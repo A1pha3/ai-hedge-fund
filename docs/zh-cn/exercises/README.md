@@ -126,6 +126,356 @@
 
 **延伸挑战**：可选的进阶挑战题目。
 
+---
+
+## 参考答案
+
+### Level 1：入门练习答案
+
+#### L1-01：验证开发环境
+
+**参考答案**：
+```bash
+# 1. 检查 Python 版本
+python --version  # 应显示 Python 3.11+
+
+# 2. 检查 Poetry 版本
+poetry --version  # 应显示 Poetry 版本号
+
+# 3. 检查 Git 版本
+git --version  # 应显示 Git 版本号
+
+# 4. 克隆项目
+git clone https://github.com/virattt/ai-hedge-fund.git
+cd ai-hedge-fund
+
+# 5. 安装依赖
+poetry install
+
+# 6. 验证安装成功
+poetry run python src/main.py --help
+```
+
+**成功标准**：所有命令正常执行，显示正确的版本号和帮助信息。
+
+---
+
+#### L1-02：配置 API 密钥
+
+**参考答案**：
+```bash
+# 1. 复制环境变量模板
+cp .env.example .env
+
+# 2. 编辑 .env 文件，添加 API 密钥
+# 使用文本编辑器打开：
+nano .env  # 或 vim .env，或使用 VS Code
+
+# 3. 添加至少一个 LLM 提供商的 API 密钥
+# 例如：
+# OPENAI_API_KEY=sk-your-key-here
+
+# 4. 验证配置生效
+poetry run python -c "import os; print('OPENAI_API_KEY configured:', bool(os.getenv('OPENAI_API_KEY')))"
+```
+
+**成功标准**：输出显示 `OPENAI_API_KEY configured: True`
+
+---
+
+#### L1-03：运行第一个分析
+
+**参考答案**：
+```bash
+# 运行单股票分析
+poetry run python src/main.py --ticker AAPL
+
+# 预期输出应包含：
+# - AI Hedge Fund Analysis 标题
+# - Analyzing ticker: AAPL
+# - 各智能体的分析结果
+# - 最终决策建议
+```
+
+**成功标准**：能够看到完整的分析输出，至少包含 10 个智能体的分析结果。
+
+---
+
+#### L1-04：单股票分析
+
+**参考答案**：
+```bash
+# 运行 AAPL 分析
+poetry run python src/main.py --ticker AAPL
+
+# 或使用 JSON 格式输出
+poetry run python src/main.py --ticker AAPL --output json
+```
+
+**成功标准**：成功执行命令并看到分析结果。
+
+---
+
+#### L1-05：多股票比较
+
+**参考答案**：
+```bash
+# 分析多只股票
+poetry run python src/main.py --ticker AAPL,MSFT,NVDA
+
+# 比较不同股票在各智能体中的评价
+# 观察各智能体对不同股票的态度差异
+```
+
+**成功标准**：能够完成多股票分析，并指出不同股票在各智能体评价中的差异。
+
+---
+
+#### L1-06：解读智能体输出
+
+**参考答案**：
+```bash
+# 运行分析并观察输出
+
+# 巴菲特智能体输出示例：
+# Signal: BUY (Confidence: 85%)
+# Reasoning: Strong moat, consistent free cash flow...
+
+# 技术分析师输出示例：
+# Signal: HOLD (Confidence: 60%)
+# Reasoning: Price approaching resistance level...
+
+# 解读要点：
+# 1. 信号含义：BUY/SELL/HOLD
+# 2. 置信度：0-100，数值越高越确定
+# 3. 推理：智能体的分析逻辑
+```
+
+**成功标准**：能够清晰解释各智能体输出的含义。
+
+---
+
+### Level 2：核心概念练习答案
+
+#### L2-01：参数组合练习
+
+**参考答案**：
+```bash
+# 组合使用多个参数
+poetry run python src/main.py \
+    --ticker AAPL,MSFT \
+    --start-date 2024-01-01 \
+    --end-date 2024-06-30 \
+    --model anthropic \
+    --analysts warren_buffett,technical_analyst \
+    --show-reasoning \
+    --output json
+```
+
+**成功标准**：能够正确使用至少 5 个不同参数。
+
+---
+
+#### L2-02：配置文件创建
+
+**参考答案**：
+```yaml
+# config.yaml
+analysis:
+  default_tickers:
+    - AAPL
+    - MSFT
+    - GOOGL
+  default_model: openai
+  show_reasoning: true
+  risk_tolerance: 5
+  max_position_size: 0.05
+
+backtest:
+  initial_capital: 100000
+  rebalance_frequency: monthly
+  commission_rate: 0.001
+
+display:
+  output_format: text
+```
+
+**成功标准**：创建包含至少 5 个自定义选项的配置文件，并能正确使用。
+
+---
+
+#### L2-03：智能体风格对比
+
+**参考答案**：
+```bash
+# 价值投资风格
+poetry run python src/main.py \
+    --ticker AAPL \
+    --analysts warren_buffett,charlie_munger,ben_graham
+
+# 成长投资风格
+poetry run python src/main.py \
+    --ticker AAPL \
+    --analysts cathie_wood,peter_lynch,phil_fisher
+
+# 技术分析风格
+poetry run python src/main.py \
+    --ticker AAPL \
+    --analysts technical_analyst
+```
+
+**成功标准**：能够清晰描述三种投资风格的分析视角差异。
+
+---
+
+#### L2-04：智能体分类练习
+
+**参考答案**：
+
+| 智能体 | 类别 | 主要分析特点 |
+|--------|------|--------------|
+| 沃伦·巴菲特 | 价值投资 | 经济护城河、自由现金流 |
+| 本杰明·格雷厄姆 | 深度价值 | 量化筛选、安全边际 |
+| 彼得·林奇 | 成长价值 | PEG 比率、十倍股 |
+| 凯茜·伍德 | 激进成长 | 颠覆性创新、高增长 |
+| 斯坦利·德鲁肯米勒 | 宏观策略 | 灵活调整、趋势把握 |
+| 技术分析师 | 技术分析 | 趋势、支撑阻力位 |
+
+---
+
+#### L2-05：智能体组合设计
+
+**参考答案**：
+
+**场景一：长期价值投资**
+- 组合：warren_buffett + charlie_munger + ben_graham
+- 理由：聚焦内在价值和安全边际
+
+**场景二：短期技术交易**
+- 组合：technical_analyst + sentiment_analyst
+- 理由：捕捉短期价格动量和市场情绪
+
+**场景三：综合评估**
+- 组合：warren_buffett + peter_lynch + technical_analyst + risk_manager
+- 理由：多维度交叉验证，综合价值、成长、技术分析
+
+---
+
+#### L2-06：投资风格分类
+
+**参考答案**：
+
+| 观点 | 投资风格 | 分析依据 |
+|------|----------|----------|
+| 「这家公司市盈率只有 8 倍」 | 价值投资 | 低估值、安全边际 |
+| 「营收每年增长 40%」 | 成长投资 | 高增长、PEG 比率 |
+| 「股价突破 200 日均线」 | 技术分析 | 趋势突破、均线系统 |
+| 「美联储即将降息」 | 宏观策略 | 宏观经济、政策影响 |
+
+---
+
+### Level 3：进阶练习答案
+
+#### L3-01：VaR 计算
+
+**参考答案**：
+
+场景一：
+```python
+# 投资组合价值 500,000 美元，日波动率 1.5%，95% 置信度
+VaR = $500,000 × 1.5% × 1.645 = $12,337.50
+```
+
+场景二：
+```python
+# 年化波动率 25%，转换为日波动率
+日波动率 = 25% / √252 ≈ 1.58%
+VaR = $200,000 × 1.58% × 2.326 ≈ $7,350
+```
+
+**答案要点**：
+- VaR 表示在给定置信度下的最大可能损失
+- 日 VaR × √252 可转换为年 VaR
+
+---
+
+#### L3-02：夏普比率比较
+
+**参考答案**：
+
+| 策略 | 年化收益 | 波动率 | 夏普比率 | 评价 |
+|------|----------|--------|----------|------|
+| A | 20% | 25% | (20%-5%)/25% = 0.60 | 中等 |
+| B | 15% | 12% | (15%-5%)/12% = 0.83 | 较好 |
+| C | 25% | 35% | (25%-5%)/35% = 0.57 | 中等偏低 |
+
+**结论**：策略 B 的风险调整后收益最高。
+
+---
+
+#### L3-03：仓位优化
+
+**参考答案**：
+
+```python
+# 凯利公式: f* = (p × b - q) / b
+
+# 参数
+p = 0.52  # 获胜概率
+q = 0.48  # 失败概率
+b = 1.1   # 盈亏比
+
+# 完整凯利
+f_full = (0.52 × 1.1 - 0.48) / 1.1 = 0.075  # 7.5%
+
+# 半凯利
+f_half = 0.075 / 2 = 0.0375  # 3.75%
+
+# 四分之一凯利
+f_quarter = 0.075 / 4 = 0.01875  # 1.875%
+```
+
+**建议**：实际投资中建议使用半凯利或更低比例。
+
+---
+
+### Level 4：专家练习答案
+
+#### L4-01：智能体开发（概述）
+
+**参考答案**：参见 `docs/zh-cn/level3-advanced-analysis/01-agent-development.md`
+
+关键步骤：
+1. 继承 `BaseAgent` 类
+2. 实现 `analyze()`、`get_prompt()`、`parse_response()` 方法
+3. 在 `src/agents/__init__.py` 中注册
+
+---
+
+#### L4-02：性能优化（概述）
+
+**参考答案**：参见 `docs/zh-cn/level3-advanced-analysis/03-performance.md`
+
+关键优化策略：
+1. 并行执行智能体
+2. 异步数据获取
+3. 多层缓存架构
+4. 连接池管理
+
+---
+
+#### L4-03：监控系统实现（概述）
+
+**参考答案**：参见 `docs/zh-cn/level3-advanced-analysis/03-performance.md`
+
+关键组件：
+1. `PerformanceMonitor` 类
+2. `AlertManager` 类
+3. 指标收集和统计
+4. 告警规则配置
+
+---
+
 ## 使用建议
 
 ### 按需选择
