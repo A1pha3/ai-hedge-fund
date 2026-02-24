@@ -60,6 +60,41 @@
     "provider": "OpenRouter"
   },
   {
+    "display_name": "MiniMax M2.5",
+    "model_name": "minimax/minimax-m2.5",
+    "provider": "OpenRouter"
+  },
+  {
+    "display_name": "MiniMax M2",
+    "model_name": "minimax/minimax-m2",
+    "provider": "OpenRouter"
+  },
+  {
+    "display_name": "GLM-4.7 (智谱原生)",
+    "model_name": "glm-4.7",
+    "provider": "Zhipu"
+  },
+  {
+    "display_name": "GLM-4.7 Air (智谱原生)",
+    "model_name": "glm-4.7-air",
+    "provider": "Zhipu"
+  },
+  {
+    "display_name": "GLM-4.7 Flash (智谱原生)",
+    "model_name": "glm-4.7-flash",
+    "provider": "Zhipu"
+  },
+  {
+    "display_name": "MiniMax-M2.5 (原生)",
+    "model_name": "MiniMax-M2.5",
+    "provider": "MiniMax"
+  },
+  {
+    "display_name": "MiniMax-M2 (原生)",
+    "model_name": "MiniMax-M2",
+    "provider": "MiniMax"
+  },
+  {
     "display_name": "GigaChat-2-Max",
     "model_name": "GigaChat-2-Max",
     "provider": "GigaChat"

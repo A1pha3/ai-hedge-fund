@@ -31,6 +31,8 @@ class ModelProvider(str, Enum):
     GIGACHAT = "GigaChat"
     AZURE_OPENAI = "Azure OpenAI"
     XAI = "xAI"
+    ZHIPU = "Zhipu"
+    MINIMAX = "MiniMax"
 
 
 class LLMModel(BaseModel):
@@ -236,3 +238,27 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
             print(f"Azure Deployment Name Error: Please make sure AZURE_OPENAI_DEPLOYMENT_NAME is set in your .env file.")
             raise ValueError("Azure OpenAI deployment name not found.  Please make sure AZURE_OPENAI_DEPLOYMENT_NAME is set in your .env file.")
         return AzureChatOpenAI(azure_endpoint=azure_endpoint, azure_deployment=azure_deployment_name, api_key=api_key, api_version="2024-10-21")
+    elif model_provider == ModelProvider.ZHIPU:
+        # 智谱 GLM 原生 API 支持
+        api_key = (api_keys or {}).get("ZHIPU_API_KEY") or os.getenv("ZHIPU_API_KEY")
+        if not api_key:
+            print(f"API Key Error: Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
+            raise ValueError("Zhipu API key not found. Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
+        # 智谱 API 使用 OpenAI 兼容接口
+        return ChatOpenAI(
+            model=model_name,
+            api_key=api_key,
+            base_url="https://open.bigmodel.cn/api/paas/v4"
+        )
+    elif model_provider == ModelProvider.MINIMAX:
+        # MiniMax 原生 API 支持
+        api_key = (api_keys or {}).get("MINIMAX_API_KEY") or os.getenv("MINIMAX_API_KEY")
+        if not api_key:
+            print(f"API Key Error: Please make sure MINIMAX_API_KEY is set in your .env file or provided via API keys.")
+            raise ValueError("MiniMax API key not found. Please make sure MINIMAX_API_KEY is set in your .env file or provided via API keys.")
+        # MiniMax API 使用 OpenAI 兼容接口
+        return ChatOpenAI(
+            model=model_name,
+            api_key=api_key,
+            base_url="https://api.minimaxi.com/v1"
+        )

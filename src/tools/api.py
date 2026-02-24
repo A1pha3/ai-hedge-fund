@@ -19,6 +19,13 @@ from src.data.models import (
     CompanyFactsResponse,
 )
 
+# Import A-share data module
+from src.tools.akshare_api import (
+    get_prices as get_ashare_prices,
+    get_financial_metrics as get_ashare_metrics,
+    is_ashare,
+)
+
 # Global cache instance
 _cache = get_cache()
 
@@ -58,15 +65,27 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
 
 
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
-    """Fetch price data from cache or API."""
+    """
+    Fetch price data from cache or API.
+    Supports both US stocks and A-shares (Chinese stocks).
+    """
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date}_{end_date}"
-    
+
     # Check cache first - simple exact match
     if cached_data := _cache.get_prices(cache_key):
         return [Price(**price) for price in cached_data]
 
-    # If not in cache, fetch from API
+    # Check if it's an A-share (Chinese stock)
+    if is_ashare(ticker):
+        # Use AKShare for A-shares
+        prices = get_ashare_prices(ticker, start_date, end_date)
+        if prices:
+            # Cache the results
+            _cache.set_prices(cache_key, [p.model_dump() for p in prices])
+        return prices
+
+    # For US stocks, use Financial Datasets API
     headers = {}
     financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
     if financial_api_key:
@@ -99,15 +118,27 @@ def get_financial_metrics(
     limit: int = 10,
     api_key: str = None,
 ) -> list[FinancialMetrics]:
-    """Fetch financial metrics from cache or API."""
+    """
+    Fetch financial metrics from cache or API.
+    Supports both US stocks and A-shares (Chinese stocks).
+    """
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{period}_{end_date}_{limit}"
-    
+
     # Check cache first - simple exact match
     if cached_data := _cache.get_financial_metrics(cache_key):
         return [FinancialMetrics(**metric) for metric in cached_data]
 
-    # If not in cache, fetch from API
+    # Check if it's an A-share (Chinese stock)
+    if is_ashare(ticker):
+        # Use AKShare for A-shares
+        metrics = get_ashare_metrics(ticker, end_date, limit)
+        if metrics:
+            # Cache the results
+            _cache.set_financial_metrics(cache_key, [m.model_dump() for m in metrics])
+        return metrics
+
+    # For US stocks, use Financial Datasets API
     headers = {}
     financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
     if financial_api_key:
