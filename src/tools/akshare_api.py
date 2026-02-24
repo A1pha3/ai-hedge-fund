@@ -37,6 +37,11 @@ except ImportError:
     ak = None
 
 
+class AShareDataError(Exception):
+    """A股数据获取错误"""
+    pass
+
+
 class AShareTicker(BaseModel):
     """A股股票代码格式"""
     symbol: str  # 如：000001
@@ -82,7 +87,6 @@ class AShareTicker(BaseModel):
 def _get_akshare():
     """获取 akshare 模块，如果不可用则返回 None"""
     if not _akshare_available or ak is None:
-        print("AKShare is not available. Please check your network connection.")
         return None
     return ak
 
@@ -120,25 +124,25 @@ def get_realtime_quote_sina(ticker: str) -> Dict[str, Any]:
         response = session.get(url, headers=headers, timeout=30)
         
         if response.status_code != 200:
-            return {}
+            raise AShareDataError(f"新浪 API 返回错误状态码: {response.status_code}")
         
         # 解析新浪返回的数据格式
         # var hq_str_sh600519="贵州茅台,1521.000,1485.300,1466.800,...";
         text = response.text
         if not text or 'hq_str_' not in text:
-            return {}
+            raise AShareDataError("新浪 API 返回数据格式错误")
         
         # 提取数据部分
         start = text.find('"') + 1
         end = text.rfind('"')
         if start <= 0 or end <= start:
-            return {}
+            raise AShareDataError("无法解析新浪返回的数据")
         
         data_str = text[start:end]
         parts = data_str.split(',')
         
         if len(parts) < 33:
-            return {}
+            raise AShareDataError("新浪返回的数据字段不完整")
         
         # 新浪数据字段映射
         result = {
@@ -179,94 +183,33 @@ def get_realtime_quote_sina(ticker: str) -> Dict[str, Any]:
         return result
     
     except Exception as e:
-        print(f"Error fetching real-time quote from Sina for {ticker}: {e}")
-        return {}
-
-
-def get_prices_sina_historical(
-    ticker: str,
-    start_date: str,
-    end_date: str,
-    period: str = "daily"
-) -> List[Price]:
-    """
-    通过新浪财经获取A股历史价格数据
-    使用 AKShare 的新浪数据源
-    
-    Args:
-        ticker: 股票代码
-        start_date: 开始日期（YYYY-MM-DD）
-        end_date: 结束日期（YYYY-MM-DD）
-        period: 周期（daily, weekly, monthly）
-    
-    Returns:
-        List[Price]: 价格数据列表
-    """
-    cache_key = f"ashare_sina_{ticker}_{start_date}_{end_date}_{period}"
-    
-    # 检查缓存
-    if cached_data := _cache.get_prices(cache_key):
-        return [Price(**price) for price in cached_data]
-    
-    ak_module = _get_akshare()
-    if ak_module is None:
-        return []
-    
-    try:
-        ashare = AShareTicker.from_symbol(ticker)
-        
-        # 使用 AKShare 的新浪数据源
-        # 注意：AKShare 内部已经处理了代理问题
-        df = ak_module.stock_zh_a_daily(
-            symbol=ashare.full_code,
-            start_date=start_date.replace("-", ""),
-            end_date=end_date.replace("-", ""),
-            adjust="qfq"  # 前复权
-        )
-        
-        if df.empty:
-            return []
-        
-        prices = []
-        for _, row in df.iterrows():
-            price = Price(
-                time=str(row["date"]),
-                open=float(row["open"]),
-                high=float(row["high"]),
-                low=float(row["low"]),
-                close=float(row["close"]),
-                volume=int(row["volume"])
-            )
-            prices.append(price)
-        
-        # 缓存结果
-        _cache.set_prices(cache_key, [p.model_dump() for p in prices])
-        
-        return prices
-    
-    except Exception as e:
-        print(f"Error fetching historical prices from Sina for {ticker}: {e}")
-        return []
+        if isinstance(e, AShareDataError):
+            raise
+        raise AShareDataError(f"获取新浪实时行情失败: {e}")
 
 
 def get_prices(
     ticker: str,
     start_date: str,
     end_date: str,
-    period: str = "daily"
+    period: str = "daily",
+    use_mock: bool = False
 ) -> List[Price]:
     """
     获取A股股票价格数据
-    首先尝试 AKShare，失败则使用模拟数据
     
     Args:
         ticker: 股票代码
         start_date: 开始日期
         end_date: 结束日期
         period: 周期
+        use_mock: 是否使用模拟数据（默认为 False，无法获取数据时报错）
     
     Returns:
         List[Price]: 价格数据列表
+    
+    Raises:
+        AShareDataError: 当无法获取数据且 use_mock=False 时抛出
     """
     cache_key = f"ashare_{ticker}_{start_date}_{end_date}_{period}"
     
@@ -274,10 +217,16 @@ def get_prices(
     if cached_data := _cache.get_prices(cache_key):
         return [Price(**price) for price in cached_data]
     
+    # 如果指定使用模拟数据，直接返回
+    if use_mock:
+        return get_mock_prices(ticker, start_date, end_date)
+    
     ak_module = _get_akshare()
     if ak_module is None:
-        print("AKShare not available, using mock data")
-        return get_mock_prices(ticker, start_date, end_date)
+        raise AShareDataError(
+            "AKShare 模块不可用，无法获取 A 股数据。\n"
+            "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
+        )
     
     try:
         ashare = AShareTicker.from_symbol(ticker)
@@ -294,8 +243,10 @@ def get_prices(
         )
         
         if df.empty:
-            print("Empty data from AKShare, trying mock data")
-            return get_mock_prices(ticker, start_date, end_date)
+            raise AShareDataError(
+                f"无法获取股票 {ticker} 的历史数据（AKShare 返回空数据）。\n"
+                "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
+            )
         
         prices = []
         for _, row in df.iterrows():
@@ -314,16 +265,20 @@ def get_prices(
         
         return prices
     
+    except AShareDataError:
+        raise
     except Exception as e:
-        print(f"Error fetching A-share prices for {ticker}: {e}")
-        print("Using mock data instead")
-        return get_mock_prices(ticker, start_date, end_date)
+        raise AShareDataError(
+            f"获取股票 {ticker} 的历史数据失败: {e}\n"
+            "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
+        )
 
 
 def get_financial_metrics(
     ticker: str,
     end_date: str,
-    limit: int = 10
+    limit: int = 10,
+    use_mock: bool = False
 ) -> List[FinancialMetrics]:
     """
     获取A股财务指标数据
@@ -332,9 +287,13 @@ def get_financial_metrics(
         ticker: 股票代码
         end_date: 结束日期（YYYY-MM-DD）
         limit: 返回记录数
+        use_mock: 是否使用模拟数据（默认为 False，无法获取数据时报错）
     
     Returns:
         List[FinancialMetrics]: 财务指标列表
+    
+    Raises:
+        AShareDataError: 当无法获取数据且 use_mock=False 时抛出
     """
     cache_key = f"ashare_metrics_{ticker}_{end_date}_{limit}"
     
@@ -342,10 +301,16 @@ def get_financial_metrics(
     if cached_data := _cache.get_financial_metrics(cache_key):
         return [FinancialMetrics(**metric) for metric in cached_data]
     
+    # 如果指定使用模拟数据，直接返回
+    if use_mock:
+        return get_mock_financial_metrics(ticker, end_date, limit)
+    
     ak_module = _get_akshare()
     if ak_module is None:
-        print("AKShare not available, using mock financial metrics")
-        return get_mock_financial_metrics(ticker, end_date, limit)
+        raise AShareDataError(
+            "AKShare 模块不可用，无法获取 A 股财务数据。\n"
+            "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
+        )
     
     try:
         ashare = AShareTicker.from_symbol(ticker)
@@ -354,8 +319,10 @@ def get_financial_metrics(
         df = ak_module.stock_financial_analysis_indicator(symbol=ashare.symbol)
         
         if df.empty:
-            print("Empty financial data from AKShare, using mock data")
-            return get_mock_financial_metrics(ticker, end_date, limit)
+            raise AShareDataError(
+                f"无法获取股票 {ticker} 的财务数据（AKShare 返回空数据）。\n"
+                "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
+            )
         
         # 转换为 FinancialMetrics 对象
         metrics = []
@@ -379,10 +346,13 @@ def get_financial_metrics(
         
         return metrics
     
+    except AShareDataError:
+        raise
     except Exception as e:
-        print(f"Error fetching A-share financial metrics for {ticker}: {e}")
-        print("Using mock financial metrics instead")
-        return get_mock_financial_metrics(ticker, end_date, limit)
+        raise AShareDataError(
+            f"获取股票 {ticker} 的财务数据失败: {e}\n"
+            "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
+        )
 
 
 def get_stock_info(ticker: str) -> Dict[str, Any]:
@@ -394,10 +364,13 @@ def get_stock_info(ticker: str) -> Dict[str, Any]:
     
     Returns:
         dict: 股票信息
+    
+    Raises:
+        AShareDataError: 当无法获取数据时抛出
     """
     ak_module = _get_akshare()
     if ak_module is None:
-        return {}
+        raise AShareDataError("AKShare 模块不可用，无法获取 A 股股票信息")
     
     try:
         ashare = AShareTicker.from_symbol(ticker)
@@ -406,7 +379,7 @@ def get_stock_info(ticker: str) -> Dict[str, Any]:
         df = ak_module.stock_individual_info_em(symbol=ashare.symbol)
         
         if df.empty:
-            return {}
+            raise AShareDataError(f"无法获取股票 {ticker} 的基本信息（AKShare 返回空数据）")
         
         # 转换为字典
         info = {}
@@ -415,9 +388,10 @@ def get_stock_info(ticker: str) -> Dict[str, Any]:
         
         return info
     
+    except AShareDataError:
+        raise
     except Exception as e:
-        print(f"Error fetching A-share info for {ticker}: {e}")
-        return {}
+        raise AShareDataError(f"获取股票 {ticker} 的基本信息失败: {e}")
 
 
 def search_stocks(keyword: str) -> List[Dict[str, Any]]:
@@ -429,10 +403,13 @@ def search_stocks(keyword: str) -> List[Dict[str, Any]]:
     
     Returns:
         List[dict]: 股票列表
+    
+    Raises:
+        AShareDataError: 当无法获取数据时抛出
     """
     ak_module = _get_akshare()
     if ak_module is None:
-        return []
+        raise AShareDataError("AKShare 模块不可用，无法搜索 A 股")
     
     try:
         # 获取所有A股列表
@@ -458,8 +435,7 @@ def search_stocks(keyword: str) -> List[Dict[str, Any]]:
         return results
     
     except Exception as e:
-        print(f"Error searching A-shares: {e}")
-        return []
+        raise AShareDataError(f"搜索 A 股失败: {e}")
 
 
 def is_ashare(ticker: str) -> bool:
@@ -618,5 +594,5 @@ __all__ = [
     "get_mock_prices",
     "get_mock_financial_metrics",
     "get_realtime_quote_sina",
-    "get_prices_sina_historical",
+    "AShareDataError",
 ]

@@ -27,6 +27,7 @@ from src.tools.akshare_api import (
     is_ashare,
     get_mock_prices,
     get_mock_financial_metrics,
+    AShareDataError,
 )
 
 
@@ -79,7 +80,11 @@ def analyze_stock(ticker: str, start_date: str, end_date: str, use_mock: bool = 
         print("(使用模拟数据)")
         prices = get_mock_prices(ticker, start_date, end_date)
     else:
-        prices = get_prices(ticker, start_date, end_date)
+        try:
+            prices = get_prices(ticker, start_date, end_date)
+        except AShareDataError as e:
+            print(f"❌ 错误: {e}")
+            prices = None
     
     if prices:
         print(f"数据区间: {prices[0].time} 至 {prices[-1].time}")
@@ -120,7 +125,11 @@ def analyze_stock(ticker: str, start_date: str, end_date: str, use_mock: bool = 
         print("(使用模拟数据)")
         metrics = get_mock_financial_metrics(ticker, end_date, limit=4)
     else:
-        metrics = get_financial_metrics(ticker, end_date, limit=4)
+        try:
+            metrics = get_financial_metrics(ticker, end_date, limit=4)
+        except AShareDataError as e:
+            print(f"❌ 错误: {e}")
+            metrics = None
     
     if metrics:
         print(f"{'报告期':<12} {'PE':<10} {'PB':<10} {'ROE':<10} {'毛利率':<10} {'净利率':<10}")
