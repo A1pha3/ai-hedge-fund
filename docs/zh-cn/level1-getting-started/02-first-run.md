@@ -45,7 +45,11 @@
 cd ai-hedge-fund
 
 # 运行苹果公司（AAPL）的分析
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL
+
+# 或使用 uv（推荐，速度更快）
+uv run python src/main.py --ticker AAPL
 ```
 
 > **📝 命令说明**
@@ -302,7 +306,11 @@ Target Price: $200.00
 
 ```bash
 # 分析三只科技股
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL,MSFT,NVDA
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL,MSFT,NVDA
 ```
 
 > **📝 注意事项**
@@ -366,7 +374,11 @@ Recommended Portfolio Allocation:
 
 ```bash
 # 分析 2024 年第一季度的数据
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --start-date 2024-01-01 --end-date 2024-03-31
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --start-date 2024-01-01 --end-date 2024-03-31
 ```
 
 > **💡 时间范围建议**
@@ -393,7 +405,11 @@ poetry run python src/main.py --ticker AAPL --start-date 2024-01-01 --end-date 2
 
 ```bash
 # 只运行三个价值投资风格的智能体
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --analysts warren_buffett,charlie_munger,ben_graham
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --analysts warren_buffett,charlie_munger,ben_graham
 ```
 
 ### 可用智能体列表
@@ -423,25 +439,41 @@ poetry run python src/main.py --ticker AAPL --analysts warren_buffett,charlie_mu
 **场景 1：专注价值投资**
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --analysts warren_buffett,charlie_munger,ben_graham
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --analysts warren_buffett,charlie_munger,ben_graham
 ```
 
 **场景 2：专注成长投资**
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --analysts peter_lynch,cathie_wood,phil_fisher
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --analysts peter_lynch,cathie_wood,phil_fisher
 ```
 
 **场景 3：专注技术分析**
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --analysts technical_analyst,sentiment_analyst
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --analysts technical_analyst,sentiment_analyst
 ```
 
 **场景 4：结合不同风格**
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --analysts warren_buffett,peter_lynch,technical_analyst
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --analysts warren_buffett,peter_lynch,technical_analyst
 ```
 
 ---
@@ -466,31 +498,51 @@ poetry run python src/main.py --ticker AAPL --analysts warren_buffett,peter_lync
 
 ```bash
 # 使用 GPT-4o（推荐）
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --model openai
 
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --model openai
+
 # 使用 GPT-4o-mini（更快更便宜）
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --model openai-mini
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --model openai-mini
 ```
 
 ### 使用 Anthropic 模型
 
 ```bash
 # 使用 Claude 3.5 Sonnet（长上下文）
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --model anthropic
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --model anthropic
 ```
 
 ### 使用 Groq 模型
 
 ```bash
 # 使用 Groq 的高速推理服务
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --model groq
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --model groq
 ```
 
 ### 使用本地 Ollama 模型
 
 ```bash
 # 使用 Ollama 本地模型
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --ollama
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --ollama
 ```
 
 > **💡 本地模型 vs 云端模型**
@@ -517,7 +569,11 @@ poetry run python src/main.py --ticker AAPL --ollama
 默认的文本格式适合命令行交互使用，输出包含丰富的颜色和格式化：
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL
 ```
 
 **颜色编码**：
@@ -530,7 +586,11 @@ poetry run python src/main.py --ticker AAPL
 如果需要程序化处理结果，可以使用 JSON 格式：
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --output json > analysis.json
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --output json > analysis.json
 ```
 
 **JSON 输出示例**：
@@ -600,20 +660,32 @@ ping api.openai.com
 **方案 2**：验证 API 密钥
 
 ```bash
+# 使用 Poetry
 poetry run python -c "import os; print(os.getenv('OPENAI_API_KEY'))"
+
+# 或使用 uv
+uv run python -c "import os; print(os.getenv('OPENAI_API_KEY'))"
 ```
 
 **方案 3**：切换到其他 LLM 提供商
 
 ```bash
 # 尝试使用 Groq
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --model groq
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --model groq
 ```
 
 **方案 4**：使用本地 Ollama
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --ollama
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --ollama
 ```
 
 ---
@@ -635,14 +707,22 @@ poetry run python src/main.py --ticker AAPL --ollama
 
 ```bash
 # 使用常见的股票代码测试
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL
 ```
 
 **方案 2**：检查 API 密钥
 
 ```bash
 # 检查金融数据 API 密钥是否配置
+# 使用 Poetry
 poetry run python -c "import os; print('API Key configured:', bool(os.getenv('FINANCIAL_DATASETS_API_KEY')))"
+
+# 或使用 uv
+uv run python -c "import os; print('API Key configured:', bool(os.getenv('FINANCIAL_DATASETS_API_KEY')))"
 ```
 
 **方案 3**：使用免费股票测试
@@ -650,7 +730,11 @@ poetry run python -c "import os; print('API Key configured:', bool(os.getenv('FI
 免费股票：AAPL、GOOGL、MSFT、NVDA、TSLA
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL,MSFT,NVDA
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL,MSFT,NVDA
 ```
 
 ---
@@ -674,13 +758,21 @@ poetry run python src/main.py --ticker AAPL,MSFT,NVDA
 **方案 2**：将输出重定向到文件
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL > output.txt
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL > output.txt
 ```
 
 **方案 3**：使用 JSON 格式
 
 ```bash
+# 使用 Poetry
 poetry run python src/main.py --ticker AAPL --output json
+
+# 或使用 uv
+uv run python src/main.py --ticker AAPL --output json
 ```
 
 ---
@@ -693,7 +785,9 @@ poetry run python src/main.py --ticker AAPL --output json
 
 **步骤**：
 1. 进入项目目录
-2. 执行分析命令：`poetry run python src/main.py --ticker AAPL`
+2. 执行分析命令：
+   - 使用 Poetry：`poetry run python src/main.py --ticker AAPL`
+   - 或使用 uv：`uv run python src/main.py --ticker AAPL`
 3. 等待分析完成
 4. 阅读和理解输出结果
 
@@ -714,7 +808,9 @@ poetry run python src/main.py --ticker AAPL --output json
 
 **步骤**：
 1. 选择三只科技股（如 AAPL、MSFT、GOOGL）
-2. 执行多股票分析：`poetry run python src/main.py --ticker AAPL,MSFT,GOOGL`
+2. 执行多股票分析：
+   - 使用 Poetry：`poetry run python src/main.py --ticker AAPL,MSFT,GOOGL`
+   - 或使用 uv：`uv run python src/main.py --ticker AAPL,MSFT,GOOGL`
 3. 比较各智能体对不同股票的评价差异
 4. 记录投资组合层面的建议
 
@@ -736,11 +832,19 @@ poetry run python src/main.py --ticker AAPL --output json
 **步骤**：
 1. 使用 `--analysts` 参数选择价值投资智能体：
    ```bash
+   # 使用 Poetry
    poetry run python src/main.py --ticker AAPL --analysts warren_buffett,charlie_munger,ben_graham
+
+   # 或使用 uv
+   uv run python src/main.py --ticker AAPL --analysts warren_buffett,charlie_munger,ben_graham
    ```
 2. 使用 `--analysts` 参数选择成长投资智能体：
    ```bash
+   # 使用 Poetry
    poetry run python src/main.py --ticker AAPL --analysts peter_lynch,cathie_wood,phil_fisher
+
+   # 或使用 uv
+   uv run python src/main.py --ticker AAPL --analysts peter_lynch,cathie_wood,phil_fisher
    ```
 3. 比较两组智能体的决策和推理差异
 4. 总结两种风格的差异

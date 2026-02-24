@@ -388,31 +388,123 @@ def get_financial_metrics(
     try:
         ashare = AShareTicker.from_symbol(ticker)
         
-        # 获取主要财务指标
+        # 尝试使用 stock_financial_analysis_indicator 获取主要财务指标
         df = ak_module.stock_financial_analysis_indicator(symbol=ashare.symbol)
         
+        # 如果返回空数据，尝试使用 stock_financial_report_sina 接口
         if df.empty:
-            raise AShareDataError(
-                f"无法获取股票 {ticker} 的财务数据（AKShare 返回空数据）。\n"
-                "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
-            )
-        
-        # 转换为 FinancialMetrics 对象
-        metrics = []
-        for _, row in df.head(limit).iterrows():
-            metric = FinancialMetrics(
-                ticker=ticker,
-                report_period=str(row.get("报告期", "")),
-                period="ttm",
-                currency="CNY",
-                revenue=float(row.get("营业收入", 0)) * 10000 if pd.notna(row.get("营业收入")) else None,
-                net_income=float(row.get("净利润", 0)) * 10000 if pd.notna(row.get("净利润")) else None,
-                price_to_earnings_ratio=float(row.get("市盈率", 0)) if pd.notna(row.get("市盈率")) else None,
-                price_to_book_ratio=float(row.get("市净率", 0)) if pd.notna(row.get("市净率")) else None,
-                return_on_equity=float(row.get("净资产收益率", 0)) / 100 if pd.notna(row.get("净资产收益率")) else None,
-                debt_to_equity=float(row.get("资产负债率", 0)) / 100 if pd.notna(row.get("资产负债率")) else None,
-            )
-            metrics.append(metric)
+            # 使用新浪财务数据接口，对科创板等股票更可靠
+            df_profit = ak_module.stock_financial_report_sina(stock=ashare.symbol, symbol="利润表")
+            
+            if df_profit.empty:
+                raise AShareDataError(
+                    f"无法获取股票 {ticker} 的财务数据（AKShare 返回空数据）。\n"
+                    "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
+                )
+            
+            # 从新浪接口数据中提取财务指标
+            metrics = []
+            for _, row in df_profit.head(limit).iterrows():
+                # 计算净利润率（如果有数据）
+                revenue = float(row.get("营业收入", 0)) if pd.notna(row.get("营业收入")) else None
+                net_income = float(row.get("净利润", 0)) if pd.notna(row.get("净利润")) else None
+                
+                metric = FinancialMetrics(
+                    ticker=ticker,
+                    report_period=str(row.get("报告日", "")),
+                    period="ttm",
+                    currency="CNY",
+                    market_cap=None,
+                    enterprise_value=None,
+                    price_to_earnings_ratio=None,
+                    price_to_book_ratio=None,
+                    price_to_sales_ratio=None,
+                    enterprise_value_to_ebitda_ratio=None,
+                    enterprise_value_to_revenue_ratio=None,
+                    free_cash_flow_yield=None,
+                    peg_ratio=None,
+                    gross_margin=None,
+                    operating_margin=None,
+                    net_margin=None,
+                    return_on_equity=None,
+                    return_on_assets=None,
+                    return_on_invested_capital=None,
+                    asset_turnover=None,
+                    inventory_turnover=None,
+                    receivables_turnover=None,
+                    days_sales_outstanding=None,
+                    operating_cycle=None,
+                    working_capital_turnover=None,
+                    current_ratio=None,
+                    quick_ratio=None,
+                    cash_ratio=None,
+                    operating_cash_flow_ratio=None,
+                    debt_to_equity=None,
+                    debt_to_assets=None,
+                    interest_coverage=None,
+                    revenue_growth=None,
+                    earnings_growth=None,
+                    book_value_growth=None,
+                    earnings_per_share_growth=None,
+                    free_cash_flow_growth=None,
+                    operating_income_growth=None,
+                    ebitda_growth=None,
+                    payout_ratio=None,
+                    earnings_per_share=None,
+                    book_value_per_share=None,
+                    free_cash_flow_per_share=None,
+                )
+                metrics.append(metric)
+        else:
+            # 使用 stock_financial_analysis_indicator 的数据
+            metrics = []
+            for _, row in df.head(limit).iterrows():
+                metric = FinancialMetrics(
+                    ticker=ticker,
+                    report_period=str(row.get("报告期", "")),
+                    period="ttm",
+                    currency="CNY",
+                    market_cap=None,
+                    enterprise_value=None,
+                    price_to_earnings_ratio=float(row.get("市盈率", 0)) if pd.notna(row.get("市盈率")) else None,
+                    price_to_book_ratio=float(row.get("市净率", 0)) if pd.notna(row.get("市净率")) else None,
+                    price_to_sales_ratio=None,
+                    enterprise_value_to_ebitda_ratio=None,
+                    enterprise_value_to_revenue_ratio=None,
+                    free_cash_flow_yield=None,
+                    peg_ratio=None,
+                    gross_margin=None,
+                    operating_margin=None,
+                    net_margin=None,
+                    return_on_equity=float(row.get("净资产收益率", 0)) / 100 if pd.notna(row.get("净资产收益率")) else None,
+                    return_on_assets=None,
+                    return_on_invested_capital=None,
+                    asset_turnover=None,
+                    inventory_turnover=None,
+                    receivables_turnover=None,
+                    days_sales_outstanding=None,
+                    operating_cycle=None,
+                    working_capital_turnover=None,
+                    current_ratio=None,
+                    quick_ratio=None,
+                    cash_ratio=None,
+                    operating_cash_flow_ratio=None,
+                    debt_to_equity=float(row.get("资产负债率", 0)) / 100 if pd.notna(row.get("资产负债率")) else None,
+                    debt_to_assets=None,
+                    interest_coverage=None,
+                    revenue_growth=None,
+                    earnings_growth=None,
+                    book_value_growth=None,
+                    earnings_per_share_growth=None,
+                    free_cash_flow_growth=None,
+                    operating_income_growth=None,
+                    ebitda_growth=None,
+                    payout_ratio=None,
+                    earnings_per_share=None,
+                    book_value_per_share=None,
+                    free_cash_flow_per_share=None,
+                )
+                metrics.append(metric)
         
         # 缓存结果
         _cache.set_financial_metrics(cache_key, [m.model_dump() for m in metrics])
