@@ -216,7 +216,8 @@ def generate_trading_decision(
 
     prompt_data = {
         "signals": json.dumps(compact_signals, separators=(",", ":"), ensure_ascii=False),
-                "Keep reasoning very concise (max 100 chars). No cash or margin math. Return JSON only."
+        "allowed": json.dumps(compact_allowed, separators=(",", ":"), ensure_ascii=False),
+    }
     prompt = template.invoke(prompt_data)
 
     # Default factory fills remaining tickers as hold if the LLM fails
@@ -227,7 +228,8 @@ def generate_trading_decision(
             decisions[t] = PortfolioDecision(action="hold", quantity=0, confidence=0.0, reasoning="Default decision: hold")
         return PortfolioManagerOutput(decisions=decisions)
 
-                "}}"
+    llm_out = call_llm(
+        prompt=prompt,
         pydantic_model=PortfolioManagerOutput,
         agent_name=agent_id,
         state=state,
