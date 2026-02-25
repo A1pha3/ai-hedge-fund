@@ -91,5 +91,11 @@ include = '\.pyi?$'
 profile = "black"
 force_alphabetical_sort_within_sections = true
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.flake8]
+max-line-length = 420
+
 [tool.poetry.scripts]
 backtester = "src.backtesting.cli:main"

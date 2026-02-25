@@ -5,17 +5,17 @@
 """
 
 import random
-from typing import Dict, Any, List
 from datetime import datetime, timedelta
+from typing import Any, Dict, List
 
 from src.data.base_provider import BaseDataProvider, DataResponse
-from src.data.models import Price, FinancialMetrics, CompanyNews
+from src.data.models import CompanyNews, FinancialMetrics, Price
 
 
 class MockProvider(BaseDataProvider):
     """
     模拟数据提供商
-    
+
     生成模拟的股票数据，用于：
     - 测试数据架构
     - 演示功能
@@ -25,40 +25,35 @@ class MockProvider(BaseDataProvider):
     def __init__(self, priority: int = 100):
         """
         初始化模拟提供商
-        
+
         Args:
             priority: 优先级（默认 100，最低优先级）
         """
         super().__init__("mock", priority)
         self.health_status = "healthy"
 
-    async def get_prices(
-        self,
-        ticker: str,
-        start_date: str,
-        end_date: str
-    ) -> DataResponse:
+    async def get_prices(self, ticker: str, start_date: str, end_date: str) -> DataResponse:
         """
         获取模拟价格数据
-        
+
         Args:
             ticker: 股票代码
             start_date: 开始日期
             end_date: 结束日期
-        
+
         Returns:
             DataResponse 包含模拟价格数据
         """
         start_time = datetime.now()
-        
+
         try:
             start = datetime.strptime(start_date, "%Y-%m-%d")
             end = datetime.strptime(end_date, "%Y-%m-%d")
-            
+
             prices = []
             current = start
             base_price = 100.0
-            
+
             while current <= end:
                 if current.weekday() < 5:  # 只生成工作日数据
                     change = random.uniform(-0.02, 0.02)
@@ -67,60 +62,41 @@ class MockProvider(BaseDataProvider):
                     high = max(open_price, close) * (1 + random.uniform(0, 0.01))
                     low = min(open_price, close) * (1 - random.uniform(0, 0.01))
                     volume = random.randint(1000000, 10000000)
-                    
-                    price = Price(
-                        time=current.strftime("%Y-%m-%d"),
-                        open=round(open_price, 2),
-                        high=round(high, 2),
-                        low=round(low, 2),
-                        close=round(close, 2),
-                        volume=volume
-                    )
+
+                    price = Price(time=current.strftime("%Y-%m-%d"), open=round(open_price, 2), high=round(high, 2), low=round(low, 2), close=round(close, 2), volume=volume)
                     prices.append(price)
                     base_price = close
-                
-                current += timedelta(days=1)
-            
-            latency = (datetime.now() - start_time).total_seconds() * 1000
-            
-            return DataResponse(
-                data=prices,
-                source=self.name,
-                latency_ms=latency
-            )
-            
-        except Exception as e:
-            return DataResponse(
-                data=[],
-                source=self.name,
-                error=str(e)
-            )
 
-    async def get_financial_metrics(
-        self,
-        ticker: str,
-        end_date: str
-    ) -> DataResponse:
+                current += timedelta(days=1)
+
+            latency = (datetime.now() - start_time).total_seconds() * 1000
+
+            return DataResponse(data=prices, source=self.name, latency_ms=latency)
+
+        except Exception as e:
+            return DataResponse(data=[], source=self.name, error=str(e))
+
+    async def get_financial_metrics(self, ticker: str, end_date: str) -> DataResponse:
         """
         获取模拟财务指标
-        
+
         Args:
             ticker: 股票代码
             end_date: 截止日期
-        
+
         Returns:
             DataResponse 包含模拟财务指标
         """
         start_time = datetime.now()
-        
+
         try:
             end = datetime.strptime(end_date, "%Y-%m-%d")
-            
+
             metrics = []
             for i in range(10):
                 quarter = (end.month - 1) // 3
                 year = end.year
-                
+
                 # 生成模拟的财务指标
                 metric = FinancialMetrics(
                     ticker=ticker,
@@ -168,44 +144,31 @@ class MockProvider(BaseDataProvider):
                     free_cash_flow_per_share=random.uniform(2.0, 15.0),
                 )
                 metrics.append(metric)
-                
+
                 # 上一个季度（使用 timedelta 避免日期越界）
                 end = end - timedelta(days=90)
-            
-            latency = (datetime.now() - start_time).total_seconds() * 1000
-            
-            return DataResponse(
-                data=metrics,
-                source=self.name,
-                latency_ms=latency
-            )
-            
-        except Exception as e:
-            return DataResponse(
-                data=[],
-                source=self.name,
-                error=str(e)
-            )
 
-    async def get_company_news(
-        self,
-        ticker: str,
-        start_date: str,
-        end_date: str
-    ) -> DataResponse:
+            latency = (datetime.now() - start_time).total_seconds() * 1000
+
+            return DataResponse(data=metrics, source=self.name, latency_ms=latency)
+
+        except Exception as e:
+            return DataResponse(data=[], source=self.name, error=str(e))
+
+    async def get_company_news(self, ticker: str, start_date: str, end_date: str) -> DataResponse:
         """
         获取模拟公司新闻
-        
+
         Args:
             ticker: 股票代码
             start_date: 开始日期
             end_date: 结束日期
-        
+
         Returns:
             DataResponse 包含模拟新闻
         """
         start_time = datetime.now()
-        
+
         news_templates = [
             "{company}发布季度财报，营收同比增长{percent}%",
             "{company}宣布新的投资计划，预计投资{amount}亿元",
@@ -216,56 +179,47 @@ class MockProvider(BaseDataProvider):
             "分析师上调{company}目标价至{amount}元",
             "{company}宣布分红方案，每10股派{amount}元",
         ]
-        
+
         companies = {
             "600519": "贵州茅台",
             "000001": "平安银行",
             "000858": "五粮液",
             "002415": "海康威视",
         }
-        
+
         company_name = companies.get(ticker, f"公司{ticker}")
-        
+
         news_list = []
         start = datetime.strptime(start_date, "%Y-%m-%d")
         end = datetime.strptime(end_date, "%Y-%m-%d")
         current = start
-        
+
         while current <= end:
             if random.random() > 0.7:  # 30% 概率生成新闻
                 template = random.choice(news_templates)
                 news = CompanyNews(
                     ticker=ticker,
-                    title=template.format(
-                        company=company_name,
-                        percent=round(random.uniform(5, 30), 1),
-                        amount=round(random.uniform(1, 100), 1),
-                        partner=f"合作伙伴{random.randint(1, 10)}"
-                    ),
+                    title=template.format(company=company_name, percent=round(random.uniform(5, 30), 1), amount=round(random.uniform(1, 100), 1), partner=f"合作伙伴{random.randint(1, 10)}"),
                     author=f"记者{random.randint(1, 20)}",
                     source=random.choice(["财经网", "证券时报", "上海证券报", "每日经济新闻"]),
                     date=current.strftime("%Y-%m-%d"),
                     url=f"https://example.com/news/{ticker}/{current.strftime('%Y%m%d')}",
-                    sentiment=random.choice(["positive", "neutral", "negative", None])
+                    sentiment=random.choice(["positive", "neutral", "negative", None]),
                 )
                 news_list.append(news)
-            
+
             current += timedelta(days=1)
-        
+
         latency = (datetime.now() - start_time).total_seconds() * 1000
-        
-        return DataResponse(
-            data=news_list,
-            source=self.name,
-            latency_ms=latency
-        )
+
+        return DataResponse(data=news_list, source=self.name, latency_ms=latency)
 
     async def health_check(self) -> bool:
         """
         健康检查
-        
+
         模拟提供商永远健康
-        
+
         Returns:
             True
         """
@@ -274,16 +228,10 @@ class MockProvider(BaseDataProvider):
     def rate_limit_info(self) -> Dict[str, Any]:
         """
         速率限制信息
-        
+
         模拟提供商没有速率限制
-        
+
         Returns:
             速率限制信息字典
         """
-        return {
-            "requests_per_minute": float('inf'),
-            "requests_per_day": float('inf'),
-            "backoff_strategy": "none",
-            "current_remaining": float('inf'),
-            "note": "Mock provider has no rate limits"
-        }
+        return {"requests_per_minute": float("inf"), "requests_per_day": float("inf"), "backoff_strategy": "none", "current_remaining": float("inf"), "note": "Mock provider has no rate limits"}

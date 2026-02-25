@@ -5,17 +5,17 @@
 """
 
 import asyncio
-import time
-from typing import List, Optional, Dict, Any, Type
-from datetime import datetime, timedelta
 import logging
+import time
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Type
 
 from src.data.base_provider import (
     BaseDataProvider,
+    DataProviderError,
     DataRequest,
     DataResponse,
     DataType,
-    DataProviderError,
 )
 from src.data.enhanced_cache import get_cache
 
@@ -27,13 +27,13 @@ logger = logging.getLogger(__name__)
 class DataRouter:
     """
     数据路由器
-    
+
     负责：
     - 根据数据类型和优先级选择合适的数据源
     - 实现容错机制（主数据源失败时自动切换）
     - 管理缓存
     - 记录数据血缘和性能指标
-    
+
     Attributes:
         providers: 注册的提供商列表
         cache: 缓存实例
@@ -41,14 +41,10 @@ class DataRouter:
         _last_health_check: 上次健康检查时间
     """
 
-    def __init__(
-        self,
-        providers: Optional[List[BaseDataProvider]] = None,
-        health_check_interval: int = 300
-    ):
+    def __init__(self, providers: Optional[List[BaseDataProvider]] = None, health_check_interval: int = 300):
         """
         初始化数据路由器
-        
+
         Args:
             providers: 提供商列表
             health_check_interval: 健康检查间隔（秒，默认 5 分钟）
@@ -58,7 +54,7 @@ class DataRouter:
         self.health_check_interval = health_check_interval
         self._last_health_check: Optional[datetime] = None
         self._health_cache: Dict[str, bool] = {}
-        
+
         # 按优先级排序
         self._sort_providers()
 
@@ -69,7 +65,7 @@ class DataRouter:
     def register_provider(self, provider: BaseDataProvider):
         """
         注册数据提供商
-        
+
         Args:
             provider: 数据提供商实例
         """
@@ -80,7 +76,7 @@ class DataRouter:
     def unregister_provider(self, provider_name: str):
         """
         注销数据提供商
-        
+
         Args:
             provider_name: 提供商名称
         """
@@ -90,37 +86,37 @@ class DataRouter:
     def _get_cache_key(self, data_type: DataType, ticker: str, **kwargs) -> str:
         """
         生成缓存键
-        
+
         Args:
             data_type: 数据类型
             ticker: 股票代码
             **kwargs: 其他参数
-        
+
         Returns:
             缓存键字符串
         """
         key_parts = [data_type.value, ticker]
-        
+
         # 添加其他参数
         for k, v in sorted(kwargs.items()):
             if v is not None:
                 key_parts.append(f"{k}={v}")
-        
+
         return "_".join(key_parts)
 
     def _get_from_cache(self, cache_key: str, data_type: DataType) -> Optional[DataResponse]:
         """
         从缓存获取数据
-        
+
         Args:
             cache_key: 缓存键
             data_type: 数据类型
-        
+
         Returns:
             DataResponse 或 None
         """
         cached_data = None
-        
+
         if data_type == DataType.PRICE:
             cached_data = self.cache.get_prices(cache_key)
         elif data_type == DataType.FUNDAMENTAL:
@@ -129,20 +125,16 @@ class DataRouter:
             cached_data = self.cache.get_company_news(cache_key)
         elif data_type == DataType.INSIDER_TRADE:
             cached_data = self.cache.get_insider_trades(cache_key)
-        
+
         if cached_data:
-            return DataResponse(
-                data=cached_data,
-                source="cache",
-                cached=True
-            )
-        
+            return DataResponse(data=cached_data, source="cache", cached=True)
+
         return None
 
     def _set_to_cache(self, cache_key: str, data_type: DataType, data: Any):
         """
         设置缓存数据
-        
+
         Args:
             cache_key: 缓存键
             data_type: 数据类型
@@ -163,29 +155,29 @@ class DataRouter:
     async def _check_health(self, force: bool = False):
         """
         检查提供商健康状态
-        
+
         Args:
             force: 是否强制检查
         """
         now = datetime.now()
-        
+
         if not force and self._last_health_check:
             elapsed = (now - self._last_health_check).total_seconds()
             if elapsed < self.health_check_interval:
                 return
-        
+
         self._last_health_check = now
-        
+
         for provider in self.providers:
             try:
                 is_healthy = await provider.health_check()
                 self._health_cache[provider.name] = is_healthy
-                
+
                 if is_healthy:
                     logger.debug(f"Provider {provider.name} is healthy")
                 else:
                     logger.warning(f"Provider {provider.name} is unhealthy")
-                    
+
             except Exception as e:
                 self._health_cache[provider.name] = False
                 logger.warning(f"Health check failed for {provider.name}: {e}")
@@ -193,82 +185,64 @@ class DataRouter:
     def _get_healthy_providers(self) -> List[BaseDataProvider]:
         """
         获取健康的提供商列表
-        
+
         Returns:
             健康的提供商列表
         """
-        return [
-            p for p in self.providers
-            if self._health_cache.get(p.name, True)
-        ]
+        return [p for p in self.providers if self._health_cache.get(p.name, True)]
 
-    async def get_prices(
-        self,
-        ticker: str,
-        start_date: str,
-        end_date: str,
-        use_cache: bool = True
-    ) -> DataResponse:
+    async def get_prices(self, ticker: str, start_date: str, end_date: str, use_cache: bool = True) -> DataResponse:
         """
         获取价格数据（带容错和缓存）
-        
+
         Args:
             ticker: 股票代码
             start_date: 开始日期
             end_date: 结束日期
             use_cache: 是否使用缓存
-        
+
         Returns:
             DataResponse 包含价格数据
         """
-        cache_key = self._get_cache_key(
-            DataType.PRICE,
-            ticker,
-            start=start_date,
-            end=end_date
-        )
-        
+        cache_key = self._get_cache_key(DataType.PRICE, ticker, start=start_date, end=end_date)
+
         # 检查缓存
         if use_cache:
             cached = self._get_from_cache(cache_key, DataType.PRICE)
             if cached:
                 logger.debug(f"Cache hit for {cache_key}")
                 return cached
-        
+
         # 检查健康状态
         await self._check_health()
-        
+
         # 获取健康的提供商
         providers = self._get_healthy_providers()
-        
+
         if not providers:
-            return DataResponse(
-                data=[],
-                source="router",
-                error="No healthy providers available"
-            )
-        
+            return DataResponse(data=[], source="router", error="No healthy providers available")
+
         # 依次尝试每个提供商
         last_error = None
-        
+
         for provider in providers:
             try:
                 logger.info(f"Trying provider {provider.name} for {ticker} prices")
-                
+
                 response = await provider.get_prices(ticker, start_date, end_date)
-                
+
                 if response.error:
                     logger.warning(f"Provider {provider.name} returned error: {response.error}")
                     last_error = response.error
                     continue
-                
+
                 if response.data:
                     # 缓存结果（转换为字典）
                     if use_cache:
                         try:
                             cache_data = []
                             for p in response.data:
-                                if hasattr(p, 'model_dump'):
+                                if hasattr(p, "model_dump"):
                                     cache_data.append(p.model_dump())
                                 elif isinstance(p, dict):
                                     cache_data.append(p)
@@ -277,90 +251,71 @@ class DataRouter:
                             self._set_to_cache(cache_key, DataType.PRICE, cache_data)
                         except Exception as e:
                             logger.warning(f"Failed to cache prices: {e}")
-                    
+
                     logger.info(f"Successfully got prices from {provider.name}")
                     return response
-                
+
             except Exception as e:
                 logger.warning(f"Provider {provider.name} failed: {e}")
                 last_error = str(e)
                 continue
-        
-        # 所有提供商都失败
-        return DataResponse(
-            data=[],
-            source="router",
-            error=f"All providers failed. Last error: {last_error}"
-        )
 
-    async def get_financial_metrics(
-        self,
-        ticker: str,
-        end_date: str,
-        limit: int = 10,
-        use_cache: bool = True
-    ) -> DataResponse:
+        # 所有提供商都失败
+        return DataResponse(data=[], source="router", error=f"All providers failed. Last error: {last_error}")
+
+    async def get_financial_metrics(self, ticker: str, end_date: str, limit: int = 10, use_cache: bool = True) -> DataResponse:
         """
         获取财务指标（带容错和缓存）
-        
+
         Args:
             ticker: 股票代码
             end_date: 截止日期
             limit: 返回记录数
             use_cache: 是否使用缓存
-        
+
         Returns:
             DataResponse 包含财务指标
         """
-        cache_key = self._get_cache_key(
-            DataType.FUNDAMENTAL,
-            ticker,
-            end=end_date,
-            limit=limit
-        )
-        
+        cache_key = self._get_cache_key(DataType.FUNDAMENTAL, ticker, end=end_date, limit=limit)
+
         # 检查缓存
         if use_cache:
             cached = self._get_from_cache(cache_key, DataType.FUNDAMENTAL)
             if cached:
                 return cached
-        
+
         # 检查健康状态
         await self._check_health()
-        
+
         # 获取健康的提供商
         providers = self._get_healthy_providers()
-        
+
         if not providers:
-            return DataResponse(
-                data=[],
-                source="router",
-                error="No healthy providers available"
-            )
-        
+            return DataResponse(data=[], source="router", error="No healthy providers available")
+
         # 依次尝试每个提供商
         last_error = None
-        
+
         for provider in providers:
             try:
                 logger.info(f"Trying provider {provider.name} for {ticker} metrics")
-                
+
                 response = await provider.get_financial_metrics(ticker, end_date)
-                
+
                 if response.error:
                     last_error = response.error
                     continue
-                
+
                 if response.data:
                     # 限制返回数量
                     data = response.data[:limit]
-                    
+
                     # 缓存结果（转换为字典）
                     if use_cache:
                         try:
                             cache_data = []
                             for m in data:
-                                if hasattr(m, 'model_dump'):
+                                if hasattr(m, "model_dump"):
                                     cache_data.append(m.model_dump())
                                 elif isinstance(m, dict):
                                     cache_data.append(m)
@@ -369,136 +324,89 @@ class DataRouter:
                             self._set_to_cache(cache_key, DataType.FUNDAMENTAL, cache_data)
                         except Exception as e:
                             logger.warning(f"Failed to cache metrics: {e}")
-                    
-                    return DataResponse(
-                        data=data,
-                        source=provider.name,
-                        latency_ms=response.latency_ms
-                    )
-                
+
+                    return DataResponse(data=data, source=provider.name, latency_ms=response.latency_ms)
+
             except Exception as e:
                 last_error = str(e)
                 continue
-        
-        return DataResponse(
-            data=[],
-            source="router",
-            error=f"All providers failed. Last error: {last_error}"
-        )
 
-    async def get_company_news(
-        self,
-        ticker: str,
-        start_date: str,
-        end_date: str,
-        use_cache: bool = True
-    ) -> DataResponse:
+        return DataResponse(data=[], source="router", error=f"All providers failed. Last error: {last_error}")
+
+    async def get_company_news(self, ticker: str, start_date: str, end_date: str, use_cache: bool = True) -> DataResponse:
         """
         获取公司新闻（带容错和缓存）
-        
+
         Args:
             ticker: 股票代码
             start_date: 开始日期
             end_date: 结束日期
             use_cache: 是否使用缓存
-        
+
         Returns:
             DataResponse 包含新闻列表
         """
-        cache_key = self._get_cache_key(
-            DataType.NEWS,
-            ticker,
-            start=start_date,
-            end=end_date
-        )
-        
+        cache_key = self._get_cache_key(DataType.NEWS, ticker, start=start_date, end=end_date)
+
         # 检查缓存
         if use_cache:
             cached = self._get_from_cache(cache_key, DataType.NEWS)
             if cached:
                 return cached
-        
+
         # 检查健康状态
         await self._check_health()
-        
+
         # 获取健康的提供商
         providers = self._get_healthy_providers()
-        
+
         if not providers:
-            return DataResponse(
-                data=[],
-                source="router",
-                error="No healthy providers available"
-            )
-        
+            return DataResponse(data=[], source="router", error="No healthy providers available")
+
         # 依次尝试每个提供商
         last_error = None
-        
+
         for provider in providers:
             try:
                 response = await provider.get_company_news(ticker, start_date, end_date)
-                
+
                 if response.error:
                     last_error = response.error
                     continue
-                
+
                 if response.data:
                     # 缓存结果
                     if use_cache:
-                        self._set_to_cache(
-                            cache_key,
-                            DataType.NEWS,
-                            [n.model_dump() for n in response.data]
-                        )
-                    
+                        self._set_to_cache(cache_key, DataType.NEWS, [n.model_dump() for n in response.data])
+
                     return response
-                
+
             except Exception as e:
                 last_error = str(e)
                 continue
-        
-        return DataResponse(
-            data=[],
-            source="router",
-            error=f"All providers failed. Last error: {last_error}"
-        )
+
+        return DataResponse(data=[], source="router", error=f"All providers failed. Last error: {last_error}")
 
     async def execute_request(self, request: DataRequest) -> DataResponse:
         """
         执行数据请求
-        
+
         根据请求类型路由到相应方法
-        
+
         Args:
             request: 数据请求对象
-        
+
         Returns:
             DataResponse
         """
         if request.data_type == DataType.PRICE:
-            return await self.get_prices(
-                request.ticker,
-                request.start_date,
-                request.end_date
-            )
+            return await self.get_prices(request.ticker, request.start_date, request.end_date)
         elif request.data_type == DataType.FUNDAMENTAL:
-            return await self.get_financial_metrics(
-                request.ticker,
-                request.end_date,
-                request.kwargs.get("limit", 10)
-            )
+            return await self.get_financial_metrics(request.ticker, request.end_date, request.kwargs.get("limit", 10))
         elif request.data_type == DataType.NEWS:
-            return await self.get_company_news(
-                request.ticker,
-                request.start_date,
-                request.end_date
-            )
+            return await self.get_company_news(request.ticker, request.start_date, request.end_date)
         else:
-            return DataResponse(
-                data=None,
-                source="router",
-                error=f"Unsupported data type: {request.data_type}"
-            )
+            return DataResponse(data=None, source="router", error=f"Unsupported data type: {request.data_type}")
 
     async def close(self):
         """关闭所有提供商连接"""
@@ -524,36 +432,39 @@ _router: Optional[DataRouter] = None
 def get_router() -> DataRouter:
     """
     获取全局数据路由器实例
-    
+
     Returns:
         DataRouter 实例
     """
     global _router
-    
+
     if _router is None:
         _router = DataRouter()
-        
+
         # 自动注册可用的提供商
         try:
             from src.data.providers.akshare_provider import AKShareProvider
+
             _router.register_provider(AKShareProvider())
         except Exception as e:
             logger.warning(f"Failed to register AKShareProvider: {e}")
-        
+
         try:
             from src.data.providers.tushare_provider import TushareProvider
+
             _router.register_provider(TushareProvider())
         except Exception as e:
             logger.warning(f"Failed to register TushareProvider: {e}")
-        
+
         # 始终注册 Mock 提供商作为最终降级方案
         try:
             from src.data.providers.mock_provider import MockProvider
+
             _router.register_provider(MockProvider())
             logger.info("Registered MockProvider as fallback")
         except Exception as e:
             logger.warning(f"Failed to register MockProvider: {e}")
-    
+
     return _router
 
 

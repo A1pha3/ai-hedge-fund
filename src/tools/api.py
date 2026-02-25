@@ -1,31 +1,32 @@
 import datetime
 import os
+import time
+
 import pandas as pd
 import requests
-import time
 
 from src.data.enhanced_cache import get_cache
 from src.data.models import (
+    CompanyFactsResponse,
     CompanyNews,
     CompanyNewsResponse,
     FinancialMetrics,
     FinancialMetricsResponse,
-    Price,
-    PriceResponse,
-    LineItem,
-    LineItemResponse,
     InsiderTrade,
     InsiderTradeResponse,
-    CompanyFactsResponse,
+    LineItem,
+    LineItemResponse,
+    Price,
+    PriceResponse,
 )
 
 # Import A-share data module
 from src.tools.akshare_api import is_ashare
 from src.tools.tushare_api import (
-    get_ashare_prices_with_tushare,
     get_ashare_financial_metrics_with_tushare,
-    get_ashare_market_cap_with_tushare,
     get_ashare_line_items_with_tushare,
+    get_ashare_market_cap_with_tushare,
+    get_ashare_prices_with_tushare,
 )
 
 # Global cache instance
@@ -35,17 +36,17 @@ _cache = get_cache()
 def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3) -> requests.Response:
     """
     Make an API request with rate limiting handling and moderate backoff.
-    
+
     Args:
         url: The URL to request
         headers: Headers to include in the request
         method: HTTP method (GET or POST)
         json_data: JSON data for POST requests
         max_retries: Maximum number of retries (default: 3)
-    
+
     Returns:
         requests.Response: The response object
-    
+
     Raises:
         Exception: If the request fails with a non-429 error
     """
@@ -54,14 +55,14 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
             response = requests.post(url, headers=headers, json=json_data)
         else:
             response = requests.get(url, headers=headers)
-        
+
         if response.status_code == 429 and attempt < max_retries:
             # Linear backoff: 60s, 90s, 120s, 150s...
             delay = 60 + (30 * attempt)
             print(f"Rate limited (429). Attempt {attempt + 1}/{max_retries + 1}. Waiting {delay}s before retrying...")
             time.sleep(delay)
             continue
-        
+
         # Return the response (whether success, other errors, or final 429)
         return response
 
@@ -175,9 +176,7 @@ def search_line_items(
     """Fetch line items from API."""
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
-        return get_ashare_line_items_with_tushare(
-            ticker, line_items, end_date, period, limit
-        )
+        return get_ashare_line_items_with_tushare(ticker, line_items, end_date, period, limit)
 
     # For US stocks, use Financial Datasets API
     headers = {}
@@ -221,7 +220,7 @@ def get_insider_trades(
     """Fetch insider trades from cache or API."""
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
-    
+
     # Check cache first - simple exact match
     if cached_data := _cache.get_insider_trades(cache_key):
         return [InsiderTrade(**trade) for trade in cached_data]
@@ -286,7 +285,7 @@ def get_company_news(
     """Fetch company news from cache or API."""
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
-    
+
     # Check cache first - simple exact match
     if cached_data := _cache.get_company_news(cache_key):
         return [CompanyNews(**news) for news in cached_data]
