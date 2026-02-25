@@ -98,28 +98,73 @@ def get_ashare_financial_metrics_with_tushare(
         return []
     try:
         ts_code = _to_ts_code(ticker)
-        end_fmt = end_date.replace("-", "")
-        df_fin = pro.fina_indicator(ts_code=ts_code, end_date=end_fmt, limit=limit)
+        # Tushare fina_indicator 使用 end_date 参数，但需要正确的日期格式
+        # 尝试使用 limit 参数获取最新数据
+        df_fin = pro.fina_indicator(ts_code=ts_code, limit=limit)
         if df_fin is None or df_fin.empty:
             return []
         metrics = []
         for _, row in df_fin.iterrows():
+            # 从 daily_basic 获取市值数据
+            end_date_str = str(row.get("end_date", ""))
+            market_cap = None
+            try:
+                df_daily = pro.daily_basic(ts_code=ts_code, trade_date=end_date_str)
+                if df_daily is not None and not df_daily.empty:
+                    market_cap = float(df_daily.iloc[0].get("total_mv", 0)) * 10000
+            except Exception:
+                pass
+            
             metrics.append(
                 FinancialMetrics(
                     ticker=ticker,
-                    report_period=str(row.get("end_date", "")),
+                    report_period=end_date_str,
                     period="ttm",
                     currency="CNY",
-                    market_cap=float(row.get("total_mv", 0)) * 10000 if pd.notna(row.get("total_mv")) else None,
-                    price_to_earnings_ratio=float(row.get("q_sales_yoy", 0)) if pd.notna(row.get("q_sales_yoy")) else None,
-                    price_to_book_ratio=float(row.get("bps", 0)) if pd.notna(row.get("bps")) else None,
+                    market_cap=market_cap,
+                    enterprise_value=None,
+                    price_to_earnings_ratio=float(row.get("pe", 0)) if pd.notna(row.get("pe")) else None,
+                    price_to_book_ratio=float(row.get("pb", 0)) if pd.notna(row.get("pb")) else None,
+                    price_to_sales_ratio=None,
+                    enterprise_value_to_ebitda_ratio=None,
+                    enterprise_value_to_revenue_ratio=None,
+                    free_cash_flow_yield=None,
+                    peg_ratio=None,
+                    gross_margin=float(row.get("grossprofit_margin", 0)) if pd.notna(row.get("grossprofit_margin")) else None,
+                    operating_margin=float(row.get("op_of_gr", 0)) if pd.notna(row.get("op_of_gr")) else None,
+                    net_margin=float(row.get("netprofit_margin", 0)) if pd.notna(row.get("netprofit_margin")) else None,
                     return_on_equity=float(row.get("roe", 0)) if pd.notna(row.get("roe")) else None,
-                    debt_to_equity=float(row.get("debt_to_assets", 0)) if pd.notna(row.get("debt_to_assets")) else None,
+                    return_on_assets=float(row.get("roa", 0)) if pd.notna(row.get("roa")) else None,
+                    return_on_invested_capital=None,
+                    asset_turnover=float(row.get("assets_turn", 0)) if pd.notna(row.get("assets_turn")) else None,
+                    inventory_turnover=None,
+                    receivables_turnover=None,
+                    days_sales_outstanding=None,
+                    operating_cycle=None,
+                    working_capital_turnover=None,
+                    current_ratio=float(row.get("current_ratio", 0)) if pd.notna(row.get("current_ratio")) else None,
+                    quick_ratio=float(row.get("quick_ratio", 0)) if pd.notna(row.get("quick_ratio")) else None,
+                    cash_ratio=float(row.get("cash_ratio", 0)) if pd.notna(row.get("cash_ratio")) else None,
+                    operating_cash_flow_ratio=None,
+                    debt_to_equity=float(row.get("debt_to_eqt", 0)) if pd.notna(row.get("debt_to_eqt")) else None,
+                    debt_to_assets=float(row.get("debt_to_assets", 0)) if pd.notna(row.get("debt_to_assets")) else None,
+                    interest_coverage=None,
                     revenue_growth=float(row.get("q_sales_yoy", 0)) / 100 if pd.notna(row.get("q_sales_yoy")) else None,
+                    earnings_growth=float(row.get("netprofit_yoy", 0)) / 100 if pd.notna(row.get("netprofit_yoy")) else None,
+                    book_value_growth=None,
+                    earnings_per_share_growth=float(row.get("basic_eps_yoy", 0)) / 100 if pd.notna(row.get("basic_eps_yoy")) else None,
+                    free_cash_flow_growth=None,
+                    operating_income_growth=float(row.get("op_yoy", 0)) / 100 if pd.notna(row.get("op_yoy")) else None,
+                    ebitda_growth=None,
+                    payout_ratio=None,
+                    earnings_per_share=float(row.get("eps", 0)) if pd.notna(row.get("eps")) else None,
+                    book_value_per_share=float(row.get("bps", 0)) if pd.notna(row.get("bps")) else None,
+                    free_cash_flow_per_share=None,
                 )
             )
         return metrics
-    except Exception:
+    except Exception as e:
+        print(f"[Tushare] 获取财务指标失败: {e}")
         return []
 
 
