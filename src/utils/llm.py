@@ -69,6 +69,8 @@ def call_llm(
                 parsed_result = extract_json_from_response(result.content)
                 if parsed_result:
                     return pydantic_model(**parsed_result)
+                else:
+                    raise ValueError(f"Could not extract valid JSON from response: {result.content[:200]}...")
             else:
                 return result
 
@@ -112,8 +114,8 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
 def extract_json_from_response(content: str) -> dict | None:
     """Extracts JSON from markdown-formatted response, handling <think> tags."""
     try:
-        # Remove <think>...</think> blocks (DeepSeek reasoning)
-        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+        # Remove <think>...</think> blocks (DeepSeek reasoning) - case insensitive
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
         content = content.strip()
 
         # Try to find JSON in markdown code block

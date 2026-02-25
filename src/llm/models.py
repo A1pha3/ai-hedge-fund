@@ -52,7 +52,7 @@ class LLMModel(BaseModel):
 
     def has_json_mode(self) -> bool:
         """Check if the model supports JSON mode"""
-        if self.is_deepseek() or self.is_gemini():
+        if self.is_deepseek() or self.is_gemini() or self.is_minimax():
             return False
         # Only certain Ollama models support JSON mode
         if self.is_ollama():
@@ -73,6 +73,10 @@ class LLMModel(BaseModel):
     def is_ollama(self) -> bool:
         """Check if the model is an Ollama model"""
         return self.provider == ModelProvider.OLLAMA
+
+    def is_minimax(self) -> bool:
+        """Check if the model is a MiniMax model"""
+        return self.provider == ModelProvider.MINIMAX or self.model_name.lower().startswith("minimax")
 
 
 # Load models from JSON file
