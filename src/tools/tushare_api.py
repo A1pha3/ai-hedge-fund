@@ -54,12 +54,15 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
     """
     pro = _get_pro()
     if not pro:
+        print("[Tushare] 未初始化，检查 TUSHARE_TOKEN")
         return []
     try:
         ts_code = _to_ts_code(ticker)
         start_fmt = start_date.replace("-", "")
         end_fmt = end_date.replace("-", "")
+        print(f"[Tushare] 调用 daily API: ts_code={ts_code}, start_date={start_fmt}, end_date={end_fmt}")
         df = pro.daily(ts_code=ts_code, start_date=start_fmt, end_date=end_fmt)
+        print(f"[Tushare] 返回数据: {df.shape if df is not None else 'None'}")
         if df is None or df.empty:
             return []
         prices = []
@@ -77,8 +80,13 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
                 )
             )
         prices.reverse()
+        print(f"[Tushare] 成功获取 {len(prices)} 条数据")
         return prices
-    except Exception:
+    except Exception as e:
+        print(f"[Tushare] 获取价格数据失败: {e}")
+        import traceback
+
+        traceback.print_exc()
         return []
 
 

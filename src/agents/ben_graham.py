@@ -111,7 +111,7 @@ def analyze_earnings_stability(metrics: list, financial_line_items: list) -> dic
 
     eps_vals = []
     for item in financial_line_items:
-        eps = getattr(item, 'earnings_per_share', None)
+        eps = getattr(item, "earnings_per_share", None)
         if eps is not None:
             eps_vals.append(eps)
 
@@ -153,10 +153,10 @@ def analyze_financial_strength(financial_line_items: list) -> dict:
         return {"score": score, "details": "No data for financial strength analysis"}
 
     latest_item = financial_line_items[0]
-    total_assets = getattr(latest_item, 'total_assets', 0) or 0
-    total_liabilities = getattr(latest_item, 'total_liabilities', 0) or 0
-    current_assets = getattr(latest_item, 'current_assets', 0) or 0
-    current_liabilities = getattr(latest_item, 'current_liabilities', 0) or 0
+    total_assets = getattr(latest_item, "total_assets", 0) or 0
+    total_liabilities = getattr(latest_item, "total_liabilities", 0) or 0
+    current_assets = getattr(latest_item, "current_assets", 0) or 0
+    current_liabilities = getattr(latest_item, "current_liabilities", 0) or 0
 
     # 1. Current ratio
     if current_liabilities > 0:
@@ -187,7 +187,7 @@ def analyze_financial_strength(financial_line_items: list) -> dict:
         details.append("Cannot compute debt ratio (missing total_assets).")
 
     # 3. Dividend track record
-    div_periods = [getattr(item, 'dividends_and_other_cash_distributions', None) for item in financial_line_items if getattr(item, 'dividends_and_other_cash_distributions', None) is not None]
+    div_periods = [getattr(item, "dividends_and_other_cash_distributions", None) for item in financial_line_items if getattr(item, "dividends_and_other_cash_distributions", None) is not None]
     if div_periods:
         # In many data feeds, dividend outflow is shown as a negative number
         # (money going out to shareholders). We'll consider any negative as 'paid a dividend'.

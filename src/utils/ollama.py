@@ -11,6 +11,9 @@ import requests
 from colorama import Fore, Style
 
 from . import docker
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 # Constants
 DEFAULT_OLLAMA_SERVER_URL = "http://localhost:11434"
@@ -85,6 +88,7 @@ def get_locally_available_models() -> List[str]:
 def start_ollama_server() -> bool:
     """Start the Ollama server if it's not already running."""
     if is_ollama_server_running():
+        logger.info("Ollama server is already running.")
         print(f"{Fore.GREEN}Ollama server is already running.{Style.RESET_ALL}")
         return True
 
@@ -96,19 +100,23 @@ def start_ollama_server() -> bool:
         elif system == "windows":  # Windows
             subprocess.Popen(["ollama", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         else:
+            logger.error(f"Unsupported operating system: {system}")
             print(f"{Fore.RED}Unsupported operating system: {system}{Style.RESET_ALL}")
             return False
 
         # Wait for server to start
         for _ in range(10):  # Try for 10 seconds
             if is_ollama_server_running():
+                logger.info("Ollama server started successfully.")
                 print(f"{Fore.GREEN}Ollama server started successfully.{Style.RESET_ALL}")
                 return True
             time.sleep(1)
 
+        logger.error("Failed to start Ollama server. Timed out waiting for server to become available.")
         print(f"{Fore.RED}Failed to start Ollama server. Timed out waiting for server to become available.{Style.RESET_ALL}")
         return False
     except Exception as e:
+        logger.error(f"Error starting Ollama server: {e}")
         print(f"{Fore.RED}Error starting Ollama server: {e}{Style.RESET_ALL}")
         return False
 

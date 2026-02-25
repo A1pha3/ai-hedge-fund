@@ -18,11 +18,16 @@ from src.cli.input import (
 from src.graph.state import AgentState
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.display import print_trading_output
+from src.utils.logging import get_logger, setup_logging
 from src.utils.progress import progress
 from src.utils.visualize import save_graph_as_png
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Setup logging
+setup_logging()
+logger = get_logger(__name__)
 
 init(autoreset=True)
 
@@ -32,13 +37,13 @@ def parse_hedge_fund_response(response):
     try:
         return json.loads(response)
     except json.JSONDecodeError as e:
-        print(f"JSON decoding error: {e}\nResponse: {repr(response)}")
+        logger.error(f"JSON decoding error: {e}\nResponse: {repr(response)}")
         return None
     except TypeError as e:
-        print(f"Invalid response type (expected string, got {type(response).__name__}): {e}")
+        logger.error(f"Invalid response type (expected string, got {type(response).__name__}): {e}")
         return None
     except Exception as e:
-        print(f"Unexpected error while parsing response: {e}\nResponse: {repr(response)}")
+        logger.error(f"Unexpected error while parsing response: {e}\nResponse: {repr(response)}")
         return None
 
 

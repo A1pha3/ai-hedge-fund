@@ -374,9 +374,9 @@ def calculate_owner_earnings(financial_line_items: list) -> dict[str, any]:
     details = []
 
     # Core components
-    net_income = getattr(latest, 'net_income', None)
-    depreciation = getattr(latest, 'depreciation_and_amortization', None)
-    capex = getattr(latest, 'capital_expenditure', None)
+    net_income = getattr(latest, "net_income", None)
+    depreciation = getattr(latest, "depreciation_and_amortization", None)
+    capex = getattr(latest, "capital_expenditure", None)
 
     if not all([net_income is not None, depreciation is not None, capex is not None]):
         missing = []

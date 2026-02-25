@@ -16,7 +16,10 @@ from src.llm.models import (
     OLLAMA_LLM_ORDER,
 )
 from src.utils.analysts import ANALYST_ORDER
+from src.utils.logging import get_logger
 from src.utils.ollama import ensure_ollama_and_model
+
+logger = get_logger(__name__)
 
 
 def add_common_args(
@@ -99,9 +102,10 @@ def select_analysts(flags: dict | None = None) -> list[str]:
     ).ask()
 
     if not choices:
-        print("\n\nInterrupt received. Exiting...")
+        logger.info("Interrupt received. Exiting...")
         sys.exit(0)
 
+    logger.info(f"Selected analysts: {', '.join(c.title().replace('_', ' ') for c in choices)}")
     print(f"\nSelected analysts: {', '.join(Fore.GREEN + c.title().replace('_', ' ') + Style.RESET_ALL for c in choices)}\n")
     return choices
 
@@ -113,12 +117,15 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
     if model_flag:
         model = find_model_by_name(model_flag)
         if model:
+            logger.info(f"Using specified model: {model.provider.value} - {model.model_name}")
             print(f"\nUsing specified model: {Fore.CYAN}{model.provider.value}{Style.RESET_ALL} - {Fore.GREEN + Style.BRIGHT}{model.model_name}{Style.RESET_ALL}\n")
             return model.model_name, model.provider.value
         else:
+            logger.warning(f"Model '{model_flag}' not found. Please select a model.")
             print(f"{Fore.RED}Model '{model_flag}' not found. Please select a model.{Style.RESET_ALL}")
 
     if use_ollama:
+        logger.info("Using Ollama for local LLM inference.")
         print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
         model_name = questionary.select(
             "Select your Ollama model:",
@@ -134,20 +141,22 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
         ).ask()
 
         if not model_name:
-            print("\n\nInterrupt received. Exiting...")
+            logger.info("Interrupt received. Exiting...")
             sys.exit(0)
 
         if model_name == "-":
             model_name = questionary.text("Enter the custom model name:").ask()
             if not model_name:
-                print("\n\nInterrupt received. Exiting...")
+                logger.info("Interrupt received. Exiting...")
                 sys.exit(0)
 
         if not ensure_ollama_and_model(model_name):
+            logger.error("Cannot proceed without Ollama and the selected model.")
             print(f"{Fore.RED}Cannot proceed without Ollama and the selected model.{Style.RESET_ALL}")
             sys.exit(1)
 
         model_provider = ModelProvider.OLLAMA.value
+        logger.info(f"Selected Ollama model: {model_name}")
         print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
     else:
         model_choice = questionary.select(
@@ -164,7 +173,7 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
         ).ask()
 
         if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
+            logger.info("Interrupt received. Exiting...")
             sys.exit(0)
 
         model_name, model_provider = model_choice
@@ -173,13 +182,15 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
         if model_info and model_info.is_custom():
             model_name = questionary.text("Enter the custom model name:").ask()
             if not model_name:
-                print("\n\nInterrupt received. Exiting...")
+                logger.info("Interrupt received. Exiting...")
                 sys.exit(0)
 
         if model_info:
+            logger.info(f"Selected {model_provider} model: {model_name}")
             print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
         else:
             model_provider = "Unknown"
+            logger.info(f"Selected model: {model_name}")
             print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
 
     return model_name, model_provider or ""
