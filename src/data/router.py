@@ -17,7 +17,7 @@ from src.data.base_provider import (
     DataType,
     DataProviderError,
 )
-from src.data.cache import get_cache
+from src.data.enhanced_cache import get_cache
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)

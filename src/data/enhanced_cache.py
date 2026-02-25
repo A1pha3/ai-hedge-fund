@@ -5,8 +5,10 @@
 """
 
 import json
+import os
 import pickle
 import hashlib
+import sqlite3
 from typing import Any, Optional, Dict, List
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -232,6 +234,149 @@ class RedisCache:
             logger.warning(f"Redis clear error: {e}")
 
 
+class DiskCache:
+    """
+    磁盘缓存
+    
+    使用 SQLite 进行持久化存储
+    """
+
+    def __init__(
+        self,
+        path: Optional[str] = None,
+        default_ttl: int = 3600
+    ):
+        """
+        初始化磁盘缓存
+        
+        Args:
+            path: 缓存数据库路径
+            default_ttl: 默认过期时间（秒）
+        """
+        self.default_ttl = default_ttl
+        self._available = True
+        cache_path = path or os.environ.get("DISK_CACHE_PATH")
+        if not cache_path:
+            cache_path = os.path.join(
+                os.path.expanduser("~"),
+                ".cache",
+                "ai-hedge-fund",
+                "cache.sqlite"
+            )
+        self._path = cache_path
+
+        try:
+            os.makedirs(os.path.dirname(self._path), exist_ok=True)
+            self._conn = sqlite3.connect(self._path)
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expires_at INTEGER)"
+            )
+            self._conn.commit()
+        except Exception as e:
+            logger.warning(f"Disk cache init error: {e}")
+            self._available = False
+
+    def is_available(self) -> bool:
+        """
+        检查磁盘缓存是否可用
+        
+        Returns:
+            是否可用
+        """
+        return self._available
+
+    def _now_ts(self) -> int:
+        """
+        获取当前时间戳
+        
+        Returns:
+            秒级时间戳
+        """
+        return int(datetime.now().timestamp())
+
+    def get(self, key: str) -> Optional[Any]:
+        """
+        获取缓存值
+        
+        Args:
+            key: 缓存键
+        
+        Returns:
+            缓存值或 None
+        """
+        if not self.is_available():
+            return None
+        try:
+            cursor = self._conn.execute(
+                "SELECT value, expires_at FROM cache WHERE key = ?",
+                (key,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            value, expires_at = row
+            if expires_at and expires_at < self._now_ts():
+                self.delete(key)
+                return None
+            return pickle.loads(value)
+        except Exception as e:
+            logger.warning(f"Disk cache get error: {e}")
+            return None
+
+    def set(self, key: str, value: Any, ttl: Optional[int] = None):
+        """
+        设置缓存值
+        
+        Args:
+            key: 缓存键
+            value: 缓存值
+            ttl: 过期时间（秒）
+        """
+        if not self.is_available():
+            return
+        try:
+            ttl_seconds = self.default_ttl if ttl is None else ttl
+            expires_at = 0 if ttl_seconds == 0 else self._now_ts() + ttl_seconds
+            data = pickle.dumps(value)
+            self._conn.execute(
+                "INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)",
+                (key, data, expires_at)
+            )
+            self._conn.commit()
+        except Exception as e:
+            logger.warning(f"Disk cache set error: {e}")
+
+    def delete(self, key: str):
+        """
+        删除缓存值
+        
+        Args:
+            key: 缓存键
+        """
+        if not self.is_available():
+            return
+        try:
+            self._conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+            self._conn.commit()
+        except Exception as e:
+            logger.warning(f"Disk cache delete error: {e}")
+
+    def clear(self):
+        """
+        清空缓存
+        
+        Returns:
+            None
+        """
+        if not self.is_available():
+            return
+        try:
+            self._conn.execute("DELETE FROM cache")
+            self._conn.commit()
+        except Exception as e:
+            logger.warning(f"Disk cache clear error: {e}")
+
+
 class EnhancedCache:
     """
     增强缓存
@@ -250,7 +395,8 @@ class EnhancedCache:
         lru_size: int = 128,
         redis_host: str = "localhost",
         redis_port: int = 6379,
-        redis_ttl: int = 3600
+        redis_ttl: int = 3600,
+        disk_path: Optional[str] = None
     ):
         """
         初始化增强缓存
@@ -260,6 +406,7 @@ class EnhancedCache:
             redis_host: Redis 主机
             redis_port: Redis 端口
             redis_ttl: Redis 默认过期时间
+            disk_path: 磁盘缓存路径
         """
         self.lru = LRUCache(maxsize=lru_size)
         self.redis = RedisCache(
@@ -267,11 +414,16 @@ class EnhancedCache:
             port=redis_port,
             default_ttl=redis_ttl
         )
+        self.disk = DiskCache(
+            path=disk_path,
+            default_ttl=redis_ttl
+        )
         
         # 统计信息
         self._stats = {
             "lru_hits": 0,
             "redis_hits": 0,
+            "disk_hits": 0,
             "misses": 0,
             "sets": 0
         }
@@ -300,6 +452,13 @@ class EnhancedCache:
             self.lru.set(key, value)
             return value
         
+        # 3. 查磁盘
+        value = self.disk.get(key)
+        if value is not None:
+            self._stats["disk_hits"] += 1
+            self.lru.set(key, value)
+            return value
+        
         self._stats["misses"] += 1
         return None
 
@@ -320,8 +479,11 @@ class EnhancedCache:
         # 写入 LRU
         self.lru.set(key, value)
         
-        # 写入 Redis
-        self.redis.set(key, value, ttl)
+        # 写入 Redis 或磁盘
+        if self.redis.is_available():
+            self.redis.set(key, value, ttl)
+        else:
+            self.disk.set(key, value, ttl)
         
         self._stats["sets"] += 1
 
@@ -334,11 +496,13 @@ class EnhancedCache:
         """
         self.lru.delete(key)
         self.redis.delete(key)
+        self.disk.delete(key)
 
     def clear(self):
         """清空所有缓存"""
         self.lru.clear()
         self.redis.clear()
+        self.disk.clear()
 
     def get_stats(self) -> Dict[str, int]:
         """
@@ -347,7 +511,7 @@ class EnhancedCache:
         Returns:
             统计信息字典
         """
-        total_hits = self._stats["lru_hits"] + self._stats["redis_hits"]
+        total_hits = self._stats["lru_hits"] + self._stats["redis_hits"] + self._stats["disk_hits"]
         total_requests = total_hits + self._stats["misses"]
         
         hit_rate = total_hits / total_requests if total_requests > 0 else 0
@@ -365,6 +529,7 @@ class EnhancedCache:
         self._stats = {
             "lru_hits": 0,
             "redis_hits": 0,
+            "disk_hits": 0,
             "misses": 0,
             "sets": 0
         }
@@ -399,7 +564,7 @@ class CacheAdapter:
     def set_prices(self, ticker: str, data: List[Dict]):
         """设置价格数据"""
         key = self._make_key("prices", ticker)
-        self._cache.set(key, data, ttl=3600)  # 1小时过期
+        self._cache.set(key, data, ttl=86400)
 
     def get_financial_metrics(self, ticker: str) -> Optional[List[Dict]]:
         """获取财务指标"""
@@ -409,7 +574,7 @@ class CacheAdapter:
     def set_financial_metrics(self, ticker: str, data: List[Dict]):
         """设置财务指标"""
         key = self._make_key("metrics", ticker)
-        self._cache.set(key, data, ttl=7200)  # 2小时过期
+        self._cache.set(key, data, ttl=604800)
 
     def get_line_items(self, ticker: str) -> Optional[List[Dict]]:
         """获取行项目数据"""
@@ -419,7 +584,7 @@ class CacheAdapter:
     def set_line_items(self, ticker: str, data: List[Dict]):
         """设置行项目数据"""
         key = self._make_key("line_items", ticker)
-        self._cache.set(key, data, ttl=7200)
+        self._cache.set(key, data, ttl=604800)
 
     def get_insider_trades(self, ticker: str) -> Optional[List[Dict]]:
         """获取内部交易数据"""
@@ -429,7 +594,7 @@ class CacheAdapter:
     def set_insider_trades(self, ticker: str, data: List[Dict]):
         """设置内部交易数据"""
         key = self._make_key("insider", ticker)
-        self._cache.set(key, data, ttl=3600)
+        self._cache.set(key, data, ttl=86400)
 
     def get_company_news(self, ticker: str) -> Optional[List[Dict]]:
         """获取公司新闻"""
@@ -439,7 +604,7 @@ class CacheAdapter:
     def set_company_news(self, ticker: str, data: List[Dict]):
         """设置公司新闻"""
         key = self._make_key("news", ticker)
-        self._cache.set(key, data, ttl=1800)  # 30分钟过期
+        self._cache.set(key, data, ttl=10800)
 
 
 # 全局缓存实例

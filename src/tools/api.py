@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 import time
 
-from src.data.cache import get_cache
+from src.data.enhanced_cache import get_cache
 from src.data.models import (
     CompanyNews,
     CompanyNewsResponse,
@@ -25,6 +25,7 @@ from src.tools.tushare_api import (
     get_ashare_prices_with_tushare,
     get_ashare_financial_metrics_with_tushare,
     get_ashare_market_cap_with_tushare,
+    get_ashare_line_items_with_tushare,
 )
 
 # Global cache instance
@@ -172,7 +173,13 @@ def search_line_items(
     api_key: str = None,
 ) -> list[LineItem]:
     """Fetch line items from API."""
-    # If not in cache or insufficient data, fetch from API
+    # Check if it's an A-share (Chinese stock)
+    if is_ashare(ticker):
+        return get_ashare_line_items_with_tushare(
+            ticker, line_items, end_date, period, limit
+        )
+
+    # For US stocks, use Financial Datasets API
     headers = {}
     financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
     if financial_api_key:
@@ -190,7 +197,7 @@ def search_line_items(
     response = _make_api_request(url, headers, method="POST", json_data=body)
     if response.status_code != 200:
         return []
-    
+
     try:
         data = response.json()
         response_model = LineItemResponse(**data)

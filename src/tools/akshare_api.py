@@ -15,7 +15,7 @@ from typing import List, Optional, Dict, Any
 import pandas as pd
 from pydantic import BaseModel
 
-from src.data.cache import get_cache
+from src.data.enhanced_cache import get_cache
 from src.data.models import (
     Price,
     FinancialMetrics,

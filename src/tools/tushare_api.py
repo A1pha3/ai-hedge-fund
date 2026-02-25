@@ -3,7 +3,7 @@ from typing import List
 
 import pandas as pd
 
-from src.data.models import Price, FinancialMetrics
+from src.data.models import Price, FinancialMetrics, LineItem
 
 _pro = None
 
@@ -190,3 +190,120 @@ def get_ashare_market_cap_with_tushare(
         return float(value) * 10000
     except Exception:
         return None
+
+
+def get_ashare_line_items_with_tushare(
+    ticker: str,
+    line_items: List[str],
+    end_date: str,
+    period: str = "ttm",
+    limit: int = 10,
+) -> List[LineItem]:
+    """
+    使用 Tushare 获取 A 股财务项目数据
+    
+    将 Tushare 的财务指标数据映射为 LineItem 格式
+    """
+    pro = _get_pro()
+    if not pro:
+        return []
+    
+    try:
+        ts_code = _to_ts_code(ticker)
+        
+        # 获取财务指标数据
+        df_fin = pro.fina_indicator(ts_code=ts_code, limit=limit)
+        if df_fin is None or df_fin.empty:
+            return []
+        
+        # 获取资产负债表数据（用于补充字段）
+        df_bal = pro.balancesheet(ts_code=ts_code, limit=limit)
+        
+        # 获取现金流量表数据
+        df_cash = pro.cashflow(ts_code=ts_code, limit=limit)
+        
+        # 获取利润表数据
+        df_income = pro.income(ts_code=ts_code, limit=limit)
+        
+        results = []
+        for _, row in df_fin.iterrows():
+            end_date_str = str(row.get("end_date", ""))
+            
+            # 构建 line item 数据
+            item_data = {
+                "ticker": ticker,
+                "report_period": end_date_str,
+                "period": period,
+                "currency": "CNY",
+            }
+            
+            # 映射 Tushare 字段到标准字段
+            field_mapping = {}
+            
+            # 从 balancesheet 获取基础数据
+            if df_bal is not None and not df_bal.empty:
+                bal_row = df_bal[df_bal["end_date"] == end_date_str]
+                if not bal_row.empty:
+                    bal = bal_row.iloc[0]
+                    field_mapping["total_assets"] = bal.get("total_assets")
+                    field_mapping["total_liabilities"] = bal.get("total_liab")
+                    field_mapping["shareholders_equity"] = bal.get("total_hldr_eqy_exc_min_int")
+                    field_mapping["outstanding_shares"] = bal.get("total_share")
+            
+            # 从 income 获取利润数据
+            if df_income is not None and not df_income.empty:
+                inc_row = df_income[df_income["end_date"] == end_date_str]
+                if not inc_row.empty:
+                    inc = inc_row.iloc[0]
+                    field_mapping["revenue"] = inc.get("total_revenue")
+                    field_mapping["net_income"] = inc.get("n_income_attr_p")
+                    field_mapping["gross_profit"] = inc.get("total_profit")
+            
+            # 从 cashflow 获取现金流数据
+            if df_cash is not None and not df_cash.empty:
+                cash_row = df_cash[df_cash["end_date"] == end_date_str]
+                if not cash_row.empty:
+                    cash = cash_row.iloc[0]
+                    # 自由现金流 (Tushare 已计算好)
+                    field_mapping["free_cash_flow"] = cash.get("free_cashflow")
+                    # 资本支出 (购建固定资产等支付的现金)
+                    field_mapping["capital_expenditure"] = cash.get("c_pay_acq_const_fiolta")
+                    # 折旧摊销
+                    field_mapping["depreciation_and_amortization"] = cash.get("depr_fa_coga_dpba")
+                    # 股息支付
+                    field_mapping["dividends_and_other_cash_distributions"] = cash.get("c_pay_dist_dpcp_int_exp")
+                    # 股权融资/回购
+                    field_mapping["issuance_or_purchase_of_equity_shares"] = cash.get("c_recp_cap_contrib")
+            
+            # 从 fina_indicator 补充数据（如果上面没有获取到）
+            if "net_income" not in field_mapping or field_mapping["net_income"] is None:
+                field_mapping["net_income"] = row.get("profit_dedt")
+            if "total_assets" not in field_mapping or field_mapping["total_assets"] is None:
+                field_mapping["total_assets"] = row.get("total_assets")
+            if "total_liabilities" not in field_mapping or field_mapping["total_liabilities"] is None:
+                field_mapping["total_liabilities"] = row.get("total_liabilities")
+            if "shareholders_equity" not in field_mapping or field_mapping["shareholders_equity"] is None:
+                field_mapping["shareholders_equity"] = row.get("total_hldr_eqy_exc_min_int")
+            if "outstanding_shares" not in field_mapping or field_mapping["outstanding_shares"] is None:
+                field_mapping["outstanding_shares"] = row.get("total_share")
+            
+            # 只添加请求的字段
+            for field in line_items:
+                if field in field_mapping and field_mapping[field] is not None:
+                    value = field_mapping[field]
+                    # 处理 NaN 值
+                    if isinstance(value, float) and pd.isna(value):
+                        continue
+                    try:
+                        item_data[field] = float(value)
+                    except (ValueError, TypeError):
+                        item_data[field] = value
+            
+            results.append(LineItem(**item_data))
+        
+        return results
+    except Exception as e:
+        print(f"[Tushare] 获取财务项目失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
