@@ -6,7 +6,6 @@ import pandas as pd
 import requests
 
 from src.data.enhanced_cache import get_cache
-from src.data.snapshot import get_snapshot_exporter
 from src.data.models import (
     CompanyFactsResponse,
     CompanyNews,
@@ -20,6 +19,7 @@ from src.data.models import (
     Price,
     PriceResponse,
 )
+from src.data.snapshot import get_snapshot_exporter
 
 # Import A-share data module
 from src.tools.akshare_api import is_ashare
@@ -79,7 +79,9 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
 
     # Check cache first - simple exact match
     if cached_data := _cache.get_prices(cache_key):
-        return [Price(**price) for price in cached_data]
+        prices = [Price(**price) for price in cached_data]
+        _snapshot.export_prices(ticker, end_date, prices, "cache")
+        return prices
 
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
@@ -133,7 +135,9 @@ def get_financial_metrics(
 
     # Check cache first - simple exact match
     if cached_data := _cache.get_financial_metrics(cache_key):
-        return [FinancialMetrics(**metric) for metric in cached_data]
+        metrics = [FinancialMetrics(**metric) for metric in cached_data]
+        _snapshot.export_financial_metrics(ticker, end_date, metrics, "cache")
+        return metrics
 
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):

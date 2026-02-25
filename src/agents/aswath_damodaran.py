@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -22,6 +23,26 @@ class AswathDamodaranSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float  # 0‒100
     reasoning: str
+
+
+def _latest_line_item_number(line_items: list, field: str) -> float | None:
+    """
+    Return the most recent finite numeric value for a given LineItem field.
+
+    The line_items list is expected to be ordered from most recent to oldest, but this
+    function will simply scan in the given order and return the first usable value.
+    """
+    for li in line_items or []:
+        value = getattr(li, field, None)
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            return number
+    return None
 
 
 def aswath_damodaran_agent(state: AgentState, agent_id: str = "aswath_damodaran_agent"):
@@ -168,7 +189,8 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
         details.append("Revenue data incomplete")
 
     # FCFF growth (proxy: free_cash_flow trend)
-    fcfs = [li.free_cash_flow for li in reversed(line_items) if li.free_cash_flow]
+    fcfs = [getattr(li, "free_cash_flow", None) for li in reversed(line_items or [])]
+    fcfs = [v for v in fcfs if v is not None]
     if len(fcfs) >= 2 and fcfs[-1] > fcfs[0]:
         score += 1
         details.append("Positive FCFF growth")
@@ -221,8 +243,8 @@ def analyze_risk_profile(metrics: list, line_items: list) -> dict[str, any]:
         details.append("D/E NA")
 
     # Interest coverage
-    ebit = getattr(latest, "ebit", None)
-    interest = getattr(latest, "interest_expense", None)
+    ebit = _latest_line_item_number(line_items, "ebit") or getattr(latest, "ebit", None)
+    interest = _latest_line_item_number(line_items, "interest_expense") or getattr(latest, "interest_expense", None)
     if ebit and interest and interest != 0:
         coverage = ebit / abs(interest)
         if coverage > 3:
@@ -288,8 +310,15 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
         return {"intrinsic_value": None, "details": ["Insufficient data"]}
 
     latest_m = metrics[0]
-    fcff0 = getattr(latest_m, "free_cash_flow", None)
-    shares = getattr(line_items[0], "outstanding_shares", None)
+    shares = _latest_line_item_number(line_items, "outstanding_shares")
+    fcff0 = _latest_line_item_number(line_items, "free_cash_flow")
+    if fcff0 is None:
+        fcf_per_share = getattr(latest_m, "free_cash_flow_per_share", None)
+        if fcf_per_share is not None and shares is not None:
+            try:
+                fcff0 = float(fcf_per_share) * float(shares)
+            except (TypeError, ValueError):
+                fcff0 = None
     if not fcff0 or not shares:
         return {"intrinsic_value": None, "details": ["Missing FCFF or share count"]}
 
