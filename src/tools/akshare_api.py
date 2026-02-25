@@ -259,7 +259,90 @@ def get_realtime_quote_sina(ticker: str) -> Dict[str, Any]:
         raise AShareDataError(f"获取新浪实时行情失败: {e}")
 
 
-@_disable_proxy_temporarily()
+def _disable_system_proxies():
+    """禁用系统代理设置，返回原始设置用于恢复"""
+    proxy_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 
+                  'ALL_PROXY', 'all_proxy', 'SOCKS_PROXY', 'socks_proxy']
+    saved = {}
+    
+    for var in proxy_vars:
+        if var in os.environ:
+            saved[var] = os.environ[var]
+            del os.environ[var]
+    
+    return saved
+
+
+def _restore_proxies(saved: dict):
+    """恢复系统代理设置"""
+    for var, value in saved.items():
+        os.environ[var] = value
+
+
+def _get_prices_from_tencent(
+    ticker: str,
+    start_date: str,
+    end_date: str
+) -> List[Price]:
+    """
+    通过腾讯财经接口获取A股历史价格数据
+    
+    Args:
+        ticker: 股票代码
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+    
+    Returns:
+        List[Price]: 价格数据列表
+    """
+    import requests
+    
+    ashare = AShareTicker.from_symbol(ticker)
+    
+    # 构建腾讯接口参数
+    # 格式: 股票代码,day,开始日期,结束日期,数据条数,复权类型
+    param = f"{ashare.full_code},day,{start_date},{end_date},640,qfq"
+    
+    url = "http://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    params = {"param": param}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    }
+    
+    session = requests.Session()
+    session.trust_env = False  # 禁用系统代理
+    
+    response = session.get(url, params=params, headers=headers, timeout=30)
+    response.raise_for_status()
+    
+    data = response.json()
+    
+    # 检查数据
+    if data.get("code") != 0:
+        raise AShareDataError(f"腾讯接口返回错误: {data.get('msg', '未知错误')}")
+    
+    stock_data = data.get("data", {}).get(ashare.full_code, {})
+    kline_data = stock_data.get("qfqday") or stock_data.get("day")
+    
+    if not kline_data:
+        raise AShareDataError(f"腾讯接口返回空数据")
+    
+    prices = []
+    for item in kline_data:
+        # 腾讯数据格式: [日期, 开盘价, 收盘价, 最高价, 最低价, 成交量]
+        price = Price(
+            time=item[0],
+            open=float(item[1]),
+            close=float(item[2]),
+            high=float(item[3]),
+            low=float(item[4]),
+            volume=int(float(item[5]))
+        )
+        prices.append(price)
+    
+    return prices
+
+
 def get_prices(
     ticker: str,
     start_date: str,
@@ -300,42 +383,58 @@ def get_prices(
             "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
         )
     
+    # 禁用系统代理
+    saved_proxies = _disable_system_proxies()
+    
     try:
         ashare = AShareTicker.from_symbol(ticker)
         start_date_fmt = start_date.replace("-", "")
         end_date_fmt = end_date.replace("-", "")
         
         # 尝试使用 AKShare 获取数据
-        df = ak_module.stock_zh_a_hist(
-            symbol=ashare.symbol,
-            period=period,
-            start_date=start_date_fmt,
-            end_date=end_date_fmt,
-            adjust="qfq"
-        )
+        try:
+            df = ak_module.stock_zh_a_hist(
+                symbol=ashare.symbol,
+                period=period,
+                start_date=start_date_fmt,
+                end_date=end_date_fmt,
+                adjust="qfq"
+            )
+            
+            if not df.empty:
+                prices = []
+                for _, row in df.iterrows():
+                    price = Price(
+                        time=row["日期"],
+                        open=float(row["开盘"]),
+                        high=float(row["最高"]),
+                        low=float(row["最低"]),
+                        close=float(row["收盘"]),
+                        volume=int(row["成交量"])
+                    )
+                    prices.append(price)
+                
+                # 缓存结果
+                _cache.set_prices(cache_key, [p.model_dump() for p in prices])
+                return prices
+        except Exception as e:
+            # AKShare 失败，尝试腾讯接口
+            print(f"AKShare 获取数据失败，尝试腾讯接口: {e}")
         
-        if df.empty:
+        # 尝试使用腾讯接口
+        try:
+            prices = _get_prices_from_tencent(ticker, start_date, end_date)
+            if prices:
+                # 缓存结果
+                _cache.set_prices(cache_key, [p.model_dump() for p in prices])
+                return prices
+        except Exception as e:
             raise AShareDataError(
-                f"无法获取股票 {ticker} 的历史数据（AKShare 返回空数据）。\n"
+                f"无法获取股票 {ticker} 的历史数据（所有数据源都失败）。\n"
+                f"AKShare 错误: {e}\n"
+                f"腾讯接口错误: {e}\n"
                 "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
             )
-        
-        prices = []
-        for _, row in df.iterrows():
-            price = Price(
-                time=row["日期"],
-                open=float(row["开盘"]),
-                high=float(row["最高"]),
-                low=float(row["最低"]),
-                close=float(row["收盘"]),
-                volume=int(row["成交量"])
-            )
-            prices.append(price)
-        
-        # 缓存结果
-        _cache.set_prices(cache_key, [p.model_dump() for p in prices])
-        
-        return prices
     
     except AShareDataError:
         raise
@@ -344,6 +443,9 @@ def get_prices(
             f"获取股票 {ticker} 的历史数据失败: {e}\n"
             "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
         )
+    finally:
+        # 恢复系统代理设置
+        _restore_proxies(saved_proxies)
 
 
 @_disable_proxy_temporarily()
