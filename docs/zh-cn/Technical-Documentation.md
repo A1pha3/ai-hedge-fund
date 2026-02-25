@@ -93,7 +93,7 @@ AI Hedge Fund 系统架构
 | 安装依赖 | `poetry install` |
 | 运行分析 | `poetry run python src/main.py --ticker AAPL` |
 | 运行回测 | `poetry run python src/backtester.py --ticker AAPL` |
-| 启动 API | `poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` |
+| 启动 API | `poetry run uvicorn app.backend.main:app --reload --host 0.0.0.0 --port 8000` |
 
 ### 智能体分类速查
 

@@ -173,10 +173,10 @@ poetry run python src/backtester.py \
 ```bash
 # 🌐 终端 1：启动后端（FastAPI）
 cd app
-poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+poetry run uvicorn app.backend.main:app --reload --host 0.0.0.0 --port 8000
 
 # 💻 终端 2：启动前端（React）
-cd app
+cd app/frontend
 npm run dev
 
 # 📌 访问地址

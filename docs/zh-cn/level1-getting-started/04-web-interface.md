@@ -181,7 +181,7 @@ Web 应用采用**前后端分离（Frontend-Backend Separation）**架构。
 cd app
 
 # 启动后端 API 服务
-poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+poetry run uvicorn app.backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **命令解释**：
@@ -190,7 +190,7 @@ poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 |------|------|
 | `poetry run` | 使用 Poetry 管理的 Python 环境运行命令 |
 | `uvicorn` | 一个 ASGI 服务器，用于运行 FastAPI 应用 |
-| `app.main:app` | 应用程序的入口点（模块:对象） |
+| `app.backend.main:app` | 应用程序的入口点（模块:对象） |
 | `--reload` | 热重载：代码修改后自动重启服务 |
 | `--host 0.0.0.0` | 监听所有网络接口（允许外部访问） |
 | `--port 8000` | 使用 8000 端口 |
@@ -224,8 +224,8 @@ curl http://localhost:8000/api/health
 打开**第二个终端窗口**（保持第一个终端运行），执行以下命令：
 
 ```bash
-# 进入 app 目录
-cd app
+# 进入前端目录
+cd app/frontend
 
 # 启动前端开发服务器
 npm run dev
@@ -1286,7 +1286,7 @@ kill -9 12345
 
 ```bash
 # 后端更换端口
-poetry run uvicorn app.main:app --port 8001
+poetry run uvicorn app.backend.main:app --port 8001
 
 # 前端更换端口（修改 vite.config.js）
 # 或使用 npm run dev -- --port 5174

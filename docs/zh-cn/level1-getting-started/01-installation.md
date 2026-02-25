@@ -832,8 +832,8 @@ Path:       /usr/local/opt/python@3.11/bin/python3.11
 # 确保在项目根目录
 cd ai-hedge-fund
 
-# 进入应用目录
-cd app
+# 进入前端目录
+cd app/frontend
 
 # 安装前端依赖（可能需要几分钟）
 npm install
@@ -852,7 +852,7 @@ npm install
 cd ai-hedge-fund
 
 # 启动 FastAPI 后端服务
-poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+poetry run uvicorn app.backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **预期输出**：

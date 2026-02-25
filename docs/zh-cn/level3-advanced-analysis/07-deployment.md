@@ -954,7 +954,7 @@ security:
 
 ```bash
 # 使用多个 worker 处理并发请求
-poetry run uvicorn app.main:app \
+poetry run uvicorn app.backend.main:app \
     --workers 4 \                                      # 工作进程数
     --worker-class uvicorn.workers.UvicornWorker \     # Worker 类
     --bind 0.0.0.0:8000 \                             # 绑定地址

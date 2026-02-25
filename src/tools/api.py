@@ -20,13 +20,12 @@ from src.data.models import (
 )
 
 # Import A-share data module
-from src.tools.akshare_api import (
-    get_prices_robust as get_ashare_prices,
-    get_financial_metrics as get_ashare_metrics,
-    get_stock_info as get_ashare_stock_info,
-    is_ashare,
+from src.tools.akshare_api import is_ashare
+from src.tools.tushare_api import (
+    get_ashare_prices_with_tushare,
+    get_ashare_financial_metrics_with_tushare,
+    get_ashare_market_cap_with_tushare,
 )
-from src.tools.ashare_data_sources import TushareDataSource
 
 # Global cache instance
 _cache = get_cache()
@@ -66,22 +65,6 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         return response
 
 
-def _get_ashare_prices_with_tushare(
-    ticker: str,
-    start_date: str,
-    end_date: str
-) -> list[Price]:
-    """
-    使用 Tushare 获取 A 股价格数据
-    """
-    if not os.environ.get("TUSHARE_TOKEN"):
-        return []
-    try:
-        return TushareDataSource.get_prices(ticker, start_date, end_date)
-    except Exception:
-        return []
-
-
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
     """
     Fetch price data from cache or API.
@@ -96,9 +79,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
 
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
-        prices = _get_ashare_prices_with_tushare(ticker, start_date, end_date)
-        if not prices:
-            prices = get_ashare_prices(ticker, start_date, end_date, use_mock_on_fail=False)
+        prices = get_ashare_prices_with_tushare(ticker, start_date, end_date)
         if prices:
             # Cache the results
             _cache.set_prices(cache_key, [p.model_dump() for p in prices])
@@ -150,8 +131,7 @@ def get_financial_metrics(
 
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
-        # Use AKShare for A-shares
-        metrics = get_ashare_metrics(ticker, end_date, limit)
+        metrics = get_ashare_financial_metrics_with_tushare(ticker, end_date, limit)
         if metrics:
             # Cache the results
             _cache.set_financial_metrics(cache_key, [m.model_dump() for m in metrics])
@@ -361,55 +341,7 @@ def get_market_cap(
 ) -> float | None:
     """Fetch market cap from the API."""
     if is_ashare(ticker):
-        try:
-            info = get_ashare_stock_info(ticker)
-        except Exception:
-            info = None
-
-        def parse_market_cap(value) -> float | None:
-            if value is None:
-                return None
-            if isinstance(value, (int, float)):
-                return float(value)
-            text = str(value).replace(",", "").strip()
-            if not text:
-                return None
-            multipliers = [
-                ("万亿", 1e12),
-                ("亿", 1e8),
-                ("万", 1e4),
-                ("元", 1.0),
-            ]
-            for unit, factor in multipliers:
-                if unit in text:
-                    number = "".join(ch for ch in text if (ch.isdigit() or ch == "." or ch == "-"))
-                    try:
-                        return float(number) * factor
-                    except Exception:
-                        return None
-            try:
-                return float(text)
-            except Exception:
-                return None
-
-        if info:
-            candidates = [
-                "总市值",
-                "总市值(元)",
-                "总市值(亿)",
-                "总市值(万元)",
-                "市值",
-                "市值(元)",
-                "市值(亿元)",
-                "流通市值",
-                "流通市值(元)",
-                "流通市值(亿)",
-            ]
-            for key in candidates:
-                if key in info and info[key]:
-                    market_cap = parse_market_cap(info[key])
-                    if market_cap:
-                        return market_cap
+        return get_ashare_market_cap_with_tushare(ticker, end_date)
 
     # Check if end_date is today
     if end_date == datetime.datetime.now().strftime("%Y-%m-%d"):

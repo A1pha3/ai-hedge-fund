@@ -30,6 +30,7 @@ dependencies = [
     "langchain-gigachat>=0.3.12",
     "langchain-xai>=0.2.5",
     "akshare>=1.18.27",
+    "tushare>=1.4.24",
 ]
 
 [tool.poetry]

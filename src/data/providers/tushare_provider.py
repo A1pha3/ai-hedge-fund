@@ -54,8 +54,8 @@ class TushareProvider(BaseDataProvider):
         
         try:
             import tushare as ts
-            ts.set_token(self._token)
-            self._pro = ts.pro_api()
+            # 直接使用 token 创建 pro_api，避免写入文件
+            self._pro = ts.pro_api(token=self._token)
             self.health_status = "healthy"
         except ImportError:
             self.health_status = "unhealthy"

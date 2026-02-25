@@ -52,3 +52,14 @@
 • 我不只是想要它能工作——我想要一个我可以自豪地展示给他人的东西
 • 这是真实的。不是模型。不是原型。是可用的产品。
 • 始终让我保持控制并知情
+
+工程检查命令：
+Python（根目录）：
+- uv run black src/
+- uv run isort src/
+- uv run flake8 src/
+- uv run pytest tests/ -v
+
+前端（app/frontend）：
+- npm run lint
+- npm run build
