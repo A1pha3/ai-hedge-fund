@@ -36,3 +36,19 @@ export function getProviderColor(provider: string): string {
   //     return 'bg-gray-600/20 text-gray-300 border-gray-600/40';
   // }
 }
+
+/**
+ * Parse ticker string to array, supporting both English and Chinese commas
+ * Handles formats like: "AAPL,NVDA,TSLA" or "600158，300118" (Chinese comma)
+ */
+export function parseTickers(tickerString: string): string[] {
+  if (!tickerString || typeof tickerString !== 'string') {
+    return [];
+  }
+  // Replace Chinese comma with English comma, then split
+  return tickerString
+    .replace(/，/g, ',')
+    .split(',')
+    .map(t => t.trim())
+    .filter(t => t.length > 0);
+}

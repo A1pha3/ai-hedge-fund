@@ -1,6 +1,7 @@
 """Helper functions for LLM"""
 
 import json
+import re
 
 from pydantic import BaseModel
 
@@ -109,8 +110,13 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
 
 
 def extract_json_from_response(content: str) -> dict | None:
-    """Extracts JSON from markdown-formatted response."""
+    """Extracts JSON from markdown-formatted response, handling <think> tags."""
     try:
+        # Remove <think>...</think> blocks (DeepSeek reasoning)
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+        content = content.strip()
+
+        # Try to find JSON in markdown code block
         json_start = content.find("```json")
         if json_start != -1:
             json_text = content[json_start + 7 :]  # Skip past ```json
@@ -118,6 +124,11 @@ def extract_json_from_response(content: str) -> dict | None:
             if json_end != -1:
                 json_text = json_text[:json_end].strip()
                 return json.loads(json_text)
+
+        # Try to find raw JSON object
+        json_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
     except Exception as e:
         print(f"Error extracting JSON from response: {e}")
     return None

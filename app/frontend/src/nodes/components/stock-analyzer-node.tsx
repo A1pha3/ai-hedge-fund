@@ -25,7 +25,7 @@ import { useNodeContext } from '@/contexts/node-context';
 import { useFlowConnection } from '@/hooks/use-flow-connection';
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 import { useNodeState } from '@/hooks/use-node-state';
-import { cn, formatKeyboardShortcut } from '@/lib/utils';
+import { cn, formatKeyboardShortcut, parseTickers } from '@/lib/utils';
 import { type StockAnalyzerNode } from '../types';
 import { NodeShell } from './node-shell';
 
@@ -187,8 +187,8 @@ export function StockAnalyzerNode({
       }
     }
     
-    // Convert tickers to array    
-    const tickerList = tickers.split(',').map(t => t.trim());
+    // Convert tickers to array (supports both English and Chinese commas)
+    const tickerList = parseTickers(tickers);
     
     // Check if we're in backtest mode
     if (runMode === 'backtest') {

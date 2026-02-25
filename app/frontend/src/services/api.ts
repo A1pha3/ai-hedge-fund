@@ -3,6 +3,7 @@ import { Agent } from '@/data/agents';
 import { LanguageModel } from '@/data/models';
 import { extractBaseAgentKey } from '@/data/node-mappings';
 import { flowConnectionManager } from '@/hooks/use-flow-connection';
+import { parseTickers } from '@/lib/utils';
 import {
   HedgeFundRequest
 } from '@/services/types';
@@ -89,9 +90,9 @@ export const api = {
     nodeContext: ReturnType<typeof useNodeContext>,
     flowId: string | null = null
   ): (() => void) => {
-    // Convert tickers string to array if needed
+    // Convert tickers string to array if needed (supports both English and Chinese commas)
     if (typeof params.tickers === 'string') {
-      params.tickers = (params.tickers as unknown as string).split(',').map(t => t.trim());
+      params.tickers = parseTickers(params.tickers);
     }
 
     // Helper function to get agent IDs from graph structure
