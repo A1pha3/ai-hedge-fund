@@ -155,12 +155,20 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
             return []
 
         name_map = {}
+        area_map: dict[str, str] = {}
+        industry_map: dict[str, str] = {}
+        market_map: dict[str, str] = {}
+        list_date_map: dict[str, str] = {}
         st_codes: set[str] = set()
         if include_name:
-            df_basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
+            df_basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name,area,industry,market,list_date")
             if df_basic is not None and not df_basic.empty:
                 name_map = {str(row["ts_code"]): str(row["name"]) for _, row in df_basic.iterrows()}
                 st_codes = {str(row["ts_code"]) for _, row in df_basic.iterrows() if "ST" in str(row["name"]).upper()}
+                area_map = {str(row["ts_code"]): str(row["area"]) for _, row in df_basic.iterrows() if pd.notna(row["area"])}
+                industry_map = {str(row["ts_code"]): str(row["industry"]) for _, row in df_basic.iterrows() if pd.notna(row["industry"])}
+                market_map = {str(row["ts_code"]): str(row["market"]) for _, row in df_basic.iterrows() if pd.notna(row["market"])}
+                list_date_map = {str(row["ts_code"]): str(row["list_date"]) for _, row in df_basic.iterrows() if pd.notna(row["list_date"])}
 
         results = []
         df_sorted = df.sort_values("pct_chg", ascending=False)
@@ -185,6 +193,10 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
                 item["amount"] = float(row["amount"])
             if include_name:
                 item["name"] = name_map.get(ts_code, ts_code)
+                item["area"] = area_map.get(ts_code)
+                item["industry"] = industry_map.get(ts_code)
+                item["market"] = market_map.get(ts_code)
+                item["list_date"] = list_date_map.get(ts_code)
             results.append(item)
         return results
     except Exception as e:

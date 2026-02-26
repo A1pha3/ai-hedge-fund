@@ -752,7 +752,7 @@ def generate_buffett_output(
                 "\n"
                 "Keep reasoning under 120 characters. Do not invent data. Return JSON only.",
             ),
-            ("human", "Ticker: {ticker}\n" "Facts:\n{facts}\n\n" "Return exactly:\n" "{{\n" '  "signal": "bullish" | "bearish" | "neutral",\n' '  "confidence": int,\n' '  "reasoning": "short justification in English",\n' '  "reasoning_cn": "same justification in Chinese/中文"\n' "}}")
+            ("human", "Ticker: {ticker}\n" "Facts:\n{facts}\n\n" "Return exactly:\n" "{{\n" '  "signal": "bullish" | "bearish" | "neutral",\n' '  "confidence": int,\n' '  "reasoning": "short justification in English",\n' '  "reasoning_cn": "same justification in Chinese/中文"\n' "}}"),
         ]
     )
 
