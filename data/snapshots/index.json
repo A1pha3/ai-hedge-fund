@@ -47,5 +47,12 @@
     "snapshot_path": "data/snapshots/688599/2026-02-26",
     "created_at": 1772088028.440752,
     "data_source": "tushare"
+  },
+  {
+    "ticker": "688503",
+    "date": "2026-02-26",
+    "snapshot_path": "data/snapshots/688503/2026-02-26",
+    "created_at": 1772090212.838268,
+    "data_source": "tushare"
   }
 ]
