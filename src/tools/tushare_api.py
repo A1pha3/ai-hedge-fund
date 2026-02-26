@@ -155,10 +155,12 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
             return []
 
         name_map = {}
+        st_codes: set[str] = set()
         if include_name:
             df_basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
             if df_basic is not None and not df_basic.empty:
                 name_map = {str(row["ts_code"]): str(row["name"]) for _, row in df_basic.iterrows()}
+                st_codes = {str(row["ts_code"]) for _, row in df_basic.iterrows() if "ST" in str(row["name"]).upper()}
 
         results = []
         df_sorted = df.sort_values("pct_chg", ascending=False)
@@ -166,6 +168,8 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
             date_str = str(row["trade_date"])
             date_formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
             ts_code = str(row["ts_code"])
+            if ts_code in st_codes:
+                continue
             item = {
                 "ts_code": ts_code,
                 "trade_date": date_formatted,
