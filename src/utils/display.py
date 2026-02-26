@@ -6,9 +6,10 @@ from pathlib import Path
 from colorama import Fore, Style
 from tabulate import tabulate
 
+from src.tools.tushare_api import get_stock_name
+
 from .analysts import ANALYST_ORDER
 from .logging import get_logger
-from src.tools.tushare_api import get_stock_name
 
 logger = get_logger(__name__)
 
@@ -527,9 +528,9 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
                     lines.append("#### 波动率指标\n")
                     lines.append(f"| 指标 | 值 |")
                     lines.append("|------|------|")
-                    lines.append(f"| 日波动率 | {vol_metrics.get('daily_volatility', 'N/A'):.4f} |" if vol_metrics.get('daily_volatility') else "| 日波动率 | N/A |")
-                    lines.append(f"| 年化波动率 | {vol_metrics.get('annualized_volatility', 'N/A'):.4f} |" if vol_metrics.get('annualized_volatility') else "| 年化波动率 | N/A |")
-                    lines.append(f"| 波动率百分位 | {vol_metrics.get('volatility_percentile', 'N/A'):.2f}% |" if vol_metrics.get('volatility_percentile') else "| 波动率百分位 | N/A |")
+                    lines.append(f"| 日波动率 | {vol_metrics.get('daily_volatility', 'N/A'):.4f} |" if vol_metrics.get("daily_volatility") else "| 日波动率 | N/A |")
+                    lines.append(f"| 年化波动率 | {vol_metrics.get('annualized_volatility', 'N/A'):.4f} |" if vol_metrics.get("annualized_volatility") else "| 年化波动率 | N/A |")
+                    lines.append(f"| 波动率百分位 | {vol_metrics.get('volatility_percentile', 'N/A'):.2f}% |" if vol_metrics.get("volatility_percentile") else "| 波动率百分位 | N/A |")
                     lines.append(f"| 数据点数 | {vol_metrics.get('data_points', 'N/A')} |")
                     lines.append("")
 
@@ -538,11 +539,11 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
                     lines.append("#### 风险调整计算\n")
                     lines.append(f"| 项目 | 值 |")
                     lines.append("|------|------|")
-                    lines.append(f"| 投资组合价值 | ${risk_reasoning.get('portfolio_value', 'N/A'):,.2f} |" if risk_reasoning.get('portfolio_value') else "| 投资组合价值 | N/A |")
-                    lines.append(f"| 当前持仓价值 | ${risk_reasoning.get('current_position_value', 'N/A'):,.2f} |" if risk_reasoning.get('current_position_value') else "| 当前持仓价值 | N/A |")
-                    lines.append(f"| 基础仓位限制 | {risk_reasoning.get('base_position_limit_pct', 'N/A')*100:.1f}% |" if risk_reasoning.get('base_position_limit_pct') else "| 基础仓位限制 | N/A |")
-                    lines.append(f"| 组合仓位限制 | {risk_reasoning.get('combined_position_limit_pct', 'N/A')*100:.1f}% |" if risk_reasoning.get('combined_position_limit_pct') else "| 组合仓位限制 | N/A |")
-                    lines.append(f"| 可用现金 | ${risk_reasoning.get('available_cash', 'N/A'):,.2f} |" if risk_reasoning.get('available_cash') else "| 可用现金 | N/A |")
+                    lines.append(f"| 投资组合价值 | ${risk_reasoning.get('portfolio_value', 'N/A'):,.2f} |" if risk_reasoning.get("portfolio_value") else "| 投资组合价值 | N/A |")
+                    lines.append(f"| 当前持仓价值 | ${risk_reasoning.get('current_position_value', 'N/A'):,.2f} |" if risk_reasoning.get("current_position_value") else "| 当前持仓价值 | N/A |")
+                    lines.append(f"| 基础仓位限制 | {risk_reasoning.get('base_position_limit_pct', 'N/A')*100:.1f}% |" if risk_reasoning.get("base_position_limit_pct") else "| 基础仓位限制 | N/A |")
+                    lines.append(f"| 组合仓位限制 | {risk_reasoning.get('combined_position_limit_pct', 'N/A')*100:.1f}% |" if risk_reasoning.get("combined_position_limit_pct") else "| 组合仓位限制 | N/A |")
+                    lines.append(f"| 可用现金 | ${risk_reasoning.get('available_cash', 'N/A'):,.2f} |" if risk_reasoning.get("available_cash") else "| 可用现金 | N/A |")
                     lines.append(f"| 风险调整说明 | {risk_reasoning.get('risk_adjustment', 'N/A')} |")
                     lines.append("")
 

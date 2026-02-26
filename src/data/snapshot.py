@@ -208,7 +208,8 @@ class DataSnapshotExporter:
 
         stock_name = get_stock_name(ticker)
 
-        parts.append(f"# {ticker}（{stock_name}）数据快照 - {date}\n")
+        title = f"# {ticker} 数据快照 - {date}" if not stock_name or stock_name == ticker else f"# {ticker}（{stock_name}）数据快照 - {date}"
+        parts.append(f"{title}\n")
         parts.append(f"- **股票代码**：{ticker}")
         parts.append(f"- **股票名称**：{stock_name}")
         parts.append(f"- **分析日期**：{date}")

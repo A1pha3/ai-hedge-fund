@@ -121,6 +121,60 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
         return []
 
 
+def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float = 3.0, include_name: bool = True) -> List[dict]:
+    """
+    使用 Tushare 获取指定交易日涨幅超过阈值的 A 股列表
+    """
+    pro = _get_pro()
+    if not pro:
+        print("[Tushare] 未初始化，检查 TUSHARE_TOKEN")
+        return []
+    try:
+        trade_fmt = trade_date.replace("-", "")
+        df = pro.daily(trade_date=trade_fmt)
+        if df is None or df.empty:
+            return []
+        df = df[pd.notna(df["pct_chg"])]
+        df = df[df["pct_chg"] > pct_threshold]
+        if df.empty:
+            return []
+
+        name_map = {}
+        if include_name:
+            df_basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
+            if df_basic is not None and not df_basic.empty:
+                name_map = {str(row["ts_code"]): str(row["name"]) for _, row in df_basic.iterrows()}
+
+        results = []
+        df_sorted = df.sort_values("pct_chg", ascending=False)
+        for _, row in df_sorted.iterrows():
+            date_str = str(row["trade_date"])
+            date_formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+            ts_code = str(row["ts_code"])
+            item = {
+                "ts_code": ts_code,
+                "trade_date": date_formatted,
+                "pct_chg": float(row["pct_chg"]),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "vol": int(row["vol"]),
+            }
+            if "amount" in row and pd.notna(row["amount"]):
+                item["amount"] = float(row["amount"])
+            if include_name:
+                item["name"] = name_map.get(ts_code, ts_code)
+            results.append(item)
+        return results
+    except Exception as e:
+        print(f"[Tushare] 获取涨幅榜失败: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return []
+
+
 def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10) -> List[FinancialMetrics]:
     """
     使用 Tushare 获取 A 股财务指标

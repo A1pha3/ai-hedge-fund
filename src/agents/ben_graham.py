@@ -218,11 +218,11 @@ def analyze_valuation_graham(financial_line_items: list, market_cap: float) -> d
         return {"score": 0, "details": "Insufficient data to perform valuation"}
 
     latest = financial_line_items[0]
-    current_assets = latest.current_assets or 0
-    total_liabilities = latest.total_liabilities or 0
-    book_value_ps = latest.book_value_per_share or 0
-    eps = latest.earnings_per_share or 0
-    shares_outstanding = latest.outstanding_shares or 0
+    current_assets = getattr(latest, "current_assets", 0) or 0
+    total_liabilities = getattr(latest, "total_liabilities", 0) or 0
+    book_value_ps = getattr(latest, "book_value_per_share", 0) or 0
+    eps = getattr(latest, "earnings_per_share", 0) or 0
+    shares_outstanding = getattr(latest, "outstanding_shares", 0) or 0
 
     details = []
     score = 0
