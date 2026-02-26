@@ -27,6 +27,7 @@ class MichaelBurrySignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float  # 0–100
     reasoning: str
+    reasoning_cn: str
 
 
 def michael_burry_agent(state: AgentState, agent_id: str = "michael_burry_agent"):
@@ -129,6 +130,7 @@ def michael_burry_agent(state: AgentState, agent_id: str = "michael_burry_agent"
             "signal": burry_output.signal,
             "confidence": burry_output.confidence,
             "reasoning": burry_output.reasoning,
+            "reasoning_cn": burry_output.reasoning_cn,
         }
 
         progress.update_status(agent_id, ticker, "Done", analysis=burry_output.reasoning)
@@ -347,7 +349,8 @@ def _generate_burry_output(
                 {{
                   "signal": "bullish" | "bearish" | "neutral",
                   "confidence": float between 0 and 100,
-                  "reasoning": "string"
+                  "reasoning": "string in English",
+                  "reasoning_cn": "same analysis in Chinese/中文"
                 }}
                 """,
             ),
@@ -358,7 +361,12 @@ def _generate_burry_output(
 
     # Default fallback signal in case parsing fails
     def create_default_michael_burry_signal():
-        return MichaelBurrySignal(signal="neutral", confidence=0.0, reasoning="Parsing error – defaulting to neutral")
+        return MichaelBurrySignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Parsing error – defaulting to neutral",
+            reasoning_cn="解析错误，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,

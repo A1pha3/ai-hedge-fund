@@ -16,6 +16,7 @@ class WarrenBuffettSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: int = Field(description="Confidence 0-100")
     reasoning: str = Field(description="Reasoning for the decision")
+    reasoning_cn: str = Field(description="Reasoning in Chinese")
 
 
 def warren_buffett_agent(state: AgentState, agent_id: str = "warren_buffett_agent"):
@@ -123,6 +124,7 @@ def warren_buffett_agent(state: AgentState, agent_id: str = "warren_buffett_agen
             "signal": buffett_output.signal,
             "confidence": buffett_output.confidence,
             "reasoning": buffett_output.reasoning,
+            "reasoning_cn": buffett_output.reasoning_cn,
         }
 
         progress.update_status(agent_id, ticker, "Done", analysis=buffett_output.reasoning)
@@ -750,7 +752,7 @@ def generate_buffett_output(
                 "\n"
                 "Keep reasoning under 120 characters. Do not invent data. Return JSON only.",
             ),
-            ("human", "Ticker: {ticker}\n" "Facts:\n{facts}\n\n" "Return exactly:\n" "{{\n" '  "signal": "bullish" | "bearish" | "neutral",\n' '  "confidence": int,\n' '  "reasoning": "short justification"\n' "}}"),
+            ("human", "Ticker: {ticker}\n" "Facts:\n{facts}\n\n" "Return exactly:\n" "{{\n" '  "signal": "bullish" | "bearish" | "neutral",\n' '  "confidence": int,\n' '  "reasoning": "short justification in English",\n' '  "reasoning_cn": "same justification in Chinese/中文"\n' "}}")
         ]
     )
 
@@ -763,7 +765,12 @@ def generate_buffett_output(
 
     # Default fallback uses int confidence to match schema and avoid parse retries
     def create_default_warren_buffett_signal():
-        return WarrenBuffettSignal(signal="neutral", confidence=50, reasoning="Insufficient data")
+        return WarrenBuffettSignal(
+            signal="neutral",
+            confidence=50,
+            reasoning="Insufficient data",
+            reasoning_cn="数据不足",
+        )
 
     return call_llm(
         prompt=prompt,

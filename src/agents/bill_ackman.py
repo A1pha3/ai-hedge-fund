@@ -16,6 +16,7 @@ class BillAckmanSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def bill_ackman_agent(state: AgentState, agent_id: str = "bill_ackman_agent"):
@@ -94,7 +95,12 @@ def bill_ackman_agent(state: AgentState, agent_id: str = "bill_ackman_agent"):
             agent_id=agent_id,
         )
 
-        ackman_analysis[ticker] = {"signal": ackman_output.signal, "confidence": ackman_output.confidence, "reasoning": ackman_output.reasoning}
+        ackman_analysis[ticker] = {
+            "signal": ackman_output.signal,
+            "confidence": ackman_output.confidence,
+            "reasoning": ackman_output.reasoning,
+            "reasoning_cn": ackman_output.reasoning_cn,
+        }
 
         progress.update_status(agent_id, ticker, "Done", analysis=ackman_output.reasoning)
 
@@ -382,7 +388,8 @@ def generate_ackman_output(
             {{
               "signal": "bullish" | "bearish" | "neutral",
               "confidence": float (0-100),
-              "reasoning": "string"
+              "reasoning": "string in English",
+              "reasoning_cn": "same analysis in Chinese/中文"
             }}
             """,
             ),
@@ -392,7 +399,12 @@ def generate_ackman_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_bill_ackman_signal():
-        return BillAckmanSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        return BillAckmanSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in analysis, defaulting to neutral",
+            reasoning_cn="分析出错，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,

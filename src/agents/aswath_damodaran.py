@@ -21,8 +21,9 @@ from src.utils.progress import progress
 
 class AswathDamodaranSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float  # 0‒100
+    confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def _latest_line_item_number(line_items: list, field: str) -> float | None:
@@ -136,7 +137,12 @@ def aswath_damodaran_agent(state: AgentState, agent_id: str = "aswath_damodaran_
             agent_id=agent_id,
         )
 
-        damodaran_signals[ticker] = damodaran_output.model_dump()
+        damodaran_signals[ticker] = {
+            "signal": damodaran_output.signal,
+            "confidence": damodaran_output.confidence,
+            "reasoning": damodaran_output.reasoning,
+            "reasoning_cn": damodaran_output.reasoning_cn,
+        }
 
         progress.update_status(agent_id, ticker, "Done", analysis=damodaran_output.reasoning)
 
@@ -415,7 +421,8 @@ def generate_damodaran_output(
                 {{
                   "signal": "bullish" | "bearish" | "neutral",
                   "confidence": float (0-100),
-                  "reasoning": "string"
+                  "reasoning": "string in English",
+                  "reasoning_cn": "same analysis in Chinese/中文"
                 }}""",
             ),
         ]
@@ -428,6 +435,7 @@ def generate_damodaran_output(
             signal="neutral",
             confidence=0.0,
             reasoning="Parsing error; defaulting to neutral",
+            reasoning_cn="解析错误，默认返回中性",
         )
 
     return call_llm(

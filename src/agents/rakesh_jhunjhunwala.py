@@ -16,6 +16,7 @@ class RakeshJhunjhunwalaSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def rakesh_jhunjhunwala_agent(state: AgentState, agent_id: str = "rakesh_jhunjhunwala_agent"):
@@ -121,7 +122,12 @@ def rakesh_jhunjhunwala_agent(state: AgentState, agent_id: str = "rakesh_jhunjhu
             agent_id=agent_id,
         )
 
-        jhunjhunwala_analysis[ticker] = jhunjhunwala_output.model_dump()
+        jhunjhunwala_analysis[ticker] = {
+            "signal": jhunjhunwala_output.signal,
+            "confidence": jhunjhunwala_output.confidence,
+            "reasoning": jhunjhunwala_output.reasoning,
+            "reasoning_cn": jhunjhunwala_output.reasoning_cn,
+        }
 
         progress.update_status(agent_id, ticker, "Done", analysis=jhunjhunwala_output.reasoning)
 
@@ -638,7 +644,8 @@ def generate_jhunjhunwala_output(
                 {{
                   "signal": "bullish" | "bearish" | "neutral",
                   "confidence": float between 0 and 100,
-                  "reasoning": "string"
+                  "reasoning": "string in English",
+                  "reasoning_cn": "same analysis in Chinese/中文"
                 }}
                 """,
             ),
@@ -649,7 +656,12 @@ def generate_jhunjhunwala_output(
 
     # Default fallback signal in case parsing fails
     def create_default_rakesh_jhunjhunwala_signal():
-        return RakeshJhunjhunwalaSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        return RakeshJhunjhunwalaSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in analysis, defaulting to neutral",
+            reasoning_cn="分析出错，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,

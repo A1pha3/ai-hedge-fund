@@ -22,6 +22,7 @@ class CharlieMungerSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: int
     reasoning: str
+    reasoning_cn: str
 
 
 def charlie_munger_agent(state: AgentState, agent_id: str = "charlie_munger_agent"):
@@ -127,7 +128,12 @@ def charlie_munger_agent(state: AgentState, agent_id: str = "charlie_munger_agen
         progress.update_status(agent_id, ticker, "Generating Charlie Munger analysis")
         munger_output = generate_munger_output(ticker=ticker, analysis_data=analysis_data[ticker], state=state, agent_id=agent_id, confidence_hint=compute_confidence(analysis_data[ticker], signal))
 
-        munger_analysis[ticker] = {"signal": munger_output.signal, "confidence": munger_output.confidence, "reasoning": munger_output.reasoning}
+        munger_analysis[ticker] = {
+            "signal": munger_output.signal,
+            "confidence": munger_output.confidence,
+            "reasoning": munger_output.reasoning,
+            "reasoning_cn": munger_output.reasoning_cn,
+        }
 
         progress.update_status(agent_id, ticker, "Done", analysis=munger_output.reasoning)
 
@@ -765,7 +771,8 @@ def generate_munger_output(
                 "{{\n"  # escaped {
                 '  "signal": "bullish" | "bearish" | "neutral",\n'
                 f'  "confidence": {confidence_hint},\n'
-                '  "reasoning": "short justification"\n'
+                '  "reasoning": "short justification in English",\n'
+                '  "reasoning_cn": "same justification in Chinese/中文"\n'
                 "}}",
             ),  # escaped }
         ]
@@ -780,7 +787,12 @@ def generate_munger_output(
     )
 
     def _default():
-        return CharlieMungerSignal(signal="neutral", confidence=confidence_hint, reasoning="Insufficient data")
+        return CharlieMungerSignal(
+            signal="neutral",
+            confidence=confidence_hint,
+            reasoning="Insufficient data",
+            reasoning_cn="数据不足",
+        )
 
     return call_llm(
         prompt=prompt,

@@ -16,6 +16,7 @@ class MohnishPabraiSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agent"):
@@ -109,6 +110,7 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
             "signal": pabrai_output.signal,
             "confidence": pabrai_output.confidence,
             "reasoning": pabrai_output.reasoning,
+            "reasoning_cn": pabrai_output.reasoning_cn,
         }
 
         progress.update_status(agent_id, ticker, "Done", analysis=pabrai_output.reasoning)
@@ -336,7 +338,8 @@ def generate_pabrai_output(
           {{
             "signal": "bullish" | "bearish" | "neutral",
             "confidence": float (0-100),
-            "reasoning": "string with Pabrai-style analysis focusing on downside protection, FCF yield, and doubling potential"
+            "reasoning": "string with Pabrai-style analysis in English focusing on downside protection, FCF yield, and doubling potential",
+            "reasoning_cn": "string with the same analysis in Chinese/中文, maintaining the same level of detail and investment insights"
           }}
           """,
             ),
@@ -351,7 +354,12 @@ def generate_pabrai_output(
     )
 
     def create_default_pabrai_signal():
-        return MohnishPabraiSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        return MohnishPabraiSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in analysis, defaulting to neutral",
+            reasoning_cn="分析出错，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,

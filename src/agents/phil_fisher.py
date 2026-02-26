@@ -22,6 +22,7 @@ class PhilFisherSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def phil_fisher_agent(state: AgentState, agent_id: str = "phil_fisher_agent"):
@@ -143,6 +144,7 @@ def phil_fisher_agent(state: AgentState, agent_id: str = "phil_fisher_agent"):
             "signal": fisher_output.signal,
             "confidence": fisher_output.confidence,
             "reasoning": fisher_output.reasoning,
+            "reasoning_cn": fisher_output.reasoning_cn,
         }
 
         progress.update_status(agent_id, ticker, "Done", analysis=fisher_output.reasoning)
@@ -574,7 +576,8 @@ def generate_fisher_output(
               {{
                 "signal": "bullish/bearish/neutral",
                 "confidence": float (0-100),
-                "reasoning": "string"
+                "reasoning": "string in English",
+                "reasoning_cn": "same analysis in Chinese/中文"
               }}
               """,
             ),
@@ -584,7 +587,12 @@ def generate_fisher_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
-        return PhilFisherSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        return PhilFisherSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in analysis, defaulting to neutral",
+            reasoning_cn="分析出错，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,

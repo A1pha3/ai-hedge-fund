@@ -17,6 +17,7 @@ class BenGrahamSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def ben_graham_agent(state: AgentState, agent_id: str = "ben_graham_agent"):
@@ -77,7 +78,12 @@ def ben_graham_agent(state: AgentState, agent_id: str = "ben_graham_agent"):
             agent_id=agent_id,
         )
 
-        graham_analysis[ticker] = {"signal": graham_output.signal, "confidence": graham_output.confidence, "reasoning": graham_output.reasoning}
+        graham_analysis[ticker] = {
+            "signal": graham_output.signal,
+            "confidence": graham_output.confidence,
+            "reasoning": graham_output.reasoning,
+            "reasoning_cn": graham_output.reasoning_cn,
+        }
 
         progress.update_status(agent_id, ticker, "Done", analysis=graham_output.reasoning)
 
@@ -330,7 +336,8 @@ def generate_graham_output(
             {{
               "signal": "bullish" or "bearish" or "neutral",
               "confidence": float (0-100),
-              "reasoning": "string"
+              "reasoning": "string in English",
+              "reasoning_cn": "same analysis in Chinese/中文"
             }}
             """,
             ),
@@ -340,7 +347,12 @@ def generate_graham_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_ben_graham_signal():
-        return BenGrahamSignal(signal="neutral", confidence=0.0, reasoning="Error in generating analysis; defaulting to neutral.")
+        return BenGrahamSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in generating analysis; defaulting to neutral.",
+            reasoning_cn="分析出错，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,

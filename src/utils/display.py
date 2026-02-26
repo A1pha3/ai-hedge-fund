@@ -582,6 +582,11 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
                 lines.append(f"- **推理过程**:\n")
                 lines.append(f"{formatted_reasoning}\n")
 
+                # 添加中文翻译（如果存在）
+                reasoning_cn = signal.get("reasoning_cn")
+                if reasoning_cn and isinstance(reasoning_cn, str):
+                    lines.append(f"**中文翻译**：\n{reasoning_cn}\n")
+
             risk_signals = result.get("analyst_signals", {}).get("risk_management_agent", {})
             if ticker in risk_signals:
                 lines.append("### 3. 风险管理分析\n")

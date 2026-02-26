@@ -25,6 +25,7 @@ class PeterLynchSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def peter_lynch_agent(state: AgentState, agent_id: str = "peter_lynch_agent"):
@@ -137,6 +138,7 @@ def peter_lynch_agent(state: AgentState, agent_id: str = "peter_lynch_agent"):
             "signal": lynch_output.signal,
             "confidence": lynch_output.confidence,
             "reasoning": lynch_output.reasoning,
+            "reasoning_cn": lynch_output.reasoning_cn,
         }
 
         progress.update_status(agent_id, ticker, "Done", analysis=lynch_output.reasoning)
@@ -469,7 +471,8 @@ def generate_lynch_output(
                 {{
                   "signal": "bullish" | "bearish" | "neutral",
                   "confidence": 0 to 100,
-                  "reasoning": "string"
+                  "reasoning": "string in English",
+                  "reasoning_cn": "same analysis in Chinese/中文"
                 }}
                 """,
             ),
@@ -489,7 +492,12 @@ def generate_lynch_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
-        return PeterLynchSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis; defaulting to neutral")
+        return PeterLynchSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in analysis; defaulting to neutral",
+            reasoning_cn="分析出错，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,

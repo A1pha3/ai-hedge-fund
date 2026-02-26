@@ -16,6 +16,7 @@ class CathieWoodSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def cathie_wood_agent(state: AgentState, agent_id: str = "cathie_wood_agent"):
@@ -94,7 +95,12 @@ def cathie_wood_agent(state: AgentState, agent_id: str = "cathie_wood_agent"):
             agent_id=agent_id,
         )
 
-        cw_analysis[ticker] = {"signal": cw_output.signal, "confidence": cw_output.confidence, "reasoning": cw_output.reasoning}
+        cw_analysis[ticker] = {
+            "signal": cw_output.signal,
+            "confidence": cw_output.confidence,
+            "reasoning": cw_output.reasoning,
+            "reasoning_cn": cw_output.reasoning_cn,
+        }
 
         progress.update_status(agent_id, ticker, "Done", analysis=cw_output.reasoning)
 
@@ -416,7 +422,8 @@ def generate_cathie_wood_output(
             {{
               "signal": "bullish/bearish/neutral",
               "confidence": float (0-100),
-              "reasoning": "string"
+              "reasoning": "string in English",
+              "reasoning_cn": "same analysis in Chinese/中文"
             }}
             """,
             ),
@@ -426,7 +433,12 @@ def generate_cathie_wood_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_cathie_wood_signal():
-        return CathieWoodSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        return CathieWoodSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in analysis, defaulting to neutral",
+            reasoning_cn="分析出错，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,

@@ -24,6 +24,7 @@ class StanleyDruckenmillerSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
+    reasoning_cn: str
 
 
 def stanley_druckenmiller_agent(state: AgentState, agent_id: str = "stanley_druckenmiller_agent"):
@@ -143,6 +144,7 @@ def stanley_druckenmiller_agent(state: AgentState, agent_id: str = "stanley_druc
             "signal": druck_output.signal,
             "confidence": druck_output.confidence,
             "reasoning": druck_output.reasoning,
+            "reasoning_cn": druck_output.reasoning_cn,
         }
 
         progress.update_status(agent_id, ticker, "Done", analysis=druck_output.reasoning)
@@ -574,7 +576,8 @@ def generate_druckenmiller_output(
               {{
                 "signal": "bullish/bearish/neutral",
                 "confidence": float (0-100),
-                "reasoning": "string"
+                "reasoning": "string in English",
+                "reasoning_cn": "same analysis in Chinese/中文"
               }}
               """,
             ),
@@ -584,7 +587,12 @@ def generate_druckenmiller_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
-        return StanleyDruckenmillerSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
+        return StanleyDruckenmillerSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in analysis, defaulting to neutral",
+            reasoning_cn="分析出错，默认返回中性",
+        )
 
     return call_llm(
         prompt=prompt,
