@@ -323,7 +323,9 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
         return {"intrinsic_value": None, "details": ["Missing FCFF or share count"]}
 
     # Growth assumptions
-    revs = [m.revenue for m in reversed(metrics) if m.revenue]
+    revs = [getattr(m, "revenue", None) for m in reversed(metrics) if getattr(m, "revenue", None) is not None]
+    if not revs:
+        revs = [getattr(li, "revenue", None) for li in reversed(line_items) if getattr(li, "revenue", None) is not None]
     if len(revs) >= 2 and revs[0] > 0:
         base_growth = min((revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1, 0.12)
     else:

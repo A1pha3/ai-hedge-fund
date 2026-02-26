@@ -126,7 +126,7 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
         return {"score": 0, "details": "Insufficient data to analyze business quality"}
 
     # 1. Multi-period revenue growth analysis
-    revenues = [item.revenue for item in financial_line_items if item.revenue is not None]
+    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
     if len(revenues) >= 2:
         initial, final = revenues[-1], revenues[0]
         if initial and final and final > initial:
@@ -143,8 +143,8 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
         details.append("Not enough revenue data for multi-period trend.")
 
     # 2. Operating margin and free cash flow consistency
-    fcf_vals = [item.free_cash_flow for item in financial_line_items if item.free_cash_flow is not None]
-    op_margin_vals = [item.operating_margin for item in financial_line_items if item.operating_margin is not None]
+    fcf_vals = [getattr(item, "free_cash_flow", None) for item in financial_line_items if getattr(item, "free_cash_flow", None) is not None]
+    op_margin_vals = [getattr(item, "operating_margin", None) for item in financial_line_items if getattr(item, "operating_margin", None) is not None]
 
     if op_margin_vals:
         above_15 = sum(1 for m in op_margin_vals if m > 0.15)
@@ -198,7 +198,7 @@ def analyze_financial_discipline(metrics: list, financial_line_items: list) -> d
         return {"score": 0, "details": "Insufficient data to analyze financial discipline"}
 
     # 1. Multi-period debt ratio or debt_to_equity
-    debt_to_equity_vals = [item.debt_to_equity for item in financial_line_items if item.debt_to_equity is not None]
+    debt_to_equity_vals = [getattr(item, "debt_to_equity", None) for item in financial_line_items if getattr(item, "debt_to_equity", None) is not None]
     if debt_to_equity_vals:
         below_one_count = sum(1 for d in debt_to_equity_vals if d < 1.0)
         if below_one_count >= (len(debt_to_equity_vals) // 2 + 1):
@@ -210,8 +210,10 @@ def analyze_financial_discipline(metrics: list, financial_line_items: list) -> d
         # Fallback to total_liabilities / total_assets
         liab_to_assets = []
         for item in financial_line_items:
-            if item.total_liabilities and item.total_assets and item.total_assets > 0:
-                liab_to_assets.append(item.total_liabilities / item.total_assets)
+            total_liabilities = getattr(item, "total_liabilities", None)
+            total_assets = getattr(item, "total_assets", None)
+            if total_liabilities and total_assets and total_assets > 0:
+                liab_to_assets.append(total_liabilities / total_assets)
 
         if liab_to_assets:
             below_50pct_count = sum(1 for ratio in liab_to_assets if ratio < 0.5)
@@ -224,7 +226,7 @@ def analyze_financial_discipline(metrics: list, financial_line_items: list) -> d
             details.append("No consistent leverage ratio data available.")
 
     # 2. Capital allocation approach (dividends + share counts)
-    dividends_list = [item.dividends_and_other_cash_distributions for item in financial_line_items if item.dividends_and_other_cash_distributions is not None]
+    dividends_list = [getattr(item, "dividends_and_other_cash_distributions", None) for item in financial_line_items if getattr(item, "dividends_and_other_cash_distributions", None) is not None]
     if dividends_list:
         paying_dividends_count = sum(1 for d in dividends_list if d < 0)
         if paying_dividends_count >= (len(dividends_list) // 2 + 1):
@@ -236,7 +238,7 @@ def analyze_financial_discipline(metrics: list, financial_line_items: list) -> d
         details.append("No dividend data found across periods.")
 
     # Check for decreasing share count (simple approach)
-    shares = [item.outstanding_shares for item in financial_line_items if item.outstanding_shares is not None]
+    shares = [getattr(item, "outstanding_shares", None) for item in financial_line_items if getattr(item, "outstanding_shares", None) is not None]
     if len(shares) >= 2:
         # For buybacks, the newest count should be less than the oldest count
         if shares[0] < shares[-1]:
@@ -263,8 +265,8 @@ def analyze_activism_potential(financial_line_items: list) -> dict:
         return {"score": 0, "details": "Insufficient data for activism potential"}
 
     # Check revenue growth vs. operating margin
-    revenues = [item.revenue for item in financial_line_items if item.revenue is not None]
-    op_margins = [item.operating_margin for item in financial_line_items if item.operating_margin is not None]
+    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
+    op_margins = [getattr(item, "operating_margin", None) for item in financial_line_items if getattr(item, "operating_margin", None) is not None]
 
     if len(revenues) < 2 or not op_margins:
         return {"score": 0, "details": "Not enough data to assess activism potential (need multi-year revenue + margins)."}
@@ -297,7 +299,9 @@ def analyze_valuation(financial_line_items: list, market_cap: float) -> dict:
     # Since financial_line_items are in descending order (newest first),
     # the most recent period is the first element
     latest = financial_line_items[0]
-    fcf = latest.free_cash_flow if latest.free_cash_flow else 0
+    fcf = getattr(latest, "free_cash_flow", None)
+    if fcf is None:
+        fcf = 0
 
     if fcf <= 0:
         return {"score": 0, "details": f"No positive FCF for valuation; FCF = {fcf}", "intrinsic_value": None}
