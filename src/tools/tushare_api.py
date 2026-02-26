@@ -1,11 +1,12 @@
 import os
-from typing import List
+from typing import Dict, List
 
 import pandas as pd
 
 from src.data.models import FinancialMetrics, LineItem, Price
 
 _pro = None
+_stock_name_cache: Dict[str, str] = {}
 
 
 def _get_pro():
@@ -46,6 +47,36 @@ def _to_ts_code(ticker: str) -> str:
     if ticker.startswith(("4", "8", "43", "83", "87")):
         return f"{ticker}.BJ"
     return f"{ticker}.SZ"
+
+
+def get_stock_name(ticker: str) -> str:
+    """
+    获取 A 股股票名称
+
+    Args:
+        ticker: 股票代码
+
+    Returns:
+        str: 股票名称，如果获取失败则返回股票代码
+    """
+    if ticker in _stock_name_cache:
+        return _stock_name_cache[ticker]
+
+    pro = _get_pro()
+    if not pro:
+        return ticker
+
+    try:
+        ts_code = _to_ts_code(ticker)
+        df = pro.stock_basic(ts_code=ts_code, fields="ts_code,name")
+        if df is not None and not df.empty:
+            name = str(df.iloc[0]["name"])
+            _stock_name_cache[ticker] = name
+            return name
+    except Exception:
+        pass
+
+    return ticker
 
 
 def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) -> List[Price]:

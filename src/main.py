@@ -17,7 +17,7 @@ from src.cli.input import (
 )
 from src.graph.state import AgentState
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
-from src.utils.display import print_trading_output
+from src.utils.display import print_trading_output, save_trading_report
 from src.utils.logging import get_logger, setup_logging
 from src.utils.progress import progress
 from src.utils.visualize import save_graph_as_png
@@ -182,3 +182,11 @@ if __name__ == "__main__":
         model_provider=inputs.model_provider,
     )
     print_trading_output(result)
+    save_trading_report(
+        result=result,
+        tickers=tickers,
+        model_name=inputs.model_name,
+        model_provider=inputs.model_provider,
+        start_date=inputs.start_date,
+        end_date=inputs.end_date,
+    )

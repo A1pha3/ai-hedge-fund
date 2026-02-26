@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from src.data.models import FinancialMetrics, LineItem, Price
+from src.tools.tushare_api import get_stock_name
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class DataSnapshotExporter:
         try:
             snapshot_dir = self._ensure_dir(ticker, end_date)
             prices_file = snapshot_dir / "prices.json"
-            
+
             # 检查快照文件是否存在，或者是否需要更新
             need_update = True
             if prices_file.exists():
@@ -82,12 +83,12 @@ class DataSnapshotExporter:
                     # 基于日期范围判断是否需要更新
                     existing_dates = sorted([p["time"] for p in existing_data if p.get("time")])
                     new_dates = sorted([p.time for p in prices if p.time])
-                    
+
                     if existing_dates and new_dates:
                         # 检查日期范围是否一致
                         if existing_dates[0] == new_dates[0] and existing_dates[-1] == new_dates[-1]:
                             need_update = False
-            
+
             if need_update:
                 self._write_json(prices_file, [p.model_dump() for p in prices])
                 self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
@@ -103,7 +104,7 @@ class DataSnapshotExporter:
         try:
             snapshot_dir = self._ensure_dir(ticker, end_date)
             financials_file = snapshot_dir / "financials.json"
-            
+
             # 检查快照文件是否存在，或者是否需要更新
             need_update = True
             if financials_file.exists():
@@ -114,12 +115,12 @@ class DataSnapshotExporter:
                     # 基于报告期判断是否需要更新
                     existing_periods = sorted([m["report_period"] for m in existing_metrics if m.get("report_period")])
                     new_periods = sorted([m.report_period for m in metrics if m.report_period])
-                    
+
                     if existing_periods and new_periods:
                         # 检查报告期是否一致
                         if existing_periods == new_periods:
                             need_update = False
-            
+
             if need_update:
                 financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
                 financials["financial_metrics"] = [m.model_dump() for m in metrics]
@@ -137,7 +138,7 @@ class DataSnapshotExporter:
         try:
             snapshot_dir = self._ensure_dir(ticker, end_date)
             financials_file = snapshot_dir / "financials.json"
-            
+
             # 检查快照文件是否存在，或者是否需要更新
             need_update = True
             if financials_file.exists():
@@ -148,12 +149,12 @@ class DataSnapshotExporter:
                     # 基于报告期判断是否需要更新
                     existing_periods = sorted([item["report_period"] for item in existing_items if item.get("report_period")])
                     new_periods = sorted([item.report_period for item in line_items if item.report_period])
-                    
+
                     if existing_periods and new_periods:
                         # 检查报告期是否一致
                         if existing_periods == new_periods:
                             need_update = False
-            
+
             if need_update:
                 financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
                 financials["line_items"] = [item.model_dump() for item in line_items]
@@ -205,8 +206,11 @@ class DataSnapshotExporter:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         parts: list[str] = []
 
-        # 标题区
-        parts.append(f"# {ticker} 数据快照 - {date}\n")
+        stock_name = get_stock_name(ticker)
+
+        parts.append(f"# {ticker}（{stock_name}）数据快照 - {date}\n")
+        parts.append(f"- **股票代码**：{ticker}")
+        parts.append(f"- **股票名称**：{stock_name}")
         parts.append(f"- **分析日期**：{date}")
         parts.append(f"- **数据源**：{data_source}")
         if prices:
@@ -328,7 +332,7 @@ def _render_metrics_table(metrics: list[dict[str, Any]]) -> list[str]:
     if not fields:
         return ["*所有指标均为空值*"]
     header = "| 报告期 | " + " | ".join(_FIELD_LABELS.get(f, f) for f in fields) + " |"
-    sep = "|--------|" + "|".join("--------|" for _ in fields)
+    sep = "|" + "|".join("--------" for _ in ["报告期"] + fields) + "|"
     rows = [header, sep]
     for m in metrics:
         cells = " | ".join(_fmt_number(m.get(f)) for f in fields)
@@ -349,7 +353,7 @@ def _render_line_items_table(line_items: list[dict[str, Any]]) -> list[str]:
     if not fields:
         return ["*所有项目均为空值*"]
     header = "| 报告期 | " + " | ".join(_FIELD_LABELS.get(f, f) for f in fields) + " |"
-    sep = "|--------|" + "|".join("--------|" for _ in fields)
+    sep = "|" + "|".join("--------" for _ in ["报告期"] + fields) + "|"
     rows = [header, sep]
     for item in line_items:
         cells = " | ".join(_fmt_amount(item.get(f)) for f in fields)

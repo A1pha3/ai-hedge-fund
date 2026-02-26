@@ -32,7 +32,11 @@ from src.tools.tushare_api import (
 
 # Global cache instance
 _cache = get_cache()
-_snapshot = get_snapshot_exporter()
+
+
+def _get_snapshot():
+    """延迟获取快照导出器，确保 .env 已加载"""
+    return get_snapshot_exporter()
 
 
 def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3) -> requests.Response:
@@ -80,7 +84,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
     # Check cache first - simple exact match
     if cached_data := _cache.get_prices(cache_key):
         prices = [Price(**price) for price in cached_data]
-        _snapshot.export_prices(ticker, end_date, prices, "cache")
+        _get_snapshot().export_prices(ticker, end_date, prices, "cache")
         return prices
 
     # Check if it's an A-share (Chinese stock)
@@ -89,7 +93,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
         if prices:
             # Cache the results
             _cache.set_prices(cache_key, [p.model_dump() for p in prices])
-            _snapshot.export_prices(ticker, end_date, prices, "tushare")
+            _get_snapshot().export_prices(ticker, end_date, prices, "tushare")
         return prices
 
     # For US stocks, use Financial Datasets API
@@ -115,7 +119,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
 
     # Cache the results using the comprehensive cache key
     _cache.set_prices(cache_key, [p.model_dump() for p in prices])
-    _snapshot.export_prices(ticker, end_date, prices, "financial_datasets")
+    _get_snapshot().export_prices(ticker, end_date, prices, "financial_datasets")
     return prices
 
 
@@ -136,7 +140,7 @@ def get_financial_metrics(
     # Check cache first - simple exact match
     if cached_data := _cache.get_financial_metrics(cache_key):
         metrics = [FinancialMetrics(**metric) for metric in cached_data]
-        _snapshot.export_financial_metrics(ticker, end_date, metrics, "cache")
+        _get_snapshot().export_financial_metrics(ticker, end_date, metrics, "cache")
         return metrics
 
     # Check if it's an A-share (Chinese stock)
@@ -145,7 +149,7 @@ def get_financial_metrics(
         if metrics:
             # Cache the results
             _cache.set_financial_metrics(cache_key, [m.model_dump() for m in metrics])
-            _snapshot.export_financial_metrics(ticker, end_date, metrics, "tushare")
+            _get_snapshot().export_financial_metrics(ticker, end_date, metrics, "tushare")
         return metrics
 
     # For US stocks, use Financial Datasets API
@@ -171,7 +175,7 @@ def get_financial_metrics(
 
     # Cache the results as dicts using the comprehensive cache key
     _cache.set_financial_metrics(cache_key, [m.model_dump() for m in financial_metrics])
-    _snapshot.export_financial_metrics(ticker, end_date, financial_metrics, "financial_datasets")
+    _get_snapshot().export_financial_metrics(ticker, end_date, financial_metrics, "financial_datasets")
     return financial_metrics
 
 
@@ -187,7 +191,7 @@ def search_line_items(
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
         results = get_ashare_line_items_with_tushare(ticker, line_items, end_date, period, limit)
-        _snapshot.export_line_items(ticker, end_date, results, "tushare")
+        _get_snapshot().export_line_items(ticker, end_date, results, "tushare")
         return results
 
     # For US stocks, use Financial Datasets API
@@ -220,7 +224,7 @@ def search_line_items(
 
     # Snapshot and return the results
     results = search_results[:limit]
-    _snapshot.export_line_items(ticker, end_date, results, "financial_datasets")
+    _get_snapshot().export_line_items(ticker, end_date, results, "financial_datasets")
     return results
 
 

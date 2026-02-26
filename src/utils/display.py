@@ -1,13 +1,18 @@
 import json
 import os
+from datetime import datetime
+from pathlib import Path
 
 from colorama import Fore, Style
 from tabulate import tabulate
 
 from .analysts import ANALYST_ORDER
 from .logging import get_logger
+from src.tools.tushare_api import get_stock_name
 
 logger = get_logger(__name__)
+
+REPORT_DIR = Path("data/reports")
 
 
 def sort_agent_signals(signals):
@@ -404,3 +409,167 @@ def format_backtest_row(
             f"{Fore.RED}{short_shares:,.0f}{Style.RESET_ALL}",  # Short Shares
             f"{Fore.YELLOW}{position_value:,.2f}{Style.RESET_ALL}",
         ]
+
+
+def save_trading_report(result: dict, tickers: list[str], model_name: str, model_provider: str, start_date: str, end_date: str) -> Path | None:
+    """
+    Save trading report to a markdown file with complete analysis details.
+
+    Args:
+        result: Dictionary containing decisions and analyst signals
+        tickers: List of ticker symbols
+        model_name: Name of the LLM model used
+        model_provider: Provider of the LLM model
+        start_date: Analysis start date
+        end_date: Analysis end date
+
+    Returns:
+        Path to the saved report file, or None if save failed
+    """
+    decisions = result.get("decisions")
+    if not decisions:
+        logger.warning("No trading decisions to save")
+        return None
+
+    try:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tickers_str = "_".join(tickers[:3])
+        if len(tickers) > 3:
+            tickers_str += f"_etc{len(tickers)}"
+        filename = f"{tickers_str}_{timestamp}.md"
+        report_path = REPORT_DIR / filename
+
+        lines: list[str] = []
+        lines.append("# 对冲基金分析报告\n")
+        lines.append(f"- **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"- **分析周期**: {start_date} ~ {end_date}")
+        lines.append(f"- **模型**: {model_provider} - {model_name}\n")
+
+        lines.append("## 分析股票概览\n")
+        lines.append("| 代码 | 名称 | 操作 | 置信度 |")
+        lines.append("|------|------|------|--------|")
+        for ticker in tickers:
+            stock_name = get_stock_name(ticker)
+            decision = decisions.get(ticker, {})
+            action = decision.get("action", "N/A").upper()
+            confidence = decision.get("confidence", 0)
+            lines.append(f"| {ticker} | {stock_name} | {action} | {confidence:.1f}% |")
+        lines.append("")
+
+        for ticker, decision in decisions.items():
+            stock_name = get_stock_name(ticker)
+            lines.append(f"## {ticker}（{stock_name}）详细分析\n")
+
+            lines.append("### 1. 分析师信号汇总\n")
+            lines.append("| 分析师 | 信号 | 置信度 |")
+            lines.append("|--------|------|--------|")
+
+            bullish_count = 0
+            bearish_count = 0
+            neutral_count = 0
+
+            for agent, signals in result.get("analyst_signals", {}).items():
+                if ticker not in signals or agent == "risk_management_agent":
+                    continue
+
+                signal = signals[ticker]
+                agent_name = agent.replace("_agent", "").replace("_", " ").title()
+                signal_type = signal.get("signal", "").upper()
+                confidence = signal.get("confidence", 0)
+
+                if signal_type == "BULLISH":
+                    bullish_count += 1
+                elif signal_type == "BEARISH":
+                    bearish_count += 1
+                elif signal_type == "NEUTRAL":
+                    neutral_count += 1
+
+                lines.append(f"| {agent_name} | {signal_type} | {confidence}% |")
+
+            lines.append(f"\n**信号统计**: 看涨 {bullish_count} | 看跌 {bearish_count} | 中性 {neutral_count}\n")
+
+            lines.append("### 2. 分析师详细推理\n")
+            for agent, signals in result.get("analyst_signals", {}).items():
+                if ticker not in signals or agent == "risk_management_agent":
+                    continue
+
+                signal = signals[ticker]
+                agent_name = agent.replace("_agent", "").replace("_", " ").title()
+                signal_type = signal.get("signal", "").upper()
+                confidence = signal.get("confidence", 0)
+                reasoning = signal.get("reasoning", "")
+
+                if isinstance(reasoning, dict):
+                    reasoning = json.dumps(reasoning, ensure_ascii=False, indent=2)
+
+                lines.append(f"#### {agent_name}\n")
+                lines.append(f"- **信号**: {signal_type}")
+                lines.append(f"- **置信度**: {confidence}%")
+                lines.append(f"- **推理过程**:\n")
+                lines.append(f"```\n{reasoning}\n```\n")
+
+            risk_signals = result.get("analyst_signals", {}).get("risk_management_agent", {})
+            if ticker in risk_signals:
+                lines.append("### 3. 风险管理分析\n")
+                risk_data = risk_signals[ticker]
+
+                lines.append("#### 仓位限制\n")
+                lines.append(f"| 项目 | 值 |")
+                lines.append("|------|------|")
+                lines.append(f"| 剩余仓位限制 | {risk_data.get('remaining_position_limit', 'N/A')} |")
+                lines.append(f"| 当前价格 | {risk_data.get('current_price', 'N/A')} |")
+                lines.append("")
+
+                vol_metrics = risk_data.get("volatility_metrics", {})
+                if vol_metrics:
+                    lines.append("#### 波动率指标\n")
+                    lines.append(f"| 指标 | 值 |")
+                    lines.append("|------|------|")
+                    lines.append(f"| 日波动率 | {vol_metrics.get('daily_volatility', 'N/A'):.4f} |" if vol_metrics.get('daily_volatility') else "| 日波动率 | N/A |")
+                    lines.append(f"| 年化波动率 | {vol_metrics.get('annualized_volatility', 'N/A'):.4f} |" if vol_metrics.get('annualized_volatility') else "| 年化波动率 | N/A |")
+                    lines.append(f"| 波动率百分位 | {vol_metrics.get('volatility_percentile', 'N/A'):.2f}% |" if vol_metrics.get('volatility_percentile') else "| 波动率百分位 | N/A |")
+                    lines.append(f"| 数据点数 | {vol_metrics.get('data_points', 'N/A')} |")
+                    lines.append("")
+
+                risk_reasoning = risk_data.get("reasoning", {})
+                if risk_reasoning:
+                    lines.append("#### 风险调整计算\n")
+                    lines.append(f"| 项目 | 值 |")
+                    lines.append("|------|------|")
+                    lines.append(f"| 投资组合价值 | ${risk_reasoning.get('portfolio_value', 'N/A'):,.2f} |" if risk_reasoning.get('portfolio_value') else "| 投资组合价值 | N/A |")
+                    lines.append(f"| 当前持仓价值 | ${risk_reasoning.get('current_position_value', 'N/A'):,.2f} |" if risk_reasoning.get('current_position_value') else "| 当前持仓价值 | N/A |")
+                    lines.append(f"| 基础仓位限制 | {risk_reasoning.get('base_position_limit_pct', 'N/A')*100:.1f}% |" if risk_reasoning.get('base_position_limit_pct') else "| 基础仓位限制 | N/A |")
+                    lines.append(f"| 组合仓位限制 | {risk_reasoning.get('combined_position_limit_pct', 'N/A')*100:.1f}% |" if risk_reasoning.get('combined_position_limit_pct') else "| 组合仓位限制 | N/A |")
+                    lines.append(f"| 可用现金 | ${risk_reasoning.get('available_cash', 'N/A'):,.2f} |" if risk_reasoning.get('available_cash') else "| 可用现金 | N/A |")
+                    lines.append(f"| 风险调整说明 | {risk_reasoning.get('risk_adjustment', 'N/A')} |")
+                    lines.append("")
+
+            lines.append("### 4. 最终交易决策\n")
+            action = decision.get("action", "").upper()
+            quantity = decision.get("quantity", 0)
+            confidence = decision.get("confidence", 0)
+            reasoning = decision.get("reasoning", "")
+
+            action_emoji = {"BUY": "📈", "SELL": "📉", "SHORT": "🔻", "COVER": "🔄", "HOLD": "⏸️"}.get(action, "❓")
+
+            lines.append(f"| 项目 | 值 |")
+            lines.append("|------|------|")
+            lines.append(f"| 操作 | {action_emoji} **{action}** |")
+            lines.append(f"| 数量 | {quantity} 股 |")
+            lines.append(f"| 置信度 | {confidence:.1f}% |")
+            lines.append(f"| 决策理由 | {reasoning} |")
+            lines.append("")
+
+        lines.append("---\n")
+        lines.append("*本报告由 AI 对冲基金系统自动生成*\n")
+        lines.append("*审阅提示：请检查分析师推理逻辑是否合理，数据来源是否可靠，风险管理参数是否适当。*\n")
+
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info(f"[Report] 分析报告已保存: {report_path}")
+        return report_path
+
+    except Exception as e:
+        logger.warning(f"[Report] 保存分析报告失败: {e}")
+        return None
