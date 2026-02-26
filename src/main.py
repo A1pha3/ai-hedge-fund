@@ -16,8 +16,13 @@ from src.cli.input import (
     parse_cli_inputs,
 )
 from src.graph.state import AgentState
+from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
-from src.utils.display import print_trading_output, save_trading_report
+from src.utils.display import (
+    print_trading_output,
+    save_daily_gainers_report,
+    save_trading_report,
+)
 from src.utils.logging import get_logger, setup_logging
 from src.utils.progress import progress
 from src.utils.visualize import save_graph_as_png
@@ -135,7 +140,49 @@ def create_workflow(selected_analysts=None):
     return workflow
 
 
+def run_daily_gainers_cli() -> int:
+    """
+    运行每日涨幅筛选 CLI
+    """
+    parser = argparse.ArgumentParser(description="获取指定日期涨幅超过阈值的 A 股列表")
+    parser.add_argument("--daily-gainers", action="store_true", help="启用每日涨幅筛选模式")
+    parser.add_argument(
+        "--trade-date",
+        type=str,
+        default=datetime.now().strftime("%Y-%m-%d"),
+        help="交易日期，格式 YYYY-MM-DD（默认当天）",
+    )
+    parser.add_argument(
+        "--pct-threshold",
+        type=float,
+        default=3.0,
+        help="涨幅阈值（默认 3.0）",
+    )
+    parser.add_argument(
+        "--output-md",
+        type=str,
+        default=None,
+        help="输出 Markdown 文件路径（可选）",
+    )
+    args = parser.parse_args()
+
+    if not args.daily_gainers:
+        return 1
+
+    results = get_ashare_daily_gainers_with_tushare(args.trade_date, pct_threshold=args.pct_threshold, include_name=True)
+    report_date = results[0].get("trade_date") if results else args.trade_date
+    report_path = save_daily_gainers_report(results, report_date, args.pct_threshold, output_path=args.output_md)
+    if report_path:
+        print(f"已保存报告: {report_path}")
+    else:
+        print("报告保存失败")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--daily-gainers" in sys.argv:
+        raise SystemExit(run_daily_gainers_cli())
+
     inputs = parse_cli_inputs(
         description="Run the hedge fund trading system",
         require_tickers=True,

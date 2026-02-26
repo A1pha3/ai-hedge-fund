@@ -30,15 +30,182 @@ def safe_float(value, default=0.0):
         return default
 
 
+def generate_chinese_reasoning(ticker: str, combined_signal: dict, strategy_signals: dict, weights: dict) -> str:
+    """
+    生成中文技术分析详细说明
+
+    信号生成规则说明：
+
+    1. 趋势跟踪策略 (Trend Following) - 权重25%
+       - 使用EMA(8/21/55)多时间框架判断趋势方向
+       - 短期趋势：EMA8 > EMA21 为上升趋势
+       - 中期趋势：EMA21 > EMA55 为上升趋势
+       - ADX > 25表示趋势较强，信号置信度更高
+       - 信号规则：
+         *  bullish: 短期和中期趋势均为上升
+         *  bearish: 短期和中期趋势均为下降
+         *  neutral: 趋势方向不一致
+
+    2. 均值回归策略 (Mean Reversion) - 权重20%
+       - 使用Z-Score判断价格偏离程度（Z-Score = (价格-50日均值)/50日标准差）
+       - 结合布林带位置判断超买超卖
+       - RSI(14/28)判断动量是否过度延伸
+       - 信号规则：
+         *  bullish: Z-Score < -2 且 价格处于布林带下轨20%以内（超卖）
+         *  bearish: Z-Score > 2 且 价格处于布林带上轨80%以上（超买）
+         *  neutral: 其他情况
+
+    3. 动量策略 (Momentum) - 权重25%
+       - 计算1月/3月/6月价格动量（加权：40%/30%/30%）
+       - 结合成交量动量确认（成交量 > 20日均量）
+       - 信号规则：
+         *  bullish: 动量得分 > 5% 且 成交量确认
+         *  bearish: 动量得分 < -5% 且 成交量确认
+         *  neutral: 其他情况
+
+    4. 波动率策略 (Volatility) - 权重15%
+       - 历史波动率 = 日收益率标准差 × √252
+       - 波动率区间 = 当前波动率 / 63日平均波动率
+       - 信号规则：
+         *  bullish: 波动率区间 < 0.8 且 Z-Score < -1（低波动，可能扩张）
+         *  bearish: 波动率区间 > 1.2 且 Z-Score > 1（高波动，可能收缩）
+         *  neutral: 其他情况
+
+    5. 统计套利策略 (Statistical Arbitrage) - 权重15%
+       - Hurst指数判断时间序列特性（H < 0.5均值回归，H > 0.5趋势性）
+       - 收益率分布偏度判断极端行情概率
+       - 信号规则：
+         *  bullish: Hurst < 0.4 且 偏度 > 1（均值回归+右偏）
+         *  bearish: Hurst < 0.4 且 偏度 < -1（均值回归+左偏）
+         *  neutral: 其他情况
+
+    综合信号计算：
+    - 将各策略信号转换为数值（bullish=1, neutral=0, bearish=-1）
+    - 加权求和：Σ(信号值 × 权重 × 置信度) / Σ(权重 × 置信度)
+    - 最终得分 > 0.2 为 bullish，< -0.2 为 bearish，否则 neutral
+    """
+    lines = []
+    lines.append(f"=== {ticker} 技术分析详细解读 ===\n")
+
+    # 总体信号
+    final_signal = combined_signal["signal"]
+    final_confidence = combined_signal["confidence"] * 100
+    signal_cn = {"bullish": "看涨", "bearish": "看跌", "neutral": "中性"}
+    lines.append(f"【综合信号】{signal_cn.get(final_signal, final_signal)} (置信度: {final_confidence:.1f}%)\n")
+
+    # 各策略详细说明
+    strategy_names = {"trend": "趋势跟踪", "mean_reversion": "均值回归", "momentum": "动量分析", "volatility": "波动率分析", "stat_arb": "统计套利"}
+
+    for strategy_key, strategy_name in strategy_names.items():
+        signal_data = strategy_signals.get(strategy_key, {})
+        signal = signal_data.get("signal", "neutral")
+        confidence = signal_data.get("confidence", 0.5) * 100
+        metrics = signal_data.get("metrics", {})
+        weight = weights.get(strategy_key, 0) * 100
+
+        lines.append(f"\n【{strategy_name}】权重{weight:.0f}% - {signal_cn.get(signal, signal)} (置信度: {confidence:.1f}%)")
+
+        # 根据策略类型添加具体解释
+        if strategy_key == "trend":
+            adx = metrics.get("adx", 0)
+            trend_strength = metrics.get("trend_strength", 0)
+            lines.append(f"  • ADX(趋势强度): {adx:.2f} (ADX>25表示强趋势)")
+            lines.append(f"  • 趋势强度得分: {trend_strength:.2f}")
+            if signal == "bullish":
+                lines.append(f"  • 解读: EMA8>EMA21且EMA21>EMA55，短期和中期趋势均为上升")
+            elif signal == "bearish":
+                lines.append(f"  • 解读: EMA8<EMA21且EMA21<EMA55，短期和中期趋势均为下降")
+            else:
+                lines.append(f"  • 解读: 短期和中期趋势方向不一致，处于震荡或转折期")
+
+        elif strategy_key == "mean_reversion":
+            z_score = metrics.get("z_score", 0)
+            price_vs_bb = metrics.get("price_vs_bb", 0.5)
+            rsi_14 = metrics.get("rsi_14", 50)
+            rsi_28 = metrics.get("rsi_28", 50)
+            lines.append(f"  • Z-Score(偏离度): {z_score:.2f} (|Z|>2表示显著偏离)")
+            lines.append(f"  • 布林带位置: {price_vs_bb:.2f} (0=下轨, 1=上轨)")
+            lines.append(f"  • RSI(14): {rsi_14:.2f}, RSI(28): {rsi_28:.2f}")
+            if signal == "bullish":
+                lines.append(f"  • 解读: 价格显著低于均值(Z<-2)且接近布林带下轨，存在反弹机会")
+            elif signal == "bearish":
+                lines.append(f"  • 解读: 价格显著高于均值(Z>2)且接近布林带上轨，存在回调风险")
+            else:
+                lines.append(f"  • 解读: 价格处于正常波动区间，无明显超买超卖")
+
+        elif strategy_key == "momentum":
+            mom_1m = metrics.get("momentum_1m", 0) * 100
+            mom_3m = metrics.get("momentum_3m", 0) * 100
+            mom_6m = metrics.get("momentum_6m", 0) * 100
+            vol_mom = metrics.get("volume_momentum", 1)
+            lines.append(f"  • 1月动量: {mom_1m:.2f}%, 3月动量: {mom_3m:.2f}%, 6月动量: {mom_6m:.2f}%")
+            lines.append(f"  • 成交量动量: {vol_mom:.2f} (>1表示放量)")
+            if signal == "bullish":
+                lines.append(f"  • 解读: 价格动量强劲且成交量配合，上涨动能充足")
+            elif signal == "bearish":
+                lines.append(f"  • 解读: 价格动量疲弱且成交量配合，下跌动能充足")
+            else:
+                lines.append(f"  • 解读: 动量信号不明确，缺乏明确方向")
+
+        elif strategy_key == "volatility":
+            hist_vol = metrics.get("historical_volatility", 0) * 100
+            vol_regime = metrics.get("volatility_regime", 1)
+            vol_z = metrics.get("volatility_z_score", 0)
+            atr_ratio = metrics.get("atr_ratio", 0) * 100
+            lines.append(f"  • 历史波动率: {hist_vol:.2f}%")
+            lines.append(f"  • 波动率区间: {vol_regime:.2f} (1=正常, <0.8=低波动, >1.2=高波动)")
+            lines.append(f"  • ATR比率: {atr_ratio:.2f}%")
+            if signal == "bullish":
+                lines.append(f"  • 解读: 处于低波动区间，波动率有望扩张，可能伴随价格上涨")
+            elif signal == "bearish":
+                lines.append(f"  • 解读: 处于高波动区间，波动率有望收缩，可能伴随价格调整")
+            else:
+                lines.append(f"  • 解读: 波动率处于正常水平")
+
+        elif strategy_key == "stat_arb":
+            hurst = metrics.get("hurst_exponent", 0.5)
+            skew = metrics.get("skewness", 0)
+            kurt = metrics.get("kurtosis", 0)
+            lines.append(f"  • Hurst指数: {hurst:.4f} (<0.5均值回归, >0.5趋势性)")
+            lines.append(f"  • 偏度: {skew:.2f} (>0右偏, <0左偏)")
+            lines.append(f"  • 峰度: {kurt:.2f}")
+            if signal == "bullish":
+                lines.append(f"  • 解读: 价格呈现均值回归特性且分布右偏，反弹概率较高")
+            elif signal == "bearish":
+                lines.append(f"  • 解读: 价格呈现均值回归特性且分布左偏，回调概率较高")
+            else:
+                lines.append(f"  • 解读: 价格行为接近随机游走，统计特征不明显")
+
+    # 综合结论
+    lines.append(f"\n【综合结论】")
+    bullish_count = sum(1 for s in strategy_signals.values() if s.get("signal") == "bullish")
+    bearish_count = sum(1 for s in strategy_signals.values() if s.get("signal") == "bearish")
+    neutral_count = sum(1 for s in strategy_signals.values() if s.get("signal") == "neutral")
+    lines.append(f"  • 看涨策略: {bullish_count}/5, 看跌策略: {bearish_count}/5, 中性策略: {neutral_count}/5")
+
+    if final_signal == "bullish":
+        lines.append(f"  • 多数策略指向看涨，建议关注买入机会")
+    elif final_signal == "bearish":
+        lines.append(f"  • 多数策略指向看跌，建议关注卖出或规避风险")
+    else:
+        lines.append(f"  • 策略信号分歧较大，建议观望等待更明确信号")
+
+    return "\n".join(lines)
+
+
 ##### Technical Analyst #####
 def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analyst_agent"):
     """
-    Sophisticated technical analysis system that combines multiple trading strategies for multiple tickers:
-    1. Trend Following
-    2. Mean Reversion
-    3. Momentum
-    4. Volatility Analysis
-    5. Statistical Arbitrage Signals
+    技术分析智能体 - 综合多策略技术分析系统
+
+    该智能体结合5种经典交易策略，通过加权集成方法生成最终交易信号：
+    1. 趋势跟踪 (Trend Following) - 权重25%: 使用EMA多时间框架和ADX判断趋势
+    2. 均值回归 (Mean Reversion) - 权重20%: 使用Z-Score、布林带和RSI判断超买超卖
+    3. 动量分析 (Momentum) - 权重25%: 使用多时间框架价格动量和成交量确认
+    4. 波动率分析 (Volatility) - 权重15%: 基于波动率区间和ATR的交易策略
+    5. 统计套利 (Statistical Arbitrage) - 权重15%: 使用Hurst指数和收益率分布特征
+
+    信号生成规则详见 generate_chinese_reasoning 函数文档字符串
     """
     data = state["data"]
     start_date = data["start_date"]
@@ -102,6 +269,23 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
             strategy_weights,
         )
 
+        # Prepare strategy signals for Chinese reasoning generation
+        strategy_signals = {
+            "trend": trend_signals,
+            "mean_reversion": mean_reversion_signals,
+            "momentum": momentum_signals,
+            "volatility": volatility_signals,
+            "stat_arb": stat_arb_signals,
+        }
+
+        # Generate Chinese detailed explanation
+        chinese_reasoning = generate_chinese_reasoning(
+            ticker=ticker,
+            combined_signal=combined_signal,
+            strategy_signals=strategy_signals,
+            weights=strategy_weights,
+        )
+
         # Generate detailed analysis report for this ticker
         technical_analysis[ticker] = {
             "signal": combined_signal["signal"],
@@ -132,6 +316,7 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
                     "confidence": round(stat_arb_signals["confidence"] * 100),
                     "metrics": normalize_pandas(stat_arb_signals["metrics"]),
                 },
+                "chinese_explanation": chinese_reasoning,
             },
         }
         progress.update_status(agent_id, ticker, "Done", analysis=json.dumps(technical_analysis, indent=4))

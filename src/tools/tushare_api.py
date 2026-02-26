@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 from typing import Dict, List
 
 import pandas as pd
@@ -131,9 +132,23 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
         return []
     try:
         trade_fmt = trade_date.replace("-", "")
-        df = pro.daily(trade_date=trade_fmt)
+        fields = "ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg"
+        df = pro.daily(trade_date=trade_fmt, fields=fields)
+        if df is None or df.empty:
+            try:
+                end_dt = datetime.strptime(trade_fmt, "%Y%m%d")
+                start_dt = end_dt - timedelta(days=30)
+                df_cal = pro.trade_cal(exchange="", start_date=start_dt.strftime("%Y%m%d"), end_date=trade_fmt, is_open=1, fields="cal_date,is_open")
+                if df_cal is not None and not df_cal.empty:
+                    last_open = str(df_cal.iloc[-1]["cal_date"])
+                    df = pro.daily(trade_date=last_open, fields=fields)
+            except Exception:
+                df = None
         if df is None or df.empty:
             return []
+        missing_pct = pd.isna(df["pct_chg"])
+        valid_pre_close = pd.notna(df["pre_close"]) & (df["pre_close"] != 0)
+        df.loc[missing_pct & valid_pre_close, "pct_chg"] = (df.loc[missing_pct & valid_pre_close, "close"] - df.loc[missing_pct & valid_pre_close, "pre_close"]) / df.loc[missing_pct & valid_pre_close, "pre_close"] * 100
         df = df[pd.notna(df["pct_chg"])]
         df = df[df["pct_chg"] > pct_threshold]
         if df.empty:
@@ -159,6 +174,7 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
                 "high": float(row["high"]),
                 "low": float(row["low"]),
                 "close": float(row["close"]),
+                "pre_close": float(row["pre_close"]) if "pre_close" in row and pd.notna(row["pre_close"]) else None,
                 "vol": int(row["vol"]),
             }
             if "amount" in row and pd.notna(row["amount"]):

@@ -574,3 +574,48 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
     except Exception as e:
         logger.warning(f"[Report] 保存分析报告失败: {e}")
         return None
+
+
+def save_daily_gainers_report(items: list[dict], trade_date: str, pct_threshold: float, output_path: str | None = None) -> Path | None:
+    """
+    保存每日涨幅筛选结果到 Markdown 文件
+    """
+    try:
+        if output_path:
+            report_path = Path(output_path)
+        else:
+            base_dir = Path("/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/stock/daliy")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            threshold_str = str(pct_threshold).replace(".", "p")
+            date_str = trade_date.replace("-", "")
+            filename = f"daily_gainers_{date_str}_gt{threshold_str}_{timestamp}.md"
+            report_path = base_dir / filename
+
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+
+        lines: list[str] = []
+        lines.append("# A股每日涨幅筛选结果\n")
+        lines.append(f"- **交易日期**: {trade_date}")
+        lines.append(f"- **涨幅阈值**: > {pct_threshold:.2f}%")
+        lines.append(f"- **结果数量**: {len(items)}\n")
+
+        lines.append("| 股票代码 | 股票名称 | 涨幅 | 昨日收盘价 | 今日收盘价 |")
+        lines.append("|----------|----------|------|------------|------------|")
+        for item in items:
+            ts_code = item.get("ts_code", "-")
+            name = item.get("name", "-")
+            pct_chg = item.get("pct_chg")
+            pre_close = item.get("pre_close")
+            close = item.get("close")
+            pct_text = f"{pct_chg:.2f}%" if isinstance(pct_chg, (int, float)) else "-"
+            pre_text = f"{pre_close:.2f}" if isinstance(pre_close, (int, float)) else "-"
+            close_text = f"{close:.2f}" if isinstance(close, (int, float)) else "-"
+            lines.append(f"| {ts_code} | {name} | {pct_text} | {pre_text} | {close_text} |")
+
+        lines.append("")
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info(f"[Report] 涨幅筛选报告已保存: {report_path}")
+        return report_path
+    except Exception as e:
+        logger.warning(f"[Report] 保存涨幅筛选报告失败: {e}")
+        return None
