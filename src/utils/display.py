@@ -412,6 +412,77 @@ def format_backtest_row(
         ]
 
 
+def _format_reasoning_to_markdown(reasoning: dict | str) -> str:
+    """将 reasoning 字典转换为 Markdown 表格格式"""
+    if isinstance(reasoning, str):
+        return reasoning
+
+    if not isinstance(reasoning, dict):
+        return str(reasoning)
+
+    lines: list[str] = []
+
+    # 处理包含 chinese_explanation 的情况（技术分析Agent）
+    if "chinese_explanation" in reasoning:
+        lines.append(reasoning["chinese_explanation"])
+        return "\n".join(lines)
+
+    # 处理标准信号结构
+    signal_sections = []
+
+    for key, value in reasoning.items():
+        if isinstance(value, dict):
+            section_title = key.replace("_", " ").title()
+            signal_type = value.get("signal", "").upper()
+            confidence = value.get("confidence", "")
+            details = value.get("details", "")
+            metrics = value.get("metrics", {})
+
+            # 构建表格行
+            signal_emoji = {"BULLISH": "📈", "BEARISH": "📉", "NEUTRAL": "⚖️"}.get(signal_type, "❓")
+
+            lines.append(f"\n**{section_title}** ({signal_emoji} {signal_type})")
+            if confidence:
+                lines.append(f"- 置信度: {confidence}%")
+            if details:
+                lines.append(f"- 详情: {details}")
+
+            # 添加指标表格
+            if metrics:
+                lines.append("")
+                lines.append("| 指标 | 值 |")
+                lines.append("|------|------|")
+                for metric_key, metric_value in metrics.items():
+                    metric_name = metric_key.replace("_", " ").title()
+                    if isinstance(metric_value, float):
+                        lines.append(f"| {metric_name} | {metric_value:.4f} |")
+                    else:
+                        lines.append(f"| {metric_name} | {metric_value} |")
+
+        elif key == "final_analysis" and isinstance(value, dict):
+            lines.append(f"\n**最终分析**")
+            lines.append(f"- 信号: {value.get('signal', '').upper()}")
+            lines.append(f"- 置信度: {value.get('confidence', '')}%")
+            lines.append(f"- 加权得分: {value.get('weighted_score', '')}")
+
+        elif key in ["reasoning", "analysis"] and isinstance(value, str):
+            lines.append(f"\n**分析说明**: {value}")
+
+    if not lines:
+        # 如果没有特定结构，使用通用表格
+        lines.append("")
+        lines.append("| 字段 | 值 |")
+        lines.append("|------|------|")
+        for key, value in reasoning.items():
+            if isinstance(value, (dict, list)):
+                value_str = json.dumps(value, ensure_ascii=False)
+            else:
+                value_str = str(value)
+            lines.append(f"| {key} | {value_str} |")
+
+    return "\n".join(lines)
+
+
 def save_trading_report(result: dict, tickers: list[str], model_name: str, model_provider: str, start_date: str, end_date: str) -> Path | None:
     """
     Save trading report to a markdown file with complete analysis details.
@@ -502,14 +573,14 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
                 confidence = signal.get("confidence", 0)
                 reasoning = signal.get("reasoning", "")
 
-                if isinstance(reasoning, dict):
-                    reasoning = json.dumps(reasoning, ensure_ascii=False, indent=2)
+                # 使用新的格式化函数
+                formatted_reasoning = _format_reasoning_to_markdown(reasoning)
 
                 lines.append(f"#### {agent_name}\n")
                 lines.append(f"- **信号**: {signal_type}")
                 lines.append(f"- **置信度**: {confidence}%")
                 lines.append(f"- **推理过程**:\n")
-                lines.append(f"```\n{reasoning}\n```\n")
+                lines.append(f"{formatted_reasoning}\n")
 
             risk_signals = result.get("analyst_signals", {}).get("risk_management_agent", {})
             if ticker in risk_signals:
