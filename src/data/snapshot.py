@@ -60,7 +60,6 @@ class DataSnapshotExporter:
         self._initialized = True
         self.config = SnapshotConfig()
         self._index_lock = threading.Lock()
-        self._exported: set[str] = set()  # 进程内去重：避免同一次运行中重复导出
 
     # =========================================================================
     # 公开 API
@@ -70,16 +69,30 @@ class DataSnapshotExporter:
         """导出价格数据快照"""
         if not self.config.enabled or not prices:
             return
-        dedup_key = f"prices:{ticker}:{end_date}"
-        if dedup_key in self._exported:
-            return
         try:
             snapshot_dir = self._ensure_dir(ticker, end_date)
-            self._write_json(snapshot_dir / "prices.json", [p.model_dump() for p in prices])
-            self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
-            self._update_index(ticker, end_date, snapshot_dir, data_source)
-            self._exported.add(dedup_key)
-            logger.info("[Snapshot] 价格快照已导出: %s/%s, %d 条", ticker, end_date, len(prices))
+            prices_file = snapshot_dir / "prices.json"
+            
+            # 检查快照文件是否存在，或者是否需要更新
+            need_update = True
+            if prices_file.exists():
+                # 检查文件是否为空或数据是否需要更新
+                existing_data = self._read_json(prices_file, [])
+                if existing_data:
+                    # 基于日期范围判断是否需要更新
+                    existing_dates = sorted([p["time"] for p in existing_data if p.get("time")])
+                    new_dates = sorted([p.time for p in prices if p.time])
+                    
+                    if existing_dates and new_dates:
+                        # 检查日期范围是否一致
+                        if existing_dates[0] == new_dates[0] and existing_dates[-1] == new_dates[-1]:
+                            need_update = False
+            
+            if need_update:
+                self._write_json(prices_file, [p.model_dump() for p in prices])
+                self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
+                self._update_index(ticker, end_date, snapshot_dir, data_source)
+                logger.info("[Snapshot] 价格快照已导出: %s/%s, %d 条", ticker, end_date, len(prices))
         except Exception as e:
             logger.warning("[Snapshot] 价格快照导出失败: %s/%s - %s", ticker, end_date, e)
 
@@ -87,18 +100,33 @@ class DataSnapshotExporter:
         """导出财务指标快照"""
         if not self.config.enabled or not metrics:
             return
-        dedup_key = f"metrics:{ticker}:{end_date}"
-        if dedup_key in self._exported:
-            return
         try:
             snapshot_dir = self._ensure_dir(ticker, end_date)
-            financials: dict[str, Any] = self._read_json(snapshot_dir / "financials.json", {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
-            financials["financial_metrics"] = [m.model_dump() for m in metrics]
-            self._write_json(snapshot_dir / "financials.json", financials)
-            self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
-            self._update_index(ticker, end_date, snapshot_dir, data_source)
-            self._exported.add(dedup_key)
-            logger.info("[Snapshot] 财务指标快照已导出: %s/%s, %d 期", ticker, end_date, len(metrics))
+            financials_file = snapshot_dir / "financials.json"
+            
+            # 检查快照文件是否存在，或者是否需要更新
+            need_update = True
+            if financials_file.exists():
+                # 检查文件是否为空或数据是否需要更新
+                existing_data = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})
+                existing_metrics = existing_data.get("financial_metrics", [])
+                if existing_metrics:
+                    # 基于报告期判断是否需要更新
+                    existing_periods = sorted([m["report_period"] for m in existing_metrics if m.get("report_period")])
+                    new_periods = sorted([m.report_period for m in metrics if m.report_period])
+                    
+                    if existing_periods and new_periods:
+                        # 检查报告期是否一致
+                        if existing_periods == new_periods:
+                            need_update = False
+            
+            if need_update:
+                financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
+                financials["financial_metrics"] = [m.model_dump() for m in metrics]
+                self._write_json(financials_file, financials)
+                self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
+                self._update_index(ticker, end_date, snapshot_dir, data_source)
+                logger.info("[Snapshot] 财务指标快照已导出: %s/%s, %d 期", ticker, end_date, len(metrics))
         except Exception as e:
             logger.warning("[Snapshot] 财务指标快照导出失败: %s/%s - %s", ticker, end_date, e)
 
@@ -106,18 +134,33 @@ class DataSnapshotExporter:
         """导出财务报表数据快照"""
         if not self.config.enabled or not line_items:
             return
-        dedup_key = f"line_items:{ticker}:{end_date}"
-        if dedup_key in self._exported:
-            return
         try:
             snapshot_dir = self._ensure_dir(ticker, end_date)
-            financials: dict[str, Any] = self._read_json(snapshot_dir / "financials.json", {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
-            financials["line_items"] = [item.model_dump() for item in line_items]
-            self._write_json(snapshot_dir / "financials.json", financials)
-            self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
-            self._update_index(ticker, end_date, snapshot_dir, data_source)
-            self._exported.add(dedup_key)
-            logger.info("[Snapshot] 财务报表快照已导出: %s/%s, %d 条", ticker, end_date, len(line_items))
+            financials_file = snapshot_dir / "financials.json"
+            
+            # 检查快照文件是否存在，或者是否需要更新
+            need_update = True
+            if financials_file.exists():
+                # 检查文件是否为空或数据是否需要更新
+                existing_data = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})
+                existing_items = existing_data.get("line_items", [])
+                if existing_items:
+                    # 基于报告期判断是否需要更新
+                    existing_periods = sorted([item["report_period"] for item in existing_items if item.get("report_period")])
+                    new_periods = sorted([item.report_period for item in line_items if item.report_period])
+                    
+                    if existing_periods and new_periods:
+                        # 检查报告期是否一致
+                        if existing_periods == new_periods:
+                            need_update = False
+            
+            if need_update:
+                financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
+                financials["line_items"] = [item.model_dump() for item in line_items]
+                self._write_json(financials_file, financials)
+                self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
+                self._update_index(ticker, end_date, snapshot_dir, data_source)
+                logger.info("[Snapshot] 财务报表快照已导出: %s/%s, %d 条", ticker, end_date, len(line_items))
         except Exception as e:
             logger.warning("[Snapshot] 财务报表快照导出失败: %s/%s - %s", ticker, end_date, e)
 

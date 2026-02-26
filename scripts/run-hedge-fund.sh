@@ -11,6 +11,8 @@ DEFAULT_INITIAL_CASH=100000.0
 DEFAULT_MARGIN_REQUIREMENT=0.0
 DEFAULT_SHOW_REASONING=false
 DEFAULT_SHOW_AGENT_GRAPH=false
+DEFAULT_START_DATE=""
+DEFAULT_END_DATE=""
 
 # 显示帮助信息
 show_help() {
@@ -24,6 +26,8 @@ show_help() {
     echo "  --ollama                使用Ollama本地LLM"
     echo "  --initial-cash CASH     初始现金 (默认: $DEFAULT_INITIAL_CASH)"
     echo "  --margin-requirement MR 保证金要求比例 (默认: $DEFAULT_MARGIN_REQUIREMENT)"
+    echo "  --start-date DATE       开始日期 (YYYY-MM-DD，默认: 30天前)"
+    echo "  --end-date DATE         结束日期 (YYYY-MM-DD，默认: 当前日期)"
     echo "  --show-reasoning        显示每个代理的推理过程"
     echo "  --show-agent-graph      显示代理图表"
     echo "  --help                  显示此帮助信息"
@@ -33,6 +37,8 @@ show_help() {
     echo "  ./scripts/run-hedge-fund.sh --ticker 600158 --model MiniMax-M2.5"
     echo "  ./scripts/run-hedge-fund.sh --ticker AAPL,MSFT --model gpt-4o --analysts-all"
     echo "  ./scripts/run-hedge-fund.sh --ticker 600519 --initial-cash 500000"
+    echo "  ./scripts/run-hedge-fund.sh --ticker 600158 --start-date 2026-01-01 --end-date 2026-02-25"
+    echo "  ./scripts/run-hedge-fund.sh --ticker 600158 --end-date 2026-02-25"
 }
 
 # 显示分析师帮助信息
@@ -69,6 +75,8 @@ ANALYSTS_ALL=false
 OLAMA="$DEFAULT_OLAMA"
 INITIAL_CASH="$DEFAULT_INITIAL_CASH"
 MARGIN_REQUIREMENT="$DEFAULT_MARGIN_REQUIREMENT"
+START_DATE="$DEFAULT_START_DATE"
+END_DATE="$DEFAULT_END_DATE"
 SHOW_REASONING="$DEFAULT_SHOW_REASONING"
 SHOW_AGENT_GRAPH="$DEFAULT_SHOW_AGENT_GRAPH"
 
@@ -102,6 +110,14 @@ while [[ $# -gt 0 ]]; do
             MARGIN_REQUIREMENT="$2"
             shift 2
             ;;
+        --start-date)
+            START_DATE="$2"
+            shift 2
+            ;;
+        --end-date)
+            END_DATE="$2"
+            shift 2
+            ;;
         --show-reasoning)
             SHOW_REASONING=true
             shift
@@ -127,6 +143,14 @@ done
 
 # 构建命令
 COMMAND="uv run python src/main.py --tickers $TICKER --model $MODEL"
+
+# 添加日期参数
+if [ -n "$START_DATE" ]; then
+    COMMAND="$COMMAND --start-date $START_DATE"
+fi
+if [ -n "$END_DATE" ]; then
+    COMMAND="$COMMAND --end-date $END_DATE"
+fi
 
 # 添加分析师参数
 if [ "$ANALYSTS_ALL" = true ]; then
