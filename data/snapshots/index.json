@@ -12,5 +12,40 @@
     "snapshot_path": "data/snapshots/688363/2026-02-26",
     "created_at": 1772086882.799079,
     "data_source": "tushare"
+  },
+  {
+    "ticker": "300171",
+    "date": "2026-02-26",
+    "snapshot_path": "data/snapshots/300171/2026-02-26",
+    "created_at": 1772087204.550712,
+    "data_source": "tushare"
+  },
+  {
+    "ticker": "300677",
+    "date": "2026-02-26",
+    "snapshot_path": "data/snapshots/300677/2026-02-26",
+    "created_at": 1772087703.408982,
+    "data_source": "tushare"
+  },
+  {
+    "ticker": "300118",
+    "date": "2026-02-26",
+    "snapshot_path": "data/snapshots/300118/2026-02-26",
+    "created_at": 1772087871.224653,
+    "data_source": "tushare"
+  },
+  {
+    "ticker": "601016",
+    "date": "2026-02-26",
+    "snapshot_path": "data/snapshots/601016/2026-02-26",
+    "created_at": 1772088008.594183,
+    "data_source": "tushare"
+  },
+  {
+    "ticker": "688599",
+    "date": "2026-02-26",
+    "snapshot_path": "data/snapshots/688599/2026-02-26",
+    "created_at": 1772088028.440752,
+    "data_source": "tushare"
   }
 ]
