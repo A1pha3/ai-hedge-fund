@@ -675,8 +675,8 @@ def save_daily_gainers_report(items: list[dict], trade_date: str, pct_threshold:
         lines.append(f"- **涨幅阈值**: > {pct_threshold:.2f}%")
         lines.append(f"- **结果数量**: {len(items)}\n")
 
-        lines.append("| 股票代码 | 股票名称 | 地域 | 所属行业 | 市场类型 | 上市日期 | 涨幅 | 昨日收盘价 | 今日收盘价 |")
-        lines.append("|----------|----------|------|----------|----------|----------|------|------------|------------|")
+        lines.append("| 股票代码 | 股票名称 | 涨幅 | 昨日收盘价 | 今日收盘价 | 地域 | 所属行业 | 市场类型 | 上市日期 |")
+        lines.append("|----------|----------|------|------------|------------|------|----------|----------|----------|")
         for item in items:
             ts_code = item.get("ts_code", "-")
             name = item.get("name", "-")
@@ -690,7 +690,7 @@ def save_daily_gainers_report(items: list[dict], trade_date: str, pct_threshold:
             pct_text = f"{pct_chg:.2f}%" if isinstance(pct_chg, (int, float)) else "-"
             pre_text = f"{pre_close:.2f}" if isinstance(pre_close, (int, float)) else "-"
             close_text = f"{close:.2f}" if isinstance(close, (int, float)) else "-"
-            lines.append(f"| {ts_code} | {name} | {area} | {industry} | {market} | {list_date} | {pct_text} | {pre_text} | {close_text} |")
+            lines.append(f"| {ts_code} | {name} | {pct_text} | {pre_text} | {close_text} | {area} | {industry} | {market} | {list_date} |")
 
         lines.append("")
         report_path.write_text("\n".join(lines), encoding="utf-8")
