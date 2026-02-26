@@ -1,0 +1,16 @@
+[
+  {
+    "ticker": "688560",
+    "date": "2026-02-26",
+    "snapshot_path": "data/snapshots/688560/2026-02-26",
+    "created_at": 1772086356.342039,
+    "data_source": "tushare"
+  },
+  {
+    "ticker": "688363",
+    "date": "2026-02-26",
+    "snapshot_path": "data/snapshots/688363/2026-02-26",
+    "created_at": 1772086882.799079,
+    "data_source": "tushare"
+  }
+]
