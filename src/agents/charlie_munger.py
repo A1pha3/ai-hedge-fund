@@ -14,6 +14,7 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
+from src.utils.financial_calcs import calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -441,11 +442,14 @@ def analyze_predictability(financial_line_items: list) -> dict:
     if not financial_line_items or len(financial_line_items) < 5:
         return {"score": 0, "details": "Insufficient data to analyze business predictability (need 5+ years)"}
 
-    # 1. Revenue stability and growth
+    # 1. Revenue stability and growth - 使用统一的 CAGR 计算方法
     revenues = [item.revenue for item in financial_line_items if hasattr(item, "revenue") and item.revenue is not None]
 
     if revenues and len(revenues) >= 5:
-        # Calculate year-over-year growth rates, handling zero division
+        # Calculate year-over-year growth rates using CAGR for consistency
+        cagr_growth = calculate_revenue_growth_cagr(revenues)
+
+        # Calculate year-over-year growth rates for volatility analysis
         growth_rates = []
         for i in range(len(revenues) - 1):
             if revenues[i + 1] != 0:  # Avoid division by zero
@@ -458,20 +462,23 @@ def analyze_predictability(financial_line_items: list) -> dict:
             avg_growth = sum(growth_rates) / len(growth_rates)
             growth_volatility = sum(abs(r - avg_growth) for r in growth_rates) / len(growth_rates)
 
+            # Use CAGR if available, otherwise fall back to avg_growth
+            display_growth = cagr_growth if cagr_growth is not None else avg_growth
+
             if avg_growth > 0.05 and growth_volatility < 0.1:
                 # Steady, consistent growth (Munger loves this)
                 score += 3
-                details.append(f"Highly predictable revenue: {avg_growth:.1%} avg growth with low volatility")
+                details.append(f"Highly predictable revenue: {display_growth:.1%} avg growth with low volatility")
             elif avg_growth > 0 and growth_volatility < 0.2:
                 # Positive but somewhat volatile growth
                 score += 2
-                details.append(f"Moderately predictable revenue: {avg_growth:.1%} avg growth with some volatility")
+                details.append(f"Moderately predictable revenue: {display_growth:.1%} avg growth with some volatility")
             elif avg_growth > 0:
                 # Growing but unpredictable
                 score += 1
-                details.append(f"Growing but less predictable revenue: {avg_growth:.1%} avg growth with high volatility")
+                details.append(f"Growing but less predictable revenue: {display_growth:.1%} avg growth with high volatility")
             else:
-                details.append(f"Declining or highly unpredictable revenue: {avg_growth:.1%} avg growth")
+                details.append(f"Declining or highly unpredictable revenue: {display_growth:.1%} avg growth")
     else:
         details.append("Insufficient revenue history for predictability analysis")
 

@@ -8,6 +8,7 @@ from typing_extensions import Literal
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
+from src.utils.financial_calcs import calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -88,6 +89,10 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
         else:
             signal = "neutral"
 
+        # 计算 revenue growth 用于传递给 LLM
+        revenues = [getattr(li, "revenue", None) for li in line_items if getattr(li, "revenue", None) is not None]
+        revenue_growth = calculate_revenue_growth_cagr(revenues)
+
         analysis_data[ticker] = {
             "signal": signal,
             "score": total_score,
@@ -96,6 +101,7 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
             "valuation": valuation,
             "double_potential": double_potential,
             "market_cap": market_cap,
+            "revenue_growth": revenue_growth,
         }
 
         progress.update_status(agent_id, ticker, "Generating Pabrai analysis")
@@ -257,16 +263,14 @@ def analyze_double_potential(financial_line_items: list, market_cap: float | Non
 
     details: list[str] = []
 
-    # Use revenue and FCF trends as rough growth proxy (keep it simple)
+    # Use revenue and FCF trends as rough growth proxy (keep it simple) - 使用统一的 CAGR 计算方法
     revenues = [getattr(li, "revenue", None) for li in financial_line_items if getattr(li, "revenue", None) is not None]
     fcfs = [getattr(li, "free_cash_flow", None) for li in financial_line_items if getattr(li, "free_cash_flow", None) is not None]
 
     score = 0
     if revenues and len(revenues) >= 3:
-        recent_rev = sum(revenues[:3]) / 3
-        older_rev = sum(revenues[-3:]) / 3 if len(revenues) >= 6 else revenues[-1]
-        if older_rev > 0:
-            rev_growth = (recent_rev / older_rev) - 1
+        rev_growth = calculate_revenue_growth_cagr(revenues)
+        if rev_growth is not None:
             if rev_growth > 0.15:
                 score += 2
                 details.append(f"Strong revenue trajectory ({rev_growth:.1%})")

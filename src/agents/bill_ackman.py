@@ -8,6 +8,7 @@ from typing_extensions import Literal
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
+from src.utils.financial_calcs import calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -131,22 +132,20 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze business quality"}
 
-    # 1. Multi-period revenue growth analysis
+    # 1. Multi-period revenue growth analysis - 使用统一的 CAGR 计算方法
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
-    if len(revenues) >= 2:
-        initial, final = revenues[-1], revenues[0]
-        if initial and final and final > initial:
-            growth_rate = (final - initial) / abs(initial)
-            if growth_rate > 0.5:  # e.g., 50% cumulative growth
-                score += 2
-                details.append(f"Revenue grew by {(growth_rate*100):.1f}% over the full period (strong growth).")
-            else:
-                score += 1
-                details.append(f"Revenue growth is positive but under 50% cumulatively ({(growth_rate*100):.1f}%).")
+    growth_rate = calculate_revenue_growth_cagr(revenues)
+    if growth_rate is not None:
+        if growth_rate > 0.15:  # 15% CAGR is strong
+            score += 2
+            details.append(f"Revenue CAGR of {growth_rate:.1%} over the period (strong growth).")
+        elif growth_rate > 0.05:  # 5% CAGR is moderate
+            score += 1
+            details.append(f"Revenue CAGR of {growth_rate:.1%} (moderate growth).")
         else:
-            details.append("Revenue did not grow significantly or data insufficient.")
+            details.append(f"Revenue CAGR of {growth_rate:.1%} (weak growth).")
     else:
-        details.append("Not enough revenue data for multi-period trend.")
+        details.append("Insufficient revenue data for CAGR calculation.")
 
     # 2. Operating margin and free cash flow consistency
     fcf_vals = [getattr(item, "free_cash_flow", None) for item in financial_line_items if getattr(item, "free_cash_flow", None) is not None]
@@ -270,24 +269,23 @@ def analyze_activism_potential(financial_line_items: list) -> dict:
     if not financial_line_items:
         return {"score": 0, "details": "Insufficient data for activism potential"}
 
-    # Check revenue growth vs. operating margin
+    # Check revenue growth vs. operating margin - 使用统一的 CAGR 计算方法
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
     op_margins = [getattr(item, "operating_margin", None) for item in financial_line_items if getattr(item, "operating_margin", None) is not None]
 
     if len(revenues) < 2 or not op_margins:
         return {"score": 0, "details": "Not enough data to assess activism potential (need multi-year revenue + margins)."}
 
-    initial, final = revenues[-1], revenues[0]
-    revenue_growth = (final - initial) / abs(initial) if initial else 0
+    revenue_growth = calculate_revenue_growth_cagr(revenues)
     avg_margin = sum(op_margins) / len(op_margins)
 
     score = 0
     details = []
 
     # Suppose if there's decent revenue growth but margins are below 10%, Ackman might see activism potential.
-    if revenue_growth > 0.15 and avg_margin < 0.10:
+    if revenue_growth is not None and revenue_growth > 0.15 and avg_margin < 0.10:
         score += 2
-        details.append(f"Revenue growth is healthy (~{revenue_growth*100:.1f}%), but margins are low (avg {avg_margin*100:.1f}%). " "Activism could unlock margin improvements.")
+        details.append(f"Revenue CAGR is healthy (~{revenue_growth*100:.1f}%), but margins are low (avg {avg_margin*100:.1f}%). " "Activism could unlock margin improvements.")
     else:
         details.append("No clear sign of activism opportunity (either margins are already decent or growth is weak).")
 

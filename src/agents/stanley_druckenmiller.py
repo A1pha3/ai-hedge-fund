@@ -16,6 +16,7 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
+from src.utils.financial_calcs import calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -176,31 +177,24 @@ def analyze_growth_and_momentum(financial_line_items: list, prices: list) -> dic
     raw_score = 0  # We'll sum up a maximum of 9 raw points, then scale to 0–10
 
     #
-    # 1. Revenue Growth (annualized CAGR)
+    # 1. Revenue Growth (annualized CAGR) - 使用统一的计算方法
     #
     revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
-    if len(revenues) >= 2:
-        latest_rev = revenues[0]
-        older_rev = revenues[-1]
-        num_years = len(revenues) - 1
-        if older_rev > 0 and latest_rev > 0:
-            # CAGR formula: (ending_value/beginning_value)^(1/years) - 1
-            rev_growth = (latest_rev / older_rev) ** (1 / num_years) - 1
-            if rev_growth > 0.08:  # 8% annualized (adjusted for CAGR)
-                raw_score += 3
-                details.append(f"Strong annualized revenue growth: {rev_growth:.1%}")
-            elif rev_growth > 0.04:  # 4% annualized
-                raw_score += 2
-                details.append(f"Moderate annualized revenue growth: {rev_growth:.1%}")
-            elif rev_growth > 0.01:  # 1% annualized
-                raw_score += 1
-                details.append(f"Slight annualized revenue growth: {rev_growth:.1%}")
-            else:
-                details.append(f"Minimal/negative revenue growth: {rev_growth:.1%}")
+    rev_growth = calculate_revenue_growth_cagr(revenues)
+    if rev_growth is not None:
+        if rev_growth > 0.08:  # 8% annualized (adjusted for CAGR)
+            raw_score += 3
+            details.append(f"Strong annualized revenue growth: {rev_growth:.1%}")
+        elif rev_growth > 0.04:  # 4% annualized
+            raw_score += 2
+            details.append(f"Moderate annualized revenue growth: {rev_growth:.1%}")
+        elif rev_growth > 0.01:  # 1% annualized
+            raw_score += 1
+            details.append(f"Slight annualized revenue growth: {rev_growth:.1%}")
         else:
-            details.append("Older revenue is zero/negative; can't compute revenue growth.")
+            details.append(f"Minimal/negative revenue growth: {rev_growth:.1%}")
     else:
-        details.append("Not enough revenue data points for growth calculation.")
+        details.append("Insufficient revenue data for CAGR calculation.")
 
     #
     # 2. EPS Growth (annualized CAGR)

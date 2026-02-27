@@ -8,6 +8,7 @@ from typing_extensions import Literal
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
+from src.utils.financial_calcs import calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -178,15 +179,15 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
     else:
         details.append("Insufficient gross margin data")
 
-    # 3. Operating Leverage Analysis
+    # 3. Operating Leverage Analysis - 使用统一的 CAGR 计算方法
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
     operating_expenses = [item.operating_expense for item in financial_line_items if hasattr(item, "operating_expense") and item.operating_expense]
 
     if len(revenues) >= 2 and len(operating_expenses) >= 2:
-        rev_growth = (revenues[0] - revenues[-1]) / abs(revenues[-1])
-        opex_growth = (operating_expenses[0] - operating_expenses[-1]) / abs(operating_expenses[-1])
+        rev_growth = calculate_revenue_growth_cagr(revenues)
+        opex_growth = calculate_revenue_growth_cagr(operating_expenses)
 
-        if rev_growth > opex_growth:
+        if rev_growth is not None and opex_growth is not None and rev_growth > opex_growth:
             score += 2
             details.append("Positive operating leverage: Revenue growing faster than expenses")
     else:

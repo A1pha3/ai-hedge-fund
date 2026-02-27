@@ -8,6 +8,7 @@ from typing_extensions import Literal
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
+from src.utils.financial_calcs import calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -235,30 +236,23 @@ def analyze_growth(financial_line_items: list) -> dict[str, any]:
     score = 0
     reasoning = []
 
-    # Revenue CAGR Analysis
+    # Revenue CAGR Analysis - 使用统一的计算方法
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None and getattr(item, "revenue", None) > 0]
+    revenue_cagr = calculate_revenue_growth_cagr(revenues)
 
-    if len(revenues) >= 3:
-        initial_revenue = revenues[-1]  # Oldest
-        final_revenue = revenues[0]  # Latest
-        years = len(revenues) - 1
-
-        if initial_revenue > 0:  # Fixed: Add zero check
-            revenue_cagr = ((final_revenue / initial_revenue) ** (1 / years) - 1) * 100
-
-            if revenue_cagr > 20:  # High growth
-                score += 3
-                reasoning.append(f"Excellent revenue CAGR: {revenue_cagr:.1f}%")
-            elif revenue_cagr > 15:  # Good growth
-                score += 2
-                reasoning.append(f"Good revenue CAGR: {revenue_cagr:.1f}%")
-            elif revenue_cagr > 10:  # Moderate growth
-                score += 1
-                reasoning.append(f"Moderate revenue CAGR: {revenue_cagr:.1f}%")
-            else:
-                reasoning.append(f"Low revenue CAGR: {revenue_cagr:.1f}%")
+    if revenue_cagr is not None:
+        revenue_cagr_pct = revenue_cagr * 100
+        if revenue_cagr_pct > 20:  # High growth
+            score += 3
+            reasoning.append(f"Excellent revenue CAGR: {revenue_cagr_pct:.1f}%")
+        elif revenue_cagr_pct > 15:  # Good growth
+            score += 2
+            reasoning.append(f"Good revenue CAGR: {revenue_cagr_pct:.1f}%")
+        elif revenue_cagr_pct > 10:  # Moderate growth
+            score += 1
+            reasoning.append(f"Moderate revenue CAGR: {revenue_cagr_pct:.1f}%")
         else:
-            reasoning.append("Cannot calculate revenue CAGR from zero base")
+            reasoning.append(f"Low revenue CAGR: {revenue_cagr_pct:.1f}%")
     else:
         reasoning.append("Insufficient revenue data for CAGR calculation")
 

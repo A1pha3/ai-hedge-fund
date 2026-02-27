@@ -13,6 +13,10 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
+from src.utils.financial_calcs import (
+    calculate_revenue_growth_cagr,
+    calculate_simple_revenue_growth,
+)
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -171,28 +175,23 @@ def analyze_lynch_growth(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # We'll sum up points, then scale to 0–10 eventually
 
-    # 1) Revenue Growth
+    # 1) Revenue Growth - 使用统一的 CAGR 计算方法
     revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
-    if len(revenues) >= 2:
-        latest_rev = revenues[0]
-        older_rev = revenues[-1]
-        if older_rev > 0:
-            rev_growth = (latest_rev - older_rev) / abs(older_rev)
-            if rev_growth > 0.25:
-                raw_score += 3
-                details.append(f"Strong revenue growth: {rev_growth:.1%}")
-            elif rev_growth > 0.10:
-                raw_score += 2
-                details.append(f"Moderate revenue growth: {rev_growth:.1%}")
-            elif rev_growth > 0.02:
-                raw_score += 1
-                details.append(f"Slight revenue growth: {rev_growth:.1%}")
-            else:
-                details.append(f"Flat or negative revenue growth: {rev_growth:.1%}")
+    rev_growth = calculate_revenue_growth_cagr(revenues)
+    if rev_growth is not None:
+        if rev_growth > 0.25:
+            raw_score += 3
+            details.append(f"Strong revenue CAGR: {rev_growth:.1%}")
+        elif rev_growth > 0.10:
+            raw_score += 2
+            details.append(f"Moderate revenue CAGR: {rev_growth:.1%}")
+        elif rev_growth > 0.02:
+            raw_score += 1
+            details.append(f"Slight revenue CAGR: {rev_growth:.1%}")
         else:
-            details.append("Older revenue is zero/negative; can't compute revenue growth.")
+            details.append(f"Flat or negative revenue CAGR: {rev_growth:.1%}")
     else:
-        details.append("Not enough revenue data to assess growth.")
+        details.append("Insufficient revenue data for CAGR calculation.")
 
     # 2) EPS Growth
     eps_values = [getattr(fi, "earnings_per_share", None) for fi in financial_line_items if getattr(fi, "earnings_per_share", None) is not None]
