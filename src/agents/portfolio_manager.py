@@ -157,6 +157,54 @@ def compute_allowed_actions(
     return allowed
 
 
+def _make_decision_from_signals(ticker: str, signals: dict, allowed: dict) -> "PortfolioDecision":
+    """
+    Make a trading decision based on analyst signals when LLM fails.
+    Uses weighted voting based on confidence levels.
+    """
+    if not signals:
+        return PortfolioDecision(action="hold", quantity=0, confidence=0.0, reasoning="无分析师信号，默认持有")
+
+    bullish_weight = 0.0
+    bearish_weight = 0.0
+    neutral_weight = 0.0
+    total_confidence = 0.0
+
+    for agent, payload in signals.items():
+        sig = payload.get("sig", "").lower()
+        conf = float(payload.get("conf", 0))
+        total_confidence += conf
+
+        if sig == "bullish":
+            bullish_weight += conf
+        elif sig == "bearish":
+            bearish_weight += conf
+        else:
+            neutral_weight += conf * 0.5
+
+    total_weight = bullish_weight + bearish_weight + neutral_weight
+    if total_weight == 0:
+        return PortfolioDecision(action="hold", quantity=0, confidence=0.0, reasoning="分析师信号权重为零")
+
+    avg_confidence = total_confidence / len(signals) if signals else 0
+
+    if bullish_weight > bearish_weight * 1.5 and "buy" in allowed:
+        qty = min(allowed.get("buy", 0), 100)
+        reasoning = f"多数分析师看涨(权重{bullish_weight:.0f} vs {bearish_weight:.0f})，建议买入"
+        return PortfolioDecision(action="buy", quantity=qty, confidence=min(avg_confidence, 80), reasoning=reasoning)
+    elif bearish_weight > bullish_weight * 1.5:
+        if "short" in allowed:
+            qty = min(allowed.get("short", 0), 100)
+            reasoning = f"多数分析师看跌(权重{bearish_weight:.0f} vs {bullish_weight:.0f})，建议做空"
+            return PortfolioDecision(action="short", quantity=qty, confidence=min(avg_confidence, 80), reasoning=reasoning)
+        elif "sell" in allowed:
+            qty = allowed.get("sell", 0)
+            reasoning = f"多数分析师看跌(权重{bearish_weight:.0f} vs {bullish_weight:.0f})，建议卖出"
+            return PortfolioDecision(action="sell", quantity=qty, confidence=min(avg_confidence, 80), reasoning=reasoning)
+
+    return PortfolioDecision(action="hold", quantity=0, confidence=avg_confidence * 0.5, reasoning=f"信号分歧(涨{bullish_weight:.0f}/跌{bearish_weight:.0f})，建议观望")
+
+
 def _compact_signals(signals_by_ticker: dict[str, dict]) -> dict[str, dict]:
     """Keep only {agent: {sig, conf}} and drop empty agents."""
     out = {}
@@ -220,12 +268,12 @@ def generate_trading_decision(
     }
     prompt = template.invoke(prompt_data)
 
-    # Default factory fills remaining tickers as hold if the LLM fails
     def create_default_portfolio_output():
-        # start from prefilled
         decisions = dict(prefilled_decisions)
         for t in tickers_for_llm:
-            decisions[t] = PortfolioDecision(action="hold", quantity=0, confidence=0.0, reasoning="Default decision: hold")
+            signals = compact_signals.get(t, {})
+            decision = _make_decision_from_signals(t, signals, compact_allowed.get(t, {"hold": 0}))
+            decisions[t] = decision
         return PortfolioManagerOutput(decisions=decisions)
 
     llm_out = call_llm(
