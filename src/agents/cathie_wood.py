@@ -133,9 +133,13 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze disruptive potential"}
 
-    # 1. Revenue Growth Analysis - Check for accelerating growth
+    # 1. Revenue Growth Analysis - Check for accelerating growth using CAGR
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
     if len(revenues) >= 3:  # Need at least 3 periods to check acceleration
+        # 使用统一的 CAGR 计算方法
+        cagr_growth = calculate_revenue_growth_cagr(revenues)
+
+        # 同时计算期间间增长率用于分析增长加速
         growth_rates = []
         for i in range(len(revenues) - 1):
             if revenues[i] and revenues[i + 1]:
@@ -147,17 +151,19 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
             score += 2
             details.append(f"Revenue growth is accelerating: {(growth_rates[0]*100):.1f}% vs {(growth_rates[-1]*100):.1f}%")
 
-        # Check absolute growth rate (most recent growth rate is at index 0)
-        latest_growth = growth_rates[0] if growth_rates else 0
-        if latest_growth > 1.0:
-            score += 3
-            details.append(f"Exceptional revenue growth: {(latest_growth*100):.1f}%")
-        elif latest_growth > 0.5:
-            score += 2
-            details.append(f"Strong revenue growth: {(latest_growth*100):.1f}%")
-        elif latest_growth > 0.2:
-            score += 1
-            details.append(f"Moderate revenue growth: {(latest_growth*100):.1f}%")
+        # 使用 CAGR 作为主要增长率指标
+        if cagr_growth is not None:
+            if cagr_growth > 1.0:
+                score += 3
+                details.append(f"Exceptional revenue CAGR: {cagr_growth:.1%}")
+            elif cagr_growth > 0.5:
+                score += 2
+                details.append(f"Strong revenue CAGR: {cagr_growth:.1%}")
+            elif cagr_growth > 0.2:
+                score += 1
+                details.append(f"Moderate revenue CAGR: {cagr_growth:.1%}")
+        else:
+            details.append("Insufficient revenue data for CAGR calculation")
     else:
         details.append("Insufficient revenue data for growth analysis")
 
