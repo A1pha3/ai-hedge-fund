@@ -43,6 +43,11 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         )
         if not financial_metrics:
             progress.update_status(agent_id, ticker, "Failed: No financial metrics found")
+            valuation_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 0,
+                "reasoning": {"error": "No financial metrics available for valuation analysis"},
+            }
             continue
         most_recent_metrics = financial_metrics[0]
 
@@ -58,6 +63,11 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         )
         if len(line_items) < 2:
             progress.update_status(agent_id, ticker, "Failed: Insufficient financial line items")
+            valuation_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 0,
+                "reasoning": {"error": f"Insufficient financial line items (found {len(line_items)}, need at least 2)"},
+            }
             continue
         li_curr, li_prev = line_items[0], line_items[1]
 
@@ -121,6 +131,11 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         market_cap = get_market_cap(ticker, end_date, api_key=api_key)
         if not market_cap:
             progress.update_status(agent_id, ticker, "Failed: Market cap unavailable")
+            valuation_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 0,
+                "reasoning": {"error": "Market cap unavailable for valuation analysis"},
+            }
             continue
 
         method_values = {
@@ -133,6 +148,14 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         total_weight = sum(v["weight"] for v in method_values.values() if v["value"] > 0)
         if total_weight == 0:
             progress.update_status(agent_id, ticker, "Failed: All valuation methods zero")
+            valuation_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 0,
+                "reasoning": {
+                    "error": "All valuation methods returned zero or negative values",
+                    "details": f"DCF: ${dcf_val:,.2f}, Owner Earnings: ${owner_val:,.2f}, EV/EBITDA: ${ev_ebitda_val:,.2f}, Residual Income: ${rim_val:,.2f}",
+                },
+            }
             continue
 
         for v in method_values.values():
@@ -146,23 +169,34 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         # Enhanced reasoning with DCF scenario details
         reasoning = {}
         for m, vals in method_values.items():
-            if vals["value"] > 0:
-                base_details = f"Value: ${vals['value']:,.2f}, Market Cap: ${market_cap:,.2f}, " f"Gap: {vals['gap']:.1%}, Weight: {vals['weight']*100:.0f}%"
+            # Always include the method, even if value is 0 or negative
+            base_details = f"Value: ${vals['value']:,.2f}, Market Cap: ${market_cap:,.2f}, "
+            if vals["gap"] is not None:
+                base_details += f"Gap: {vals['gap']:.1%}, Weight: {vals['weight']*100:.0f}%"
+            else:
+                base_details += f"Gap: N/A, Weight: {vals['weight']*100:.0f}%"
 
-                # Add enhanced DCF details
-                if m == "dcf" and "dcf_results" in locals():
-                    enhanced_details = f"{base_details}\n" f"  WACC: {wacc:.1%}, Bear: ${dcf_results['downside']:,.2f}, " f"Bull: ${dcf_results['upside']:,.2f}, Range: ${dcf_results['range']:,.2f}"
-                else:
-                    enhanced_details = base_details
+            # Add enhanced DCF details
+            if m == "dcf" and "dcf_results" in locals():
+                enhanced_details = f"{base_details}\n" f"  WACC: {wacc:.1%}, Bear: ${dcf_results['downside']:,.2f}, " f"Bull: ${dcf_results['upside']:,.2f}, Range: ${dcf_results['range']:,.2f}"
+            else:
+                enhanced_details = base_details
 
-                reasoning[f"{m}_analysis"] = {
-                    "signal": ("bullish" if vals["gap"] and vals["gap"] > 0.15 else "bearish" if vals["gap"] and vals["gap"] < -0.15 else "neutral"),
-                    "details": enhanced_details,
-                }
+            reasoning[f"{m}_analysis"] = {
+                "signal": ("bullish" if vals["gap"] and vals["gap"] > 0.15 else "bearish" if vals["gap"] and vals["gap"] < -0.15 else "neutral"),
+                "details": enhanced_details,
+            }
 
         # Add overall DCF scenario summary if available
         if "dcf_results" in locals():
             reasoning["dcf_scenario_analysis"] = {"bear_case": f"${dcf_results['downside']:,.2f}", "base_case": f"${dcf_results['scenarios']['base']:,.2f}", "bull_case": f"${dcf_results['upside']:,.2f}", "wacc_used": f"{wacc:.1%}", "fcf_periods_analyzed": len(fcf_history)}
+        
+        # Add summary if reasoning is still empty (fallback)
+        if not reasoning:
+            reasoning["summary"] = {
+                "signal": signal,
+                "details": f"Weighted valuation gap: {weighted_gap:.1%}. Market Cap: ${market_cap:,.2f}. All valuation methods returned zero or negative values.",
+            }
 
         valuation_analysis[ticker] = {
             "signal": signal,

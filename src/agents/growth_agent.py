@@ -41,6 +41,11 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
         )
         if not financial_metrics or len(financial_metrics) < 4:
             progress.update_status(agent_id, ticker, "Failed: Not enough financial metrics")
+            growth_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 0,
+                "reasoning": {"error": f"Insufficient financial metrics (found {len(financial_metrics) if financial_metrics else 0}, need at least 4)"},
+            }
             continue
 
         most_recent_metrics = financial_metrics[0]
@@ -85,7 +90,41 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
 
         confidence = round(abs(weighted_score - 0.5) * 2 * 100)
 
-        reasoning = {"historical_growth": growth_trends, "growth_valuation": valuation_metrics, "margin_expansion": margin_trends, "insider_conviction": insider_conviction, "financial_health": financial_health, "final_analysis": {"signal": signal, "confidence": confidence, "weighted_score": round(weighted_score, 2)}}
+        # Build structured reasoning compatible with _format_reasoning_to_markdown
+        def fmt_pct(val):
+            return f"{val:.2%}" if val is not None else "N/A"
+
+        def fmt_float(val):
+            return f"{val:.2f}" if val is not None else "N/A"
+
+        reasoning = {
+            "historical_growth": {
+                "signal": "bullish" if growth_trends["score"] > 0.6 else "bearish" if growth_trends["score"] < 0.4 else "neutral",
+                "details": f"Revenue Growth: {fmt_pct(growth_trends['revenue_growth'])}, EPS Growth: {fmt_pct(growth_trends['eps_growth'])}, FCF Growth: {fmt_pct(growth_trends['fcf_growth'])}",
+                "metrics": {k: v for k, v in growth_trends.items() if k != "score"},
+            },
+            "growth_valuation": {
+                "signal": "bullish" if valuation_metrics["score"] > 0.6 else "bearish" if valuation_metrics["score"] < 0.4 else "neutral",
+                "details": f"PEG Ratio: {fmt_float(valuation_metrics['peg_ratio'])}, P/S Ratio: {fmt_float(valuation_metrics['price_to_sales_ratio'])}",
+                "metrics": {k: v for k, v in valuation_metrics.items() if k != "score"},
+            },
+            "margin_expansion": {
+                "signal": "bullish" if margin_trends["score"] > 0.6 else "bearish" if margin_trends["score"] < 0.4 else "neutral",
+                "details": f"Gross Margin: {fmt_pct(margin_trends['gross_margin'])}, Operating Margin: {fmt_pct(margin_trends['operating_margin'])}, Net Margin: {fmt_pct(margin_trends['net_margin'])}",
+                "metrics": {k: v for k, v in margin_trends.items() if k != "score"},
+            },
+            "insider_conviction": {
+                "signal": "bullish" if insider_conviction["score"] > 0.6 else "bearish" if insider_conviction["score"] < 0.4 else "neutral",
+                "details": f"Net Flow Ratio: {insider_conviction['net_flow_ratio']:.2f}, Total Buys: ${insider_conviction['buys']:,.0f}, Total Sells: ${insider_conviction['sells']:,.0f}",
+                "metrics": {k: v for k, v in insider_conviction.items() if k != "score"},
+            },
+            "financial_health": {
+                "signal": "bullish" if financial_health["score"] > 0.6 else "bearish" if financial_health["score"] < 0.4 else "neutral",
+                "details": f"Debt/Equity: {fmt_float(financial_health['debt_to_equity'])}, Current Ratio: {fmt_float(financial_health['current_ratio'])}",
+                "metrics": {k: v for k, v in financial_health.items() if k != "score"},
+            },
+            "final_analysis": {"signal": signal, "confidence": confidence, "weighted_score": round(weighted_score, 2)},
+        }
 
         growth_analysis[ticker] = {
             "signal": signal,

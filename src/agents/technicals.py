@@ -228,6 +228,11 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
 
         if not prices:
             progress.update_status(agent_id, ticker, "Failed: No price data found")
+            technical_analysis[ticker] = {
+                "signal": "neutral",
+                "confidence": 0,
+                "reasoning": {"error": "No price data available for technical analysis"},
+            }
             continue
 
         # Convert prices to a DataFrame
