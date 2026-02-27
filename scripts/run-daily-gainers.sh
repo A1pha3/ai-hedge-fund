@@ -3,7 +3,7 @@
 # 获取每日涨幅超过阈值的 A 股列表（默认剔除 ST）
 
 DEFAULT_TRADE_DATE="$(date +%Y-%m-%d)"
-DEFAULT_PCT_THRESHOLD=3.0
+DEFAULT_PCT_THRESHOLD=5.0
 DEFAULT_OUTPUT_MD=""
 
 show_help() {

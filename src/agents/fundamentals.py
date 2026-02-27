@@ -62,7 +62,7 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
         signals.append("bullish" if profitability_score >= 2 else "bearish" if profitability_score == 0 else "neutral")
         reasoning["profitability_signal"] = {
             "signal": signals[0],
-            "details": (f"ROE: {return_on_equity:.2%}" if return_on_equity else "ROE: N/A") + ", " + (f"Net Margin: {net_margin:.2%}" if net_margin else "Net Margin: N/A") + ", " + (f"Op Margin: {operating_margin:.2%}" if operating_margin else "Op Margin: N/A"),
+            "details": (f"ROE: {return_on_equity:.2%}" if return_on_equity is not None else "ROE: N/A") + ", " + (f"Net Margin: {net_margin:.2%}" if net_margin is not None else "Net Margin: N/A") + ", " + (f"Op Margin: {operating_margin:.2%}" if operating_margin is not None else "Op Margin: N/A"),
         }
 
         progress.update_status(agent_id, ticker, "Analyzing growth")
@@ -81,7 +81,7 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
         signals.append("bullish" if growth_score >= 2 else "bearish" if growth_score == 0 else "neutral")
         reasoning["growth_signal"] = {
             "signal": signals[1],
-            "details": (f"Revenue Growth: {revenue_growth:.2%}" if revenue_growth else "Revenue Growth: N/A") + ", " + (f"Earnings Growth: {earnings_growth:.2%}" if earnings_growth else "Earnings Growth: N/A"),
+            "details": (f"Revenue Growth: {revenue_growth:.2%}" if revenue_growth is not None else "Revenue Growth: N/A") + ", " + (f"Earnings Growth: {earnings_growth:.2%}" if earnings_growth is not None else "Earnings Growth: N/A"),
         }
 
         progress.update_status(agent_id, ticker, "Analyzing financial health")
@@ -102,7 +102,7 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
         signals.append("bullish" if health_score >= 2 else "bearish" if health_score == 0 else "neutral")
         reasoning["financial_health_signal"] = {
             "signal": signals[2],
-            "details": (f"Current Ratio: {current_ratio:.2f}" if current_ratio else "Current Ratio: N/A") + ", " + (f"D/E: {debt_to_equity:.2f}" if debt_to_equity else "D/E: N/A"),
+            "details": (f"Current Ratio: {current_ratio:.2f}" if current_ratio is not None else "Current Ratio: N/A") + ", " + (f"D/E: {debt_to_equity:.2f}" if debt_to_equity is not None else "D/E: N/A"),
         }
 
         progress.update_status(agent_id, ticker, "Analyzing valuation ratios")
@@ -116,12 +116,17 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
             (pb_ratio, 3),  # Reasonable P/B ratio
             (ps_ratio, 5),  # Reasonable P/S ratio
         ]
-        price_ratio_score = sum(metric is not None and metric > threshold for metric, threshold in thresholds)
+        available_price_metrics = [metric for metric, _ in thresholds if metric is not None]
+        if not available_price_metrics:
+            price_ratio_signal = "neutral"
+        else:
+            price_ratio_score = sum(metric > threshold for metric, threshold in thresholds if metric is not None)
+            price_ratio_signal = "bearish" if price_ratio_score >= 2 else "bullish" if price_ratio_score == 0 else "neutral"
 
-        signals.append("bearish" if price_ratio_score >= 2 else "bullish" if price_ratio_score == 0 else "neutral")
+        signals.append(price_ratio_signal)
         reasoning["price_ratios_signal"] = {
             "signal": signals[3],
-            "details": (f"P/E: {pe_ratio:.2f}" if pe_ratio else "P/E: N/A") + ", " + (f"P/B: {pb_ratio:.2f}" if pb_ratio else "P/B: N/A") + ", " + (f"P/S: {ps_ratio:.2f}" if ps_ratio else "P/S: N/A"),
+            "details": (f"P/E: {pe_ratio:.2f}" if pe_ratio is not None else "P/E: N/A") + ", " + (f"P/B: {pb_ratio:.2f}" if pb_ratio is not None else "P/B: N/A") + ", " + (f"P/S: {ps_ratio:.2f}" if ps_ratio is not None else "P/S: N/A"),
         }
 
         progress.update_status(agent_id, ticker, "Calculating final signal")

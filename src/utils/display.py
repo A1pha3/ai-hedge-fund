@@ -438,32 +438,39 @@ def _format_reasoning_to_markdown(reasoning: dict | str) -> str:
             details = value.get("details", "")
             metrics = value.get("metrics", {})
 
-            # 构建表格行
-            signal_emoji = {"BULLISH": "📈", "BEARISH": "📉", "NEUTRAL": "⚖️"}.get(signal_type, "❓")
+            # 优先处理标准信号结构
+            if any(field in value for field in ("signal", "confidence", "details", "metrics")):
+                signal_emoji = {"BULLISH": "📈", "BEARISH": "📉", "NEUTRAL": "⚖️"}.get(signal_type, "❓")
+                title_suffix = f" ({signal_emoji} {signal_type})" if signal_type else ""
+                lines.append(f"\n**{section_title}**{title_suffix}")
+                if confidence != "":
+                    lines.append(f"- 置信度: {confidence}%")
+                if details:
+                    lines.append(f"- 详情: {details}")
 
-            lines.append(f"\n**{section_title}** ({signal_emoji} {signal_type})")
-            if confidence:
-                lines.append(f"- 置信度: {confidence}%")
-            if details:
-                lines.append(f"- 详情: {details}")
-
-            # 添加指标表格
-            if metrics:
+                # 添加指标表格
+                if metrics:
+                    lines.append("")
+                    lines.append("| 指标 | 值 |")
+                    lines.append("|------|------|")
+                    for metric_key, metric_value in metrics.items():
+                        metric_name = metric_key.replace("_", " ").title()
+                        if isinstance(metric_value, float):
+                            lines.append(f"| {metric_name} | {metric_value:.4f} |")
+                        else:
+                            lines.append(f"| {metric_name} | {metric_value} |")
+            else:
+                # 对于 combined_analysis 这类普通字典，完整展开
+                lines.append(f"\n**{section_title}**")
                 lines.append("")
-                lines.append("| 指标 | 值 |")
+                lines.append("| 字段 | 值 |")
                 lines.append("|------|------|")
-                for metric_key, metric_value in metrics.items():
-                    metric_name = metric_key.replace("_", " ").title()
-                    if isinstance(metric_value, float):
-                        lines.append(f"| {metric_name} | {metric_value:.4f} |")
+                for sub_key, sub_value in value.items():
+                    field_name = sub_key.replace("_", " ").title()
+                    if isinstance(sub_value, float):
+                        lines.append(f"| {field_name} | {sub_value:.4f} |")
                     else:
-                        lines.append(f"| {metric_name} | {metric_value} |")
-
-        elif key == "final_analysis" and isinstance(value, dict):
-            lines.append(f"\n**最终分析**")
-            lines.append(f"- 信号: {value.get('signal', '').upper()}")
-            lines.append(f"- 置信度: {value.get('confidence', '')}%")
-            lines.append(f"- 加权得分: {value.get('weighted_score', '')}")
+                        lines.append(f"| {field_name} | {sub_value} |")
 
         elif key in ["reasoning", "analysis"] and isinstance(value, str):
             lines.append(f"\n**分析说明**: {value}")
