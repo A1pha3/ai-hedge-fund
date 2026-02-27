@@ -1,12 +1,12 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-02-27
-**Commit:** aa20bfa
+**Commit:** 036fac2
 **Branch:** main
 
 ## OVERVIEW
 
-AI-powered hedge fund simulator using LangChain/LangGraph multi-agent system. 12 investor + 6 analyst agents generate trading signals, aggregated by risk manager + portfolio manager. CLI + Web (FastAPI + React/ReactFlow) interfaces. Python 3.11+ / TypeScript. A-share market support via akshare + tushare.
+AI-powered hedge fund simulator using LangChain/LangGraph multi-agent system. 18 analyst agents (12 investor personas + 6 technical analysts) generate trading signals, aggregated by risk manager + portfolio manager. CLI + Web (FastAPI + React/ReactFlow) interfaces. Python 3.11+ / TypeScript. A-share market support via akshare + tushare.
 
 ## STRUCTURE
 
@@ -34,6 +34,17 @@ ai-hedge-fund-fork/
 ├── tests/                 # pytest (backtesting unit + integration)
 └── docs/zh-cn/            # Chinese documentation
 ```
+
+## AGENTS
+
+**Investor Personas (12):**
+Aswath Damodaran, Ben Graham, Bill Ackman, Cathie Wood, Charlie Munger, Michael Burry, Mohnish Pabrai, Peter Lynch, Phil Fisher, Rakesh Jhunjhunwala, Stanley Druckenmiller, Warren Buffett
+
+**Technical Analysts (6):**
+Technical Analyst, Fundamentals Analyst, Growth Analyst, News Sentiment Analyst, Sentiment Analyst, Valuation Analyst
+
+**Managers (2):**
+Risk Manager, Portfolio Manager
 
 ## WHERE TO LOOK
 

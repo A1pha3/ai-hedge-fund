@@ -1965,5 +1965,12 @@
     "snapshot_path": "data/snapshots/300118/2026-02-27",
     "created_at": 1772171043.445001,
     "data_source": "tushare"
+  },
+  {
+    "ticker": "001379",
+    "date": "2026-02-27",
+    "snapshot_path": "data/snapshots/001379/2026-02-27",
+    "created_at": 1772175778.83643,
+    "data_source": "tushare"
   }
 ]
