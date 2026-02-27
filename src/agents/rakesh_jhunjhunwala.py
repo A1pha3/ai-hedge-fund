@@ -111,6 +111,7 @@ def rakesh_jhunjhunwala_agent(state: AgentState, agent_id: str = "rakesh_jhunjhu
             "intrinsic_value_analysis": intrinsic_value_analysis,
             "intrinsic_value": intrinsic_value,
             "market_cap": market_cap,
+            "financial_metrics": metrics[0].model_dump() if metrics else None,
         }
 
         # ─── LLM: craft Jhunjhunwala‑style narrative ──────────────────────────────
@@ -606,6 +607,27 @@ def generate_jhunjhunwala_output(
     agent_id: str,
 ) -> RakeshJhunjhunwalaSignal:
     """Get investment decision from LLM with Jhunjhunwala's principles"""
+
+    # Add explicit financial metrics to the data
+    financial_metrics = analysis_data.get("financial_metrics", {})
+    enhanced_data = {
+        **analysis_data,
+        "revenue_growth": financial_metrics.get("revenue_growth"),
+        "earnings_growth": financial_metrics.get("earnings_growth"),
+        "return_on_equity": financial_metrics.get("return_on_equity"),
+        "operating_margin": financial_metrics.get("operating_margin"),
+        "debt_to_equity": financial_metrics.get("debt_to_equity"),
+        "current_ratio": financial_metrics.get("current_ratio"),
+        "gross_margin": financial_metrics.get("gross_margin"),
+        "net_margin": financial_metrics.get("net_margin"),
+        "return_on_assets": financial_metrics.get("return_on_assets"),
+    }
+
+    # 移除可能包含误导性增长率的字段
+    enhanced_data.pop("growth_analysis", None)
+    enhanced_data.pop("profitability_analysis", None)
+    enhanced_data.pop("intrinsic_value_analysis", None)
+
     template = ChatPromptTemplate.from_messages(
         [
             (
@@ -620,10 +642,16 @@ def generate_jhunjhunwala_output(
                 - Growth Focus: Look for companies with consistent earnings and revenue growth
                 - Sell only if fundamentals deteriorate or valuation far exceeds intrinsic value
 
+                CRITICAL RULES (STRICTLY ENFORCED):
+                1. ONLY use data explicitly provided in the Analysis Data section
+                2. NEVER invent, estimate, or make up any numbers or metrics
+                3. If a data point is missing or null, state 'data not available'
+                4. Do NOT reference any data not in the Analysis Data
+
                 When providing your reasoning, be thorough and specific by:
                 1. Explaining the key factors that influenced your decision the most (both positive and negative)
                 2. Highlighting how the company aligns with or violates specific Jhunjhunwala principles
-                3. Providing quantitative evidence where relevant (e.g., specific margins, ROE values, debt levels)
+                3. Providing quantitative evidence ONLY from the provided data (e.g., specific margins, ROE values, debt levels)
                 4. Concluding with a Jhunjhunwala-style assessment of the investment opportunity
                 5. Using Rakesh Jhunjhunwala's voice and conversational style in your explanation
 
@@ -652,7 +680,7 @@ def generate_jhunjhunwala_output(
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(enhanced_data, indent=2), "ticker": ticker})
 
     # Default fallback signal in case parsing fails
     def create_default_rakesh_jhunjhunwala_signal():

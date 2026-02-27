@@ -1970,7 +1970,7 @@
     "ticker": "001379",
     "date": "2026-02-27",
     "snapshot_path": "data/snapshots/001379/2026-02-27",
-    "created_at": 1772175778.83643,
-    "data_source": "tushare"
+    "created_at": 1772180415.507936,
+    "data_source": "cache"
   }
 ]

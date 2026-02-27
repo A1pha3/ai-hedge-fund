@@ -109,6 +109,7 @@ def warren_buffett_agent(state: AgentState, agent_id: str = "warren_buffett_agen
             "intrinsic_value_analysis": intrinsic_value_analysis,
             "market_cap": market_cap,
             "margin_of_safety": margin_of_safety,
+            "financial_metrics": metrics[0].model_dump() if metrics else None,
         }
 
         progress.update_status(agent_id, ticker, "Generating Warren Buffett analysis")
@@ -212,11 +213,6 @@ def analyze_consistency(financial_line_items: list) -> dict[str, any]:
             reasoning.append("Consistent earnings growth over past periods")
         else:
             reasoning.append("Inconsistent earnings growth pattern")
-
-        # Calculate total growth rate from oldest to latest
-        if len(earnings_values) >= 2 and earnings_values[-1] != 0:
-            growth_rate = (earnings_values[0] - earnings_values[-1]) / abs(earnings_values[-1])
-            reasoning.append(f"Total earnings growth of {growth_rate:.1%} over past {len(earnings_values)} periods")
     else:
         reasoning.append("Insufficient earnings data for trend analysis")
 
@@ -710,11 +706,20 @@ def generate_buffett_output(
     """Get investment decision from LLM with a compact prompt."""
 
     # --- Build compact facts here ---
+    financial_metrics = analysis_data.get("financial_metrics", {})
     facts = {
         "score": analysis_data.get("score"),
         "max_score": analysis_data.get("max_score"),
+        "revenue_growth": financial_metrics.get("revenue_growth"),
+        "earnings_growth": financial_metrics.get("earnings_growth"),
+        "return_on_equity": financial_metrics.get("return_on_equity"),
+        "operating_margin": financial_metrics.get("operating_margin"),
+        "debt_to_equity": financial_metrics.get("debt_to_equity"),
+        "current_ratio": financial_metrics.get("current_ratio"),
+        "gross_margin": financial_metrics.get("gross_margin"),
+        "net_margin": financial_metrics.get("net_margin"),
+        "return_on_assets": financial_metrics.get("return_on_assets"),
         "fundamentals": analysis_data.get("fundamental_analysis", {}).get("details"),
-        "consistency": analysis_data.get("consistency_analysis", {}).get("details"),
         "moat": analysis_data.get("moat_analysis", {}).get("details"),
         "pricing_power": analysis_data.get("pricing_power_analysis", {}).get("details"),
         "book_value": analysis_data.get("book_value_analysis", {}).get("details"),
@@ -728,7 +733,13 @@ def generate_buffett_output(
         [
             (
                 "system",
-                "You are Warren Buffett. Decide bullish, bearish, or neutral using only the provided facts.\n"
+                "You are Warren Buffett. Decide bullish, bearish, or neutral using ONLY the provided facts.\n"
+                "\n"
+                "CRITICAL RULES (STRICTLY ENFORCED):\n"
+                "1. ONLY use data explicitly provided in the Facts section\n"
+                "2. NEVER invent, estimate, or make up any numbers or metrics\n"
+                "3. If a data point is missing or null, state 'data not available'\n"
+                "4. Do NOT reference any data not in the Facts\n"
                 "\n"
                 "Checklist for decision:\n"
                 "- Circle of competence\n"
@@ -750,7 +761,7 @@ def generate_buffett_output(
                 "- 30-49%: Outside my expertise or concerning fundamentals\n"
                 "- 10-29%: Poor business or significantly overvalued\n"
                 "\n"
-                "Keep reasoning under 120 characters. Do not invent data. Return JSON only.",
+                "Keep reasoning concise. ONLY use provided facts. Return JSON only.",
             ),
             ("human", "Ticker: {ticker}\n" "Facts:\n{facts}\n\n" "Return exactly:\n" "{{\n" '  "signal": "bullish" | "bearish" | "neutral",\n' '  "confidence": int,\n' '  "reasoning": "short justification in English",\n' '  "reasoning_cn": "same justification in Chinese/中文"\n' "}}"),
         ]
