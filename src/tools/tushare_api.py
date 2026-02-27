@@ -207,6 +207,24 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
         return []
 
 
+def _validate_margin(value: float | None) -> float | None:
+    """验证利润率数据，过滤异常值（利润率应在 -100% 到 100% 之间）"""
+    if value is None:
+        return None
+    if value < -1.0 or value > 1.0:
+        return None
+    return value
+
+
+def _validate_roe(value: float | None) -> float | None:
+    """验证 ROE 数据，过滤异常值（ROE 应在 -200% 到 200% 之间）"""
+    if value is None:
+        return None
+    if value < -2.0 or value > 2.0:
+        return None
+    return value
+
+
 def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10) -> List[FinancialMetrics]:
     """
     使用 Tushare 获取 A 股财务指标
@@ -233,6 +251,15 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
             except Exception:
                 pass
 
+            pe_ratio = float(row.get("pe", 0)) if pd.notna(row.get("pe")) and row.get("pe") != 0 else None
+            pb_ratio = float(row.get("pb", 0)) if pd.notna(row.get("pb")) and row.get("pb") != 0 else None
+            ps_ratio_val = float(row.get("ps", 0)) if pd.notna(row.get("ps")) and row.get("ps") != 0 else None
+            peg_ratio_val = None
+            if pe_ratio and pe_ratio > 0:
+                earnings_growth = float(row.get("netprofit_yoy", 0)) / 100 if pd.notna(row.get("netprofit_yoy")) else None
+                if earnings_growth and earnings_growth > 0:
+                    peg_ratio_val = pe_ratio / (earnings_growth * 100)
+
             metrics.append(
                 FinancialMetrics(
                     ticker=ticker,
@@ -241,18 +268,18 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     currency="CNY",
                     market_cap=market_cap,
                     enterprise_value=None,
-                    price_to_earnings_ratio=float(row.get("pe", 0)) if pd.notna(row.get("pe")) else None,
-                    price_to_book_ratio=float(row.get("pb", 0)) if pd.notna(row.get("pb")) else None,
-                    price_to_sales_ratio=None,
+                    price_to_earnings_ratio=pe_ratio,
+                    price_to_book_ratio=pb_ratio,
+                    price_to_sales_ratio=ps_ratio_val,
                     enterprise_value_to_ebitda_ratio=None,
                     enterprise_value_to_revenue_ratio=None,
                     free_cash_flow_yield=None,
-                    peg_ratio=None,
-                    gross_margin=float(row.get("grossprofit_margin", 0)) / 100 if pd.notna(row.get("grossprofit_margin")) else None,
-                    operating_margin=float(row.get("op_of_gr", 0)) / 100 if pd.notna(row.get("op_of_gr")) else None,
-                    net_margin=float(row.get("netprofit_margin", 0)) / 100 if pd.notna(row.get("netprofit_margin")) else None,
-                    return_on_equity=float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None,
-                    return_on_assets=float(row.get("roa", 0)) / 100 if pd.notna(row.get("roa")) else None,
+                    peg_ratio=peg_ratio_val,
+                    gross_margin=_validate_margin(float(row.get("grossprofit_margin", 0)) / 100 if pd.notna(row.get("grossprofit_margin")) else None),
+                    operating_margin=_validate_margin(float(row.get("op_of_gr", 0)) / 100 if pd.notna(row.get("op_of_gr")) else None),
+                    net_margin=_validate_margin(float(row.get("netprofit_margin", 0)) / 100 if pd.notna(row.get("netprofit_margin")) else None),
+                    return_on_equity=_validate_roe(float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None),
+                    return_on_assets=_validate_roe(float(row.get("roa", 0)) / 100 if pd.notna(row.get("roa")) else None),
                     return_on_invested_capital=None,
                     asset_turnover=float(row.get("assets_turn", 0)) if pd.notna(row.get("assets_turn")) else None,
                     inventory_turnover=None,

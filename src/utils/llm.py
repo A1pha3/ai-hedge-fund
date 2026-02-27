@@ -112,13 +112,16 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
 
 
 def extract_json_from_response(content: str) -> dict | None:
-    """Extracts JSON from markdown-formatted response, handling <think> tags."""
+    """Extracts JSON from markdown-formatted response, handling various response formats."""
     try:
-        # Remove <think>...</think> blocks (DeepSeek reasoning) - case insensitive
-        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
+        if not content:
+            return None
+
+        # Remove thinking blocks (DeepSeek reasoning) - case insensitive
+        content = re.sub(r"<thinkin.*?/thinking>", "", content, flags=re.DOTALL | re.IGNORECASE)
         content = content.strip()
 
-        # Try to find JSON in markdown code block
+        # Try to find JSON in markdown code block with 'json' marker
         json_start = content.find("```json")
         if json_start != -1:
             json_text = content[json_start + 7 :]  # Skip past ```json
@@ -127,12 +130,37 @@ def extract_json_from_response(content: str) -> dict | None:
                 json_text = json_text[:json_end].strip()
                 return json.loads(json_text)
 
-        # Try to find raw JSON object
-        json_match = re.search(r"\{.*\}", content, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
+        # Try to find JSON in markdown code block without 'json' marker
+        json_start = content.find("```")
+        if json_start != -1:
+            json_text = content[json_start + 3 :]  # Skip past ```
+            json_end = json_text.find("```")
+            if json_end != -1:
+                json_text = json_text[:json_end].strip()
+                if json_text.startswith("{") or json_text.startswith("["):
+                    return json.loads(json_text)
+
+        # Try to find raw JSON object with balanced braces
+        brace_count = 0
+        start_idx = -1
+        for i, char in enumerate(content):
+            if char == "{":
+                if brace_count == 0:
+                    start_idx = i
+                brace_count += 1
+            elif char == "}":
+                brace_count -= 1
+                if brace_count == 0 and start_idx != -1:
+                    json_str = content[start_idx : i + 1]
+                    try:
+                        return json.loads(json_str)
+                    except json.JSONDecodeError:
+                        continue
+
     except Exception as e:
         print(f"Error extracting JSON from response: {e}")
+        if content:
+            print(f"Content preview: {content[:500]}...")
     return None
 
 
