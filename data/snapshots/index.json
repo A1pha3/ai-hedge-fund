@@ -1958,5 +1958,12 @@
     "snapshot_path": "data/snapshots/301175/2026-02-27",
     "created_at": 1772132113.16279,
     "data_source": "tushare"
+  },
+  {
+    "ticker": "300118",
+    "date": "2026-02-27",
+    "snapshot_path": "data/snapshots/300118/2026-02-27",
+    "created_at": 1772170507.50547,
+    "data_source": "tushare"
   }
 ]
