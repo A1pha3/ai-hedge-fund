@@ -458,14 +458,8 @@
       "period": "ttm",
       "currency": "CNY",
       "capital_expenditure": 90931985.46,
-      "net_income": 251699486.6,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2624229467.75,
-      "total_liabilities": 532643876.39,
-      "shareholders_equity": 2094656192.48,
-      "dividends_and_other_cash_distributions": 193801851.28,
-      "gross_profit": 284762682.47,
-      "revenue": 1298271497.36
+      "net_income": 251699486.6
     },
     {
       "ticker": "300684",
@@ -474,14 +468,8 @@
       "currency": "CNY",
       "capital_expenditure": 54401240.05,
       "depreciation_and_amortization": 29086460.93,
-      "net_income": 121471118.27,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2374596498.22,
-      "total_liabilities": 421085200.36,
-      "shareholders_equity": 1956586971.8,
-      "dividends_and_other_cash_distributions": 193751022.89,
-      "gross_profit": 142058368.43,
-      "revenue": 748052576.25
+      "net_income": 121471118.27
     },
     {
       "ticker": "300684",
@@ -489,101 +477,64 @@
       "period": "ttm",
       "currency": "CNY",
       "capital_expenditure": 21377527.19,
-      "net_income": 61727912.71,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2428764077.17,
-      "total_liabilities": 337787755.73,
-      "shareholders_equity": 2094057602.0,
-      "dividends_and_other_cash_distributions": 34114.75,
-      "gross_profit": 72424406.76,
-      "revenue": 348814103.58
+      "net_income": 61727912.71
     },
     {
       "ticker": "300684",
       "report_period": "20241231",
       "period": "ttm",
       "currency": "CNY",
+      "free_cash_flow": 157384845.1422,
       "capital_expenditure": 61520481.21,
       "depreciation_and_amortization": 58580705.33,
-      "net_income": 201387773.06,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2522564804.78,
-      "total_liabilities": 491885025.2,
-      "shareholders_equity": 2033761214.6,
-      "dividends_and_other_cash_distributions": 71686844.68,
-      "gross_profit": 236808226.27,
-      "revenue": 1566285115.53,
-      "free_cash_flow": 157384845.1422
+      "net_income": 201387773.06
     },
     {
       "ticker": "300684",
       "report_period": "20240930",
       "period": "ttm",
       "currency": "CNY",
+      "free_cash_flow": -105699908.6944,
       "capital_expenditure": 55694649.37,
-      "net_income": 132064244.79,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2462818628.33,
-      "total_liabilities": 519649191.53,
-      "shareholders_equity": 1946222369.07,
-      "dividends_and_other_cash_distributions": 71558981.52,
-      "gross_profit": 152534876.13,
-      "revenue": 1096010027.07,
-      "free_cash_flow": -105699908.6944
+      "net_income": 132064244.79
     },
     {
       "ticker": "300684",
       "report_period": "20240630",
       "period": "ttm",
       "currency": "CNY",
+      "free_cash_flow": -11330021.9683,
       "capital_expenditure": 47761637.5,
       "depreciation_and_amortization": 28650317.52,
-      "net_income": 62698756.62,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2270828909.89,
-      "total_liabilities": 398955580.68,
-      "shareholders_equity": 1873886365.79,
-      "dividends_and_other_cash_distributions": 71528981.52,
-      "gross_profit": 72490324.13,
-      "revenue": 644220301.9,
-      "free_cash_flow": -11330021.9683
+      "net_income": 62698756.62
     },
     {
       "ticker": "300684",
       "report_period": "20240331",
       "period": "ttm",
       "currency": "CNY",
-      "net_income": 30009376.06,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2263064396.5,
-      "total_liabilities": 343085886.03,
-      "shareholders_equity": 1921535696.39,
-      "gross_profit": 35395159.18,
-      "revenue": 299653704.97
+      "net_income": 30009376.06
     },
     {
       "ticker": "300684",
       "report_period": "20231231",
       "period": "ttm",
       "currency": "CNY",
-      "net_income": 73756521.69,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2262180293.47,
-      "total_liabilities": 367280956.28,
-      "shareholders_equity": 1896074420.57,
-      "gross_profit": 92280132.15,
-      "revenue": 1257911746.32
+      "net_income": 73756521.69
     },
     {
       "ticker": "300684",
       "report_period": "20230930",
       "period": "ttm",
       "currency": "CNY",
-      "net_income": 40632356.55,
       "outstanding_shares": 299509223.0,
-      "total_assets": 2242426015.77,
-      "total_liabilities": 360534415.94,
-      "shareholders_equity": 1874099239.81
+      "net_income": 40632356.55
     },
     {
       "ticker": "300684",

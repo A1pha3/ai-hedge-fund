@@ -320,59 +320,57 @@
     {
       "ticker": "688807",
       "report_period": "20250930",
-      "period": "annual",
+      "period": "ttm",
       "currency": "CNY",
       "net_income": 62076800.0
     },
     {
       "ticker": "688807",
       "report_period": "20250630",
-      "period": "annual",
+      "period": "ttm",
       "currency": "CNY",
-      "revenue": 238498675.39,
-      "net_income": 46958808.57,
       "free_cash_flow": -14661968.4771,
+      "net_income": 46958808.57,
+      "depreciation_and_amortization": 8206863.32,
       "capital_expenditure": 22090849.13,
-      "shareholders_equity": 781532905.66,
-      "outstanding_shares": 60000000.0
+      "revenue": 238498675.39
     },
     {
       "ticker": "688807",
       "report_period": "20241231",
-      "period": "annual",
+      "period": "ttm",
       "currency": "CNY",
-      "revenue": 410559117.39,
-      "net_income": 77866366.08,
       "free_cash_flow": -94897699.1087,
+      "net_income": 77866366.08,
+      "depreciation_and_amortization": 15349660.65,
       "capital_expenditure": 23765023.3,
-      "shareholders_equity": 725121928.09,
-      "outstanding_shares": 60000000.0
+      "revenue": 410559117.39
     },
     {
       "ticker": "688807",
       "report_period": "20240930",
-      "period": "annual",
+      "period": "ttm",
       "currency": "CNY",
       "net_income": 57189100.0
     },
     {
       "ticker": "688807",
       "report_period": "20231231",
-      "period": "annual",
+      "period": "ttm",
       "currency": "CNY",
       "net_income": 54914100.0
     },
     {
       "ticker": "688807",
       "report_period": "20221231",
-      "period": "annual",
+      "period": "ttm",
       "currency": "CNY",
       "net_income": 95731400.0
     },
     {
       "ticker": "688807",
       "report_period": "20141231",
-      "period": "annual",
+      "period": "ttm",
       "currency": "CNY"
     }
   ]
