@@ -284,8 +284,38 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         df_fin = pro.fina_indicator(ts_code=ts_code, limit=limit)
         if df_fin is None or df_fin.empty:
             return []
+
+        # 获取现金流量表数据以补充 FCF 字段
+        df_cash = None
+        try:
+            df_cash = pro.cashflow(ts_code=ts_code, limit=limit)
+        except Exception:
+            pass
+
+        # 获取总股本用于计算 free_cash_flow_per_share
+        df_bal = None
+        try:
+            df_bal = pro.balancesheet(ts_code=ts_code, limit=limit)
+        except Exception:
+            pass
+
         metrics = []
-        for _, row in df_fin.iterrows():
+        # 预计算 FCF growth 所需的 FCF 值列表
+        fcf_values = []
+        if df_cash is not None and not df_cash.empty:
+            for _, row in df_fin.iterrows():
+                end_date_str = str(row.get("end_date", ""))
+                cash_row = df_cash[df_cash["end_date"] == end_date_str]
+                if not cash_row.empty:
+                    fcf_val = cash_row.iloc[0].get("free_cashflow")
+                    if fcf_val is not None and not (isinstance(fcf_val, float) and pd.isna(fcf_val)):
+                        fcf_values.append(float(fcf_val))
+                    else:
+                        fcf_values.append(None)
+                else:
+                    fcf_values.append(None)
+
+        for idx, (_, row) in enumerate(df_fin.iterrows()):
             # 从 daily_basic 获取市值和估值数据（pe/pb/ps 仅存在于 daily_basic，不在 fina_indicator 中）
             end_date_str = str(row.get("end_date", ""))
             daily_data = _get_latest_daily_basic(pro, ts_code, end_date_str)
@@ -313,6 +343,26 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                 if earnings_growth and earnings_growth > 0:
                     peg_ratio_val = pe_ratio / (earnings_growth * 100)
 
+            # 从现金流量表获取 FCF 相关数据
+            fcf_yield_val = None
+            fcf_growth_val = None
+            fcf_per_share_val = None
+            if fcf_values and idx < len(fcf_values) and fcf_values[idx] is not None:
+                current_fcf = fcf_values[idx]
+                # FCF yield = FCF / Market Cap
+                if market_cap and market_cap > 0:
+                    fcf_yield_val = current_fcf / market_cap
+                # FCF per share = FCF / outstanding shares
+                if df_bal is not None and not df_bal.empty:
+                    bal_row = df_bal[df_bal["end_date"] == end_date_str]
+                    if not bal_row.empty:
+                        shares = bal_row.iloc[0].get("total_share")
+                        if shares is not None and not (isinstance(shares, float) and pd.isna(shares)) and float(shares) > 0:
+                            fcf_per_share_val = current_fcf / float(shares)
+                # FCF growth: compare with next period (older)
+                if idx + 1 < len(fcf_values) and fcf_values[idx + 1] is not None and abs(fcf_values[idx + 1]) > 1e-9:
+                    fcf_growth_val = (current_fcf - fcf_values[idx + 1]) / abs(fcf_values[idx + 1])
+
             metrics.append(
                 FinancialMetrics(
                     ticker=ticker,
@@ -326,7 +376,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     price_to_sales_ratio=ps_ratio_val,
                     enterprise_value_to_ebitda_ratio=None,
                     enterprise_value_to_revenue_ratio=None,
-                    free_cash_flow_yield=None,
+                    free_cash_flow_yield=fcf_yield_val,
                     peg_ratio=peg_ratio_val,
                     gross_margin=_validate_margin(float(row.get("grossprofit_margin", 0)) / 100 if pd.notna(row.get("grossprofit_margin")) else None),
                     operating_margin=_validate_margin(float(row.get("op_of_gr", 0)) / 100 if pd.notna(row.get("op_of_gr")) else None),
@@ -351,13 +401,13 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     earnings_growth=float(row.get("netprofit_yoy", 0)) / 100 if pd.notna(row.get("netprofit_yoy")) else None,
                     book_value_growth=None,
                     earnings_per_share_growth=float(row.get("basic_eps_yoy", 0)) / 100 if pd.notna(row.get("basic_eps_yoy")) else None,
-                    free_cash_flow_growth=None,
+                    free_cash_flow_growth=fcf_growth_val,
                     operating_income_growth=float(row.get("op_yoy", 0)) / 100 if pd.notna(row.get("op_yoy")) else None,
                     ebitda_growth=None,
                     payout_ratio=None,
                     earnings_per_share=float(row.get("eps", 0)) if pd.notna(row.get("eps")) else None,
                     book_value_per_share=float(row.get("bps", 0)) if pd.notna(row.get("bps")) else None,
-                    free_cash_flow_per_share=None,
+                    free_cash_flow_per_share=fcf_per_share_val,
                 )
             )
         return metrics

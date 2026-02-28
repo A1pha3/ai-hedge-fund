@@ -6,6 +6,7 @@ from pathlib import Path
 from colorama import Fore, Style
 from tabulate import tabulate
 
+from src.tools.akshare_api import is_ashare
 from src.tools.tushare_api import get_stock_name
 
 from .analysts import ANALYST_ORDER
@@ -14,6 +15,17 @@ from .logging import get_logger
 logger = get_logger(__name__)
 
 REPORT_DIR = Path("data/reports")
+
+
+def _currency_symbol(tickers: list[str] | str | None = None) -> str:
+    """Return currency symbol based on ticker type. A-share uses ¥, others use $."""
+    if tickers is None:
+        return "$"
+    if isinstance(tickers, str):
+        tickers = [tickers]
+    if tickers and is_ashare(tickers[0]):
+        return "¥"
+    return "$"
 
 
 def sort_agent_signals(signals):
@@ -300,6 +312,7 @@ def print_backtest_results(table_rows: list) -> None:
         print(f"Cash Balance: {Fore.CYAN}${float(cash_str):,.2f}{Style.RESET_ALL}")
         print(f"Total Position Value: {Fore.YELLOW}${float(position_str):,.2f}{Style.RESET_ALL}")
         print(f"Total Value: {Fore.WHITE}${float(total_str):,.2f}{Style.RESET_ALL}")
+        # Note: Terminal portfolio summary uses $ parsed from formatted strings; report uses _currency_symbol()
         print(f"Portfolio Return: {latest_summary[10]}")
         if len(latest_summary) > 14 and latest_summary[14]:
             print(f"Benchmark Return: {latest_summary[14]}")
@@ -634,11 +647,12 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
                     base_position_limit_pct = risk_reasoning.get("base_position_limit_pct")
                     combined_position_limit_pct = risk_reasoning.get("combined_position_limit_pct")
                     available_cash = risk_reasoning.get("available_cash")
-                    lines.append(f"| 投资组合价值 | ${portfolio_value:,.2f} |" if portfolio_value is not None else "| 投资组合价值 | N/A |")
-                    lines.append(f"| 当前持仓价值 | ${current_position_value:,.2f} |" if current_position_value is not None else "| 当前持仓价值 | N/A |")
+                    cs = _currency_symbol(tickers)
+                    lines.append(f"| 投资组合价值 | {cs}{portfolio_value:,.2f} |" if portfolio_value is not None else "| 投资组合价值 | N/A |")
+                    lines.append(f"| 当前持仓价值 | {cs}{current_position_value:,.2f} |" if current_position_value is not None else "| 当前持仓价值 | N/A |")
                     lines.append(f"| 基础仓位限制 | {base_position_limit_pct*100:.1f}% |" if base_position_limit_pct is not None else "| 基础仓位限制 | N/A |")
                     lines.append(f"| 组合仓位限制 | {combined_position_limit_pct*100:.1f}% |" if combined_position_limit_pct is not None else "| 组合仓位限制 | N/A |")
-                    lines.append(f"| 可用现金 | ${available_cash:,.2f} |" if available_cash is not None else "| 可用现金 | N/A |")
+                    lines.append(f"| 可用现金 | {cs}{available_cash:,.2f} |" if available_cash is not None else "| 可用现金 | N/A |")
                     lines.append(f"| 风险调整说明 | {risk_reasoning.get('risk_adjustment', 'N/A')} |")
                     lines.append("")
 

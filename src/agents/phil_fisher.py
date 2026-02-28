@@ -17,6 +17,7 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_pe_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class PhilFisherSignal(BaseModel):
@@ -197,33 +198,26 @@ def analyze_fisher_growth_quality(financial_line_items: list) -> dict:
     else:
         details.append("Insufficient revenue data for CAGR calculation.")
 
-    # 2. EPS Growth (annualized CAGR)
-    eps_values = [getattr(fi, "earnings_per_share", None) for fi in financial_line_items if getattr(fi, "earnings_per_share", None) is not None]
-    if len(eps_values) >= 2:
-        latest_eps = eps_values[0]
-        oldest_eps = eps_values[-1]
-        num_years = len(eps_values) - 1
-        if oldest_eps > 0 and latest_eps > 0:
-            # CAGR formula for EPS
-            eps_growth = (latest_eps / oldest_eps) ** (1 / num_years) - 1
-            if eps_growth > 0.20:  # 20% annualized
-                raw_score += 3
-                details.append(f"Very strong annualized EPS growth: {eps_growth:.1%}")
-            elif eps_growth > 0.10:  # 10% annualized
-                raw_score += 2
-                details.append(f"Moderate annualized EPS growth: {eps_growth:.1%}")
-            elif eps_growth > 0.03:  # 3% annualized
-                raw_score += 1
-                details.append(f"Slight annualized EPS growth: {eps_growth:.1%}")
-            else:
-                details.append(f"Minimal or negative annualized EPS growth: {eps_growth:.1%}")
+    # 2. EPS Growth - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
+    eps_growth = calculate_cagr_from_line_items(financial_line_items, field="earnings_per_share")
+    if eps_growth is not None:
+        if eps_growth > 0.20:  # 20% annualized
+            raw_score += 3
+            details.append(f"Very strong annualized EPS growth: {eps_growth:.1%}")
+        elif eps_growth > 0.10:  # 10% annualized
+            raw_score += 2
+            details.append(f"Moderate annualized EPS growth: {eps_growth:.1%}")
+        elif eps_growth > 0.03:  # 3% annualized
+            raw_score += 1
+            details.append(f"Slight annualized EPS growth: {eps_growth:.1%}")
         else:
-            details.append("Oldest EPS near zero; skipping EPS growth calculation.")
+            details.append(f"Minimal or negative annualized EPS growth: {eps_growth:.1%}")
     else:
-        details.append("Not enough EPS data points for growth calculation.")
+        details.append("Insufficient EPS data for CAGR calculation.")
 
     # 3. R&D as % of Revenue (if we have R&D data)
     rnd_values = [getattr(fi, "research_and_development", None) for fi in financial_line_items if getattr(fi, "research_and_development", None) is not None]
+    revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
     if rnd_values and revenues and len(rnd_values) == len(revenues):
         # We'll just look at the most recent for a simple measure
         recent_rnd = rnd_values[0]
@@ -570,6 +564,8 @@ def generate_fisher_output(
               Analysis Data for {ticker}:
               {analysis_data}
 
+              {currency_context}
+
               Return the trading signal in this JSON format:
               {{
                 "signal": "bullish/bearish/neutral",
@@ -582,7 +578,7 @@ def generate_fisher_output(
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker, "currency_context": get_currency_context(ticker)})
 
     def create_default_signal():
         return PhilFisherSignal(

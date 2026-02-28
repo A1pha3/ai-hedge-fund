@@ -19,6 +19,7 @@ from src.tools.api import (
 )
 from src.utils.api_key import get_api_key_from_state
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_symbol
 
 
 def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analyst_agent"):
@@ -145,6 +146,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
             "residual_income": {"value": rim_val, "weight": 0.10},
         }
 
+        cs = get_currency_symbol(ticker)
         total_weight = sum(v["weight"] for v in method_values.values() if v["value"] > 0)
         methods_succeeded = sum(1 for v in method_values.values() if v["value"] > 0)
         methods_total = len(method_values)
@@ -158,7 +160,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
                     "summary": "All valuation methods returned non-positive intrinsic values while market cap is positive",
                     "market_cap": market_cap,
                     "method_values": method_value_summary,
-                    "details": f"DCF: ${dcf_val:,.2f}, Owner Earnings: ${owner_val:,.2f}, EV/EBITDA: ${ev_ebitda_val:,.2f}, Residual Income: ${rim_val:,.2f}",
+                    "details": f"DCF: {cs}{dcf_val:,.2f}, Owner Earnings: {cs}{owner_val:,.2f}, EV/EBITDA: {cs}{ev_ebitda_val:,.2f}, Residual Income: {cs}{rim_val:,.2f}",
                 },
             }
             continue
@@ -179,9 +181,9 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         for m, vals in method_values.items():
             # Always include the method, even if value is 0 or negative
             if vals['value'] == 0:
-                base_details = f"Value: N/A (insufficient data), Market Cap: ${market_cap:,.2f}, "
+                base_details = f"Value: N/A (insufficient data), Market Cap: {cs}{market_cap:,.2f}, "
             else:
-                base_details = f"Value: ${vals['value']:,.2f}, Market Cap: ${market_cap:,.2f}, "
+                base_details = f"Value: {cs}{vals['value']:,.2f}, Market Cap: {cs}{market_cap:,.2f}, "
             if vals["gap"] is not None:
                 base_details += f"Gap: {vals['gap']:.1%}, Weight: {vals['weight']*100:.0f}%"
             else:
@@ -189,7 +191,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
 
             # Add enhanced DCF details
             if m == "dcf" and "dcf_results" in locals():
-                enhanced_details = f"{base_details}\n" f"  WACC: {wacc:.1%}, Bear: ${dcf_results['downside']:,.2f}, " f"Bull: ${dcf_results['upside']:,.2f}, Range: ${dcf_results['range']:,.2f}"
+                enhanced_details = f"{base_details}\n" f"  WACC: {wacc:.1%}, Bear: {cs}{dcf_results['downside']:,.2f}, " f"Bull: {cs}{dcf_results['upside']:,.2f}, Range: {cs}{dcf_results['range']:,.2f}"
             else:
                 enhanced_details = base_details
 
@@ -200,13 +202,13 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
 
         # Add overall DCF scenario summary if available
         if "dcf_results" in locals():
-            reasoning["dcf_scenario_analysis"] = {"bear_case": f"${dcf_results['downside']:,.2f}", "base_case": f"${dcf_results['scenarios']['base']:,.2f}", "bull_case": f"${dcf_results['upside']:,.2f}", "wacc_used": f"{wacc:.1%}", "fcf_periods_analyzed": len(fcf_history)}
+            reasoning["dcf_scenario_analysis"] = {"bear_case": f"{cs}{dcf_results['downside']:,.2f}", "base_case": f"{cs}{dcf_results['scenarios']['base']:,.2f}", "bull_case": f"{cs}{dcf_results['upside']:,.2f}", "wacc_used": f"{wacc:.1%}", "fcf_periods_analyzed": len(fcf_history)}
         
         # Add summary if reasoning is still empty (fallback)
         if not reasoning:
             reasoning["summary"] = {
                 "signal": signal,
-                "details": f"Weighted valuation gap: {weighted_gap:.1%}. Market Cap: ${market_cap:,.2f}. All valuation methods returned zero or negative values.",
+                "details": f"Weighted valuation gap: {weighted_gap:.1%}. Market Cap: {cs}{market_cap:,.2f}. All valuation methods returned zero or negative values.",
             }
 
         valuation_analysis[ticker] = {

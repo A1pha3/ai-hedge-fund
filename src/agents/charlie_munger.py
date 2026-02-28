@@ -17,6 +17,7 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class CharlieMungerSignal(BaseModel):
@@ -295,8 +296,8 @@ def analyze_management_quality(financial_line_items: list, insider_trades: list)
         details.append("Missing FCF or Net Income data")
 
     # 2. Debt management - Munger is cautious about debt
-    # Use total_liabilities (not just total_debt/interest-bearing debt) for D/E consistency with other agents
-    debt_values = [item.total_liabilities for item in financial_line_items if hasattr(item, "total_liabilities") and item.total_liabilities is not None]
+    # Use total_debt (interest-bearing debt only) for D/E consistency with other agents
+    debt_values = [item.total_debt for item in financial_line_items if hasattr(item, "total_debt") and item.total_debt is not None]
 
     equity_values = [item.shareholders_equity for item in financial_line_items if hasattr(item, "shareholders_equity") and item.shareholders_equity is not None]
 
@@ -775,6 +776,7 @@ def generate_munger_output(
                 "Ticker: {ticker}\n"
                 "Facts:\n{facts}\n"
                 "Confidence: {confidence}\n"
+                "{currency_context}\n"
                 "Return exactly:\n"
                 "{{\n"  # escaped {
                 '  "signal": "bullish" | "bearish" | "neutral",\n'
@@ -791,6 +793,7 @@ def generate_munger_output(
             "ticker": ticker,
             "facts": json.dumps(facts_bundle, separators=(",", ":"), ensure_ascii=False),
             "confidence": confidence_hint,
+            "currency_context": get_currency_context(ticker),
         }
     )
 

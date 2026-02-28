@@ -11,6 +11,7 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context, get_currency_symbol
 
 
 class MohnishPabraiSignal(BaseModel):
@@ -71,7 +72,7 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
         market_cap = get_market_cap(ticker, end_date, api_key=api_key)
 
         progress.update_status(agent_id, ticker, "Analyzing downside protection")
-        downside = analyze_downside_protection(line_items)
+        downside = analyze_downside_protection(line_items, ticker)
 
         progress.update_status(agent_id, ticker, "Analyzing cash yield and valuation")
         valuation = analyze_pabrai_valuation(line_items, market_cap)
@@ -133,7 +134,7 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
     return {"messages": [message], "data": state["data"]}
 
 
-def analyze_downside_protection(financial_line_items: list) -> dict[str, any]:
+def analyze_downside_protection(financial_line_items: list, ticker: str = "") -> dict[str, any]:
     """Assess balance-sheet strength and downside resiliency (capital preservation first)."""
     if not financial_line_items:
         return {"score": 0, "details": "Insufficient data"}
@@ -152,11 +153,12 @@ def analyze_downside_protection(financial_line_items: list) -> dict[str, any]:
     net_cash = None
     if cash is not None and debt is not None:
         net_cash = cash - debt
+        cs = get_currency_symbol(ticker)
         if net_cash > 0:
             score += 3
-            details.append(f"Net cash position: ${net_cash:,.0f}")
+            details.append(f"Net cash position: {cs}{net_cash:,.0f}")
         else:
-            details.append(f"Net debt position: ${net_cash:,.0f}")
+            details.append(f"Net debt position: {cs}{net_cash:,.0f}")
 
     # Current ratio
     if current_assets is not None and current_liabilities is not None and current_liabilities > 0:
@@ -343,6 +345,8 @@ def generate_pabrai_output(
           DATA:
           {analysis_data}
 
+          {currency_context}
+
           Return EXACTLY this JSON:
           {{
             "signal": "bullish" | "bearish" | "neutral",
@@ -359,6 +363,7 @@ def generate_pabrai_output(
         {
             "analysis_data": json.dumps(analysis_data, indent=2),
             "ticker": ticker,
+            "currency_context": get_currency_context(ticker),
         }
     )
 

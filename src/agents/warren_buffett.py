@@ -10,6 +10,7 @@ from src.tools.api import get_financial_metrics, get_market_cap, search_line_ite
 from src.utils.api_key import get_api_key_from_state
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context, get_currency_symbol
 
 
 class WarrenBuffettSignal(BaseModel):
@@ -81,7 +82,7 @@ def warren_buffett_agent(state: AgentState, agent_id: str = "warren_buffett_agen
         mgmt_analysis = analyze_management_quality(financial_line_items)
 
         progress.update_status(agent_id, ticker, "Calculating intrinsic value")
-        intrinsic_value_analysis = calculate_intrinsic_value(financial_line_items)
+        intrinsic_value_analysis = calculate_intrinsic_value(financial_line_items, currency_symbol=get_currency_symbol(ticker))
 
         # Calculate total score without circle of competence (LLM will handle that)
         total_score = fundamental_analysis["score"] + consistency_analysis["score"] + moat_analysis["score"] + mgmt_analysis["score"] + pricing_power_analysis["score"] + book_value_analysis["score"]
@@ -359,7 +360,7 @@ def analyze_management_quality(financial_line_items: list) -> dict[str, any]:
     }
 
 
-def calculate_owner_earnings(financial_line_items: list) -> dict[str, any]:
+def calculate_owner_earnings(financial_line_items: list, currency_symbol: str = "$") -> dict[str, any]:
     """
     Calculate owner earnings (Buffett's preferred measure of true earnings power).
     Enhanced methodology: Net Income + Depreciation/Amortization - Maintenance CapEx - Working Capital Changes
@@ -404,7 +405,7 @@ def calculate_owner_earnings(financial_line_items: list) -> dict[str, any]:
                 wc_current = current_assets_current - current_liab_current
                 wc_previous = current_assets_previous - current_liab_previous
                 working_capital_change = wc_current - wc_previous
-                details.append(f"Working capital change: ${working_capital_change:,.0f}")
+                details.append(f"Working capital change: {currency_symbol}{working_capital_change:,.0f}")
         except:
             pass  # Skip working capital adjustment if data unavailable
 
@@ -418,7 +419,7 @@ def calculate_owner_earnings(financial_line_items: list) -> dict[str, any]:
     if maintenance_capex > depreciation * 2:  # Maintenance capex shouldn't typically exceed 2x depreciation
         details.append("Warning: Estimated maintenance capex seems high relative to depreciation")
 
-    details.extend([f"Net income: ${net_income:,.0f}", f"Depreciation: ${depreciation:,.0f}", f"Estimated maintenance capex: ${maintenance_capex:,.0f}", f"Owner earnings: ${owner_earnings:,.0f}"])
+    details.extend([f"Net income: {currency_symbol}{net_income:,.0f}", f"Depreciation: {currency_symbol}{depreciation:,.0f}", f"Estimated maintenance capex: {currency_symbol}{maintenance_capex:,.0f}", f"Owner earnings: {currency_symbol}{owner_earnings:,.0f}"])
 
     return {
         "owner_earnings": owner_earnings,
@@ -476,7 +477,7 @@ def estimate_maintenance_capex(financial_line_items: list) -> float:
         return max(method_1, method_2)
 
 
-def calculate_intrinsic_value(financial_line_items: list) -> dict[str, any]:
+def calculate_intrinsic_value(financial_line_items: list, currency_symbol: str = "$") -> dict[str, any]:
     """
     Calculate intrinsic value using enhanced DCF with owner earnings.
     Uses more sophisticated assumptions and conservative approach like Buffett.
@@ -485,7 +486,7 @@ def calculate_intrinsic_value(financial_line_items: list) -> dict[str, any]:
         return {"intrinsic_value": None, "details": ["Insufficient data for reliable valuation"]}
 
     # Calculate owner earnings with better methodology
-    earnings_data = calculate_owner_earnings(financial_line_items)
+    earnings_data = calculate_owner_earnings(financial_line_items, currency_symbol=currency_symbol)
     if not earnings_data["owner_earnings"]:
         return {"intrinsic_value": None, "details": earnings_data["details"]}
 
@@ -567,7 +568,7 @@ def calculate_intrinsic_value(financial_line_items: list) -> dict[str, any]:
     # Apply additional margin of safety (Buffett's conservatism)
     conservative_intrinsic_value = intrinsic_value * 0.85  # 15% additional haircut
 
-    details.extend([f"Stage 1 PV: ${stage1_pv:,.0f}", f"Stage 2 PV: ${stage2_pv:,.0f}", f"Terminal PV: ${terminal_pv:,.0f}", f"Total IV: ${intrinsic_value:,.0f}", f"Conservative IV (15% haircut): ${conservative_intrinsic_value:,.0f}", f"Owner earnings: ${owner_earnings:,.0f}", f"Discount rate: {discount_rate:.1%}"])
+    details.extend([f"Stage 1 PV: {currency_symbol}{stage1_pv:,.0f}", f"Stage 2 PV: {currency_symbol}{stage2_pv:,.0f}", f"Terminal PV: {currency_symbol}{terminal_pv:,.0f}", f"Total IV: {currency_symbol}{intrinsic_value:,.0f}", f"Conservative IV (15% haircut): {currency_symbol}{conservative_intrinsic_value:,.0f}", f"Owner earnings: {currency_symbol}{owner_earnings:,.0f}", f"Discount rate: {discount_rate:.1%}"])
 
     return {
         "intrinsic_value": conservative_intrinsic_value,
@@ -763,15 +764,14 @@ def generate_buffett_output(
                 "\n"
                 "Keep reasoning concise. ONLY use provided facts. Return JSON only.",
             ),
-            ("human", "Ticker: {ticker}\n" "Facts:\n{facts}\n\n" "Return exactly:\n" "{{\n" '  "signal": "bullish" | "bearish" | "neutral",\n' '  "confidence": int,\n' '  "reasoning": "short justification in English",\n' '  "reasoning_cn": "same justification in Chinese/中文"\n' "}}"),
+            ("human", "Ticker: {ticker}\n" "Facts:\n{facts}\n\n" "{currency_context}\n\n" "Return exactly:\n" "{{\n" '  "signal": "bullish" | "bearish" | "neutral",\n' '  "confidence": int,\n' '  "reasoning": "short justification in English",\n' '  "reasoning_cn": "same justification in Chinese/中文"\n' "}}"),
         ]
     )
 
     prompt = template.invoke(
         {
             "facts": json.dumps(facts, separators=(",", ":"), ensure_ascii=False),
-            "ticker": ticker,
-        }
+            "ticker": ticker,            "currency_context": get_currency_context(ticker),        }
     )
 
     # Default fallback uses int confidence to match schema and avoid parse retries

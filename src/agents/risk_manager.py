@@ -8,6 +8,7 @@ from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_prices, prices_to_df
 from src.utils.api_key import get_api_key_from_state
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_symbol
 
 
 ##### Risk Management Agent #####
@@ -165,7 +166,7 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
             },
         }
 
-        progress.update_status(agent_id, ticker, f"Adj. limit: {combined_limit_pct:.1%}, Available: ${max_position_size:.0f}")
+        progress.update_status(agent_id, ticker, f"Adj. limit: {combined_limit_pct:.1%}, Available: {get_currency_symbol(ticker)}{max_position_size:.0f}")
 
     progress.update_status(agent_id, None, "Done")
 

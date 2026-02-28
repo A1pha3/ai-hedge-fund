@@ -19,6 +19,7 @@ from src.tools.api import (
 from src.utils.api_key import get_api_key_from_state
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class MichaelBurrySignal(BaseModel):
@@ -345,6 +346,8 @@ def _generate_burry_output(
                 Analysis Data for {ticker}:
                 {analysis_data}
 
+                {currency_context}
+
                 Return the trading signal in the following JSON format exactly:
                 {{
                   "signal": "bullish" | "bearish" | "neutral",
@@ -357,7 +360,7 @@ def _generate_burry_output(
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker, "currency_context": get_currency_context(ticker)})
 
     # Default fallback signal in case parsing fails
     def create_default_michael_burry_signal():

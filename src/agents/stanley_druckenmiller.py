@@ -19,6 +19,7 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_pe_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class StanleyDruckenmillerSignal(BaseModel):
@@ -197,32 +198,23 @@ def analyze_growth_and_momentum(financial_line_items: list, prices: list) -> dic
         details.append("Insufficient revenue data for CAGR calculation.")
 
     #
-    # 2. EPS Growth (annualized CAGR)
+    # 2. EPS Growth - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
     #
-    eps_values = [getattr(fi, "earnings_per_share", None) for fi in financial_line_items if getattr(fi, "earnings_per_share", None) is not None]
-    if len(eps_values) >= 2:
-        latest_eps = eps_values[0]
-        older_eps = eps_values[-1]
-        num_years = len(eps_values) - 1
-        # Calculate CAGR for positive EPS values
-        if older_eps > 0 and latest_eps > 0:
-            # CAGR formula for EPS
-            eps_growth = (latest_eps / older_eps) ** (1 / num_years) - 1
-            if eps_growth > 0.08:  # 8% annualized (adjusted for CAGR)
-                raw_score += 3
-                details.append(f"Strong annualized EPS growth: {eps_growth:.1%}")
-            elif eps_growth > 0.04:  # 4% annualized
-                raw_score += 2
-                details.append(f"Moderate annualized EPS growth: {eps_growth:.1%}")
-            elif eps_growth > 0.01:  # 1% annualized
-                raw_score += 1
-                details.append(f"Slight annualized EPS growth: {eps_growth:.1%}")
-            else:
-                details.append(f"Minimal/negative annualized EPS growth: {eps_growth:.1%}")
+    eps_growth = calculate_cagr_from_line_items(financial_line_items, field="earnings_per_share")
+    if eps_growth is not None:
+        if eps_growth > 0.08:  # 8% annualized (adjusted for CAGR)
+            raw_score += 3
+            details.append(f"Strong annualized EPS growth: {eps_growth:.1%}")
+        elif eps_growth > 0.04:  # 4% annualized
+            raw_score += 2
+            details.append(f"Moderate annualized EPS growth: {eps_growth:.1%}")
+        elif eps_growth > 0.01:  # 1% annualized
+            raw_score += 1
+            details.append(f"Slight annualized EPS growth: {eps_growth:.1%}")
         else:
-            details.append("Older EPS is near zero; skipping EPS growth calculation.")
+            details.append(f"Minimal/negative annualized EPS growth: {eps_growth:.1%}")
     else:
-        details.append("Not enough EPS data points for growth calculation.")
+        details.append("Insufficient EPS data for CAGR calculation.")
 
     #
     # 3. Price Momentum
@@ -570,6 +562,8 @@ def generate_druckenmiller_output(
               Analysis Data for {ticker}:
               {analysis_data}
 
+              {currency_context}
+
               Return the trading signal in this JSON format:
               {{
                 "signal": "bullish/bearish/neutral",
@@ -582,7 +576,7 @@ def generate_druckenmiller_output(
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker, "currency_context": get_currency_context(ticker)})
 
     def create_default_signal():
         return StanleyDruckenmillerSignal(

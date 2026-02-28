@@ -11,6 +11,7 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class BillAckmanSignal(BaseModel):
@@ -380,6 +381,8 @@ def generate_ackman_output(
             Analysis Data for {ticker}:
             {analysis_data}
 
+            {currency_context}
+
             Return your output in strictly valid JSON:
             {{
               "signal": "bullish" | "bearish" | "neutral",
@@ -392,7 +395,7 @@ def generate_ackman_output(
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker, "currency_context": get_currency_context(ticker)})
 
     def create_default_bill_ackman_signal():
         return BillAckmanSignal(

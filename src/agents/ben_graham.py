@@ -11,6 +11,7 @@ from src.tools.api import get_financial_metrics, get_market_cap, search_line_ite
 from src.utils.api_key import get_api_key_from_state
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class BenGrahamSignal(BaseModel):
@@ -332,6 +333,8 @@ def generate_graham_output(
             Analysis Data for {ticker}:
             {analysis_data}
 
+            {currency_context}
+
             Return JSON exactly in this format:
             {{
               "signal": "bullish" or "bearish" or "neutral",
@@ -344,7 +347,7 @@ def generate_graham_output(
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker, "currency_context": get_currency_context(ticker)})
 
     def create_default_ben_graham_signal():
         return BenGrahamSignal(

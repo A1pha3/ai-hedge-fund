@@ -11,6 +11,7 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class CathieWoodSignal(BaseModel):
@@ -431,6 +432,8 @@ def generate_cathie_wood_output(
             Analysis Data for {ticker}:
             {analysis_data}
 
+            {currency_context}
+
             Return the trading signal in this JSON format:
             {{
               "signal": "bullish/bearish/neutral",
@@ -443,7 +446,7 @@ def generate_cathie_wood_output(
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker, "currency_context": get_currency_context(ticker)})
 
     def create_default_cathie_wood_signal():
         return CathieWoodSignal(

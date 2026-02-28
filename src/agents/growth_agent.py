@@ -17,6 +17,7 @@ from src.tools.api import (
 )
 from src.utils.api_key import get_api_key_from_state
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_symbol
 
 
 def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agent"):
@@ -115,7 +116,7 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
             },
             "insider_conviction": {
                 "signal": "bullish" if insider_conviction["score"] > 0.6 else "bearish" if insider_conviction["score"] < 0.4 else "neutral",
-                "details": f"Net Flow Ratio: {insider_conviction['net_flow_ratio']:.2f}, Total Buys: ${insider_conviction['buys']:,.0f}, Total Sells: ${insider_conviction['sells']:,.0f}",
+                "details": f"Net Flow Ratio: {insider_conviction['net_flow_ratio']:.2f}, Total Buys: {get_currency_symbol(ticker)}{insider_conviction['buys']:,.0f}, Total Sells: {get_currency_symbol(ticker)}{insider_conviction['sells']:,.0f}",
                 "metrics": {k: v for k, v in insider_conviction.items() if k != "score"},
             },
             "financial_health": {

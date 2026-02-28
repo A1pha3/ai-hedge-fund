@@ -11,6 +11,7 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class RakeshJhunjhunwalaSignal(BaseModel):
@@ -664,6 +665,8 @@ def generate_jhunjhunwala_output(
                 Analysis Data for {ticker}:
                 {analysis_data}
 
+                {currency_context}
+
                 Return the trading signal in the following JSON format exactly:
                 {{
                   "signal": "bullish" | "bearish" | "neutral",
@@ -676,7 +679,7 @@ def generate_jhunjhunwala_output(
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(enhanced_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(enhanced_data, indent=2), "ticker": ticker, "currency_context": get_currency_context(ticker)})
 
     # Default fallback signal in case parsing fails
     def create_default_rakesh_jhunjhunwala_signal():

@@ -21,6 +21,7 @@ from src.utils.financial_calcs import (
 )
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.utils.ticker_utils import get_currency_context
 
 
 class PeterLynchSignal(BaseModel):
@@ -195,28 +196,22 @@ def analyze_lynch_growth(financial_line_items: list) -> dict:
     else:
         details.append("Insufficient revenue data for CAGR calculation.")
 
-    # 2) EPS Growth
-    eps_values = [getattr(fi, "earnings_per_share", None) for fi in financial_line_items if getattr(fi, "earnings_per_share", None) is not None]
-    if len(eps_values) >= 2:
-        latest_eps = eps_values[0]
-        older_eps = eps_values[-1]
-        if abs(older_eps) > 1e-9:
-            eps_growth = (latest_eps - older_eps) / abs(older_eps)
-            if eps_growth > 0.25:
-                raw_score += 3
-                details.append(f"Strong EPS growth: {eps_growth:.1%}")
-            elif eps_growth > 0.10:
-                raw_score += 2
-                details.append(f"Moderate EPS growth: {eps_growth:.1%}")
-            elif eps_growth > 0.02:
-                raw_score += 1
-                details.append(f"Slight EPS growth: {eps_growth:.1%}")
-            else:
-                details.append(f"Minimal or negative EPS growth: {eps_growth:.1%}")
+    # 2) EPS Growth - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
+    eps_growth = calculate_cagr_from_line_items(financial_line_items, field="earnings_per_share")
+    if eps_growth is not None:
+        if eps_growth > 0.25:
+            raw_score += 3
+            details.append(f"Strong EPS CAGR: {eps_growth:.1%}")
+        elif eps_growth > 0.10:
+            raw_score += 2
+            details.append(f"Moderate EPS CAGR: {eps_growth:.1%}")
+        elif eps_growth > 0.02:
+            raw_score += 1
+            details.append(f"Slight EPS CAGR: {eps_growth:.1%}")
         else:
-            details.append("Older EPS is near zero; skipping EPS growth calculation.")
+            details.append(f"Flat or negative EPS CAGR: {eps_growth:.1%}")
     else:
-        details.append("Not enough EPS data for growth calculation.")
+        details.append("Insufficient EPS data for CAGR calculation.")
 
     # raw_score can be up to 6 => scale to 0–10
     final_score = min(10, (raw_score / 6) * 10)
@@ -316,25 +311,12 @@ def analyze_lynch_valuation(financial_line_items: list, market_cap: float | None
     else:
         details.append("No positive net income => can't compute approximate P/E")
 
-    # If we have at least 2 EPS data points, let's estimate growth
-    eps_growth_rate = None
-    if len(eps_values) >= 2:
-        latest_eps = eps_values[0]
-        older_eps = eps_values[-1]
-        if older_eps > 0:
-            # Calculate annualized growth rate (CAGR) for PEG ratio
-            num_years = len(eps_values) - 1
-            if latest_eps > 0:
-                # CAGR formula: (ending_value/beginning_value)^(1/years) - 1
-                eps_growth_rate = (latest_eps / older_eps) ** (1 / num_years) - 1
-            else:
-                # If latest EPS is negative, use simple average growth
-                eps_growth_rate = (latest_eps - older_eps) / (older_eps * num_years)
-            details.append(f"Annualized EPS growth rate: {eps_growth_rate:.1%}")
-        else:
-            details.append("Cannot compute EPS growth rate (older EPS <= 0)")
+    # EPS growth rate - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
+    eps_growth_rate = calculate_cagr_from_line_items(financial_line_items, field="earnings_per_share")
+    if eps_growth_rate is not None:
+        details.append(f"Annualized EPS growth rate: {eps_growth_rate:.1%}")
     else:
-        details.append("Not enough EPS data to compute growth rate")
+        details.append("Insufficient EPS data to compute growth rate")
 
     # Compute PEG if possible
     peg_ratio = None
@@ -489,13 +471,15 @@ def generate_lynch_output(
                 Analysis Data:
                 {analysis_data}
 
+                {currency_context}
+
                 Return only valid JSON with "signal", "confidence", and "reasoning".
                 """,
             ),
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker, "currency_context": get_currency_context(ticker)})
 
     def create_default_signal():
         return PeterLynchSignal(
