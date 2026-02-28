@@ -123,7 +123,7 @@ class DataSnapshotExporter:
 
             if need_update:
                 financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
-                financials["financial_metrics"] = [m.model_dump() for m in metrics]
+                financials["financial_metrics"] = self._dedupe_dict_records_by_period([m.model_dump() for m in metrics])
                 self._write_json(financials_file, financials)
                 self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
                 self._update_index(ticker, end_date, snapshot_dir, data_source)
@@ -157,7 +157,7 @@ class DataSnapshotExporter:
 
             if need_update:
                 financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
-                financials["line_items"] = [item.model_dump() for item in line_items]
+                financials["line_items"] = self._dedupe_dict_records_by_period([item.model_dump() for item in line_items])
                 self._write_json(financials_file, financials)
                 self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
                 self._update_index(ticker, end_date, snapshot_dir, data_source)
@@ -189,6 +189,33 @@ class DataSnapshotExporter:
             except (json.JSONDecodeError, OSError):
                 pass
         return default if default is not None else {}
+
+    @staticmethod
+    def _dict_completeness_score(item: dict[str, Any]) -> int:
+        """Estimate completeness by counting non-null field values."""
+        return sum(1 for value in item.values() if value is not None)
+
+    def _dedupe_dict_records_by_period(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Deduplicate dict records by report_period and keep the more complete one."""
+        if not records:
+            return records
+
+        grouped: dict[str, dict[str, Any]] = {}
+        passthrough: list[dict[str, Any]] = []
+
+        for item in records:
+            period = item.get("report_period")
+            if not period:
+                passthrough.append(item)
+                continue
+
+            existing = grouped.get(period)
+            if existing is None or self._dict_completeness_score(item) > self._dict_completeness_score(existing):
+                grouped[period] = item
+
+        deduped = list(grouped.values())
+        deduped.sort(key=lambda row: str(row.get("report_period", "")), reverse=True)
+        return deduped + passthrough
 
     # =========================================================================
     # Markdown 渲染

@@ -8,7 +8,7 @@ from typing_extensions import Literal
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -54,6 +54,7 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
                 "current_assets",
                 "current_liabilities",
                 "shareholders_equity",
+                "debt_to_equity",
                 # Capital intensity
                 "capital_expenditure",
                 "depreciation_and_amortization",
@@ -89,9 +90,8 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
         else:
             signal = "neutral"
 
-        # 计算 revenue growth 用于传递给 LLM
-        revenues = [getattr(li, "revenue", None) for li in line_items if getattr(li, "revenue", None) is not None]
-        revenue_growth = calculate_revenue_growth_cagr(revenues)
+        # 计算 revenue growth 用于传递给 LLM (处理A股YTD累计数据)
+        revenue_growth = calculate_cagr_from_line_items(line_items, field="revenue")
 
         analysis_data[ticker] = {
             "signal": signal,
@@ -170,9 +170,15 @@ def analyze_downside_protection(financial_line_items: list) -> dict[str, any]:
         else:
             details.append(f"Weak liquidity (current ratio {current_ratio:.2f})")
 
-    # Low leverage
-    if equity is not None and equity > 0 and debt is not None:
+    # Low leverage - 优先使用标准 debt_to_equity 字段（total_liabilities/equity）
+    dte_direct = getattr(latest, "debt_to_equity", None)
+    if dte_direct is not None:
+        de_ratio = dte_direct
+    elif equity is not None and equity > 0 and debt is not None:
         de_ratio = debt / equity
+    else:
+        de_ratio = None
+    if de_ratio is not None:
         if de_ratio < 0.3:
             score += 2
             details.append(f"Very low leverage (D/E {de_ratio:.2f})")
@@ -263,13 +269,12 @@ def analyze_double_potential(financial_line_items: list, market_cap: float | Non
 
     details: list[str] = []
 
-    # Use revenue and FCF trends as rough growth proxy (keep it simple) - 使用统一的 CAGR 计算方法
-    revenues = [getattr(li, "revenue", None) for li in financial_line_items if getattr(li, "revenue", None) is not None]
+    # Use revenue and FCF trends as rough growth proxy (keep it simple) - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
     fcfs = [getattr(li, "free_cash_flow", None) for li in financial_line_items if getattr(li, "free_cash_flow", None) is not None]
 
     score = 0
-    if revenues and len(revenues) >= 3:
-        rev_growth = calculate_revenue_growth_cagr(revenues)
+    if len(financial_line_items) >= 3:
+        rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
         if rev_growth is not None:
             if rev_growth > 0.15:
                 score += 2

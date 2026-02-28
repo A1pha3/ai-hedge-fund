@@ -430,7 +430,14 @@ def calculate_enhanced_dcf_value(fcf_history: list[float], growth_metrics: dict,
 
 
 def calculate_dcf_scenarios(fcf_history: list[float], growth_metrics: dict, wacc: float, market_cap: float, revenue_growth: float | None = None) -> dict:
-    """Calculate DCF under multiple scenarios."""
+    """Calculate DCF under multiple scenarios.
+
+    When revenue_growth is negative, the growth adjustments are applied to the
+    *absolute* deviation so that bear always yields the worst (most negative or
+    least positive) growth and bull yields the best.  This prevents the
+    multiplicative inversion bug where ``negative_growth * 0.5`` is actually
+    *better* than ``negative_growth * 1.5``.
+    """
 
     scenarios = {"bear": {"growth_adj": 0.5, "wacc_adj": 1.2, "terminal_adj": 0.8}, "base": {"growth_adj": 1.0, "wacc_adj": 1.0, "terminal_adj": 1.0}, "bull": {"growth_adj": 1.5, "wacc_adj": 0.9, "terminal_adj": 1.2}}
 
@@ -438,7 +445,18 @@ def calculate_dcf_scenarios(fcf_history: list[float], growth_metrics: dict, wacc
     base_revenue_growth = revenue_growth or 0.05
 
     for scenario, adjustments in scenarios.items():
-        adjusted_revenue_growth = base_revenue_growth * adjustments["growth_adj"]
+        if base_revenue_growth >= 0:
+            # Positive growth: higher multiplier → more growth → higher value (bull)
+            adjusted_revenue_growth = base_revenue_growth * adjustments["growth_adj"]
+        else:
+            # Negative growth: apply adjustment to the absolute magnitude, then
+            # swap direction so bear gets *more* negative (worse) growth and
+            # bull gets *less* negative (better) growth.
+            #   bear: growth_adj=0.5 → inverted to 1.5 → -0.26*1.5 = -0.39 (worse)
+            #   bull: growth_adj=1.5 → inverted to 0.5 → -0.26*0.5 = -0.13 (better)
+            inverted_adj = 1.0 / adjustments["growth_adj"] if adjustments["growth_adj"] != 0 else 1.0
+            adjusted_revenue_growth = base_revenue_growth * inverted_adj
+
         adjusted_wacc = wacc * adjustments["wacc_adj"]
 
         results[scenario] = calculate_enhanced_dcf_value(fcf_history=fcf_history, growth_metrics=growth_metrics, wacc=adjusted_wacc, market_cap=market_cap, revenue_growth=adjusted_revenue_growth)

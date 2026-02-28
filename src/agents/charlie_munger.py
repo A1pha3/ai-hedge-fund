@@ -14,7 +14,7 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -442,12 +442,12 @@ def analyze_predictability(financial_line_items: list) -> dict:
     if not financial_line_items or len(financial_line_items) < 5:
         return {"score": 0, "details": "Insufficient data to analyze business predictability (need 5+ years)"}
 
-    # 1. Revenue stability and growth - 使用统一的 CAGR 计算方法
+    # 1. Revenue stability and growth - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
     revenues = [item.revenue for item in financial_line_items if hasattr(item, "revenue") and item.revenue is not None]
 
     if revenues and len(revenues) >= 5:
         # Calculate year-over-year growth rates using CAGR for consistency
-        cagr_growth = calculate_revenue_growth_cagr(revenues)
+        cagr_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
 
         # Calculate year-over-year growth rates for volatility analysis
         growth_rates = []

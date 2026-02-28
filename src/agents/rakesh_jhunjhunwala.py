@@ -8,7 +8,7 @@ from typing_extensions import Literal
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -236,9 +236,8 @@ def analyze_growth(financial_line_items: list) -> dict[str, any]:
     score = 0
     reasoning = []
 
-    # Revenue CAGR Analysis - 使用统一的计算方法
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None and getattr(item, "revenue", None) > 0]
-    revenue_cagr = calculate_revenue_growth_cagr(revenues)
+    # Revenue CAGR Analysis - 使用统一的计算方法(处理A股YTD累计数据)
+    revenue_cagr = calculate_cagr_from_line_items(financial_line_items, field="revenue")
 
     if revenue_cagr is not None:
         revenue_cagr_pct = revenue_cagr * 100
@@ -255,6 +254,9 @@ def analyze_growth(financial_line_items: list) -> dict[str, any]:
             reasoning.append(f"Low revenue CAGR: {revenue_cagr_pct:.1f}%")
     else:
         reasoning.append("Insufficient revenue data for CAGR calculation")
+
+    # Revenue Consistency Check (year-over-year) - extract revenues list
+    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
 
     # Net Income CAGR Analysis
     net_incomes = [getattr(item, "net_income", None) for item in financial_line_items if getattr(item, "net_income", None) is not None and getattr(item, "net_income", None) > 0]

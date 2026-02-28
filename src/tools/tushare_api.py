@@ -414,6 +414,15 @@ def get_ashare_line_items_with_tushare(
                     field_mapping["total_liabilities"] = bal.get("total_liab")
                     field_mapping["shareholders_equity"] = bal.get("total_hldr_eqy_exc_min_int")
                     field_mapping["outstanding_shares"] = bal.get("total_share")
+                    # 补充资产负债表字段（投资者代理需要）
+                    lt_borr = bal.get("lt_borr", 0) or 0
+                    st_borr = bal.get("st_borr", 0) or 0
+                    total_debt_val = lt_borr + st_borr
+                    if total_debt_val > 0:
+                        field_mapping["total_debt"] = total_debt_val
+                    field_mapping["cash_and_equivalents"] = bal.get("money_cap")
+                    field_mapping["current_assets"] = bal.get("total_cur_assets")
+                    field_mapping["current_liabilities"] = bal.get("total_cur_liab")
 
             # 从 income 获取利润数据
             if df_income is not None and not df_income.empty:
@@ -423,6 +432,16 @@ def get_ashare_line_items_with_tushare(
                     field_mapping["revenue"] = inc.get("total_revenue")
                     field_mapping["net_income"] = inc.get("n_income_attr_p")
                     field_mapping["gross_profit"] = inc.get("total_profit")
+                    field_mapping["operating_income"] = inc.get("operate_profit")
+                    # 计算 operating_margin = operating_income / revenue
+                    op_income = inc.get("operate_profit")
+                    total_rev = inc.get("total_revenue")
+                    if op_income is not None and total_rev is not None and not (isinstance(op_income, float) and pd.isna(op_income)) and not (isinstance(total_rev, float) and pd.isna(total_rev)) and total_rev != 0:
+                        field_mapping["operating_margin"] = float(op_income) / float(total_rev)
+                    # 计算 gross_margin (使用 fina_indicator 的 grossprofit_margin)
+                    gpm = row.get("grossprofit_margin")
+                    if gpm is not None and not (isinstance(gpm, float) and pd.isna(gpm)):
+                        field_mapping["gross_margin"] = float(gpm) / 100.0
 
             # 从 cashflow 获取现金流数据
             if df_cash is not None and not df_cash.empty:
@@ -451,6 +470,20 @@ def get_ashare_line_items_with_tushare(
                 field_mapping["shareholders_equity"] = row.get("total_hldr_eqy_exc_min_int")
             if "outstanding_shares" not in field_mapping or field_mapping["outstanding_shares"] is None:
                 field_mapping["outstanding_shares"] = row.get("total_share")
+            # 补充 EPS 和其他 fina_indicator 字段
+            if "earnings_per_share" not in field_mapping or field_mapping["earnings_per_share"] is None:
+                eps_val = row.get("basic_eps")
+                if eps_val is not None and not (isinstance(eps_val, float) and pd.isna(eps_val)):
+                    field_mapping["earnings_per_share"] = eps_val
+            # 补充 debt_to_equity (来自 fina_indicator 的标准计算: total_liabilities / equity)
+            dte_val = row.get("debt_to_eqt")
+            if dte_val is not None and not (isinstance(dte_val, float) and pd.isna(dte_val)):
+                field_mapping["debt_to_equity"] = float(dte_val)
+            # 补充 operating_margin (如果从 income 表未计算到)
+            if "operating_margin" not in field_mapping or field_mapping["operating_margin"] is None:
+                om_val = row.get("op_of_gr")
+                if om_val is not None and not (isinstance(om_val, float) and pd.isna(om_val)):
+                    field_mapping["operating_margin"] = float(om_val) / 100.0
 
             # 只添加请求的字段
             for field in line_items:

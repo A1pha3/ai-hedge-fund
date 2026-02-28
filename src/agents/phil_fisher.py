@@ -14,7 +14,7 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_pe_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -65,13 +65,14 @@ def phil_fisher_agent(state: AgentState, agent_id: str = "phil_fisher_agent"):
                 "gross_margin",
                 "total_debt",
                 "shareholders_equity",
+                "debt_to_equity",
                 "cash_and_equivalents",
                 "ebit",
                 "ebitda",
             ],
             end_date,
             period="annual",
-            limit=5,
+            limit=10,
             api_key=api_key,
         )
 
@@ -179,9 +180,8 @@ def analyze_fisher_growth_quality(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # up to 9 raw points => scale to 0–10
 
-    # 1. Revenue Growth (annualized CAGR) - 使用统一的计算方法
-    revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
-    rev_growth = calculate_revenue_growth_cagr(revenues)
+    # 1. Revenue Growth (annualized CAGR) - 使用统一的计算方法(处理A股YTD累计数据)
+    rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
     if rev_growth is not None:
         if rev_growth > 0.20:  # 20% annualized
             raw_score += 3
@@ -356,12 +356,18 @@ def analyze_management_efficiency_leverage(financial_line_items: list) -> dict:
     else:
         details.append("Insufficient data for ROE calculation")
 
-    # 2. Debt-to-Equity
-    debt_values = [getattr(fi, "total_debt", None) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None]
-    if debt_values and eq_values and len(debt_values) == len(eq_values):
-        recent_debt = debt_values[0]
-        recent_equity = eq_values[0] if eq_values[0] else 1e-9
-        dte = recent_debt / recent_equity
+    # 2. Debt-to-Equity - 优先使用标准 debt_to_equity 字段
+    dte = None
+    dte_direct = getattr(financial_line_items[0], "debt_to_equity", None) if financial_line_items else None
+    if dte_direct is not None:
+        dte = dte_direct
+    else:
+        debt_values = [getattr(fi, "total_debt", None) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None]
+        if debt_values and eq_values and len(debt_values) == len(eq_values):
+            recent_debt = debt_values[0]
+            recent_equity = eq_values[0] if eq_values[0] else 1e-9
+            dte = recent_debt / recent_equity
+    if dte is not None:
         if dte < 0.3:
             raw_score += 2
             details.append(f"Low debt-to-equity: {dte:.2f}")
@@ -371,7 +377,7 @@ def analyze_management_efficiency_leverage(financial_line_items: list) -> dict:
         else:
             details.append(f"High debt-to-equity: {dte:.2f}")
     else:
-        details.append("Insufficient data for debt/equity analysis")
+        details.append("No debt/equity data available")
 
     # 3. FCF Consistency
     fcf_values = [getattr(fi, "free_cash_flow", None) for fi in financial_line_items if getattr(fi, "free_cash_flow", None) is not None]
@@ -410,10 +416,9 @@ def analyze_fisher_valuation(financial_line_items: list, market_cap: float | Non
     net_incomes = [getattr(fi, "net_income", None) for fi in financial_line_items if getattr(fi, "net_income", None) is not None]
     fcf_values = [getattr(fi, "free_cash_flow", None) for fi in financial_line_items if getattr(fi, "free_cash_flow", None) is not None]
 
-    # 1) P/E
-    recent_net_income = net_incomes[0] if net_incomes else None
-    if recent_net_income and recent_net_income > 0:
-        pe = market_cap / recent_net_income
+    # 1) P/E (使用年化净利润，处理A股YTD累计数据)
+    pe = calculate_pe_from_line_items(market_cap, financial_line_items)
+    if pe is not None:
         pe_points = 0
         if pe < 20:
             pe_points = 2

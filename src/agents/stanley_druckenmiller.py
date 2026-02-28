@@ -16,7 +16,7 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_pe_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -71,12 +71,13 @@ def stanley_druckenmiller_agent(state: AgentState, agent_id: str = "stanley_druc
                 "total_debt",
                 "shareholders_equity",
                 "outstanding_shares",
+                "debt_to_equity",
                 "ebit",
                 "ebitda",
             ],
             end_date,
             period="annual",
-            limit=5,
+            limit=10,
             api_key=api_key,
         )
 
@@ -179,8 +180,7 @@ def analyze_growth_and_momentum(financial_line_items: list, prices: list) -> dic
     #
     # 1. Revenue Growth (annualized CAGR) - 使用统一的计算方法
     #
-    revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
-    rev_growth = calculate_revenue_growth_cagr(revenues)
+    rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
     if rev_growth is not None:
         if rev_growth > 0.08:  # 8% annualized (adjusted for CAGR)
             raw_score += 3
@@ -355,15 +355,20 @@ def analyze_risk_reward(financial_line_items: list, prices: list) -> dict:
     raw_score = 0  # We'll accumulate up to 6 raw points, then scale to 0-10
 
     #
-    # 1. Debt-to-Equity
+    # 1. Debt-to-Equity - 优先使用标准 debt_to_equity 字段
     #
-    debt_values = [getattr(fi, "total_debt", None) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None]
-    equity_values = [getattr(fi, "shareholders_equity", None) for fi in financial_line_items if getattr(fi, "shareholders_equity", None) is not None]
-
-    if debt_values and equity_values and len(debt_values) == len(equity_values) and len(debt_values) > 0:
-        recent_debt = debt_values[0]
-        recent_equity = equity_values[0] if equity_values[0] else 1e-9
-        de_ratio = recent_debt / recent_equity
+    de_ratio = None
+    dte_direct = getattr(financial_line_items[0], "debt_to_equity", None) if financial_line_items else None
+    if dte_direct is not None:
+        de_ratio = dte_direct
+    else:
+        debt_values = [getattr(fi, "total_debt", None) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None]
+        equity_values = [getattr(fi, "shareholders_equity", None) for fi in financial_line_items if getattr(fi, "shareholders_equity", None) is not None]
+        if debt_values and equity_values and len(debt_values) == len(equity_values) and len(debt_values) > 0:
+            recent_debt = debt_values[0]
+            recent_equity = equity_values[0] if equity_values[0] else 1e-9
+            de_ratio = recent_debt / recent_equity
+    if de_ratio is not None:
         if de_ratio < 0.3:
             raw_score += 3
             details.append(f"Low debt-to-equity: {de_ratio:.2f}")
@@ -376,7 +381,7 @@ def analyze_risk_reward(financial_line_items: list, prices: list) -> dict:
         else:
             details.append(f"High debt-to-equity: {de_ratio:.2f}")
     else:
-        details.append("No consistent debt/equity data available.")
+        details.append("No debt/equity data available.")
 
     #
     # 2. Price Volatility
@@ -444,10 +449,9 @@ def analyze_druckenmiller_valuation(financial_line_items: list, market_cap: floa
 
     enterprise_value = market_cap + recent_debt - recent_cash
 
-    # 1) P/E
-    recent_net_income = net_incomes[0] if net_incomes else None
-    if recent_net_income and recent_net_income > 0:
-        pe = market_cap / recent_net_income
+    # 1) P/E (使用年化净利润，处理A股YTD累计数据)
+    pe = calculate_pe_from_line_items(market_cap, financial_line_items)
+    if pe is not None:
         pe_points = 0
         if pe < 15:
             pe_points = 2

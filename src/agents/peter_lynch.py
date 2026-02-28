@@ -14,6 +14,8 @@ from src.tools.api import (
 )
 from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import (
+    calculate_cagr_from_line_items,
+    calculate_pe_from_line_items,
     calculate_revenue_growth_cagr,
     calculate_simple_revenue_growth,
 )
@@ -72,10 +74,11 @@ def peter_lynch_agent(state: AgentState, agent_id: str = "peter_lynch_agent"):
                 "total_debt",
                 "shareholders_equity",
                 "outstanding_shares",
+                "debt_to_equity",
             ],
             end_date,
             period="annual",
-            limit=5,
+            limit=10,
             api_key=api_key,
         )
 
@@ -175,9 +178,8 @@ def analyze_lynch_growth(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # We'll sum up points, then scale to 0–10 eventually
 
-    # 1) Revenue Growth - 使用统一的 CAGR 计算方法
-    revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
-    rev_growth = calculate_revenue_growth_cagr(revenues)
+    # 1) Revenue Growth - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
+    rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
     if rev_growth is not None:
         if rev_growth > 0.25:
             raw_score += 3
@@ -235,13 +237,19 @@ def analyze_lynch_fundamentals(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # We'll accumulate up to 6 points, then scale to 0–10
 
-    # 1) Debt-to-Equity
-    debt_values = [getattr(fi, "total_debt", None) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None]
-    eq_values = [getattr(fi, "shareholders_equity", None) for fi in financial_line_items if getattr(fi, "shareholders_equity", None) is not None]
-    if debt_values and eq_values and len(debt_values) == len(eq_values) and len(debt_values) > 0:
-        recent_debt = debt_values[0]
-        recent_equity = eq_values[0] if eq_values[0] else 1e-9
-        de_ratio = recent_debt / recent_equity
+    # 1) Debt-to-Equity - 优先使用标准 debt_to_equity 字段（total_liabilities/equity），回退到 total_debt/equity
+    de_ratio = None
+    dte_direct = getattr(financial_line_items[0], "debt_to_equity", None) if financial_line_items else None
+    if dte_direct is not None:
+        de_ratio = dte_direct
+    else:
+        debt_values = [getattr(fi, "total_debt", None) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None]
+        eq_values = [getattr(fi, "shareholders_equity", None) for fi in financial_line_items if getattr(fi, "shareholders_equity", None) is not None]
+        if debt_values and eq_values and len(debt_values) == len(eq_values) and len(debt_values) > 0:
+            recent_debt = debt_values[0]
+            recent_equity = eq_values[0] if eq_values[0] else 1e-9
+            de_ratio = debt_values[0] / (eq_values[0] if eq_values[0] else 1e-9)
+    if de_ratio is not None:
         if de_ratio < 0.5:
             raw_score += 2
             details.append(f"Low debt-to-equity: {de_ratio:.2f}")
@@ -251,7 +259,7 @@ def analyze_lynch_fundamentals(financial_line_items: list) -> dict:
         else:
             details.append(f"High debt-to-equity: {de_ratio:.2f}")
     else:
-        details.append("No consistent debt/equity data available.")
+        details.append("No debt/equity data available.")
 
     # 2) Operating Margin
     om_values = [getattr(fi, "operating_margin", None) for fi in financial_line_items if getattr(fi, "operating_margin", None) is not None]
@@ -301,10 +309,9 @@ def analyze_lynch_valuation(financial_line_items: list, market_cap: float | None
     net_incomes = [getattr(fi, "net_income", None) for fi in financial_line_items if getattr(fi, "net_income", None) is not None]
     eps_values = [getattr(fi, "earnings_per_share", None) for fi in financial_line_items if getattr(fi, "earnings_per_share", None) is not None]
 
-    # Approximate P/E via (market cap / net income) if net income is positive
-    pe_ratio = None
-    if net_incomes and net_incomes[0] and net_incomes[0] > 0:
-        pe_ratio = market_cap / net_incomes[0]
+    # Approximate P/E via annualized net income (处理A股YTD累计数据)
+    pe_ratio = calculate_pe_from_line_items(market_cap, financial_line_items)
+    if pe_ratio is not None:
         details.append(f"Estimated P/E: {pe_ratio:.2f}")
     else:
         details.append("No positive net income => can't compute approximate P/E")

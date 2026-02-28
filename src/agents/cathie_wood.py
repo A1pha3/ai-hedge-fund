@@ -8,7 +8,7 @@ from typing_extensions import Literal
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -59,7 +59,7 @@ def cathie_wood_agent(state: AgentState, agent_id: str = "cathie_wood_agent"):
             ],
             end_date,
             period="annual",
-            limit=5,
+            limit=10,
             api_key=api_key,
         )
 
@@ -133,11 +133,11 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze disruptive potential"}
 
-    # 1. Revenue Growth Analysis - Check for accelerating growth using CAGR
+    # 1. Revenue Growth Analysis - Check for accelerating growth using CAGR (处理A股YTD累计数据)
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
     if len(revenues) >= 3:  # Need at least 3 periods to check acceleration
-        # 使用统一的 CAGR 计算方法
-        cagr_growth = calculate_revenue_growth_cagr(revenues)
+        # 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
+        cagr_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
 
         # 同时计算期间间增长率用于分析增长加速
         growth_rates = []
@@ -185,13 +185,13 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
     else:
         details.append("Insufficient gross margin data")
 
-    # 3. Operating Leverage Analysis - 使用统一的 CAGR 计算方法
+    # 3. Operating Leverage Analysis - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
     operating_expenses = [item.operating_expense for item in financial_line_items if hasattr(item, "operating_expense") and item.operating_expense]
 
     if len(revenues) >= 2 and len(operating_expenses) >= 2:
-        rev_growth = calculate_revenue_growth_cagr(revenues)
-        opex_growth = calculate_revenue_growth_cagr(operating_expenses)
+        rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
+        opex_growth = calculate_cagr_from_line_items(financial_line_items, field="operating_expense")
 
         if rev_growth is not None and opex_growth is not None and rev_growth > opex_growth:
             score += 2

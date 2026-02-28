@@ -8,7 +8,7 @@ from typing_extensions import Literal
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -55,7 +55,7 @@ def bill_ackman_agent(state: AgentState, agent_id: str = "bill_ackman_agent"):
             ],
             end_date,
             period="annual",
-            limit=5,
+            limit=10,
             api_key=api_key,
         )
 
@@ -132,9 +132,8 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze business quality"}
 
-    # 1. Multi-period revenue growth analysis - 使用统一的 CAGR 计算方法
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
-    growth_rate = calculate_revenue_growth_cagr(revenues)
+    # 1. Multi-period revenue growth analysis - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
+    growth_rate = calculate_cagr_from_line_items(financial_line_items, field="revenue")
     if growth_rate is not None:
         if growth_rate > 0.15:  # 15% CAGR is strong
             score += 2
@@ -269,14 +268,13 @@ def analyze_activism_potential(financial_line_items: list) -> dict:
     if not financial_line_items:
         return {"score": 0, "details": "Insufficient data for activism potential"}
 
-    # Check revenue growth vs. operating margin - 使用统一的 CAGR 计算方法
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
+    # Check revenue growth vs. operating margin - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
     op_margins = [getattr(item, "operating_margin", None) for item in financial_line_items if getattr(item, "operating_margin", None) is not None]
 
-    if len(revenues) < 2 or not op_margins:
+    if len(financial_line_items) < 2 or not op_margins:
         return {"score": 0, "details": "Not enough data to assess activism potential (need multi-year revenue + margins)."}
 
-    revenue_growth = calculate_revenue_growth_cagr(revenues)
+    revenue_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
     avg_margin = sum(op_margins) / len(op_margins)
 
     score = 0

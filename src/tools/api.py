@@ -34,6 +34,37 @@ from src.tools.tushare_api import (
 _cache = get_cache()
 
 
+def _completeness_score(model_obj) -> int:
+    """Estimate record completeness by counting non-null fields."""
+    if not hasattr(model_obj, "model_dump"):
+        return 0
+    data = model_obj.model_dump()
+    return sum(1 for value in data.values() if value is not None)
+
+
+def _dedupe_by_report_period(records: list) -> list:
+    """Deduplicate model records by report_period, keeping the more complete one."""
+    if not records:
+        return records
+
+    deduped: dict[str, object] = {}
+    passthrough: list = []
+
+    for record in records:
+        period = getattr(record, "report_period", None)
+        if not period:
+            passthrough.append(record)
+            continue
+
+        existing = deduped.get(period)
+        if existing is None or _completeness_score(record) > _completeness_score(existing):
+            deduped[period] = record
+
+    unique_records = list(deduped.values())
+    unique_records.sort(key=lambda item: getattr(item, "report_period", ""), reverse=True)
+    return unique_records + passthrough
+
+
 def _get_snapshot():
     """延迟获取快照导出器，确保 .env 已加载"""
     return get_snapshot_exporter()
@@ -139,13 +170,13 @@ def get_financial_metrics(
 
     # Check cache first - simple exact match
     if cached_data := _cache.get_financial_metrics(cache_key):
-        metrics = [FinancialMetrics(**metric) for metric in cached_data]
+        metrics = _dedupe_by_report_period([FinancialMetrics(**metric) for metric in cached_data])
         _get_snapshot().export_financial_metrics(ticker, end_date, metrics, "cache")
         return metrics
 
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
-        metrics = get_ashare_financial_metrics_with_tushare(ticker, end_date, limit)
+        metrics = _dedupe_by_report_period(get_ashare_financial_metrics_with_tushare(ticker, end_date, limit))
         if metrics:
             # Cache the results
             _cache.set_financial_metrics(cache_key, [m.model_dump() for m in metrics])
@@ -166,7 +197,7 @@ def get_financial_metrics(
     # Parse response with Pydantic model
     try:
         metrics_response = FinancialMetricsResponse(**response.json())
-        financial_metrics = metrics_response.financial_metrics
+        financial_metrics = _dedupe_by_report_period(metrics_response.financial_metrics)
     except:
         return []
 
@@ -190,7 +221,7 @@ def search_line_items(
     """Fetch line items from API."""
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
-        results = get_ashare_line_items_with_tushare(ticker, line_items, end_date, period, limit)
+        results = _dedupe_by_report_period(get_ashare_line_items_with_tushare(ticker, line_items, end_date, period, limit))
         _get_snapshot().export_line_items(ticker, end_date, results, "tushare")
         return results
 
@@ -223,7 +254,7 @@ def search_line_items(
         return []
 
     # Snapshot and return the results
-    results = search_results[:limit]
+    results = _dedupe_by_report_period(search_results[:limit])
     _get_snapshot().export_line_items(ticker, end_date, results, "financial_datasets")
     return results
 
