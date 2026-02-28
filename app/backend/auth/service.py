@@ -1,5 +1,6 @@
 """Authentication service — business logic for auth operations."""
 
+import calendar
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
@@ -13,7 +14,13 @@ LOCKOUT_MINUTES = 15
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    """Return current UTC time as a naive datetime (no tzinfo).
+
+    SQLite stores datetime without timezone info, so we use naive UTC
+    throughout to avoid 'can't compare offset-naive and offset-aware
+    datetimes' TypeError.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _validate_password(password: str) -> None:
@@ -186,7 +193,6 @@ class AuthService:
         token_iat = payload.get("iat", 0)
         if user.updated_at:
             # Convert updated_at to timestamp for comparison
-            import calendar
             last_update_ts = calendar.timegm(user.updated_at.timetuple())
             if token_iat < last_update_ts:
                 raise InvalidTokenError("重置令牌已使用或已过期")

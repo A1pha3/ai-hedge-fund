@@ -6,7 +6,7 @@ import {
   BacktestPerformanceMetrics,
   BacktestRequest
 } from '@/services/types';
-import { authHeaders } from '@/services/auth-api';
+import { authHeaders, clearStoredToken } from '@/services/auth-api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -36,6 +36,10 @@ export const backtestApi = {
     })
     .then(response => {
       if (!response.ok) {
+        if (response.status === 401) {
+          clearStoredToken();
+          window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+        }
         throw new Error(`HTTP error! status: ${response.status}`);
       }
             
@@ -229,10 +233,9 @@ export const backtestApi = {
               });
             }
           }
-        } catch (error: any) {
-          if (error.name === 'AbortError') {
-          } else {
-            console.error('Error reading backtest SSE stream:', error);
+        } catch (error: unknown) {
+          if (error instanceof Error && error.name === 'AbortError') return;
+          console.error('Error reading backtest SSE stream:', error);
             // Mark nodes as error when there's a connection error
             nodeContext.updateAgentNode(flowId, 'portfolio-start', {
               status: 'ERROR',
@@ -243,18 +246,18 @@ export const backtestApi = {
             if (flowId) {
               flowConnectionManager.setConnection(flowId, {
                 state: 'error',
-                error: error.message || 'Connection error',
+                error: error instanceof Error ? error.message : 'Connection error',
                 abortController: null,
               });
             }
-          }
         }
       };
       
       // Start processing the stream
       processStream();
     })
-    .catch((error: any) => {
+    .catch((error: unknown) => {
+      if (error instanceof Error && error.name === 'AbortError') return;
       console.error('Backtest SSE connection error:', error);
       // Mark nodes as error when there's a connection error
       nodeContext.updateAgentNode(flowId, 'portfolio-start', {
@@ -266,7 +269,7 @@ export const backtestApi = {
       if (flowId) {
         flowConnectionManager.setConnection(flowId, {
           state: 'error',
-          error: error.message || 'Connection failed',
+          error: error instanceof Error ? error.message : 'Connection failed',
           abortController: null,
         });
       }

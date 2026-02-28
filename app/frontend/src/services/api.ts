@@ -7,14 +7,14 @@ import { parseTickers } from '@/lib/utils';
 import {
   HedgeFundRequest
 } from '@/services/types';
-import { getStoredToken, clearStoredToken, authHeaders } from '@/services/auth-api';
+import { clearStoredToken, authHeaders, authFetch } from '@/services/auth-api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 /**
- * Handle 401 responses — dispatch event for AuthContext.
+ * Handle 401 responses for SSE streams (cannot use authFetch wrapper).
  */
-function handleAuthError(response: Response): void {
+function handleSSEAuthError(response: Response): void {
   if (response.status === 401) {
     clearStoredToken();
     window.dispatchEvent(new CustomEvent('auth:unauthorized'));
@@ -28,11 +28,8 @@ export const api = {
    */
   getAgents: async (): Promise<Agent[]> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/hedge-fund/agents`, {
-        headers: authHeaders(),
-      });
+      const response = await authFetch(`${API_BASE_URL}/hedge-fund/agents`);
       if (!response.ok) {
-        handleAuthError(response);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
@@ -49,11 +46,8 @@ export const api = {
    */
   getLanguageModels: async (): Promise<LanguageModel[]> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/language-models/`, {
-        headers: authHeaders(),
-      });
+      const response = await authFetch(`${API_BASE_URL}/language-models/`);
       if (!response.ok) {
-        handleAuthError(response);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
@@ -72,9 +66,9 @@ export const api = {
    */
   saveJsonFile: async (filename: string, data: any): Promise<void> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/storage/save-json`, {
+      const response = await authFetch(`${API_BASE_URL}/storage/save-json`, {
         method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           filename,
           data
@@ -82,7 +76,6 @@ export const api = {
       });
 
       if (!response.ok) {
-        handleAuthError(response);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -131,6 +124,7 @@ export const api = {
     })
     .then(response => {
       if (!response.ok) {
+        handleSSEAuthError(response);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
             
@@ -271,9 +265,9 @@ export const api = {
               });
             }
           }
-        } catch (error: any) { // Type assertion for error
-          if (error.name !== 'AbortError') {
-            console.error('Error reading SSE stream:', error);
+        } catch (error: unknown) {
+          if (error instanceof Error && error.name === 'AbortError') return;
+          console.error('Error reading SSE stream:', error);
             // Mark all agents as error when there's a connection error
             nodeContext.updateAgentNodes(flowId, getAgentIds(), 'ERROR');
             
@@ -281,20 +275,19 @@ export const api = {
             if (flowId) {
               flowConnectionManager.setConnection(flowId, {
                 state: 'error',
-                error: error.message || 'Connection error',
+                error: error instanceof Error ? error.message : 'Connection error',
                 abortController: null,
               });
             }
-          }
         }
       };
       
       // Start processing the stream
       processStream();
     })
-    .catch((error: any) => { // Type assertion for error
-      if (error.name !== 'AbortError') {
-        console.error('SSE connection error:', error);
+    .catch((error: unknown) => {
+      if (error instanceof Error && error.name === 'AbortError') return;
+      console.error('SSE connection error:', error);
         // Mark all agents as error when there's a connection error
         nodeContext.updateAgentNodes(flowId, getAgentIds(), 'ERROR');
         
@@ -302,11 +295,10 @@ export const api = {
         if (flowId) {
           flowConnectionManager.setConnection(flowId, {
             state: 'error',
-            error: error.message || 'Connection failed',
+            error: error instanceof Error ? error.message : 'Connection failed',
             abortController: null,
           });
         }
-      }
     });
 
     // Return abort function

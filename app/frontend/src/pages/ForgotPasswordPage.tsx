@@ -108,6 +108,7 @@ export function ForgotPasswordPage() {
                 name="username"
                 type="text"
                 autoComplete="username"
+                autoFocus
                 spellCheck={false}
                 required
                 value={username}

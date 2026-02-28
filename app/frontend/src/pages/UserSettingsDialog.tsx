@@ -3,7 +3,7 @@
  * Rendered as a modal dialog, triggered from the main layout.
  */
 
-import { useState, useEffect, useRef, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { authApi } from '@/services/auth-api';
 
@@ -16,7 +16,6 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<'password' | 'email'>('password');
 
   const [confirmLogout, setConfirmLogout] = useState(false);
-  const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Close on Escape key
   useEffect(() => {
@@ -26,13 +25,6 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
-
-  // Cleanup logout timer on unmount
-  useEffect(() => {
-    return () => {
-      if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
-    };
-  }, []);
 
   // Password form
   const [oldPassword, setOldPassword] = useState('');
@@ -57,8 +49,8 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
       setPwdSuccess(true);
       setOldPassword('');
       setNewPassword('');
-      // Auto-logout after 2 seconds since token_version has changed
-      logoutTimerRef.current = setTimeout(() => logout(), 2000);
+      // Auto-logout immediately since token_version has changed
+      logout();
     } catch (err: unknown) {
       setPwdError(err instanceof Error ? err.message : '修改失败');
     } finally {

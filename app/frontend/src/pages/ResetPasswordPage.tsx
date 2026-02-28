@@ -137,7 +137,7 @@ export function ResetPasswordPage() {
           </div>
 
           <button className="auth-submit" type="submit" disabled={isLoading}>
-            {isLoading ? <span className="auth-spinner" /> : '重置密码'}
+            {isLoading ? <><span className="auth-spinner" /><span>重置中…</span></> : '重置密码'}
           </button>
 
           <div className="auth-links">

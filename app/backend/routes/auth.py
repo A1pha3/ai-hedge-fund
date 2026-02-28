@@ -1,6 +1,9 @@
 """Authentication API routes — login, register, password management."""
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -14,6 +17,10 @@ from app.backend.auth.constants import (
     PASSWORD_MIN_LENGTH,
 )
 from app.backend.models.user import User
+
+# Dev mode: return reset token in response (no email system).
+# Set AUTH_SHOW_RESET_TOKEN=false in production.
+SHOW_RESET_TOKEN = os.getenv("AUTH_SHOW_RESET_TOKEN", "true").lower() == "true"
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -102,6 +109,8 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
         return result
     except WeakPasswordError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="用户名已被注册")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -167,11 +176,11 @@ async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(
         logger.info(f"Password reset token generated for {request.username}")
 
     # Since no email system is configured, return the token directly
-    # In production with email, you would remove reset_token from the response
+    # In production with email, set AUTH_SHOW_RESET_TOKEN=false
     # Always return the same message text to prevent user enumeration
     return {
         "message": "如果用户名和邮箱匹配，已生成密码重置令牌",
-        "reset_token": reset_token,
+        "reset_token": reset_token if SHOW_RESET_TOKEN else None,
     }
 
 
