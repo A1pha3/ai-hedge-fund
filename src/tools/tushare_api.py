@@ -4,7 +4,7 @@ from typing import Dict, List
 
 import pandas as pd
 
-from src.data.models import FinancialMetrics, LineItem, Price
+from src.data.models import FinancialMetrics, InsiderTrade, LineItem, Price
 
 _pro = None
 _stock_name_cache: Dict[str, str] = {}
@@ -299,6 +299,13 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         except Exception:
             pass
 
+        # 获取利润表数据（用于计算 EBITDA、interest_coverage 等）
+        df_income = None
+        try:
+            df_income = pro.income(ts_code=ts_code, limit=limit)
+        except Exception:
+            pass
+
         metrics = []
         # 预计算 FCF growth 所需的 FCF 值列表
         fcf_values = []
@@ -343,6 +350,67 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                 if earnings_growth and earnings_growth > 0:
                     peg_ratio_val = pe_ratio / (earnings_growth * 100)
 
+            # 计算 enterprise_value, EV/EBITDA, EV/Revenue, interest_coverage
+            ev_val = None
+            ev_to_ebitda_val = None
+            ev_to_revenue_val = None
+            interest_coverage_val = None
+            if market_cap and df_bal is not None and not df_bal.empty:
+                bal_row = df_bal[df_bal["end_date"] == end_date_str]
+                if not bal_row.empty:
+                    bal = bal_row.iloc[0]
+                    lt_borr = bal.get("lt_borr", 0) or 0
+                    st_borr = bal.get("st_borr", 0) or 0
+                    bonds_payable = bal.get("bond_payable", 0) or 0
+                    # Handle NaN values
+                    lt_borr = 0 if (isinstance(lt_borr, float) and pd.isna(lt_borr)) else float(lt_borr)
+                    st_borr = 0 if (isinstance(st_borr, float) and pd.isna(st_borr)) else float(st_borr)
+                    bonds_payable = 0 if (isinstance(bonds_payable, float) and pd.isna(bonds_payable)) else float(bonds_payable)
+                    total_debt = lt_borr + st_borr + bonds_payable
+                    cash_eq = bal.get("money_cap", 0) or 0
+                    cash_eq = 0 if (isinstance(cash_eq, float) and pd.isna(cash_eq)) else float(cash_eq)
+                    ev_val = market_cap + total_debt - cash_eq
+                    if ev_val < 0:
+                        ev_val = market_cap  # EV should not be negative; fallback to market cap
+
+            # 计算 EBITDA 和 EV/EBITDA
+            if ev_val and df_income is not None and not df_income.empty:
+                inc_row = df_income[df_income["end_date"] == end_date_str]
+                if not inc_row.empty:
+                    inc = inc_row.iloc[0]
+                    op_profit = inc.get("operate_profit")
+                    # 利息支出: 优先使用 fin_exp_int_exp，回退到 int_exp
+                    int_exp = inc.get("fin_exp_int_exp") or inc.get("int_exp", 0) or 0
+                    int_exp = 0 if (isinstance(int_exp, float) and pd.isna(int_exp)) else float(int_exp)
+                    # 财务费用 (含利息支出、汇兑损益等)
+                    fin_exp = inc.get("fin_exp", 0) or 0
+                    fin_exp = 0 if (isinstance(fin_exp, float) and pd.isna(fin_exp)) else float(fin_exp)
+                    total_revenue = inc.get("total_revenue")
+                    # 中国会计准则: 营业利润已扣除财务费用(含利息)
+                    # EBITDA = 营业利润 + 财务费用 + 折旧摊销
+                    # EBIT = 营业利润 + 财务费用
+                    depr_val = 0
+                    if df_cash is not None and not df_cash.empty:
+                        cash_row = df_cash[df_cash["end_date"] == end_date_str]
+                        if not cash_row.empty:
+                            dv = cash_row.iloc[0].get("depr_fa_coga_dpba", 0) or 0
+                            depr_val = 0 if (isinstance(dv, float) and pd.isna(dv)) else float(dv)
+                    if op_profit is not None and not (isinstance(op_profit, float) and pd.isna(op_profit)):
+                        ebit = float(op_profit) + fin_exp
+                        ebitda = ebit + depr_val
+                        if ebitda > 0:
+                            ev_to_ebitda_val = ev_val / ebitda
+                        elif ebit > 0:
+                            # EBITDA 为负但 EBIT 为正时，使用 EBIT 作为保守估计
+                            ev_to_ebitda_val = ev_val / ebit
+                    # EV/Revenue
+                    if total_revenue is not None and not (isinstance(total_revenue, float) and pd.isna(total_revenue)) and float(total_revenue) > 0:
+                        ev_to_revenue_val = ev_val / float(total_revenue)
+                    # Interest coverage = EBIT / interest_expense
+                    if op_profit is not None and not (isinstance(op_profit, float) and pd.isna(op_profit)) and int_exp > 0:
+                        ebit_for_ic = float(op_profit) + fin_exp
+                        interest_coverage_val = ebit_for_ic / int_exp
+
             # 从现金流量表获取 FCF 相关数据
             fcf_yield_val = None
             fcf_growth_val = None
@@ -370,12 +438,12 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     period="ttm",
                     currency="CNY",
                     market_cap=market_cap,
-                    enterprise_value=None,
+                    enterprise_value=ev_val,
                     price_to_earnings_ratio=pe_ratio,
                     price_to_book_ratio=pb_ratio,
                     price_to_sales_ratio=ps_ratio_val,
-                    enterprise_value_to_ebitda_ratio=None,
-                    enterprise_value_to_revenue_ratio=None,
+                    enterprise_value_to_ebitda_ratio=ev_to_ebitda_val,
+                    enterprise_value_to_revenue_ratio=ev_to_revenue_val,
                     free_cash_flow_yield=fcf_yield_val,
                     peg_ratio=peg_ratio_val,
                     gross_margin=_validate_margin(float(row.get("grossprofit_margin", 0)) / 100 if pd.notna(row.get("grossprofit_margin")) else None),
@@ -396,7 +464,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     operating_cash_flow_ratio=None,
                     debt_to_equity=float(row.get("debt_to_eqt", 0)) if pd.notna(row.get("debt_to_eqt")) else None,
                     debt_to_assets=float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
-                    interest_coverage=None,
+                    interest_coverage=interest_coverage_val,
                     revenue_growth=float(row.get("q_sales_yoy", 0)) / 100 if pd.notna(row.get("q_sales_yoy")) else None,
                     earnings_growth=float(row.get("netprofit_yoy", 0)) / 100 if pd.notna(row.get("netprofit_yoy")) else None,
                     book_value_growth=None,
@@ -496,6 +564,11 @@ def get_ashare_line_items_with_tushare(
                     field_mapping["cash_and_equivalents"] = bal.get("money_cap")
                     field_mapping["current_assets"] = bal.get("total_cur_assets")
                     field_mapping["current_liabilities"] = bal.get("total_cur_liab")
+                    # 计算 working_capital = current_assets - current_liabilities
+                    cur_assets = bal.get("total_cur_assets")
+                    cur_liab = bal.get("total_cur_liab")
+                    if cur_assets is not None and cur_liab is not None and not (isinstance(cur_assets, float) and pd.isna(cur_assets)) and not (isinstance(cur_liab, float) and pd.isna(cur_liab)):
+                        field_mapping["working_capital"] = float(cur_assets) - float(cur_liab)
 
             # 从 income 获取利润数据
             if df_income is not None and not df_income.empty:
@@ -506,6 +579,20 @@ def get_ashare_line_items_with_tushare(
                     field_mapping["net_income"] = inc.get("n_income_attr_p")
                     field_mapping["gross_profit"] = inc.get("total_profit")
                     field_mapping["operating_income"] = inc.get("operate_profit")
+                    # interest_expense (利息支出) - tushare 字段名为 fin_exp_int_exp
+                    int_exp_val = inc.get("fin_exp_int_exp") or inc.get("int_exp")
+                    if int_exp_val is not None and not (isinstance(int_exp_val, float) and pd.isna(int_exp_val)):
+                        field_mapping["interest_expense"] = float(int_exp_val)
+                    # research_and_development (研发费用)
+                    rd_val = inc.get("rd_exp")
+                    if rd_val is not None and not (isinstance(rd_val, float) and pd.isna(rd_val)):
+                        field_mapping["research_and_development"] = float(rd_val)
+                    # ebit = operating_income + interest_expense (近似)
+                    op_inc = inc.get("operate_profit")
+                    if op_inc is not None and not (isinstance(op_inc, float) and pd.isna(op_inc)):
+                        field_mapping["ebit"] = float(op_inc)
+                        if int_exp_val is not None and not (isinstance(int_exp_val, float) and pd.isna(int_exp_val)):
+                            field_mapping["ebit"] = float(op_inc) + float(int_exp_val)
                     # 计算 operating_margin = operating_income / revenue
                     op_income = inc.get("operate_profit")
                     total_rev = inc.get("total_revenue")
@@ -531,6 +618,14 @@ def get_ashare_line_items_with_tushare(
                     field_mapping["dividends_and_other_cash_distributions"] = cash.get("c_pay_dist_dpcp_int_exp")
                     # 股权融资/回购
                     field_mapping["issuance_or_purchase_of_equity_shares"] = cash.get("c_recp_cap_contrib")
+                    # 计算 ebitda = ebit + depreciation_and_amortization
+                    depr_val = cash.get("depr_fa_coga_dpba")
+                    if "ebit" in field_mapping:
+                        if depr_val is not None and not (isinstance(depr_val, float) and pd.isna(depr_val)):
+                            field_mapping["ebitda"] = field_mapping["ebit"] + float(depr_val)
+                        else:
+                            # 折旧不可用时 EBITDA ≈ EBIT（保守估计）
+                            field_mapping["ebitda"] = field_mapping["ebit"]
 
             # 从 fina_indicator 补充数据（如果上面没有获取到）
             if "net_income" not in field_mapping or field_mapping["net_income"] is None:
@@ -584,4 +679,95 @@ def get_ashare_line_items_with_tushare(
         import traceback
 
         traceback.print_exc()
+        return []
+
+
+def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_date: str = None, limit: int = 100) -> List[InsiderTrade]:
+    """
+    使用 Tushare stk_holdertrade 获取 A 股股东增减持数据
+
+    Args:
+        ticker: 股票代码 (如 600567)
+        end_date: 结束日期 (YYYY-MM-DD)
+        start_date: 开始日期 (YYYY-MM-DD), 可选
+        limit: 最大记录数
+
+    Returns:
+        List[InsiderTrade]
+    """
+    pro = _get_pro()
+    if not pro:
+        return []
+    try:
+        ts_code = _to_ts_code(ticker)
+        end_fmt = end_date.replace("-", "")
+
+        # 使用 ann_date 范围查询
+        kwargs = {"ts_code": ts_code, "end_date": end_fmt}
+        if start_date:
+            start_fmt = start_date.replace("-", "")
+            kwargs["start_date"] = start_fmt
+
+        df = pro.stk_holdertrade(**kwargs)
+        if df is None or df.empty:
+            return []
+
+        # 按公告日期降序排序
+        if "ann_date" in df.columns:
+            df = df.sort_values("ann_date", ascending=False)
+
+        trades = []
+        for _, row in df.head(limit).iterrows():
+            ann_date = str(row.get("ann_date", ""))
+            # 格式化日期 YYYYMMDD -> YYYY-MM-DD
+            filing_date = f"{ann_date[:4]}-{ann_date[4:6]}-{ann_date[6:8]}" if len(ann_date) == 8 else ann_date
+
+            in_de = str(row.get("in_de", ""))
+            change_vol = row.get("change_vol")
+            avg_price = row.get("avg_price")
+            after_share = row.get("after_share")
+            holder_name = str(row.get("holder_name", ""))
+
+            # 计算交易股数和交易价值
+            shares = None
+            tx_value = None
+            if change_vol is not None and not (isinstance(change_vol, float) and pd.isna(change_vol)):
+                shares = float(change_vol)
+                # 增持为正, 减持为负
+                if in_de == "DE" and shares > 0:
+                    shares = -shares
+                if avg_price is not None and not (isinstance(avg_price, float) and pd.isna(avg_price)):
+                    tx_value = abs(shares) * float(avg_price)
+
+            shares_after = None
+            if after_share is not None and not (isinstance(after_share, float) and pd.isna(after_share)):
+                shares_after = float(after_share)
+
+            shares_before = None
+            if shares_after is not None and shares is not None:
+                shares_before = shares_after - shares
+
+            tx_price = None
+            if avg_price is not None and not (isinstance(avg_price, float) and pd.isna(avg_price)):
+                tx_price = float(avg_price)
+
+            trades.append(InsiderTrade(
+                ticker=ticker,
+                issuer=None,
+                name=holder_name,
+                title=str(row.get("holder_type", "")),  # C=公司, P=个人
+                is_board_director=None,
+                transaction_date=filing_date,
+                transaction_shares=shares,
+                transaction_price_per_share=tx_price,
+                transaction_value=tx_value,
+                shares_owned_before_transaction=shares_before,
+                shares_owned_after_transaction=shares_after,
+                security_title=None,
+                filing_date=filing_date,
+            ))
+
+        return trades
+    except Exception as e:
+        print(f"[Tushare] 获取股东增减持数据失败: {e}")
         return []

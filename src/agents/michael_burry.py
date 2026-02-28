@@ -190,9 +190,9 @@ def _analyze_value(metrics, line_items, market_cap):
     else:
         details.append("FCF data unavailable")
 
-    # EV/EBIT (from financial metrics)
+    # EV/EBIT (from financial metrics, use EV/EBITDA ratio as proxy)
     if metrics:
-        ev_ebit = getattr(metrics[0], "ev_to_ebit", None)
+        ev_ebit = getattr(metrics[0], "enterprise_value_to_ebitda_ratio", None)
         if ev_ebit is not None:
             if ev_ebit < 6:
                 score += 2

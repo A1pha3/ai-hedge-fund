@@ -25,6 +25,7 @@ from src.data.snapshot import get_snapshot_exporter
 from src.tools.akshare_api import get_ashare_company_news, is_ashare
 from src.tools.tushare_api import (
     get_ashare_financial_metrics_with_tushare,
+    get_ashare_insider_trades_with_tushare,
     get_ashare_line_items_with_tushare,
     get_ashare_market_cap_with_tushare,
     get_ashare_prices_with_tushare,
@@ -267,9 +268,10 @@ def get_insider_trades(
     api_key: str = None,
 ) -> list[InsiderTrade]:
     """Fetch insider trades from cache or API."""
-    # A-share stocks: insider trade data not available via financialdatasets.ai
+    # A-share stocks: use tushare stk_holdertrade
     if is_ashare(ticker):
-        return []
+        trades = get_ashare_insider_trades_with_tushare(ticker, end_date, start_date, limit)
+        return trades
 
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
