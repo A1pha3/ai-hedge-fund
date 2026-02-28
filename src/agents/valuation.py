@@ -147,12 +147,15 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
 
         total_weight = sum(v["weight"] for v in method_values.values() if v["value"] > 0)
         if total_weight == 0:
-            progress.update_status(agent_id, ticker, "Failed: All valuation methods zero")
+            progress.update_status(agent_id, ticker, "All valuation methods non-positive")
+            method_value_summary = {name: vals["value"] for name, vals in method_values.items()}
             valuation_analysis[ticker] = {
-                "signal": "neutral",
-                "confidence": 0,
+                "signal": "bearish",
+                "confidence": 85,
                 "reasoning": {
-                    "error": "All valuation methods returned zero or negative values",
+                    "summary": "All valuation methods returned non-positive intrinsic values while market cap is positive",
+                    "market_cap": market_cap,
+                    "method_values": method_value_summary,
                     "details": f"DCF: ${dcf_val:,.2f}, Owner Earnings: ${owner_val:,.2f}, EV/EBITDA: ${ev_ebitda_val:,.2f}, Residual Income: ${rim_val:,.2f}",
                 },
             }

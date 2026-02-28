@@ -225,6 +225,42 @@ def _validate_roe(value: float | None) -> float | None:
     return value
 
 
+def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> float | None:
+    """获取指定日期（含）之前最近一个交易日的总市值（元）。"""
+    date_fmt = anchor_date.replace("-", "")
+
+    try:
+        df_exact = pro.daily_basic(ts_code=ts_code, trade_date=date_fmt)
+        if df_exact is not None and not df_exact.empty:
+            value = df_exact.iloc[0].get("total_mv", None)
+            if value is not None and not pd.isna(value):
+                return float(value) * 10000
+    except Exception:
+        pass
+
+    try:
+        date_obj = datetime.strptime(date_fmt, "%Y%m%d")
+    except Exception:
+        return None
+
+    start_fmt = (date_obj - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    try:
+        df_window = pro.daily_basic(ts_code=ts_code, start_date=start_fmt, end_date=date_fmt)
+        if df_window is None or df_window.empty or "total_mv" not in df_window.columns:
+            return None
+
+        valid = df_window[df_window["total_mv"].notna()]
+        if valid.empty:
+            return None
+
+        if "trade_date" in valid.columns:
+            valid = valid.sort_values("trade_date", ascending=False)
+
+        return float(valid.iloc[0]["total_mv"]) * 10000
+    except Exception:
+        return None
+
+
 def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10) -> List[FinancialMetrics]:
     """
     使用 Tushare 获取 A 股财务指标
@@ -243,13 +279,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         for _, row in df_fin.iterrows():
             # 从 daily_basic 获取市值数据
             end_date_str = str(row.get("end_date", ""))
-            market_cap = None
-            try:
-                df_daily = pro.daily_basic(ts_code=ts_code, trade_date=end_date_str)
-                if df_daily is not None and not df_daily.empty:
-                    market_cap = float(df_daily.iloc[0].get("total_mv", 0)) * 10000
-            except Exception:
-                pass
+            market_cap = _get_latest_total_mv(pro, ts_code, end_date_str)
 
             pe_ratio = float(row.get("pe", 0)) if pd.notna(row.get("pe")) and row.get("pe") != 0 else None
             pb_ratio = float(row.get("pb", 0)) if pd.notna(row.get("pb")) and row.get("pb") != 0 else None
@@ -322,14 +352,7 @@ def get_ashare_market_cap_with_tushare(ticker: str, end_date: str) -> float | No
         return None
     try:
         ts_code = _to_ts_code(ticker)
-        end_fmt = end_date.replace("-", "")
-        df_daily = pro.daily_basic(ts_code=ts_code, trade_date=end_fmt)
-        if df_daily is None or df_daily.empty:
-            return None
-        value = df_daily.iloc[0].get("total_mv", None)
-        if value is None or pd.isna(value):
-            return None
-        return float(value) * 10000
+        return _get_latest_total_mv(pro, ts_code, end_date)
     except Exception:
         return None
 

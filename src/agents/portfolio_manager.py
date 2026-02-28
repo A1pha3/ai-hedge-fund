@@ -1,5 +1,4 @@
 import json
-import time
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -162,8 +161,11 @@ def _make_decision_from_signals(ticker: str, signals: dict, allowed: dict) -> "P
     Make a trading decision based on analyst signals when LLM fails.
     Uses weighted voting based on confidence levels.
     """
+    def _confidence_int(value: float) -> int:
+        return max(0, min(100, int(round(value))))
+
     if not signals:
-        return PortfolioDecision(action="hold", quantity=0, confidence=0.0, reasoning="无分析师信号，默认持有")
+        return PortfolioDecision(action="hold", quantity=0, confidence=0, reasoning="无分析师信号，默认持有")
 
     bullish_weight = 0.0
     bearish_weight = 0.0
@@ -184,25 +186,25 @@ def _make_decision_from_signals(ticker: str, signals: dict, allowed: dict) -> "P
 
     total_weight = bullish_weight + bearish_weight + neutral_weight
     if total_weight == 0:
-        return PortfolioDecision(action="hold", quantity=0, confidence=0.0, reasoning="分析师信号权重为零")
+        return PortfolioDecision(action="hold", quantity=0, confidence=0, reasoning="分析师信号权重为零")
 
     avg_confidence = total_confidence / len(signals) if signals else 0
 
     if bullish_weight > bearish_weight * 1.5 and "buy" in allowed:
         qty = min(allowed.get("buy", 0), 100)
         reasoning = f"多数分析师看涨(权重{bullish_weight:.0f} vs {bearish_weight:.0f})，建议买入"
-        return PortfolioDecision(action="buy", quantity=qty, confidence=min(avg_confidence, 80), reasoning=reasoning)
+        return PortfolioDecision(action="buy", quantity=qty, confidence=_confidence_int(min(avg_confidence, 80)), reasoning=reasoning)
     elif bearish_weight > bullish_weight * 1.5:
         if "short" in allowed:
             qty = min(allowed.get("short", 0), 100)
             reasoning = f"多数分析师看跌(权重{bearish_weight:.0f} vs {bullish_weight:.0f})，建议做空"
-            return PortfolioDecision(action="short", quantity=qty, confidence=min(avg_confidence, 80), reasoning=reasoning)
+            return PortfolioDecision(action="short", quantity=qty, confidence=_confidence_int(min(avg_confidence, 80)), reasoning=reasoning)
         elif "sell" in allowed:
             qty = allowed.get("sell", 0)
             reasoning = f"多数分析师看跌(权重{bearish_weight:.0f} vs {bullish_weight:.0f})，建议卖出"
-            return PortfolioDecision(action="sell", quantity=qty, confidence=min(avg_confidence, 80), reasoning=reasoning)
+            return PortfolioDecision(action="sell", quantity=qty, confidence=_confidence_int(min(avg_confidence, 80)), reasoning=reasoning)
 
-    return PortfolioDecision(action="hold", quantity=0, confidence=avg_confidence * 0.5, reasoning=f"信号分歧(涨{bullish_weight:.0f}/跌{bearish_weight:.0f})，建议观望")
+    return PortfolioDecision(action="hold", quantity=0, confidence=_confidence_int(avg_confidence * 0.5), reasoning=f"信号分歧(涨{bullish_weight:.0f}/跌{bearish_weight:.0f})，建议观望")
 
 
 def _compact_signals(signals_by_ticker: dict[str, dict]) -> dict[str, dict]:
@@ -243,7 +245,7 @@ def generate_trading_decision(
         aa = allowed_actions_full.get(t, {"hold": 0})
         # If only 'hold' key exists, there is no trade possible
         if set(aa.keys()) == {"hold"}:
-            prefilled_decisions[t] = PortfolioDecision(action="hold", quantity=0, confidence=100.0, reasoning="No valid trade available")
+            prefilled_decisions[t] = PortfolioDecision(action="hold", quantity=0, confidence=100, reasoning="No valid trade available")
         else:
             tickers_for_llm.append(t)
 
@@ -284,7 +286,27 @@ def generate_trading_decision(
         default_factory=create_default_portfolio_output,
     )
 
+    # Post-LLM consistency guard:
+    # If LLM outputs a low-confidence HOLD while signals indicate a clear directional bias
+    # and valid non-hold actions exist, fall back to deterministic rule-based decision.
+    validated_decisions: dict[str, PortfolioDecision] = {}
+    for t in tickers_for_llm:
+        llm_decision = llm_out.decisions.get(t)
+        if llm_decision is None:
+            validated_decisions[t] = _make_decision_from_signals(t, compact_signals.get(t, {}), compact_allowed.get(t, {"hold": 0}))
+            continue
+
+        fallback_decision = _make_decision_from_signals(t, compact_signals.get(t, {}), compact_allowed.get(t, {"hold": 0}))
+
+        should_override = (
+            llm_decision.action == "hold"
+            and fallback_decision.action != "hold"
+            and int(llm_decision.confidence) <= 20
+        )
+
+        validated_decisions[t] = fallback_decision if should_override else llm_decision
+
     # Merge prefilled holds with LLM results
     merged = dict(prefilled_decisions)
-    merged.update(llm_out.decisions)
+    merged.update(validated_decisions)
     return PortfolioManagerOutput(decisions=merged)
