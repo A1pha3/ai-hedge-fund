@@ -55,7 +55,7 @@ def charlie_munger_agent(state: AgentState, agent_id: str = "charlie_munger_agen
                 "free_cash_flow",
                 "capital_expenditure",
                 "cash_and_equivalents",
-                "total_debt",
+                "total_liabilities",
                 "shareholders_equity",
                 "outstanding_shares",
                 "research_and_development",
@@ -295,7 +295,8 @@ def analyze_management_quality(financial_line_items: list, insider_trades: list)
         details.append("Missing FCF or Net Income data")
 
     # 2. Debt management - Munger is cautious about debt
-    debt_values = [item.total_debt for item in financial_line_items if hasattr(item, "total_debt") and item.total_debt is not None]
+    # Use total_liabilities (not just total_debt/interest-bearing debt) for D/E consistency with other agents
+    debt_values = [item.total_liabilities for item in financial_line_items if hasattr(item, "total_liabilities") and item.total_liabilities is not None]
 
     equity_values = [item.shareholders_equity for item in financial_line_items if hasattr(item, "shareholders_equity") and item.shareholders_equity is not None]
 
@@ -685,7 +686,7 @@ def make_munger_facts_bundle(analysis: dict[str, any]) -> dict[str, any]:
         "moat_strong": moat_score >= 7,
         "predictable": pred_score >= 7,
         "owner_aligned": (mgmt_score >= 7) or ((mgmt.get("insider_buy_ratio") or 0) >= 0.6),
-        "low_leverage": (mgmt.get("recent_de_ratio") is not None and mgmt.get("recent_de_ratio") < 0.7),
+        "low_leverage": (mgmt.get("recent_de_ratio") is not None and mgmt.get("recent_de_ratio") < 1.0),
         "sensible_cash": (mgmt.get("cash_to_revenue") is not None and 0.1 <= mgmt.get("cash_to_revenue") <= 0.25),
         "low_capex": None,  # inferred in moat score already; keep placeholder if you later expose a ratio
         "mos_positive": (val.get("mos_to_reasonable") or 0) > 0.0,

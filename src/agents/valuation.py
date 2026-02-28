@@ -146,6 +146,8 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         }
 
         total_weight = sum(v["weight"] for v in method_values.values() if v["value"] > 0)
+        methods_succeeded = sum(1 for v in method_values.values() if v["value"] > 0)
+        methods_total = len(method_values)
         if total_weight == 0:
             progress.update_status(agent_id, ticker, "All valuation methods non-positive")
             method_value_summary = {name: vals["value"] for name, vals in method_values.items()}
@@ -167,17 +169,23 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         weighted_gap = sum(v["weight"] * v["gap"] for v in method_values.values() if v["gap"] is not None) / total_weight
 
         signal = "bullish" if weighted_gap > 0.15 else "bearish" if weighted_gap < -0.15 else "neutral"
-        confidence = round(min(abs(weighted_gap) / 0.30 * 100, 100))
+        # Penalize confidence when most valuation methods fail (data unavailable)
+        coverage_ratio = methods_succeeded / methods_total  # e.g., 1/4 = 0.25
+        raw_confidence = abs(weighted_gap) / 0.30 * 100
+        confidence = round(min(raw_confidence * coverage_ratio, 100))
 
         # Enhanced reasoning with DCF scenario details
         reasoning = {}
         for m, vals in method_values.items():
             # Always include the method, even if value is 0 or negative
-            base_details = f"Value: ${vals['value']:,.2f}, Market Cap: ${market_cap:,.2f}, "
+            if vals['value'] == 0:
+                base_details = f"Value: N/A (insufficient data), Market Cap: ${market_cap:,.2f}, "
+            else:
+                base_details = f"Value: ${vals['value']:,.2f}, Market Cap: ${market_cap:,.2f}, "
             if vals["gap"] is not None:
                 base_details += f"Gap: {vals['gap']:.1%}, Weight: {vals['weight']*100:.0f}%"
             else:
-                base_details += f"Gap: N/A, Weight: {vals['weight']*100:.0f}%"
+                base_details += f"Gap: N/A (data unavailable), Weight: {vals['weight']*100:.0f}%"
 
             # Add enhanced DCF details
             if m == "dcf" and "dcf_results" in locals():

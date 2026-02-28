@@ -225,16 +225,18 @@ def _validate_roe(value: float | None) -> float | None:
     return value
 
 
-def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> float | None:
-    """获取指定日期（含）之前最近一个交易日的总市值（元）。"""
+def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> dict | None:
+    """获取指定日期（含）之前最近一个交易日的 daily_basic 数据行。
+
+    返回包含 total_mv, pe, pe_ttm, pb, ps, ps_ttm 等字段的 dict，
+    如果找不到数据则返回 None。
+    """
     date_fmt = anchor_date.replace("-", "")
 
     try:
         df_exact = pro.daily_basic(ts_code=ts_code, trade_date=date_fmt)
         if df_exact is not None and not df_exact.empty:
-            value = df_exact.iloc[0].get("total_mv", None)
-            if value is not None and not pd.isna(value):
-                return float(value) * 10000
+            return df_exact.iloc[0].to_dict()
     except Exception:
         pass
 
@@ -246,19 +248,26 @@ def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int
     start_fmt = (date_obj - timedelta(days=lookback_days)).strftime("%Y%m%d")
     try:
         df_window = pro.daily_basic(ts_code=ts_code, start_date=start_fmt, end_date=date_fmt)
-        if df_window is None or df_window.empty or "total_mv" not in df_window.columns:
+        if df_window is None or df_window.empty:
             return None
 
-        valid = df_window[df_window["total_mv"].notna()]
-        if valid.empty:
-            return None
+        if "trade_date" in df_window.columns:
+            df_window = df_window.sort_values("trade_date", ascending=False)
 
-        if "trade_date" in valid.columns:
-            valid = valid.sort_values("trade_date", ascending=False)
-
-        return float(valid.iloc[0]["total_mv"]) * 10000
+        return df_window.iloc[0].to_dict()
     except Exception:
         return None
+
+
+def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> float | None:
+    """获取指定日期（含）之前最近一个交易日的总市值（元）。"""
+    row = _get_latest_daily_basic(pro, ts_code, anchor_date, lookback_days)
+    if row is None:
+        return None
+    value = row.get("total_mv", None)
+    if value is not None and not pd.isna(value):
+        return float(value) * 10000
+    return None
 
 
 def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10) -> List[FinancialMetrics]:
@@ -277,13 +286,27 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
             return []
         metrics = []
         for _, row in df_fin.iterrows():
-            # 从 daily_basic 获取市值数据
+            # 从 daily_basic 获取市值和估值数据（pe/pb/ps 仅存在于 daily_basic，不在 fina_indicator 中）
             end_date_str = str(row.get("end_date", ""))
-            market_cap = _get_latest_total_mv(pro, ts_code, end_date_str)
+            daily_data = _get_latest_daily_basic(pro, ts_code, end_date_str)
+            market_cap = None
+            pe_ratio = None
+            pb_ratio = None
+            ps_ratio_val = None
+            if daily_data:
+                mv = daily_data.get("total_mv")
+                if mv is not None and not pd.isna(mv):
+                    market_cap = float(mv) * 10000
+                pe_val = daily_data.get("pe_ttm") or daily_data.get("pe")
+                if pe_val is not None and not pd.isna(pe_val) and float(pe_val) != 0:
+                    pe_ratio = float(pe_val)
+                pb_val = daily_data.get("pb")
+                if pb_val is not None and not pd.isna(pb_val) and float(pb_val) != 0:
+                    pb_ratio = float(pb_val)
+                ps_val = daily_data.get("ps_ttm") or daily_data.get("ps")
+                if ps_val is not None and not pd.isna(ps_val) and float(ps_val) != 0:
+                    ps_ratio_val = float(ps_val)
 
-            pe_ratio = float(row.get("pe", 0)) if pd.notna(row.get("pe")) and row.get("pe") != 0 else None
-            pb_ratio = float(row.get("pb", 0)) if pd.notna(row.get("pb")) and row.get("pb") != 0 else None
-            ps_ratio_val = float(row.get("ps", 0)) if pd.notna(row.get("ps")) and row.get("ps") != 0 else None
             peg_ratio_val = None
             if pe_ratio and pe_ratio > 0:
                 earnings_growth = float(row.get("netprofit_yoy", 0)) / 100 if pd.notna(row.get("netprofit_yoy")) else None
@@ -471,10 +494,16 @@ def get_ashare_line_items_with_tushare(
             if "outstanding_shares" not in field_mapping or field_mapping["outstanding_shares"] is None:
                 field_mapping["outstanding_shares"] = row.get("total_share")
             # 补充 EPS 和其他 fina_indicator 字段
+            # 注意: tushare fina_indicator 中 EPS 字段名为 "eps"，不是 "basic_eps"
             if "earnings_per_share" not in field_mapping or field_mapping["earnings_per_share"] is None:
-                eps_val = row.get("basic_eps")
+                eps_val = row.get("eps") or row.get("basic_eps")
                 if eps_val is not None and not (isinstance(eps_val, float) and pd.isna(eps_val)):
                     field_mapping["earnings_per_share"] = eps_val
+            # 补充 book_value_per_share (来自 fina_indicator 的 bps 字段)
+            if "book_value_per_share" not in field_mapping or field_mapping["book_value_per_share"] is None:
+                bps_val = row.get("bps")
+                if bps_val is not None and not (isinstance(bps_val, float) and pd.isna(bps_val)):
+                    field_mapping["book_value_per_share"] = bps_val
             # 补充 debt_to_equity (来自 fina_indicator 的标准计算: total_liabilities / equity)
             dte_val = row.get("debt_to_eqt")
             if dte_val is not None and not (isinstance(dte_val, float) and pd.isna(dte_val)):

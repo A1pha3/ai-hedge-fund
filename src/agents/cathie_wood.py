@@ -341,11 +341,17 @@ def analyze_cathie_wood_valuation(financial_line_items: list, market_cap: float)
 
     latest = financial_line_items[0]
     fcf = getattr(latest, "free_cash_flow", None)
-    if fcf is None:
-        fcf = 0
 
-    if fcf <= 0:
-        return {"score": 0, "details": f"No positive FCF for valuation; FCF = {fcf}", "intrinsic_value": None}
+    if fcf is None:
+        # Latest period FCF not yet available — try the next available period
+        for item in financial_line_items[1:]:
+            fcf = getattr(item, "free_cash_flow", None)
+            if fcf is not None:
+                break
+
+    if fcf is None or fcf <= 0:
+        reason = "Latest FCF data not yet available" if fcf is None else f"Negative FCF ({fcf:,.0f})"
+        return {"score": 0, "details": f"No positive FCF for valuation; {reason}", "intrinsic_value": None}
 
     # Instead of a standard DCF, let's assume a higher growth rate for an innovative company.
     # Example values:

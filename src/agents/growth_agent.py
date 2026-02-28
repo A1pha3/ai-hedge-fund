@@ -101,17 +101,17 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
             "historical_growth": {
                 "signal": "bullish" if growth_trends["score"] > 0.6 else "bearish" if growth_trends["score"] < 0.4 else "neutral",
                 "details": f"Revenue Growth: {fmt_pct(growth_trends['revenue_growth'])}, EPS Growth: {fmt_pct(growth_trends['eps_growth'])}, FCF Growth: {fmt_pct(growth_trends['fcf_growth'])}",
-                "metrics": {k: v for k, v in growth_trends.items() if k != "score"},
+                "metrics": {k: (v if v is not None else "N/A") for k, v in growth_trends.items() if k != "score"},
             },
             "growth_valuation": {
                 "signal": "bullish" if valuation_metrics["score"] > 0.6 else "bearish" if valuation_metrics["score"] < 0.4 else "neutral",
                 "details": f"PEG Ratio: {fmt_float(valuation_metrics['peg_ratio'])}, P/S Ratio: {fmt_float(valuation_metrics['price_to_sales_ratio'])}",
-                "metrics": {k: v for k, v in valuation_metrics.items() if k != "score"},
+                "metrics": {k: (v if v is not None else "N/A") for k, v in valuation_metrics.items() if k != "score"},
             },
             "margin_expansion": {
                 "signal": "bullish" if margin_trends["score"] > 0.6 else "bearish" if margin_trends["score"] < 0.4 else "neutral",
                 "details": f"Gross Margin: {fmt_pct(margin_trends['gross_margin'])}, Operating Margin: {fmt_pct(margin_trends['operating_margin'])}, Net Margin: {fmt_pct(margin_trends['net_margin'])}",
-                "metrics": {k: v for k, v in margin_trends.items() if k != "score"},
+                "metrics": {k: (v if v is not None else "N/A") for k, v in margin_trends.items() if k != "score"},
             },
             "insider_conviction": {
                 "signal": "bullish" if insider_conviction["score"] > 0.6 else "bearish" if insider_conviction["score"] < 0.4 else "neutral",
@@ -121,7 +121,7 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
             "financial_health": {
                 "signal": "bullish" if financial_health["score"] > 0.6 else "bearish" if financial_health["score"] < 0.4 else "neutral",
                 "details": f"Debt/Equity: {fmt_float(financial_health['debt_to_equity'])}, Current Ratio: {fmt_float(financial_health['current_ratio'])}",
-                "metrics": {k: v for k, v in financial_health.items() if k != "score"},
+                "metrics": {k: (v if v is not None else "N/A") for k, v in financial_health.items() if k != "score"},
             },
             "final_analysis": {"signal": signal, "confidence": confidence, "weighted_score": round(weighted_score, 2)},
         }

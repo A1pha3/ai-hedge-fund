@@ -455,7 +455,9 @@ def _format_reasoning_to_markdown(reasoning: dict | str) -> str:
                     lines.append("|------|------|")
                     for metric_key, metric_value in metrics.items():
                         metric_name = metric_key.replace("_", " ").title()
-                        if isinstance(metric_value, float):
+                        if metric_value is None:
+                            lines.append(f"| {metric_name} | N/A |")
+                        elif isinstance(metric_value, float):
                             lines.append(f"| {metric_name} | {metric_value:.4f} |")
                         else:
                             lines.append(f"| {metric_name} | {metric_value} |")
@@ -467,7 +469,9 @@ def _format_reasoning_to_markdown(reasoning: dict | str) -> str:
                 lines.append("|------|------|")
                 for sub_key, sub_value in value.items():
                     field_name = sub_key.replace("_", " ").title()
-                    if isinstance(sub_value, float):
+                    if sub_value is None:
+                        lines.append(f"| {field_name} | N/A |")
+                    elif isinstance(sub_value, float):
                         lines.append(f"| {field_name} | {sub_value:.4f} |")
                     else:
                         lines.append(f"| {field_name} | {sub_value} |")

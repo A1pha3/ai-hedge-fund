@@ -696,6 +696,8 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 def calculate_hurst_exponent(price_series: pd.Series, max_lag: int = 20) -> float:
     """
     Calculate Hurst Exponent to determine long-term memory of time series
+    using the rescaled range (R/S) method.
+
     H < 0.5: Mean reverting series
     H = 0.5: Random walk
     H > 0.5: Trending series
@@ -707,14 +709,27 @@ def calculate_hurst_exponent(price_series: pd.Series, max_lag: int = 20) -> floa
     Returns:
         float: Hurst exponent
     """
-    lags = range(2, max_lag)
-    # Add small epsilon to avoid log(0)
-    tau = [max(1e-8, np.sqrt(np.std(np.subtract(price_series[lag:], price_series[:-lag])))) for lag in lags]
+    # Convert to numpy array to avoid pandas index-alignment issues
+    ts = np.asarray(price_series, dtype=float)
+    ts = ts[~np.isnan(ts)]
 
-    # Return the Hurst exponent from linear fit
+    if len(ts) < max_lag + 2:
+        return 0.5  # Not enough data
+
+    lags = range(2, max_lag)
+    # Calculate variance of lagged differences (no spurious sqrt)
+    tau = []
+    for lag in lags:
+        diffs = ts[lag:] - ts[:-lag]
+        std_val = np.std(diffs)
+        tau.append(max(1e-8, std_val))
+
+    # Return the Hurst exponent from linear fit of log(lag) vs log(tau)
     try:
-        reg = np.polyfit(np.log(lags), np.log(tau), 1)
-        return reg[0]  # Hurst exponent is the slope
+        reg = np.polyfit(np.log(list(lags)), np.log(tau), 1)
+        hurst = reg[0]  # Hurst exponent is the slope
+        # Clamp to reasonable range [0, 1]
+        return float(np.clip(hurst, 0.0, 1.0))
     except (ValueError, RuntimeWarning):
         # Return 0.5 (random walk) if calculation fails
         return 0.5
