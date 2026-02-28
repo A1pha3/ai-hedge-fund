@@ -3,7 +3,7 @@
  * Rendered as a modal dialog, triggered from the main layout.
  */
 
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { authApi } from '@/services/auth-api';
 
@@ -14,6 +14,15 @@ interface UserSettingsDialogProps {
 export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
   const { user, updateUser, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'password' | 'email'>('password');
+
+  // Close on Escape key
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onClose]);
 
   // Password form
   const [oldPassword, setOldPassword] = useState('');
@@ -38,6 +47,8 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
       setPwdSuccess(true);
       setOldPassword('');
       setNewPassword('');
+      // Auto-logout after 2 seconds since token_version has changed
+      setTimeout(() => logout(), 2000);
     } catch (err: unknown) {
       setPwdError(err instanceof Error ? err.message : '修改失败');
     } finally {
@@ -103,52 +114,56 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
         {/* Password tab */}
         {activeTab === 'password' && (
           <form onSubmit={handlePasswordSubmit} className="settings-form">
-            {isAdmin && (
+            {isAdmin ? (
               <div className="settings-warning">
-                管理员密码只能通过服务器 CLI 修改
+                管理员密码只能通过服务器 CLI 修改：
+                <code className="settings-cli-hint">
+                  uv run python -m app.backend.auth reset-admin-password
+                </code>
               </div>
+            ) : (
+              <>
+                {pwdError && <div className="settings-error">{pwdError}</div>}
+                {pwdSuccess && <div className="settings-success">密码修改成功，请重新登录</div>}
+
+                <div className="settings-field">
+                  <label htmlFor="old-pwd">当前密码</label>
+                  <input
+                    id="old-pwd"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    minLength={8}
+                    value={oldPassword}
+                    onChange={(e) => setOldPassword(e.target.value)}
+                    className="settings-input"
+                  />
+                </div>
+
+                <div className="settings-field">
+                  <label htmlFor="new-pwd">新密码</label>
+                  <input
+                    id="new-pwd"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="大小写字母 + 数字，至少 8 位"
+                    className="settings-input"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={pwdLoading}
+                  className="settings-submit"
+                >
+                  {pwdLoading ? '修改中…' : '确认修改'}
+                </button>
+              </>
             )}
-
-            {pwdError && <div className="settings-error">{pwdError}</div>}
-            {pwdSuccess && <div className="settings-success">密码修改成功</div>}
-
-            <div className="settings-field">
-              <label htmlFor="old-pwd">当前密码</label>
-              <input
-                id="old-pwd"
-                type="password"
-                autoComplete="current-password"
-                required
-                minLength={6}
-                disabled={isAdmin}
-                value={oldPassword}
-                onChange={(e) => setOldPassword(e.target.value)}
-                className="settings-input"
-              />
-            </div>
-
-            <div className="settings-field">
-              <label htmlFor="new-pwd">新密码</label>
-              <input
-                id="new-pwd"
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={6}
-                disabled={isAdmin}
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="settings-input"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={pwdLoading || isAdmin}
-              className="settings-submit"
-            >
-              {pwdLoading ? '修改中…' : '确认修改'}
-            </button>
           </form>
         )}
 

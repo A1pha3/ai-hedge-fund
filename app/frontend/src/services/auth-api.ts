@@ -26,6 +26,11 @@ export interface MessageResponse {
   message: string;
 }
 
+export interface ForgotPasswordResponse {
+  message: string;
+  reset_token: string | null;
+}
+
 // ---- Token Management ----
 
 export function getStoredToken(): string | null {
@@ -165,7 +170,7 @@ export const authApi = {
   async forgotPassword(
     username: string,
     email: string
-  ): Promise<MessageResponse> {
+  ): Promise<ForgotPasswordResponse> {
     const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

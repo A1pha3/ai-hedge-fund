@@ -30,14 +30,15 @@ def _auto_init_admin():
     db = None
     try:
         from app.backend.auth.utils import hash_password
+        from app.backend.auth.constants import ADMIN_USERNAME
         db = SessionLocal()
-        existing = db.query(User).filter(User.username == "einstein").first()
+        existing = db.query(User).filter(User.username == ADMIN_USERNAME).first()
         if not existing:
             default_password = os.getenv("AUTH_ADMIN_DEFAULT_PASSWORD", "Hedge@2026!")
-            admin = User(username="einstein", password_hash=hash_password(default_password), role="admin", is_active=True)
+            admin = User(username=ADMIN_USERNAME, password_hash=hash_password(default_password), role="admin", is_active=True)
             db.add(admin)
             db.commit()
-            logger.info("✓ Admin user 'einstein' auto-created (change default password via CLI)")
+            logger.info(f"✓ Admin user '{ADMIN_USERNAME}' auto-created (change default password via CLI)")
     except Exception as e:
         logger.warning(f"Could not auto-init admin: {e}")
     finally:

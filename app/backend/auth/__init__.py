@@ -76,16 +76,17 @@ def _cmd_init(db):
     """Initialize auth system and create admin user."""
     from app.backend.models.user import User
     from app.backend.auth.utils import hash_password
+    from app.backend.auth.constants import ADMIN_USERNAME
 
     # Check if admin already exists
-    existing = db.query(User).filter(User.username == "einstein").first()
+    existing = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     if existing:
-        print("✓ 管理员 einstein 已存在，跳过创建")
+        print(f"✓ 管理员 {ADMIN_USERNAME} 已存在，跳过创建")
         return
 
     default_password = os.getenv("AUTH_ADMIN_DEFAULT_PASSWORD", "Hedge@2026!")
     admin = User(
-        username="einstein",
+        username=ADMIN_USERNAME,
         password_hash=hash_password(default_password),
         role="admin",
         is_active=True,
@@ -94,7 +95,7 @@ def _cmd_init(db):
     db.commit()
 
     print("✓ 数据库表已创建")
-    print("✓ 管理员 einstein 已创建")
+    print(f"✓ 管理员 {ADMIN_USERNAME} 已创建")
     print("⚠ 默认密码请查看 AUTH_ADMIN_DEFAULT_PASSWORD 环境变量或 .env 文件")
     print("⚠ 请及时使用 reset-admin-password 命令修改管理员默认密码")
 
@@ -103,19 +104,18 @@ def _cmd_gen_invite(db, expires_in: str, count: int):
     """Generate invitation codes."""
     from app.backend.models.user import User, InvitationCode
     from app.backend.auth.utils import generate_invitation_code
-    from datetime import datetime, timedelta
+    from app.backend.auth.constants import ADMIN_USERNAME
+    from datetime import datetime, timedelta, timezone
 
-    # Check admin exists
-    admin = db.query(User).filter(User.username == "einstein").first()
+    admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     if not admin:
         print("✗ 管理员不存在，请先运行 init 命令")
         sys.exit(1)
 
-    # Parse expires_in
     expires_at = None
     if expires_in:
         days = int(expires_in.rstrip("d"))
-        expires_at = datetime.utcnow() + timedelta(days=days)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=days)
 
     for i in range(count):
         code = generate_invitation_code()
@@ -140,8 +140,9 @@ def _cmd_reset_admin_password(db):
     """Reset admin password interactively."""
     from app.backend.models.user import User
     from app.backend.auth.utils import hash_password
+    from app.backend.auth.constants import ADMIN_USERNAME
 
-    admin = db.query(User).filter(User.username == "einstein").first()
+    admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     if not admin:
         print("✗ 管理员不存在，请先运行 init 命令")
         sys.exit(1)

@@ -9,6 +9,11 @@ from datetime import datetime
 from app.backend.database.connection import get_db
 from app.backend.auth.dependencies import get_current_user
 from app.backend.auth.service import AuthService
+from app.backend.auth.constants import (
+    AuthError, InvalidCredentialsError, AccountLockedError,
+    ForbiddenError, InvalidTokenError, WeakPasswordError,
+    PASSWORD_MIN_LENGTH,
+)
 from app.backend.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -18,18 +23,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_]+$")
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=128)
     invitation_code: str = Field(..., min_length=8, max_length=32)
 
 
 class ChangePasswordRequest(BaseModel):
-    old_password: str = Field(..., min_length=6)
-    new_password: str = Field(..., min_length=6, max_length=128)
+    old_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=128)
 
 
 class BindEmailRequest(BaseModel):
@@ -43,7 +48,7 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    new_password: str = Field(..., min_length=6, max_length=128)
+    new_password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=128)
 
 
 # ---- Response Schemas ----
@@ -54,6 +59,7 @@ class UserResponse(BaseModel):
     email: Optional[str] = None
     role: str
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -62,6 +68,11 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_token: Optional[str] = None  # Only populated in dev mode (no email system)
 
 
 class MessageResponse(BaseModel):
@@ -77,7 +88,9 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
     try:
         result = service.login(request.username, request.password)
         return result
-    except ValueError as e:
+    except AccountLockedError as e:
+        raise HTTPException(status_code=423, detail=str(e))
+    except AuthError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
 
@@ -88,6 +101,8 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     try:
         result = service.register(request.username, request.password, request.invitation_code)
         return result
+    except WeakPasswordError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -101,6 +116,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
         email=current_user.email,
         role=current_user.role,
         created_at=current_user.created_at.isoformat() if current_user.created_at else None,
+        updated_at=current_user.updated_at.isoformat() if current_user.updated_at else None,
     )
 
 
@@ -115,9 +131,13 @@ async def change_password(
     try:
         service.change_password(current_user, request.old_password, request.new_password)
         return {"message": "密码修改成功"}
-    except PermissionError:
+    except ForbiddenError:
         raise HTTPException(status_code=403, detail="管理员密码只能通过 CLI 修改")
-    except ValueError as e:
+    except WeakPasswordError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except InvalidCredentialsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AuthError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -136,22 +156,23 @@ async def bind_email(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/forgot-password", response_model=MessageResponse)
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
 async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    """Initiate password reset. Always returns success to prevent enumeration."""
+    """Initiate password reset. Returns reset token directly since no email system is configured."""
     service = AuthService(db)
-    # Generate reset token (may be None if user doesn't exist)
     reset_token = service.forgot_password(request.username, request.email)
 
     if reset_token:
-        # In production, send email with reset_token
-        # Log event without exposing the token value
         import logging
         logger = logging.getLogger(__name__)
         logger.info(f"Password reset token generated for {request.username}")
 
-    # Always return same response to prevent user enumeration
-    return {"message": "如果用户名和邮箱匹配，密码重置邮件已发送，请查收"}
+    # Since no email system is configured, return the token directly
+    # In production with email, you would remove reset_token from the response
+    return {
+        "message": "如果用户名和邮箱匹配，已生成密码重置令牌" if reset_token else "如果用户名和邮箱匹配，密码重置邮件已发送，请查收",
+        "reset_token": reset_token,
+    }
 
 
 @router.post("/reset-password", response_model=MessageResponse)
@@ -161,5 +182,9 @@ async def reset_password(request: ResetPasswordRequest, db: Session = Depends(ge
     try:
         service.reset_password(request.token, request.new_password)
         return {"message": "密码重置成功，请使用新密码登录"}
-    except ValueError as e:
+    except ForbiddenError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except WeakPasswordError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except (InvalidTokenError, AuthError) as e:
         raise HTTPException(status_code=400, detail=str(e))

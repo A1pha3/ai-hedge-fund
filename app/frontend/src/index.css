@@ -907,6 +907,13 @@
   border-radius: 6px;
 }
 
+.settings-cli-hint {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
 .settings-footer {
   padding: 12px 20px;
   border-top: 1px solid hsl(var(--border));

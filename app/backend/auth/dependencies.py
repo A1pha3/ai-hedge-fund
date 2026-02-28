@@ -1,7 +1,7 @@
 """FastAPI authentication dependencies (middleware)."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.backend.database.connection import get_db
 from app.backend.models.user import User
 from app.backend.auth.utils import decode_token
+from app.backend.auth.constants import ADMIN_USERNAME
 
 # Optional: disable auth for development
 AUTH_DISABLED = os.getenv("AUTH_DISABLED", "false").lower() == "true"
@@ -30,11 +31,15 @@ async def get_current_user(
     """
     # If auth is disabled, return a mock admin user for development
     if AUTH_DISABLED:
-        mock_user = db.query(User).filter(User.username == "einstein").first()
+        mock_user = db.query(User).filter(User.username == ADMIN_USERNAME).first()
         if mock_user:
             return mock_user
-        # Create a temporary mock user object if no admin exists
-        mock = User(id=0, username="dev", role="admin", is_active=True)
+        # Fallback: find any admin user
+        any_admin = db.query(User).filter(User.role == "admin").first()
+        if any_admin:
+            return any_admin
+        # Last resort: create a transient mock user (not persisted, id=-1 avoids FK collision)
+        mock = User(id=-1, username="dev", role="admin", is_active=True)
         return mock
 
     if credentials is None:
@@ -58,8 +63,13 @@ async def get_current_user(
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="用户不存在或已禁用")
 
+    # Check token version — reject tokens issued before password change
+    token_version = payload.get("tv", 0)
+    if token_version != (user.token_version or 0):
+        raise HTTPException(status_code=401, detail="认证令牌已失效，请重新登录")
+
     # Check account lock
-    if user.locked_until and user.locked_until > datetime.utcnow():
+    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
         raise HTTPException(status_code=423, detail="账户已锁定，请稍后重试")
 
     return user

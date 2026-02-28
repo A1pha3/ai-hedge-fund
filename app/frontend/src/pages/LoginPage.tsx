@@ -9,6 +9,7 @@
 
 import { useState, useRef, useEffect, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/auth-context';
+import { BrandLogo, ErrorIcon } from '@/components/auth-icons';
 
 export function LoginPage() {
   const [username, setUsername] = useState('');
@@ -55,12 +56,7 @@ export function LoginPage() {
         {/* Brand header */}
         <div className="auth-brand">
           <div className="auth-logo">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <rect x="2" y="2" width="32" height="32" rx="6" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 26L14 14L18 22L22 10L26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              <circle cx="14" cy="14" r="2" fill="currentColor" />
-              <circle cx="22" cy="10" r="2" fill="currentColor" />
-            </svg>
+            <BrandLogo />
           </div>
           <h1 className="auth-title">AI Hedge Fund</h1>
           <p className="auth-subtitle">Quantitative Intelligence Platform</p>
@@ -70,10 +66,7 @@ export function LoginPage() {
         <form onSubmit={handleSubmit} className="auth-form">
           {error && (
             <div className="auth-error" role="alert" aria-live="polite">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M7 4v3.5M7 9.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
+              <ErrorIcon />
               <span>{error}</span>
             </div>
           )}
@@ -112,7 +105,7 @@ export function LoginPage() {
               autoComplete="current-password"
               spellCheck={false}
               required
-              minLength={6}
+              minLength={1}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="请输入密码…"

@@ -5,10 +5,12 @@
 
 import { useState, useRef, useEffect, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/auth-context';
+import { BrandLogo, SuccessIcon, ErrorIcon } from '@/components/auth-icons';
 
 export function RegisterPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [invitationCode, setInvitationCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -23,6 +25,10 @@ export function RegisterPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (password !== confirmPassword) {
+      setError('两次输入的密码不一致');
+      return;
+    }
     setIsLoading(true);
     try {
       await register(username, password, invitationCode);
@@ -44,10 +50,7 @@ export function RegisterPage() {
         <div className="auth-container">
           <div className="auth-brand">
             <div className="auth-logo">
-              <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-                <rect x="2" y="2" width="32" height="32" rx="6" stroke="currentColor" strokeWidth="2" />
-                <path d="M12 18L16 22L24 14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <SuccessIcon />
             </div>
             <h1 className="auth-title">注册成功</h1>
             <p className="auth-subtitle">正在跳转登录页面…</p>
@@ -73,12 +76,7 @@ export function RegisterPage() {
       <div className="auth-container">
         <div className="auth-brand">
           <div className="auth-logo">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <rect x="2" y="2" width="32" height="32" rx="6" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 26L14 14L18 22L22 10L26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              <circle cx="14" cy="14" r="2" fill="currentColor" />
-              <circle cx="22" cy="10" r="2" fill="currentColor" />
-            </svg>
+            <BrandLogo />
           </div>
           <h1 className="auth-title">创建账户</h1>
           <p className="auth-subtitle">需要管理员提供的邀请码</p>
@@ -87,10 +85,7 @@ export function RegisterPage() {
         <form onSubmit={handleSubmit} className="auth-form">
           {error && (
             <div className="auth-error" role="alert" aria-live="polite">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M7 4v3.5M7 9.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
+              <ErrorIcon />
               <span>{error}</span>
             </div>
           )}
@@ -131,18 +126,39 @@ export function RegisterPage() {
               autoComplete="new-password"
               spellCheck={false}
               required
-              minLength={6}
+              minLength={8}
               maxLength={128}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="至少 6 个字符…"
+              placeholder="大小写字母 + 数字，至少 8 位…"
+              className="auth-input"
+            />
+          </div>
+
+          <div className="auth-field">
+            <label htmlFor="reg-confirm" className="auth-label">
+              <span className="auth-label-prefix">03</span>
+              确认密码
+            </label>
+            <input
+              id="reg-confirm"
+              name="confirm_password"
+              type="password"
+              autoComplete="new-password"
+              spellCheck={false}
+              required
+              minLength={8}
+              maxLength={128}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="再次输入密码…"
               className="auth-input"
             />
           </div>
 
           <div className="auth-field">
             <label htmlFor="reg-invite" className="auth-label">
-              <span className="auth-label-prefix">03</span>
+              <span className="auth-label-prefix">04</span>
               邀请码
             </label>
             <input

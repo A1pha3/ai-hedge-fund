@@ -5,11 +5,13 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { authApi } from '@/services/auth-api';
+import { BrandLogo, ErrorIcon, SuccessCheckIcon } from '@/components/auth-icons';
 
 export function ForgotPasswordPage() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [resetToken, setResetToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { setAuthPage } = useAuth();
@@ -19,8 +21,11 @@ export function ForgotPasswordPage() {
     setError(null);
     setIsLoading(true);
     try {
-      await authApi.forgotPassword(username, email);
+      const result = await authApi.forgotPassword(username, email);
       setSubmitted(true);
+      if (result.reset_token) {
+        setResetToken(result.reset_token);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '请求失败');
     } finally {
@@ -36,12 +41,7 @@ export function ForgotPasswordPage() {
       <div className="auth-container">
         <div className="auth-brand">
           <div className="auth-logo">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <rect x="2" y="2" width="32" height="32" rx="6" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 26L14 14L18 22L22 10L26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              <circle cx="14" cy="14" r="2" fill="currentColor" />
-              <circle cx="22" cy="10" r="2" fill="currentColor" />
-            </svg>
+            <BrandLogo />
           </div>
           <h1 className="auth-title">找回密码</h1>
           <p className="auth-subtitle">
@@ -52,28 +52,48 @@ export function ForgotPasswordPage() {
         {submitted ? (
           <div className="auth-form">
             <div className="auth-success">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M7 10l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span>如果用户名和邮箱匹配，密码重置邮件已发送，请查收</span>
+              <SuccessCheckIcon />
+              <span>{resetToken ? '已生成密码重置令牌' : '如果用户名和邮箱匹配，密码重置邮件已发送'}</span>
             </div>
+            {resetToken && (
+              <div className="auth-field">
+                <label htmlFor="reset-token-display" className="auth-label">
+                  <span className="auth-label-prefix">→</span>
+                  重置令牌（请复制）
+                </label>
+                <input
+                  id="reset-token-display"
+                  className="auth-input font-mono"
+                  type="text"
+                  readOnly
+                  value={resetToken}
+                  title="密码重置令牌"
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+              </div>
+            )}
             <button
               type="button"
-              onClick={() => setAuthPage('login')}
+              onClick={() => setAuthPage('reset-password')}
               className="auth-submit"
             >
-              返回登录
+              前往重置密码
             </button>
+            <div className="auth-links">
+              <button
+                type="button"
+                onClick={() => setAuthPage('login')}
+                className="auth-link"
+              >
+                ← 返回登录
+              </button>
+            </div>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="auth-form">
             {error && (
               <div className="auth-error" role="alert" aria-live="polite">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M7 4v3.5M7 9.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
+                <ErrorIcon />
                 <span>{error}</span>
               </div>
             )}

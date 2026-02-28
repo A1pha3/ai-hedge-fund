@@ -3,7 +3,7 @@
 import os
 import secrets
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from jose import jwt, JWTError
@@ -45,7 +45,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
         Encoded JWT string
     """
     to_encode = data.copy()
-    now = datetime.now(tz=__import__('datetime').timezone.utc)
+    now = datetime.now(tz=timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire, "iat": now})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)

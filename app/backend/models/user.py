@@ -20,6 +20,7 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     login_attempts = Column(Integer, nullable=False, default=0)
     locked_until = Column(DateTime, nullable=True)
+    token_version = Column(Integer, nullable=False, default=0)  # Increment to invalidate all JWTs
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
