@@ -14,6 +14,7 @@ export interface AuthUser {
   email: string | null;
   role: 'admin' | 'user';
   created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface TokenResponse {

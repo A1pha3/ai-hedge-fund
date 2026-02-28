@@ -936,3 +936,65 @@
   background: rgba(248, 113, 113, 0.15);
   border-color: rgba(248, 113, 113, 0.3);
 }
+
+/* ---- Password Strength Indicator ---- */
+.pwd-strength-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  height: 4px;
+  position: relative;
+}
+
+.pwd-strength-fill {
+  height: 4px;
+  border-radius: 2px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.pwd-strength-fill[data-score="1"] { width: 25%; background: #ef4444; }
+.pwd-strength-fill[data-score="2"] { width: 50%; background: #f97316; }
+.pwd-strength-fill[data-score="3"] { width: 75%; background: #eab308; }
+.pwd-strength-fill[data-score="4"] { width: 100%; background: #22c55e; }
+
+.pwd-strength-label {
+  font-size: 11px;
+  white-space: nowrap;
+  position: absolute;
+  right: 0;
+  top: -2px;
+}
+
+.pwd-strength-label.pwd-weak { color: #ef4444; }
+.pwd-strength-label.pwd-fair { color: #f97316; }
+.pwd-strength-label.pwd-good { color: #eab308; }
+.pwd-strength-label.pwd-strong { color: #22c55e; }
+
+/* ---- Logout Confirmation ---- */
+.settings-logout-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-logout-prompt {
+  font-size: 12px;
+  color: #f87171;
+  margin-right: auto;
+}
+
+.settings-logout-cancel {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.settings-logout-cancel:hover {
+  background: hsl(var(--accent));
+}

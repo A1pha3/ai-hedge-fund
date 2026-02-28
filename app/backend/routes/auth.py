@@ -1,10 +1,9 @@
 """Authentication API routes — login, register, password management."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime
 
 from app.backend.database.connection import get_db
 from app.backend.auth.dependencies import get_current_user
@@ -169,8 +168,9 @@ async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(
 
     # Since no email system is configured, return the token directly
     # In production with email, you would remove reset_token from the response
+    # Always return the same message text to prevent user enumeration
     return {
-        "message": "如果用户名和邮箱匹配，已生成密码重置令牌" if reset_token else "如果用户名和邮箱匹配，密码重置邮件已发送，请查收",
+        "message": "如果用户名和邮箱匹配，已生成密码重置令牌",
         "reset_token": reset_token,
     }
 

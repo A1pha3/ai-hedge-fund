@@ -140,7 +140,7 @@ def _cmd_reset_admin_password(db):
     """Reset admin password interactively."""
     from app.backend.models.user import User
     from app.backend.auth.utils import hash_password
-    from app.backend.auth.constants import ADMIN_USERNAME
+    from app.backend.auth.constants import ADMIN_USERNAME, PASSWORD_PATTERN, PASSWORD_RULES
 
     admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     if not admin:
@@ -154,14 +154,15 @@ def _cmd_reset_admin_password(db):
         print("✗ 两次输入的密码不一致")
         sys.exit(1)
 
-    if len(password) < 6:
-        print("✗ 密码长度至少 6 位")
+    if not PASSWORD_PATTERN.match(password):
+        print(f"✗ {PASSWORD_RULES}")
         sys.exit(1)
 
     admin.password_hash = hash_password(password)
+    admin.token_version = (admin.token_version or 0) + 1  # Invalidate all existing JWTs
     db.commit()
 
-    print("✓ 管理员密码已更新（立即生效）")
+    print("✓ 管理员密码已更新（立即生效，旧会话已失效）")
 
 
 def _cmd_list_users(db):

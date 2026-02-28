@@ -159,7 +159,13 @@ class AuthService:
         return create_reset_token(user.username)
 
     def reset_password(self, token: str, new_password: str) -> None:
-        """Reset password using a reset token."""
+        """Reset password using a reset token.
+
+        The token is effectively single-use: after a successful reset,
+        token_version increments. If the same token is reused, the
+        iat (issued-at) check prevents re-use because the token was
+        issued before the password change.
+        """
         payload = decode_token(token)
         if payload is None:
             raise InvalidTokenError("重置令牌无效或已过期")
@@ -174,6 +180,16 @@ class AuthService:
 
         if user.username == ADMIN_USERNAME:
             raise ForbiddenError("管理员密码只能通过 CLI 修改")
+
+        # Single-use check: if the token was issued before the last password change,
+        # it means this (or another) reset token was already used.
+        token_iat = payload.get("iat", 0)
+        if user.updated_at:
+            # Convert updated_at to timestamp for comparison
+            import calendar
+            last_update_ts = calendar.timegm(user.updated_at.timetuple())
+            if token_iat < last_update_ts:
+                raise InvalidTokenError("重置令牌已使用或已过期")
 
         _validate_password(new_password)
         user.password_hash = hash_password(new_password)

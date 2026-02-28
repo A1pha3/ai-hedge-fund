@@ -3,9 +3,29 @@
  * Same "Terminal Luxe" aesthetic as LoginPage.
  */
 
-import { useState, useRef, useEffect, type FormEvent } from 'react';
+import { useState, useRef, useEffect, useMemo, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { BrandLogo, SuccessIcon, ErrorIcon } from '@/components/auth-icons';
+
+/** Evaluate password strength: 0-4 score */
+function getPasswordStrength(pw: string): { score: number; label: string; cls: string } {
+  if (!pw) return { score: 0, label: '', cls: '' };
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (/[a-z]/.test(pw)) score++;
+  if (/[A-Z]/.test(pw)) score++;
+  if (/\d/.test(pw)) score++;
+  if (pw.length >= 12 || /[^a-zA-Z0-9]/.test(pw)) score++;
+  const labels: Record<number, [string, string]> = {
+    1: ['弱', 'pwd-weak'],
+    2: ['较弱', 'pwd-fair'],
+    3: ['中等', 'pwd-good'],
+    4: ['强', 'pwd-strong'],
+    5: ['很强', 'pwd-strong'],
+  };
+  const [label, cls] = labels[score] || ['', ''];
+  return { score: Math.min(score, 4), label, cls };
+}
 
 export function RegisterPage() {
   const [username, setUsername] = useState('');
@@ -17,6 +37,7 @@ export function RegisterPage() {
   const [isLoading, setIsLoading] = useState(false);
   const usernameRef = useRef<HTMLInputElement>(null);
   const { register, setAuthPage } = useAuth();
+  const pwdStrength = useMemo(() => getPasswordStrength(password), [password]);
 
   useEffect(() => {
     usernameRef.current?.focus();
@@ -133,6 +154,12 @@ export function RegisterPage() {
               placeholder="大小写字母 + 数字，至少 8 位…"
               className="auth-input"
             />
+            {password && (
+              <div className="pwd-strength-bar">
+                <div className={`pwd-strength-fill ${pwdStrength.cls}`} data-score={pwdStrength.score} />
+                <span className={`pwd-strength-label ${pwdStrength.cls}`}>{pwdStrength.label}</span>
+              </div>
+            )}
           </div>
 
           <div className="auth-field">

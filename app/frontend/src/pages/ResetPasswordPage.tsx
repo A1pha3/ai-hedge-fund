@@ -6,7 +6,7 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { authApi } from '@/services/auth-api';
-import { SuccessIcon, ResetIcon } from '@/components/auth-icons';
+import { SuccessIcon, ResetIcon, ErrorIcon } from '@/components/auth-icons';
 
 export function ResetPasswordPage() {
   const [token, setToken] = useState('');
@@ -81,13 +81,19 @@ export function ResetPasswordPage() {
         </div>
 
         <form className="auth-form" onSubmit={handleSubmit}>
-          {error && <div className="auth-error">{error}</div>}
+          {error && (
+            <div className="auth-error" role="alert" aria-live="polite">
+              <ErrorIcon />
+              <span>{error}</span>
+            </div>
+          )}
 
           <div className="auth-field">
-            <label className="auth-label">
+            <label htmlFor="reset-token" className="auth-label">
               <span className="auth-label-prefix">01</span> 重置令牌
             </label>
             <input
+              id="reset-token"
               className="auth-input"
               type="text"
               placeholder="粘贴重置令牌…"
@@ -99,13 +105,14 @@ export function ResetPasswordPage() {
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">
+            <label htmlFor="reset-new-pwd" className="auth-label">
               <span className="auth-label-prefix">02</span> 新密码
             </label>
             <input
+              id="reset-new-pwd"
               className="auth-input"
               type="password"
-              placeholder="至少 6 位"
+              placeholder="大小写字母 + 数字，至少 8 位"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
@@ -114,10 +121,11 @@ export function ResetPasswordPage() {
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">
+            <label htmlFor="reset-confirm-pwd" className="auth-label">
               <span className="auth-label-prefix">03</span> 确认密码
             </label>
             <input
+              id="reset-confirm-pwd"
               className="auth-input"
               type="password"
               placeholder="再次输入新密码"

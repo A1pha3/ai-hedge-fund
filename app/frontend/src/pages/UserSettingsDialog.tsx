@@ -3,7 +3,7 @@
  * Rendered as a modal dialog, triggered from the main layout.
  */
 
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { authApi } from '@/services/auth-api';
 
@@ -15,6 +15,9 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
   const { user, updateUser, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'password' | 'email'>('password');
 
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Close on Escape key
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -23,6 +26,13 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
+
+  // Cleanup logout timer on unmount
+  useEffect(() => {
+    return () => {
+      if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+    };
+  }, []);
 
   // Password form
   const [oldPassword, setOldPassword] = useState('');
@@ -48,7 +58,7 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
       setOldPassword('');
       setNewPassword('');
       // Auto-logout after 2 seconds since token_version has changed
-      setTimeout(() => logout(), 2000);
+      logoutTimerRef.current = setTimeout(() => logout(), 2000);
     } catch (err: unknown) {
       setPwdError(err instanceof Error ? err.message : '修改失败');
     } finally {
@@ -199,9 +209,17 @@ export function UserSettingsDialog({ onClose }: UserSettingsDialogProps) {
 
         {/* Logout button */}
         <div className="settings-footer">
-          <button onClick={logout} className="settings-logout">
-            退出登录
-          </button>
+          {confirmLogout ? (
+            <div className="settings-logout-confirm">
+              <span className="settings-logout-prompt">确认退出登录？</span>
+              <button onClick={logout} className="settings-logout">确认退出</button>
+              <button onClick={() => setConfirmLogout(false)} className="settings-logout-cancel">取消</button>
+            </div>
+          ) : (
+            <button onClick={() => setConfirmLogout(true)} className="settings-logout">
+              退出登录
+            </button>
+          )}
         </div>
       </div>
     </div>
