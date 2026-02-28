@@ -22,7 +22,7 @@ from src.data.models import (
 from src.data.snapshot import get_snapshot_exporter
 
 # Import A-share data module
-from src.tools.akshare_api import is_ashare
+from src.tools.akshare_api import get_ashare_company_news, is_ashare
 from src.tools.tushare_api import (
     get_ashare_financial_metrics_with_tushare,
     get_ashare_line_items_with_tushare,
@@ -267,6 +267,10 @@ def get_insider_trades(
     api_key: str = None,
 ) -> list[InsiderTrade]:
     """Fetch insider trades from cache or API."""
+    # A-share stocks: insider trade data not available via financialdatasets.ai
+    if is_ashare(ticker):
+        return []
+
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
 
@@ -332,6 +336,16 @@ def get_company_news(
     api_key: str = None,
 ) -> list[CompanyNews]:
     """Fetch company news from cache or API."""
+    # A-share stocks: use AKShare news API
+    if is_ashare(ticker):
+        cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}_ashare"
+        if cached_data := _cache.get_company_news(cache_key):
+            return [CompanyNews(**news) for news in cached_data]
+        news = get_ashare_company_news(ticker, end_date, start_date, limit)
+        if news:
+            _cache.set_company_news(cache_key, [n.model_dump() for n in news])
+        return news
+
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
 

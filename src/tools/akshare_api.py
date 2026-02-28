@@ -888,6 +888,105 @@ def get_prices_robust(ticker: str, start_date: str, end_date: str, period: str =
     raise AShareDataError(f"所有数据源都失败: {'; '.join(errors)}")
 
 
+def _classify_news_sentiment(title: str, content: str = "") -> str:
+    """
+    基于关键词对A股新闻进行简单情感分类
+
+    Returns:
+        "positive", "negative", 或 "neutral"
+    """
+    text = (title + " " + content).lower()
+
+    positive_keywords = [
+        "涨停", "大涨", "暴涨", "利好", "突破", "创新高", "增长", "盈利",
+        "超预期", "上调", "买入", "推荐", "看好", "回购", "增持", "签约",
+        "中标", "获批", "扭亏", "新高", "强势", "反弹", "爆发", "景气",
+        "丰收", "提价", "提升", "改善", "加速", "翻倍", "分红", "派息",
+    ]
+    negative_keywords = [
+        "跌停", "大跌", "暴跌", "利空", "下调", "亏损", "减持", "卖出",
+        "风险", "预警", "违规", "处罚", "退市", "ST", "爆雷", "债务",
+        "诉讼", "下滑", "萎缩", "破发", "破位", "新低", "弱势", "下行",
+        "缩水", "低于预期", "恶化", "暂停", "终止", "警告", "质押",
+    ]
+
+    pos_count = sum(1 for kw in positive_keywords if kw in text)
+    neg_count = sum(1 for kw in negative_keywords if kw in text)
+
+    if pos_count > neg_count:
+        return "positive"
+    elif neg_count > pos_count:
+        return "negative"
+    return "neutral"
+
+
+def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, limit: int = 100) -> list:
+    """
+    使用 AKShare 获取 A 股个股新闻
+
+    Args:
+        ticker: 股票代码 (如 600567)
+        end_date: 结束日期 (YYYY-MM-DD)
+        start_date: 开始日期 (YYYY-MM-DD), 可选
+        limit: 最大返回条数
+
+    Returns:
+        CompanyNews 列表
+    """
+    if not _akshare_available:
+        return []
+
+    try:
+        symbol = ticker.strip().lower()
+        # 移除可能的交易所前缀
+        if symbol.startswith(("sh", "sz", "bj")):
+            symbol = symbol[2:]
+
+        df = ak.stock_news_em(symbol=symbol)
+        if df is None or df.empty:
+            return []
+
+        results = []
+        for _, row in df.iterrows():
+            pub_time = str(row.get("发布时间", ""))
+            # 解析日期用于过滤
+            try:
+                news_date = pub_time[:10]  # "YYYY-MM-DD"
+                if end_date and news_date > end_date:
+                    continue
+                if start_date and news_date < start_date:
+                    continue
+            except (ValueError, IndexError):
+                news_date = end_date or ""
+
+            title = str(row.get("新闻标题", ""))
+            content = str(row.get("新闻内容", ""))
+            source = str(row.get("文章来源", ""))
+            url = str(row.get("新闻链接", ""))
+
+            # 基于关键词的情感分类
+            sentiment = _classify_news_sentiment(title, content)
+
+            news = CompanyNews(
+                ticker=ticker,
+                title=title,
+                author=source,
+                source=source,
+                date=pub_time,
+                url=url,
+                sentiment=sentiment,
+            )
+            results.append(news)
+
+            if len(results) >= limit:
+                break
+
+        return results
+    except Exception as e:
+        print(f"[AKShare] 获取 A 股新闻失败 ({ticker}): {e}")
+        return []
+
+
 # 导出函数
 __all__ = [
     "get_prices",
@@ -902,4 +1001,5 @@ __all__ = [
     "AShareDataError",
     "get_sina_historical_data",
     "get_prices_robust",
+    "get_ashare_company_news",
 ]

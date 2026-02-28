@@ -58,13 +58,18 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
         if company_news:
             # Check the 10 most recent articles
             recent_articles = company_news[:10]
-            articles_without_sentiment = [news for news in recent_articles if news.sentiment is None]
 
-            # Analyze only the 5 most recent articles without sentiment to reduce LLM calls
-            if articles_without_sentiment:
+            # Always LLM-classify the most recent articles for accurate stock-specific sentiment.
+            # Pre-existing keyword-based sentiment (e.g., from A-share data) is too crude
+            # for stock-specific analysis, so we always prefer LLM classification.
+            articles_without_sentiment = [news for news in recent_articles if news.sentiment is None]
+            # Prioritize articles without sentiment, then fill with those that have keyword-based sentiment
+            articles_needing_analysis = articles_without_sentiment + [news for news in recent_articles if news.sentiment is not None]
+
+            if articles_needing_analysis:
                 # We only take the first 5 articles, but this is configurable
                 num_articles_to_analyze = 5
-                articles_to_analyze = articles_without_sentiment[:num_articles_to_analyze]
+                articles_to_analyze = articles_needing_analysis[:num_articles_to_analyze]
                 progress.update_status(agent_id, ticker, f"Analyzing sentiment for {len(articles_to_analyze)} articles")
 
                 for idx, news in enumerate(articles_to_analyze):

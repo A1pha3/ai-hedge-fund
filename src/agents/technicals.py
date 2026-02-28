@@ -560,13 +560,19 @@ def calculate_stat_arb_signals(prices_df):
 
 def weighted_signal_combination(signals, weights):
     """
-    Combines multiple trading signals using a weighted approach
+    Combines multiple trading signals using a weighted approach.
+
+    Returns confidence as:
+    - For bullish/bearish: abs(final_score) — how strongly directional
+    - For neutral: weighted average of sub-strategy confidences that agree on neutral,
+      reflecting how confidently we believe the signal is neutral
     """
     # Convert signals to numeric values
     signal_values = {"bullish": 1, "neutral": 0, "bearish": -1}
 
     weighted_sum = 0
     total_confidence = 0
+    total_weight = 0
 
     for strategy, signal in signals.items():
         numeric_signal = signal_values[signal["signal"]]
@@ -575,6 +581,7 @@ def weighted_signal_combination(signals, weights):
 
         weighted_sum += numeric_signal * weight * confidence
         total_confidence += weight * confidence
+        total_weight += weight
 
     # Normalize the weighted sum
     if total_confidence > 0:
@@ -590,7 +597,18 @@ def weighted_signal_combination(signals, weights):
     else:
         signal = "neutral"
 
-    return {"signal": signal, "confidence": abs(final_score)}
+    # Calculate confidence
+    if signal == "neutral":
+        # For neutral signals, confidence = weighted average of sub-strategy confidences
+        # This reflects "how confident are we that the signal is neutral"
+        if total_weight > 0:
+            confidence = total_confidence / total_weight
+        else:
+            confidence = 0
+    else:
+        confidence = abs(final_score)
+
+    return {"signal": signal, "confidence": confidence}
 
 
 def normalize_pandas(obj):

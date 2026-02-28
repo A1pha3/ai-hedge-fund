@@ -14,6 +14,49 @@ from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context
 
 
+def _calculate_yoy_growth_rates(line_items, field: str = "revenue"):
+    """
+    计算同季度 YoY 增长率（正确处理A股YTD累计数据）
+
+    将数据按季度分组，每个季度与上一年同季度进行比较。
+    返回增长率列表，按时间从新到旧排列。
+    """
+    # 提取 (值, report_period) 对
+    pairs = []
+    for item in line_items:
+        val = getattr(item, field, None)
+        period = getattr(item, "report_period", "") or ""
+        if val is not None and val > 0 and len(period) >= 8:
+            pairs.append((val, period))
+
+    if len(pairs) < 2:
+        return []
+
+    # 按季度分组: key = 季度标识(MMDD), value = [(value, year), ...]
+    quarter_map = {}
+    for val, period in pairs:
+        quarter_key = period[4:8]  # e.g. "0930", "1231"
+        year = period[:4]
+        if quarter_key not in quarter_map:
+            quarter_map[quarter_key] = []
+        quarter_map[quarter_key].append((val, year))
+
+    # 对每个季度组按年份排序(从新到旧)
+    growth_rates = []
+    for quarter_key, year_data in quarter_map.items():
+        year_data.sort(key=lambda x: x[1], reverse=True)
+        for i in range(len(year_data) - 1):
+            newer_val, newer_year = year_data[i]
+            older_val, older_year = year_data[i + 1]
+            if older_val > 0:
+                growth_rate = (newer_val - older_val) / older_val
+                growth_rates.append((growth_rate, newer_year + quarter_key))
+
+    # 按时间从新到旧排序
+    growth_rates.sort(key=lambda x: x[1], reverse=True)
+    return [rate for rate, _ in growth_rates]
+
+
 class CathieWoodSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
@@ -140,12 +183,8 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
         # 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
         cagr_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
 
-        # 同时计算期间间增长率用于分析增长加速
-        growth_rates = []
-        for i in range(len(revenues) - 1):
-            if revenues[i] and revenues[i + 1]:
-                growth_rate = (revenues[i] - revenues[i + 1]) / abs(revenues[i + 1]) if revenues[i + 1] != 0 else 0
-                growth_rates.append(growth_rate)
+        # 计算同季度 YoY 增长率用于分析增长加速（正确处理A股YTD累计数据）
+        growth_rates = _calculate_yoy_growth_rates(financial_line_items, field="revenue")
 
         # Check if growth is accelerating (first growth rate higher than last, since they're in reverse order)
         if len(growth_rates) >= 2 and growth_rates[0] > growth_rates[-1]:
