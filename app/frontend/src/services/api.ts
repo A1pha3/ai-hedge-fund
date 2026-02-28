@@ -7,8 +7,19 @@ import { parseTickers } from '@/lib/utils';
 import {
   HedgeFundRequest
 } from '@/services/types';
+import { getStoredToken, clearStoredToken, authHeaders } from '@/services/auth-api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+/**
+ * Handle 401 responses — dispatch event for AuthContext.
+ */
+function handleAuthError(response: Response): void {
+  if (response.status === 401) {
+    clearStoredToken();
+    window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+  }
+}
 
 export const api = {
   /**
@@ -17,8 +28,11 @@ export const api = {
    */
   getAgents: async (): Promise<Agent[]> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/hedge-fund/agents`);
+      const response = await fetch(`${API_BASE_URL}/hedge-fund/agents`, {
+        headers: authHeaders(),
+      });
       if (!response.ok) {
+        handleAuthError(response);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
@@ -35,8 +49,11 @@ export const api = {
    */
   getLanguageModels: async (): Promise<LanguageModel[]> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/language-models/`);
+      const response = await fetch(`${API_BASE_URL}/language-models/`, {
+        headers: authHeaders(),
+      });
       if (!response.ok) {
+        handleAuthError(response);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
@@ -57,9 +74,7 @@ export const api = {
     try {
       const response = await fetch(`${API_BASE_URL}/storage/save-json`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           filename,
           data
@@ -67,6 +82,7 @@ export const api = {
       });
 
       if (!response.ok) {
+        handleAuthError(response);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -109,9 +125,7 @@ export const api = {
     // Make a POST request with the JSON body
     fetch(`${API_BASE_URL}/hedge-fund/run`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(backendParams),
       signal,
     })

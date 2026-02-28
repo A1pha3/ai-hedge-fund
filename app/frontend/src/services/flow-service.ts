@@ -1,6 +1,7 @@
 import { Flow } from '@/types/flow';
+import { authHeaders } from '@/services/auth-api';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface CreateFlowRequest {
   name: string;
@@ -27,7 +28,7 @@ export interface UpdateFlowRequest {
 export const flowService = {
   // Get all flows
   async getFlows(): Promise<Flow[]> {
-    const response = await fetch(`${API_BASE_URL}/flows/`);
+    const response = await fetch(`${API_BASE_URL}/flows/`, { headers: authHeaders() });
     if (!response.ok) {
       throw new Error('Failed to fetch flows');
     }
@@ -36,7 +37,7 @@ export const flowService = {
 
   // Get a specific flow
   async getFlow(id: number): Promise<Flow> {
-    const response = await fetch(`${API_BASE_URL}/flows/${id}`);
+    const response = await fetch(`${API_BASE_URL}/flows/${id}`, { headers: authHeaders() });
     if (!response.ok) {
       throw new Error('Failed to fetch flow');
     }
@@ -47,9 +48,7 @@ export const flowService = {
   async createFlow(data: CreateFlowRequest): Promise<Flow> {
     const response = await fetch(`${API_BASE_URL}/flows/`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(data),
     });
     if (!response.ok) {
@@ -62,9 +61,7 @@ export const flowService = {
   async updateFlow(id: number, data: UpdateFlowRequest): Promise<Flow> {
     const response = await fetch(`${API_BASE_URL}/flows/${id}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(data),
     });
     if (!response.ok) {
@@ -77,6 +74,7 @@ export const flowService = {
   async deleteFlow(id: number): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/flows/${id}`, {
       method: 'DELETE',
+      headers: authHeaders(),
     });
     if (!response.ok) {
       throw new Error('Failed to delete flow');
@@ -88,6 +86,7 @@ export const flowService = {
     const url = `${API_BASE_URL}/flows/${id}/duplicate${newName ? `?new_name=${encodeURIComponent(newName)}` : ''}`;
     const response = await fetch(url, {
       method: 'POST',
+      headers: authHeaders(),
     });
     if (!response.ok) {
       throw new Error('Failed to duplicate flow');

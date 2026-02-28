@@ -31,6 +31,9 @@ dependencies = [
     "langchain-xai>=0.2.5",
     "akshare>=1.18.27",
     "tushare>=1.4.24",
+    "python-jose[cryptography]>=3.3.0",
+    "python-multipart>=0.0.6",
+    "bcrypt>=5.0.0",
 ]
 
 [tool.poetry]

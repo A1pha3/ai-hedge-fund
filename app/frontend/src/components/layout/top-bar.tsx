@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { PanelBottom, PanelLeft, PanelRight, Settings } from 'lucide-react';
+import { PanelBottom, PanelLeft, PanelRight, Settings, UserCircle } from 'lucide-react';
 
 interface TopBarProps {
   isLeftCollapsed: boolean;
@@ -10,6 +10,8 @@ interface TopBarProps {
   onToggleRight: () => void;
   onToggleBottom: () => void;
   onSettingsClick: () => void;
+  onUserClick?: () => void;
+  username?: string;
 }
 
 export function TopBar({
@@ -20,6 +22,8 @@ export function TopBar({
   onToggleRight,
   onToggleBottom,
   onSettingsClick,
+  onUserClick,
+  username,
 }: TopBarProps) {
   return (
     <div className="absolute top-0 right-0 z-40 flex items-center gap-0 py-1 px-2 bg-panel/80">
@@ -82,6 +86,26 @@ export function TopBar({
       >
         <Settings size={16} />
       </Button>
+
+      {/* User Settings */}
+      {onUserClick && (
+        <>
+          <div className="w-px h-5 bg-ramp-grey-700 mx-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onUserClick}
+            className="h-8 px-2 gap-1.5 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
+            aria-label="User settings"
+            title="User Settings"
+          >
+            <UserCircle size={16} />
+            {username && (
+              <span className="text-xs font-medium max-w-[80px] truncate">{username}</span>
+            )}
+          </Button>
+        </>
+      )}
     </div>
   );
 } 

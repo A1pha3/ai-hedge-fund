@@ -4,11 +4,13 @@ import { RightSidebar } from '@/components/panels/right/right-sidebar';
 import { TabBar } from '@/components/tabs/tab-bar';
 import { TabContent } from '@/components/tabs/tab-content';
 import { SidebarProvider } from '@/components/ui/sidebar';
+import { useAuth } from '@/contexts/auth-context';
 import { FlowProvider, useFlowContext } from '@/contexts/flow-context';
 import { LayoutProvider, useLayoutContext } from '@/contexts/layout-context';
 import { TabsProvider, useTabsContext } from '@/contexts/tabs-context';
 import { useLayoutKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 import { cn } from '@/lib/utils';
+import { UserSettingsDialog } from '@/pages/UserSettingsDialog';
 import { SidebarStorageService } from '@/services/sidebar-storage';
 import { TabService } from '@/services/tab-service';
 import { ReactFlowProvider } from '@xyflow/react';
@@ -20,6 +22,8 @@ function LayoutContent({ children }: { children: ReactNode }) {
   const { reactFlowInstance } = useFlowContext();
   const { openTab } = useTabsContext();
   const { isBottomCollapsed, expandBottomPanel, collapseBottomPanel, toggleBottomPanel } = useLayoutContext();
+  const { user } = useAuth();
+  const [showUserSettings, setShowUserSettings] = useState(false);
   
   // Initialize sidebar states from storage service
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(() => 
@@ -111,6 +115,8 @@ function LayoutContent({ children }: { children: ReactNode }) {
         onToggleRight={() => setIsRightCollapsed(!isRightCollapsed)}
         onToggleBottom={toggleBottomPanel}
         onSettingsClick={handleSettingsClick}
+        onUserClick={() => setShowUserSettings(true)}
+        username={user?.username}
       />
 
       {/* Tab Bar - positioned absolutely like bottom panel */}
@@ -176,6 +182,11 @@ function LayoutContent({ children }: { children: ReactNode }) {
           onHeightChange={setBottomPanelHeight}
         />
       </div>
+
+      {/* User settings dialog */}
+      {showUserSettings && (
+        <UserSettingsDialog onClose={() => setShowUserSettings(false)} />
+      )}
     </div>
   );
 }

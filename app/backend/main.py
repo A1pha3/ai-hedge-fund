@@ -10,8 +10,9 @@ env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__
 load_dotenv(dotenv_path=env_path)
 
 from app.backend.routes import api_router
-from app.backend.database.connection import engine
+from app.backend.database.connection import engine, SessionLocal
 from app.backend.database.models import Base
+from app.backend.models.user import User, InvitationCode  # noqa: F401 — register auth models with Base
 from app.backend.services.ollama_service import ollama_service
 
 # Configure logging
@@ -22,6 +23,28 @@ app = FastAPI(title="AI Hedge Fund API", description="Backend API for AI Hedge F
 
 # Initialize database tables (this is safe to run multiple times)
 Base.metadata.create_all(bind=engine)
+
+# Auto-initialize admin user if not exists
+def _auto_init_admin():
+    """Create admin user on first startup if it doesn't exist."""
+    db = None
+    try:
+        from app.backend.auth.utils import hash_password
+        db = SessionLocal()
+        existing = db.query(User).filter(User.username == "einstein").first()
+        if not existing:
+            default_password = os.getenv("AUTH_ADMIN_DEFAULT_PASSWORD", "Hedge@2026!")
+            admin = User(username="einstein", password_hash=hash_password(default_password), role="admin", is_active=True)
+            db.add(admin)
+            db.commit()
+            logger.info("✓ Admin user 'einstein' auto-created (change default password via CLI)")
+    except Exception as e:
+        logger.warning(f"Could not auto-init admin: {e}")
+    finally:
+        if db:
+            db.close()
+
+_auto_init_admin()
 
 # Configure CORS
 app.add_middleware(

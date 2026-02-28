@@ -2,6 +2,10 @@ from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, F
 from sqlalchemy.sql import func
 from .connection import Base
 
+# NOTE: Auth models (User, InvitationCode) are imported lazily to avoid circular imports.
+# They are registered with Base.metadata when app.backend.models.user is first imported
+# (e.g. in main.py startup or auth routes).
+
 
 class HedgeFundFlow(Base):
     """Table to store React Flow configurations (nodes, edges, viewport)"""
