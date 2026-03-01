@@ -175,12 +175,21 @@ def _calculate_trend(data: list[float | None]) -> float:
         return 0.0
 
 
+def _clamp_growth(value, lower=-1.0, upper=5.0):
+    """Clamp growth rate to a meaningful range. Values beyond [-100%, +500%] are
+    typically caused by zero-crossing and are not meaningful for analysis."""
+    if value is None:
+        return None
+    return max(lower, min(upper, value))
+
+
 def analyze_growth_trends(metrics: list) -> dict:
     """Analyzes historical growth trends."""
 
     rev_growth = [m.revenue_growth for m in metrics]
-    eps_growth = [m.earnings_per_share_growth for m in metrics]
-    fcf_growth = [m.free_cash_flow_growth for m in metrics]
+    # Clamp EPS/FCF growth to avoid extreme values from zero-crossing
+    eps_growth = [_clamp_growth(m.earnings_per_share_growth) for m in metrics]
+    fcf_growth = [_clamp_growth(m.free_cash_flow_growth) for m in metrics]
 
     rev_trend = _calculate_trend(rev_growth)
     eps_trend = _calculate_trend(eps_growth)
@@ -195,6 +204,8 @@ def analyze_growth_trends(metrics: list) -> dict:
             score += 0.4
         elif rev_growth[0] > 0.10:
             score += 0.2
+        elif rev_growth[0] < -0.10:
+            score -= 0.2  # Penalize significant revenue decline
         if rev_trend > 0:
             score += 0.1  # Accelerating
 
@@ -204,6 +215,10 @@ def analyze_growth_trends(metrics: list) -> dict:
             score += 0.25
         elif eps_growth[0] > 0.10:
             score += 0.1
+        elif eps_growth[0] < -0.50:
+            score -= 0.2  # Penalize severe EPS decline
+        elif eps_growth[0] < -0.10:
+            score -= 0.1  # Penalize moderate EPS decline
         if eps_trend > 0:
             score += 0.05
 
@@ -212,7 +227,7 @@ def analyze_growth_trends(metrics: list) -> dict:
         if fcf_growth[0] > 0.15:
             score += 0.1
 
-    score = min(score, 1.0)
+    score = max(min(score, 1.0), 0.0)
 
     return {"score": score, "revenue_growth": rev_growth[0], "revenue_trend": rev_trend, "eps_growth": eps_growth[0], "eps_trend": eps_trend, "fcf_growth": fcf_growth[0], "fcf_trend": fcf_trend}
 

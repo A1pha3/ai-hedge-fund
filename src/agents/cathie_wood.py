@@ -89,6 +89,7 @@ def cathie_wood_agent(state: AgentState, agent_id: str = "cathie_wood_agent"):
             ticker,
             [
                 "revenue",
+                "net_income",
                 "gross_margin",
                 "operating_margin",
                 "debt_to_equity",
@@ -393,11 +394,22 @@ def analyze_cathie_wood_valuation(financial_line_items: list, market_cap: float)
         reason = "Latest FCF data not yet available" if fcf is None else f"Negative FCF ({fcf:,.0f})"
         return {"score": 0, "details": f"No positive FCF for valuation; {reason}", "intrinsic_value": None}
 
-    # Instead of a standard DCF, let's assume a higher growth rate for an innovative company.
-    # Example values:
-    growth_rate = 0.20  # 20% annual growth
-    discount_rate = 0.15
-    terminal_multiple = 25
+    # Check if company is loss-making — reduce growth assumptions accordingly
+    net_income = getattr(latest, "net_income", None)
+    operating_margin = getattr(latest, "operating_margin", None)
+    is_loss_making = (net_income is not None and net_income < 0) or (operating_margin is not None and operating_margin < 0)
+
+    # Quality-adjusted DCF parameters for innovative companies
+    if is_loss_making:
+        # Loss-making: use conservative growth, higher discount, lower terminal
+        growth_rate = 0.05  # 5% (cannot assume innovation-driven growth with negative earnings)
+        discount_rate = 0.20  # Higher risk for loss-making
+        terminal_multiple = 8  # Conservative terminal
+    else:
+        # Profitable: standard Cathie Wood growth assumptions
+        growth_rate = 0.20  # 20% annual growth for innovative company
+        discount_rate = 0.15
+        terminal_multiple = 25
     projection_years = 5
 
     present_value = 0

@@ -690,12 +690,12 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     debt_to_equity=float(row.get("debt_to_eqt", 0)) if pd.notna(row.get("debt_to_eqt")) else None,
                     debt_to_assets=float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
                     interest_coverage=interest_coverage_val,
-                    revenue_growth=float(row.get("q_sales_yoy", 0)) / 100 if pd.notna(row.get("q_sales_yoy")) else None,
-                    earnings_growth=float(row.get("netprofit_yoy", 0)) / 100 if pd.notna(row.get("netprofit_yoy")) else None,
+                    revenue_growth=max(-1.0, min(5.0, float(row.get("q_sales_yoy", 0)) / 100)) if pd.notna(row.get("q_sales_yoy")) else None,
+                    earnings_growth=max(-1.0, min(5.0, float(row.get("netprofit_yoy", 0)) / 100)) if pd.notna(row.get("netprofit_yoy")) else None,
                     book_value_growth=bvg_val,
-                    earnings_per_share_growth=float(row.get("basic_eps_yoy", 0)) / 100 if pd.notna(row.get("basic_eps_yoy")) else None,
-                    free_cash_flow_growth=fcf_growth_val,
-                    operating_income_growth=float(row.get("op_yoy", 0)) / 100 if pd.notna(row.get("op_yoy")) else None,
+                    earnings_per_share_growth=max(-1.0, min(5.0, float(row.get("basic_eps_yoy", 0)) / 100)) if pd.notna(row.get("basic_eps_yoy")) else None,
+                    free_cash_flow_growth=max(-1.0, min(5.0, fcf_growth_val)) if fcf_growth_val is not None else None,
+                    operating_income_growth=max(-1.0, min(5.0, float(row.get("op_yoy", 0)) / 100)) if pd.notna(row.get("op_yoy")) else None,
                     ebitda_growth=ebitda_growth_val,
                     payout_ratio=payout_ratio_val,
                     earnings_per_share=float(row.get("eps", 0)) if pd.notna(row.get("eps")) else None,
@@ -877,6 +877,10 @@ def get_ashare_line_items_with_tushare(
                     total_rev = inc.get("total_revenue")
                     if op_income is not None and total_rev is not None and not (isinstance(op_income, float) and pd.isna(op_income)) and not (isinstance(total_rev, float) and pd.isna(total_rev)) and total_rev != 0:
                         field_mapping["operating_margin"] = float(op_income) / float(total_rev)
+                    # 计算 operating_expense (营业总支出) = 营业总收入 - 营业利润
+                    # This is used by Cathie Wood agent for operating leverage analysis
+                    if total_rev is not None and op_income is not None and not (isinstance(total_rev, float) and pd.isna(total_rev)) and not (isinstance(op_income, float) and pd.isna(op_income)):
+                        field_mapping["operating_expense"] = float(total_rev) - float(op_income)
                     # 计算 gross_margin (使用 fina_indicator 的 grossprofit_margin)
                     gpm = row.get("grossprofit_margin")
                     if gpm is not None and not (isinstance(gpm, float) and pd.isna(gpm)):

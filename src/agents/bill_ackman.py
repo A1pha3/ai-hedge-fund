@@ -299,20 +299,50 @@ def analyze_valuation(financial_line_items: list, market_cap: float) -> dict:
     if not financial_line_items or market_cap is None:
         return {"score": 0, "details": "Insufficient data to perform valuation"}
 
-    # Since financial_line_items are in descending order (newest first),
-    # the most recent period is the first element
-    latest = financial_line_items[0]
-    fcf = getattr(latest, "free_cash_flow", None)
-    if fcf is None:
-        fcf = 0
+    # Use normalized FCF (average of available periods) to account for cyclicality
+    # This prevents overvaluation of cyclical companies based on a single peak period
+    fcf_values = [getattr(item, "free_cash_flow", None) for item in financial_line_items if getattr(item, "free_cash_flow", None) is not None]
+    if not fcf_values:
+        return {"score": 0, "details": "No FCF data available for valuation", "intrinsic_value": None}
+
+    # Use normalized (average) FCF for DCF, not just the latest
+    normalized_fcf = sum(fcf_values[:min(5, len(fcf_values))]) / min(5, len(fcf_values))
+    latest_fcf = fcf_values[0] if fcf_values else 0
+    fcf = normalized_fcf if len(fcf_values) >= 3 else latest_fcf
 
     if fcf <= 0:
-        return {"score": 0, "details": f"No positive FCF for valuation; FCF = {fcf}", "intrinsic_value": None}
+        return {"score": 0, "details": f"No positive FCF for valuation; normalized FCF = {fcf:,.0f}", "intrinsic_value": None}
 
-    # Basic DCF assumptions
-    growth_rate = 0.06
-    discount_rate = 0.10
-    terminal_multiple = 15
+    # Quality-adjusted DCF assumptions
+    # Assess company quality to avoid unrealistic valuations for weak businesses
+    op_margins = [getattr(item, "operating_margin", None) for item in financial_line_items if getattr(item, "operating_margin", None) is not None]
+    avg_op_margin = sum(op_margins) / len(op_margins) if op_margins else 0
+    net_incomes = [getattr(item, "net_income", None) for item in financial_line_items[:3] if getattr(item, "net_income", None) is not None]
+    avg_ni = sum(net_incomes) / len(net_incomes) if net_incomes else 0
+    debt_to_equities = [getattr(item, "debt_to_equity", None) for item in financial_line_items if getattr(item, "debt_to_equity", None) is not None]
+    avg_de = sum(debt_to_equities) / len(debt_to_equities) if debt_to_equities else 0
+
+    if avg_op_margin < 0 or avg_ni < 0:
+        # Loss-making company: very conservative assumptions
+        growth_rate = 0.02
+        terminal_multiple = 6
+        discount_rate = 0.14
+    elif avg_op_margin < 0.10:
+        # Low-margin company: moderate assumptions
+        growth_rate = 0.04
+        terminal_multiple = 10
+        discount_rate = 0.12
+    else:
+        # Healthy company: standard assumptions
+        growth_rate = 0.06
+        terminal_multiple = 15
+        discount_rate = 0.10
+
+    # Additional leverage penalty
+    if avg_de > 1.5:
+        discount_rate += 0.02
+        terminal_multiple = max(terminal_multiple - 2, 5)
+
     projection_years = 5
 
     present_value = 0

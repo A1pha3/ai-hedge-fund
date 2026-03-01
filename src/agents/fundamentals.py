@@ -71,6 +71,10 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
         earnings_growth = metrics.earnings_growth
         book_value_growth = metrics.book_value_growth
 
+        # Clamp extreme growth values (zero-crossing artifacts) to meaningful range
+        if earnings_growth is not None:
+            earnings_growth = max(-1.0, min(5.0, earnings_growth))
+
         thresholds = [
             (revenue_growth, 0.10),  # 10% revenue growth
             (earnings_growth, 0.10),  # 10% earnings growth

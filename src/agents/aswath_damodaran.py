@@ -83,6 +83,8 @@ def aswath_damodaran_agent(state: AgentState, agent_id: str = "aswath_damodaran_
                 "total_debt",
             ],
             end_date,
+            period="annual",
+            limit=5,
             api_key=api_key,
         )
 
@@ -94,7 +96,7 @@ def aswath_damodaran_agent(state: AgentState, agent_id: str = "aswath_damodaran_
         growth_analysis = analyze_growth_and_reinvestment(metrics, line_items)
 
         progress.update_status(agent_id, ticker, "Analyzing risk profile")
-        risk_analysis = analyze_risk_profile(metrics, line_items)
+        risk_analysis = analyze_risk_profile(metrics, line_items, ticker=ticker)
 
         progress.update_status(agent_id, ticker, "Calculating intrinsic value (DCF)")
         intrinsic_val_analysis = calculate_intrinsic_value_dcf(metrics, line_items, risk_analysis)
@@ -213,7 +215,7 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
     return {"score": score, "max_score": max_score, "details": "; ".join(details), "metrics": latest.model_dump()}
 
 
-def analyze_risk_profile(metrics: list, line_items: list) -> dict[str, any]:
+def analyze_risk_profile(metrics: list, line_items: list, ticker: str = None) -> dict[str, any]:
     """
     Risk score (0-3):
       +1  Beta < 1.3
@@ -262,8 +264,12 @@ def analyze_risk_profile(metrics: list, line_items: list) -> dict[str, any]:
     else:
         details.append("Interest coverage NA")
 
-    # Compute cost of equity for later use
-    cost_of_equity = estimate_cost_of_equity(beta)
+    # Determine if company is loss-making
+    net_income = _latest_line_item_number(line_items, "net_income")
+    is_loss_making = net_income is not None and net_income < 0
+
+    # Compute cost of equity with leverage adjustment
+    cost_of_equity = estimate_cost_of_equity(beta, ticker=ticker, debt_to_equity=dte, is_loss_making=is_loss_making)
 
     return {
         "score": score,
@@ -374,12 +380,34 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
     }
 
 
-def estimate_cost_of_equity(beta: float | None) -> float:
-    """CAPM: r_e = r_f + β × ERP (use Damodaran's long-term averages)."""
+def estimate_cost_of_equity(beta: float | None, ticker: str = None, debt_to_equity: float | None = None, is_loss_making: bool = False) -> float:
+    """CAPM with leverage adjustment: r_e = r_f + β_L × ERP + CRP + distress.
+    β_L = β_U × (1 + (1-t) × D/E) — Hamada equation for leveraged beta.
+    For A-share stocks, adds China country risk premium."""
     risk_free = 0.04  # 10-yr US Treasury proxy
     erp = 0.05  # long-run US equity risk premium
-    beta = beta if beta is not None else 1.0
-    return risk_free + beta * erp
+    beta_u = beta if beta is not None else 1.0  # unlevered beta
+
+    # Hamada equation: lever up beta with D/E
+    if debt_to_equity is not None and debt_to_equity > 0:
+        tax_rate = 0.25  # China corporate tax rate
+        beta_l = beta_u * (1 + (1 - tax_rate) * min(debt_to_equity, 5.0))  # cap D/E at 5 to avoid extreme
+    else:
+        beta_l = beta_u
+
+    cost = risk_free + beta_l * erp
+
+    # Add country risk premium for A-share stocks
+    if ticker:
+        from src.tools.akshare_api import is_ashare
+        if is_ashare(ticker):
+            cost += 0.025  # China country risk premium ~2.5%
+
+    # Add distress premium for loss-making companies
+    if is_loss_making:
+        cost += 0.03  # 3% distress premium for negative earnings
+
+    return cost
 
 
 # ────────────────────────────────────────────────────────────────────────────────
