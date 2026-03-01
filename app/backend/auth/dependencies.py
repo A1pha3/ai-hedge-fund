@@ -68,8 +68,8 @@ async def get_current_user(
     if token_version != (user.token_version or 0):
         raise HTTPException(status_code=401, detail="认证令牌已失效，请重新登录")
 
-    # Check account lock
-    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+    # Check account lock (use naive UTC to match SQLite storage)
+    if user.locked_until and user.locked_until > datetime.now(timezone.utc).replace(tzinfo=None):
         raise HTTPException(status_code=423, detail="账户已锁定，请稍后重试")
 
     return user
