@@ -512,11 +512,14 @@ def calculate_intrinsic_value(financial_line_items: list, currency_symbol: str =
         latest_earnings = historical_earnings[0]
         years = len(historical_earnings) - 1
 
-        if oldest_earnings > 0:
+        if oldest_earnings > 0 and latest_earnings > 0:
             historical_growth = ((latest_earnings / oldest_earnings) ** (1 / years)) - 1
             # Conservative adjustment - cap growth and apply haircut
             historical_growth = max(-0.05, min(historical_growth, 0.15))  # Cap between -5% and 15%
             conservative_growth = historical_growth * 0.7  # Apply 30% haircut for conservatism
+        elif oldest_earnings > 0 and latest_earnings <= 0:
+            # Earnings turned negative — treat as contraction
+            conservative_growth = -0.05
         else:
             conservative_growth = 0.03  # Default 3% if negative base
     else:

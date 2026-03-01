@@ -290,18 +290,39 @@ def calculate_intrinsic_value(
 
 
 def calculate_ev_ebitda_value(financial_metrics: list):
-    """Implied equity value via median EV/EBITDA multiple."""
+    """Implied equity value via median EV/EBITDA multiple.
+
+    Uses **normalized (median) EBITDA** across available periods instead of
+    only the current period's EBITDA.  This avoids seasonal / TTM distortions
+    where a single quarter can produce an EBITDA far below the company's
+    run-rate, leading to a spuriously low (or zero) equity estimate.
+    """
     if not financial_metrics:
         return 0
     m0 = financial_metrics[0]
-    if not (m0.enterprise_value and m0.enterprise_value_to_ebitda_ratio):
-        return 0
-    if m0.enterprise_value_to_ebitda_ratio == 0:
+    if not (m0.enterprise_value and m0.market_cap):
         return 0
 
-    ebitda_now = m0.enterprise_value / m0.enterprise_value_to_ebitda_ratio
-    med_mult = statistics.median([m.enterprise_value_to_ebitda_ratio for m in financial_metrics if m.enterprise_value_to_ebitda_ratio])
-    ev_implied = med_mult * ebitda_now
+    # Collect EV/EBITDA pairs and derive EBITDA for each period
+    ev_ebitda_ratios: list[float] = []
+    ebitda_values: list[float] = []
+    for m in financial_metrics:
+        ratio = m.enterprise_value_to_ebitda_ratio
+        ev = m.enterprise_value
+        if ratio and ev and ratio > 0:
+            ev_ebitda_ratios.append(ratio)
+            ebitda_values.append(ev / ratio)
+
+    if not ev_ebitda_ratios:
+        return 0
+
+    # Use median EBITDA to smooth seasonal / TTM distortions
+    ebitda_normalized = statistics.median(ebitda_values)
+    if ebitda_normalized <= 0:
+        return 0
+
+    med_mult = statistics.median(ev_ebitda_ratios)
+    ev_implied = med_mult * ebitda_normalized
     net_debt = (m0.enterprise_value or 0) - (m0.market_cap or 0)
     return max(ev_implied - net_debt, 0)
 
@@ -315,25 +336,48 @@ def calculate_residual_income_value(
     terminal_growth_rate: float = 0.03,
     num_years: int = 5,
 ):
-    """Residual Income Model (Edwards‑Bell‑Ohlson)."""
-    if not (market_cap and net_income and price_to_book_ratio and price_to_book_ratio > 0):
+    """Residual Income Model (Edwards‑Bell‑Ohlson).
+
+    The EBO model values equity as ``book_value + PV(future residual income)``.
+    Residual income *can* be negative (i.e. the company earns less than its
+    cost of equity on book value).  In that case the PV of RI is negative and
+    the intrinsic value sits *below* book value — but it may still be a
+    meaningful positive number.  Returning 0 when RI₀ < 0 discards all
+    information from the model for loss‑making companies and is overly
+    aggressive.
+    """
+    if not (market_cap and price_to_book_ratio and price_to_book_ratio > 0):
         return 0
+
+    # net_income may be None (data missing) — treat as zero for the RI calc
+    ni = net_income if isinstance(net_income, (int, float)) else 0
 
     book_val = market_cap / price_to_book_ratio
-    ri0 = net_income - cost_of_equity * book_val
-    if ri0 <= 0:
-        return 0
+    ri0 = ni - cost_of_equity * book_val
 
-    pv_ri = 0.0
-    for yr in range(1, num_years + 1):
-        ri_t = ri0 * (1 + book_value_growth) ** yr
-        pv_ri += ri_t / (1 + cost_of_equity) ** yr
+    # When RI is negative, cap the terminal‑value decay so the model doesn't
+    # produce absurdly low values.  We fade negative RI to zero over the
+    # projection window (assume the company eventually earns its CoE).
+    if ri0 < 0:
+        # For negative RI: assume it linearly recovers to 0 over num_years
+        pv_ri = 0.0
+        for yr in range(1, num_years + 1):
+            fade = max(1.0 - yr / num_years, 0.0)  # 1.0 → 0.0
+            ri_t = ri0 * fade
+            pv_ri += ri_t / (1 + cost_of_equity) ** yr
+        # No terminal value for negative RI (assumed to recover)
+        pv_term = 0.0
+    else:
+        pv_ri = 0.0
+        for yr in range(1, num_years + 1):
+            ri_t = ri0 * (1 + book_value_growth) ** yr
+            pv_ri += ri_t / (1 + cost_of_equity) ** yr
 
-    term_ri = ri0 * (1 + book_value_growth) ** (num_years + 1) / (cost_of_equity - terminal_growth_rate)
-    pv_term = term_ri / (1 + cost_of_equity) ** num_years
+        term_ri = ri0 * (1 + book_value_growth) ** (num_years + 1) / (cost_of_equity - terminal_growth_rate)
+        pv_term = term_ri / (1 + cost_of_equity) ** num_years
 
     intrinsic = book_val + pv_ri + pv_term
-    return intrinsic * 0.8  # 20% margin of safety
+    return max(intrinsic * 0.8, 0)  # 20% margin of safety, floor at 0
 
 
 ####################################
@@ -389,13 +433,27 @@ def calculate_fcf_volatility(fcf_history: list[float]) -> float:
 
 
 def calculate_enhanced_dcf_value(fcf_history: list[float], growth_metrics: dict, wacc: float, market_cap: float, revenue_growth: float | None = None) -> float:
-    """Enhanced DCF with multi-stage growth."""
+    """Enhanced DCF with multi-stage growth.
 
-    if not fcf_history or fcf_history[0] <= 0:
+    When the most-recent FCF is negative but there are positive historical
+    values, uses the average of positive historical FCF as a conservative
+    proxy.  This avoids returning 0 for cyclical businesses that have
+    temporary negative FCF but a track record of positive cash generation.
+    """
+    if not fcf_history:
         return 0
 
-    # Analyze FCF trend and quality
     fcf_current = fcf_history[0]
+
+    # If current FCF is negative, try to use average positive historical FCF
+    if fcf_current <= 0:
+        positive_fcf = [f for f in fcf_history if f > 0]
+        if not positive_fcf:
+            return 0  # No positive FCF in entire history
+        # Use average of positive historical FCF with a 30% haircut
+        fcf_current = statistics.mean(positive_fcf) * 0.7
+
+    # Analyze FCF trend and quality
     fcf_avg_3yr = sum(fcf_history[:3]) / min(3, len(fcf_history))
     fcf_volatility = calculate_fcf_volatility(fcf_history)
 

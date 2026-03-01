@@ -431,6 +431,33 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                 if idx + 1 < len(fcf_values) and fcf_values[idx + 1] is not None and abs(fcf_values[idx + 1]) > 1e-9:
                     fcf_growth_val = (current_fcf - fcf_values[idx + 1]) / abs(fcf_values[idx + 1])
 
+            # 计算 ROIC = NOPAT / Invested Capital
+            # NOPAT = operating_income * (1 - tax_rate), tax_rate 默认 25% (中国企业所得税)
+            # Invested Capital = total_assets - current_liabilities
+            roic_val = None
+            if df_income is not None and not df_income.empty and df_bal is not None and not df_bal.empty:
+                inc_row = df_income[df_income["end_date"] == end_date_str]
+                bal_row = df_bal[df_bal["end_date"] == end_date_str]
+                if not inc_row.empty and not bal_row.empty:
+                    op_profit = inc_row.iloc[0].get("operate_profit")
+                    total_assets = bal_row.iloc[0].get("total_assets")
+                    cur_liab = bal_row.iloc[0].get("total_cur_liab")
+                    if op_profit is not None and total_assets is not None and cur_liab is not None:
+                        if not any(isinstance(v, float) and pd.isna(v) for v in [op_profit, total_assets, cur_liab]):
+                            invested_capital = float(total_assets) - float(cur_liab)
+                            if invested_capital > 0:
+                                nopat = float(op_profit) * 0.75  # 25% 企业所得税
+                                roic_val = nopat / invested_capital
+
+            # 计算 book_value_growth (从相邻两期 bps 计算)
+            bvg_val = None
+            bps_current = row.get("bps")
+            if bps_current is not None and pd.notna(bps_current) and float(bps_current) > 0:
+                if idx + 1 < len(df_fin):
+                    bps_prev = df_fin.iloc[idx + 1].get("bps")
+                    if bps_prev is not None and pd.notna(bps_prev) and float(bps_prev) > 0:
+                        bvg_val = (float(bps_current) - float(bps_prev)) / float(bps_prev)
+
             metrics.append(
                 FinancialMetrics(
                     ticker=ticker,
@@ -451,7 +478,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     net_margin=_validate_margin(float(row.get("netprofit_margin", 0)) / 100 if pd.notna(row.get("netprofit_margin")) else None),
                     return_on_equity=_validate_roe(float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None),
                     return_on_assets=_validate_roe(float(row.get("roa", 0)) / 100 if pd.notna(row.get("roa")) else None),
-                    return_on_invested_capital=None,
+                    return_on_invested_capital=roic_val,
                     asset_turnover=float(row.get("assets_turn", 0)) if pd.notna(row.get("assets_turn")) else None,
                     inventory_turnover=None,
                     receivables_turnover=None,
@@ -467,7 +494,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     interest_coverage=interest_coverage_val,
                     revenue_growth=float(row.get("q_sales_yoy", 0)) / 100 if pd.notna(row.get("q_sales_yoy")) else None,
                     earnings_growth=float(row.get("netprofit_yoy", 0)) / 100 if pd.notna(row.get("netprofit_yoy")) else None,
-                    book_value_growth=None,
+                    book_value_growth=bvg_val,
                     earnings_per_share_growth=float(row.get("basic_eps_yoy", 0)) / 100 if pd.notna(row.get("basic_eps_yoy")) else None,
                     free_cash_flow_growth=fcf_growth_val,
                     operating_income_growth=float(row.get("op_yoy", 0)) / 100 if pd.notna(row.get("op_yoy")) else None,
@@ -558,7 +585,11 @@ def get_ashare_line_items_with_tushare(
                     # 补充资产负债表字段（投资者代理需要）
                     lt_borr = bal.get("lt_borr", 0) or 0
                     st_borr = bal.get("st_borr", 0) or 0
-                    total_debt_val = lt_borr + st_borr
+                    bonds_payable = bal.get("bond_payable", 0) or 0
+                    lt_borr = 0 if (isinstance(lt_borr, float) and pd.isna(lt_borr)) else float(lt_borr)
+                    st_borr = 0 if (isinstance(st_borr, float) and pd.isna(st_borr)) else float(st_borr)
+                    bonds_payable = 0 if (isinstance(bonds_payable, float) and pd.isna(bonds_payable)) else float(bonds_payable)
+                    total_debt_val = lt_borr + st_borr + bonds_payable
                     if total_debt_val > 0:
                         field_mapping["total_debt"] = total_debt_val
                     field_mapping["cash_and_equivalents"] = bal.get("money_cap")
@@ -569,6 +600,13 @@ def get_ashare_line_items_with_tushare(
                     cur_liab = bal.get("total_cur_liab")
                     if cur_assets is not None and cur_liab is not None and not (isinstance(cur_assets, float) and pd.isna(cur_assets)) and not (isinstance(cur_liab, float) and pd.isna(cur_liab)):
                         field_mapping["working_capital"] = float(cur_assets) - float(cur_liab)
+                    # 商誉和无形资产
+                    goodwill_val = bal.get("goodwill", 0) or 0
+                    intan_val = bal.get("intan_assets", 0) or 0
+                    goodwill_val = 0 if (isinstance(goodwill_val, float) and pd.isna(goodwill_val)) else float(goodwill_val)
+                    intan_val = 0 if (isinstance(intan_val, float) and pd.isna(intan_val)) else float(intan_val)
+                    if goodwill_val > 0 or intan_val > 0:
+                        field_mapping["goodwill_and_intangible_assets"] = goodwill_val + intan_val
 
             # 从 income 获取利润数据
             if df_income is not None and not df_income.empty:
@@ -612,16 +650,25 @@ def get_ashare_line_items_with_tushare(
                     field_mapping["free_cash_flow"] = cash.get("free_cashflow")
                     # 资本支出 (购建固定资产等支付的现金)
                     field_mapping["capital_expenditure"] = cash.get("c_pay_acq_const_fiolta")
-                    # 折旧摊销
-                    field_mapping["depreciation_and_amortization"] = cash.get("depr_fa_coga_dpba")
+                    # 折旧摊销 - Q1/Q3季报无此字段，需回退到最近可用期
+                    depr_raw = cash.get("depr_fa_coga_dpba")
+                    if depr_raw is not None and not (isinstance(depr_raw, float) and pd.isna(depr_raw)):
+                        field_mapping["depreciation_and_amortization"] = float(depr_raw)
+                    else:
+                        # Q1/Q3 季报无折旧数据，从历史期中查找最近的非空值
+                        for _, hist_cash in df_cash.iterrows():
+                            hist_depr = hist_cash.get("depr_fa_coga_dpba")
+                            if hist_depr is not None and not (isinstance(hist_depr, float) and pd.isna(hist_depr)) and float(hist_depr) > 0:
+                                field_mapping["depreciation_and_amortization"] = float(hist_depr)
+                                break
                     # 股息支付
                     field_mapping["dividends_and_other_cash_distributions"] = cash.get("c_pay_dist_dpcp_int_exp")
                     # 股权融资/回购
                     field_mapping["issuance_or_purchase_of_equity_shares"] = cash.get("c_recp_cap_contrib")
                     # 计算 ebitda = ebit + depreciation_and_amortization
-                    depr_val = cash.get("depr_fa_coga_dpba")
+                    depr_val = field_mapping.get("depreciation_and_amortization")
                     if "ebit" in field_mapping:
-                        if depr_val is not None and not (isinstance(depr_val, float) and pd.isna(depr_val)):
+                        if depr_val is not None:
                             field_mapping["ebitda"] = field_mapping["ebit"] + float(depr_val)
                         else:
                             # 折旧不可用时 EBITDA ≈ EBIT（保守估计）
@@ -658,6 +705,20 @@ def get_ashare_line_items_with_tushare(
                 om_val = row.get("op_of_gr")
                 if om_val is not None and not (isinstance(om_val, float) and pd.isna(om_val)):
                     field_mapping["operating_margin"] = float(om_val) / 100.0
+
+            # 计算 ROIC = NOPAT / Invested Capital (用于 Charlie Munger 等 Agent)
+            if "return_on_invested_capital" not in field_mapping or field_mapping.get("return_on_invested_capital") is None:
+                op_inc = field_mapping.get("operating_income")
+                total_assets_val = field_mapping.get("total_assets")
+                cur_liab_val = field_mapping.get("current_liabilities")
+                if op_inc is not None and total_assets_val is not None and cur_liab_val is not None:
+                    try:
+                        invested_capital = float(total_assets_val) - float(cur_liab_val)
+                        if invested_capital > 0:
+                            nopat = float(op_inc) * 0.75  # 25% 企业所得税
+                            field_mapping["return_on_invested_capital"] = nopat / invested_capital
+                    except (ValueError, TypeError):
+                        pass
 
             # 只添加请求的字段
             for field in line_items:

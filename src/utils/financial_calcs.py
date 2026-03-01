@@ -290,21 +290,26 @@ def calculate_pe_from_line_items(market_cap: float, line_items: list) -> Optiona
     if not market_cap or market_cap <= 0 or not line_items:
         return None
 
-    # 策略1：优先使用最近的年度数据
+    # 策略1：使用最近的年度数据（仅使用最新年度，不回溯历史）
     for item in line_items:
-        net_income = getattr(item, "net_income", None)
         report_period = getattr(item, "report_period", "") or ""
-        if net_income and net_income > 0 and report_period.endswith("1231"):
-            return market_cap / net_income
+        if report_period.endswith("1231"):
+            net_income = getattr(item, "net_income", None)
+            if net_income and net_income > 0:
+                return market_cap / net_income
+            # 最新年度亏损或无数据 → 不再回溯更早年度
+            break
 
-    # 策略2：使用最新季度的年化净利润
+    # 策略2：使用最新季度的年化净利润（仅使用最新季度，不回溯）
     for item in line_items:
         net_income = getattr(item, "net_income", None)
         report_period = getattr(item, "report_period", "") or ""
-        if net_income and net_income > 0 and len(report_period) >= 8:
+        if net_income and len(report_period) >= 8:
             annualized = annualize_ytd_value(net_income, report_period)
             if annualized and annualized > 0:
                 return market_cap / annualized
+            # 最新季度年化后仍为负 → 不再回溯
+            break
 
     return None
 
