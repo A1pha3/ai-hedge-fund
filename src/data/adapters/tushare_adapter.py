@@ -72,10 +72,10 @@ class TushareAdapter(DataSourceAdapter):
         field_mappings = {
             "return_on_equity": ["roe", "return_on_equity"],
             "return_on_assets": ["roa", "return_on_assets"],
-            "debt_to_equity": ["debt_to_assets", "debt_to_equity"],
+            "debt_to_equity": ["debt_to_eqt", "debt_to_equity"],
             "debt_to_assets": ["debt_to_assets"],
             "gross_margin": ["grossprofit_margin", "gross_margin"],
-            "operating_margin": ["op_yoy", "operating_margin"],
+            "operating_margin": ["op_of_gr", "operating_margin"],
             "net_margin": ["netprofit_margin", "net_margin"],
             "revenue_growth": ["q_sales_yoy", "revenue_growth"],
             "earnings_growth": ["q_profit_yoy", "earnings_growth"],

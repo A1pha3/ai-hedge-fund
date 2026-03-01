@@ -53,12 +53,14 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         most_recent_metrics = financial_metrics[0]
 
         # --- Enhanced line‑items ---
+        # 使用 "annual" period 确保 DCF 模型获取完整年度数据
+        # A股使用累计会计制度，"ttm" 返回的 Q1/H1/Q3 数据不能作为年度等间距序列
         progress.update_status(agent_id, ticker, "Gathering comprehensive line items")
         line_items = search_line_items(
             ticker=ticker,
             line_items=["free_cash_flow", "net_income", "depreciation_and_amortization", "capital_expenditure", "working_capital", "total_debt", "cash_and_equivalents", "interest_expense", "revenue", "operating_income", "ebit", "ebitda"],
             end_date=end_date,
-            period="ttm",
+            period="annual",
             limit=8,
             api_key=api_key,
         )
@@ -181,7 +183,13 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         for m, vals in method_values.items():
             # Always include the method, even if value is 0 or negative
             if vals['value'] == 0:
-                base_details = f"Value: N/A (insufficient data), Market Cap: {cs}{market_cap:,.2f}, "
+                # 区分"数据不足"和"计算结果为负/零"
+                if m == "owner_earnings":
+                    base_details = f"Value: N/A (owner earnings negative, business not generating positive owner earnings), Market Cap: {cs}{market_cap:,.2f}, "
+                elif m == "dcf" and any(isinstance(x, (int, float)) and x < 0 for x in fcf_history[:1]):
+                    base_details = f"Value: N/A (negative free cash flow), Market Cap: {cs}{market_cap:,.2f}, "
+                else:
+                    base_details = f"Value: N/A (insufficient data), Market Cap: {cs}{market_cap:,.2f}, "
             else:
                 base_details = f"Value: {cs}{vals['value']:,.2f}, Market Cap: {cs}{market_cap:,.2f}, "
             if vals["gap"] is not None:

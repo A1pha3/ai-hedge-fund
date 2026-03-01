@@ -286,41 +286,112 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
             return []
 
         # 获取现金流量表数据以补充 FCF 字段
+        # Tushare cashflow 可能每期返回多个 report_type (合并报表、母公司报表等)
+        # 因此 limit 需要足够大以覆盖所有报告期 (每期约2-3行 × limit 期 + TTM合成需要上期数据)
+        financial_fetch_limit = limit * 4
         df_cash = None
         try:
-            df_cash = pro.cashflow(ts_code=ts_code, limit=limit)
+            df_cash = pro.cashflow(ts_code=ts_code, limit=financial_fetch_limit)
         except Exception:
             pass
 
         # 获取总股本用于计算 free_cash_flow_per_share
         df_bal = None
         try:
-            df_bal = pro.balancesheet(ts_code=ts_code, limit=limit)
+            df_bal = pro.balancesheet(ts_code=ts_code, limit=financial_fetch_limit)
         except Exception:
             pass
 
         # 获取利润表数据（用于计算 EBITDA、interest_coverage 等）
         df_income = None
         try:
-            df_income = pro.income(ts_code=ts_code, limit=limit)
+            df_income = pro.income(ts_code=ts_code, limit=financial_fetch_limit)
         except Exception:
             pass
 
         metrics = []
         # 预计算 FCF growth 所需的 FCF 值列表
+        # 同时收集各期的 end_date，用于 TTM 合成
         fcf_values = []
+        period_dates = []
+        raw_fcf_map = {}  # key: end_date_str, value: raw FCF
+
         if df_cash is not None and not df_cash.empty:
             for _, row in df_fin.iterrows():
                 end_date_str = str(row.get("end_date", ""))
+                period_dates.append(end_date_str)
                 cash_row = df_cash[df_cash["end_date"] == end_date_str]
                 if not cash_row.empty:
                     fcf_val = cash_row.iloc[0].get("free_cashflow")
                     if fcf_val is not None and not (isinstance(fcf_val, float) and pd.isna(fcf_val)):
+                        raw_fcf_map[end_date_str] = float(fcf_val)
                         fcf_values.append(float(fcf_val))
                     else:
                         fcf_values.append(None)
                 else:
                     fcf_values.append(None)
+        else:
+            for _, row in df_fin.iterrows():
+                period_dates.append(str(row.get("end_date", "")))
+                fcf_values.append(None)
+
+        # A股 TTM FCF 合成:
+        # 如果最新期是 Q1/H1/Q3（非年报），合成 TTM FCF
+        # TTM_FCF = 最近累计 + 上年年报 - 上年同期累计
+        for i, ed in enumerate(period_dates):
+            if fcf_values[i] is None:
+                continue
+            if ed.endswith("1231"):
+                continue  # 年报本身即12个月
+            # 非年报期: 合成 TTM
+            year = ed[:4]
+            mmdd = ed[4:]
+            prior_year = str(int(year) - 1)
+            prior_annual_key = f"{prior_year}1231"
+            prior_same_key = f"{prior_year}{mmdd}"
+            if prior_annual_key in raw_fcf_map and prior_same_key in raw_fcf_map:
+                ttm_fcf = fcf_values[i] + raw_fcf_map[prior_annual_key] - raw_fcf_map[prior_same_key]
+                fcf_values[i] = ttm_fcf
+
+        # A股 TTM 合成: 利润表 & 折旧字段（用于 EV/EBITDA, EV/Revenue, ROIC, interest_coverage）
+        # 收集原始利润表流量字段，然后对非年报期做 TTM = 当期累计 + 上年年报 - 上年同期累计
+        raw_income_map = {}  # key: (end_date, field_name), value: float
+        _income_ttm_fields = ["operate_profit", "total_revenue", "fin_exp", "fin_exp_int_exp", "int_exp"]
+        _cash_ttm_fields = ["depr_fa_coga_dpba"]
+        if df_income is not None and not df_income.empty:
+            for _, inc_r in df_income.iterrows():
+                ed_str = str(inc_r.get("end_date", ""))
+                for fld in _income_ttm_fields:
+                    v = inc_r.get(fld)
+                    if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                        raw_income_map[(ed_str, fld)] = float(v)
+        if df_cash is not None and not df_cash.empty:
+            for _, cash_r in df_cash.iterrows():
+                ed_str = str(cash_r.get("end_date", ""))
+                for fld in _cash_ttm_fields:
+                    v = cash_r.get(fld)
+                    if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                        raw_income_map[(ed_str, fld)] = float(v)
+
+        # TTM 合成后的值：key: (end_date, field_name), value: TTM float
+        ttm_income_map = {}
+        all_ttm_fields = _income_ttm_fields + _cash_ttm_fields
+        for ed in period_dates:
+            for fld in all_ttm_fields:
+                raw_val = raw_income_map.get((ed, fld))
+                if raw_val is None:
+                    continue
+                if ed.endswith("1231"):
+                    ttm_income_map[(ed, fld)] = raw_val  # 年报即12个月
+                else:
+                    year = ed[:4]
+                    mmdd = ed[4:]
+                    prior_year = str(int(year) - 1)
+                    pa_key = (f"{prior_year}1231", fld)
+                    ps_key = (f"{prior_year}{mmdd}", fld)
+                    if pa_key in raw_income_map and ps_key in raw_income_map:
+                        ttm_income_map[(ed, fld)] = raw_val + raw_income_map[pa_key] - raw_income_map[ps_key]
+                    # else: 无法合成 TTM，不放入 ttm_income_map（后续使用原始值会标注）
 
         for idx, (_, row) in enumerate(df_fin.iterrows()):
             # 从 daily_basic 获取市值和估值数据（pe/pb/ps 仅存在于 daily_basic，不在 fina_indicator 中）
@@ -373,43 +444,77 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     if ev_val < 0:
                         ev_val = market_cap  # EV should not be negative; fallback to market cap
 
-            # 计算 EBITDA 和 EV/EBITDA
+            # 计算 EBITDA 和 EV/EBITDA（使用 TTM 合成值）
             if ev_val and df_income is not None and not df_income.empty:
                 inc_row = df_income[df_income["end_date"] == end_date_str]
                 if not inc_row.empty:
-                    inc = inc_row.iloc[0]
-                    op_profit = inc.get("operate_profit")
-                    # 利息支出: 优先使用 fin_exp_int_exp，回退到 int_exp
-                    int_exp = inc.get("fin_exp_int_exp") or inc.get("int_exp", 0) or 0
-                    int_exp = 0 if (isinstance(int_exp, float) and pd.isna(int_exp)) else float(int_exp)
-                    # 财务费用 (含利息支出、汇兑损益等)
-                    fin_exp = inc.get("fin_exp", 0) or 0
-                    fin_exp = 0 if (isinstance(fin_exp, float) and pd.isna(fin_exp)) else float(fin_exp)
-                    total_revenue = inc.get("total_revenue")
+                    # 优先使用 TTM 合成值，回退到原始值
+                    op_profit_ttm = ttm_income_map.get((end_date_str, "operate_profit"))
+                    if op_profit_ttm is None:
+                        raw_op = inc_row.iloc[0].get("operate_profit")
+                        if raw_op is not None and not (isinstance(raw_op, float) and pd.isna(raw_op)):
+                            op_profit_ttm = float(raw_op)
+                    # 利息支出: 优先 TTM，回退原始
+                    int_exp_ttm = ttm_income_map.get((end_date_str, "fin_exp_int_exp"))
+                    if int_exp_ttm is None:
+                        int_exp_ttm = ttm_income_map.get((end_date_str, "int_exp"))
+                    if int_exp_ttm is None:
+                        raw_int = inc_row.iloc[0].get("fin_exp_int_exp") or inc_row.iloc[0].get("int_exp", 0) or 0
+                        int_exp_ttm = 0 if (isinstance(raw_int, float) and pd.isna(raw_int)) else float(raw_int)
+                    # 财务费用: 优先 TTM，回退原始
+                    fin_exp_ttm = ttm_income_map.get((end_date_str, "fin_exp"))
+                    if fin_exp_ttm is None:
+                        raw_fin = inc_row.iloc[0].get("fin_exp", 0) or 0
+                        fin_exp_ttm = 0 if (isinstance(raw_fin, float) and pd.isna(raw_fin)) else float(raw_fin)
+                    # 营业收入: 优先 TTM，回退原始
+                    total_revenue_ttm = ttm_income_map.get((end_date_str, "total_revenue"))
+                    if total_revenue_ttm is None:
+                        raw_rev = inc_row.iloc[0].get("total_revenue")
+                        if raw_rev is not None and not (isinstance(raw_rev, float) and pd.isna(raw_rev)):
+                            total_revenue_ttm = float(raw_rev)
+                    # 折旧摊销: 优先 TTM 合成值
+                    # 注意：Tushare Q3/Q1 现金流量表通常不含折旧字段(NaN)，只有 H1 和年报有
+                    # 回退策略: TTM合成 → 当期原始 → 当年H1推算 → 上年年报 → 0
+                    depr_val_ttm = ttm_income_map.get((end_date_str, "depr_fa_coga_dpba"))
+                    if depr_val_ttm is None or depr_val_ttm == 0:
+                        # 尝试当期原始值
+                        if df_cash is not None and not df_cash.empty:
+                            cash_row = df_cash[df_cash["end_date"] == end_date_str]
+                            if not cash_row.empty:
+                                dv = cash_row.iloc[0].get("depr_fa_coga_dpba")
+                                if dv is not None and not (isinstance(dv, float) and pd.isna(dv)):
+                                    depr_val_ttm = float(dv)
+                    if depr_val_ttm is None or depr_val_ttm == 0:
+                        # Q3/Q1 无折旧数据: 尝试用当年H1折旧年化，或上年年报折旧
+                        year = end_date_str[:4]
+                        prior_year = str(int(year) - 1)
+                        h1_key = (f"{year}0630", "depr_fa_coga_dpba")
+                        annual_key = (f"{prior_year}1231", "depr_fa_coga_dpba")
+                        if h1_key in raw_income_map:
+                            # H1 折旧 × 12/6 年化
+                            depr_val_ttm = raw_income_map[h1_key] * 2.0
+                        elif annual_key in raw_income_map:
+                            depr_val_ttm = raw_income_map[annual_key]
+                        else:
+                            depr_val_ttm = 0
                     # 中国会计准则: 营业利润已扣除财务费用(含利息)
                     # EBITDA = 营业利润 + 财务费用 + 折旧摊销
                     # EBIT = 营业利润 + 财务费用
-                    depr_val = 0
-                    if df_cash is not None and not df_cash.empty:
-                        cash_row = df_cash[df_cash["end_date"] == end_date_str]
-                        if not cash_row.empty:
-                            dv = cash_row.iloc[0].get("depr_fa_coga_dpba", 0) or 0
-                            depr_val = 0 if (isinstance(dv, float) and pd.isna(dv)) else float(dv)
-                    if op_profit is not None and not (isinstance(op_profit, float) and pd.isna(op_profit)):
-                        ebit = float(op_profit) + fin_exp
-                        ebitda = ebit + depr_val
+                    if op_profit_ttm is not None:
+                        ebit = op_profit_ttm + fin_exp_ttm
+                        ebitda = ebit + depr_val_ttm
                         if ebitda > 0:
                             ev_to_ebitda_val = ev_val / ebitda
                         elif ebit > 0:
                             # EBITDA 为负但 EBIT 为正时，使用 EBIT 作为保守估计
                             ev_to_ebitda_val = ev_val / ebit
                     # EV/Revenue
-                    if total_revenue is not None and not (isinstance(total_revenue, float) and pd.isna(total_revenue)) and float(total_revenue) > 0:
-                        ev_to_revenue_val = ev_val / float(total_revenue)
+                    if total_revenue_ttm is not None and total_revenue_ttm > 0:
+                        ev_to_revenue_val = ev_val / total_revenue_ttm
                     # Interest coverage = EBIT / interest_expense
-                    if op_profit is not None and not (isinstance(op_profit, float) and pd.isna(op_profit)) and int_exp > 0:
-                        ebit_for_ic = float(op_profit) + fin_exp
-                        interest_coverage_val = ebit_for_ic / int_exp
+                    if op_profit_ttm is not None and int_exp_ttm > 0:
+                        ebit_for_ic = op_profit_ttm + fin_exp_ttm
+                        interest_coverage_val = ebit_for_ic / int_exp_ttm
 
             # 从现金流量表获取 FCF 相关数据
             fcf_yield_val = None
@@ -431,22 +536,28 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                 if idx + 1 < len(fcf_values) and fcf_values[idx + 1] is not None and abs(fcf_values[idx + 1]) > 1e-9:
                     fcf_growth_val = (current_fcf - fcf_values[idx + 1]) / abs(fcf_values[idx + 1])
 
-            # 计算 ROIC = NOPAT / Invested Capital
+            # 计算 ROIC = NOPAT / Invested Capital（使用 TTM 合成值）
             # NOPAT = operating_income * (1 - tax_rate), tax_rate 默认 25% (中国企业所得税)
             # Invested Capital = total_assets - current_liabilities
             roic_val = None
-            if df_income is not None and not df_income.empty and df_bal is not None and not df_bal.empty:
-                inc_row = df_income[df_income["end_date"] == end_date_str]
+            if df_bal is not None and not df_bal.empty:
                 bal_row = df_bal[df_bal["end_date"] == end_date_str]
-                if not inc_row.empty and not bal_row.empty:
-                    op_profit = inc_row.iloc[0].get("operate_profit")
+                if not bal_row.empty:
+                    # 使用 TTM 合成的 operate_profit
+                    op_profit_for_roic = ttm_income_map.get((end_date_str, "operate_profit"))
+                    if op_profit_for_roic is None and df_income is not None and not df_income.empty:
+                        inc_row = df_income[df_income["end_date"] == end_date_str]
+                        if not inc_row.empty:
+                            raw_op = inc_row.iloc[0].get("operate_profit")
+                            if raw_op is not None and not (isinstance(raw_op, float) and pd.isna(raw_op)):
+                                op_profit_for_roic = float(raw_op)
                     total_assets = bal_row.iloc[0].get("total_assets")
                     cur_liab = bal_row.iloc[0].get("total_cur_liab")
-                    if op_profit is not None and total_assets is not None and cur_liab is not None:
-                        if not any(isinstance(v, float) and pd.isna(v) for v in [op_profit, total_assets, cur_liab]):
+                    if op_profit_for_roic is not None and total_assets is not None and cur_liab is not None:
+                        if not any(isinstance(v, float) and pd.isna(v) for v in [total_assets, cur_liab]):
                             invested_capital = float(total_assets) - float(cur_liab)
                             if invested_capital > 0:
-                                nopat = float(op_profit) * 0.75  # 25% 企业所得税
+                                nopat = op_profit_for_roic * 0.75  # 25% 企业所得税
                                 roic_val = nopat / invested_capital
 
             # 计算 book_value_growth (从相邻两期 bps 计算)
@@ -544,23 +655,57 @@ def get_ashare_line_items_with_tushare(
     try:
         ts_code = _to_ts_code(ticker)
 
+        # Tushare 每年约4条报告(Q1/H1/Q3/Annual)，且 cashflow 表可能有多个 report_type
+        # 获取 limit*4 条以确保各子表(balance/income/cashflow)有足够匹配数据
+        fetch_limit = limit * 4
+
         # 获取财务指标数据
-        df_fin = pro.fina_indicator(ts_code=ts_code, limit=limit)
+        df_fin = pro.fina_indicator(ts_code=ts_code, limit=fetch_limit)
         if df_fin is None or df_fin.empty:
             return []
 
         # 获取资产负债表数据（用于补充字段）
-        df_bal = pro.balancesheet(ts_code=ts_code, limit=limit)
+        df_bal = pro.balancesheet(ts_code=ts_code, limit=fetch_limit)
 
         # 获取现金流量表数据
-        df_cash = pro.cashflow(ts_code=ts_code, limit=limit)
+        df_cash = pro.cashflow(ts_code=ts_code, limit=fetch_limit)
 
         # 获取利润表数据
-        df_income = pro.income(ts_code=ts_code, limit=limit)
+        df_income = pro.income(ts_code=ts_code, limit=fetch_limit)
 
         results = []
+        # A股 TTM 合成逻辑
+        # A股使用累计会计制度：Q1=3月, H1=6月累计, Q3=9月累计, Annual=12月
+        # 当 period="ttm" 时，需要合成真正的滚动12个月数据
+        # TTM = 最近累计期 + 上年年报 - 上年同期累计
+        # 例如: TTM(Q3_2025) = Q3_2025_cumulative + Annual_2024 - Q3_2024_cumulative
+        # 对于已是年报的数据(1231)，TTM = 该年报本身
+        #
+        # 仅利润表和现金流量表的流量指标需要 TTM 合成
+        # 资产负债表的存量指标(total_assets, equity等)使用最新期即可
+        ttm_flow_fields = {
+            "revenue", "net_income", "gross_profit", "total_profit", "operating_income",
+            "interest_expense", "research_and_development", "ebit",
+            "operating_cash_flow", "free_cash_flow", "capital_expenditure",
+            "depreciation_and_amortization", "dividends_and_other_cash_distributions",
+            "issuance_or_purchase_of_equity_shares",
+        }
+
+        # 收集所有报告期的原始数据，用于 TTM 合成
+        all_period_data = {}
         for _, row in df_fin.iterrows():
             end_date_str = str(row.get("end_date", ""))
+
+            # 按 period 类型过滤报告期
+            # period="annual" 只保留年报（12月31日报告期）
+            # period="quarterly" 只保留季报
+            # period="ttm": 先收集所有数据，后面做 TTM 合成
+            if period == "annual":
+                if not end_date_str.endswith("1231"):
+                    continue
+            elif period == "quarterly":
+                if end_date_str.endswith("1231"):
+                    continue
 
             # 构建 line item 数据
             item_data = {
@@ -615,7 +760,16 @@ def get_ashare_line_items_with_tushare(
                     inc = inc_row.iloc[0]
                     field_mapping["revenue"] = inc.get("total_revenue")
                     field_mapping["net_income"] = inc.get("n_income_attr_p")
-                    field_mapping["gross_profit"] = inc.get("total_profit")
+                    # gross_profit (毛利润) = 营业收入 - 营业成本
+                    # 注意: total_profit 是利润总额(税前利润)，不是毛利润
+                    rev_val = inc.get("revenue")  # 营业收入
+                    if rev_val is None or (isinstance(rev_val, float) and pd.isna(rev_val)):
+                        rev_val = inc.get("total_revenue")  # 回退到营业总收入
+                    oper_cost_val = inc.get("oper_cost")  # 营业成本
+                    if rev_val is not None and oper_cost_val is not None and not (isinstance(rev_val, float) and pd.isna(rev_val)) and not (isinstance(oper_cost_val, float) and pd.isna(oper_cost_val)):
+                        field_mapping["gross_profit"] = float(rev_val) - float(oper_cost_val)
+                    # total_profit (利润总额，税前利润) 单独映射
+                    field_mapping["total_profit"] = inc.get("total_profit")
                     field_mapping["operating_income"] = inc.get("operate_profit")
                     # interest_expense (利息支出) - tushare 字段名为 fin_exp_int_exp
                     int_exp_val = inc.get("fin_exp_int_exp") or inc.get("int_exp")
@@ -646,21 +800,18 @@ def get_ashare_line_items_with_tushare(
                 cash_row = df_cash[df_cash["end_date"] == end_date_str]
                 if not cash_row.empty:
                     cash = cash_row.iloc[0]
+                    # 经营活动现金流净额
+                    field_mapping["operating_cash_flow"] = cash.get("n_cashflow_act")
                     # 自由现金流 (Tushare 已计算好)
                     field_mapping["free_cash_flow"] = cash.get("free_cashflow")
                     # 资本支出 (购建固定资产等支付的现金)
                     field_mapping["capital_expenditure"] = cash.get("c_pay_acq_const_fiolta")
-                    # 折旧摊销 - Q1/Q3季报无此字段，需回退到最近可用期
+                    # 折旧摊销 - 仅使用当期数据，不回填历史值
+                    # A股Q1/Q3季报的现金流量表附注中通常无此字段
+                    # 用历史年报值回填到季报会导致 EBITDA/Owner Earnings 严重失真
                     depr_raw = cash.get("depr_fa_coga_dpba")
                     if depr_raw is not None and not (isinstance(depr_raw, float) and pd.isna(depr_raw)):
                         field_mapping["depreciation_and_amortization"] = float(depr_raw)
-                    else:
-                        # Q1/Q3 季报无折旧数据，从历史期中查找最近的非空值
-                        for _, hist_cash in df_cash.iterrows():
-                            hist_depr = hist_cash.get("depr_fa_coga_dpba")
-                            if hist_depr is not None and not (isinstance(hist_depr, float) and pd.isna(hist_depr)) and float(hist_depr) > 0:
-                                field_mapping["depreciation_and_amortization"] = float(hist_depr)
-                                break
                     # 股息支付
                     field_mapping["dividends_and_other_cash_distributions"] = cash.get("c_pay_dist_dpcp_int_exp")
                     # 股权融资/回购
@@ -732,7 +883,103 @@ def get_ashare_line_items_with_tushare(
                     except (ValueError, TypeError):
                         item_data[field] = value
 
-            results.append(LineItem(**item_data))
+            # TTM 模式下: 收集所有期的 field_mapping，不直接 append
+            # 非 TTM 模式: 直接 append 到 results
+            if period == "ttm":
+                all_period_data[end_date_str] = (item_data, field_mapping)
+            else:
+                results.append(LineItem(**item_data))
+                # 限制返回结果数量
+                if len(results) >= limit:
+                    break
+
+        # ============================================================
+        # TTM 合成后处理 (仅 period="ttm" 时执行)
+        # ============================================================
+        if period == "ttm" and all_period_data:
+            sorted_periods = sorted(all_period_data.keys(), reverse=True)
+            latest_period = sorted_periods[0] if sorted_periods else None
+
+            if latest_period:
+                latest_item_data, latest_fm = all_period_data[latest_period]
+
+                if latest_period.endswith("1231"):
+                    # 最新期就是年报，直接作为 TTM
+                    latest_item_data["period"] = "ttm"
+                    results.append(LineItem(**latest_item_data))
+                else:
+                    # 最新是 Q1(0331)/H1(0630)/Q3(0930)，需要合成 TTM
+                    # TTM = 最近累计期 + 上年年报 - 上年同期累计
+                    latest_year = latest_period[:4]
+                    latest_mmdd = latest_period[4:]
+                    prior_year = str(int(latest_year) - 1)
+                    prior_annual_key = f"{prior_year}1231"
+                    prior_same_key = f"{prior_year}{latest_mmdd}"
+
+                    prior_annual_data = all_period_data.get(prior_annual_key)
+                    prior_same_data = all_period_data.get(prior_same_key)
+
+                    if prior_annual_data and prior_same_data:
+                        _, prior_annual_fm = prior_annual_data
+                        _, prior_same_fm = prior_same_data
+
+                        # 合成 TTM
+                        ttm_item_data = {
+                            "ticker": ticker,
+                            "report_period": latest_period,
+                            "period": "ttm",
+                            "currency": "CNY",
+                        }
+                        for field in line_items:
+                            if field in ttm_flow_fields:
+                                # 流量指标: TTM = current + prior_annual - prior_same
+                                curr_val = latest_fm.get(field)
+                                annual_val = prior_annual_fm.get(field)
+                                same_val = prior_same_fm.get(field)
+                                if curr_val is not None and annual_val is not None and same_val is not None:
+                                    try:
+                                        c = float(curr_val) if not (isinstance(curr_val, float) and pd.isna(curr_val)) else None
+                                        a = float(annual_val) if not (isinstance(annual_val, float) and pd.isna(annual_val)) else None
+                                        s = float(same_val) if not (isinstance(same_val, float) and pd.isna(same_val)) else None
+                                        if c is not None and a is not None and s is not None:
+                                            ttm_item_data[field] = c + a - s
+                                    except (ValueError, TypeError):
+                                        pass
+                            else:
+                                # 存量/比率指标: 使用最新期
+                                val = latest_fm.get(field)
+                                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                                    try:
+                                        ttm_item_data[field] = float(val)
+                                    except (ValueError, TypeError):
+                                        ttm_item_data[field] = val
+
+                        # 重新计算 TTM 衍生指标
+                        ttm_rev = ttm_item_data.get("revenue")
+                        ttm_op_inc = ttm_item_data.get("operating_income")
+                        if ttm_rev and ttm_op_inc and ttm_rev != 0:
+                            ttm_item_data["operating_margin"] = ttm_op_inc / ttm_rev
+                        ttm_ebit = ttm_item_data.get("ebit")
+                        ttm_depr = ttm_item_data.get("depreciation_and_amortization")
+                        if ttm_ebit is not None and ttm_depr is not None:
+                            ttm_item_data["ebitda"] = ttm_ebit + ttm_depr
+                        elif ttm_ebit is not None:
+                            ttm_item_data["ebitda"] = ttm_ebit
+
+                        results.append(LineItem(**ttm_item_data))
+                    else:
+                        # 没有上年同期数据，退化为使用最新期原始值
+                        latest_item_data["period"] = "ttm"
+                        results.append(LineItem(**latest_item_data))
+
+                # 追加历史年报数据（供趋势分析用）
+                for p in sorted_periods:
+                    if p.endswith("1231") and p != latest_period:
+                        hist_item_data, hist_fm = all_period_data[p]
+                        hist_item_data["period"] = "ttm"
+                        results.append(LineItem(**hist_item_data))
+                        if len(results) >= limit:
+                            break
 
         return results
     except Exception as e:
