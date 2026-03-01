@@ -974,6 +974,13 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
         if df is None or df.empty:
             return []
 
+        # 按发布时间从新到旧排序，确保优先获取最新新闻
+        try:
+            df["_pub_dt"] = pd.to_datetime(df["发布时间"], errors="coerce")
+            df = df.sort_values("_pub_dt", ascending=False).reset_index(drop=True)
+        except Exception:
+            pass  # 排序失败时保持原始顺序
+
         results = []
         for _, row in df.iterrows():
             pub_time = str(row.get("发布时间", ""))
@@ -1003,6 +1010,7 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
                 date=pub_time,
                 url=url,
                 sentiment=sentiment,
+                content=content[:200] if content else None,
             )
             results.append(news)
 

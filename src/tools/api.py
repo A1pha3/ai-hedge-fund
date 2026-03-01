@@ -400,6 +400,9 @@ def get_company_news(
     if not all_news:
         return []
 
+    # Sort by date descending (newest first) to ensure most recent news is prioritized
+    all_news.sort(key=lambda n: n.date, reverse=True)
+
     # Cache the results using the comprehensive cache key
     _cache.set_company_news(cache_key, [news.model_dump() for news in all_news])
     return all_news

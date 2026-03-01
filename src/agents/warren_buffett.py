@@ -710,7 +710,7 @@ def generate_buffett_output(
     """Get investment decision from LLM with a compact prompt."""
 
     # --- Build compact facts here ---
-    financial_metrics = analysis_data.get("financial_metrics", {})
+    financial_metrics = analysis_data.get("financial_metrics") or {}
     facts = {
         "score": analysis_data.get("score"),
         "max_score": analysis_data.get("max_score"),

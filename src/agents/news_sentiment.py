@@ -109,10 +109,44 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
         confidence = _calculate_confidence_score(sentiment_confidences=sentiment_confidences, company_news=company_news, overall_signal=overall_signal, bullish_signals=bullish_signals, bearish_signals=bearish_signals, total_signals=total_signals)
 
         # Create reasoning for the news sentiment
+        # Generate a human-readable reasoning summary
+        if total_signals > 0:
+            signal_cn = {"bullish": "看涨", "bearish": "看跌", "neutral": "中性"}.get(overall_signal, overall_signal)
+            details = (
+                f"共分析 {total_signals} 篇新闻文章，其中看涨 {bullish_signals} 篇、看跌 {bearish_signals} 篇、中性 {neutral_signals} 篇。"
+                f"通过 LLM 对 {sentiments_classified_by_llm} 篇文章进行了深度情感分类。"
+            )
+            if overall_signal == "bullish":
+                details += f"正面新闻占比 {bullish_signals/total_signals*100:.0f}%，整体新闻情绪偏向积极，发出看涨信号。"
+            elif overall_signal == "bearish":
+                details += f"负面新闻占比 {bearish_signals/total_signals*100:.0f}%，整体新闻情绪偏向消极，发出看跌信号。"
+            else:
+                details += "正面与负面新闻比例均衡，整体情绪中性。"
+            details += f"综合置信度为 {confidence:.1f}%。"
+        else:
+            details = "未找到相关新闻文章，无法进行情感分析。"
+
+        # Build article details list for the report
+        articles_info = []
+        if company_news:
+            sentiment_map = {"positive": "正面", "negative": "负面", "neutral": "中性"}
+            for news in company_news[:10]:
+                article = {
+                    "title": news.title,
+                    "url": news.url,
+                    "date": news.date[:10] if news.date else "",
+                    "source": news.source or news.author or "",
+                    "sentiment": sentiment_map.get(news.sentiment, news.sentiment or "未知"),
+                }
+                if news.content:
+                    article["summary"] = news.content[:100] + ("..." if len(news.content) > 100 else "")
+                articles_info.append(article)
+
         reasoning = {
             "news_sentiment": {
                 "signal": overall_signal,
                 "confidence": confidence,
+                "details": details,
                 "metrics": {
                     "total_articles": total_signals,
                     "bullish_articles": bullish_signals,
@@ -120,6 +154,7 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
                     "neutral_articles": neutral_signals,
                     "articles_classified_by_llm": sentiments_classified_by_llm,
                 },
+                "articles": articles_info,
             }
         }
 

@@ -474,6 +474,32 @@ def _format_reasoning_to_markdown(reasoning: dict | str) -> str:
                             lines.append(f"| {metric_name} | {metric_value:.4f} |")
                         else:
                             lines.append(f"| {metric_name} | {metric_value} |")
+
+                # 添加新闻文章列表
+                articles = value.get("articles", [])
+                if articles:
+                    # 按日期从新到旧排序
+                    articles = sorted(articles, key=lambda a: a.get("date", ""), reverse=True)
+                    lines.append("")
+                    lines.append("**新闻文章列表**\n")
+                    lines.append("| # | 日期 | 情感 | 来源 | 标题 |")
+                    lines.append("|---|------|------|------|------|")
+                    for i, article in enumerate(articles, 1):
+                        title = article.get("title", "")
+                        url = article.get("url", "")
+                        date = article.get("date", "")
+                        source = article.get("source", "")
+                        sent = article.get("sentiment", "")
+                        sent_emoji = {"正面": "🟢", "负面": "🔴", "中性": "⚪"}.get(sent, "⚪")
+                        title_cell = f"[{title}]({url})" if url else title
+                        lines.append(f"| {i} | {date} | {sent_emoji} {sent} | {source} | {title_cell} |")
+                    # 添加摘要（如果有）
+                    summaries = [(i, a) for i, a in enumerate(articles, 1) if a.get("summary")]
+                    if summaries:
+                        lines.append("")
+                        lines.append("**文章摘要**\n")
+                        for i, article in summaries:
+                            lines.append(f"{i}. **{article['title'][:30]}...**: {article['summary']}")
             else:
                 # 对于 combined_analysis 这类普通字典，完整展开
                 lines.append(f"\n**{section_title}**")

@@ -15,3 +15,12 @@
 # 每日批量生成股票分析
 - 运行此命令 uv run  python scripts/batch_run_hedge_fund.py --file data/stock/daliy/daily_gainers_20260227_gt5p0_20260227_224118.md --model MiniMax-M2.5 --start-date 2024-05-30 --analysts-all --show-reasoning 
 - 此命令会根据输入文件中的股票，产生大量分析报告，每个股票会生成一个md文件，你耐心等待所有结果生成完成，如果程序中间出现错误，导致程序停止运行。你去检查错误原因，如果能修复就修复问题，然后继续执行上面这个命令，直到所有股票分析完毕。
+
+
+# 推理过程
+
+- #### News Sentiment
+
+- **信号**: BULLISH
+- **置信度**: 74.5%
+- **推理过程**:

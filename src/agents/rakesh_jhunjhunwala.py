@@ -606,7 +606,7 @@ def generate_jhunjhunwala_output(
     """Get investment decision from LLM with Jhunjhunwala's principles"""
 
     # Add explicit financial metrics to the data
-    financial_metrics = analysis_data.get("financial_metrics", {})
+    financial_metrics = analysis_data.get("financial_metrics") or {}
     enhanced_data = {
         **analysis_data,
         "revenue_growth": financial_metrics.get("revenue_growth"),

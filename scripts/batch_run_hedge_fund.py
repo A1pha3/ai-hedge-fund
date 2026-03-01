@@ -5,6 +5,7 @@
 """
 
 import argparse
+import datetime
 import re
 import subprocess
 import sys
@@ -82,6 +83,22 @@ def run_hedge_fund_analysis(cmd: List[str]) -> int:
     return result.returncode
 
 
+def get_existing_tickers_from_reports(report_dir: Path, report_date: str) -> set[str]:
+    """从报告目录中提取指定日期已生成报告的股票代码集合。"""
+    existing_tickers: set[str] = set()
+    if not report_dir.exists():
+        return existing_tickers
+
+    # 报告文件格式: 000001_20260302_123456.md
+    pattern = re.compile(rf"^(\d{{6}})_{re.escape(report_date)}_\d{{6}}\.md$")
+    for file_path in report_dir.glob(f"*_{report_date}_*.md"):
+        match = pattern.match(file_path.name)
+        if match:
+            existing_tickers.add(match.group(1))
+
+    return existing_tickers
+
+
 def main() -> int:
     """主函数"""
     parser = argparse.ArgumentParser(
@@ -119,6 +136,8 @@ def main() -> int:
     parser.add_argument("--end-date", help="结束日期 (YYYY-MM-DD)")
     parser.add_argument("--show-reasoning", action="store_true", help="显示每个代理的推理过程")
     parser.add_argument("--limit", type=int, default=0, help="限制处理前 N 只股票")
+    parser.add_argument("--skip-existing", action="store_true", default=True, help="跳过已生成当日报告的股票（默认开启）")
+    parser.add_argument("--report-date", help="用于识别已生成报告的日期，格式 YYYYMMDD（默认: 今天）")
 
     args = parser.parse_args()
 
@@ -157,7 +176,25 @@ def main() -> int:
     total = len(stocks)
     processed = 0
 
+    # 识别已完成报告的股票（用于断点续跑）
+    report_date = args.report_date or datetime.datetime.now().strftime("%Y%m%d")
+    project_root = Path(__file__).resolve().parent.parent
+    reports_dir = project_root / "data" / "reports"
+    existing_tickers = get_existing_tickers_from_reports(reports_dir, report_date) if args.skip_existing else set()
+    if args.skip_existing:
+        print(f"检测到 {len(existing_tickers)} 只股票在 {report_date} 已有报告，将自动跳过")
+        print()
+
     for stock in stocks:
+        if args.skip_existing and stock.ticker in existing_tickers:
+            processed += 1
+            print(f"[{processed}/{total}] 跳过已完成: {stock.ticker} ({stock.name}) - 涨幅: {stock.change_percent}%")
+            print("-" * 40)
+            print()
+            print("=" * 40)
+            print()
+            continue
+
         processed += 1
         print(f"[{processed}/{total}] 正在分析: {stock.ticker} ({stock.name}) - 涨幅: {stock.change_percent}%")
         print("-" * 40)
