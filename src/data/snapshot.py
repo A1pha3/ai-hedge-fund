@@ -61,6 +61,7 @@ class DataSnapshotExporter:
         self._initialized = True
         self.config = SnapshotConfig()
         self._index_lock = threading.Lock()
+        self._financials_lock = threading.Lock()  # 防止 financial_metrics 和 line_items 并发写入冲突
 
     # =========================================================================
     # 公开 API
@@ -122,10 +123,11 @@ class DataSnapshotExporter:
                             need_update = False
 
             if need_update:
-                financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
-                financials["financial_metrics"] = self._dedupe_dict_records_by_period([m.model_dump() for m in metrics])
-                self._write_json(financials_file, financials)
-                self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
+                with self._financials_lock:
+                    financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
+                    financials["financial_metrics"] = self._dedupe_dict_records_by_period([m.model_dump() for m in metrics])
+                    self._write_json(financials_file, financials)
+                    self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
                 self._update_index(ticker, end_date, snapshot_dir, data_source)
                 logger.info("[Snapshot] 财务指标快照已导出: %s/%s, %d 期", ticker, end_date, len(metrics))
         except Exception as e:
@@ -156,10 +158,11 @@ class DataSnapshotExporter:
                             need_update = False
 
             if need_update:
-                financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
-                financials["line_items"] = self._dedupe_dict_records_by_period([item.model_dump() for item in line_items])
-                self._write_json(financials_file, financials)
-                self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
+                with self._financials_lock:
+                    financials: dict[str, Any] = self._read_json(financials_file, {"financial_metrics": [], "line_items": []})  # type: ignore[assignment]
+                    financials["line_items"] = self._dedupe_dict_records_by_period([item.model_dump() for item in line_items])
+                    self._write_json(financials_file, financials)
+                    self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
                 self._update_index(ticker, end_date, snapshot_dir, data_source)
                 logger.info("[Snapshot] 财务报表快照已导出: %s/%s, %d 条", ticker, end_date, len(line_items))
         except Exception as e:

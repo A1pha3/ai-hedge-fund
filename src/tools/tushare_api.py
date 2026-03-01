@@ -285,6 +285,16 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         if df_fin is None or df_fin.empty:
             return []
 
+        # 补充默认字段集不包含的字段（inv_turn, dp_dt_ratio 不在默认返回中）
+        try:
+            df_extra = pro.fina_indicator(ts_code=ts_code, limit=limit, fields="ts_code,end_date,inv_turn,dp_dt_ratio")
+            if df_extra is not None and not df_extra.empty:
+                extra_cols = [c for c in df_extra.columns if c not in df_fin.columns]
+                if extra_cols:
+                    df_fin = df_fin.merge(df_extra[["end_date"] + extra_cols], on="end_date", how="left")
+        except Exception:
+            pass
+
         # 获取现金流量表数据以补充 FCF 字段
         # Tushare cashflow 可能每期返回多个 report_type (合并报表、母公司报表等)
         # 因此 limit 需要足够大以覆盖所有报告期 (每期约2-3行 × limit 期 + TTM合成需要上期数据)
@@ -569,6 +579,83 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     if bps_prev is not None and pd.notna(bps_prev) and float(bps_prev) > 0:
                         bvg_val = (float(bps_current) - float(bps_prev)) / float(bps_prev)
 
+            # ------------------------------------------------------------------
+            # 补充周转率、经营现金流比率、EBITDA增长率、分红比率
+            # ------------------------------------------------------------------
+            # 存货周转率 (fina_indicator: inv_turn)
+            inv_turn_val = None
+            raw_inv_turn = row.get("inv_turn")
+            if raw_inv_turn is not None and pd.notna(raw_inv_turn) and float(raw_inv_turn) > 0:
+                inv_turn_val = float(raw_inv_turn)
+
+            # 应收账款周转率 (fina_indicator: ar_turn)
+            ar_turn_val = None
+            raw_ar_turn = row.get("ar_turn")
+            if raw_ar_turn is not None and pd.notna(raw_ar_turn) and float(raw_ar_turn) > 0:
+                ar_turn_val = float(raw_ar_turn)
+
+            # 应收账款周转天数 = 365 / 应收账款周转率
+            dso_val = None
+            if ar_turn_val is not None and ar_turn_val > 0:
+                dso_val = 365.0 / ar_turn_val
+
+            # 营业周期 = 存货周转天数 + 应收账款周转天数
+            operating_cycle_val = None
+            if inv_turn_val is not None and inv_turn_val > 0 and ar_turn_val is not None and ar_turn_val > 0:
+                operating_cycle_val = 365.0 / inv_turn_val + 365.0 / ar_turn_val
+
+            # 营运资本周转率 = TTM营业收入 / 营运资本
+            wc_turnover_val = None
+            if market_cap and df_bal is not None and not df_bal.empty:
+                bal_row_wc = df_bal[df_bal["end_date"] == end_date_str]
+                if not bal_row_wc.empty:
+                    cur_assets_wc = bal_row_wc.iloc[0].get("total_cur_assets")
+                    cur_liab_wc = bal_row_wc.iloc[0].get("total_cur_liab")
+                    if cur_assets_wc is not None and cur_liab_wc is not None and not (isinstance(cur_assets_wc, float) and pd.isna(cur_assets_wc)) and not (isinstance(cur_liab_wc, float) and pd.isna(cur_liab_wc)):
+                        working_capital_wc = float(cur_assets_wc) - float(cur_liab_wc)
+                        if abs(working_capital_wc) > 1e-9:
+                            rev_ttm = ttm_income_map.get((end_date_str, "total_revenue"))
+                            if rev_ttm is not None and rev_ttm > 0:
+                                wc_turnover_val = rev_ttm / abs(working_capital_wc)
+
+            # 经营现金流比率 = 经营活动现金流净额 / 流动负债
+            ocf_ratio_val = None
+            if df_cash is not None and not df_cash.empty and df_bal is not None and not df_bal.empty:
+                cash_row_ocf = df_cash[df_cash["end_date"] == end_date_str]
+                bal_row_ocf = df_bal[df_bal["end_date"] == end_date_str]
+                if not cash_row_ocf.empty and not bal_row_ocf.empty:
+                    n_cfa = cash_row_ocf.iloc[0].get("n_cashflow_act")
+                    cl_ocf = bal_row_ocf.iloc[0].get("total_cur_liab")
+                    if n_cfa is not None and cl_ocf is not None and not (isinstance(n_cfa, float) and pd.isna(n_cfa)) and not (isinstance(cl_ocf, float) and pd.isna(cl_ocf)) and float(cl_ocf) > 0:
+                        ocf_ratio_val = float(n_cfa) / float(cl_ocf)
+
+            # EBITDA 增长率 (使用当前期与上一期的 EBITDA 对比)
+            ebitda_growth_val = None
+            # 当前期的 EBITDA 在上方已计算（ebitda 变量），但其作用域可能不稳
+            # 重新获取当前期 EBITDA
+            ebitda_current = None
+            op_profit_curr = ttm_income_map.get((end_date_str, "operate_profit"))
+            fin_exp_curr = ttm_income_map.get((end_date_str, "fin_exp"))
+            depr_curr = ttm_income_map.get((end_date_str, "depr_fa_coga_dpba"))
+            if op_profit_curr is not None and fin_exp_curr is not None:
+                ebitda_current = op_profit_curr + (fin_exp_curr or 0) + (depr_curr or 0)
+
+            if ebitda_current is not None and idx + 1 < len(df_fin):
+                next_end_date = str(df_fin.iloc[idx + 1].get("end_date", ""))
+                op_profit_prev = ttm_income_map.get((next_end_date, "operate_profit"))
+                fin_exp_prev = ttm_income_map.get((next_end_date, "fin_exp"))
+                depr_prev = ttm_income_map.get((next_end_date, "depr_fa_coga_dpba"))
+                if op_profit_prev is not None and fin_exp_prev is not None:
+                    ebitda_prev = op_profit_prev + (fin_exp_prev or 0) + (depr_prev or 0)
+                    if abs(ebitda_prev) > 1e-9:
+                        ebitda_growth_val = (ebitda_current - ebitda_prev) / abs(ebitda_prev)
+
+            # 分红比率 (fina_indicator: dp_dt_ratio, 已是百分比需除以100)
+            payout_ratio_val = None
+            raw_dp = row.get("dp_dt_ratio")
+            if raw_dp is not None and pd.notna(raw_dp):
+                payout_ratio_val = float(raw_dp) / 100.0
+
             metrics.append(
                 FinancialMetrics(
                     ticker=ticker,
@@ -591,15 +678,15 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     return_on_assets=_validate_roe(float(row.get("roa", 0)) / 100 if pd.notna(row.get("roa")) else None),
                     return_on_invested_capital=roic_val,
                     asset_turnover=float(row.get("assets_turn", 0)) if pd.notna(row.get("assets_turn")) else None,
-                    inventory_turnover=None,
-                    receivables_turnover=None,
-                    days_sales_outstanding=None,
-                    operating_cycle=None,
-                    working_capital_turnover=None,
+                    inventory_turnover=inv_turn_val,
+                    receivables_turnover=ar_turn_val,
+                    days_sales_outstanding=dso_val,
+                    operating_cycle=operating_cycle_val,
+                    working_capital_turnover=wc_turnover_val,
                     current_ratio=float(row.get("current_ratio", 0)) if pd.notna(row.get("current_ratio")) else None,
                     quick_ratio=float(row.get("quick_ratio", 0)) if pd.notna(row.get("quick_ratio")) else None,
                     cash_ratio=float(row.get("cash_ratio", 0)) if pd.notna(row.get("cash_ratio")) else None,
-                    operating_cash_flow_ratio=None,
+                    operating_cash_flow_ratio=ocf_ratio_val,
                     debt_to_equity=float(row.get("debt_to_eqt", 0)) if pd.notna(row.get("debt_to_eqt")) else None,
                     debt_to_assets=float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
                     interest_coverage=interest_coverage_val,
@@ -609,8 +696,8 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     earnings_per_share_growth=float(row.get("basic_eps_yoy", 0)) / 100 if pd.notna(row.get("basic_eps_yoy")) else None,
                     free_cash_flow_growth=fcf_growth_val,
                     operating_income_growth=float(row.get("op_yoy", 0)) / 100 if pd.notna(row.get("op_yoy")) else None,
-                    ebitda_growth=None,
-                    payout_ratio=None,
+                    ebitda_growth=ebitda_growth_val,
+                    payout_ratio=payout_ratio_val,
                     earnings_per_share=float(row.get("eps", 0)) if pd.notna(row.get("eps")) else None,
                     book_value_per_share=float(row.get("bps", 0)) if pd.notna(row.get("bps")) else None,
                     free_cash_flow_per_share=fcf_per_share_val,

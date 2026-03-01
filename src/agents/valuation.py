@@ -182,7 +182,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         reasoning = {}
         for m, vals in method_values.items():
             # Always include the method, even if value is 0 or negative
-            if vals['value'] == 0:
+            if vals['value'] <= 0:
                 # 区分"数据不足"和"计算结果为负/零"
                 if m == "owner_earnings":
                     base_details = f"Value: N/A (owner earnings negative, business not generating positive owner earnings), Market Cap: {cs}{market_cap:,.2f}, "
@@ -261,6 +261,10 @@ def calculate_owner_earnings_value(
     owner_earnings = net_income + depreciation - capex - working_capital_change
     if owner_earnings <= 0:
         return 0
+
+    # Clamp growth_rate to a reasonable range to prevent nonsensical valuations
+    # from extreme earnings_growth values (e.g. -522.7% → -5.227)
+    growth_rate = max(min(growth_rate, 0.30), -0.20)
 
     pv = 0.0
     for yr in range(1, num_years + 1):
