@@ -225,6 +225,26 @@ def _validate_roe(value: float | None) -> float | None:
     return value
 
 
+def _dedupe_tushare_df(df: pd.DataFrame, date_col: str = "end_date") -> pd.DataFrame:
+    """去重 Tushare 返回的 DataFrame：同一 end_date 可能有多行（如数据修正）。
+
+    策略：对每个 end_date 保留非 NaN 字段最多的那一行。
+    这样可避免 iloc[0] 取到字段缺失较多的行。
+    """
+    if df is None or df.empty or date_col not in df.columns:
+        return df
+    # 计算每行的非NaN字段数
+    df = df.copy()
+    df["_non_null_cnt"] = df.drop(columns=[date_col], errors="ignore").notna().sum(axis=1)
+    # 按 end_date 分组，保留非NaN最多的行
+    df = df.sort_values([date_col, "_non_null_cnt"], ascending=[True, False])
+    df = df.drop_duplicates(subset=[date_col], keep="first")
+    df = df.drop(columns=["_non_null_cnt"])
+    # 恢复原始排序（按 end_date 降序）
+    df = df.sort_values(date_col, ascending=False).reset_index(drop=True)
+    return df
+
+
 def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> dict | None:
     """获取指定日期（含）之前最近一个交易日的 daily_basic 数据行。
 
@@ -302,6 +322,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         df_cash = None
         try:
             df_cash = pro.cashflow(ts_code=ts_code, limit=financial_fetch_limit)
+            df_cash = _dedupe_tushare_df(df_cash)
         except Exception:
             pass
 
@@ -309,6 +330,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         df_bal = None
         try:
             df_bal = pro.balancesheet(ts_code=ts_code, limit=financial_fetch_limit)
+            df_bal = _dedupe_tushare_df(df_bal)
         except Exception:
             pass
 
@@ -316,6 +338,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         df_income = None
         try:
             df_income = pro.income(ts_code=ts_code, limit=financial_fetch_limit)
+            df_income = _dedupe_tushare_df(df_income)
         except Exception:
             pass
 
@@ -326,23 +349,29 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         period_dates = []
         raw_fcf_map = {}  # key: end_date_str, value: raw FCF
 
+        # 先从 df_cash 全量构建 raw_fcf_map（包含 df_fin 以外的历史期，TTM 合成需要）
         if df_cash is not None and not df_cash.empty:
-            for _, row in df_fin.iterrows():
-                end_date_str = str(row.get("end_date", ""))
-                period_dates.append(end_date_str)
-                cash_row = df_cash[df_cash["end_date"] == end_date_str]
-                if not cash_row.empty:
-                    fcf_val = cash_row.iloc[0].get("free_cashflow")
-                    if fcf_val is not None and not (isinstance(fcf_val, float) and pd.isna(fcf_val)):
-                        raw_fcf_map[end_date_str] = float(fcf_val)
-                        fcf_values.append(float(fcf_val))
-                    else:
-                        fcf_values.append(None)
+            for _, cash_r in df_cash.iterrows():
+                ed = str(cash_r.get("end_date", ""))
+                if ed in raw_fcf_map:
+                    continue  # 已去重后不应有重复，但以防万一
+                fcf_v = cash_r.get("free_cashflow")
+                if fcf_v is not None and not (isinstance(fcf_v, float) and pd.isna(fcf_v)):
+                    raw_fcf_map[ed] = float(fcf_v)
                 else:
-                    fcf_values.append(None)
-        else:
-            for _, row in df_fin.iterrows():
-                period_dates.append(str(row.get("end_date", "")))
+                    # Fallback: FCF = 经营活动现金流 - 资本支出
+                    op_cf_v = cash_r.get("n_cashflow_act")
+                    capex_v = cash_r.get("c_pay_acq_const_fiolta")
+                    if op_cf_v is not None and not (isinstance(op_cf_v, float) and pd.isna(op_cf_v)) and capex_v is not None and not (isinstance(capex_v, float) and pd.isna(capex_v)):
+                        raw_fcf_map[ed] = float(op_cf_v) - float(capex_v)
+
+        # 按 df_fin 的顺序构建 fcf_values（与 period_dates 对齐）
+        for _, row in df_fin.iterrows():
+            end_date_str = str(row.get("end_date", ""))
+            period_dates.append(end_date_str)
+            if end_date_str in raw_fcf_map:
+                fcf_values.append(raw_fcf_map[end_date_str])
+            else:
                 fcf_values.append(None)
 
         # A股 TTM FCF 合成:
@@ -752,13 +781,13 @@ def get_ashare_line_items_with_tushare(
             return []
 
         # 获取资产负债表数据（用于补充字段）
-        df_bal = pro.balancesheet(ts_code=ts_code, limit=fetch_limit)
+        df_bal = _dedupe_tushare_df(pro.balancesheet(ts_code=ts_code, limit=fetch_limit))
 
         # 获取现金流量表数据
-        df_cash = pro.cashflow(ts_code=ts_code, limit=fetch_limit)
+        df_cash = _dedupe_tushare_df(pro.cashflow(ts_code=ts_code, limit=fetch_limit))
 
         # 获取利润表数据
-        df_income = pro.income(ts_code=ts_code, limit=fetch_limit)
+        df_income = _dedupe_tushare_df(pro.income(ts_code=ts_code, limit=fetch_limit))
 
         results = []
         # A股 TTM 合成逻辑
@@ -893,8 +922,15 @@ def get_ashare_line_items_with_tushare(
                     cash = cash_row.iloc[0]
                     # 经营活动现金流净额
                     field_mapping["operating_cash_flow"] = cash.get("n_cashflow_act")
-                    # 自由现金流 (Tushare 已计算好)
-                    field_mapping["free_cash_flow"] = cash.get("free_cashflow")
+                    # 自由现金流 (Tushare 已计算好，若为NaN则用 经营现金流-资本支出 回退)
+                    fcf_raw = cash.get("free_cashflow")
+                    if fcf_raw is not None and not (isinstance(fcf_raw, float) and pd.isna(fcf_raw)):
+                        field_mapping["free_cash_flow"] = fcf_raw
+                    else:
+                        op_cf_raw = cash.get("n_cashflow_act")
+                        capex_raw = cash.get("c_pay_acq_const_fiolta")
+                        if op_cf_raw is not None and not (isinstance(op_cf_raw, float) and pd.isna(op_cf_raw)) and capex_raw is not None and not (isinstance(capex_raw, float) and pd.isna(capex_raw)):
+                            field_mapping["free_cash_flow"] = float(op_cf_raw) - float(capex_raw)
                     # 资本支出 (购建固定资产等支付的现金)
                     field_mapping["capital_expenditure"] = cash.get("c_pay_acq_const_fiolta")
                     # 折旧摊销 - 仅使用当期数据，不回填历史值
@@ -1056,6 +1092,17 @@ def get_ashare_line_items_with_tushare(
                             ttm_item_data["ebitda"] = ttm_ebit + ttm_depr
                         elif ttm_ebit is not None:
                             ttm_item_data["ebitda"] = ttm_ebit
+                        # 重新计算 TTM ROIC = NOPAT / Invested Capital
+                        if ttm_op_inc is not None:
+                            ttm_total_assets = ttm_item_data.get("total_assets")
+                            ttm_cur_liab = ttm_item_data.get("current_liabilities")
+                            if ttm_total_assets is not None and ttm_cur_liab is not None:
+                                try:
+                                    invested_capital = float(ttm_total_assets) - float(ttm_cur_liab)
+                                    if invested_capital > 0:
+                                        ttm_item_data["return_on_invested_capital"] = (ttm_op_inc * 0.75) / invested_capital
+                                except (ValueError, TypeError):
+                                    pass
 
                         results.append(LineItem(**ttm_item_data))
                     else:
