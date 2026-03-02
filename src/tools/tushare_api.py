@@ -21,6 +21,7 @@ def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: b
 
     同一 ts_code + api_name 的首次调用会实际请求 Tushare，后续直接从内存返回。
     limit 取已缓存和请求中的较大值，确保不会因 limit 不同而丢失数据。
+    重新获取失败时，保留已有的有效缓存（防止空数据覆盖有效数据）。
     """
     cache_key = f"{ts_code}_{api_name}"
 
@@ -37,14 +38,38 @@ def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: b
     # 实际请求 Tushare
     api_func = getattr(pro, api_name, None)
     if api_func is None:
+        # API 不存在，返回已有缓存（如果有）
+        with _tushare_df_cache_lock:
+            existing = _tushare_df_cache.get(cache_key)
+            if existing is not None and not existing.empty:
+                return existing.copy()
         return None
 
-    df = api_func(ts_code=ts_code, limit=fetch_limit)
+    try:
+        df = api_func(ts_code=ts_code, limit=fetch_limit)
+    except Exception as e:
+        print(f"[Tushare] API {api_name}({ts_code}) 调用失败: {e}")
+        # 请求失败时返回已有缓存
+        with _tushare_df_cache_lock:
+            existing = _tushare_df_cache.get(cache_key)
+            if existing is not None and not existing.empty:
+                return existing.copy()
+        return None
+
     if dedupe and df is not None and not df.empty:
         df = _dedupe_tushare_df(df)
 
     with _tushare_df_cache_lock:
-        _tushare_df_cache[cache_key] = df
+        if df is not None and not df.empty:
+            # 新数据有效，更新缓存
+            _tushare_df_cache[cache_key] = df
+        else:
+            # 重新获取返回空数据，保留已有有效缓存
+            existing = _tushare_df_cache.get(cache_key)
+            if existing is not None and not existing.empty:
+                return existing.copy()
+            # 首次获取也为空，缓存空结果
+            _tushare_df_cache[cache_key] = df
 
     return df.copy() if df is not None else None
 
@@ -289,33 +314,51 @@ def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: 
 
     返回包含 total_mv, pe, pe_ttm, pb, ps, ps_ttm 等字段的 dict，
     如果找不到数据则返回 None。
+    内置内存缓存：同一 ts_code 批量获取一次 daily_basic，后续按日期过滤。
     """
+    # 批量缓存：首次调用时获取近2年的 daily_basic 数据，后续按日期过滤
+    batch_cache_key = f"{ts_code}_daily_basic_batch"
     date_fmt = anchor_date.replace("-", "")
 
-    try:
-        df_exact = pro.daily_basic(ts_code=ts_code, trade_date=date_fmt)
-        if df_exact is not None and not df_exact.empty:
-            return df_exact.iloc[0].to_dict()
-    except Exception:
-        pass
+    # 检查批量缓存
+    df_batch = None
+    with _tushare_df_cache_lock:
+        if batch_cache_key in _tushare_df_cache:
+            df_batch = _tushare_df_cache[batch_cache_key]
 
-    try:
-        date_obj = datetime.strptime(date_fmt, "%Y%m%d")
-    except Exception:
-        return None
-
-    start_fmt = (date_obj - timedelta(days=lookback_days)).strftime("%Y%m%d")
-    try:
-        df_window = pro.daily_basic(ts_code=ts_code, start_date=start_fmt, end_date=date_fmt)
-        if df_window is None or df_window.empty:
+    # 首次调用：批量获取近2年的 daily_basic 数据（一次 API 调用覆盖所有周期）
+    if df_batch is None:
+        # 始终以当前日期为终点，确保覆盖最新交易日数据
+        today_fmt = datetime.now().strftime("%Y%m%d")
+        try:
+            # 使用 anchor_date 和 today 中较晚的作为终止日期
+            actual_end = max(date_fmt, today_fmt)
+            date_obj = datetime.strptime(actual_end, "%Y%m%d")
+        except Exception:
             return None
+        # 获取最近 730 天（约2年）的数据，覆盖所有财报周期
+        start_fmt = (date_obj - timedelta(days=730)).strftime("%Y%m%d")
+        try:
+            df_batch = pro.daily_basic(ts_code=ts_code, start_date=start_fmt, end_date=actual_end)
+            if df_batch is not None and not df_batch.empty and "trade_date" in df_batch.columns:
+                df_batch = df_batch.sort_values("trade_date", ascending=False).reset_index(drop=True)
+        except Exception as e:
+            print(f"[Tushare] daily_basic 批量获取({ts_code}, {start_fmt}~{actual_end}) 失败: {e}")
+            df_batch = pd.DataFrame()  # 空 DataFrame 表示已尝试
 
-        if "trade_date" in df_window.columns:
-            df_window = df_window.sort_values("trade_date", ascending=False)
+        with _tushare_df_cache_lock:
+            _tushare_df_cache[batch_cache_key] = df_batch
 
-        return df_window.iloc[0].to_dict()
-    except Exception:
+    # 从批量数据中查找 <= anchor_date 的最近交易日
+    if df_batch is None or df_batch.empty:
         return None
+
+    mask = df_batch["trade_date"] <= date_fmt
+    filtered = df_batch[mask]
+    if filtered.empty:
+        return None
+
+    return filtered.iloc[0].to_dict()
 
 
 def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> float | None:
@@ -329,9 +372,12 @@ def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int
     return None
 
 
-def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10) -> List[FinancialMetrics]:
+def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10, period: str = "ttm") -> List[FinancialMetrics]:
     """
     使用 Tushare 获取 A 股财务指标
+
+    Args:
+        period: "ttm" (默认, 返回所有季度含TTM合成) | "annual" (仅返回年报 1231) | "quarterly" (仅返回季报)
     """
     pro = _get_pro()
     if not pro:
@@ -339,14 +385,16 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
     try:
         ts_code = _to_ts_code(ticker)
         # Tushare fina_indicator 使用 end_date 参数，但需要正确的日期格式
+        # 当请求 annual 时，fina_indicator 每年有4行(Q1/H1/Q3/Annual)，需要多取4倍才能保证足够的年报行数
+        fetch_limit = limit * 4 if period == "annual" else limit
         # 使用内存缓存获取数据
-        df_fin = _cached_tushare_call(pro, "fina_indicator", ts_code, limit)
+        df_fin = _cached_tushare_call(pro, "fina_indicator", ts_code, fetch_limit)
         if df_fin is None or df_fin.empty:
             return []
 
         # 补充默认字段集不包含的字段（inv_turn, dp_dt_ratio 不在默认返回中）
         try:
-            df_extra = pro.fina_indicator(ts_code=ts_code, limit=limit, fields="ts_code,end_date,inv_turn,dp_dt_ratio")
+            df_extra = pro.fina_indicator(ts_code=ts_code, limit=fetch_limit, fields="ts_code,end_date,inv_turn,dp_dt_ratio")
             if df_extra is not None and not df_extra.empty:
                 extra_cols = [c for c in df_extra.columns if c not in df_fin.columns]
                 if extra_cols:
@@ -471,6 +519,12 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         for idx, (_, row) in enumerate(df_fin.iterrows()):
             # 从 daily_basic 获取市值和估值数据（pe/pb/ps 仅存在于 daily_basic，不在 fina_indicator 中）
             end_date_str = str(row.get("end_date", ""))
+
+            # period 过滤: "annual" 只保留年报(1231), "quarterly" 只保留季报(非1231)
+            if period == "annual" and not end_date_str.endswith("1231"):
+                continue
+            if period == "quarterly" and end_date_str.endswith("1231"):
+                continue
             daily_data = _get_latest_daily_basic(pro, ts_code, end_date_str)
             market_cap = None
             pe_ratio = None
@@ -725,7 +779,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                 FinancialMetrics(
                     ticker=ticker,
                     report_period=end_date_str,
-                    period="ttm",
+                    period="annual" if end_date_str.endswith("1231") else period,
                     currency="CNY",
                     market_cap=market_cap,
                     enterprise_value=ev_val,
@@ -768,7 +822,8 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     free_cash_flow_per_share=fcf_per_share_val,
                 )
             )
-        return metrics
+        # 如果 period 过滤导致 fetch_limit > limit，截断到用户请求的 limit 数量
+        return metrics[:limit]
     except Exception as e:
         print(f"[Tushare] 获取财务指标失败: {e}")
         return []
@@ -776,15 +831,23 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
 
 def get_ashare_market_cap_with_tushare(ticker: str, end_date: str) -> float | None:
     """
-    使用 Tushare 获取 A 股市值
+    使用 Tushare 获取 A 股市值。
+    优先使用 _get_latest_daily_basic 缓存（与 get_financial_metrics 共享）。
     """
     pro = _get_pro()
     if not pro:
         return None
     try:
         ts_code = _to_ts_code(ticker)
-        return _get_latest_total_mv(pro, ts_code, end_date)
-    except Exception:
+        # 优先从 daily_basic 缓存获取市值
+        daily_data = _get_latest_daily_basic(pro, ts_code, end_date)
+        if daily_data:
+            mv = daily_data.get("total_mv")
+            if mv is not None and not pd.isna(mv):
+                return float(mv) * 10000
+        return None
+    except Exception as e:
+        print(f"[Tushare] 获取市值失败({ticker}): {e}")
         return None
 
 

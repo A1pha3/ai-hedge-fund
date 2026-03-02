@@ -177,7 +177,7 @@ def get_financial_metrics(
 
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
-        metrics = _dedupe_by_report_period(get_ashare_financial_metrics_with_tushare(ticker, end_date, limit))
+        metrics = _dedupe_by_report_period(get_ashare_financial_metrics_with_tushare(ticker, end_date, limit, period=period))
         if metrics:
             # Cache the results
             _cache.set_financial_metrics(cache_key, [m.model_dump() for m in metrics])
