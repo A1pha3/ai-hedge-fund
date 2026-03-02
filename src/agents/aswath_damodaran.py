@@ -350,18 +350,20 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
     # Discount rate
     discount = risk_analysis.get("cost_of_equity") or 0.09
 
-    # Project FCFF and discount
+    # Project FCFF and discount (compound growth)
     pv_sum = 0.0
     g = base_growth
     g_step = (terminal_growth - base_growth) / (years - 1)
+    prev_fcff = fcff0
     for yr in range(1, years + 1):
-        fcff_t = fcff0 * (1 + g)
+        fcff_t = prev_fcff * (1 + g)
         pv = fcff_t / (1 + discount) ** yr
         pv_sum += pv
+        prev_fcff = fcff_t
         g += g_step
 
-    # Terminal value (perpetuity with terminal growth)
-    tv = fcff0 * (1 + terminal_growth) / (discount - terminal_growth) / (1 + discount) ** years
+    # Terminal value (perpetuity with terminal growth, based on last projected FCF)
+    tv = prev_fcff * (1 + terminal_growth) / (discount - terminal_growth) / (1 + discount) ** years
 
     equity_value = pv_sum + tv
     intrinsic_per_share = equity_value / shares

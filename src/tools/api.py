@@ -222,7 +222,15 @@ def search_line_items(
     """Fetch line items from API."""
     # Check if it's an A-share (Chinese stock)
     if is_ashare(ticker):
+        # 缓存 key: 按 ticker + 字段 + period + end_date + limit 组合
+        sorted_items = "_".join(sorted(line_items))
+        cache_key = f"{ticker}_{sorted_items}_{period}_{end_date}_{limit}"
+        if cached_data := _cache.get_line_items(cache_key):
+            results = [LineItem(**item) for item in cached_data]
+            return results
         results = _dedupe_by_report_period(get_ashare_line_items_with_tushare(ticker, line_items, end_date, period, limit))
+        if results:
+            _cache.set_line_items(cache_key, [r.model_dump() for r in results])
         _get_snapshot().export_line_items(ticker, end_date, results, "tushare")
         return results
 
@@ -268,9 +276,14 @@ def get_insider_trades(
     api_key: str = None,
 ) -> list[InsiderTrade]:
     """Fetch insider trades from cache or API."""
-    # A-share stocks: use tushare stk_holdertrade
+    # A-share stocks: use tushare stk_holdertrade (with caching)
     if is_ashare(ticker):
+        cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
+        if cached_data := _cache.get_insider_trades(cache_key):
+            return [InsiderTrade(**trade) for trade in cached_data]
         trades = get_ashare_insider_trades_with_tushare(ticker, end_date, start_date, limit)
+        if trades:
+            _cache.set_insider_trades(cache_key, [t.model_dump() for t in trades])
         return trades
 
     # Create a cache key that includes all parameters to ensure exact matches

@@ -405,8 +405,8 @@ def calculate_wacc(market_cap: float, total_debt: float | None, cash: float | No
 
     # Cost of Debt - estimate from interest coverage
     if interest_coverage and interest_coverage > 0:
-        # Higher coverage = lower cost of debt
-        cost_of_debt = max(risk_free_rate + 0.01, risk_free_rate + (10 / interest_coverage))
+        # Higher coverage = lower cost of debt (credit spread as decimal)
+        cost_of_debt = max(risk_free_rate + 0.01, risk_free_rate + (0.10 / interest_coverage))
     else:
         cost_of_debt = risk_free_rate + 0.05  # Default spread
 

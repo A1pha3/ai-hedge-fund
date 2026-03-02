@@ -1,6 +1,7 @@
 import os
+import threading
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -8,6 +9,44 @@ from src.data.models import FinancialMetrics, InsiderTrade, LineItem, Price
 
 _pro = None
 _stock_name_cache: Dict[str, str] = {}
+
+# Tushare 原始 DataFrame 内存缓存 — 同一次运行内复用，避免多 Agent 并行重复请求
+_tushare_df_cache: Dict[str, pd.DataFrame] = {}
+_tushare_df_cache_lock = threading.Lock()
+
+
+def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: bool = False) -> Optional[pd.DataFrame]:
+    """
+    带内存缓存的 Tushare API 调用。
+
+    同一 ts_code + api_name 的首次调用会实际请求 Tushare，后续直接从内存返回。
+    limit 取已缓存和请求中的较大值，确保不会因 limit 不同而丢失数据。
+    """
+    cache_key = f"{ts_code}_{api_name}"
+
+    with _tushare_df_cache_lock:
+        if cache_key in _tushare_df_cache:
+            cached_df = _tushare_df_cache[cache_key]
+            if cached_df is not None and len(cached_df) >= limit:
+                return cached_df.copy()
+            # 已缓存但数据量不足，需要重新获取更多
+            fetch_limit = max(limit, len(cached_df) if cached_df is not None else 0)
+        else:
+            fetch_limit = limit
+
+    # 实际请求 Tushare
+    api_func = getattr(pro, api_name, None)
+    if api_func is None:
+        return None
+
+    df = api_func(ts_code=ts_code, limit=fetch_limit)
+    if dedupe and df is not None and not df.empty:
+        df = _dedupe_tushare_df(df)
+
+    with _tushare_df_cache_lock:
+        _tushare_df_cache[cache_key] = df
+
+    return df.copy() if df is not None else None
 
 
 def _get_pro():
@@ -300,8 +339,8 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
     try:
         ts_code = _to_ts_code(ticker)
         # Tushare fina_indicator 使用 end_date 参数，但需要正确的日期格式
-        # 尝试使用 limit 参数获取最新数据
-        df_fin = pro.fina_indicator(ts_code=ts_code, limit=limit)
+        # 使用内存缓存获取数据
+        df_fin = _cached_tushare_call(pro, "fina_indicator", ts_code, limit)
         if df_fin is None or df_fin.empty:
             return []
 
@@ -315,30 +354,27 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         except Exception:
             pass
 
-        # 获取现金流量表数据以补充 FCF 字段
+        # 获取现金流量表数据以补充 FCF 字段（使用内存缓存）
         # Tushare cashflow 可能每期返回多个 report_type (合并报表、母公司报表等)
         # 因此 limit 需要足够大以覆盖所有报告期 (每期约2-3行 × limit 期 + TTM合成需要上期数据)
         financial_fetch_limit = limit * 4
         df_cash = None
         try:
-            df_cash = pro.cashflow(ts_code=ts_code, limit=financial_fetch_limit)
-            df_cash = _dedupe_tushare_df(df_cash)
+            df_cash = _cached_tushare_call(pro, "cashflow", ts_code, financial_fetch_limit, dedupe=True)
         except Exception:
             pass
 
         # 获取总股本用于计算 free_cash_flow_per_share
         df_bal = None
         try:
-            df_bal = pro.balancesheet(ts_code=ts_code, limit=financial_fetch_limit)
-            df_bal = _dedupe_tushare_df(df_bal)
+            df_bal = _cached_tushare_call(pro, "balancesheet", ts_code, financial_fetch_limit, dedupe=True)
         except Exception:
             pass
 
         # 获取利润表数据（用于计算 EBITDA、interest_coverage 等）
         df_income = None
         try:
-            df_income = pro.income(ts_code=ts_code, limit=financial_fetch_limit)
-            df_income = _dedupe_tushare_df(df_income)
+            df_income = _cached_tushare_call(pro, "income", ts_code, financial_fetch_limit, dedupe=True)
         except Exception:
             pass
 
@@ -775,19 +811,35 @@ def get_ashare_line_items_with_tushare(
         # 获取 limit*4 条以确保各子表(balance/income/cashflow)有足够匹配数据
         fetch_limit = limit * 4
 
-        # 获取财务指标数据
-        df_fin = pro.fina_indicator(ts_code=ts_code, limit=fetch_limit)
+        # 获取财务指标数据（使用内存缓存）
+        try:
+            df_fin = _cached_tushare_call(pro, "fina_indicator", ts_code, fetch_limit)
+        except Exception as e:
+            print(f"[Tushare] 获取财务指标失败: {e}")
+            df_fin = None
         if df_fin is None or df_fin.empty:
             return []
 
-        # 获取资产负债表数据（用于补充字段）
-        df_bal = _dedupe_tushare_df(pro.balancesheet(ts_code=ts_code, limit=fetch_limit))
+        # 获取资产负债表数据（使用内存缓存，独立异常保护）
+        df_bal = None
+        try:
+            df_bal = _cached_tushare_call(pro, "balancesheet", ts_code, fetch_limit, dedupe=True)
+        except Exception as e:
+            print(f"[Tushare] 获取资产负债表失败(非致命): {e}")
 
         # 获取现金流量表数据
-        df_cash = _dedupe_tushare_df(pro.cashflow(ts_code=ts_code, limit=fetch_limit))
+        df_cash = None
+        try:
+            df_cash = _cached_tushare_call(pro, "cashflow", ts_code, fetch_limit, dedupe=True)
+        except Exception as e:
+            print(f"[Tushare] 获取现金流量表失败(非致命): {e}")
 
         # 获取利润表数据
-        df_income = _dedupe_tushare_df(pro.income(ts_code=ts_code, limit=fetch_limit))
+        df_income = None
+        try:
+            df_income = _cached_tushare_call(pro, "income", ts_code, fetch_limit, dedupe=True)
+        except Exception as e:
+            print(f"[Tushare] 获取利润表失败(非致命): {e}")
 
         results = []
         # A股 TTM 合成逻辑

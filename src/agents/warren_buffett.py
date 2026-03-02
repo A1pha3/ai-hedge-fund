@@ -378,14 +378,28 @@ def calculate_owner_earnings(financial_line_items: list, currency_symbol: str = 
     capex = getattr(latest, "capital_expenditure", None)
 
     if not all([net_income is not None, depreciation is not None, capex is not None]):
-        missing = []
-        if net_income is None:
-            missing.append("net income")
-        if depreciation is None:
-            missing.append("depreciation")
-        if capex is None:
-            missing.append("capital expenditure")
-        return {"owner_earnings": None, "details": [f"Missing components: {', '.join(missing)}"]}
+        # Fallback: 当折旧摊销不可用时（A股Q1/Q3季报常见情况），尝试从历史年报获取
+        if depreciation is None and len(financial_line_items) >= 2:
+            for hist_item in financial_line_items[1:]:
+                hist_depr = getattr(hist_item, "depreciation_and_amortization", None)
+                if hist_depr is not None:
+                    depreciation = hist_depr
+                    details.append(f"Note: Using historical depreciation as fallback (¥{depreciation:,.0f})")
+                    break
+        # Fallback: 若仍无折旧数据但有 capex，用 capex * 0.6 近似（资本密集型行业常见比例）
+        if depreciation is None and capex is not None:
+            depreciation = abs(capex) * 0.6
+            details.append(f"Note: Estimated depreciation as 60% of capex (¥{depreciation:,.0f})")
+        # 如果仍有必要字段缺失，才返回 None
+        if not all([net_income is not None, depreciation is not None, capex is not None]):
+            missing = []
+            if net_income is None:
+                missing.append("net income")
+            if depreciation is None:
+                missing.append("depreciation")
+            if capex is None:
+                missing.append("capital expenditure")
+            return {"owner_earnings": None, "details": [f"Missing components: {', '.join(missing)}"]}
 
     # Enhanced maintenance capex estimation using historical analysis
     maintenance_capex = estimate_maintenance_capex(financial_line_items)
