@@ -1,6 +1,7 @@
 #  data
 ## archive data
 data/reports/archive
+data/snapshots
 
 # Python
 __pycache__/
