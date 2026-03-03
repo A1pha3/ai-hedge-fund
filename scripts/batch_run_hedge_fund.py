@@ -22,12 +22,29 @@ class StockInfo:
     ticker: str
     name: str
     change_percent: float
+    market_type: str = ""  # 主板/创业板/科创板/北交所
 
 
 def parse_change_percent(change_str: str) -> float:
     """解析涨幅字符串为浮点数"""
     # 移除 % 符号并转换为浮点数
     return float(change_str.replace("%", ""))
+
+
+# 科创板/北交所 股票识别规则
+_STAR_MARKET_PREFIXES = ("688",)  # 科创板
+_BSE_PREFIXES = ("83", "87", "920")  # 北交所
+
+
+def _detect_market_type(ticker: str, exchange_suffix: str) -> str:
+    """根据股票代码和交易所后缀判断市场类型"""
+    if exchange_suffix == "BJ" or any(ticker.startswith(p) for p in _BSE_PREFIXES):
+        return "北交所"
+    if any(ticker.startswith(p) for p in _STAR_MARKET_PREFIXES):
+        return "科创板"
+    if ticker.startswith("3"):
+        return "创业板"
+    return "主板"
 
 
 def extract_stocks_from_markdown(file_path: Path) -> List[StockInfo]:
@@ -38,14 +55,16 @@ def extract_stocks_from_markdown(file_path: Path) -> List[StockInfo]:
     # 匹配表格行格式: | xxxxxx.SH | 股票名称 | xx.xx% | ...
     # 股票代码格式: xxxxxx.SH 或 xxxxxx.SZ 或 xxxxxx.BJ
     # 提取时去掉后缀，只保留6位数字代码
-    pattern = r"\|\s*(\d{6})\.(?:SH|SZ|BJ)\s*\|\s*([^|]+)\|\s*([\d.]+)%\s*\|"
+    pattern = r"\|\s*(\d{6})\.(SH|SZ|BJ)\s*\|\s*([^|]+)\|\s*([\d.]+)%\s*\|"
 
     for match in re.finditer(pattern, content):
         ticker = match.group(1).strip()
-        name = match.group(2).strip()
-        change_percent = float(match.group(3))
+        exchange_suffix = match.group(2).strip()
+        name = match.group(3).strip()
+        change_percent = float(match.group(4))
+        market_type = _detect_market_type(ticker, exchange_suffix)
 
-        stocks.append(StockInfo(ticker=ticker, name=name, change_percent=change_percent))
+        stocks.append(StockInfo(ticker=ticker, name=name, change_percent=change_percent, market_type=market_type))
 
     return stocks
 
@@ -138,6 +157,13 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0, help="限制处理前 N 只股票")
     parser.add_argument("--skip-existing", action="store_true", default=True, help="跳过已生成当日报告的股票（默认开启）")
     parser.add_argument("--report-date", help="用于识别已生成报告的日期，格式 YYYYMMDD（默认: 今天）")
+    parser.add_argument(
+        "--exclude-boards",
+        nargs="*",
+        default=[],
+        metavar="BOARD",
+        help="排除指定板块的股票，可选值: 科创板 北交所 创业板 主板 (如: --exclude-boards 科创板 北交所)",
+    )
 
     args = parser.parse_args()
 
@@ -156,6 +182,14 @@ def main() -> int:
         return 1
 
     print(f"找到 {len(stocks)} 只股票")
+
+    # 按板块过滤
+    if args.exclude_boards:
+        excluded = set(args.exclude_boards)
+        before_count = len(stocks)
+        stocks = [s for s in stocks if s.market_type not in excluded]
+        filtered_count = before_count - len(stocks)
+        print(f"已过滤 {filtered_count} 只股票（排除板块: {', '.join(excluded)}），剩余 {len(stocks)} 只")
 
     # 按涨幅从低到高排序
     stocks.sort(key=lambda x: x.change_percent)

@@ -109,7 +109,7 @@ def _to_ts_code(ticker: str) -> str:
         return f"{ticker}.SH"
     if ticker.startswith(("0", "3", "15", "16", "18", "20")):
         return f"{ticker}.SZ"
-    if ticker.startswith(("4", "8", "43", "83", "87")):
+    if ticker.startswith(("4", "8", "43", "83", "87", "92")):
         return f"{ticker}.BJ"
     return f"{ticker}.SZ"
 

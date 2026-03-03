@@ -7,7 +7,15 @@ import time
 from datetime import datetime
 
 # 确保项目根目录在 sys.path 中，以便导入 src 包
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, _project_root)
+
+# 加载 .env 文件中的环境变量（TUSHARE_TOKEN 等）
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(_project_root, ".env"))
+except ImportError:
+    pass
 
 from src.tools.tushare_api import get_stock_details
 
@@ -166,7 +174,7 @@ def _classify_reports(reports_dir: str, ticker_category: dict, all_files: list):
 
         src_path = os.path.join(reports_dir, filename)
         dst_path = os.path.join(reports_dir, category, filename)
-        shutil.copy2(src_path, dst_path)
+        shutil.move(src_path, dst_path)
         copied[category] += 1
 
     print(f"报告文件分类完成: buy/{copied['buy']}份, hold/{copied['hold']}份, short/{copied['short']}份")
