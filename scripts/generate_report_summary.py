@@ -10,7 +10,7 @@ from datetime import datetime
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _project_root)
 
-# 加载 .env 文件中的环境变量（TUSHARE_TOKEN 等）
+# 加载 .env 文件中的环境变量
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(_project_root, ".env"))
@@ -20,8 +20,8 @@ except ImportError:
 from src.tools.tushare_api import get_stock_details
 
 
-TABLE_HEADER = "| 代码 | 名称 | 操作 | 置信度 | 涨幅 | 昨日收盘价 | 今日收盘价 | 地域 | 所属行业 | 市场类型 | 上市日期 |"
-TABLE_SEPARATOR = "|------|------|------|--------|------|-----------|-----------|------|---------|---------|---------|"
+TABLE_HEADER = "| 代码 | 名称 | 涨幅 | 昨日收盘价 | 今日收盘价 | 地域 | 所属行业 | 市场类型 | 上市日期 | 操作 | 置信度 |"
+TABLE_SEPARATOR = "|------|------|------|-----------|-----------|------|---------|---------|---------|------|--------|"
 
 
 def _fetch_details_with_retry(ticker: str, max_retries: int = 3) -> dict:
@@ -51,8 +51,11 @@ def generate_summary():
     # 记录每只股票的分类，用于后续文件归类
     ticker_category = {}  # ticker -> "buy" | "hold" | "short"
 
-    # 匹配表格行的正则，例如: | 000010 | 美丽生态 | SHORT | 88.0% |
-    row_pattern = re.compile(r"\|\s*([0-9]{6})\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|")
+    # 匹配表格行的正则
+    # 历史版本格式: | 代码 | 名称 | 操作 | 置信度 |
+    old_row_pattern = re.compile(r"\|\s*([0-9]{6})\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|")
+    # 包含详情的格式: | 代码 | 股票名称 | 涨幅 | 昨日收盘价 | 今日收盘价 | 地域 | 所属行业 | 市场类型 | 上市日期 | 操作 | 置信度 |
+    detail_row_pattern = re.compile(r"\|\s*([0-9]{6})\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|")
 
     processed_tickers = set()
 
@@ -60,55 +63,72 @@ def generate_summary():
     files = [f for f in os.listdir(reports_dir) if f.endswith(".md") and f.startswith(("0", "3", "6", "9"))]
     files.sort(key=lambda x: os.path.getmtime(os.path.join(reports_dir, x)), reverse=True)
 
-    # 第一遍：收集所有待处理的股票
-    ticker_entries = []  # [(ticker, name, action, confidence), ...]
-
+    # 扫描收集
     for filename in files:
         filepath = os.path.join(reports_dir, filename)
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-            matches = row_pattern.findall(content)
-            for m in matches:
-                ticker, name, action, confidence = [i.strip() for i in m]
-                if ticker in processed_tickers:
-                    continue
-                processed_tickers.add(ticker)
-                ticker_entries.append((ticker, name, action, confidence))
+            # 优先匹配带详情的行
+            matches = detail_row_pattern.findall(content)
+            if matches:
+                for m in matches:
+                    ticker = m[0].strip()
+                    if ticker in processed_tickers:
+                        continue
+                    processed_tickers.add(ticker)
+                    
+                    # 取出各个字段 (代码|名称|涨幅|昨收|今收|地域|行业|市场|日期|操作|置信度)
+                    # m = (ticker, name, pct_chg, pre_close, close, area, industry, market, list_date, action, confidence)
+                    action = m[9].strip()
+                    row_data = [f" {x.strip()} " for x in m]
+                    entry = "|" + "|".join(row_data) + "|"
+                    
+                    if "BUY" in action.upper():
+                        buy_list.append(entry)
+                        ticker_category[ticker] = "buy"
+                    elif "HOLD" in action.upper():
+                        hold_list.append(entry)
+                        ticker_category[ticker] = "hold"
+                    else:
+                        short_list.append(entry)
+                        ticker_category[ticker] = "short"
+            else:
+                # 兼容旧版本简单表格或尝试使用 Tushare 补充
+                matches = old_row_pattern.findall(content)
+                for m in matches:
+                    ticker, name, action, confidence = [i.strip() for i in m]
+                    if ticker in processed_tickers:
+                        continue
+                    processed_tickers.add(ticker)
+                    
+                    print(f"警告: 报告 {filename} 中 {ticker} 详情缺失，正在尝试使用 Tushare 补充...")
+                    details = _fetch_details_with_retry(ticker)
+                    
+                    stock_name = details.get("name", name)
+                    pct_chg = details.get("pct_chg", "N/A")
+                    pre_close = details.get("pre_close", "N/A")
+                    close = details.get("close", "N/A")
+                    area = details.get("area", "N/A")
+                    industry = details.get("industry", "N/A")
+                    market = details.get("market", "N/A")
+                    list_date = details.get("list_date", "N/A")
 
-    # 第二遍：批量获取股票详细信息
-    total = len(ticker_entries)
-    print(f"共发现 {total} 只股票，正在获取详细信息...")
+                    entry = f"| {ticker} | {stock_name} | {pct_chg} | {pre_close} | {close} | {area} | {industry} | {market} | {list_date} | **{action}** | {confidence} |"
+                    
+                    if "BUY" in action.upper():
+                        buy_list.append(entry)
+                        ticker_category[ticker] = "buy"
+                    elif "HOLD" in action.upper():
+                        hold_list.append(entry)
+                        ticker_category[ticker] = "hold"
+                    else:
+                        short_list.append(entry)
+                        ticker_category[ticker] = "short"
+                    
+                    # tushare 限速保护
+                    time.sleep(0.3)
 
-    for idx, (ticker, name, action, confidence) in enumerate(ticker_entries, 1):
-        details = _fetch_details_with_retry(ticker)
-        stock_name = details.get("name", name)
-        pct_chg = details.get("pct_chg", "N/A")
-        pre_close = details.get("pre_close", "N/A")
-        close = details.get("close", "N/A")
-        area = details.get("area", "N/A")
-        industry = details.get("industry", "N/A")
-        market = details.get("market", "N/A")
-        list_date = details.get("list_date", "N/A")
-
-        entry = f"| {ticker} | {stock_name} | **{action}** | {confidence} | {pct_chg} | {pre_close} | {close} | {area} | {industry} | {market} | {list_date} |"
-
-        if "BUY" in action.upper():
-            buy_list.append(entry)
-            ticker_category[ticker] = "buy"
-        elif "HOLD" in action.upper():
-            hold_list.append(entry)
-            ticker_category[ticker] = "hold"
-        else:
-            short_list.append(entry)
-            ticker_category[ticker] = "short"
-
-        if idx % 10 == 0 or idx == total:
-            print(f"  进度: {idx}/{total}")
-
-        # tushare 限速保护：每次请求间隔 0.3s
-        time.sleep(0.3)
-
-    # 格式化输出内容
+    # 汇总输出
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     buy_rows = "\n".join(sorted(buy_list))
     hold_rows = "\n".join(sorted(hold_list))

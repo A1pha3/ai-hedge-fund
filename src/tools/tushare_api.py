@@ -339,7 +339,8 @@ def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: 
         # 获取最近 730 天（约2年）的数据，覆盖所有财报周期
         start_fmt = (date_obj - timedelta(days=730)).strftime("%Y%m%d")
         try:
-            df_batch = pro.daily_basic(ts_code=ts_code, start_date=start_fmt, end_date=actual_end)
+            # 使用 query 通用调用，避开 pro.daily_basic 可能的属性缺失
+            df_batch = pro.query("daily_basic", ts_code=ts_code, start_date=start_fmt, end_date=actual_end)
             if df_batch is not None and not df_batch.empty and "trade_date" in df_batch.columns:
                 df_batch = df_batch.sort_values("trade_date", ascending=False).reset_index(drop=True)
         except Exception as e:
