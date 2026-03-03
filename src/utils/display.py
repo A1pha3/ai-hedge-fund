@@ -7,7 +7,7 @@ from colorama import Fore, Style
 from tabulate import tabulate
 
 from src.tools.akshare_api import is_ashare
-from src.tools.tushare_api import get_stock_name
+from src.tools.tushare_api import get_stock_name, get_stock_details
 
 from .analysts import ANALYST_ORDER
 from .logging import get_logger
@@ -570,14 +570,24 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
         lines.append(f"- **模型**: {model_provider} - {model_name}\n")
 
         lines.append("## 分析股票概览\n")
-        lines.append("| 代码 | 名称 | 操作 | 置信度 |")
-        lines.append("|------|------|------|--------|")
+        lines.append("| 代码 | 股票名称 | 涨幅 | 昨日收盘价 | 今日收盘价 | 地域 | 所属行业 | 市场类型 | 上市日期 | 操作 | 置信度 |")
+        lines.append("|------|------|------|------|------|------|------|------|------|------|--------|")
         for ticker in tickers:
-            stock_name = get_stock_name(ticker)
+            stock_details = get_stock_details(ticker)
             decision = decisions.get(ticker, {})
             action = decision.get("action", "N/A").upper()
             confidence = decision.get("confidence", 0)
-            lines.append(f"| {ticker} | {stock_name} | {action} | {confidence:.1f}% |")
+            lines.append(
+                f"| {ticker} | {stock_details.get('name', ticker)} | "
+                f"{stock_details.get('pct_chg', 'N/A')} | "
+                f"{stock_details.get('pre_close', 'N/A')} | "
+                f"{stock_details.get('close', 'N/A')} | "
+                f"{stock_details.get('area', 'N/A')} | "
+                f"{stock_details.get('industry', 'N/A')} | "
+                f"{stock_details.get('market', 'N/A')} | "
+                f"{stock_details.get('list_date', 'N/A')} | "
+                f"{action} | {confidence:.1f}% |"
+            )
         lines.append("")
 
         for ticker, decision in decisions.items():

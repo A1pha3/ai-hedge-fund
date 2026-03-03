@@ -439,15 +439,18 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                 ed = str(cash_r.get("end_date", ""))
                 if ed in raw_fcf_map:
                     continue  # 已去重后不应有重复，但以防万一
-                fcf_v = cash_r.get("free_cashflow")
-                if fcf_v is not None and not (isinstance(fcf_v, float) and pd.isna(fcf_v)):
-                    raw_fcf_map[ed] = float(fcf_v)
+                # 优先使用 OpCF - CapEx（标准 FCF 定义，与投资人 persona agents 一致）
+                # Tushare 的 free_cashflow 字段为 FCFF（企业自由现金流），定义不同于标准 OpCF-CapEx，
+                # 可能导致 FinancialMetrics 路径和 search_line_items 路径对 FCF 的计算出现矛盾。
+                op_cf_v = cash_r.get("n_cashflow_act")
+                capex_v = cash_r.get("c_pay_acq_const_fiolta")
+                if op_cf_v is not None and not (isinstance(op_cf_v, float) and pd.isna(op_cf_v)) and capex_v is not None and not (isinstance(capex_v, float) and pd.isna(capex_v)):
+                    raw_fcf_map[ed] = float(op_cf_v) - float(capex_v)
                 else:
-                    # Fallback: FCF = 经营活动现金流 - 资本支出
-                    op_cf_v = cash_r.get("n_cashflow_act")
-                    capex_v = cash_r.get("c_pay_acq_const_fiolta")
-                    if op_cf_v is not None and not (isinstance(op_cf_v, float) and pd.isna(op_cf_v)) and capex_v is not None and not (isinstance(capex_v, float) and pd.isna(capex_v)):
-                        raw_fcf_map[ed] = float(op_cf_v) - float(capex_v)
+                    # Fallback: 使用 Tushare 的 FCFF（仅在 OpCF/CapEx 缺失时）
+                    fcf_v = cash_r.get("free_cashflow")
+                    if fcf_v is not None and not (isinstance(fcf_v, float) and pd.isna(fcf_v)):
+                        raw_fcf_map[ed] = float(fcf_v)
 
         # 按 df_fin 的顺序构建 fcf_values（与 period_dates 对齐）
         for _, row in df_fin.iterrows():
@@ -516,6 +519,8 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                         ttm_income_map[(ed, fld)] = raw_val + raw_income_map[pa_key] - raw_income_map[ps_key]
                     # else: 无法合成 TTM，不放入 ttm_income_map（后续使用原始值会标注）
 
+        # 记录已输出的有效期数（用于判断 idx_out == 0 时使用用户 end_date 的股价）
+        idx_out = 0
         for idx, (_, row) in enumerate(df_fin.iterrows()):
             # 从 daily_basic 获取市值和估值数据（pe/pb/ps 仅存在于 daily_basic，不在 fina_indicator 中）
             end_date_str = str(row.get("end_date", ""))
@@ -525,7 +530,10 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                 continue
             if period == "quarterly" and end_date_str.endswith("1231"):
                 continue
-            daily_data = _get_latest_daily_basic(pro, ts_code, end_date_str)
+            # 最新一期(idx_out==0)使用用户的分析截止日期获取估值数据，
+            # 以反映当前股价对应的 P/E、P/B、市值等；历史期仍用各自报告期日期。
+            daily_anchor = end_date if idx_out == 0 else end_date_str
+            daily_data = _get_latest_daily_basic(pro, ts_code, daily_anchor)
             market_cap = None
             pe_ratio = None
             pb_ratio = None
@@ -809,7 +817,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     debt_to_equity=float(row.get("debt_to_eqt", 0)) if pd.notna(row.get("debt_to_eqt")) else None,
                     debt_to_assets=float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
                     interest_coverage=interest_coverage_val,
-                    revenue_growth=max(-1.0, min(5.0, float(row.get("q_sales_yoy", 0)) / 100)) if pd.notna(row.get("q_sales_yoy")) else None,
+                    revenue_growth=max(-1.0, min(5.0, float(row.get("or_yoy", 0)) / 100)) if pd.notna(row.get("or_yoy")) else None,
                     earnings_growth=max(-1.0, min(5.0, float(row.get("netprofit_yoy", 0)) / 100)) if pd.notna(row.get("netprofit_yoy")) else None,
                     book_value_growth=bvg_val,
                     earnings_per_share_growth=max(-1.0, min(5.0, float(row.get("basic_eps_yoy", 0)) / 100)) if pd.notna(row.get("basic_eps_yoy")) else None,
@@ -822,6 +830,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     free_cash_flow_per_share=fcf_per_share_val,
                 )
             )
+            idx_out += 1
         # 如果 period 过滤导致 fetch_limit > limit，截断到用户请求的 limit 数量
         return metrics[:limit]
     except Exception as e:
@@ -1037,15 +1046,18 @@ def get_ashare_line_items_with_tushare(
                     cash = cash_row.iloc[0]
                     # 经营活动现金流净额
                     field_mapping["operating_cash_flow"] = cash.get("n_cashflow_act")
-                    # 自由现金流 (Tushare 已计算好，若为NaN则用 经营现金流-资本支出 回退)
-                    fcf_raw = cash.get("free_cashflow")
-                    if fcf_raw is not None and not (isinstance(fcf_raw, float) and pd.isna(fcf_raw)):
-                        field_mapping["free_cash_flow"] = fcf_raw
+                    # 自由现金流: 优先使用 OpCF - CapEx（标准 FCF 定义，与 get_financial_metrics 路径一致）
+                    # Tushare 的 free_cashflow 字段为 FCFF（企业自由现金流），定义不同于标准 OpCF-CapEx，
+                    # 仅在 OpCF 或 CapEx 缺失时回退使用。
+                    op_cf_raw = cash.get("n_cashflow_act")
+                    capex_raw = cash.get("c_pay_acq_const_fiolta")
+                    if op_cf_raw is not None and not (isinstance(op_cf_raw, float) and pd.isna(op_cf_raw)) and capex_raw is not None and not (isinstance(capex_raw, float) and pd.isna(capex_raw)):
+                        field_mapping["free_cash_flow"] = float(op_cf_raw) - float(capex_raw)
                     else:
-                        op_cf_raw = cash.get("n_cashflow_act")
-                        capex_raw = cash.get("c_pay_acq_const_fiolta")
-                        if op_cf_raw is not None and not (isinstance(op_cf_raw, float) and pd.isna(op_cf_raw)) and capex_raw is not None and not (isinstance(capex_raw, float) and pd.isna(capex_raw)):
-                            field_mapping["free_cash_flow"] = float(op_cf_raw) - float(capex_raw)
+                        # Fallback: 使用 Tushare 的 FCFF（仅在 OpCF/CapEx 缺失时）
+                        fcf_raw = cash.get("free_cashflow")
+                        if fcf_raw is not None and not (isinstance(fcf_raw, float) and pd.isna(fcf_raw)):
+                            field_mapping["free_cash_flow"] = fcf_raw
                     # 资本支出 (购建固定资产等支付的现金)
                     field_mapping["capital_expenditure"] = cash.get("c_pay_acq_const_fiolta")
                     # 折旧摊销 - 仅使用当期数据，不回填历史值
@@ -1332,3 +1344,93 @@ def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_dat
     except Exception as e:
         print(f"[Tushare] 获取股东增减持数据失败: {e}")
         return []
+
+
+def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
+    """
+    获取股票详细信息，包括基本信息和最新价格数据
+
+    Args:
+        ticker: 股票代码（如 000807）
+        trade_date: 交易日期（如 20260302），默认为最新日期
+
+    Returns:
+        dict: 股票详细信息，包含以下字段：
+              - name: 股票名称
+              - area: 地域
+              - industry: 所属行业
+              - market: 市场类型
+              - list_date: 上市日期
+              - pct_chg: 涨幅（%）
+              - pre_close: 昨日收盘价
+              - close: 今日收盘价
+              字段不存在则为 N/A
+    """
+    pro = _get_pro()
+    if not pro:
+        return {
+            "name": ticker,
+            "area": "N/A",
+            "industry": "N/A",
+            "market": "N/A",
+            "list_date": "N/A",
+            "pct_chg": "N/A",
+            "pre_close": "N/A",
+            "close": "N/A",
+        }
+
+    try:
+        ts_code = _to_ts_code(ticker)
+        
+        # 获取基本信息
+        df_basic = pro.stock_basic(ts_code=ts_code, fields="ts_code,name,area,industry,market,list_date")
+        basic_info = {
+            "name": ticker,
+            "area": "N/A",
+            "industry": "N/A",
+            "market": "N/A",
+            "list_date": "N/A",
+        }
+        
+        if df_basic is not None and not df_basic.empty:
+            row = df_basic.iloc[0]
+            basic_info["name"] = str(row["name"]) if pd.notna(row["name"]) else ticker
+            basic_info["area"] = str(row["area"]) if pd.notna(row["area"]) else "N/A"
+            basic_info["industry"] = str(row["industry"]) if pd.notna(row["industry"]) else "N/A"
+            basic_info["market"] = str(row["market"]) if pd.notna(row["market"]) else "N/A"
+            basic_info["list_date"] = str(row["list_date"]) if pd.notna(row["list_date"]) else "N/A"
+        
+        # 获取最新价格数据
+        price_info = {
+            "pct_chg": "N/A",
+            "pre_close": "N/A",
+            "close": "N/A",
+        }
+        
+        if trade_date is None:
+            # 获取最新日期的数据
+            df_daily = pro.daily(ts_code=ts_code, limit=1, fields="trade_date,close,pre_close,pct_chg")
+        else:
+            # 获取指定日期的数据
+            df_daily = pro.daily(trade_date=trade_date, ts_code=ts_code, fields="trade_date,close,pre_close,pct_chg")
+        
+        if df_daily is not None and not df_daily.empty:
+            row = df_daily.iloc[0]
+            price_info["pct_chg"] = f"{float(row['pct_chg']):.2f}%" if pd.notna(row["pct_chg"]) else "N/A"
+            price_info["pre_close"] = f"{float(row['pre_close']):.2f}" if pd.notna(row["pre_close"]) else "N/A"
+            price_info["close"] = f"{float(row['close']):.2f}" if pd.notna(row["close"]) else "N/A"
+        
+        return {**basic_info, **price_info}
+        
+    except Exception as e:
+        print(f"[Tushare] 获取股票详细信息失败 ({ticker}): {e}")
+        return {
+            "name": ticker,
+            "area": "N/A",
+            "industry": "N/A",
+            "market": "N/A",
+            "list_date": "N/A",
+            "pct_chg": "N/A",
+            "pre_close": "N/A",
+            "close": "N/A",
+        }
