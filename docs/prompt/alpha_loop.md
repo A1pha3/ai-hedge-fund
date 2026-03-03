@@ -13,7 +13,8 @@
 
 
 # 每日批量生成股票分析
-- 运行此命令 uv run  python scripts/batch_run_hedge_fund.py --file data/stock/daliy/daily_gainers_20260302_gt5p0_20260302_182924.md --model MiniMax-M2.5 --start-date 2025-05-30 --analysts-all --show-reasoning --exclude-boards 科创板 北交所  
+- 运行此命令 uv run  python scripts/batch_run_hedge_fund.py --file data/stock/daliy/daily_gainers_20260303_gt5p0_20260303_214747
+- .md --model MiniMax-M2.5 --start-date 2025-05-30 --analysts-all --show-reasoning --exclude-boards 科创板 北交所  
 - 此命令会根据输入文件中的股票，产生大量分析报告，每个股票会生成一个md文件，你耐心等待所有结果生成完成，如果程序中间出现错误，导致程序停止运行。你去检查错误原因，如果能修复就修复问题，问题修复后，继续执行上面这个命令分析股票，直到所有股票分析完毕。
 
 

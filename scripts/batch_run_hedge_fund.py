@@ -246,7 +246,25 @@ def main() -> int:
         return_code = run_hedge_fund_analysis(cmd)
 
         if return_code != 0:
-            print(f"警告: {stock.ticker} 分析失败，返回码: {return_code}", file=sys.stderr)
+            # 检查是否因为 MiniMax API 限流导致 (退出码通常被 shell 捕获，但我们主要通过日志或特定逻辑判断)
+            # 在这种情况下，我们假设如果分析失败且模型是 MiniMax，可能是限流
+            if "MiniMax" in args.model:
+                print(f"\n警告: {stock.ticker} 分析失败。可能是 API 限流。")
+                print("程序将休息 1 小时后再继续运行...")
+                try:
+                    # 1 小时 = 3600 秒
+                    for i in range(3600, 0, -60):
+                        print(f"\r剩余休息时间: {i//60} 分钟... ", end="", flush=True)
+                        time.sleep(60)
+                    print("\n休息结束，准备重试该股票并继续后续分析。")
+                    # 重新对当前股票进行分析
+                    return_code = run_hedge_fund_analysis(cmd)
+                except KeyboardInterrupt:
+                    print("\n用户中断休息，程序退出。")
+                    return 1
+
+            if return_code != 0:
+                print(f"错误: {stock.ticker} 分析仍然失败，返回码: {return_code}", file=sys.stderr)
 
         print()
         print("=" * 40)
