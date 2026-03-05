@@ -106,7 +106,7 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
         reasoning = {
             "historical_growth": {
                 "signal": "bullish" if growth_trends["score"] > 0.6 else "bearish" if growth_trends["score"] < 0.4 else "neutral",
-                "details": f"Revenue Growth: {fmt_pct(growth_trends['revenue_growth'])}, EPS Growth: {fmt_pct(growth_trends['eps_growth'])}, FCF Growth: {fmt_fcf_growth(growth_trends['fcf_growth'])}",
+                "details": f"Revenue Growth(TTM YoY): {fmt_pct(growth_trends['revenue_growth'])}, EPS Growth(TTM YoY): {fmt_pct(growth_trends['eps_growth'])}, FCF Growth: {fmt_fcf_growth(growth_trends['fcf_growth'])}",
                 "metrics": {k: (v if v is not None else "N/A") for k, v in growth_trends.items() if k != "score"},
             },
             "growth_valuation": {
@@ -116,7 +116,7 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
             },
             "margin_expansion": {
                 "signal": "bullish" if margin_trends["score"] > 0.6 else "bearish" if margin_trends["score"] < 0.4 else "neutral",
-                "details": f"Gross Margin: {fmt_pct(margin_trends['gross_margin'])}, Operating Margin: {fmt_pct(margin_trends['operating_margin'])}, Net Margin: {fmt_pct(margin_trends['net_margin'])}",
+                "details": f"Gross Margin(TTM): {fmt_pct(margin_trends['gross_margin'])}, Operating Margin(TTM): {fmt_pct(margin_trends['operating_margin'])}, Net Margin(TTM): {fmt_pct(margin_trends['net_margin'])}",
                 "metrics": {k: (v if v is not None else "N/A") for k, v in margin_trends.items() if k != "score"},
             },
             "insider_conviction": {

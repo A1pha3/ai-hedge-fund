@@ -59,12 +59,16 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
             # Check the 10 most recent articles
             recent_articles = company_news[:10]
 
+            # Use a separate dict to store LLM-classified sentiment, to avoid mutating
+            # shared CompanyNews objects (which could affect other agents using the same cache).
+            llm_sentiments = {}  # Maps article index (in company_news) to LLM sentiment
+
             # Always LLM-classify the most recent articles for accurate stock-specific sentiment.
             # Pre-existing keyword-based sentiment (e.g., from A-share data) is too crude
             # for stock-specific analysis, so we always prefer LLM classification.
-            articles_without_sentiment = [news for news in recent_articles if news.sentiment is None]
+            articles_without_sentiment = [(i, news) for i, news in enumerate(recent_articles) if news.sentiment is None]
             # Prioritize articles without sentiment, then fill with those that have keyword-based sentiment
-            articles_needing_analysis = articles_without_sentiment + [news for news in recent_articles if news.sentiment is not None]
+            articles_needing_analysis = articles_without_sentiment + [(i, news) for i, news in enumerate(recent_articles) if news.sentiment is not None]
 
             if articles_needing_analysis:
                 # We only take the first 5 articles, but this is configurable
@@ -72,7 +76,7 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
                 articles_to_analyze = articles_needing_analysis[:num_articles_to_analyze]
                 progress.update_status(agent_id, ticker, f"Analyzing sentiment for {len(articles_to_analyze)} articles")
 
-                for idx, news in enumerate(articles_to_analyze):
+                for idx, (article_idx, news) in enumerate(articles_to_analyze):
                     # We analyze based on title, but can also pass in the entire article text,
                     # but this is more expensive and requires extracting the text from the article.
                     # Note: this is an opportunity for improvement!
@@ -80,15 +84,21 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
                     prompt = f"Please analyze the sentiment of the following news headline " f"with the following context: " f"The stock is {ticker}. " f"Determine if sentiment is 'positive', 'negative', or 'neutral' for the stock {ticker} only. " f"Also provide a confidence score for your prediction from 0 to 100. " f"Respond in JSON format.\n\n" f"Headline: {news.title}"
                     response = call_llm(prompt, Sentiment, agent_name=agent_id, state=state)
                     if response:
-                        news.sentiment = response.sentiment.lower()
-                        sentiment_confidences[id(news)] = response.confidence
+                        llm_sentiments[article_idx] = response.sentiment.lower()
+                        sentiment_confidences[article_idx] = response.confidence
                     else:
-                        news.sentiment = "neutral"
-                        sentiment_confidences[id(news)] = 0
+                        llm_sentiments[article_idx] = "neutral"
+                        sentiment_confidences[article_idx] = 0
                     sentiments_classified_by_llm += 1
 
-            # Aggregate sentiment across all articles
-            sentiment = pd.Series([n.sentiment for n in company_news]).dropna()
+            # Aggregate sentiment across all articles, using LLM classification when available
+            all_sentiments = []
+            for i, n in enumerate(company_news):
+                if i in llm_sentiments:
+                    all_sentiments.append(llm_sentiments[i])
+                elif n.sentiment:
+                    all_sentiments.append(n.sentiment)
+            sentiment = pd.Series(all_sentiments).dropna()
             news_signals = np.where(sentiment == "negative", "bearish", np.where(sentiment == "positive", "bullish", "neutral")).tolist()
 
         progress.update_status(agent_id, ticker, "Aggregating signals")
@@ -130,13 +140,15 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
         articles_info = []
         if company_news:
             sentiment_map = {"positive": "正面", "negative": "负面", "neutral": "中性"}
-            for news in company_news[:10]:
+            for i, news in enumerate(company_news[:10]):
+                # Use LLM-reclassified sentiment when available, otherwise fall back to keyword-based
+                final_sentiment = llm_sentiments.get(i, news.sentiment) or "neutral"
                 article = {
                     "title": news.title,
                     "url": news.url,
                     "date": news.date[:10] if news.date else "",
                     "source": news.source or news.author or "",
-                    "sentiment": sentiment_map.get(news.sentiment, news.sentiment or "未知"),
+                    "sentiment": sentiment_map.get(final_sentiment, final_sentiment),
                 }
                 if news.content:
                     article["summary"] = news.content[:100] + ("..." if len(news.content) > 100 else "")
@@ -210,11 +222,9 @@ def _calculate_confidence_score(sentiment_confidences: dict, company_news: list,
 
     # Calculate weighted confidence using LLM confidence scores when available
     if sentiment_confidences:
-        # Get articles that match the overall signal
-        matching_articles = [news for news in company_news if news.sentiment and ((overall_signal == "bullish" and news.sentiment == "positive") or (overall_signal == "bearish" and news.sentiment == "negative") or (overall_signal == "neutral" and news.sentiment == "neutral"))]
-
-        # Calculate average confidence from LLM-classified articles that match the signal
-        llm_confidences = [sentiment_confidences[id(news)] for news in matching_articles if id(news) in sentiment_confidences]
+        # sentiment_confidences now uses article index as key (int)
+        # Get all LLM confidence scores (they are already stock-specific classified)
+        llm_confidences = list(sentiment_confidences.values())
 
         if llm_confidences:
             # Weight: 70% from LLM confidence scores, 30% from signal proportion

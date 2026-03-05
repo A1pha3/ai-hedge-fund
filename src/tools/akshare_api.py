@@ -917,6 +917,9 @@ def _classify_news_sentiment(title: str, content: str = "") -> str:
         "合作", "订单", "营收", "净利润", "业绩预增", "预增",
         "高送转", "定增", "重组", "复牌", "龙头", "优质", "稳健",
         "战略合作", "产能扩张", "市占率", "竞争优势", "行业领先",
+        # 温和正面：补贴/政策/分红
+        "补贴", "收到补贴", "补贴资金", "政策支持", "获得补助",
+        "补助", "政府补助", "分派", "每股派", "权益分派",
     ]
     negative_keywords = [
         # 极端负面
@@ -933,6 +936,8 @@ def _classify_news_sentiment(title: str, content: str = "") -> str:
         # 温和负面：业绩面
         "负增长", "收缩", "亏", "业绩变脸", "业绩不及预期",
         "利润下滑", "营收下降", "收入下降",
+        "预降", "预减", "净利下降", "同比下降", "同比减少", "业绩下滑",
+        "净利同比预降", "利润下降", "收入减少",
         # 温和负面：监管/法律
         "监管", "问询函", "关注函", "立案", "调查", "侵权",
         "裁员", "关停", "破产", "清算",
@@ -946,6 +951,109 @@ def _classify_news_sentiment(title: str, content: str = "") -> str:
     elif neg_count > pos_count:
         return "negative"
     return "neutral"
+
+
+def _deduplicate_news(articles: list, similarity_threshold: float = 0.5) -> list:
+    """
+    对新闻列表去重，移除标题高度相似的重复报道（同一事件不同来源）。
+
+    使用基于字符集合的 Jaccard 相似度，对中文标题效果良好且计算高效。
+    保留每组重复文章中最早出现的那篇（通常是最新的，因为列表已按时间倒序排列）。
+
+    Args:
+        articles: CompanyNews 列表（已按发布时间倒序排列）
+        similarity_threshold: 相似度阈值 (0-1)，超过此值视为重复
+
+    Returns:
+        去重后的 CompanyNews 列表
+    """
+    if len(articles) <= 1:
+        return articles
+
+    import re as _re
+
+    def _extract_key_chars(title: str) -> set:
+        """提取标题中的关键字符集合（去除标点、空格、股票代码前缀等）"""
+        # 移除常见前缀模板如 "节能风电：" 或 "节能风电（601016）"
+        cleaned = _re.sub(r'^[\w\u4e00-\u9fff]+[：:]\s*', '', title)
+        # 移除标点符号和空格，只保留有意义的汉字和数字
+        cleaned = _re.sub(r'[^\u4e00-\u9fff0-9a-zA-Z%.]', '', cleaned)
+        return set(cleaned)
+
+    def _jaccard_similarity(set_a: set, set_b: set) -> float:
+        """计算两个集合的 Jaccard 相似度"""
+        if not set_a or not set_b:
+            return 0.0
+        intersection = len(set_a & set_b)
+        union = len(set_a | set_b)
+        return intersection / union if union > 0 else 0.0
+
+    unique_articles = []
+    seen_char_sets = []
+
+    for article in articles:
+        title = getattr(article, 'title', '')
+        char_set = _extract_key_chars(title)
+
+        is_duplicate = False
+        for existing_set in seen_char_sets:
+            if _jaccard_similarity(char_set, existing_set) >= similarity_threshold:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            unique_articles.append(article)
+            seen_char_sets.append(char_set)
+
+    dedup_count = len(articles) - len(unique_articles)
+    if dedup_count > 0:
+        print(f"[AKShare] 新闻去重：移除 {dedup_count} 篇重复报道（同一事件不同来源），保留 {len(unique_articles)} 篇")
+
+    return unique_articles
+
+
+def _is_news_relevant_to_stock(title: str, content: str, ticker: str, stock_name: str = "") -> bool:
+    """
+    判断新闻文章是否与目标股票直接相关（而非仅在多股票列表中被提及）。
+
+    Args:
+        title: 新闻标题
+        content: 新闻内容
+        ticker: 股票代码
+        stock_name: 股票名称
+
+    Returns:
+        bool: True 如果文章主要关于目标股票
+    """
+    # 如果标题中包含股票名称或代码，高置信度相关
+    if stock_name and stock_name in title:
+        return True
+    if ticker in title:
+        return True
+
+    # 通用市场文章模式（多股票列表类）
+    generic_list_patterns = [
+        "解密主力资金出逃股", "主力资金出逃", "短线防风险",
+        "只个股", "一览", "榜单", "排行", "盘点",
+        "连续.*净流出.*股", "连续.*净流入.*股",
+        "只股票", "股名单",
+    ]
+    import re
+    for pattern in generic_list_patterns:
+        if re.search(pattern, title):
+            return False
+
+    # 如果内容主要是数字/表格数据（如多股排行表），大概率是通用文章
+    if content:
+        content_sample = content[:300]
+        # 统计内容中数字和空格的比例，表格类内容数字密度高
+        digit_count = sum(1 for c in content_sample if c.isdigit() or c in '. -')
+        if len(content_sample) > 0 and digit_count / len(content_sample) > 0.5:
+            # 内容以数字为主，很可能是排行表，检查标题是否提到目标股票
+            if stock_name and stock_name not in content_sample[:100]:
+                return False
+
+    return True
 
 
 def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, limit: int = 100) -> list:
@@ -974,6 +1082,16 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
         if df is None or df.empty:
             return []
 
+        # 获取股票名称，用于新闻相关性过滤
+        stock_name = ""
+        try:
+            from src.tools.tushare_api import get_stock_name
+            stock_name = get_stock_name(ticker)
+            if stock_name == ticker:  # get_stock_name 失败时返回代码本身
+                stock_name = ""
+        except Exception:
+            pass
+
         # 按发布时间从新到旧排序，确保优先获取最新新闻
         try:
             df["_pub_dt"] = pd.to_datetime(df["发布时间"], errors="coerce")
@@ -982,6 +1100,7 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
             pass  # 排序失败时保持原始顺序
 
         results = []
+        filtered_count = 0
         for _, row in df.iterrows():
             pub_time = str(row.get("发布时间", ""))
             # 解析日期用于过滤
@@ -998,6 +1117,11 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
             content = str(row.get("新闻内容", ""))
             source = str(row.get("文章来源", ""))
             url = str(row.get("新闻链接", ""))
+
+            # 过滤与目标股票无直接关联的通用市场文章
+            if not _is_news_relevant_to_stock(title, content, ticker, stock_name):
+                filtered_count += 1
+                continue
 
             # 基于关键词的情感分类
             sentiment = _classify_news_sentiment(title, content)
@@ -1016,6 +1140,12 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
 
             if len(results) >= limit:
                 break
+
+        if filtered_count > 0:
+            print(f"[AKShare] 已过滤 {filtered_count} 篇与 {ticker}({stock_name}) 无直接关联的通用市场文章")
+
+        # 对新闻去重：移除同一事件不同来源的重复报道
+        results = _deduplicate_news(results)
 
         return results
     except Exception as e:

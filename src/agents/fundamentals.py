@@ -62,7 +62,7 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
         signals.append("bullish" if profitability_score >= 2 else "bearish" if profitability_score == 0 else "neutral")
         reasoning["profitability_signal"] = {
             "signal": signals[0],
-            "details": (f"ROE: {return_on_equity:.2%}" if return_on_equity is not None else "ROE: N/A") + ", " + (f"Net Margin: {net_margin:.2%}" if net_margin is not None else "Net Margin: N/A") + ", " + (f"Op Margin: {operating_margin:.2%}" if operating_margin is not None else "Op Margin: N/A"),
+            "details": (f"ROE(TTM): {return_on_equity:.2%}" if return_on_equity is not None else "ROE: N/A") + ", " + (f"Net Margin(TTM): {net_margin:.2%}" if net_margin is not None else "Net Margin: N/A") + ", " + (f"Op Margin(TTM): {operating_margin:.2%}" if operating_margin is not None else "Op Margin: N/A"),
         }
 
         progress.update_status(agent_id, ticker, "Analyzing growth")
@@ -85,7 +85,7 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
         signals.append("bullish" if growth_score >= 2 else "bearish" if growth_score == 0 else "neutral")
         reasoning["growth_signal"] = {
             "signal": signals[1],
-            "details": (f"Revenue Growth: {revenue_growth:.2%}" if revenue_growth is not None else "Revenue Growth: N/A") + ", " + (f"Earnings Growth: {earnings_growth:.2%}" if earnings_growth is not None else "Earnings Growth: N/A"),
+            "details": (f"Revenue Growth(TTM YoY): {revenue_growth:.2%}" if revenue_growth is not None else "Revenue Growth: N/A") + ", " + (f"Earnings Growth(TTM YoY): {earnings_growth:.2%}" if earnings_growth is not None else "Earnings Growth: N/A"),
         }
 
         progress.update_status(agent_id, ticker, "Analyzing financial health")
@@ -130,7 +130,7 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
         signals.append(price_ratio_signal)
         reasoning["price_ratios_signal"] = {
             "signal": signals[3],
-            "details": (f"P/E: {pe_ratio:.2f}" if pe_ratio is not None else "P/E: N/A") + ", " + (f"P/B: {pb_ratio:.2f}" if pb_ratio is not None else "P/B: N/A") + ", " + (f"P/S: {ps_ratio:.2f}" if ps_ratio is not None else "P/S: N/A"),
+            "details": (f"P/E(TTM): {pe_ratio:.2f}" if pe_ratio is not None else "P/E: N/A") + ", " + (f"P/B: {pb_ratio:.2f}" if pb_ratio is not None else "P/B: N/A") + ", " + (f"P/S: {ps_ratio:.2f}" if ps_ratio is not None else "P/S: N/A"),
         }
 
         progress.update_status(agent_id, ticker, "Calculating final signal")
