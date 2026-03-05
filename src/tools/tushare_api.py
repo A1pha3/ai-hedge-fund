@@ -388,8 +388,8 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         # Tushare fina_indicator 使用 end_date 参数，但需要正确的日期格式
         # 当请求 annual 时，fina_indicator 每年有4行(Q1/H1/Q3/Annual)，需要多取4倍才能保证足够的年报行数
         fetch_limit = limit * 4 if period == "annual" else limit
-        # 使用内存缓存获取数据
-        df_fin = _cached_tushare_call(pro, "fina_indicator", ts_code, fetch_limit)
+        # 使用内存缓存获取数据（dedupe=True：同一 end_date 可能有多行数据修正版本）
+        df_fin = _cached_tushare_call(pro, "fina_indicator", ts_code, fetch_limit, dedupe=True)
         if df_fin is None or df_fin.empty:
             return []
 
@@ -483,7 +483,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         # A股 TTM 合成: 利润表 & 折旧字段（用于 EV/EBITDA, EV/Revenue, ROIC, interest_coverage）
         # 收集原始利润表流量字段，然后对非年报期做 TTM = 当期累计 + 上年年报 - 上年同期累计
         raw_income_map = {}  # key: (end_date, field_name), value: float
-        _income_ttm_fields = ["operate_profit", "total_revenue", "fin_exp", "fin_exp_int_exp", "int_exp"]
+        _income_ttm_fields = ["operate_profit", "total_revenue", "fin_exp", "fin_exp_int_exp", "int_exp", "n_income_attr_p"]
         _cash_ttm_fields = ["depr_fa_coga_dpba"]
         if df_income is not None and not df_income.empty:
             for _, inc_r in df_income.iterrows():
@@ -503,7 +503,13 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         # TTM 合成后的值：key: (end_date, field_name), value: TTM float
         ttm_income_map = {}
         all_ttm_fields = _income_ttm_fields + _cash_ttm_fields
+        # 扩展合成范围：包含 period_dates + 上年同期（用于计算 TTM YoY 增长率）
+        _ttm_synthesis_dates = set(period_dates)
         for ed in period_dates:
+            if not ed.endswith("1231"):
+                prior_year = str(int(ed[:4]) - 1)
+                _ttm_synthesis_dates.add(f"{prior_year}{ed[4:]}")  # 上年同期
+        for ed in sorted(_ttm_synthesis_dates):
             for fld in all_ttm_fields:
                 raw_val = raw_income_map.get((ed, fld))
                 if raw_val is None:
@@ -671,8 +677,22 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                         if shares is not None and not (isinstance(shares, float) and pd.isna(shares)) and float(shares) > 0:
                             fcf_per_share_val = current_fcf / float(shares)
                 # FCF growth: compare with next period (older)
+                # Handle zero-crossing: when FCF changes sign, percentage growth is meaningless
+                # Also handle tiny-base distortion: if previous FCF is very small relative to current,
+                # the growth rate becomes meaninglessly large
                 if idx + 1 < len(fcf_values) and fcf_values[idx + 1] is not None and abs(fcf_values[idx + 1]) > 1e-9:
-                    fcf_growth_val = (current_fcf - fcf_values[idx + 1]) / abs(fcf_values[idx + 1])
+                    prev_fcf = fcf_values[idx + 1]
+                    # Zero-crossing detection: if signs differ, mark growth as None (meaningless)
+                    if (current_fcf > 0 and prev_fcf < 0) or (current_fcf < 0 and prev_fcf > 0):
+                        fcf_growth_val = None  # Sign change makes percentage growth meaningless
+                    else:
+                        raw_growth = (current_fcf - prev_fcf) / abs(prev_fcf)
+                        # Tiny-base filter: if previous FCF is < 5% of current FCF in absolute terms,
+                        # the growth rate is unreliable (e.g., ¥39M → ¥1B = 2500%)
+                        if abs(raw_growth) > 3.0 and abs(prev_fcf) < abs(current_fcf) * 0.05:
+                            fcf_growth_val = None  # Tiny base makes growth rate unreliable
+                        else:
+                            fcf_growth_val = raw_growth
 
             # 计算 ROIC = NOPAT / Invested Capital（使用 TTM 合成值）
             # NOPAT = operating_income * (1 - tax_rate), tax_rate 默认 25% (中国企业所得税)
@@ -784,6 +804,75 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
             if raw_dp is not None and pd.notna(raw_dp):
                 payout_ratio_val = float(raw_dp) / 100.0
 
+            # ------------------------------------------------------------------
+            # TTM 调整: operating_margin, net_margin, return_on_equity
+            # 对于非年报期，fina_indicator 的 op_of_gr/netprofit_margin/roe 是 YTD 累计值，
+            # 不是 TTM（滚动12个月）值。使用已合成的 TTM 利润表数据重新计算。
+            # ------------------------------------------------------------------
+            _ttm_op_profit = ttm_income_map.get((end_date_str, "operate_profit"))
+            _ttm_total_rev = ttm_income_map.get((end_date_str, "total_revenue"))
+            _ttm_net_income = ttm_income_map.get((end_date_str, "n_income_attr_p"))
+
+            # TTM Operating Margin
+            _ttm_operating_margin = None
+            if _ttm_op_profit is not None and _ttm_total_rev is not None and _ttm_total_rev != 0:
+                _ttm_operating_margin = _ttm_op_profit / _ttm_total_rev
+            else:
+                _ttm_operating_margin = float(row.get("op_of_gr", 0)) / 100 if pd.notna(row.get("op_of_gr")) else None
+
+            # TTM Net Margin
+            _ttm_net_margin = None
+            if _ttm_net_income is not None and _ttm_total_rev is not None and _ttm_total_rev != 0:
+                _ttm_net_margin = _ttm_net_income / _ttm_total_rev
+            else:
+                _ttm_net_margin = float(row.get("netprofit_margin", 0)) / 100 if pd.notna(row.get("netprofit_margin")) else None
+
+            # TTM ROE = TTM 净利润 / 最新期末归母权益
+            _ttm_roe = None
+            if _ttm_net_income is not None and df_bal is not None and not df_bal.empty:
+                bal_row_roe = df_bal[df_bal["end_date"] == end_date_str]
+                if not bal_row_roe.empty:
+                    equity = bal_row_roe.iloc[0].get("total_hldr_eqy_exc_min_int")
+                    if equity is None or (isinstance(equity, float) and pd.isna(equity)):
+                        equity = bal_row_roe.iloc[0].get("total_hldr_eqy_inc_min_int")
+                    if equity is not None and not (isinstance(equity, float) and pd.isna(equity)) and float(equity) > 0:
+                        _ttm_roe = _ttm_net_income / float(equity)
+            if _ttm_roe is None:
+                _ttm_roe = float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None
+
+            # Gross Margin: 对于非年报期也尝试 TTM 调整
+            _ttm_gross_margin = None
+            if _ttm_total_rev is not None and _ttm_total_rev != 0:
+                # TTM 毛利润 = TTM 营业收入 - TTM 营业成本（目前无 TTM 营业成本，退回 fina_indicator）
+                _ttm_gross_margin = float(row.get("grossprofit_margin", 0)) / 100 if pd.notna(row.get("grossprofit_margin")) else None
+            else:
+                _ttm_gross_margin = float(row.get("grossprofit_margin", 0)) / 100 if pd.notna(row.get("grossprofit_margin")) else None
+
+            # ------------------------------------------------------------------
+            # TTM Revenue Growth & Earnings Growth:
+            # 对于非年报期，fina_indicator 的 or_yoy/netprofit_yoy 是 YTD 同比，
+            # 应计算 TTM-to-TTM YoY：TTM_revenue_current / TTM_revenue_prior_year - 1
+            # ------------------------------------------------------------------
+            _ttm_revenue_growth = None
+            _ttm_earnings_growth = None
+            if not end_date_str.endswith("1231") and _ttm_total_rev is not None:
+                prior_year = str(int(end_date_str[:4]) - 1)
+                prior_same_str = f"{prior_year}{end_date_str[4:]}"
+                prior_ttm_rev = ttm_income_map.get((prior_same_str, "total_revenue"))
+                if prior_ttm_rev is not None and abs(prior_ttm_rev) > 1e-9:
+                    _ttm_revenue_growth = (_ttm_total_rev - prior_ttm_rev) / abs(prior_ttm_rev)
+                    _ttm_revenue_growth = max(-1.0, min(5.0, _ttm_revenue_growth))
+                if _ttm_net_income is not None:
+                    prior_ttm_ni = ttm_income_map.get((prior_same_str, "n_income_attr_p"))
+                    if prior_ttm_ni is not None and abs(prior_ttm_ni) > 1e-9:
+                        _ttm_earnings_growth = (_ttm_net_income - prior_ttm_ni) / abs(prior_ttm_ni)
+                        _ttm_earnings_growth = max(-1.0, min(5.0, _ttm_earnings_growth))
+            # 年报期或无法计算 TTM 时，退回 fina_indicator 原始值
+            if _ttm_revenue_growth is None:
+                _ttm_revenue_growth = max(-1.0, min(5.0, float(row.get("or_yoy", 0)) / 100)) if pd.notna(row.get("or_yoy")) else None
+            if _ttm_earnings_growth is None:
+                _ttm_earnings_growth = max(-1.0, min(5.0, float(row.get("netprofit_yoy", 0)) / 100)) if pd.notna(row.get("netprofit_yoy")) else None
+
             metrics.append(
                 FinancialMetrics(
                     ticker=ticker,
@@ -799,10 +888,10 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     enterprise_value_to_revenue_ratio=ev_to_revenue_val,
                     free_cash_flow_yield=fcf_yield_val,
                     peg_ratio=peg_ratio_val,
-                    gross_margin=_validate_margin(float(row.get("grossprofit_margin", 0)) / 100 if pd.notna(row.get("grossprofit_margin")) else None),
-                    operating_margin=_validate_margin(float(row.get("op_of_gr", 0)) / 100 if pd.notna(row.get("op_of_gr")) else None),
-                    net_margin=_validate_margin(float(row.get("netprofit_margin", 0)) / 100 if pd.notna(row.get("netprofit_margin")) else None),
-                    return_on_equity=_validate_roe(float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None),
+                    gross_margin=_validate_margin(_ttm_gross_margin),
+                    operating_margin=_validate_margin(_ttm_operating_margin),
+                    net_margin=_validate_margin(_ttm_net_margin),
+                    return_on_equity=_validate_roe(_ttm_roe),
                     return_on_assets=_validate_roe(float(row.get("roa", 0)) / 100 if pd.notna(row.get("roa")) else None),
                     return_on_invested_capital=roic_val,
                     asset_turnover=float(row.get("assets_turn", 0)) if pd.notna(row.get("assets_turn")) else None,
@@ -818,8 +907,8 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
                     debt_to_equity=float(row.get("debt_to_eqt", 0)) if pd.notna(row.get("debt_to_eqt")) else None,
                     debt_to_assets=float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
                     interest_coverage=interest_coverage_val,
-                    revenue_growth=max(-1.0, min(5.0, float(row.get("or_yoy", 0)) / 100)) if pd.notna(row.get("or_yoy")) else None,
-                    earnings_growth=max(-1.0, min(5.0, float(row.get("netprofit_yoy", 0)) / 100)) if pd.notna(row.get("netprofit_yoy")) else None,
+                    revenue_growth=_ttm_revenue_growth,
+                    earnings_growth=_ttm_earnings_growth,
                     book_value_growth=bvg_val,
                     earnings_per_share_growth=max(-1.0, min(5.0, float(row.get("basic_eps_yoy", 0)) / 100)) if pd.notna(row.get("basic_eps_yoy")) else None,
                     free_cash_flow_growth=max(-1.0, min(5.0, fcf_growth_val)) if fcf_growth_val is not None else None,
@@ -884,9 +973,9 @@ def get_ashare_line_items_with_tushare(
         # 获取 limit*4 条以确保各子表(balance/income/cashflow)有足够匹配数据
         fetch_limit = limit * 4
 
-        # 获取财务指标数据（使用内存缓存）
+        # 获取财务指标数据（使用内存缓存，dedupe=True：同一 end_date 可能有多行数据修正版本）
         try:
-            df_fin = _cached_tushare_call(pro, "fina_indicator", ts_code, fetch_limit)
+            df_fin = _cached_tushare_call(pro, "fina_indicator", ts_code, fetch_limit, dedupe=True)
         except Exception as e:
             print(f"[Tushare] 获取财务指标失败: {e}")
             df_fin = None

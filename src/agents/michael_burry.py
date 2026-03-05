@@ -65,6 +65,7 @@ def michael_burry_agent(state: AgentState, agent_id: str = "michael_burry_agent"
                 "issuance_or_purchase_of_equity_shares",
             ],
             end_date,
+            period="annual",
             api_key=api_key,
         )
 

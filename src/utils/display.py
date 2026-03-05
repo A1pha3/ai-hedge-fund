@@ -28,6 +28,13 @@ def _currency_symbol(tickers: list[str] | str | None = None) -> str:
     return "$"
 
 
+def _format_list_date(date_str: str) -> str:
+    """Format list date from YYYYMMDD to YYYY-MM-DD."""
+    if date_str and len(date_str) == 8 and date_str.isdigit():
+        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    return date_str
+
+
 def sort_agent_signals(signals):
     """Sort agent signals in a consistent order."""
     # Create order mapping from ANALYST_ORDER
@@ -585,7 +592,7 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
                 f"{stock_details.get('area', 'N/A')} | "
                 f"{stock_details.get('industry', 'N/A')} | "
                 f"{stock_details.get('market', 'N/A')} | "
-                f"{stock_details.get('list_date', 'N/A')} | "
+                f"{_format_list_date(stock_details.get('list_date', 'N/A'))} | "
                 f"{action} | {confidence:.1f}% |"
             )
         lines.append("")
@@ -655,8 +662,14 @@ def save_trading_report(result: dict, tickers: list[str], model_name: str, model
                 lines.append("#### 仓位限制\n")
                 lines.append(f"| 项目 | 值 |")
                 lines.append("|------|------|")
-                lines.append(f"| 剩余仓位限制 | {risk_data.get('remaining_position_limit', 'N/A')} |")
-                lines.append(f"| 当前价格 | {risk_data.get('current_price', 'N/A')} |")
+                remaining_limit = risk_data.get('remaining_position_limit', 'N/A')
+                if isinstance(remaining_limit, (int, float)):
+                    remaining_limit = f"{remaining_limit:,.2f}"
+                current_price = risk_data.get('current_price', 'N/A')
+                if isinstance(current_price, (int, float)):
+                    current_price = f"{current_price:.2f}"
+                lines.append(f"| 剩余仓位限制 | {remaining_limit} |")
+                lines.append(f"| 当前价格 | {current_price} |")
                 lines.append("")
 
                 vol_metrics = risk_data.get("volatility_metrics", {})

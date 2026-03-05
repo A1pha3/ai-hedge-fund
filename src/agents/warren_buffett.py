@@ -53,7 +53,7 @@ def warren_buffett_agent(state: AgentState, agent_id: str = "warren_buffett_agen
                 "free_cash_flow",
             ],
             end_date,
-            period="ttm",
+            period="annual",
             limit=10,
             api_key=api_key,
         )
@@ -788,7 +788,9 @@ def generate_buffett_output(
     prompt = template.invoke(
         {
             "facts": json.dumps(facts, separators=(",", ":"), ensure_ascii=False),
-            "ticker": ticker,            "currency_context": get_currency_context(ticker),        }
+            "ticker": ticker,
+            "currency_context": get_currency_context(ticker),
+        }
     )
 
     # Default fallback uses int confidence to match schema and avoid parse retries

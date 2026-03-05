@@ -42,6 +42,7 @@ def rakesh_jhunjhunwala_agent(state: AgentState, agent_id: str = "rakesh_jhunjhu
             ticker,
             ["net_income", "earnings_per_share", "ebit", "operating_income", "revenue", "operating_margin", "total_assets", "total_liabilities", "current_assets", "current_liabilities", "free_cash_flow", "dividends_and_other_cash_distributions", "issuance_or_purchase_of_equity_shares"],
             end_date,
+            period="annual",
             api_key=api_key,
         )
 

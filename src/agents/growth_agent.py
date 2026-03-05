@@ -95,13 +95,18 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
         def fmt_pct(val):
             return f"{val:.2%}" if val is not None else "N/A"
 
+        def fmt_fcf_growth(val):
+            if val is None:
+                return "N/A (不可比或小基数失真)"
+            return f"{val:.2%}"
+
         def fmt_float(val):
             return f"{val:.2f}" if val is not None else "N/A"
 
         reasoning = {
             "historical_growth": {
                 "signal": "bullish" if growth_trends["score"] > 0.6 else "bearish" if growth_trends["score"] < 0.4 else "neutral",
-                "details": f"Revenue Growth: {fmt_pct(growth_trends['revenue_growth'])}, EPS Growth: {fmt_pct(growth_trends['eps_growth'])}, FCF Growth: {fmt_pct(growth_trends['fcf_growth'])}",
+                "details": f"Revenue Growth: {fmt_pct(growth_trends['revenue_growth'])}, EPS Growth: {fmt_pct(growth_trends['eps_growth'])}, FCF Growth: {fmt_fcf_growth(growth_trends['fcf_growth'])}",
                 "metrics": {k: (v if v is not None else "N/A") for k, v in growth_trends.items() if k != "score"},
             },
             "growth_valuation": {
@@ -237,6 +242,12 @@ def analyze_valuation(metrics) -> dict:
 
     peg_ratio = metrics.peg_ratio
     ps_ratio = metrics.price_to_sales_ratio
+
+    if peg_ratio is None:
+        pe_ratio = metrics.price_to_earnings_ratio
+        eps_growth = metrics.earnings_per_share_growth
+        if pe_ratio is not None and eps_growth is not None and eps_growth > 0:
+            peg_ratio = pe_ratio / (eps_growth * 100)
 
     score = 0
 
