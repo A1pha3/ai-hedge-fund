@@ -69,9 +69,89 @@ class PerformanceMetricsCalculator:
             max_drawdown = 0.0
             max_drawdown_date = None
 
+        # --- Phase 0.3 新增指标 ---
+        # Calmar Ratio = 年化收益 / |最大回撤|
+        total_return = (df["Portfolio Value"].iloc[-1] / df["Portfolio Value"].iloc[0]) - 1
+        trading_days = len(clean_returns)
+        annual_return = (1 + total_return) ** (self.annual_trading_days / max(trading_days, 1)) - 1
+        abs_mdd = abs(min_dd) if min_dd < 0 else 0
+        calmar = float(annual_return / abs_mdd) if abs_mdd > 1e-12 else (float("inf") if annual_return > 0 else 0.0)
+
+        # CVaR(95%) 历史模拟法
+        sorted_returns = np.sort(clean_returns.values)
+        var_index = int(np.floor(0.05 * len(sorted_returns)))
+        if var_index > 0:
+            cvar_95 = float(sorted_returns[:var_index].mean())
+        else:
+            cvar_95 = float(sorted_returns[0]) if len(sorted_returns) > 0 else 0.0
+
         return {
             "sharpe_ratio": sharpe,
             "sortino_ratio": sortino,
             "max_drawdown": max_drawdown,
             "max_drawdown_date": max_drawdown_date,
+            "calmar_ratio": calmar,
+            "cvar_95": cvar_95,
         }
+
+    @staticmethod
+    def compute_trade_metrics(trades: Sequence[dict]) -> PerformanceMetrics:
+        """
+        从交易记录计算盈亏比、胜率和交易次数。
+
+        参数:
+            trades: 交易记录列表，每条含 'pnl' 字段（正=盈利，负=亏损）
+
+        返回:
+            包含 profit_loss_ratio, win_rate, total_trades 的指标字典
+        """
+        if not trades:
+            return {"profit_loss_ratio": None, "win_rate": None, "total_trades": 0}
+
+        pnls = [t.get("pnl", 0) for t in trades if "pnl" in t]
+        if not pnls:
+            return {"profit_loss_ratio": None, "win_rate": None, "total_trades": 0}
+
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p < 0]
+
+        total_trades = len(pnls)
+        win_rate = float(len(wins) / total_trades) if total_trades > 0 else 0.0
+
+        avg_win = sum(wins) / len(wins) if wins else 0.0
+        avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
+        profit_loss_ratio = float(avg_win / avg_loss) if avg_loss > 1e-12 else (float("inf") if avg_win > 0 else 0.0)
+
+        return {
+            "profit_loss_ratio": profit_loss_ratio,
+            "win_rate": win_rate,
+            "total_trades": total_trades,
+        }
+
+    @staticmethod
+    def compute_turnover(total_trade_value: float, avg_nav: float, trading_days: int, annual_trading_days: int = 252) -> float:
+        """
+        计算年化换手率 = (总交易额 / 平均净值) × (252 / 交易天数)
+        """
+        if avg_nav < 1e-12 or trading_days < 1:
+            return 0.0
+        return float((total_trade_value / avg_nav) * (annual_trading_days / trading_days))
+
+    @staticmethod
+    def compute_beta(portfolio_returns: Sequence[float], benchmark_returns: Sequence[float]) -> Optional[float]:
+        """
+        计算组合 Beta（对基准指数的回归系数）。
+
+        Beta = Cov(Rp, Rb) / Var(Rb)
+        """
+        import numpy as np
+
+        if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
+            return None
+        pr = np.array(portfolio_returns[:min(len(portfolio_returns), len(benchmark_returns))])
+        br = np.array(benchmark_returns[:min(len(portfolio_returns), len(benchmark_returns))])
+        var_b = np.var(br)
+        if var_b < 1e-12:
+            return None
+        cov_pb = np.cov(pr, br)[0][1]
+        return float(cov_pb / var_b)

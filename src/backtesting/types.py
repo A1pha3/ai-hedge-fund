@@ -102,3 +102,11 @@ class PerformanceMetrics(TypedDict, total=False):
     long_short_ratio: Optional[float]
     gross_exposure: Optional[float]
     net_exposure: Optional[float]
+    # Phase 0.3 新增指标
+    calmar_ratio: Optional[float]
+    profit_loss_ratio: Optional[float]
+    annual_turnover: Optional[float]
+    cvar_95: Optional[float]
+    portfolio_beta: Optional[float]
+    win_rate: Optional[float]
+    total_trades: Optional[int]

@@ -1524,3 +1524,290 @@ def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
             "pre_close": "N/A",
             "close": "N/A",
         }
+
+
+# ============================================================================
+# 以下为机构级多策略框架（Phase 0.2）新增接口
+# ============================================================================
+
+# 全量 stock_basic 缓存
+_stock_basic_cache: Optional[pd.DataFrame] = None
+_stock_basic_cache_lock = threading.Lock()
+
+# 申万行业分类缓存
+_sw_industry_cache: Optional[Dict[str, str]] = None
+_sw_industry_cache_lock = threading.Lock()
+
+
+def get_all_stock_basic() -> Optional[pd.DataFrame]:
+    """
+    获取全 A 股基本信息（代码/名称/上市日期/行业/市场/状态）。
+
+    返回 DataFrame 列: ts_code, symbol, name, area, industry, market,
+                       list_date, list_status, is_hs
+    结果全局缓存，同一进程内仅调用一次。
+    """
+    global _stock_basic_cache
+    with _stock_basic_cache_lock:
+        if _stock_basic_cache is not None:
+            return _stock_basic_cache.copy()
+
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    try:
+        df = pro.stock_basic(
+            exchange="",
+            list_status="L",
+            fields="ts_code,symbol,name,area,industry,market,list_date,list_status,is_hs",
+        )
+        if df is not None and not df.empty:
+            with _stock_basic_cache_lock:
+                _stock_basic_cache = df
+            return df.copy()
+        return None
+    except Exception as e:
+        print(f"[Tushare] get_all_stock_basic 失败: {e}")
+        return None
+
+
+def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
+    """
+    获取全市场当日基础面指标（PE/PB/换手率/成交额/总市值/流通市值）。
+
+    参数:
+        trade_date: 交易日期，格式 YYYYMMDD
+
+    返回 DataFrame 列: ts_code, trade_date, close, turnover_rate, pe, pe_ttm,
+                       pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share,
+                       free_share, total_mv, circ_mv, volume, amount
+    """
+    cache_key = f"daily_basic_batch_{trade_date}"
+    with _tushare_df_cache_lock:
+        if cache_key in _tushare_df_cache:
+            return _tushare_df_cache[cache_key].copy()
+
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    try:
+        df = pro.daily_basic(
+            trade_date=trade_date,
+            fields="ts_code,trade_date,close,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm,"
+                   "dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv",
+        )
+        if df is not None and not df.empty:
+            with _tushare_df_cache_lock:
+                _tushare_df_cache[cache_key] = df
+            return df.copy()
+        return None
+    except Exception as e:
+        print(f"[Tushare] get_daily_basic_batch({trade_date}) 失败: {e}")
+        return None
+
+
+def get_sw_industry_classification() -> Optional[Dict[str, str]]:
+    """
+    获取申万一级行业分类映射：{ts_code -> 行业名称}。
+
+    使用 tushare index_classify（L1 申万一级）获取行业列表，
+    再用 index_member 获取每个行业的成分股。
+    结果全局缓存。
+    """
+    global _sw_industry_cache
+    with _sw_industry_cache_lock:
+        if _sw_industry_cache is not None:
+            return _sw_industry_cache.copy()
+
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    try:
+        import time
+
+        # 获取申万一级行业列表
+        index_df = pro.index_classify(level="L1", src="SW2021")
+        if index_df is None or index_df.empty:
+            # 尝试旧版：SW2014
+            index_df = pro.index_classify(level="L1", src="SW2014")
+        if index_df is None or index_df.empty:
+            print("[Tushare] 无法获取申万行业分类")
+            return None
+
+        result: Dict[str, str] = {}
+        for _, row in index_df.iterrows():
+            index_code = str(row["index_code"])
+            industry_name = str(row["industry_name"])
+            try:
+                time.sleep(0.35)  # tushare 限流：200次/分钟
+                member_df = pro.index_member(index_code=index_code)
+                if member_df is not None and not member_df.empty:
+                    for _, m_row in member_df.iterrows():
+                        con_code = str(m_row["con_code"])
+                        # 仅保留非退出成分（is_new 为空或 None 表示当前成分）
+                        if pd.isna(m_row.get("out_date")):
+                            result[con_code] = industry_name
+            except Exception as e:
+                print(f"[Tushare] 获取行业 {industry_name}({index_code}) 成分失败: {e}")
+                continue
+
+        if result:
+            with _sw_industry_cache_lock:
+                _sw_industry_cache = result
+        return result.copy() if result else None
+    except Exception as e:
+        print(f"[Tushare] get_sw_industry_classification 失败: {e}")
+        return None
+
+
+def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
+    """
+    获取当日涨跌停列表。
+
+    参数:
+        trade_date: 交易日期，格式 YYYYMMDD
+
+    返回 DataFrame 列: trade_date, ts_code, name, close, pct_chg,
+                       amp, fc_ratio, fl_ratio, fd_amount, first_time, last_time,
+                       open_times, up_stat, limit_times, limit
+    其中 limit 字段: U=涨停, D=跌停, Z=炸板
+    """
+    cache_key = f"limit_list_{trade_date}"
+    with _tushare_df_cache_lock:
+        if cache_key in _tushare_df_cache:
+            return _tushare_df_cache[cache_key].copy()
+
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    try:
+        df = pro.limit_list_d(trade_date=trade_date)
+        if df is not None and not df.empty:
+            with _tushare_df_cache_lock:
+                _tushare_df_cache[cache_key] = df
+            return df.copy()
+        return None
+    except Exception as e:
+        print(f"[Tushare] get_limit_list({trade_date}) 失败: {e}")
+        return None
+
+
+def get_suspend_list(trade_date: str) -> Optional[pd.DataFrame]:
+    """
+    获取当日停牌列表。
+
+    参数:
+        trade_date: 交易日期，格式 YYYYMMDD
+
+    返回 DataFrame 列: ts_code, trade_date, suspend_timing, suspend_type
+    """
+    cache_key = f"suspend_list_{trade_date}"
+    with _tushare_df_cache_lock:
+        if cache_key in _tushare_df_cache:
+            return _tushare_df_cache[cache_key].copy()
+
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    try:
+        df = pro.suspend_d(trade_date=trade_date)
+        if df is not None and not df.empty:
+            with _tushare_df_cache_lock:
+                _tushare_df_cache[cache_key] = df
+            return df.copy()
+        return None
+    except Exception as e:
+        print(f"[Tushare] get_suspend_list({trade_date}) 失败: {e}")
+        return None
+
+
+def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", limit: int = 120) -> Optional[pd.DataFrame]:
+    """
+    获取指数日线行情（沪深300/上证50/中证500等）。
+
+    参数:
+        index_code: 指数代码（如 '000300.SH' 沪深300, '000016.SH' 上证50, '000905.SH' 中证500）
+        start_date: 开始日期 YYYYMMDD（可选）
+        end_date: 结束日期 YYYYMMDD（可选）
+        limit: 返回行数
+
+    返回 DataFrame 列: ts_code, trade_date, close, open, high, low, pre_close,
+                       change, pct_chg, vol, amount
+    """
+    cache_key = f"index_daily_{index_code}_{start_date}_{end_date}_{limit}"
+    with _tushare_df_cache_lock:
+        if cache_key in _tushare_df_cache:
+            return _tushare_df_cache[cache_key].copy()
+
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    try:
+        kwargs = {"ts_code": index_code}
+        if start_date:
+            kwargs["start_date"] = start_date
+        if end_date:
+            kwargs["end_date"] = end_date
+        if not start_date and not end_date:
+            kwargs["limit"] = limit
+
+        df = pro.index_daily(**kwargs)
+        if df is not None and not df.empty:
+            df = df.sort_values("trade_date").reset_index(drop=True)
+            with _tushare_df_cache_lock:
+                _tushare_df_cache[cache_key] = df
+            return df.copy()
+        return None
+    except Exception as e:
+        print(f"[Tushare] get_index_daily({index_code}) 失败: {e}")
+        return None
+
+
+def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: str = "", limit: int = 30) -> Optional[pd.DataFrame]:
+    """
+    获取北向资金（沪股通+深股通）每日流向。
+
+    参数:
+        trade_date: 单日查询 YYYYMMDD（可选）
+        start_date/end_date: 区间查询（可选）
+        limit: 默认 30 日
+
+    返回 DataFrame 列: trade_date, ggt_ss（港股通上海）, ggt_sz（港股通深圳）,
+                       hgt（沪股通）, sgt（深股通）, north_money（北向合计）, south_money（南向合计）
+    """
+    cache_key = f"northbound_{trade_date}_{start_date}_{end_date}_{limit}"
+    with _tushare_df_cache_lock:
+        if cache_key in _tushare_df_cache:
+            return _tushare_df_cache[cache_key].copy()
+
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    try:
+        kwargs: Dict = {}
+        if trade_date:
+            kwargs["trade_date"] = trade_date
+        if start_date:
+            kwargs["start_date"] = start_date
+        if end_date:
+            kwargs["end_date"] = end_date
+        if not trade_date and not start_date:
+            kwargs["limit"] = limit
+
+        df = pro.moneyflow_hsgt(**kwargs)
+        if df is not None and not df.empty:
+            df = df.sort_values("trade_date").reset_index(drop=True)
+            with _tushare_df_cache_lock:
+                _tushare_df_cache[cache_key] = df
+            return df.copy()
+        return None
+    except Exception as e:
+        print(f"[Tushare] get_northbound_flow 失败: {e}")
+        return None

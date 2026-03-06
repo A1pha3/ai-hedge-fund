@@ -1153,6 +1153,82 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
         return []
 
 
+# ============================================================================
+# 以下为机构级多策略框架（Phase 0.2）新增接口
+# ============================================================================
+
+
+def get_realtime_quotes(tickers: List[str] = None) -> Optional[pd.DataFrame]:
+    """
+    获取 A 股盘中实时行情（全部或指定标的）。
+
+    参数:
+        tickers: 股票代码列表（6 位数字），None 表示全市场
+
+    返回 DataFrame 列: 代码, 名称, 最新价, 涨跌幅, 涨跌额, 成交量, 成交额,
+                       振幅, 最高, 最低, 今开, 昨收, 量比, 换手率, 市盈率, 市净率
+    """
+    if not _akshare_available:
+        print("[AKShare] akshare 未安装")
+        return None
+
+    try:
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            return None
+        if tickers:
+            df = df[df["代码"].isin(tickers)]
+        return df
+    except Exception as e:
+        print(f"[AKShare] get_realtime_quotes 失败: {e}")
+        return None
+
+
+def get_industry_realtime() -> Optional[pd.DataFrame]:
+    """
+    获取行业板块实时行情。
+
+    返回 DataFrame 列: 排名, 板块名称, 板块代码, 最新价, 涨跌幅, 涨跌额,
+                       成交量, 成交额, 换手率, 上涨家数, 下跌家数, 领涨股票, 最新价_领涨
+    """
+    if not _akshare_available:
+        print("[AKShare] akshare 未安装")
+        return None
+
+    try:
+        df = ak.stock_board_industry_name_em()
+        if df is not None and not df.empty:
+            return df
+        return None
+    except Exception as e:
+        print(f"[AKShare] get_industry_realtime 失败: {e}")
+        return None
+
+
+def get_money_flow(ticker: str) -> Optional[pd.DataFrame]:
+    """
+    获取个股主力资金流向。
+
+    参数:
+        ticker: 6 位股票代码
+
+    返回 DataFrame 列: 日期, 收盘价, 涨跌幅, 主力净流入, 主力净流入占比,
+                       超大单净流入, 大单净流入, 中单净流入, 小单净流入
+    """
+    if not _akshare_available:
+        print("[AKShare] akshare 未安装")
+        return None
+
+    try:
+        df = ak.stock_individual_fund_flow(stock=ticker, market="sh" if ticker.startswith("6") else "sz")
+        if df is not None and not df.empty:
+            return df
+        return None
+    except Exception as e:
+        print(f"[AKShare] get_money_flow({ticker}) 失败: {e}")
+        return None
+
+
 # 导出函数
 __all__ = [
     "get_prices",
@@ -1168,4 +1244,7 @@ __all__ = [
     "get_sina_historical_data",
     "get_prices_robust",
     "get_ashare_company_news",
+    "get_realtime_quotes",
+    "get_industry_realtime",
+    "get_money_flow",
 ]
