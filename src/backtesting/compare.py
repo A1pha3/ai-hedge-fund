@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from math import erfc, sqrt
 from pathlib import Path
 from statistics import mean, stdev
+import json
 from typing import Callable, Sequence
 
 from src.execution.daily_pipeline import DailyPipeline
@@ -68,6 +69,18 @@ class ABWindowMetrics:
     window: WalkForwardWindow
     baseline: PerformanceMetrics
     mvp: PerformanceMetrics
+
+    def to_dict(self) -> dict:
+        return {
+            "window": {
+                "train_start": self.window.train_start,
+                "train_end": self.window.train_end,
+                "test_start": self.window.test_start,
+                "test_end": self.window.test_end,
+            },
+            "baseline": dict(self.baseline),
+            "mvp": dict(self.mvp),
+        }
 
 
 def _average_metric(metrics_list: Sequence[PerformanceMetrics], key: str) -> float | None:
@@ -217,4 +230,23 @@ def save_ab_comparison_report(report: str, output_path: str | None = None) -> Pa
         path = report_dir / "ab_walk_forward_report.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(report, encoding="utf-8")
+    return path
+
+
+def build_ab_comparison_payload(results: Sequence[ABWindowMetrics], summary: dict[str, float | int | None]) -> dict:
+    return {
+        "summary": summary,
+        "windows": [item.to_dict() for item in results],
+    }
+
+
+def save_ab_comparison_payload(payload: dict, output_path: str | None = None) -> Path:
+    if output_path is not None:
+        path = Path(output_path)
+    else:
+        report_dir = Path(__file__).resolve().parents[2] / "data" / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        path = report_dir / "ab_walk_forward_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     return path

@@ -1,4 +1,4 @@
-from src.backtesting.compare import ABWindowMetrics, BaselineDailyGainersPipeline, format_ab_comparison_report, run_ab_comparison_walk_forward
+from src.backtesting.compare import ABWindowMetrics, BaselineDailyGainersPipeline, build_ab_comparison_payload, format_ab_comparison_report, run_ab_comparison_walk_forward
 from src.backtesting.walk_forward import WalkForwardWindow
 from src.screening.models import MarketState, MarketStateType
 
@@ -90,3 +90,18 @@ def test_format_ab_comparison_report():
     assert "A/B Walk-Forward Comparison" in report
     assert "2026-03-01..2026-03-31" in report
     assert "MVP Avg Sortino: 1.60" in report
+
+
+def test_build_ab_comparison_payload():
+    results = [
+        ABWindowMetrics(
+            window=WalkForwardWindow(train_start="2026-01-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-31"),
+            baseline={"sharpe_ratio": 0.8, "sortino_ratio": 1.1},
+            mvp={"sharpe_ratio": 1.2, "sortino_ratio": 1.6},
+        )
+    ]
+    payload = build_ab_comparison_payload(results, {"window_count": 1, "mvp_avg_sortino": 1.6})
+
+    assert payload["summary"]["window_count"] == 1
+    assert payload["windows"][0]["window"]["test_start"] == "2026-03-01"
+    assert payload["windows"][0]["mvp"]["sortino_ratio"] == 1.6

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime
+import os
 
 import questionary
 from colorama import Fore, init, Style
@@ -14,7 +15,7 @@ from src.utils.analysts import ANALYST_ORDER
 from src.utils.logging import get_logger
 from src.utils.ollama import ensure_ollama_and_model
 
-from .compare import format_ab_comparison_report, run_ab_comparison_walk_forward, save_ab_comparison_report
+from .compare import build_ab_comparison_payload, format_ab_comparison_report, run_ab_comparison_walk_forward, save_ab_comparison_payload, save_ab_comparison_report
 from .engine import BacktestEngine
 from .walk_forward import build_walk_forward_windows, run_walk_forward, summarize_walk_forward
 
@@ -47,6 +48,9 @@ def main() -> int:
     parser.add_argument("--baseline-pct-threshold", type=float, default=3.0, help="Baseline daily gainers threshold")
     parser.add_argument("--baseline-top-n", type=int, default=20, help="Baseline top N gainers passed to multi-agent analysis")
     parser.add_argument("--report-file", type=str, default=None, help="Optional output path for generated markdown report")
+    parser.add_argument("--report-json", type=str, default=None, help="Optional output path for generated JSON report")
+    parser.add_argument("--model-name", type=str, default=None, help="Run non-interactively with an explicit model name")
+    parser.add_argument("--model-provider", type=str, default=None, help="Run non-interactively with an explicit model provider")
     parser.add_argument("--analysts", type=str, required=False)
     parser.add_argument("--analysts-all", action="store_true")
     parser.add_argument("--ollama", action="store_true")
@@ -61,6 +65,8 @@ def main() -> int:
         selected_analysts = [a[1] for a in ANALYST_ORDER]
     elif args.analysts:
         selected_analysts = [a.strip() for a in args.analysts.split(",") if a.strip()]
+    elif args.ab_compare or args.walk_forward:
+        selected_analysts = [a[1] for a in ANALYST_ORDER]
     else:
         # Interactive analyst selection (same as legacy backtester)
         choices = questionary.checkbox(
@@ -86,7 +92,12 @@ def main() -> int:
         print(f"\nSelected analysts: " f"{', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in choices)}\n")
 
     # Model selection simplified: default to first ordered model or Ollama flag
-    if args.ollama:
+    if args.model_name and args.model_provider:
+        model_name = args.model_name
+        model_provider = args.model_provider
+        logger.info(f"Using non-interactive model selection: {model_provider} / {model_name}")
+        print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+    elif args.ollama:
         logger.info("Using Ollama for local LLM inference.")
         print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
         model_name = questionary.select(
@@ -178,9 +189,12 @@ def main() -> int:
             baseline_top_n=args.baseline_top_n,
         )
         report = format_ab_comparison_report(results, summary)
+        payload = build_ab_comparison_payload(results, summary)
         report_path = save_ab_comparison_report(report, args.report_file)
+        json_path = save_ab_comparison_payload(payload, args.report_json)
         print(report)
         print(f"\nReport saved to: {report_path}")
+        print(f"JSON saved to: {json_path}")
         return 0
 
     if args.walk_forward:
