@@ -14,6 +14,7 @@ from src.utils.analysts import ANALYST_ORDER
 from src.utils.logging import get_logger
 from src.utils.ollama import ensure_ollama_and_model
 
+from .compare import format_ab_comparison_report, run_ab_comparison_walk_forward, save_ab_comparison_report
 from .engine import BacktestEngine
 from .walk_forward import build_walk_forward_windows, run_walk_forward, summarize_walk_forward
 
@@ -39,9 +40,13 @@ def main() -> int:
     parser.add_argument("--margin-requirement", type=float, default=0.0)
     parser.add_argument("--mode", choices=["agent", "pipeline"], default="agent", help="Backtest execution mode")
     parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward validation")
+    parser.add_argument("--ab-compare", action="store_true", help="Run Group A vs Group B walk-forward comparison")
     parser.add_argument("--train-months", type=int, default=2, help="Training window size in months for walk-forward")
     parser.add_argument("--test-months", type=int, default=1, help="Test window size in months for walk-forward")
     parser.add_argument("--step-months", type=int, default=1, help="Step size in months for walk-forward")
+    parser.add_argument("--baseline-pct-threshold", type=float, default=3.0, help="Baseline daily gainers threshold")
+    parser.add_argument("--baseline-top-n", type=int, default=20, help="Baseline top N gainers passed to multi-agent analysis")
+    parser.add_argument("--report-file", type=str, default=None, help="Optional output path for generated markdown report")
     parser.add_argument("--analysts", type=str, required=False)
     parser.add_argument("--analysts-all", action="store_true")
     parser.add_argument("--ollama", action="store_true")
@@ -154,6 +159,29 @@ def main() -> int:
             initial_margin_requirement=args.margin_requirement,
             backtest_mode=args.mode,
         )
+
+    if args.ab_compare:
+        results, summary = run_ab_comparison_walk_forward(
+            tickers=tickers,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            initial_capital=args.initial_capital,
+            model_name=model_name,
+            model_provider=model_provider,
+            selected_analysts=selected_analysts,
+            initial_margin_requirement=args.margin_requirement,
+            agent=run_hedge_fund,
+            train_months=args.train_months,
+            test_months=args.test_months,
+            step_months=args.step_months,
+            baseline_pct_threshold=args.baseline_pct_threshold,
+            baseline_top_n=args.baseline_top_n,
+        )
+        report = format_ab_comparison_report(results, summary)
+        report_path = save_ab_comparison_report(report, args.report_file)
+        print(report)
+        print(f"\nReport saved to: {report_path}")
+        return 0
 
     if args.walk_forward:
         windows = build_walk_forward_windows(

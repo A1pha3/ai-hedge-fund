@@ -24,6 +24,9 @@ class PendingOrder(BaseModel):
     ticker: str
     order_type: str  # "buy" or "sell"
     original_score: float = 0.0
+    shares: int = 0
+    amount: float = 0.0
+    sell_ratio: float = Field(ge=0, le=1, default=1.0)
     queue_date: str = ""
     queue_days: int = 0
     reason: str = ""

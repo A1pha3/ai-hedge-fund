@@ -182,7 +182,7 @@ def test_pipeline_mode_blocks_limit_up_buy(monkeypatch):
         agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
         tickers=["000001"],
         start_date="2024-03-01",
-        end_date="2024-03-05",
+        end_date="2024-03-04",
         initial_capital=100000.0,
         model_name="test-model",
         model_provider="test-provider",
@@ -196,3 +196,107 @@ def test_pipeline_mode_blocks_limit_up_buy(monkeypatch):
 
     snapshot = engine._portfolio.get_snapshot()
     assert snapshot["positions"]["000001"]["long"] == 0
+    assert len(engine._pending_buy_queue) == 1
+
+
+def test_pipeline_mode_pending_buy_executes_after_board_opens(monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "000001": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+                "2024-03-05": 10.8,
+                "2024-03-06": 11.2,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+                "2024-03-05": 102.0,
+                "2024-03-06": 103.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "src.backtesting.engine.get_limit_list",
+        lambda trade_date: pd.DataFrame([{"ts_code": "000001.SZ", "limit": "U"}]) if trade_date == "20240304" else None,
+    )
+    plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="000001", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+    )
+    pipeline = StubPipeline(
+        post_market_plans=[plan, ExecutionPlan(date="20240304", portfolio_snapshot={}), ExecutionPlan(date="20240305", portfolio_snapshot={})],
+        intraday_responses=[(plan.buy_orders, [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0}), ([], [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["000001"],
+        start_date="2024-03-01",
+        end_date="2024-03-06",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+    )
+
+    engine.run_backtest()
+
+    snapshot = engine._portfolio.get_snapshot()
+    assert snapshot["positions"]["000001"]["long"] == 100
+    assert engine._pending_buy_queue == []
+
+
+def test_pipeline_mode_pending_sell_executes_after_limit_down_releases(monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "000001": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 9.8,
+                "2024-03-05": 10.1,
+                "2024-03-06": 10.2,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+                "2024-03-05": 102.0,
+                "2024-03-06": 103.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "src.backtesting.engine.get_limit_list",
+        lambda trade_date: pd.DataFrame([{"ts_code": "000001.SZ", "limit": "D"}]) if trade_date == "20240304" else None,
+    )
+    exit_signal = type("ExitSignalLike", (), {"ticker": "000001", "sell_ratio": 1.0})()
+    pipeline = StubPipeline(
+        post_market_plans=[ExecutionPlan(date="20240301", portfolio_snapshot={}), ExecutionPlan(date="20240304", portfolio_snapshot={}), ExecutionPlan(date="20240305", portfolio_snapshot={})],
+        intraday_responses=[([], [exit_signal], {"pause_new_buys": False, "forced_reduce_ratio": 0.0}), ([], [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["000001"],
+        start_date="2024-03-01",
+        end_date="2024-03-06",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+    )
+    engine._portfolio.apply_long_buy("000001", 100, 10.0)
+
+    engine.run_backtest()
+
+    snapshot = engine._portfolio.get_snapshot()
+    assert snapshot["positions"]["000001"]["long"] == 0
+    assert engine._pending_sell_queue == []

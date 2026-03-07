@@ -7,7 +7,8 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from src.execution.daily_pipeline import DailyPipeline
-from src.execution.models import ExecutionPlan
+from src.execution.models import ExecutionPlan, PendingOrder
+from src.portfolio.limit_handler import process_pending_buy, process_pending_sell, queue_pending_buy, queue_pending_sell
 from src.tools.tushare_api import get_limit_list
 from src.tools.api import (
     get_company_news,
@@ -84,6 +85,8 @@ class BacktestEngine:
             "gross_exposure": None,
             "net_exposure": None,
         }
+        self._pending_buy_queue: list[PendingOrder] = []
+        self._pending_sell_queue: list[PendingOrder] = []
 
     def _prefetch_data(self) -> None:
         end_date_dt = datetime.strptime(self._end_date, "%Y-%m-%d")
@@ -257,6 +260,66 @@ class BacktestEngine:
         }
         return {"decisions": normalized, "analyst_signals": {}}
 
+    @staticmethod
+    def _dedupe_pending_orders(orders: Sequence[PendingOrder]) -> list[PendingOrder]:
+        by_key: dict[tuple[str, str], PendingOrder] = {}
+        for order in orders:
+            by_key[(order.ticker, order.order_type)] = order
+        return list(by_key.values())
+
+    def _process_pending_queues(
+        self,
+        *,
+        prepared_plan: ExecutionPlan,
+        trade_date_compact: str,
+        current_prices: Dict[str, float],
+        limit_up: set[str],
+        limit_down: set[str],
+        decisions: Dict[str, dict],
+    ) -> tuple[list[PendingOrder], list[PendingOrder], list[str]]:
+        next_pending_buy: list[PendingOrder] = []
+        next_pending_sell: list[PendingOrder] = []
+        alerts: list[str] = []
+        watch_scores = {item.ticker: item.score_final for item in prepared_plan.watchlist}
+
+        for order in self._pending_buy_queue:
+            normalized_ticker = self._normalize_ticker(order.ticker)
+            price = current_prices.get(order.ticker)
+            if price is None:
+                next_pending_buy.append(order)
+                continue
+            result = process_pending_buy(
+                order,
+                current_score=watch_scores.get(order.ticker, order.original_score),
+                is_limit_up=normalized_ticker in limit_up,
+                opened_board=normalized_ticker not in limit_up,
+                current_price=price,
+                reference_close=price,
+            )
+            if result["action"] == "execute" and order.shares > 0:
+                existing_qty = int(decisions.get(order.ticker, {}).get("quantity", 0))
+                decisions[order.ticker] = {"action": "buy", "quantity": max(existing_qty, order.shares)}
+                alerts.append(f"pending_buy_execute:{order.ticker}")
+            elif result["action"] == "keep":
+                next_pending_buy.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
+            elif result["action"] == "remove":
+                alerts.append(f"pending_buy_remove:{order.ticker}:{result['reason']}")
+
+        for order in self._pending_sell_queue:
+            normalized_ticker = self._normalize_ticker(order.ticker)
+            result = process_pending_sell(order, is_limit_down=normalized_ticker in limit_down)
+            if result["action"] == "execute" and order.shares > 0:
+                existing_qty = int(decisions.get(order.ticker, {}).get("quantity", 0))
+                decisions[order.ticker] = {"action": "sell", "quantity": max(existing_qty, order.shares)}
+                alerts.append(f"pending_sell_execute:{order.ticker}")
+            elif result["action"] == "keep":
+                next_pending_sell.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
+            elif result["action"] == "risk_reduce_others":
+                next_pending_sell.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
+                alerts.append(f"pending_sell_risk_reduce:{order.ticker}")
+
+        return self._dedupe_pending_orders(next_pending_buy), self._dedupe_pending_orders(next_pending_sell), alerts
+
     def _run_pipeline_mode(self, dates: pd.DatetimeIndex) -> PerformanceMetrics:
         pending_plan: ExecutionPlan | None = None
 
@@ -284,6 +347,14 @@ class BacktestEngine:
             if pending_plan is not None and self._pipeline is not None:
                 prepared_plan = self._pipeline.run_pre_market(pending_plan, trade_date_compact)
                 confirmation_inputs = self._build_confirmation_inputs(prepared_plan, current_prices)
+                next_pending_buy, next_pending_sell, queue_alerts = self._process_pending_queues(
+                    prepared_plan=prepared_plan,
+                    trade_date_compact=trade_date_compact,
+                    current_prices=current_prices,
+                    limit_up=limit_up,
+                    limit_down=limit_down,
+                    decisions=decisions,
+                )
                 confirmed_orders, exits, crisis_response = self._pipeline.run_intraday(
                     prepared_plan,
                     trade_date_compact,
@@ -320,6 +391,33 @@ class BacktestEngine:
                     if price is None:
                         continue
                     normalized_ticker = self._normalize_ticker(ticker)
+                    if decision["action"] == "buy" and normalized_ticker in limit_up:
+                        matching_order = next((order for order in prepared_plan.buy_orders if order.ticker == ticker), None)
+                        next_pending_buy.append(
+                            queue_pending_buy(
+                                ticker,
+                                original_score=matching_order.score_final if matching_order is not None else 0.0,
+                                queue_date=trade_date_compact,
+                                shares=int(decision["quantity"]),
+                                amount=matching_order.amount if matching_order is not None else 0.0,
+                            )
+                        )
+                        executed_trades[ticker] = 0
+                        continue
+                    if decision["action"] == "sell" and normalized_ticker in limit_down:
+                        long_shares = self._portfolio.get_positions().get(ticker, {}).get("long", 0)
+                        sell_ratio = (int(decision["quantity"]) / long_shares) if long_shares else 1.0
+                        next_pending_sell.append(
+                            queue_pending_sell(
+                                ticker,
+                                original_score=-1.0,
+                                queue_date=trade_date_compact,
+                                shares=int(decision["quantity"]),
+                                sell_ratio=sell_ratio,
+                            )
+                        )
+                        executed_trades[ticker] = 0
+                        continue
                     executed_qty = self._executor.execute_trade(
                         ticker,
                         decision["action"],
@@ -331,6 +429,9 @@ class BacktestEngine:
                         daily_turnover=daily_turnovers.get(ticker),
                     )
                     executed_trades[ticker] = executed_qty
+                prepared_plan.risk_alerts.extend(queue_alerts)
+                self._pending_buy_queue = self._dedupe_pending_orders(next_pending_buy)
+                self._pending_sell_queue = self._dedupe_pending_orders(next_pending_sell)
 
             agent_output = self._build_pipeline_agent_output(decisions, active_tickers)
             self._append_daily_state(
@@ -344,6 +445,8 @@ class BacktestEngine:
 
             if self._pipeline is not None:
                 pending_plan = self._pipeline.run_post_market(trade_date_compact, self._portfolio.get_snapshot())
+                pending_plan.pending_buy_queue = list(self._pending_buy_queue)
+                pending_plan.pending_sell_queue = list(self._pending_sell_queue)
 
         return self._performance_metrics
 
