@@ -73,6 +73,18 @@ class Portfolio:
     def get_realized_gains(self) -> Mapping[str, TickerRealizedGains]:
         return MappingProxyType(self._portfolio["realized_gains"])  # type: ignore[arg-type]
 
+    def ensure_ticker(self, ticker: str) -> None:
+        if ticker in self._portfolio["positions"]:
+            return
+        self._portfolio["positions"][ticker] = {
+            "long": 0,
+            "short": 0,
+            "long_cost_basis": 0.0,
+            "short_cost_basis": 0.0,
+            "short_margin_used": 0.0,
+        }
+        self._portfolio["realized_gains"][ticker] = {"long": 0.0, "short": 0.0}
+
     def apply_long_buy(self, ticker: str, quantity: int, price: float) -> int:
         if quantity <= 0:
             return 0

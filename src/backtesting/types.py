@@ -17,6 +17,7 @@ class Action(str, Enum):
 
 # Backward-compatible alias
 ActionLiteral = Literal["buy", "sell", "short", "cover", "hold"]
+BacktestMode = Literal["agent", "pipeline"]
 
 
 class PositionState(TypedDict):

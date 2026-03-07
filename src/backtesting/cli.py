@@ -36,6 +36,7 @@ def main() -> int:
     )
     parser.add_argument("--initial-capital", type=float, default=100000)
     parser.add_argument("--margin-requirement", type=float, default=0.0)
+    parser.add_argument("--mode", choices=["agent", "pipeline"], default="agent", help="Backtest execution mode")
     parser.add_argument("--analysts", type=str, required=False)
     parser.add_argument("--analysts-all", action="store_true")
     parser.add_argument("--ollama", action="store_true")
@@ -145,6 +146,7 @@ def main() -> int:
         model_provider=model_provider,
         selected_analysts=selected_analysts,
         initial_margin_requirement=args.margin_requirement,
+        backtest_mode=args.mode,
     )
 
     metrics = engine.run_backtest()
