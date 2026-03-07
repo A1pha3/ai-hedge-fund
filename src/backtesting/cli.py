@@ -15,6 +15,7 @@ from src.utils.logging import get_logger
 from src.utils.ollama import ensure_ollama_and_model
 
 from .engine import BacktestEngine
+from .walk_forward import build_walk_forward_windows, run_walk_forward, summarize_walk_forward
 
 logger = get_logger(__name__)
 
@@ -37,6 +38,10 @@ def main() -> int:
     parser.add_argument("--initial-capital", type=float, default=100000)
     parser.add_argument("--margin-requirement", type=float, default=0.0)
     parser.add_argument("--mode", choices=["agent", "pipeline"], default="agent", help="Backtest execution mode")
+    parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward validation")
+    parser.add_argument("--train-months", type=int, default=2, help="Training window size in months for walk-forward")
+    parser.add_argument("--test-months", type=int, default=1, help="Test window size in months for walk-forward")
+    parser.add_argument("--step-months", type=int, default=1, help="Step size in months for walk-forward")
     parser.add_argument("--analysts", type=str, required=False)
     parser.add_argument("--analysts-all", action="store_true")
     parser.add_argument("--ollama", action="store_true")
@@ -136,18 +141,43 @@ def main() -> int:
         logger.info(f"Selected {model_provider} model: {model_name}")
         print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
 
-    engine = BacktestEngine(
-        agent=run_hedge_fund,
-        tickers=tickers,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        initial_capital=args.initial_capital,
-        model_name=model_name,
-        model_provider=model_provider,
-        selected_analysts=selected_analysts,
-        initial_margin_requirement=args.margin_requirement,
-        backtest_mode=args.mode,
-    )
+    def _build_engine(start_date: str, end_date: str) -> BacktestEngine:
+        return BacktestEngine(
+            agent=run_hedge_fund,
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=args.initial_capital,
+            model_name=model_name,
+            model_provider=model_provider,
+            selected_analysts=selected_analysts,
+            initial_margin_requirement=args.margin_requirement,
+            backtest_mode=args.mode,
+        )
+
+    if args.walk_forward:
+        windows = build_walk_forward_windows(
+            args.start_date,
+            args.end_date,
+            train_months=args.train_months,
+            test_months=args.test_months,
+            step_months=args.step_months,
+        )
+        results = run_walk_forward(
+            windows,
+            lambda window: _build_engine(window.test_start, window.test_end),
+        )
+        summary = summarize_walk_forward(results)
+        print(f"Walk-Forward Windows: {summary['window_count']}")
+        if summary["avg_sharpe"] is not None:
+            print(f"Average Sharpe: {summary['avg_sharpe']:.2f}")
+        if summary["avg_sortino"] is not None:
+            print(f"Average Sortino: {summary['avg_sortino']:.2f}")
+        if summary["avg_max_drawdown"] is not None:
+            print(f"Average Max Drawdown: {abs(summary['avg_max_drawdown']):.2f}%")
+        return 0
+
+    engine = _build_engine(args.start_date, args.end_date)
 
     metrics = engine.run_backtest()
     values = engine.get_portfolio_values()

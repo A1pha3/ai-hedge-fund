@@ -36,6 +36,7 @@ def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]
     monkeypatch.setattr("src.backtesting.engine.get_insider_trades", lambda *a, **k: [])
     monkeypatch.setattr("src.backtesting.engine.get_company_news", lambda *a, **k: [])
     monkeypatch.setattr("src.backtesting.output.print_backtest_results", lambda *a, **k: None)
+    monkeypatch.setattr("src.backtesting.engine.get_limit_list", lambda *a, **k: None)
 
     def fake_get_price_data(ticker: str, start_date: str, end_date: str, api_key=None):
         closes = closes_by_ticker[ticker]
@@ -145,3 +146,53 @@ def test_pipeline_mode_crisis_reduce_trims_existing_position(monkeypatch):
 
     snapshot = engine._portfolio.get_snapshot()
     assert snapshot["positions"]["AAPL"]["long"] == 100
+
+
+def test_pipeline_mode_blocks_limit_up_buy(monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "000001": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+                "2024-03-05": 12.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+                "2024-03-05": 102.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "src.backtesting.engine.get_limit_list",
+        lambda trade_date: pd.DataFrame([{"ts_code": "000001.SZ", "limit": "U"}]) if trade_date == "20240304" else None,
+    )
+    plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="000001", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+    )
+    pipeline = StubPipeline(
+        post_market_plans=[plan, ExecutionPlan(date="20240304", portfolio_snapshot={})],
+        intraday_responses=[(plan.buy_orders, [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["000001"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+    )
+
+    engine.run_backtest()
+
+    snapshot = engine._portfolio.get_snapshot()
+    assert snapshot["positions"]["000001"]["long"] == 0

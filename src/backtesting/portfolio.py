@@ -85,6 +85,9 @@ class Portfolio:
         }
         self._portfolio["realized_gains"][ticker] = {"long": 0.0, "short": 0.0}
 
+    def adjust_cash(self, delta: float) -> None:
+        self._portfolio["cash"] += float(delta)
+
     def apply_long_buy(self, ticker: str, quantity: int, price: float) -> int:
         if quantity <= 0:
             return 0

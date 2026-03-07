@@ -8,6 +8,7 @@ from dateutil.relativedelta import relativedelta
 
 from src.execution.daily_pipeline import DailyPipeline
 from src.execution.models import ExecutionPlan
+from src.tools.tushare_api import get_limit_list
 from src.tools.api import (
     get_company_news,
     get_financial_metrics,
@@ -21,7 +22,7 @@ from .controller import AgentController
 from .metrics import PerformanceMetricsCalculator
 from .output import OutputBuilder
 from .portfolio import Portfolio
-from .trader import TradeExecutor
+from .trader import TradeExecutor, TradingConstraints
 from .types import AgentOutput, BacktestMode, PerformanceMetrics, PortfolioValuePoint
 from .valuation import calculate_portfolio_value, compute_exposures
 
@@ -65,7 +66,7 @@ class BacktestEngine:
             initial_cash=initial_capital,
             margin_requirement=initial_margin_requirement,
         )
-        self._executor = TradeExecutor()
+        self._executor = TradeExecutor(TradingConstraints() if backtest_mode == "pipeline" else TradingConstraints(commission_rate=0.0, stamp_duty_rate=0.0, base_slippage_rate=0.0, low_liquidity_slippage_rate=0.0))
         self._agent_controller = AgentController()
         self._perf = PerformanceMetricsCalculator()
         self._results = OutputBuilder(initial_capital=self._initial_capital)
@@ -100,6 +101,37 @@ class BacktestEngine:
 
     def _iter_backtest_dates(self) -> pd.DatetimeIndex:
         return pd.date_range(self._start_date, self._end_date, freq="B")
+
+    @staticmethod
+    def _normalize_ticker(ticker: str) -> str:
+        return str(ticker).split(".")[0].upper()
+
+    def _get_limit_state(self, trade_date_compact: str) -> tuple[set[str], set[str]]:
+        limit_df = get_limit_list(trade_date_compact)
+        if limit_df is None or limit_df.empty:
+            return set(), set()
+        limit_up = {
+            self._normalize_ticker(ts_code)
+            for ts_code in limit_df.loc[limit_df["limit"] == "U", "ts_code"].tolist()
+        }
+        limit_down = {
+            self._normalize_ticker(ts_code)
+            for ts_code in limit_df.loc[limit_df["limit"] == "D", "ts_code"].tolist()
+        }
+        return limit_up, limit_down
+
+    def _get_daily_turnovers(self, active_tickers: Sequence[str], previous_date_str: str, current_date_str: str) -> Dict[str, float]:
+        turnovers: Dict[str, float] = {}
+        for ticker in active_tickers:
+            try:
+                price_data = get_price_data(ticker, previous_date_str, current_date_str)
+                if price_data.empty:
+                    continue
+                row = price_data.iloc[-1]
+                turnovers[ticker] = float(row.get("close", 0.0)) * float(row.get("volume", 0.0))
+            except Exception:
+                continue
+        return turnovers
 
     def _load_current_prices(self, tickers: Sequence[str], previous_date_str: str, current_date_str: str) -> Dict[str, float] | None:
         current_prices: Dict[str, float] = {}
@@ -243,6 +275,8 @@ class BacktestEngine:
             current_prices = self._load_current_prices(active_tickers, previous_date_str, current_date_str)
             if current_prices is None:
                 continue
+            daily_turnovers = self._get_daily_turnovers(active_tickers, previous_date_str, current_date_str)
+            limit_up, limit_down = self._get_limit_state(trade_date_compact)
 
             decisions: Dict[str, dict] = {}
             executed_trades: Dict[str, int] = {ticker: 0 for ticker in active_tickers}
@@ -285,7 +319,17 @@ class BacktestEngine:
                     price = current_prices.get(ticker)
                     if price is None:
                         continue
-                    executed_qty = self._executor.execute_trade(ticker, decision["action"], decision["quantity"], price, self._portfolio)
+                    normalized_ticker = self._normalize_ticker(ticker)
+                    executed_qty = self._executor.execute_trade(
+                        ticker,
+                        decision["action"],
+                        decision["quantity"],
+                        price,
+                        self._portfolio,
+                        is_limit_up=normalized_ticker in limit_up,
+                        is_limit_down=normalized_ticker in limit_down,
+                        daily_turnover=daily_turnovers.get(ticker),
+                    )
                     executed_trades[ticker] = executed_qty
 
             agent_output = self._build_pipeline_agent_output(decisions, active_tickers)
