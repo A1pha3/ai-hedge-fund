@@ -2,10 +2,8 @@ import argparse
 import json
 import sys
 from datetime import datetime
+from pathlib import Path
 
-import questionary
-from colorama import Fore, init, Style
-from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
@@ -15,9 +13,14 @@ from src.agents.risk_manager import risk_management_agent
 from src.cli.input import (
     parse_cli_inputs,
 )
+from src.execution.daily_pipeline import DailyPipeline
 from src.graph.state import AgentState
+from src.screening.candidate_pool import build_candidate_pool
+from src.screening.market_state import detect_market_state
+from src.screening.signal_fusion import fuse_batch
+from src.screening.strategy_scorer import score_batch
 from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
-from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
+from src.utils.analysts import get_analyst_nodes
 from src.utils.display import (
     print_trading_output,
     save_daily_gainers_report,
@@ -25,7 +28,6 @@ from src.utils.display import (
 )
 from src.utils.logging import get_logger, setup_logging
 from src.utils.progress import progress
-from src.utils.visualize import save_graph_as_png
 
 # Load environment variables from .env file
 load_dotenv()
@@ -33,8 +35,6 @@ load_dotenv()
 # Setup logging
 setup_logging()
 logger = get_logger(__name__)
-
-init(autoreset=True)
 
 
 def parse_hedge_fund_response(response):
@@ -179,9 +179,60 @@ def run_daily_gainers_cli() -> int:
     return 0
 
 
+def _save_json_report(filename: str, payload: dict) -> Path:
+    report_dir = Path(__file__).resolve().parents[1] / "data" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    output_path = report_dir / filename
+    with open(output_path, "w", encoding="utf-8") as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2, default=str)
+    return output_path
+
+
+def run_pipeline_mode(trade_date: str) -> int:
+    pipeline = DailyPipeline()
+    plan = pipeline.run_post_market(trade_date)
+    output_path = _save_json_report(f"execution_plan_{trade_date}.json", plan.model_dump())
+    print(f"[Pipeline] 日期: {trade_date}")
+    print(f"[Pipeline] Layer A: {plan.layer_a_count} | Layer B: {plan.layer_b_count} | Layer C: {plan.layer_c_count}")
+    print(f"[Pipeline] 买入: {len(plan.buy_orders)} | 卖出: {len(plan.sell_orders)}")
+    print(f"[Pipeline] 已输出: {output_path}")
+    return 0
+
+
+def run_screen_only_mode(trade_date: str) -> int:
+    candidates = build_candidate_pool(trade_date)
+    market_state = detect_market_state(trade_date)
+    scored = score_batch(candidates, trade_date)
+    fused = fuse_batch(scored, market_state, trade_date)
+    high_pool = [item for item in fused if item.score_b >= 0.35]
+    output = {
+        "date": trade_date,
+        "market_state": market_state.model_dump(),
+        "layer_a_count": len(candidates),
+        "layer_b_count": len(high_pool),
+        "high_pool": [item.model_dump() for item in high_pool],
+    }
+    output_path = _save_json_report(f"screen_only_{trade_date}.json", output)
+    print(f"[ScreenOnly] 日期: {trade_date}")
+    print(f"[ScreenOnly] Layer A: {len(candidates)} | Layer B: {len(high_pool)}")
+    print(f"[ScreenOnly] 已输出: {output_path}")
+    return 0
+
+
 if __name__ == "__main__":
     if "--daily-gainers" in sys.argv:
         raise SystemExit(run_daily_gainers_cli())
+
+    if "--pipeline" in sys.argv or "--screen-only" in sys.argv:
+        parser = argparse.ArgumentParser(description="Institutional multi-strategy pipeline runner")
+        parser.add_argument("--pipeline", action="store_true", help="运行全流水线模式")
+        parser.add_argument("--screen-only", action="store_true", help="仅运行 Layer A + Layer B")
+        parser.add_argument("--trade-date", required=True, help="交易日期 YYYYMMDD")
+        args = parser.parse_args()
+        if args.pipeline:
+            raise SystemExit(run_pipeline_mode(args.trade_date))
+        if args.screen_only:
+            raise SystemExit(run_screen_only_mode(args.trade_date))
 
     inputs = parse_cli_inputs(
         description="Run the hedge fund trading system",
