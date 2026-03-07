@@ -172,6 +172,11 @@ def main() -> int:
         )
 
     if args.ab_compare:
+        checkpoint_path = None
+        if args.report_json:
+            checkpoint_path = str(os.path.splitext(args.report_json)[0] + ".checkpoint.json")
+        elif args.report_file:
+            checkpoint_path = str(os.path.splitext(args.report_file)[0] + ".checkpoint.json")
         results, summary = run_ab_comparison_walk_forward(
             tickers=tickers,
             start_date=args.start_date,
@@ -187,6 +192,7 @@ def main() -> int:
             step_months=args.step_months,
             baseline_pct_threshold=args.baseline_pct_threshold,
             baseline_top_n=args.baseline_top_n,
+            checkpoint_path=checkpoint_path,
         )
         report = format_ab_comparison_report(results, summary)
         payload = build_ab_comparison_payload(results, summary)

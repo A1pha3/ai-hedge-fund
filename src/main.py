@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +21,7 @@ from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
-from src.utils.analysts import get_analyst_nodes
+from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.display import (
     print_trading_output,
     save_daily_gainers_report,
@@ -29,8 +30,8 @@ from src.utils.display import (
 from src.utils.logging import get_logger, setup_logging
 from src.utils.progress import progress
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file and override stale inherited values.
+load_dotenv(override=True)
 
 # Setup logging
 setup_logging()
@@ -118,26 +119,59 @@ def create_workflow(selected_analysts=None):
     # Default to all analysts if none selected
     if selected_analysts is None:
         selected_analysts = list(analyst_nodes.keys())
+
+    selected_analysts = _order_selected_analysts(selected_analysts)
+    analyst_batches = _build_analyst_batches(selected_analysts, _get_analyst_concurrency_limit())
+
     # Add selected analyst nodes
     for analyst_key in selected_analysts:
         node_name, node_func = analyst_nodes[analyst_key]
         workflow.add_node(node_name, node_func)
-        workflow.add_edge("start_node", node_name)
 
     # Always add risk and portfolio management
     workflow.add_node("risk_management_agent", risk_management_agent)
     workflow.add_node("portfolio_manager", portfolio_management_agent)
 
-    # Connect selected analysts to risk management
-    for analyst_key in selected_analysts:
-        node_name = analyst_nodes[analyst_key][0]
-        workflow.add_edge(node_name, "risk_management_agent")
+    if analyst_batches:
+        for analyst_key in analyst_batches[0]:
+            workflow.add_edge("start_node", analyst_nodes[analyst_key][0])
+
+        for previous_batch, current_batch in zip(analyst_batches, analyst_batches[1:]):
+            for previous_key in previous_batch:
+                previous_node_name = analyst_nodes[previous_key][0]
+                for current_key in current_batch:
+                    workflow.add_edge(previous_node_name, analyst_nodes[current_key][0])
+
+        for analyst_key in analyst_batches[-1]:
+            workflow.add_edge(analyst_nodes[analyst_key][0], "risk_management_agent")
+    else:
+        workflow.add_edge("start_node", "risk_management_agent")
 
     workflow.add_edge("risk_management_agent", "portfolio_manager")
     workflow.add_edge("portfolio_manager", END)
 
     workflow.set_entry_point("start_node")
     return workflow
+
+
+def _get_analyst_concurrency_limit() -> int:
+    raw_value = os.getenv("ANALYST_CONCURRENCY_LIMIT", "2")
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return 2
+
+
+def _order_selected_analysts(selected_analysts: list[str]) -> list[str]:
+    analyst_nodes = get_analyst_nodes()
+    ordered_keys = [key for _, key in ANALYST_ORDER if key in analyst_nodes]
+    ordered_selected = [key for key in ordered_keys if key in selected_analysts]
+    remaining = [key for key in selected_analysts if key not in ordered_selected]
+    return ordered_selected + remaining
+
+
+def _build_analyst_batches(selected_analysts: list[str], concurrency_limit: int) -> list[list[str]]:
+    return [selected_analysts[index : index + concurrency_limit] for index in range(0, len(selected_analysts), concurrency_limit)]
 
 
 def run_daily_gainers_cli() -> int:

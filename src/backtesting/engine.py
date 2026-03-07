@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+from pathlib import Path
 from typing import Dict, Sequence
 
 import pandas as pd
@@ -50,6 +52,7 @@ class BacktestEngine:
         initial_margin_requirement: float,
         backtest_mode: BacktestMode = "agent",
         pipeline: DailyPipeline | None = None,
+        checkpoint_path: str | None = None,
     ) -> None:
         self._agent = agent
         self._tickers = tickers
@@ -61,6 +64,7 @@ class BacktestEngine:
         self._selected_analysts = selected_analysts
         self._backtest_mode = backtest_mode
         self._pipeline = pipeline or (DailyPipeline() if backtest_mode == "pipeline" else None)
+        self._checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
 
         self._portfolio = Portfolio(
             tickers=tickers,
@@ -87,6 +91,56 @@ class BacktestEngine:
         }
         self._pending_buy_queue: list[PendingOrder] = []
         self._pending_sell_queue: list[PendingOrder] = []
+
+    def _serialize_portfolio_values(self) -> list[dict]:
+        serialized: list[dict] = []
+        for point in self._portfolio_values:
+            payload = dict(point)
+            date_value = payload.get("Date")
+            if isinstance(date_value, datetime):
+                payload["Date"] = date_value.strftime("%Y-%m-%d")
+            serialized.append(payload)
+        return serialized
+
+    def _save_checkpoint(self, last_processed_date: str, pending_plan: ExecutionPlan | None = None) -> None:
+        if self._checkpoint_path is None:
+            return
+
+        payload = {
+            "last_processed_date": last_processed_date,
+            "portfolio_snapshot": self._portfolio.get_snapshot(),
+            "portfolio_values": self._serialize_portfolio_values(),
+            "performance_metrics": dict(self._performance_metrics),
+            "pending_buy_queue": [order.model_dump() for order in self._pending_buy_queue],
+            "pending_sell_queue": [order.model_dump() for order in self._pending_sell_queue],
+            "pending_plan": pending_plan.model_dump() if pending_plan is not None else None,
+        }
+        self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        self._checkpoint_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+    def _load_checkpoint(self) -> tuple[str | None, ExecutionPlan | None]:
+        if self._checkpoint_path is None or not self._checkpoint_path.exists():
+            return None, None
+
+        payload = json.loads(self._checkpoint_path.read_text(encoding="utf-8"))
+        self._portfolio.load_snapshot(payload["portfolio_snapshot"])
+        self._portfolio_values = []
+        for item in payload.get("portfolio_values", []):
+            restored = dict(item)
+            date_value = restored.get("Date")
+            if isinstance(date_value, str) and date_value:
+                restored["Date"] = datetime.strptime(date_value, "%Y-%m-%d")
+            self._portfolio_values.append(restored)
+        self._performance_metrics.update(payload.get("performance_metrics", {}))
+        self._pending_buy_queue = [PendingOrder.model_validate(item) for item in payload.get("pending_buy_queue", [])]
+        self._pending_sell_queue = [PendingOrder.model_validate(item) for item in payload.get("pending_sell_queue", [])]
+        pending_plan_payload = payload.get("pending_plan")
+        pending_plan = ExecutionPlan.model_validate(pending_plan_payload) if pending_plan_payload else None
+        return payload.get("last_processed_date"), pending_plan
+
+    def _clear_checkpoint(self) -> None:
+        if self._checkpoint_path is not None and self._checkpoint_path.exists():
+            self._checkpoint_path.unlink()
 
     def _prefetch_data(self) -> None:
         end_date_dt = datetime.strptime(self._end_date, "%Y-%m-%d")
@@ -320,8 +374,7 @@ class BacktestEngine:
 
         return self._dedupe_pending_orders(next_pending_buy), self._dedupe_pending_orders(next_pending_sell), alerts
 
-    def _run_pipeline_mode(self, dates: pd.DatetimeIndex) -> PerformanceMetrics:
-        pending_plan: ExecutionPlan | None = None
+    def _run_pipeline_mode(self, dates: pd.DatetimeIndex, pending_plan: ExecutionPlan | None = None) -> PerformanceMetrics:
 
         for current_date in dates:
             current_date_str = current_date.strftime("%Y-%m-%d")
@@ -448,20 +501,29 @@ class BacktestEngine:
                 pending_plan.pending_buy_queue = list(self._pending_buy_queue)
                 pending_plan.pending_sell_queue = list(self._pending_sell_queue)
 
+            self._save_checkpoint(current_date_str, pending_plan)
+
         return self._performance_metrics
 
     def run_backtest(self) -> PerformanceMetrics:
         self._prefetch_data()
 
         dates = self._iter_backtest_dates()
-        if len(dates) > 0:
+        last_processed_date, pending_plan = self._load_checkpoint()
+        if last_processed_date is not None:
+            dates = pd.DatetimeIndex([date for date in dates if date.strftime("%Y-%m-%d") > last_processed_date])
+        elif len(dates) > 0:
             self._portfolio_values = [{"Date": dates[0], "Portfolio Value": self._initial_capital}]
         else:
             self._portfolio_values = []
 
         if self._backtest_mode == "pipeline":
-            return self._run_pipeline_mode(dates)
-        return self._run_agent_mode(dates)
+            metrics = self._run_pipeline_mode(dates, pending_plan=pending_plan)
+        else:
+            metrics = self._run_agent_mode(dates)
+
+        self._clear_checkpoint()
+        return metrics
 
     def get_portfolio_values(self) -> Sequence[PortfolioValuePoint]:
         return list(self._portfolio_values)

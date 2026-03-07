@@ -58,6 +58,26 @@ class Portfolio:
             "realized_gains": gains_copy,
         }
 
+    def load_snapshot(self, snapshot: PortfolioSnapshot) -> None:
+        self._portfolio = {
+            "cash": float(snapshot["cash"]),
+            "margin_used": float(snapshot["margin_used"]),
+            "margin_requirement": float(snapshot["margin_requirement"]),
+            "positions": {
+                ticker: {
+                    "long": int(position["long"]),
+                    "short": int(position["short"]),
+                    "long_cost_basis": float(position["long_cost_basis"]),
+                    "short_cost_basis": float(position["short_cost_basis"]),
+                    "short_margin_used": float(position["short_margin_used"]),
+                }
+                for ticker, position in snapshot["positions"].items()
+            },
+            "realized_gains": {
+                ticker: {"long": float(gains["long"]), "short": float(gains["short"])} for ticker, gains in snapshot["realized_gains"].items()
+            },
+        }
+
     def get_cash(self) -> float:
         return float(self._portfolio["cash"])
 

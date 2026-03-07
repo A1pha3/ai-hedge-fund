@@ -110,6 +110,49 @@ LLM_ORDER = [model.to_choice_tuple() for model in AVAILABLE_MODELS]
 # Create Ollama LLM_ORDER separately
 OLLAMA_LLM_ORDER = [model.to_choice_tuple() for model in OLLAMA_MODELS]
 
+ZHIPU_STANDARD_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+ZHIPU_CODING_PLAN_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4"
+
+
+def _normalize_zhipu_coding_plan_model_name(model_name: str) -> str:
+    """Normalize coding-plan model ids to the names expected by Zhipu tools docs."""
+    lowered = model_name.lower()
+    if lowered.startswith("glm-4."):
+        return model_name.upper()
+    return model_name
+
+
+def get_zhipu_coding_plan_model(model_name: str, api_keys: dict | None = None) -> ChatOpenAI:
+    """Build a Zhipu Coding Plan client using the dedicated coding endpoint."""
+    api_key = (api_keys or {}).get("ZHIPU_CODE_API_KEY") or os.getenv("ZHIPU_CODE_API_KEY")
+    if not api_key:
+        print("API Key Error: Please make sure ZHIPU_CODE_API_KEY is set in your .env file or provided via API keys.")
+        raise ValueError("Zhipu Coding Plan API key not found. Please make sure ZHIPU_CODE_API_KEY is set in your .env file or provided via API keys.")
+
+    base_url = os.getenv("ZHIPU_CODING_API_BASE", ZHIPU_CODING_PLAN_BASE_URL)
+    normalized_model_name = _normalize_zhipu_coding_plan_model_name(model_name)
+    return ChatOpenAI(model=normalized_model_name, api_key=api_key, base_url=base_url)
+
+
+def get_zhipu_model(model_name: str, api_keys: dict | None = None) -> ChatOpenAI:
+    """Build a Zhipu client, routing to Coding Plan when a dedicated key is intended."""
+    standard_api_key = (api_keys or {}).get("ZHIPU_API_KEY") or os.getenv("ZHIPU_API_KEY")
+    coding_api_key = (api_keys or {}).get("ZHIPU_CODE_API_KEY") or os.getenv("ZHIPU_CODE_API_KEY")
+    prefer_coding_plan = bool((api_keys or {}).get("ZHIPU_USE_CODING_PLAN")) or os.getenv("ZHIPU_USE_CODING_PLAN", "").lower() in {"1", "true", "yes"}
+    if not standard_api_key and coding_api_key:
+        prefer_coding_plan = True
+
+    if prefer_coding_plan:
+        return get_zhipu_coding_plan_model(model_name, api_keys)
+
+    api_key = standard_api_key
+    if not api_key:
+        print(f"API Key Error: Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
+        raise ValueError("Zhipu API key not found. Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
+
+    base_url = os.getenv("ZHIPU_API_BASE", ZHIPU_STANDARD_BASE_URL)
+    return ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url)
+
 
 def get_model_info(model_name: str, model_provider: str) -> LLMModel | None:
     """Get model information by model_name"""
@@ -230,13 +273,7 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
             raise ValueError("Azure OpenAI deployment name not found.  Please make sure AZURE_OPENAI_DEPLOYMENT_NAME is set in your .env file.")
         return AzureChatOpenAI(azure_endpoint=azure_endpoint, azure_deployment=azure_deployment_name, api_key=api_key, api_version="2024-10-21")
     elif model_provider == ModelProvider.ZHIPU:
-        # 智谱 GLM 原生 API 支持
-        api_key = (api_keys or {}).get("ZHIPU_API_KEY") or os.getenv("ZHIPU_API_KEY")
-        if not api_key:
-            print(f"API Key Error: Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
-            raise ValueError("Zhipu API key not found. Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
-        # 智谱 API 使用 OpenAI 兼容接口
-        return ChatOpenAI(model=model_name, api_key=api_key, base_url="https://open.bigmodel.cn/api/paas/v4")
+        return get_zhipu_model(model_name, api_keys)
     elif model_provider == ModelProvider.MINIMAX:
         # MiniMax 原生 API 支持
         api_key = (api_keys or {}).get("MINIMAX_API_KEY") or os.getenv("MINIMAX_API_KEY")

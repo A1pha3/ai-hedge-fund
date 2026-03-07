@@ -30,6 +30,14 @@ def safe_float(value, default=0.0):
         return default
 
 
+def safe_confidence(value, default=0.5):
+    """Return a finite confidence score clamped to the [0, 1] range."""
+    confidence = safe_float(value, default)
+    if not math.isfinite(confidence):
+        return default
+    return max(0.0, min(confidence, 1.0))
+
+
 def generate_chinese_reasoning(ticker: str, combined_signal: dict, strategy_signals: dict, weights: dict) -> str:
     """
     生成中文技术分析详细说明
@@ -89,7 +97,7 @@ def generate_chinese_reasoning(ticker: str, combined_signal: dict, strategy_sign
 
     # 总体信号
     final_signal = combined_signal["signal"]
-    final_confidence = combined_signal["confidence"] * 100
+    final_confidence = safe_confidence(combined_signal.get("confidence", 0.5)) * 100
     signal_cn = {"bullish": "看涨", "bearish": "看跌", "neutral": "中性"}
     lines.append(f"【综合信号】{signal_cn.get(final_signal, final_signal)} (置信度: {final_confidence:.1f}%)\n")
 
@@ -99,7 +107,7 @@ def generate_chinese_reasoning(ticker: str, combined_signal: dict, strategy_sign
     for strategy_key, strategy_name in strategy_names.items():
         signal_data = strategy_signals.get(strategy_key, {})
         signal = signal_data.get("signal", "neutral")
-        confidence = signal_data.get("confidence", 0.5) * 100
+        confidence = safe_confidence(signal_data.get("confidence", 0.5)) * 100
         metrics = signal_data.get("metrics", {})
         weight = weights.get(strategy_key, 0) * 100
 
@@ -294,31 +302,31 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
         # Generate detailed analysis report for this ticker
         technical_analysis[ticker] = {
             "signal": combined_signal["signal"],
-            "confidence": round(combined_signal["confidence"] * 100),
+            "confidence": round(safe_confidence(combined_signal.get("confidence", 0.5)) * 100),
             "reasoning": {
                 "trend_following": {
                     "signal": trend_signals["signal"],
-                    "confidence": round(trend_signals["confidence"] * 100),
+                    "confidence": round(safe_confidence(trend_signals.get("confidence", 0.5)) * 100),
                     "metrics": normalize_pandas(trend_signals["metrics"]),
                 },
                 "mean_reversion": {
                     "signal": mean_reversion_signals["signal"],
-                    "confidence": round(mean_reversion_signals["confidence"] * 100),
+                    "confidence": round(safe_confidence(mean_reversion_signals.get("confidence", 0.5)) * 100),
                     "metrics": normalize_pandas(mean_reversion_signals["metrics"]),
                 },
                 "momentum": {
                     "signal": momentum_signals["signal"],
-                    "confidence": round(momentum_signals["confidence"] * 100),
+                    "confidence": round(safe_confidence(momentum_signals.get("confidence", 0.5)) * 100),
                     "metrics": normalize_pandas(momentum_signals["metrics"]),
                 },
                 "volatility": {
                     "signal": volatility_signals["signal"],
-                    "confidence": round(volatility_signals["confidence"] * 100),
+                    "confidence": round(safe_confidence(volatility_signals.get("confidence", 0.5)) * 100),
                     "metrics": normalize_pandas(volatility_signals["metrics"]),
                 },
                 "statistical_arbitrage": {
                     "signal": stat_arb_signals["signal"],
-                    "confidence": round(stat_arb_signals["confidence"] * 100),
+                    "confidence": round(safe_confidence(stat_arb_signals.get("confidence", 0.5)) * 100),
                     "metrics": normalize_pandas(stat_arb_signals["metrics"]),
                 },
                 "chinese_explanation": chinese_reasoning,
@@ -377,7 +385,7 @@ def calculate_trend_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_confidence(confidence),
         "metrics": {
             "adx": safe_float(adx["adx"].iloc[-1]),
             "trend_strength": safe_float(trend_strength),
@@ -417,7 +425,7 @@ def calculate_mean_reversion_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_confidence(confidence),
         "metrics": {
             "z_score": safe_float(z_score.iloc[-1]),
             "price_vs_bb": safe_float(price_vs_bb),
@@ -462,7 +470,7 @@ def calculate_momentum_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_confidence(confidence),
         "metrics": {
             "momentum_1m": safe_float(mom_1m.iloc[-1]),
             "momentum_3m": safe_float(mom_3m.iloc[-1]),
@@ -509,7 +517,7 @@ def calculate_volatility_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_confidence(confidence),
         "metrics": {
             "historical_volatility": safe_float(hist_vol.iloc[-1]),
             "volatility_regime": safe_float(current_vol_regime),
@@ -549,7 +557,7 @@ def calculate_stat_arb_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_confidence(confidence),
         "metrics": {
             "hurst_exponent": safe_float(hurst),
             "skewness": safe_float(skew.iloc[-1]),
@@ -577,7 +585,7 @@ def weighted_signal_combination(signals, weights):
     for strategy, signal in signals.items():
         numeric_signal = signal_values[signal["signal"]]
         weight = weights[strategy]
-        confidence = signal["confidence"]
+        confidence = safe_confidence(signal.get("confidence", 0.5))
 
         weighted_sum += numeric_signal * weight * confidence
         total_confidence += weight * confidence
@@ -608,7 +616,7 @@ def weighted_signal_combination(signals, weights):
     else:
         confidence = abs(final_score)
 
-    return {"signal": signal, "confidence": confidence}
+    return {"signal": signal, "confidence": safe_confidence(confidence, default=0.0)}
 
 
 def normalize_pandas(obj):

@@ -1,4 +1,5 @@
 import json
+import math
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -18,6 +19,21 @@ class WarrenBuffettSignal(BaseModel):
     confidence: int = Field(description="Confidence 0-100")
     reasoning: str = Field(description="Reasoning for the decision")
     reasoning_cn: str = Field(description="Reasoning in Chinese")
+
+
+def _latest_line_item_number(line_items: list, field: str) -> float | None:
+    """Return the most recent finite numeric value for a given LineItem field."""
+    for line_item in line_items or []:
+        value = getattr(line_item, field, None)
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            return number
+    return None
 
 
 def warren_buffett_agent(state: AgentState, agent_id: str = "warren_buffett_agent"):
@@ -505,8 +521,7 @@ def calculate_intrinsic_value(financial_line_items: list, currency_symbol: str =
         return {"intrinsic_value": None, "details": earnings_data["details"]}
 
     owner_earnings = earnings_data["owner_earnings"]
-    latest_financial_line_items = financial_line_items[0]
-    shares_outstanding = latest_financial_line_items.outstanding_shares
+    shares_outstanding = _latest_line_item_number(financial_line_items, "outstanding_shares")
 
     if not shares_outstanding or shares_outstanding <= 0:
         return {"intrinsic_value": None, "details": ["Missing or invalid shares outstanding data"]}
@@ -610,7 +625,12 @@ def analyze_book_value_growth(financial_line_items: list) -> dict[str, any]:
         return {"score": 0, "details": "Insufficient data for book value analysis"}
 
     # Extract book values per share
-    book_values = [item.shareholders_equity / item.outstanding_shares for item in financial_line_items if hasattr(item, "shareholders_equity") and hasattr(item, "outstanding_shares") and item.shareholders_equity and item.outstanding_shares]
+    book_values = []
+    for item in financial_line_items:
+        shareholders_equity = getattr(item, "shareholders_equity", None)
+        shares_outstanding = getattr(item, "outstanding_shares", None)
+        if shareholders_equity and shares_outstanding:
+            book_values.append(shareholders_equity / shares_outstanding)
 
     if len(book_values) < 3:
         return {"score": 0, "details": "Insufficient book value data for growth analysis"}

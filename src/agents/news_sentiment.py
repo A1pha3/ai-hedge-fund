@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pandas as pd
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from typing_extensions import Literal
 
 from src.data.models import CompanyNews
@@ -17,7 +17,7 @@ from src.utils.progress import progress
 class Sentiment(BaseModel):
     """Represents the sentiment of a news article."""
 
-    sentiment: Literal["positive", "negative", "neutral"]
+    sentiment: Literal["positive", "negative", "neutral"] = Field(validation_alias=AliasChoices("sentiment", "answer"))
     confidence: int = Field(description="Confidence 0-100")
 
 

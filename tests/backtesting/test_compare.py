@@ -1,4 +1,4 @@
-from src.backtesting.compare import ABWindowMetrics, BaselineDailyGainersPipeline, build_ab_comparison_payload, format_ab_comparison_report, run_ab_comparison_walk_forward
+from src.backtesting.compare import ABWindowMetrics, BaselineDailyGainersPipeline, build_ab_comparison_payload, format_ab_comparison_report, make_backtest_agent_runner, run_ab_comparison_walk_forward
 from src.backtesting.walk_forward import WalkForwardWindow
 from src.screening.models import MarketState, MarketStateType
 
@@ -64,6 +64,23 @@ def test_run_ab_comparison_walk_forward(monkeypatch):
     assert summary["baseline_avg_sortino"] == 1.1
     assert summary["mvp_avg_sortino"] == 1.6
     assert summary["avg_sortino_delta"] == 0.5
+
+
+def test_make_backtest_agent_runner_uses_explicit_model():
+    calls = []
+
+    def fake_agent(**kwargs):
+        calls.append(kwargs)
+        return {"analyst_signals": {"agent": {"000001": {"signal": "bullish", "confidence": 80, "reasoning": "ok"}}}}
+
+    runner = make_backtest_agent_runner(fake_agent, model_name="gpt-4.1-mini", model_provider="OpenAI")
+    result = runner(["000001"], "20260305", "fast")
+
+    assert "agent" in result
+    assert calls[0]["model_name"] == "gpt-4.1-mini"
+    assert calls[0]["model_provider"] == "OpenAI"
+    assert calls[0]["start_date"] == "2025-03-05"
+    assert calls[0]["end_date"] == "2026-03-05"
 
 
 def test_format_ab_comparison_report():

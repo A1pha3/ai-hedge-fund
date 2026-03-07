@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from math import erfc, sqrt
 from pathlib import Path
 from statistics import mean, stdev
@@ -18,6 +19,26 @@ from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
 from .engine import BacktestEngine
 from .types import PerformanceMetrics
 from .walk_forward import WalkForwardWindow, build_walk_forward_windows
+
+
+def make_backtest_agent_runner(agent: Callable, model_name: str, model_provider: str) -> Callable[[list[str], str, str], dict[str, dict[str, dict]]]:
+    def _runner(tickers: list[str], trade_date: str, model_tier: str) -> dict[str, dict[str, dict]]:
+        del model_tier
+        trade_dt = datetime.strptime(trade_date, "%Y%m%d")
+        start_date = (trade_dt - timedelta(days=365)).strftime("%Y-%m-%d")
+        end_date = trade_dt.strftime("%Y-%m-%d")
+        result = agent(
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date,
+            portfolio={"cash": 1_000_000, "positions": {}, "margin_requirement": 0.0, "margin_used": 0.0, "realized_gains": {}},
+            show_reasoning=False,
+            model_name=model_name,
+            model_provider=model_provider,
+        )
+        return result.get("analyst_signals", {})
+
+    return _runner
 
 
 def _baseline_fused_score(ticker: str, market_state) -> FusedScore:
@@ -83,6 +104,29 @@ class ABWindowMetrics:
         }
 
 
+def _window_key(window: WalkForwardWindow) -> str:
+    return f"{window.train_start}_{window.train_end}_{window.test_start}_{window.test_end}"
+
+
+def _load_compare_checkpoint(path: Path | None) -> dict[str, dict]:
+    if path is None or not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload.get("windows", {})
+
+
+def _save_compare_checkpoint(path: Path | None, windows_state: dict[str, dict]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"windows": windows_state}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _remove_if_exists(path: Path | None) -> None:
+    if path is not None and path.exists():
+        path.unlink()
+
+
 def _average_metric(metrics_list: Sequence[PerformanceMetrics], key: str) -> float | None:
     values = [metrics.get(key) for metrics in metrics_list if metrics.get(key) is not None]
     if not values:
@@ -116,6 +160,7 @@ def run_ab_comparison_walk_forward(
     step_months: int = 1,
     baseline_pct_threshold: float = 3.0,
     baseline_top_n: int = 20,
+    checkpoint_path: str | None = None,
 ) -> tuple[list[ABWindowMetrics], dict[str, float | int | None]]:
     windows = build_walk_forward_windows(
         start_date,
@@ -124,42 +169,61 @@ def run_ab_comparison_walk_forward(
         test_months=test_months,
         step_months=step_months,
     )
+    agent_runner = make_backtest_agent_runner(agent, model_name, model_provider)
+    compare_checkpoint = Path(checkpoint_path) if checkpoint_path else None
+    windows_state = _load_compare_checkpoint(compare_checkpoint)
 
     results: list[ABWindowMetrics] = []
-    for window in windows:
-        baseline_engine = BacktestEngine(
-            agent=agent,
-            tickers=tickers,
-            start_date=window.test_start,
-            end_date=window.test_end,
-            initial_capital=initial_capital,
-            model_name=model_name,
-            model_provider=model_provider,
-            selected_analysts=selected_analysts,
-            initial_margin_requirement=initial_margin_requirement,
-            backtest_mode="pipeline",
-            pipeline=BaselineDailyGainersPipeline(pct_threshold=baseline_pct_threshold, top_n=baseline_top_n),
-        )
-        mvp_engine = BacktestEngine(
-            agent=agent,
-            tickers=tickers,
-            start_date=window.test_start,
-            end_date=window.test_end,
-            initial_capital=initial_capital,
-            model_name=model_name,
-            model_provider=model_provider,
-            selected_analysts=selected_analysts,
-            initial_margin_requirement=initial_margin_requirement,
-            backtest_mode="pipeline",
-            pipeline=DailyPipeline(),
-        )
-        results.append(
-            ABWindowMetrics(
-                window=window,
-                baseline=baseline_engine.run_backtest(),
-                mvp=mvp_engine.run_backtest(),
+    for index, window in enumerate(windows, start=1):
+        window_state = windows_state.get(_window_key(window), {})
+        baseline_metrics = window_state.get("baseline")
+        mvp_metrics = window_state.get("mvp")
+        baseline_checkpoint = compare_checkpoint.with_name(f"{compare_checkpoint.stem}.window{index}.baseline.engine.json") if compare_checkpoint else None
+        mvp_checkpoint = compare_checkpoint.with_name(f"{compare_checkpoint.stem}.window{index}.mvp.engine.json") if compare_checkpoint else None
+
+        if baseline_metrics is None:
+            baseline_engine = BacktestEngine(
+                agent=agent,
+                tickers=tickers,
+                start_date=window.test_start,
+                end_date=window.test_end,
+                initial_capital=initial_capital,
+                model_name=model_name,
+                model_provider=model_provider,
+                selected_analysts=selected_analysts,
+                initial_margin_requirement=initial_margin_requirement,
+                backtest_mode="pipeline",
+                pipeline=BaselineDailyGainersPipeline(agent_runner=agent_runner, pct_threshold=baseline_pct_threshold, top_n=baseline_top_n),
+                checkpoint_path=str(baseline_checkpoint) if baseline_checkpoint else None,
             )
-        )
+            baseline_metrics = baseline_engine.run_backtest()
+            window_state["baseline"] = baseline_metrics
+            windows_state[_window_key(window)] = window_state
+            _save_compare_checkpoint(compare_checkpoint, windows_state)
+
+        if mvp_metrics is None:
+            mvp_engine = BacktestEngine(
+                agent=agent,
+                tickers=tickers,
+                start_date=window.test_start,
+                end_date=window.test_end,
+                initial_capital=initial_capital,
+                model_name=model_name,
+                model_provider=model_provider,
+                selected_analysts=selected_analysts,
+                initial_margin_requirement=initial_margin_requirement,
+                backtest_mode="pipeline",
+                pipeline=DailyPipeline(agent_runner=agent_runner),
+                checkpoint_path=str(mvp_checkpoint) if mvp_checkpoint else None,
+            )
+            mvp_metrics = mvp_engine.run_backtest()
+            window_state["mvp"] = mvp_metrics
+            windows_state[_window_key(window)] = window_state
+            _save_compare_checkpoint(compare_checkpoint, windows_state)
+
+        results.append(ABWindowMetrics(window=window, baseline=baseline_metrics, mvp=mvp_metrics))
+        _remove_if_exists(baseline_checkpoint)
+        _remove_if_exists(mvp_checkpoint)
 
     baseline_metrics = [item.baseline for item in results]
     mvp_metrics = [item.mvp for item in results]
@@ -178,6 +242,7 @@ def run_ab_comparison_walk_forward(
         "avg_sortino_delta": mean(sortino_deltas) if sortino_deltas else None,
         "sortino_p_value_estimate": _one_sided_normal_pvalue(sortino_deltas),
     }
+    _remove_if_exists(compare_checkpoint)
     return results, summary
 
 

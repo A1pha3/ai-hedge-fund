@@ -336,32 +336,35 @@ def print_backtest_results(table_rows: list) -> None:
     print("\n" * 2)
 
     # Print the table with just ticker rows
-    print(
-        tabulate(
-            ticker_rows,
-            headers=[
-                "Date",
-                "Ticker",
-                "Action",
-                "Quantity",
-                "Price",
-                "Long Shares",
-                "Short Shares",
-                "Position Value",
-            ],
-            tablefmt="grid",
-            colalign=(
-                "left",  # Date
-                "left",  # Ticker
-                "center",  # Action
-                "right",  # Quantity
-                "right",  # Price
-                "right",  # Long Shares
-                "right",  # Short Shares
-                "right",  # Position Value
-            ),
+    if ticker_rows:
+        print(
+            tabulate(
+                ticker_rows,
+                headers=[
+                    "Date",
+                    "Ticker",
+                    "Action",
+                    "Quantity",
+                    "Price",
+                    "Long Shares",
+                    "Short Shares",
+                    "Position Value",
+                ],
+                tablefmt="grid",
+                colalign=(
+                    "left",  # Date
+                    "left",  # Ticker
+                    "center",  # Action
+                    "right",  # Quantity
+                    "right",  # Price
+                    "right",  # Long Shares
+                    "right",  # Short Shares
+                    "right",  # Position Value
+                ),
+            )
         )
-    )
+    else:
+        print("No ticker rows for this backtest day.")
 
     # Add vertical spacing
     print("\n" * 4)
