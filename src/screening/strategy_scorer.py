@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from statistics import median
@@ -39,6 +40,14 @@ from src.tools.api import (
     prices_to_df,
 )
 from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_sw_industry_classification
+
+LIGHT_STRATEGY_WEIGHTS = {
+    "trend": 0.6,
+    "mean_reversion": 0.4,
+}
+FUNDAMENTAL_SCORE_MAX_CANDIDATES = int(os.getenv("SCORE_BATCH_FUNDAMENTAL_MAX_CANDIDATES", "60"))
+EVENT_SENTIMENT_MAX_CANDIDATES = int(os.getenv("SCORE_BATCH_EVENT_SENTIMENT_MAX_CANDIDATES", "20"))
+HEAVY_SCORE_MIN_PROVISIONAL_SCORE = float(os.getenv("SCORE_BATCH_MIN_PROVISIONAL_SCORE", "0.05"))
 
 TREND_SUBFACTOR_WEIGHTS = {
     "ema_alignment": 0.30,
@@ -163,6 +172,10 @@ def _make_sub_factor(
         weight=weight,
         metrics=metrics or {},
     )
+
+
+def _empty_signal() -> StrategySignal:
+    return StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={})
 
 
 def _load_price_frame(ticker: str, trade_date: str, lookback_days: int = 400) -> pd.DataFrame:
@@ -591,9 +604,62 @@ def score_candidate(
     }
 
 
+def _compute_light_signals(candidate: CandidateStock, trade_date: str) -> tuple[dict[str, StrategySignal], pd.DataFrame]:
+    prices_df = _load_price_frame(candidate.ticker, trade_date)
+    return {
+        "trend": score_trend_strategy(prices_df),
+        "mean_reversion": score_mean_reversion_strategy(prices_df),
+        "fundamental": _empty_signal(),
+        "event_sentiment": _empty_signal(),
+    }, prices_df
+
+
+def _provisional_score(signals: dict[str, StrategySignal]) -> float:
+    score = 0.0
+    total_weight = 0.0
+    for name, weight in LIGHT_STRATEGY_WEIGHTS.items():
+        signal = signals.get(name)
+        if signal is None or signal.completeness <= 0:
+            continue
+        total_weight += weight
+        score += weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
+    if total_weight <= 0:
+        return 0.0
+    return score / total_weight
+
+
 def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, dict[str, StrategySignal]]:
     industry_pe_medians = _build_industry_pe_medians(trade_date)
     results: dict[str, dict[str, StrategySignal]] = {}
+    provisional_ranking: list[tuple[float, CandidateStock]] = []
+
     for candidate in candidates:
-        results[candidate.ticker] = score_candidate(candidate, trade_date, industry_pe_medians=industry_pe_medians)
+        light_signals, _ = _compute_light_signals(candidate, trade_date)
+        results[candidate.ticker] = light_signals
+        provisional_ranking.append((_provisional_score(light_signals), candidate))
+
+    ranked_candidates = sorted(
+        provisional_ranking,
+        key=lambda item: (item[0], item[1].avg_volume_20d, item[1].market_cap),
+        reverse=True,
+    )
+
+    fundamental_candidates = [
+        candidate
+        for score, candidate in ranked_candidates
+        if score >= HEAVY_SCORE_MIN_PROVISIONAL_SCORE
+    ][:FUNDAMENTAL_SCORE_MAX_CANDIDATES]
+
+    for candidate in fundamental_candidates:
+        results[candidate.ticker]["fundamental"] = score_fundamental_strategy(
+            candidate.ticker,
+            trade_date,
+            candidate.industry_sw,
+            industry_pe_medians,
+        )
+
+    event_candidates = fundamental_candidates[:EVENT_SENTIMENT_MAX_CANDIDATES]
+    for candidate in event_candidates:
+        results[candidate.ticker]["event_sentiment"] = score_event_sentiment_strategy(candidate.ticker, trade_date)
+
     return results
