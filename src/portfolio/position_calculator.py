@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from src.backtesting.metrics import PerformanceMetricsCalculator
 from src.portfolio.models import PositionPlan
 
 

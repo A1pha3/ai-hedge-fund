@@ -11,6 +11,7 @@ import pytest
 
 from src.screening.candidate_pool import (
     _estimate_trading_days,
+    _estimate_amount_from_daily_basic,
     _enforce_tushare_daily_rate_limit,
     _is_disclosure_window,
     add_cooldown,
@@ -77,6 +78,11 @@ class TestHelpers:
         assert _is_disclosure_window("20261020") is True
         assert _is_disclosure_window("20260601") is False
         assert _is_disclosure_window("20260115") is False
+
+    def test_estimate_amount_from_daily_basic(self):
+        """用换手率和流通市值估算当日成交额。"""
+        row = pd.Series({"turnover_rate": 2.5, "circ_mv": 200000.0})
+        assert _estimate_amount_from_daily_basic(row) == 5000.0
 
     def test_tushare_rate_limit_skips_sleep_when_batch_is_already_slow(self):
         """如果批次本身已经耗时足够，不应再额外 sleep。"""
@@ -310,3 +316,33 @@ class TestExcludeRules:
 
                 result = build_candidate_pool("20260615", use_cache=False)
                 assert result[0].disclosure_risk is False
+
+    def test_exclude_low_estimated_liquidity_before_20d_fetch(self):
+        """低当日估算流动性的标的应在逐只计算 20 日均额前被过滤。"""
+        stocks = [
+            {"ts_code": "000001.SZ", "symbol": "000001", "name": "高流动性"},
+            {"ts_code": "000002.SZ", "symbol": "000002", "name": "低流动性"},
+        ]
+
+        daily_df = _make_daily_basic_df([
+            {"ts_code": "000001.SZ", "turnover_rate": 4.0, "circ_mv": 200000.0},
+            {"ts_code": "000002.SZ", "turnover_rate": 1.0, "circ_mv": 100000.0},
+        ])
+
+        result = self._run_build(stocks=stocks, daily_df=daily_df, avg_amount=10000.0)
+        tickers = {candidate.ticker for candidate in result}
+
+        assert "000001" in tickers
+        assert "000002" not in tickers
+
+    def test_candidate_pool_is_capped_by_default(self):
+        """候选池默认应被截断到可控规模。"""
+        stocks = [
+            {"ts_code": f"{i:06d}.SZ", "symbol": f"{i:06d}", "name": f"股票{i}"}
+            for i in range(250)
+        ]
+
+        with patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 200):
+            result = self._run_build(stocks=stocks, avg_amount=10000.0)
+
+        assert len(result) == 200

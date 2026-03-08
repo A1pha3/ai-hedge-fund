@@ -174,7 +174,7 @@ def test_tiered_llm_call():
         daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker=f"{i:06d}", name=str(i), industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403") for i in range(30)]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
         daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})} for candidate in candidates}
-        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.40 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.46 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
         pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
     finally:
         daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
@@ -182,8 +182,8 @@ def test_tiered_llm_call():
         daily_pipeline_module.score_batch = original_score_batch
         daily_pipeline_module.fuse_batch = original_fuse_batch
 
-    assert calls[0] == (30, "fast")
-    assert calls[1] == (20, "precise")
+    assert calls[0] == (12, "fast")
+    assert calls[1] == (6, "precise")
 
 
 def test_recovery_protocol():

@@ -43,10 +43,12 @@ _COOLDOWN_FILE = _SNAPSHOT_DIR / "cooldown_registry.json"
 # 常量
 MIN_LISTING_DAYS = 60
 MIN_AVG_AMOUNT_20D = 5000  # 万元
+MIN_ESTIMATED_AMOUNT_1D = 3000  # 万元，使用换手率 * 流通市值做粗筛
 COOLDOWN_TRADING_DAYS = 15
 DISCLOSURE_MONTHS = {4, 8, 10}  # 财报窗口月份
 TUSHARE_DAILY_CALLS_PER_MINUTE = 200
 TUSHARE_DAILY_BATCH_SIZE = 50
+MAX_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "200"))
 
 
 # ============================================================================
@@ -143,6 +145,18 @@ def _get_avg_amount_20d(pro, ts_code: str, trade_date: str) -> float:
             return 0.0
         return float(amounts.mean() / 10.0)  # 千元 → 万元
     except Exception:
+        return 0.0
+
+
+def _estimate_amount_from_daily_basic(row: pd.Series) -> float:
+    """使用当日换手率和流通市值粗略估算成交额（万元）。"""
+    turnover_rate = row.get("turnover_rate")
+    circ_mv = row.get("circ_mv")
+    if pd.isna(turnover_rate) or pd.isna(circ_mv):
+        return 0.0
+    try:
+        return max(0.0, float(circ_mv) * float(turnover_rate) / 100.0)
+    except (TypeError, ValueError):
         return 0.0
 
 
@@ -257,6 +271,7 @@ def build_candidate_pool(
     # ---- Step 8: 获取当日 daily_basic 批量数据（市值+成交额筛选） ----
     daily_df = get_daily_basic_batch(trade_date)
     amount_map: Dict[str, float] = {}
+    estimated_amount_map: Dict[str, float] = {}
     mv_map: Dict[str, float] = {}
 
     if daily_df is not None and not daily_df.empty:
@@ -265,6 +280,19 @@ def build_candidate_pool(
             # total_mv 单位万元
             if pd.notna(row.get("total_mv")):
                 mv_map[ts] = float(row["total_mv"])
+            estimated_amount_map[ts] = _estimate_amount_from_daily_basic(row)
+
+    # 先用便宜的当日流动性估算做粗筛，避免对大量明显弱标的逐只请求 daily
+    if estimated_amount_map:
+        low_estimated_liq_codes = {
+            ts_code
+            for ts_code in stock_df["ts_code"].tolist()
+            if 0.0 < estimated_amount_map.get(ts_code, 0.0) < MIN_ESTIMATED_AMOUNT_1D
+        }
+        if low_estimated_liq_codes:
+            mask_low_estimated_liq = stock_df["ts_code"].isin(low_estimated_liq_codes)
+            stock_df = stock_df[~mask_low_estimated_liq].copy()
+            print(f"[CandidatePool] 排除低当日估算流动性后: {len(stock_df)} (过滤 {mask_low_estimated_liq.sum()})")
 
     # 对剩余标的计算 20 日均额（批量优化：先用 daily_basic 的当日成交额粗筛，低于阈值的直接排除）
     # 但 daily_basic 没有 20 日均额，需要逐只精确计算
@@ -321,6 +349,14 @@ def build_candidate_pool(
             listing_date=list_date,
             disclosure_risk=is_disclosure,
         ))
+
+    if len(candidates) > MAX_CANDIDATE_POOL_SIZE:
+        candidates = sorted(
+            candidates,
+            key=lambda candidate: (candidate.avg_volume_20d, candidate.market_cap),
+            reverse=True,
+        )[:MAX_CANDIDATE_POOL_SIZE]
+        print(f"[CandidatePool] 候选池截断至 Top {MAX_CANDIDATE_POOL_SIZE}（按20日均成交额/市值排序）")
 
     # ---- 持久化 ----
     _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)

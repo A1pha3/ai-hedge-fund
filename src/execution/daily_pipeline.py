@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import perf_counter
 from typing import Callable, Optional
+import os
 
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
@@ -22,6 +23,31 @@ from src.screening.strategy_scorer import score_batch
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
 ExitChecker = Callable[[dict, str], list]
+
+
+def _get_env_float(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
+def _get_env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
+FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD", 0.45)
+FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
+PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
 
 
 def _default_agent_runner(tickers: list[str], trade_date: str, model: str) -> dict[str, dict[str, dict]]:
@@ -69,13 +95,17 @@ class DailyPipeline:
         stage_started_at = perf_counter()
         fused = fuse_batch(scored, market_state, trade_date)
         fuse_batch_seconds = perf_counter() - stage_started_at
-        high_pool = [item for item in fused if item.score_b >= 0.35]
+        high_pool = sorted(
+            [item for item in fused if item.score_b >= FAST_AGENT_SCORE_THRESHOLD],
+            key=lambda item: item.score_b,
+            reverse=True,
+        )[:FAST_AGENT_MAX_TICKERS]
 
         stage_started_at = perf_counter()
         agent_results = self.agent_runner([item.ticker for item in high_pool], trade_date, "fast") if high_pool else {}
         fast_agent_seconds = perf_counter() - stage_started_at
 
-        top_20 = sorted(high_pool, key=lambda item: item.score_b, reverse=True)[:20]
+        top_20 = high_pool[:PRECISE_AGENT_MAX_TICKERS]
         stage_started_at = perf_counter()
         if top_20:
             precise_results = self.agent_runner([item.ticker for item in top_20], trade_date, "precise")
@@ -127,6 +157,9 @@ class DailyPipeline:
                     "sell_order_count": len(sell_orders),
                     "fast_agent_ticker_count": len(high_pool),
                     "precise_agent_ticker_count": len(top_20),
+                    "fast_agent_score_threshold": FAST_AGENT_SCORE_THRESHOLD,
+                    "fast_agent_max_tickers": FAST_AGENT_MAX_TICKERS,
+                    "precise_agent_max_tickers": PRECISE_AGENT_MAX_TICKERS,
                 },
             },
             layer_a_count=len(candidates),
