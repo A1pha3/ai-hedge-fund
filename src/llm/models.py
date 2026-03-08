@@ -124,7 +124,10 @@ def _normalize_zhipu_coding_plan_model_name(model_name: str) -> str:
 
 def get_zhipu_coding_plan_model(model_name: str, api_keys: dict | None = None) -> ChatOpenAI:
     """Build a Zhipu Coding Plan client using the dedicated coding endpoint."""
-    api_key = (api_keys or {}).get("ZHIPU_CODE_API_KEY") or os.getenv("ZHIPU_CODE_API_KEY")
+    if api_keys is None:
+        api_key = os.getenv("ZHIPU_CODE_API_KEY")
+    else:
+        api_key = api_keys.get("ZHIPU_CODE_API_KEY")
     if not api_key:
         print("API Key Error: Please make sure ZHIPU_CODE_API_KEY is set in your .env file or provided via API keys.")
         raise ValueError("Zhipu Coding Plan API key not found. Please make sure ZHIPU_CODE_API_KEY is set in your .env file or provided via API keys.")
@@ -136,10 +139,16 @@ def get_zhipu_coding_plan_model(model_name: str, api_keys: dict | None = None) -
 
 def get_zhipu_model(model_name: str, api_keys: dict | None = None) -> ChatOpenAI:
     """Build a Zhipu client, routing to Coding Plan when a dedicated key is intended."""
-    standard_api_key = (api_keys or {}).get("ZHIPU_API_KEY") or os.getenv("ZHIPU_API_KEY")
-    coding_api_key = (api_keys or {}).get("ZHIPU_CODE_API_KEY") or os.getenv("ZHIPU_CODE_API_KEY")
-    prefer_coding_plan = bool((api_keys or {}).get("ZHIPU_USE_CODING_PLAN")) or os.getenv("ZHIPU_USE_CODING_PLAN", "").lower() in {"1", "true", "yes"}
-    if not standard_api_key and coding_api_key:
+    if api_keys is None:
+        standard_api_key = os.getenv("ZHIPU_API_KEY")
+        coding_api_key = os.getenv("ZHIPU_CODE_API_KEY")
+        prefer_coding_plan = os.getenv("ZHIPU_USE_CODING_PLAN", "").lower() in {"1", "true", "yes"}
+    else:
+        standard_api_key = api_keys.get("ZHIPU_API_KEY")
+        coding_api_key = api_keys.get("ZHIPU_CODE_API_KEY")
+        prefer_coding_plan = bool(api_keys.get("ZHIPU_USE_CODING_PLAN"))
+
+    if coding_api_key:
         prefer_coding_plan = True
 
     if prefer_coding_plan:

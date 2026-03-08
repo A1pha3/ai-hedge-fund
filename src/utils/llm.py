@@ -14,6 +14,7 @@ from src.utils.progress import progress
 
 DEFAULT_ZHIPU_FALLBACK_MODEL = "glm-4.7"
 DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL = "glm-4.7"
+DEFAULT_MINIMAX_FALLBACK_MODEL = "MiniMax-M2.5"
 
 
 def _build_llm(model_name: str, model_provider: str, api_keys: dict | None, pydantic_model: type[BaseModel]):
@@ -58,17 +59,27 @@ def _build_fallback_chain(primary_provider: str, api_keys: dict | None) -> list[
     """Builds an ordered fallback chain for quota/rate-limit failures."""
     chain: list[dict[str, object]] = []
 
+    minimax_api_key = (api_keys or {}).get("MINIMAX_API_KEY") or os.getenv("MINIMAX_API_KEY")
     zhipu_code_api_key = (api_keys or {}).get("ZHIPU_CODE_API_KEY") or os.getenv("ZHIPU_CODE_API_KEY")
     zhipu_api_key = (api_keys or {}).get("ZHIPU_API_KEY") or os.getenv("ZHIPU_API_KEY")
 
-    if str(primary_provider) == "MiniMax":
+    if str(primary_provider) in {"MiniMax", "Zhipu"}:
         if zhipu_code_api_key:
             chain.append(
                 {
                     "model_name": os.getenv("ZHIPU_CODING_FALLBACK_MODEL", DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL),
                     "model_provider": "Zhipu",
                     "api_keys": {"ZHIPU_CODE_API_KEY": zhipu_code_api_key, "ZHIPU_USE_CODING_PLAN": True},
-                    "status_message": "MiniMax limited, switching to Coding Plan Zhipu:glm-4.7",
+                    "status_message": "Switching to Coding Plan Zhipu:glm-4.7",
+                }
+            )
+        if minimax_api_key:
+            chain.append(
+                {
+                    "model_name": os.getenv("MINIMAX_FALLBACK_MODEL", DEFAULT_MINIMAX_FALLBACK_MODEL),
+                    "model_provider": "MiniMax",
+                    "api_keys": {"MINIMAX_API_KEY": minimax_api_key},
+                    "status_message": "Coding Plan limited, switching to MiniMax:MiniMax-M2.5",
                 }
             )
         if zhipu_api_key:
@@ -77,24 +88,21 @@ def _build_fallback_chain(primary_provider: str, api_keys: dict | None) -> list[
                     "model_name": os.getenv("ZHIPU_FALLBACK_MODEL", DEFAULT_ZHIPU_FALLBACK_MODEL),
                     "model_provider": "Zhipu",
                     "api_keys": {"ZHIPU_API_KEY": zhipu_api_key},
-                    "status_message": "Coding Plan limited, switching to standard Zhipu:glm-4.7",
-                }
-            )
-        return chain
-
-    if str(primary_provider) == "Zhipu":
-        current_is_coding = bool((api_keys or {}).get("ZHIPU_USE_CODING_PLAN"))
-        if current_is_coding and zhipu_api_key:
-            chain.append(
-                {
-                    "model_name": os.getenv("ZHIPU_FALLBACK_MODEL", DEFAULT_ZHIPU_FALLBACK_MODEL),
-                    "model_provider": "Zhipu",
-                    "api_keys": {"ZHIPU_API_KEY": zhipu_api_key},
-                    "status_message": "Coding Plan limited, switching to standard Zhipu:glm-4.7",
+                    "status_message": "MiniMax limited, switching to standard Zhipu:glm-4.7",
                 }
             )
 
     return chain
+
+
+def _apply_priority_strategy(model_name: str, model_provider: str, api_keys: dict | None) -> tuple[str, str, dict | None, list[dict[str, object]]]:
+    """Applies the temporary global LLM priority strategy for Zhipu/MiniMax runs."""
+    fallback_chain = _build_fallback_chain(model_provider, api_keys)
+    if str(model_provider) not in {"MiniMax", "Zhipu"} or not fallback_chain:
+        return model_name, model_provider, api_keys, []
+
+    primary = fallback_chain[0]
+    return primary["model_name"], primary["model_provider"], primary.get("api_keys"), fallback_chain[1:]
 
 
 def _compute_retry_delay(attempt: int, error: Exception) -> float:
@@ -142,11 +150,11 @@ def call_llm(
         if request and hasattr(request, "api_keys"):
             api_keys = request.api_keys
 
+    model_name, model_provider, api_keys, fallback_chain = _apply_priority_strategy(model_name, model_provider, api_keys)
     llm, model_info = _build_llm(model_name, model_provider, api_keys, pydantic_model)
     active_model_name = model_name
     active_model_provider = model_provider
     active_api_keys = api_keys
-    fallback_chain = _build_fallback_chain(active_model_provider, api_keys)
     fallback_index = 0
 
     # Call the LLM with retries
@@ -171,7 +179,7 @@ def call_llm(
                 fallback_index += 1
                 active_model_name = fallback_config["model_name"]
                 active_model_provider = fallback_config["model_provider"]
-                active_api_keys = _merge_api_keys(api_keys, fallback_config.get("api_keys"))
+                active_api_keys = fallback_config.get("api_keys")
                 llm, model_info = _build_llm(active_model_name, active_model_provider, active_api_keys, pydantic_model)
                 if agent_name:
                     progress.update_status(agent_name, None, str(fallback_config["status_message"]))

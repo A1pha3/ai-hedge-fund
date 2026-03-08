@@ -12,6 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_MD = REPO_ROOT / "data/reports/ab_walk_forward_first_pilot.md"
 DEFAULT_REPORT_JSON = REPO_ROOT / "data/reports/ab_walk_forward_first_pilot.json"
 DEFAULT_LOG = REPO_ROOT / "data/reports/ab_walk_forward_supervisor.log"
+DEFAULT_MODEL_PROVIDER = "Zhipu"
+DEFAULT_MODEL_NAME = "glm-4.7"
 RESET_INTERVAL_HOURS = 5
 RESET_ANCHOR_HOUR = 20
 RESET_ANCHOR_MINUTE = 0
@@ -19,20 +21,20 @@ RESET_INTERVAL = dt.timedelta(hours=RESET_INTERVAL_HOURS)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Supervise A/B compare runs around MiniMax quota reset windows")
+    parser = argparse.ArgumentParser(description="Supervise A/B compare runs with Coding Plan first and provider reset-window recovery")
     parser.add_argument("--start-date", required=True)
     parser.add_argument("--end-date", required=True)
     parser.add_argument("--train-months", type=int, default=2)
     parser.add_argument("--test-months", type=int, default=1)
     parser.add_argument("--step-months", type=int, default=1)
-    parser.add_argument("--model-provider", default="MiniMax")
-    parser.add_argument("--model-name", default="MiniMax-M2.5")
+    parser.add_argument("--model-provider", default=DEFAULT_MODEL_PROVIDER)
+    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument("--report-file", default=str(DEFAULT_REPORT_MD))
     parser.add_argument("--report-json", default=str(DEFAULT_REPORT_JSON))
-    parser.add_argument("--heartbeat-seconds", type=int, default=300)
+    parser.add_argument("--heartbeat-seconds", type=int, default=3600)
     parser.add_argument("--restart-grace-seconds", type=int, default=600)
     parser.add_argument("--log-file", default=str(DEFAULT_LOG))
-    parser.add_argument("--first-reset", default=None, help="First known MiniMax reset time, format: YYYY-MM-DD HH:MM:SS")
+    parser.add_argument("--first-reset", default=None, help="First known provider reset time, format: YYYY-MM-DD HH:MM:SS")
     return parser.parse_args()
 
 
@@ -136,6 +138,20 @@ def append_log(log_file: Path, message: str) -> None:
         handle.write(f"[{now_str()}] {message}\n")
 
 
+def describe_latest_progress(report_md: Path, report_json: Path) -> str:
+    progress_files = [report_md, report_json]
+    report_prefix = report_md.stem
+    progress_files.extend(sorted(report_md.parent.glob(f"{report_prefix}.checkpoint*")))
+
+    existing_files = [path for path in progress_files if path.exists()]
+    if not existing_files:
+        return "progress=no-artifacts-yet"
+
+    latest_file = max(existing_files, key=lambda path: path.stat().st_mtime)
+    updated_at = dt.datetime.fromtimestamp(latest_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    return f"progress={latest_file.name} updated_at={updated_at}"
+
+
 def in_restart_window(reset_point: dt.datetime | None, grace_seconds: int) -> bool:
     if reset_point is None:
         return False
@@ -152,7 +168,7 @@ def main() -> None:
     patterns = process_patterns(args)
     first_reset = resolve_first_reset(args.first_reset)
 
-    append_log(log_file, "A/B supervisor started")
+    append_log(log_file, f"A/B supervisor started strategy=CodingPlan->MiniMax->ZhipuStandard launch={args.model_provider}:{args.model_name} heartbeat={args.heartbeat_seconds}s")
     append_log(
         log_file,
         "next resets: " + ", ".join(point.strftime("%Y-%m-%d %H:%M") for point in upcoming_resets(6, first_reset)),
@@ -173,7 +189,7 @@ def main() -> None:
         if pids:
             current = time.time()
             if current - last_heartbeat_at >= args.heartbeat_seconds:
-                append_log(log_file, f"alive pids={','.join(pids)} next_reset={next_reset.strftime('%Y-%m-%d %H:%M:%S')}")
+                append_log(log_file, f"alive pids={','.join(pids)} next_reset={next_reset.strftime('%Y-%m-%d %H:%M:%S')} {describe_latest_progress(report_md, report_json)}")
                 last_heartbeat_at = current
             time.sleep(30)
             continue
