@@ -13,6 +13,7 @@ from src.screening.candidate_pool import (
     _estimate_trading_days,
     _estimate_amount_from_daily_basic,
     _enforce_tushare_daily_rate_limit,
+    _get_avg_amount_20d_map,
     _is_disclosure_window,
     add_cooldown,
     build_candidate_pool,
@@ -102,6 +103,30 @@ class TestHelpers:
         assert slept == pytest.approx(5.0)
         mock_sleep.assert_called_once_with(pytest.approx(5.0))
 
+    def test_get_avg_amount_20d_map_uses_market_daily_batches(self):
+        """应按交易日批量拉取 daily，再本地聚合目标股票的 20 日均额。"""
+        mock_pro = MagicMock()
+        mock_pro.trade_cal.return_value = pd.DataFrame([
+            {"cal_date": "20260303"},
+            {"cal_date": "20260304"},
+        ])
+        mock_pro.daily.side_effect = [
+            pd.DataFrame([
+                {"ts_code": "000001.SZ", "amount": 10000.0},
+                {"ts_code": "000002.SZ", "amount": 20000.0},
+            ]),
+            pd.DataFrame([
+                {"ts_code": "000001.SZ", "amount": 30000.0},
+                {"ts_code": "000002.SZ", "amount": 40000.0},
+            ]),
+        ]
+
+        result = _get_avg_amount_20d_map(mock_pro, ["000001.SZ", "000002.SZ"], "20260304", lookback_sessions=2)
+
+        assert result["000001.SZ"] == pytest.approx(2000.0)
+        assert result["000002.SZ"] == pytest.approx(3000.0)
+        assert mock_pro.daily.call_count == 2
+
 
 class TestCooldownRegistry:
     def test_cooldown_lifecycle(self, tmp_path):
@@ -170,7 +195,8 @@ class TestExcludeRules:
         mock_sw.return_value = overrides.get("sw_map", {})
 
         with patch("src.screening.candidate_pool._SNAPSHOT_DIR", Path(tempfile.mkdtemp())):
-            return build_candidate_pool("20260305", use_cache=False, cooldown_tickers=overrides.get("cooldown", set()))
+            with patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value=overrides.get("avg_amount_map", {})):
+                return build_candidate_pool("20260305", use_cache=False, cooldown_tickers=overrides.get("cooldown", set()))
 
     def test_exclude_st(self):
         """ST 标的被正确过滤"""
@@ -202,11 +228,11 @@ class TestExcludeRules:
             {"ts_code": "000001.SZ", "symbol": "000001", "name": "够流动"},
         ]
         # 高于阈值：保留
-        result = self._run_build(stocks=stocks, avg_amount=10000.0)
+        result = self._run_build(stocks=stocks, avg_amount_map={"000001.SZ": 10000.0}, avg_amount=10000.0)
         assert len(result) == 1
 
         # 低于阈值：过滤
-        result = self._run_build(stocks=stocks, avg_amount=3000.0)
+        result = self._run_build(stocks=stocks, avg_amount_map={"000001.SZ": 3000.0}, avg_amount=3000.0)
         assert len(result) == 0
 
     def test_exclude_limit_up(self):
@@ -329,7 +355,7 @@ class TestExcludeRules:
             {"ts_code": "000002.SZ", "turnover_rate": 1.0, "circ_mv": 100000.0},
         ])
 
-        result = self._run_build(stocks=stocks, daily_df=daily_df, avg_amount=10000.0)
+        result = self._run_build(stocks=stocks, daily_df=daily_df, avg_amount_map={"000001.SZ": 10000.0}, avg_amount=10000.0)
         tickers = {candidate.ticker for candidate in result}
 
         assert "000001" in tickers
@@ -343,6 +369,10 @@ class TestExcludeRules:
         ]
 
         with patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 200):
-            result = self._run_build(stocks=stocks, avg_amount=10000.0)
+            result = self._run_build(
+                stocks=stocks,
+                avg_amount=10000.0,
+                avg_amount_map={f"{i:06d}.SZ": 10000.0 for i in range(250)},
+            )
 
         assert len(result) == 200

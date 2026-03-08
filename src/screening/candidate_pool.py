@@ -15,6 +15,7 @@ Layer A 候选池构建器 — 全市场快筛
 
 import json
 import os
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -146,6 +147,56 @@ def _get_avg_amount_20d(pro, ts_code: str, trade_date: str) -> float:
         return float(amounts.mean() / 10.0)  # 千元 → 万元
     except Exception:
         return 0.0
+
+
+def _get_recent_open_dates(pro, trade_date: str, lookback_sessions: int = 20) -> list[str]:
+    """获取截至指定日期最近的开市交易日列表。"""
+    try:
+        end_dt = datetime.strptime(trade_date, "%Y%m%d")
+        start_dt = end_dt - timedelta(days=45)
+        df_cal = pro.trade_cal(
+            exchange="",
+            start_date=start_dt.strftime("%Y%m%d"),
+            end_date=trade_date,
+            is_open=1,
+            fields="cal_date,is_open",
+        )
+        if df_cal is None or df_cal.empty:
+            return []
+        return [str(value) for value in df_cal["cal_date"].tail(lookback_sessions).tolist()]
+    except Exception:
+        return []
+
+
+def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_sessions: int = 20) -> Dict[str, float]:
+    """按交易日批量获取全市场成交额并在本地聚合，避免逐票调用 `daily`。"""
+    recent_open_dates = _get_recent_open_dates(pro, trade_date, lookback_sessions=lookback_sessions)
+    if not recent_open_dates or not ts_codes:
+        return {}
+
+    target_codes = set(ts_codes)
+    amount_buckets: dict[str, list[float]] = defaultdict(list)
+
+    for open_date in recent_open_dates:
+        try:
+            df = pro.daily(trade_date=open_date, fields="ts_code,amount")
+        except Exception:
+            return {}
+        if df is None or df.empty:
+            continue
+        filtered = df[df["ts_code"].isin(target_codes)]
+        if filtered.empty:
+            continue
+        for _, row in filtered.iterrows():
+            amount = row.get("amount")
+            if pd.notna(amount):
+                amount_buckets[str(row["ts_code"])].append(float(amount) / 10.0)
+
+    return {
+        ts_code: float(sum(amounts) / len(amounts))
+        for ts_code, amounts in amount_buckets.items()
+        if amounts
+    }
 
 
 def _estimate_amount_from_daily_basic(row: pd.Series) -> float:
@@ -294,29 +345,38 @@ def build_candidate_pool(
             stock_df = stock_df[~mask_low_estimated_liq].copy()
             print(f"[CandidatePool] 排除低当日估算流动性后: {len(stock_df)} (过滤 {mask_low_estimated_liq.sum()})")
 
-    # 对剩余标的计算 20 日均额（批量优化：先用 daily_basic 的当日成交额粗筛，低于阈值的直接排除）
-    # 但 daily_basic 没有 20 日均额，需要逐只精确计算
-    # 优化策略：分批获取，每批控制在 API 限流范围内
+    # 对剩余标的计算 20 日均额
+    # 优先方案：按交易日批量拉全市场 daily，再本地聚合到目标股票
+    # 回退方案：若批量拉取失败，再走逐票 daily 查询
     remaining_codes = stock_df["ts_code"].tolist()
     print(f"[CandidatePool] 开始计算 {len(remaining_codes)} 只标的的 20 日均成交额...")
 
     low_liq_codes: Set[str] = set()
-    batch_size = TUSHARE_DAILY_BATCH_SIZE
-    for i in range(0, len(remaining_codes), batch_size):
-        batch = remaining_codes[i:i + batch_size]
-        batch_started_at = perf_counter()
-        for ts_code in batch:
-            avg_amt = _get_avg_amount_20d(pro, ts_code, trade_date)
-            amount_map[ts_code] = avg_amt
+    amount_map = _get_avg_amount_20d_map(pro, remaining_codes, trade_date)
+
+    if amount_map:
+        for ts_code in remaining_codes:
+            avg_amt = amount_map.get(ts_code, 0.0)
             if avg_amt < MIN_AVG_AMOUNT_20D:
                 low_liq_codes.add(ts_code)
-        _enforce_tushare_daily_rate_limit(
-            batch_started_at=batch_started_at,
-            processed_calls=len(batch),
-            has_more_batches=(i + batch_size) < len(remaining_codes),
-        )
-        progress_pct = min(100, int((i + batch_size) / len(remaining_codes) * 100))
-        print(f"[CandidatePool] 成交额计算进度: {progress_pct}%")
+        print(f"[CandidatePool] 使用批量 daily 聚合完成 20 日均成交额计算")
+    else:
+        batch_size = TUSHARE_DAILY_BATCH_SIZE
+        for i in range(0, len(remaining_codes), batch_size):
+            batch = remaining_codes[i:i + batch_size]
+            batch_started_at = perf_counter()
+            for ts_code in batch:
+                avg_amt = _get_avg_amount_20d(pro, ts_code, trade_date)
+                amount_map[ts_code] = avg_amt
+                if avg_amt < MIN_AVG_AMOUNT_20D:
+                    low_liq_codes.add(ts_code)
+            _enforce_tushare_daily_rate_limit(
+                batch_started_at=batch_started_at,
+                processed_calls=len(batch),
+                has_more_batches=(i + batch_size) < len(remaining_codes),
+            )
+            progress_pct = min(100, int((i + batch_size) / len(remaining_codes) * 100))
+            print(f"[CandidatePool] 成交额计算进度: {progress_pct}%")
 
     mask_low_liq = stock_df["ts_code"].isin(low_liq_codes)
     stock_df = stock_df[~mask_low_liq].copy()
