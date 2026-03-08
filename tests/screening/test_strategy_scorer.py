@@ -79,22 +79,24 @@ def test_score_batch_delays_heavy_signals_to_ranked_subset():
 def test_score_batch_keeps_all_strategy_keys_when_heavy_signals_skipped():
     candidates = [_candidate("000001")]
 
-    with patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}), \
-         patch(
-             "src.screening.strategy_scorer._compute_light_signals",
-             return_value=(
-                 {
-                     "trend": _signal(0, 0, completeness=0.0),
-                     "mean_reversion": _signal(0, 0, completeness=0.0),
-                     "fundamental": _signal(0, 0, completeness=0.0),
-                     "event_sentiment": _signal(0, 0, completeness=0.0),
-                 },
-                 None,
-             ),
-         ), \
-         patch("src.screening.strategy_scorer.score_fundamental_strategy") as mock_fundamental, \
-         patch("src.screening.strategy_scorer.score_event_sentiment_strategy") as mock_event, \
-         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.2):
+    with (
+        patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
+        patch(
+            "src.screening.strategy_scorer._compute_light_signals",
+            return_value=(
+                {
+                    "trend": _signal(0, 0, completeness=0.0),
+                    "mean_reversion": _signal(0, 0, completeness=0.0),
+                    "fundamental": _signal(0, 0, completeness=0.0),
+                    "event_sentiment": _signal(0, 0, completeness=0.0),
+                },
+                None,
+            ),
+        ),
+        patch("src.screening.strategy_scorer.score_fundamental_strategy") as mock_fundamental,
+        patch("src.screening.strategy_scorer.score_event_sentiment_strategy") as mock_event,
+        patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.2),
+    ):
         results = score_batch(candidates, "20260305")
 
     mock_fundamental.assert_not_called()
@@ -102,3 +104,34 @@ def test_score_batch_keeps_all_strategy_keys_when_heavy_signals_skipped():
     assert set(results["000001"].keys()) == {"trend", "mean_reversion", "fundamental", "event_sentiment"}
     assert results["000001"]["fundamental"].completeness == 0.0
     assert results["000001"]["event_sentiment"].completeness == 0.0
+
+
+def test_score_batch_limits_technical_scoring_to_ranked_subset():
+    candidates = [
+        _candidate("000001", avg_volume_20d=30000.0, market_cap=300.0),
+        _candidate("000002", avg_volume_20d=20000.0, market_cap=200.0),
+        _candidate("000003", avg_volume_20d=10000.0, market_cap=100.0),
+    ]
+    technical_calls: list[str] = []
+
+    def fake_light(candidate, trade_date):
+        technical_calls.append(candidate.ticker)
+        return {
+            "trend": _signal(1, 70),
+            "mean_reversion": _signal(0, 0, completeness=0.0),
+            "fundamental": _signal(0, 0, completeness=0.0),
+            "event_sentiment": _signal(0, 0, completeness=0.0),
+        }, None
+
+    with (
+        patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
+        patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light),
+        patch("src.screening.strategy_scorer.TECHNICAL_SCORE_MAX_CANDIDATES", 2),
+        patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 0),
+        patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 0),
+    ):
+        results = score_batch(candidates, "20260305")
+
+    assert technical_calls == ["000001", "000002"]
+    assert results["000003"]["trend"].completeness == 0.0
+    assert results["000003"]["mean_reversion"].completeness == 0.0

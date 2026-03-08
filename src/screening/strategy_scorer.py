@@ -45,8 +45,9 @@ LIGHT_STRATEGY_WEIGHTS = {
     "trend": 0.6,
     "mean_reversion": 0.4,
 }
-FUNDAMENTAL_SCORE_MAX_CANDIDATES = int(os.getenv("SCORE_BATCH_FUNDAMENTAL_MAX_CANDIDATES", "60"))
-EVENT_SENTIMENT_MAX_CANDIDATES = int(os.getenv("SCORE_BATCH_EVENT_SENTIMENT_MAX_CANDIDATES", "20"))
+TECHNICAL_SCORE_MAX_CANDIDATES = int(os.getenv("SCORE_BATCH_TECHNICAL_MAX_CANDIDATES", "160"))
+FUNDAMENTAL_SCORE_MAX_CANDIDATES = int(os.getenv("SCORE_BATCH_FUNDAMENTAL_MAX_CANDIDATES", "100"))
+EVENT_SENTIMENT_MAX_CANDIDATES = int(os.getenv("SCORE_BATCH_EVENT_SENTIMENT_MAX_CANDIDATES", "40"))
 HEAVY_SCORE_MIN_PROVISIONAL_SCORE = float(os.getenv("SCORE_BATCH_MIN_PROVISIONAL_SCORE", "0.05"))
 
 TREND_SUBFACTOR_WEIGHTS = {
@@ -628,15 +629,36 @@ def _provisional_score(signals: dict[str, StrategySignal]) -> float:
     return score / total_weight
 
 
+def _rank_candidates_for_technical_stage(candidates: list[CandidateStock]) -> list[CandidateStock]:
+    return sorted(
+        candidates,
+        key=lambda candidate: (candidate.avg_volume_20d, candidate.market_cap),
+        reverse=True,
+    )
+
+
 def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, dict[str, StrategySignal]]:
     industry_pe_medians = _build_industry_pe_medians(trade_date)
-    results: dict[str, dict[str, StrategySignal]] = {}
+    results: dict[str, dict[str, StrategySignal]] = {
+        candidate.ticker: {
+            "trend": _empty_signal(),
+            "mean_reversion": _empty_signal(),
+            "fundamental": _empty_signal(),
+            "event_sentiment": _empty_signal(),
+        }
+        for candidate in candidates
+    }
     provisional_ranking: list[tuple[float, CandidateStock]] = []
+    technical_candidates = _rank_candidates_for_technical_stage(candidates)[:TECHNICAL_SCORE_MAX_CANDIDATES]
 
-    for candidate in candidates:
+    for candidate in technical_candidates:
         light_signals, _ = _compute_light_signals(candidate, trade_date)
         results[candidate.ticker] = light_signals
         provisional_ranking.append((_provisional_score(light_signals), candidate))
+
+    for candidate in candidates:
+        if candidate.ticker not in {ranked_candidate.ticker for _, ranked_candidate in provisional_ranking}:
+            provisional_ranking.append((0.0, candidate))
 
     ranked_candidates = sorted(
         provisional_ranking,
