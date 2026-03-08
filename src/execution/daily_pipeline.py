@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from time import perf_counter
 from typing import Callable, Optional
 
 from src.execution.crisis_handler import evaluate_crisis_response
@@ -50,25 +51,63 @@ class DailyPipeline:
     exit_checker: ExitChecker = _default_exit_checker
 
     def run_post_market(self, trade_date: str, portfolio_snapshot: Optional[dict] = None) -> ExecutionPlan:
+        total_started_at = perf_counter()
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
 
+        stage_started_at = perf_counter()
         candidates = build_candidate_pool(trade_date)
+        candidate_pool_seconds = perf_counter() - stage_started_at
+
+        stage_started_at = perf_counter()
         market_state = detect_market_state(trade_date)
+        market_state_seconds = perf_counter() - stage_started_at
+
+        stage_started_at = perf_counter()
         scored = score_batch(candidates, trade_date)
+        score_batch_seconds = perf_counter() - stage_started_at
+
+        stage_started_at = perf_counter()
         fused = fuse_batch(scored, market_state, trade_date)
+        fuse_batch_seconds = perf_counter() - stage_started_at
         high_pool = [item for item in fused if item.score_b >= 0.35]
 
+        stage_started_at = perf_counter()
         agent_results = self.agent_runner([item.ticker for item in high_pool], trade_date, "fast") if high_pool else {}
+        fast_agent_seconds = perf_counter() - stage_started_at
+
         top_20 = sorted(high_pool, key=lambda item: item.score_b, reverse=True)[:20]
+        stage_started_at = perf_counter()
         if top_20:
             precise_results = self.agent_runner([item.ticker for item in top_20], trade_date, "precise")
             for agent_id, ticker_payload in precise_results.items():
                 agent_results.setdefault(agent_id, {}).update(ticker_payload)
+        precise_agent_seconds = perf_counter() - stage_started_at
 
+        stage_started_at = perf_counter()
         layer_c_results = aggregate_layer_c_results(high_pool, agent_results)
+        aggregate_layer_c_seconds = perf_counter() - stage_started_at
         watchlist = [item for item in layer_c_results if item.score_final >= 0.25 and item.decision != "avoid"]
+
+        stage_started_at = perf_counter()
         buy_orders = self._build_buy_orders(watchlist, portfolio_snapshot)
+        build_buy_orders_seconds = perf_counter() - stage_started_at
+
+        stage_started_at = perf_counter()
         sell_orders = self.exit_checker(portfolio_snapshot, trade_date)
+        sell_check_seconds = perf_counter() - stage_started_at
+
+        timing_seconds = {
+            "candidate_pool": round(candidate_pool_seconds, 3),
+            "market_state": round(market_state_seconds, 3),
+            "score_batch": round(score_batch_seconds, 3),
+            "fuse_batch": round(fuse_batch_seconds, 3),
+            "fast_agent": round(fast_agent_seconds, 3),
+            "precise_agent": round(precise_agent_seconds, 3),
+            "aggregate_layer_c": round(aggregate_layer_c_seconds, 3),
+            "build_buy_orders": round(build_buy_orders_seconds, 3),
+            "sell_check": round(sell_check_seconds, 3),
+            "total_post_market": round(perf_counter() - total_started_at, 3),
+        }
         return generate_execution_plan(
             trade_date=trade_date,
             market_state=market_state,
@@ -77,7 +116,19 @@ class DailyPipeline:
             sell_orders=sell_orders,
             portfolio_snapshot=portfolio_snapshot,
             risk_alerts=[],
-            risk_metrics={},
+            risk_metrics={
+                "timing_seconds": timing_seconds,
+                "counts": {
+                    "layer_a_count": len(candidates),
+                    "layer_b_count": len(high_pool),
+                    "layer_c_count": len(layer_c_results),
+                    "watchlist_count": len(watchlist),
+                    "buy_order_count": len(buy_orders),
+                    "sell_order_count": len(sell_orders),
+                    "fast_agent_ticker_count": len(high_pool),
+                    "precise_agent_ticker_count": len(top_20),
+                },
+            },
             layer_a_count=len(candidates),
             layer_b_count=len(high_pool),
         )

@@ -83,6 +83,27 @@ def test_make_backtest_agent_runner_uses_explicit_model():
     assert calls[0]["end_date"] == "2026-03-05"
 
 
+def test_make_backtest_agent_runner_reuses_superset_results_for_same_day():
+    calls = []
+
+    def fake_agent(**kwargs):
+        calls.append(kwargs)
+        return {
+            "analyst_signals": {
+                "agent": {ticker: {"signal": "bullish", "confidence": 80, "reasoning": "ok"} for ticker in kwargs["tickers"]}
+            }
+        }
+
+    runner = make_backtest_agent_runner(fake_agent, model_name="glm-4.7", model_provider="Zhipu")
+
+    fast_result = runner(["000001", "000002", "000003"], "20260305", "fast")
+    precise_result = runner(["000001", "000003"], "20260305", "precise")
+
+    assert set(fast_result["agent"].keys()) == {"000001", "000002", "000003"}
+    assert set(precise_result["agent"].keys()) == {"000001", "000003"}
+    assert len(calls) == 1
+
+
 def test_format_ab_comparison_report():
     results = [
         ABWindowMetrics(

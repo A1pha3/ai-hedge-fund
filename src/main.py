@@ -3,6 +3,7 @@ import json
 import os
 import sys
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -68,9 +69,8 @@ def run_hedge_fund(
     progress.start()
 
     try:
-        # Build workflow (default to all analysts when none provided)
-        workflow = create_workflow(selected_analysts if selected_analysts else None)
-        agent = workflow.compile()
+        selected_analysts_key = tuple(selected_analysts) if selected_analysts else None
+        agent = _get_compiled_workflow(selected_analysts_key, _get_analyst_concurrency_limit())
 
         final_state = agent.invoke(
             {
@@ -108,7 +108,13 @@ def start(state: AgentState):
     return state
 
 
-def create_workflow(selected_analysts=None):
+@lru_cache(maxsize=16)
+def _get_compiled_workflow(selected_analysts_key: tuple[str, ...] | None, concurrency_limit: int):
+    workflow = create_workflow(list(selected_analysts_key) if selected_analysts_key else None, concurrency_limit=concurrency_limit)
+    return workflow.compile()
+
+
+def create_workflow(selected_analysts=None, concurrency_limit: int | None = None):
     """Create the workflow with selected analysts."""
     workflow = StateGraph(AgentState)
     workflow.add_node("start_node", start)
@@ -121,7 +127,7 @@ def create_workflow(selected_analysts=None):
         selected_analysts = list(analyst_nodes.keys())
 
     selected_analysts = _order_selected_analysts(selected_analysts)
-    analyst_batches = _build_analyst_batches(selected_analysts, _get_analyst_concurrency_limit())
+    analyst_batches = _build_analyst_batches(selected_analysts, concurrency_limit or _get_analyst_concurrency_limit())
 
     # Add selected analyst nodes
     for analyst_key in selected_analysts:

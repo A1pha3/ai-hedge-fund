@@ -46,7 +46,7 @@ def main() -> int:
     parser.add_argument("--test-months", type=int, default=1, help="Test window size in months for walk-forward")
     parser.add_argument("--step-months", type=int, default=1, help="Step size in months for walk-forward")
     parser.add_argument("--baseline-pct-threshold", type=float, default=3.0, help="Baseline daily gainers threshold")
-    parser.add_argument("--baseline-top-n", type=int, default=20, help="Baseline top N gainers passed to multi-agent analysis")
+    parser.add_argument("--baseline-top-n", type=int, default=10, help="Baseline top N gainers passed to multi-agent analysis")
     parser.add_argument("--report-file", type=str, default=None, help="Optional output path for generated markdown report")
     parser.add_argument("--report-json", type=str, default=None, help="Optional output path for generated JSON report")
     parser.add_argument("--model-name", type=str, default=None, help="Run non-interactively with an explicit model name")

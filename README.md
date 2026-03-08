@@ -42,13 +42,22 @@ This project is for **educational and research purposes only**.
 By using this software, you agree to use it solely for learning purposes.
 
 ## Table of Contents
-- [How to Install](#how-to-install)
-- [How to Run](#how-to-run)
-  - [⌨️ Command Line Interface](#️-command-line-interface)
-  - [🖥️ Web Application](#️-web-application)
-- [How to Contribute](#how-to-contribute)
-- [Feature Requests](#feature-requests)
-- [License](#license)
+- [AI Hedge Fund](#ai-hedge-fund)
+  - [Disclaimer](#disclaimer)
+  - [Table of Contents](#table-of-contents)
+  - [How to Install](#how-to-install)
+    - [1. Clone the Repository](#1-clone-the-repository)
+    - [2. Set up API keys](#2-set-up-api-keys)
+  - [How to Run](#how-to-run)
+    - [⌨️ Command Line Interface](#️-command-line-interface)
+      - [Quick Start](#quick-start)
+      - [Run the AI Hedge Fund](#run-the-ai-hedge-fund)
+      - [Run the Backtester](#run-the-backtester)
+      - [Control Analyst Concurrency](#control-analyst-concurrency)
+    - [🖥️ Web Application](#️-web-application)
+  - [How to Contribute](#how-to-contribute)
+  - [Feature Requests](#feature-requests)
+  - [License](#license)
 
 ## How to Install
 
@@ -123,6 +132,51 @@ poetry run python src/main.py --ticker AAPL,MSFT,NVDA --start-date 2024-01-01 --
 ```bash
 poetry run python src/backtester.py --ticker AAPL,MSFT,NVDA
 ```
+
+#### Control Analyst Concurrency
+
+For pipeline-style hedge fund runs and A/B backtests, the environment variable `ANALYST_CONCURRENCY_LIMIT` controls how many analyst agents run at the same time in each wave.
+
+- `1` means fully serialized analysis. This is the safest option when your LLM quota is tight, but also the slowest.
+- `2` means two analysts run in parallel per wave. This was the original conservative default used to stabilize long A-share runs.
+- `3` means three analysts run in parallel per wave. This is a practical middle ground when you want more speed without taking on the burst risk of full fan-out.
+- Larger values increase throughput, but they also increase the chance of provider-side `429`, quota exhaustion, or unstable long-running jobs.
+
+This setting does **not** change the number of stocks being processed. It only changes how many analyst personas are evaluated concurrently before the workflow moves on to the next batch.
+
+**Examples**
+
+Run the main program with conservative concurrency:
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=2 poetry run python src/main.py --ticker AAPL,MSFT,NVDA
+```
+
+Run a real A/B backtest with moderate concurrency:
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=3 .venv/bin/backtester --ab-compare --mode pipeline \
+  --start-date 2025-12-01 --end-date 2026-03-04 \
+  --train-months 2 --test-months 1 --step-months 1 \
+  --model-provider Zhipu --model-name glm-4.7 \
+  --analysts-all \
+  --report-file data/reports/ab_walk_forward_first_pilot.md \
+  --report-json data/reports/ab_walk_forward_first_pilot.json
+```
+
+Run the supervisor so that all future restart attempts also keep the same concurrency:
+
+```bash
+.venv/bin/python scripts/supervise_ab_compare.py \
+  --start-date 2025-12-01 --end-date 2026-03-04 \
+  --train-months 2 --test-months 1 --step-months 1 \
+  --analyst-concurrency-limit 3 \
+  --report-file data/reports/ab_walk_forward_first_pilot.md \
+  --report-json data/reports/ab_walk_forward_first_pilot.json \
+  --first-reset '2026-03-08 05:00:00'
+```
+
+If you are running under unstable quota conditions, increase concurrency gradually. In practice, moving from `2` to `3` is usually a safer step than jumping directly to `4` or higher.
 
 **Example Output:**
 <img width="941" alt="Screenshot 2025-01-06 at 5 47 52 PM" src="https://github.com/user-attachments/assets/00e794ea-8628-44e6-9a84-8f8a31ad3b47" />

@@ -14,6 +14,8 @@ DEFAULT_REPORT_JSON = REPO_ROOT / "data/reports/ab_walk_forward_first_pilot.json
 DEFAULT_LOG = REPO_ROOT / "data/reports/ab_walk_forward_supervisor.log"
 DEFAULT_MODEL_PROVIDER = "Zhipu"
 DEFAULT_MODEL_NAME = "glm-4.7"
+DEFAULT_ANALYST_CONCURRENCY_LIMIT = 3
+DEFAULT_BASELINE_TOP_N = 10
 RESET_INTERVAL_HOURS = 5
 RESET_ANCHOR_HOUR = 20
 RESET_ANCHOR_MINUTE = 0
@@ -29,6 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step-months", type=int, default=1)
     parser.add_argument("--model-provider", default=DEFAULT_MODEL_PROVIDER)
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument("--analyst-concurrency-limit", type=int, default=DEFAULT_ANALYST_CONCURRENCY_LIMIT)
+    parser.add_argument("--baseline-top-n", type=int, default=DEFAULT_BASELINE_TOP_N)
     parser.add_argument("--report-file", default=str(DEFAULT_REPORT_MD))
     parser.add_argument("--report-json", default=str(DEFAULT_REPORT_JSON))
     parser.add_argument("--heartbeat-seconds", type=int, default=3600)
@@ -104,6 +108,8 @@ def build_command(args: argparse.Namespace) -> list[str]:
         "--model-name",
         args.model_name,
         "--analysts-all",
+        "--baseline-top-n",
+        str(args.baseline_top_n),
         "--report-file",
         args.report_file,
         "--report-json",
@@ -167,8 +173,13 @@ def main() -> None:
     command = build_command(args)
     patterns = process_patterns(args)
     first_reset = resolve_first_reset(args.first_reset)
+    launch_env = os.environ.copy()
+    launch_env["ANALYST_CONCURRENCY_LIMIT"] = str(max(1, args.analyst_concurrency_limit))
 
-    append_log(log_file, f"A/B supervisor started strategy=CodingPlan->MiniMax->ZhipuStandard launch={args.model_provider}:{args.model_name} heartbeat={args.heartbeat_seconds}s")
+    append_log(
+        log_file,
+        f"A/B supervisor started strategy=CodingPlan->MiniMax->ZhipuStandard launch={args.model_provider}:{args.model_name} heartbeat={args.heartbeat_seconds}s analyst_concurrency={launch_env['ANALYST_CONCURRENCY_LIMIT']} baseline_top_n={args.baseline_top_n}",
+    )
     append_log(
         log_file,
         "next resets: " + ", ".join(point.strftime("%Y-%m-%d %H:%M") for point in upcoming_resets(6, first_reset)),
@@ -196,7 +207,7 @@ def main() -> None:
 
         if in_restart_window(latest_reset, args.restart_grace_seconds):
             append_log(log_file, f"starting command at reset window; next_reset={next_reset.strftime('%Y-%m-%d %H:%M:%S')}")
-            process = subprocess.Popen(command, cwd=REPO_ROOT)
+            process = subprocess.Popen(command, cwd=REPO_ROOT, env=launch_env)
             append_log(log_file, f"started pid={process.pid}")
             time.sleep(15)
             continue

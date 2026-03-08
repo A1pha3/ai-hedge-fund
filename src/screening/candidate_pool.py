@@ -17,7 +17,10 @@ import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 from typing import Dict, List, Optional, Set
+
+import time
 
 import pandas as pd
 
@@ -42,6 +45,8 @@ MIN_LISTING_DAYS = 60
 MIN_AVG_AMOUNT_20D = 5000  # 万元
 COOLDOWN_TRADING_DAYS = 15
 DISCLOSURE_MONTHS = {4, 8, 10}  # 财报窗口月份
+TUSHARE_DAILY_CALLS_PER_MINUTE = 200
+TUSHARE_DAILY_BATCH_SIZE = 50
 
 
 # ============================================================================
@@ -139,6 +144,19 @@ def _get_avg_amount_20d(pro, ts_code: str, trade_date: str) -> float:
         return float(amounts.mean() / 10.0)  # 千元 → 万元
     except Exception:
         return 0.0
+
+
+def _enforce_tushare_daily_rate_limit(batch_started_at: float, processed_calls: int, has_more_batches: bool) -> float:
+    """按实际已耗时补足 Tushare `daily` 调用的批次速率限制。"""
+    if not has_more_batches or processed_calls <= 0:
+        return 0.0
+
+    target_seconds = processed_calls * (60.0 / TUSHARE_DAILY_CALLS_PER_MINUTE)
+    elapsed_seconds = perf_counter() - batch_started_at
+    sleep_seconds = max(0.0, target_seconds - elapsed_seconds)
+    if sleep_seconds > 0:
+        time.sleep(sleep_seconds)
+    return sleep_seconds
 
 
 def build_candidate_pool(
@@ -254,19 +272,21 @@ def build_candidate_pool(
     remaining_codes = stock_df["ts_code"].tolist()
     print(f"[CandidatePool] 开始计算 {len(remaining_codes)} 只标的的 20 日均成交额...")
 
-    import time
     low_liq_codes: Set[str] = set()
-    batch_size = 50
+    batch_size = TUSHARE_DAILY_BATCH_SIZE
     for i in range(0, len(remaining_codes), batch_size):
         batch = remaining_codes[i:i + batch_size]
+        batch_started_at = perf_counter()
         for ts_code in batch:
             avg_amt = _get_avg_amount_20d(pro, ts_code, trade_date)
             amount_map[ts_code] = avg_amt
             if avg_amt < MIN_AVG_AMOUNT_20D:
                 low_liq_codes.add(ts_code)
-        # tushare 限流：200 次/分钟，每批暂停
-        if i + batch_size < len(remaining_codes):
-            time.sleep(15)
+        _enforce_tushare_daily_rate_limit(
+            batch_started_at=batch_started_at,
+            processed_calls=len(batch),
+            has_more_batches=(i + batch_size) < len(remaining_codes),
+        )
         progress_pct = min(100, int((i + batch_size) / len(remaining_codes) * 100))
         print(f"[CandidatePool] 成交额计算进度: {progress_pct}%")
 

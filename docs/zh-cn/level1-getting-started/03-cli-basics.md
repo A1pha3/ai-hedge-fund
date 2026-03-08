@@ -259,6 +259,102 @@ uv run python src/main.py --ticker 300750 --model deepseek-reasoner
 
 **批量分析示例**：
 
+---
+
+## 3.X 分析师并发控制：`ANALYST_CONCURRENCY_LIMIT`
+
+在主程序和 `pipeline` 模式回测中，系统不会一次性把所有分析师全部并发跑完，而是按“波次”分批执行。`ANALYST_CONCURRENCY_LIMIT` 用来控制：**每一波最多同时运行多少个分析师智能体**。
+
+### 它到底控制什么？
+
+假设当前启用了 18 个分析师：
+
+- 当值为 `1` 时：18 个分析师串行执行，每次只跑 1 个，最稳但最慢。
+- 当值为 `2` 时：每波 2 个分析师并发，执行 9 波。这是长时间真实 A/B 任务中比较保守的配置。
+- 当值为 `3` 时：每波 3 个分析师并发，执行 6 波。通常比 `2` 更快，但仍明显比“全量并发”稳。
+- 当值为 `4` 或更高时：总波次数更少，但单时间片内对 LLM 的请求突发会更大，更容易触发 `429`、配额不足或长任务不稳定。
+
+> 重要：这个参数控制的是“分析师 persona 的并发数量”，不是股票数量，也不是回测窗口数量。
+
+### 生效范围
+
+- `src/main.py` 主程序
+- `backtester --ab-compare --mode pipeline` 的真实 A/B 回测
+- `scripts/supervise_ab_compare.py` 拉起的新回测进程
+
+### 使用方式
+
+这个参数目前通过环境变量传入。
+
+#### 示例 1：最稳妥的串行模式
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=1 uv run python src/main.py --ticker 000001
+```
+
+适用场景：
+
+- 刚切换新模型或新 Key，先验证链路稳定性
+- 配额非常紧张，优先保证任务能跑完
+
+#### 示例 2：保守并发 2
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=2 uv run python src/main.py --ticker 000001,300750
+```
+
+适用场景：
+
+- 长时间运行任务
+- 最近出现过频繁限流，希望把请求峰值压低
+
+#### 示例 3：适度提速到 3
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=3 .venv/bin/backtester --ab-compare --mode pipeline \
+  --start-date 2025-12-01 --end-date 2026-03-04 \
+  --train-months 2 --test-months 1 --step-months 1 \
+  --model-provider Zhipu --model-name glm-4.7 \
+  --analysts-all \
+  --report-file data/reports/ab_walk_forward_first_pilot.md \
+  --report-json data/reports/ab_walk_forward_first_pilot.json
+```
+
+适用场景：
+
+- 当前 2 并发太慢
+- 你希望适度提速，但不想直接跳到更高并发
+
+#### 示例 4：让 supervisor 后续重启也保持 3 并发
+
+```bash
+.venv/bin/python scripts/supervise_ab_compare.py \
+  --start-date 2025-12-01 --end-date 2026-03-04 \
+  --train-months 2 --test-months 1 --step-months 1 \
+  --analyst-concurrency-limit 3 \
+  --report-file data/reports/ab_walk_forward_first_pilot.md \
+  --report-json data/reports/ab_walk_forward_first_pilot.json \
+  --first-reset '2026-03-08 05:00:00'
+```
+
+这里的 `--analyst-concurrency-limit 3` 是 supervisor 自己的参数。它会在拉起真实 A/B 进程时，自动注入：
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=3
+```
+
+因此就算主任务后面因为异常退出，由 supervisor 重启的新进程也会继续按 3 并发运行。
+
+### 如何选择合适的值？
+
+可以按下面的经验顺序调：
+
+- 先从 `2` 开始，确认任务稳定。
+- 如果速度明显不够，再提到 `3`。
+- 只有在提供商限流和配额都比较宽松时，才考虑 `4` 或更高。
+
+一个实用原则是：**优先小步上调，不要一次跳太多**。从 `2` 升到 `3`，通常比从 `2` 直接升到 `5` 更容易保持长任务稳定。
+
 ```bash
 # 使用高性价比模型批量分析
 poetry run python src/main.py --ticker AAPL,MSFT,NVDA --model deepseek-chat

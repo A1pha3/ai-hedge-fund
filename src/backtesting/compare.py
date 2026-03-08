@@ -6,6 +6,7 @@ from math import erfc, sqrt
 from pathlib import Path
 from statistics import mean, stdev
 import json
+from time import perf_counter
 from typing import Callable, Sequence
 
 from src.execution.daily_pipeline import DailyPipeline
@@ -21,9 +22,27 @@ from .types import PerformanceMetrics
 from .walk_forward import WalkForwardWindow, build_walk_forward_windows
 
 
+def _slice_agent_results(agent_results: dict[str, dict[str, dict]], tickers: list[str]) -> dict[str, dict[str, dict]]:
+    requested = set(tickers)
+    return {
+        agent_id: {ticker: payload for ticker, payload in ticker_payload.items() if ticker in requested}
+        for agent_id, ticker_payload in agent_results.items()
+    }
+
+
 def make_backtest_agent_runner(agent: Callable, model_name: str, model_provider: str) -> Callable[[list[str], str, str], dict[str, dict[str, dict]]]:
+    cached_results_by_config: dict[tuple[str, str, str], dict[str, dict[str, dict]]] = {}
+    cached_tickers_by_config: dict[tuple[str, str, str], set[str]] = {}
+
     def _runner(tickers: list[str], trade_date: str, model_tier: str) -> dict[str, dict[str, dict]]:
         del model_tier
+        cache_key = (trade_date, model_provider, model_name)
+        requested_tickers = set(tickers)
+        cached_results = cached_results_by_config.get(cache_key)
+        cached_tickers = cached_tickers_by_config.get(cache_key, set())
+        if requested_tickers and cached_results is not None and requested_tickers.issubset(cached_tickers):
+            return _slice_agent_results(cached_results, tickers)
+
         trade_dt = datetime.strptime(trade_date, "%Y%m%d")
         start_date = (trade_dt - timedelta(days=365)).strftime("%Y-%m-%d")
         end_date = trade_dt.strftime("%Y-%m-%d")
@@ -36,7 +55,11 @@ def make_backtest_agent_runner(agent: Callable, model_name: str, model_provider:
             model_name=model_name,
             model_provider=model_provider,
         )
-        return result.get("analyst_signals", {})
+        analyst_signals = result.get("analyst_signals", {})
+        if requested_tickers:
+            cached_results_by_config[cache_key] = analyst_signals
+            cached_tickers_by_config[cache_key] = requested_tickers
+        return analyst_signals
 
     return _runner
 
@@ -56,21 +79,49 @@ def _baseline_fused_score(ticker: str, market_state) -> FusedScore:
 @dataclass
 class BaselineDailyGainersPipeline(DailyPipeline):
     pct_threshold: float = 3.0
-    top_n: int = 20
+    top_n: int = 10
 
     def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None) -> ExecutionPlan:
+        total_started_at = perf_counter()
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
+
+        stage_started_at = perf_counter()
         market_state = detect_market_state(trade_date)
+        market_state_seconds = perf_counter() - stage_started_at
+
+        stage_started_at = perf_counter()
         gainers = get_ashare_daily_gainers_with_tushare(trade_date, pct_threshold=self.pct_threshold, include_name=True)
+        gainers_seconds = perf_counter() - stage_started_at
         selected = gainers[: self.top_n]
         tickers = [str(item["ts_code"]).split(".")[0] for item in selected if item.get("ts_code")]
 
+        stage_started_at = perf_counter()
         agent_results = self.agent_runner(tickers, trade_date, "precise") if tickers else {}
+        precise_agent_seconds = perf_counter() - stage_started_at
+
+        stage_started_at = perf_counter()
         fused = [_baseline_fused_score(ticker, market_state) for ticker in tickers]
         layer_c_results = aggregate_layer_c_results(fused, agent_results)
+        aggregate_layer_c_seconds = perf_counter() - stage_started_at
         watchlist = [item for item in layer_c_results if item.score_final >= 0.25 and item.decision != "avoid"]
+
+        stage_started_at = perf_counter()
         buy_orders = self._build_buy_orders(watchlist, portfolio_snapshot)
+        build_buy_orders_seconds = perf_counter() - stage_started_at
+
+        stage_started_at = perf_counter()
         sell_orders = self.exit_checker(portfolio_snapshot, trade_date)
+        sell_check_seconds = perf_counter() - stage_started_at
+
+        timing_seconds = {
+            "market_state": round(market_state_seconds, 3),
+            "fetch_gainers": round(gainers_seconds, 3),
+            "precise_agent": round(precise_agent_seconds, 3),
+            "aggregate_layer_c": round(aggregate_layer_c_seconds, 3),
+            "build_buy_orders": round(build_buy_orders_seconds, 3),
+            "sell_check": round(sell_check_seconds, 3),
+            "total_post_market": round(perf_counter() - total_started_at, 3),
+        }
         return generate_execution_plan(
             trade_date=trade_date,
             market_state=market_state,
@@ -79,7 +130,18 @@ class BaselineDailyGainersPipeline(DailyPipeline):
             sell_orders=sell_orders,
             portfolio_snapshot=portfolio_snapshot,
             risk_alerts=[],
-            risk_metrics={"baseline_strategy": "daily_gainers"},
+            risk_metrics={
+                "baseline_strategy": "daily_gainers",
+                "timing_seconds": timing_seconds,
+                "counts": {
+                    "selected_gainers_count": len(selected),
+                    "precise_agent_ticker_count": len(tickers),
+                    "layer_c_count": len(layer_c_results),
+                    "watchlist_count": len(watchlist),
+                    "buy_order_count": len(buy_orders),
+                    "sell_order_count": len(sell_orders),
+                },
+            },
             layer_a_count=len(selected),
             layer_b_count=0,
         )
@@ -159,7 +221,7 @@ def run_ab_comparison_walk_forward(
     test_months: int = 1,
     step_months: int = 1,
     baseline_pct_threshold: float = 3.0,
-    baseline_top_n: int = 20,
+    baseline_top_n: int = 10,
     checkpoint_path: str | None = None,
 ) -> tuple[list[ABWindowMetrics], dict[str, float | int | None]]:
     windows = build_walk_forward_windows(

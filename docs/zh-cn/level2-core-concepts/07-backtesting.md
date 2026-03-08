@@ -77,6 +77,96 @@
 
 ## 7.2 回测系统架构
 
+### A/B 回测中的分析师并发参数
+
+在真实 A/B 回测里，你可能会看到两个相关配置：
+
+- 环境变量 `ANALYST_CONCURRENCY_LIMIT`
+- supervisor 参数 `--analyst-concurrency-limit`
+
+它们控制的其实是同一件事：**每一波最多同时运行多少个分析师智能体**。
+
+#### 区别是什么？
+
+- `ANALYST_CONCURRENCY_LIMIT`：主程序或 backtester 进程真正读取的环境变量。
+- `--analyst-concurrency-limit`：supervisor 的命令行参数。supervisor 在拉起 backtester 时，会把它转换成环境变量注入子进程。
+
+也就是说：
+
+```text
+--analyst-concurrency-limit 3
+            ↓
+ANALYST_CONCURRENCY_LIMIT=3
+            ↓
+src/main.py / pipeline backtester 按 3 并发分波执行分析师
+```
+
+#### 为什么这个参数很重要？
+
+真实 A/B 回测通常持续很久，最容易失败的不是平均吞吐，而是瞬时请求峰值。如果并发太高：
+
+- 更容易命中 LLM 提供商的 `429`
+- 更容易在短时间内耗尽 prompt 配额
+- 更容易让长任务在窗口中途失稳
+
+如果并发太低：
+
+- 回测速度会显著变慢
+- 单个窗口完成时间会拉长
+
+因此这个参数本质上是在 **速度** 和 **稳定性** 之间做权衡。
+
+#### 实际使用示例
+
+**示例 1：直接运行 backtester，按 2 并发保守执行**
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=2 .venv/bin/backtester --ab-compare --mode pipeline \
+  --start-date 2025-12-01 --end-date 2026-03-04 \
+  --train-months 2 --test-months 1 --step-months 1 \
+  --model-provider Zhipu --model-name glm-4.7 \
+  --analysts-all \
+  --report-file data/reports/ab_walk_forward_first_pilot.md \
+  --report-json data/reports/ab_walk_forward_first_pilot.json
+```
+
+**示例 2：直接运行 backtester，按 3 并发适度提速**
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=3 .venv/bin/backtester --ab-compare --mode pipeline \
+  --start-date 2025-12-01 --end-date 2026-03-04 \
+  --train-months 2 --test-months 1 --step-months 1 \
+  --model-provider Zhipu --model-name glm-4.7 \
+  --analysts-all \
+  --report-file data/reports/ab_walk_forward_first_pilot.md \
+  --report-json data/reports/ab_walk_forward_first_pilot.json
+```
+
+**示例 3：通过 supervisor 持续守护，并固定为 3 并发**
+
+```bash
+.venv/bin/python scripts/supervise_ab_compare.py \
+  --start-date 2025-12-01 --end-date 2026-03-04 \
+  --train-months 2 --test-months 1 --step-months 1 \
+  --analyst-concurrency-limit 3 \
+  --report-file data/reports/ab_walk_forward_first_pilot.md \
+  --report-json data/reports/ab_walk_forward_first_pilot.json \
+  --first-reset '2026-03-08 05:00:00'
+```
+
+这个例子适合长时间真实回测。它的好处是：
+
+- 主任务退出后，supervisor 能继续按同样并发配置重启
+- 不需要每次手动重新设置环境变量
+- 日志里会记录 `analyst_concurrency=3`，方便回顾当时的运行配置
+
+#### 经验建议
+
+- `1`：最稳，最慢，适合故障排查。
+- `2`：保守稳定，适合刚开始跑长任务。
+- `3`：通常是比较实用的提速档位。
+- `4+`：只建议在配额充足、限流很宽松时尝试。
+
 ### 核心组件
 
 回测系统由以下六个核心组件构成：

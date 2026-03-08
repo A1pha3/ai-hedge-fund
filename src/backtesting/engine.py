@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import os
 from pathlib import Path
+from time import perf_counter
 from typing import Dict, Sequence
 
 import pandas as pd
@@ -65,6 +67,7 @@ class BacktestEngine:
         self._backtest_mode = backtest_mode
         self._pipeline = pipeline or (DailyPipeline() if backtest_mode == "pipeline" else None)
         self._checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
+        self._timing_log_path = self._resolve_timing_log_path()
 
         self._portfolio = Portfolio(
             tickers=tickers,
@@ -91,6 +94,26 @@ class BacktestEngine:
         }
         self._pending_buy_queue: list[PendingOrder] = []
         self._pending_sell_queue: list[PendingOrder] = []
+
+    def _resolve_timing_log_path(self) -> Path | None:
+        explicit_path = os.getenv("BACKTEST_TIMING_LOG_PATH")
+        if explicit_path:
+            return Path(explicit_path)
+        if self._checkpoint_path is not None:
+            return self._checkpoint_path.with_name(f"{self._checkpoint_path.stem}.timings.jsonl")
+        return None
+
+    def _append_timing_log(self, payload: dict) -> None:
+        if self._timing_log_path is None:
+            return
+        self._timing_log_path.parent.mkdir(parents=True, exist_ok=True)
+        event = {
+            "logged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": self._backtest_mode,
+            **payload,
+        }
+        with self._timing_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     def _serialize_portfolio_values(self) -> list[dict]:
         serialized: list[dict] = []
@@ -377,6 +400,7 @@ class BacktestEngine:
     def _run_pipeline_mode(self, dates: pd.DatetimeIndex, pending_plan: ExecutionPlan | None = None) -> PerformanceMetrics:
 
         for current_date in dates:
+            day_started_at = perf_counter()
             current_date_str = current_date.strftime("%Y-%m-%d")
             trade_date_compact = current_date.strftime("%Y%m%d")
             previous_date_str = (current_date - relativedelta(days=1)).strftime("%Y-%m-%d")
@@ -388,17 +412,32 @@ class BacktestEngine:
                 active_ticker_set.update(order.ticker for order in pending_plan.sell_orders)
             active_tickers = sorted(active_ticker_set)
 
+            stage_started_at = perf_counter()
             current_prices = self._load_current_prices(active_tickers, previous_date_str, current_date_str)
             if current_prices is None:
                 continue
             daily_turnovers = self._get_daily_turnovers(active_tickers, previous_date_str, current_date_str)
             limit_up, limit_down = self._get_limit_state(trade_date_compact)
+            load_market_data_seconds = perf_counter() - stage_started_at
 
             decisions: Dict[str, dict] = {}
             executed_trades: Dict[str, int] = {ticker: 0 for ticker in active_tickers}
+            pre_market_seconds = 0.0
+            intraday_seconds = 0.0
+            append_daily_state_seconds = 0.0
+            post_market_seconds = 0.0
+            previous_plan_counts: dict[str, int] = {}
+            previous_plan_timing: dict[str, float] = {}
 
             if pending_plan is not None and self._pipeline is not None:
+                stage_started_at = perf_counter()
                 prepared_plan = self._pipeline.run_pre_market(pending_plan, trade_date_compact)
+                pre_market_seconds = perf_counter() - stage_started_at
+
+                previous_plan_counts = dict((pending_plan.risk_metrics or {}).get("counts", {}))
+                previous_plan_timing = dict((pending_plan.risk_metrics or {}).get("timing_seconds", {}))
+
+                stage_started_at = perf_counter()
                 confirmation_inputs = self._build_confirmation_inputs(prepared_plan, current_prices)
                 next_pending_buy, next_pending_sell, queue_alerts = self._process_pending_queues(
                     prepared_plan=prepared_plan,
@@ -414,6 +453,7 @@ class BacktestEngine:
                     confirmation_inputs=confirmation_inputs,
                     crisis_inputs={"drawdown_pct": 0.0},
                 )
+                intraday_seconds = perf_counter() - stage_started_at
 
                 if crisis_response.get("pause_new_buys"):
                     confirmed_orders = []
@@ -487,6 +527,7 @@ class BacktestEngine:
                 self._pending_sell_queue = self._dedupe_pending_orders(next_pending_sell)
 
             agent_output = self._build_pipeline_agent_output(decisions, active_tickers)
+            stage_started_at = perf_counter()
             self._append_daily_state(
                 current_date=current_date,
                 current_date_str=current_date_str,
@@ -495,18 +536,58 @@ class BacktestEngine:
                 executed_trades=executed_trades,
                 current_prices=current_prices,
             )
+            append_daily_state_seconds = perf_counter() - stage_started_at
 
             if self._pipeline is not None:
+                stage_started_at = perf_counter()
                 pending_plan = self._pipeline.run_post_market(trade_date_compact, self._portfolio.get_snapshot())
                 pending_plan.pending_buy_queue = list(self._pending_buy_queue)
                 pending_plan.pending_sell_queue = list(self._pending_sell_queue)
+                post_market_seconds = perf_counter() - stage_started_at
+
+            executed_order_count = sum(1 for quantity in executed_trades.values() if quantity)
+            timing_payload = {
+                "event": "pipeline_day_timing",
+                "trade_date": trade_date_compact,
+                "active_ticker_count": len(active_tickers),
+                "pending_buy_queue_count": len(self._pending_buy_queue),
+                "pending_sell_queue_count": len(self._pending_sell_queue),
+                "executed_order_count": executed_order_count,
+                "timing_seconds": {
+                    "load_market_data": round(load_market_data_seconds, 3),
+                    "pre_market": round(pre_market_seconds, 3),
+                    "intraday": round(intraday_seconds, 3),
+                    "append_daily_state": round(append_daily_state_seconds, 3),
+                    "post_market": round(post_market_seconds, 3),
+                    "total_day": round(perf_counter() - day_started_at, 3),
+                },
+                "current_plan": {
+                    "counts": dict((pending_plan.risk_metrics or {}).get("counts", {})) if pending_plan is not None else {},
+                    "timing_seconds": dict((pending_plan.risk_metrics or {}).get("timing_seconds", {})) if pending_plan is not None else {},
+                },
+                "previous_plan": {
+                    "counts": previous_plan_counts,
+                    "timing_seconds": previous_plan_timing,
+                },
+            }
+            self._append_timing_log(timing_payload)
 
             self._save_checkpoint(current_date_str, pending_plan)
 
         return self._performance_metrics
 
     def run_backtest(self) -> PerformanceMetrics:
+        prefetch_started_at = perf_counter()
         self._prefetch_data()
+        self._append_timing_log(
+            {
+                "event": "prefetch_complete",
+                "start_date": self._start_date,
+                "end_date": self._end_date,
+                "ticker_count": len(self._tickers),
+                "timing_seconds": {"prefetch": round(perf_counter() - prefetch_started_at, 3)},
+            }
+        )
 
         dates = self._iter_backtest_dates()
         last_processed_date, pending_plan = self._load_checkpoint()

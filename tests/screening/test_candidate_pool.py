@@ -11,6 +11,7 @@ import pytest
 
 from src.screening.candidate_pool import (
     _estimate_trading_days,
+    _enforce_tushare_daily_rate_limit,
     _is_disclosure_window,
     add_cooldown,
     build_candidate_pool,
@@ -76,6 +77,24 @@ class TestHelpers:
         assert _is_disclosure_window("20261020") is True
         assert _is_disclosure_window("20260601") is False
         assert _is_disclosure_window("20260115") is False
+
+    def test_tushare_rate_limit_skips_sleep_when_batch_is_already_slow(self):
+        """如果批次本身已经耗时足够，不应再额外 sleep。"""
+        with patch("src.screening.candidate_pool.perf_counter", return_value=20.0), \
+             patch("src.screening.candidate_pool.time.sleep") as mock_sleep:
+            slept = _enforce_tushare_daily_rate_limit(batch_started_at=0.0, processed_calls=50, has_more_batches=True)
+
+        assert slept == 0.0
+        mock_sleep.assert_not_called()
+
+    def test_tushare_rate_limit_only_sleeps_remaining_budget(self):
+        """如果批次运行较快，只补足剩余限流窗口，不再固定睡满。"""
+        with patch("src.screening.candidate_pool.perf_counter", return_value=10.0), \
+             patch("src.screening.candidate_pool.time.sleep") as mock_sleep:
+            slept = _enforce_tushare_daily_rate_limit(batch_started_at=0.0, processed_calls=50, has_more_batches=True)
+
+        assert slept == pytest.approx(5.0)
+        mock_sleep.assert_called_once_with(pytest.approx(5.0))
 
 
 class TestCooldownRegistry:
