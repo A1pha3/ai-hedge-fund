@@ -45,6 +45,7 @@ def main() -> int:
     parser.add_argument("--train-months", type=int, default=2, help="Training window size in months for walk-forward")
     parser.add_argument("--test-months", type=int, default=1, help="Test window size in months for walk-forward")
     parser.add_argument("--step-months", type=int, default=1, help="Step size in months for walk-forward")
+    parser.add_argument("--max-test-trading-days", type=int, default=None, help="Optional cap on real trading days inside each test window")
     parser.add_argument("--baseline-pct-threshold", type=float, default=3.0, help="Baseline daily gainers threshold")
     parser.add_argument("--baseline-top-n", type=int, default=10, help="Baseline top N gainers passed to multi-agent analysis")
     parser.add_argument("--report-file", type=str, default=None, help="Optional output path for generated markdown report")
@@ -190,6 +191,7 @@ def main() -> int:
             train_months=args.train_months,
             test_months=args.test_months,
             step_months=args.step_months,
+            max_test_trading_days=args.max_test_trading_days,
             baseline_pct_threshold=args.baseline_pct_threshold,
             baseline_top_n=args.baseline_top_n,
             checkpoint_path=checkpoint_path,
@@ -210,6 +212,7 @@ def main() -> int:
             train_months=args.train_months,
             test_months=args.test_months,
             step_months=args.step_months,
+            max_test_trading_days=args.max_test_trading_days,
         )
         results = run_walk_forward(
             windows,

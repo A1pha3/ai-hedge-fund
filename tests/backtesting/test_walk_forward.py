@@ -1,4 +1,5 @@
 import pytest
+import pandas as pd
 
 from src.backtesting.walk_forward import build_walk_forward_windows, run_walk_forward, summarize_walk_forward
 
@@ -23,6 +24,28 @@ def test_build_walk_forward_windows_generates_rolling_ranges():
 def test_build_walk_forward_windows_rejects_non_positive_lengths():
     with pytest.raises(ValueError):
         build_walk_forward_windows("2026-01-01", "2026-06-30", train_months=0)
+
+
+def test_build_walk_forward_windows_truncates_test_range_to_max_trading_days(monkeypatch):
+    class StubPro:
+        @staticmethod
+        def trade_cal(**kwargs):
+            return pd.DataFrame({"cal_date": ["20260302", "20260303", "20260304", "20260305", "20260306", "20260309"]})
+
+    monkeypatch.setattr("src.backtesting.walk_forward._get_pro", lambda: StubPro())
+
+    windows = build_walk_forward_windows(
+        "2026-01-01",
+        "2026-03-31",
+        train_months=2,
+        test_months=1,
+        step_months=1,
+        max_test_trading_days=5,
+    )
+
+    assert len(windows) == 1
+    assert windows[0].test_start == "2026-03-01"
+    assert windows[0].test_end == "2026-03-06"
 
 
 def test_run_and_summarize_walk_forward():

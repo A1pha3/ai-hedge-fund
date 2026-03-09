@@ -66,6 +66,39 @@ def test_run_ab_comparison_walk_forward(monkeypatch):
     assert summary["avg_sortino_delta"] == 0.5
 
 
+def test_run_ab_comparison_walk_forward_passes_max_test_trading_days(monkeypatch):
+    captured_kwargs = {}
+
+    def fake_build_walk_forward_windows(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return [WalkForwardWindow(train_start="2026-01-01", train_end="2026-02-28", test_start="2026-03-01", test_end="2026-03-07")]
+
+    class StubEngine:
+        def __init__(self, **kwargs):
+            self.pipeline = kwargs["pipeline"]
+
+        def run_backtest(self):
+            return {"sharpe_ratio": 1.0, "sortino_ratio": 1.0, "max_drawdown": -5.0}
+
+    monkeypatch.setattr("src.backtesting.compare.build_walk_forward_windows", fake_build_walk_forward_windows)
+    monkeypatch.setattr("src.backtesting.compare.BacktestEngine", StubEngine)
+
+    run_ab_comparison_walk_forward(
+        tickers=["000001"],
+        start_date="2026-01-01",
+        end_date="2026-04-30",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        max_test_trading_days=5,
+    )
+
+    assert captured_kwargs["max_test_trading_days"] == 5
+
+
 def test_make_backtest_agent_runner_uses_explicit_model():
     calls = []
 

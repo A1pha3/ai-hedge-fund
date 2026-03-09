@@ -6,6 +6,8 @@ from typing import Callable, Sequence
 
 from dateutil.relativedelta import relativedelta
 
+from src.tools.tushare_api import _get_pro
+
 from .types import PerformanceMetrics
 
 
@@ -30,9 +32,12 @@ def build_walk_forward_windows(
     train_months: int = 2,
     test_months: int = 1,
     step_months: int = 1,
+    max_test_trading_days: int | None = None,
 ) -> list[WalkForwardWindow]:
     if train_months <= 0 or test_months <= 0 or step_months <= 0:
         raise ValueError("walk-forward windows require positive month lengths")
+    if max_test_trading_days is not None and max_test_trading_days <= 0:
+        raise ValueError("max_test_trading_days must be positive when provided")
 
     overall_start = datetime.strptime(start_date, "%Y-%m-%d")
     overall_end = datetime.strptime(end_date, "%Y-%m-%d")
@@ -43,9 +48,10 @@ def build_walk_forward_windows(
         train_start = cursor
         train_end = train_start + relativedelta(months=train_months) - relativedelta(days=1)
         test_start = train_end + relativedelta(days=1)
-        test_end = test_start + relativedelta(months=test_months) - relativedelta(days=1)
-        if test_end > overall_end:
+        full_test_end = test_start + relativedelta(months=test_months) - relativedelta(days=1)
+        if full_test_end > overall_end:
             break
+        test_end = _truncate_test_end_by_trading_days(test_start, full_test_end, max_test_trading_days)
         windows.append(
             WalkForwardWindow(
                 train_start=train_start.strftime("%Y-%m-%d"),
@@ -57,6 +63,29 @@ def build_walk_forward_windows(
         cursor = cursor + relativedelta(months=step_months)
 
     return windows
+
+
+def _truncate_test_end_by_trading_days(test_start: datetime, test_end: datetime, max_test_trading_days: int | None) -> datetime:
+    if max_test_trading_days is None:
+        return test_end
+
+    pro = _get_pro()
+    if pro is None:
+        raise RuntimeError("Tushare trade calendar is required when max_test_trading_days is set")
+
+    df = pro.trade_cal(
+        exchange="",
+        start_date=test_start.strftime("%Y%m%d"),
+        end_date=test_end.strftime("%Y%m%d"),
+        is_open=1,
+        fields="cal_date,is_open",
+    )
+    if df is None or df.empty:
+        raise RuntimeError("No open trading days found in requested walk-forward test window")
+
+    open_dates = sorted(str(value) for value in df["cal_date"].tolist())
+    capped_index = min(max_test_trading_days, len(open_dates)) - 1
+    return datetime.strptime(open_dates[capped_index], "%Y%m%d")
 
 
 def run_walk_forward(

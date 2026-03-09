@@ -220,6 +220,7 @@ def run_ab_comparison_walk_forward(
     train_months: int = 2,
     test_months: int = 1,
     step_months: int = 1,
+    max_test_trading_days: int | None = None,
     baseline_pct_threshold: float = 3.0,
     baseline_top_n: int = 10,
     checkpoint_path: str | None = None,
@@ -230,6 +231,7 @@ def run_ab_comparison_walk_forward(
         train_months=train_months,
         test_months=test_months,
         step_months=step_months,
+        max_test_trading_days=max_test_trading_days,
     )
     agent_runner = make_backtest_agent_runner(agent, model_name, model_provider)
     compare_checkpoint = Path(checkpoint_path) if checkpoint_path else None
