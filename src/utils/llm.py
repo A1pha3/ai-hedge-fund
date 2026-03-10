@@ -10,7 +10,7 @@ from time import perf_counter
 from pydantic import BaseModel
 
 from src.graph.state import AgentState
-from src.llm.models import get_model, get_model_info
+from src.llm.models import ProviderRoute, get_model, get_model_info, get_provider_concurrency_limit_env_var, get_provider_primary_route, get_provider_profile, get_provider_routes
 from src.monitoring.llm_metrics import record_llm_attempt
 from src.utils.progress import progress
 
@@ -21,6 +21,32 @@ logger = logging.getLogger(__name__)
 DEFAULT_ZHIPU_FALLBACK_MODEL = "glm-4.7"
 DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL = "glm-4.7"
 DEFAULT_MINIMAX_FALLBACK_MODEL = "MiniMax-M2.5"
+
+
+def _describe_provider_route(route: ProviderRoute) -> str:
+    """Returns a human-readable provider route label for status updates."""
+    return f"{route.display_name}:{route.model_name}"
+
+
+def _group_provider_routes(api_keys: dict | None, *, enabled_only_for: str | None = None) -> dict[str, list[ProviderRoute]]:
+    """Groups available provider routes by provider name."""
+    grouped_routes: dict[str, list[ProviderRoute]] = {}
+    for route in get_provider_routes(api_keys, enabled_only_for=enabled_only_for):
+        grouped_routes.setdefault(route.provider_name, []).append(route)
+    return grouped_routes
+
+
+def _get_transport_family(provider_name: str, route_id: str | None, api_keys: dict | None) -> str:
+    """Returns the transport family label used by metrics aggregation."""
+    if route_id:
+        route = next((item for item in get_provider_routes(api_keys) if item.route_id == route_id), None)
+        if route:
+            return route.transport_family
+
+    profile = get_provider_profile(provider_name)
+    if profile and profile.capabilities.openai_compatible:
+        return "openai-compatible"
+    return "native"
 
 
 def _get_env_int(name: str, default: int) -> int:
@@ -96,86 +122,43 @@ def _get_agent_llm_override(state: AgentState | None, agent_name: str | None) ->
     return override if isinstance(override, dict) else None
 
 
-def _get_available_provider_keys(api_keys: dict | None) -> tuple[str | None, str | None, str | None]:
-    """Returns the available provider keys in a stable order."""
-    minimax_api_key = (api_keys or {}).get("MINIMAX_API_KEY") or os.getenv("MINIMAX_API_KEY")
-    zhipu_code_api_key = (api_keys or {}).get("ZHIPU_CODE_API_KEY") or os.getenv("ZHIPU_CODE_API_KEY")
-    zhipu_api_key = (api_keys or {}).get("ZHIPU_API_KEY") or os.getenv("ZHIPU_API_KEY")
-    return minimax_api_key, zhipu_code_api_key, zhipu_api_key
+def _get_available_provider_keys(api_keys: dict | None) -> dict[str, list[ProviderRoute]]:
+    """Returns the available parallel-routing provider routes grouped by provider."""
+    return _group_provider_routes(api_keys, enabled_only_for="parallel")
 
 
-def _build_explicit_zhipu_config(api_keys: dict | None, status_message: str) -> dict[str, object] | None:
-    """Builds an explicit Zhipu config, preferring Coding Plan when the key exists."""
-    _, zhipu_code_api_key, zhipu_api_key = _get_available_provider_keys(api_keys)
-
-    if zhipu_code_api_key:
-        return {
-            "model_name": os.getenv("ZHIPU_CODING_FALLBACK_MODEL", DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL),
-            "model_provider": "Zhipu",
-            "api_keys": {"ZHIPU_CODE_API_KEY": zhipu_code_api_key, "ZHIPU_USE_CODING_PLAN": True},
-            "status_message": status_message,
-        }
-
-    if zhipu_api_key:
-        return {
-            "model_name": os.getenv("ZHIPU_FALLBACK_MODEL", DEFAULT_ZHIPU_FALLBACK_MODEL),
-            "model_provider": "Zhipu",
-            "api_keys": {"ZHIPU_API_KEY": zhipu_api_key},
-            "status_message": status_message,
-        }
-
-    return None
-
-
-def _build_explicit_minimax_config(api_keys: dict | None, status_message: str) -> dict[str, object] | None:
-    """Builds an explicit MiniMax config when the key exists."""
-    minimax_api_key, _, _ = _get_available_provider_keys(api_keys)
-    if not minimax_api_key:
+def _build_explicit_provider_config(
+    provider_name: str,
+    api_keys: dict | None,
+    status_message: str,
+    *,
+    model_name: str | None = None,
+    enabled_only_for: str | None = None,
+) -> dict[str, object] | None:
+    """Builds an explicit provider config from the registry when the provider is available."""
+    route = get_provider_primary_route(provider_name, api_keys, enabled_only_for=enabled_only_for)
+    if not route:
         return None
-
-    return {
-        "model_name": os.getenv("MINIMAX_FALLBACK_MODEL", DEFAULT_MINIMAX_FALLBACK_MODEL),
-        "model_provider": "MiniMax",
-        "api_keys": {"MINIMAX_API_KEY": minimax_api_key},
-        "status_message": status_message,
-    }
+    return route.to_execution_config(status_message=status_message, model_name=model_name)
 
 
-def _build_parallel_fallback_chain(primary_provider: str, api_keys: dict | None) -> list[dict[str, object]]:
-    """Builds fallback order without changing the chosen primary provider."""
+def _build_parallel_fallback_chain(primary_provider: str, api_keys: dict | None, current_route_id: str | None = None) -> list[dict[str, object]]:
+    """Builds parallel fallback order from the provider registry."""
+    available_routes = get_provider_routes(api_keys, enabled_only_for="parallel")
+    if not available_routes:
+        return []
+
+    current_route = next((route for route in available_routes if route.route_id == current_route_id), None)
+    if not current_route:
+        current_route = next((route for route in available_routes if route.provider_name == str(primary_provider)), None)
+    if not current_route:
+        return []
+
     chain: list[dict[str, object]] = []
-    provider_name = str(primary_provider)
-
-    if provider_name == "Zhipu":
-        minimax_config = _build_explicit_minimax_config(api_keys, "Zhipu limited, switching to MiniMax:MiniMax-M2.5")
-        if minimax_config:
-            chain.append(minimax_config)
-
-        _, zhipu_code_api_key, zhipu_api_key = _get_available_provider_keys(api_keys)
-        if zhipu_code_api_key and zhipu_api_key:
-            chain.append(
-                {
-                    "model_name": os.getenv("ZHIPU_FALLBACK_MODEL", DEFAULT_ZHIPU_FALLBACK_MODEL),
-                    "model_provider": "Zhipu",
-                    "api_keys": {"ZHIPU_API_KEY": zhipu_api_key},
-                    "status_message": "Coding Plan limited, switching to standard Zhipu:glm-4.7",
-                }
-            )
-    elif provider_name == "MiniMax":
-        zhipu_config = _build_explicit_zhipu_config(api_keys, "MiniMax limited, switching to Zhipu:glm-4.7")
-        if zhipu_config:
-            chain.append(zhipu_config)
-
-        _, zhipu_code_api_key, zhipu_api_key = _get_available_provider_keys(api_keys)
-        if zhipu_code_api_key and zhipu_api_key:
-            chain.append(
-                {
-                    "model_name": os.getenv("ZHIPU_FALLBACK_MODEL", DEFAULT_ZHIPU_FALLBACK_MODEL),
-                    "model_provider": "Zhipu",
-                    "api_keys": {"ZHIPU_API_KEY": zhipu_api_key},
-                    "status_message": "Coding Plan limited, switching to standard Zhipu:glm-4.7",
-                }
-            )
+    for route in available_routes:
+        if route.route_id == current_route.route_id:
+            continue
+        chain.append(route.to_execution_config(status_message=f"{current_route.display_name} limited, switching to {_describe_provider_route(route)}"))
 
     return chain
 
@@ -209,14 +192,13 @@ def _build_provider_slot_sequence(provider_limits: dict[str, int], base_model_pr
     return provider_slots
 
 
-def _get_provider_lane_limits(per_provider_limit: int, has_zhipu: bool, has_minimax: bool, base_model_provider: str) -> dict[str, int]:
+def _get_provider_lane_limits(per_provider_limit: int, active_providers: list[str], base_model_provider: str) -> dict[str, int]:
     """Returns per-provider soft caps for one execution wave."""
     limits: dict[str, int] = {}
 
-    if has_minimax:
-        limits["MiniMax"] = _get_env_int("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", per_provider_limit)
-    if has_zhipu:
-        limits["Zhipu"] = _get_env_int("ZHIPU_PROVIDER_CONCURRENCY_LIMIT", per_provider_limit)
+    for provider_name in active_providers:
+        limit_env_var = get_provider_concurrency_limit_env_var(provider_name)
+        limits[provider_name] = _get_env_int(limit_env_var, per_provider_limit)
 
     if sum(limits.values()) <= 0:
         limits[str(base_model_provider)] = per_provider_limit
@@ -231,50 +213,29 @@ def build_parallel_provider_execution_plan(
     api_keys: dict | None,
     per_provider_limit: int,
 ) -> dict[str, object]:
-    """Builds provider-balanced agent overrides when both Zhipu and MiniMax are available."""
+    """Builds provider-balanced agent overrides for any registered parallel providers."""
     provider_name = str(base_model_provider)
-    minimax_api_key, zhipu_code_api_key, zhipu_api_key = _get_available_provider_keys(api_keys)
-    has_zhipu = bool(zhipu_code_api_key or zhipu_api_key)
-    has_minimax = bool(minimax_api_key)
+    provider_routes = _get_available_provider_keys(api_keys)
+    active_provider_names = list(provider_routes.keys())
 
-    if provider_name not in {"Zhipu", "MiniMax"} or not (has_zhipu and has_minimax):
+    if provider_name not in provider_routes or len(active_provider_names) < 2:
         return {
             "effective_concurrency_limit": per_provider_limit,
             "agent_llm_overrides": {},
             "parallel_provider_count": 1,
         }
 
-    zhipu_primary_api_keys = {"ZHIPU_CODE_API_KEY": zhipu_code_api_key, "ZHIPU_USE_CODING_PLAN": True} if zhipu_code_api_key else {"ZHIPU_API_KEY": zhipu_api_key}
-    primary_config = {
-        "model_name": base_model_name,
-        "model_provider": provider_name,
-        "api_keys": zhipu_primary_api_keys if provider_name == "Zhipu" else {"MINIMAX_API_KEY": minimax_api_key},
-        "status_message": f"Retrying with {provider_name}:{base_model_name}",
-    }
+    provider_configs: dict[str, dict[str, object]] = {}
+    primary_route = provider_routes[provider_name][0]
+    provider_configs[provider_name] = primary_route.to_execution_config(status_message=f"Retrying with {provider_name}:{base_model_name}", model_name=base_model_name)
 
-    secondary_config = (
-        {
-            "model_name": os.getenv("MINIMAX_FALLBACK_MODEL", DEFAULT_MINIMAX_FALLBACK_MODEL),
-            "model_provider": "MiniMax",
-            "api_keys": {"MINIMAX_API_KEY": minimax_api_key},
-            "status_message": "Switching to MiniMax:MiniMax-M2.5",
-        }
-        if provider_name == "Zhipu"
-        else {
-            "model_name": os.getenv("ZHIPU_CODING_FALLBACK_MODEL", DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL)
-            if zhipu_code_api_key
-            else os.getenv("ZHIPU_FALLBACK_MODEL", DEFAULT_ZHIPU_FALLBACK_MODEL),
-            "model_provider": "Zhipu",
-            "api_keys": zhipu_primary_api_keys,
-            "status_message": "Switching to Zhipu:glm-4.7",
-        }
-    )
+    for secondary_provider_name in active_provider_names:
+        if secondary_provider_name == provider_name:
+            continue
+        secondary_route = provider_routes[secondary_provider_name][0]
+        provider_configs[secondary_provider_name] = secondary_route.to_execution_config(status_message=f"Switching to {_describe_provider_route(secondary_route)}")
 
-    provider_configs = {
-        str(primary_config["model_provider"]): primary_config,
-        str(secondary_config["model_provider"]): secondary_config,
-    }
-    provider_limits = _get_provider_lane_limits(per_provider_limit, has_zhipu, has_minimax, provider_name)
+    provider_limits = _get_provider_lane_limits(per_provider_limit, active_provider_names, provider_name)
     provider_slot_names = _build_provider_slot_sequence(provider_limits, provider_name)
     provider_slots = [provider_configs[slot_name] for slot_name in provider_slot_names]
 
@@ -284,68 +245,38 @@ def build_parallel_provider_execution_plan(
         batch = agent_names[batch_start : batch_start + wave_size]
         for index, agent_name in enumerate(batch):
             provider_config = provider_slots[index]
+            current_route_id = str(provider_config.get("route_id") or "")
             overrides[agent_name] = {
                 "model_name": provider_config["model_name"],
                 "model_provider": provider_config["model_provider"],
                 "api_keys": dict(provider_config.get("api_keys") or {}),
-                "fallback_chain": _build_parallel_fallback_chain(str(provider_config["model_provider"]), api_keys),
+                "fallback_chain": _build_parallel_fallback_chain(str(provider_config["model_provider"]), api_keys, current_route_id=current_route_id),
             }
 
     return {
         "effective_concurrency_limit": wave_size,
         "agent_llm_overrides": overrides,
-        "parallel_provider_count": 2,
+        "parallel_provider_count": len(active_provider_names),
     }
 
 
 def _build_fallback_chain(primary_provider: str, api_keys: dict | None) -> list[dict[str, object]]:
     """Builds an ordered fallback chain for quota/rate-limit failures."""
-    chain: list[dict[str, object]] = []
+    profile = get_provider_profile(str(primary_provider))
+    if not profile or not profile.enable_priority_routing:
+        return []
 
-    minimax_api_key = (api_keys or {}).get("MINIMAX_API_KEY") or os.getenv("MINIMAX_API_KEY")
-    zhipu_code_api_key = (api_keys or {}).get("ZHIPU_CODE_API_KEY") or os.getenv("ZHIPU_CODE_API_KEY")
-    zhipu_api_key = (api_keys or {}).get("ZHIPU_API_KEY") or os.getenv("ZHIPU_API_KEY")
-
-    if str(primary_provider) in {"MiniMax", "Zhipu"}:
-        if zhipu_code_api_key:
-            chain.append(
-                {
-                    "model_name": os.getenv("ZHIPU_CODING_FALLBACK_MODEL", DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL),
-                    "model_provider": "Zhipu",
-                    "api_keys": {"ZHIPU_CODE_API_KEY": zhipu_code_api_key, "ZHIPU_USE_CODING_PLAN": True},
-                    "status_message": "Switching to Coding Plan Zhipu:glm-4.7",
-                }
-            )
-        if minimax_api_key:
-            chain.append(
-                {
-                    "model_name": os.getenv("MINIMAX_FALLBACK_MODEL", DEFAULT_MINIMAX_FALLBACK_MODEL),
-                    "model_provider": "MiniMax",
-                    "api_keys": {"MINIMAX_API_KEY": minimax_api_key},
-                    "status_message": "Coding Plan limited, switching to MiniMax:MiniMax-M2.5",
-                }
-            )
-        if zhipu_api_key:
-            chain.append(
-                {
-                    "model_name": os.getenv("ZHIPU_FALLBACK_MODEL", DEFAULT_ZHIPU_FALLBACK_MODEL),
-                    "model_provider": "Zhipu",
-                    "api_keys": {"ZHIPU_API_KEY": zhipu_api_key},
-                    "status_message": "MiniMax limited, switching to standard Zhipu:glm-4.7",
-                }
-            )
-
-    return chain
+    return [route.to_execution_config(status_message=f"Switching to {_describe_provider_route(route)}") for route in get_provider_routes(api_keys, enabled_only_for="priority")]
 
 
-def _apply_priority_strategy(model_name: str, model_provider: str, api_keys: dict | None) -> tuple[str, str, dict | None, list[dict[str, object]]]:
-    """Applies the temporary global LLM priority strategy for Zhipu/MiniMax runs."""
+def _apply_priority_strategy(model_name: str, model_provider: str, api_keys: dict | None) -> tuple[str, str, dict | None, list[dict[str, object]], str | None, str]:
+    """Applies the registry-driven priority routing strategy when configured."""
     fallback_chain = _build_fallback_chain(model_provider, api_keys)
-    if str(model_provider) not in {"MiniMax", "Zhipu"} or not fallback_chain:
-        return model_name, model_provider, api_keys, []
+    if not fallback_chain:
+        return model_name, model_provider, api_keys, [], None, _get_transport_family(model_provider, None, api_keys)
 
     primary = fallback_chain[0]
-    return primary["model_name"], primary["model_provider"], primary.get("api_keys"), fallback_chain[1:]
+    return primary["model_name"], primary["model_provider"], primary.get("api_keys"), fallback_chain[1:], primary.get("route_id"), str(primary.get("transport_family") or _get_transport_family(str(primary["model_provider"]), primary.get("route_id"), api_keys))
 
 
 def _compute_retry_delay(attempt: int, error: Exception) -> float:
@@ -403,8 +334,10 @@ def call_llm(
         model_provider = str(agent_override.get("model_provider") or model_provider)
         api_keys = _merge_api_keys(api_keys, agent_override.get("api_keys"))
         fallback_chain = list(agent_override.get("fallback_chain") or [])
+        active_route_id = str(agent_override.get("route_id") or "") or None
+        active_transport_family = str(agent_override.get("transport_family") or _get_transport_family(model_provider, active_route_id, api_keys))
     else:
-        model_name, model_provider, api_keys, fallback_chain = _apply_priority_strategy(model_name, model_provider, api_keys)
+        model_name, model_provider, api_keys, fallback_chain, active_route_id, active_transport_family = _apply_priority_strategy(model_name, model_provider, api_keys)
 
     llm, model_info = _build_llm(model_name, model_provider, api_keys, pydantic_model)
     active_model_name = model_name
@@ -433,6 +366,8 @@ def call_llm(
                         prompt=prompt,
                         response=result.content,
                         used_fallback=fallback_index > 0,
+                        route_id=active_route_id,
+                        transport_family=active_transport_family,
                     )
                     return pydantic_model(**parsed_result)
                 else:
@@ -448,6 +383,8 @@ def call_llm(
                     prompt=prompt,
                     response=getattr(result, "content", result),
                     used_fallback=fallback_index > 0,
+                    route_id=active_route_id,
+                    transport_family=active_transport_family,
                 )
                 return result
 
@@ -463,6 +400,8 @@ def call_llm(
                 error=e,
                 is_rate_limit=_is_rate_limit_error(e),
                 used_fallback=fallback_index > 0,
+                route_id=active_route_id,
+                transport_family=active_transport_family,
             )
             if fallback_index < len(fallback_chain) and _is_rate_limit_error(e):
                 fallback_config = fallback_chain[fallback_index]
@@ -470,6 +409,8 @@ def call_llm(
                 active_model_name = fallback_config["model_name"]
                 active_model_provider = fallback_config["model_provider"]
                 active_api_keys = fallback_config.get("api_keys")
+                active_route_id = str(fallback_config.get("route_id") or "") or None
+                active_transport_family = str(fallback_config.get("transport_family") or _get_transport_family(active_model_provider, active_route_id, active_api_keys))
                 llm, model_info = _build_llm(active_model_name, active_model_provider, active_api_keys, pydantic_model)
                 if agent_name:
                     progress.update_status(agent_name, None, str(fallback_config["status_message"]))

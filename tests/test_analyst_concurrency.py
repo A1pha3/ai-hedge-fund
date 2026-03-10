@@ -1,4 +1,6 @@
+from src.llm import models as llm_models
 from src.main import _build_analyst_batches, _get_analyst_concurrency_limit, _order_selected_analysts
+from src.utils import llm as llm_utils
 from src.utils.llm import build_parallel_provider_execution_plan
 
 
@@ -77,3 +79,45 @@ def test_build_parallel_provider_execution_plan_keeps_single_provider_when_key_m
     assert plan["effective_concurrency_limit"] == 3
     assert plan["parallel_provider_count"] == 1
     assert plan["agent_llm_overrides"] == {}
+
+
+def test_build_parallel_provider_execution_plan_supports_generic_registered_providers(monkeypatch):
+    fake_routes = [
+        llm_models.ProviderRoute(
+            provider_name="Alpha",
+            variant_name="primary",
+            display_name="Alpha",
+            model_name="alpha-fallback",
+            api_keys={"ALPHA_API_KEY": "alpha-key"},
+            route_order=10,
+            capabilities=llm_models.ProviderCapabilities(openai_compatible=True),
+        ),
+        llm_models.ProviderRoute(
+            provider_name="Beta",
+            variant_name="primary",
+            display_name="Beta",
+            model_name="beta-fallback",
+            api_keys={"BETA_API_KEY": "beta-key"},
+            route_order=20,
+            capabilities=llm_models.ProviderCapabilities(openai_compatible=True),
+        ),
+    ]
+
+    monkeypatch.setattr(llm_utils, "get_provider_routes", lambda api_keys, enabled_only_for=None: fake_routes)
+    monkeypatch.setattr(llm_utils, "get_provider_concurrency_limit_env_var", lambda provider_name: f"{provider_name.upper()}_PROVIDER_CONCURRENCY_LIMIT")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=[f"agent_{index}" for index in range(1, 5)],
+        base_model_name="alpha-primary",
+        base_model_provider="Alpha",
+        api_keys=None,
+        per_provider_limit=1,
+    )
+
+    overrides = plan["agent_llm_overrides"]
+
+    assert plan["effective_concurrency_limit"] == 2
+    assert plan["parallel_provider_count"] == 2
+    assert [overrides[f"agent_{index}"]["model_provider"] for index in range(1, 5)] == ["Alpha", "Beta", "Alpha", "Beta"]
+    assert overrides["agent_1"]["model_name"] == "alpha-primary"
+    assert overrides["agent_2"]["model_name"] == "beta-fallback"

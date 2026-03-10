@@ -65,7 +65,7 @@ class BacktestEngine:
         self._model_provider = model_provider
         self._selected_analysts = selected_analysts
         self._backtest_mode = backtest_mode
-        self._pipeline = pipeline or (DailyPipeline() if backtest_mode == "pipeline" else None)
+        self._pipeline = pipeline or (DailyPipeline(base_model_name=model_name, base_model_provider=model_provider) if backtest_mode == "pipeline" else None)
         self._checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self._timing_log_path = self._resolve_timing_log_path()
 

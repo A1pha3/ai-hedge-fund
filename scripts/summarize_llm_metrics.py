@@ -32,11 +32,15 @@ def summarize(jsonl_path: Path) -> dict:
         "file": str(jsonl_path),
         "totals": _bucket(),
         "providers": {},
+        "routes": {},
+        "transport_families": {},
         "models": {},
         "agents": {},
     }
 
     providers: dict[str, dict] = defaultdict(_bucket)
+    routes: dict[str, dict] = defaultdict(_bucket)
+    transport_families: dict[str, dict] = defaultdict(_bucket)
     models: dict[str, dict] = defaultdict(_bucket)
     agents: dict[str, dict] = defaultdict(_bucket)
 
@@ -47,11 +51,15 @@ def summarize(jsonl_path: Path) -> dict:
             entry = json.loads(line)
             _update(summary["totals"], entry)
             _update(providers[str(entry.get("model_provider") or "unknown")], entry)
+            _update(routes[str(entry.get("route_id") or "unknown")], entry)
+            _update(transport_families[str(entry.get("transport_family") or "unknown")], entry)
             model_key = f"{entry.get('model_provider') or 'unknown'}:{entry.get('model_name') or 'unknown'}"
             _update(models[model_key], entry)
             _update(agents[str(entry.get("agent_name") or "unknown")], entry)
 
     summary["providers"] = dict(sorted(providers.items()))
+    summary["routes"] = dict(sorted(routes.items()))
+    summary["transport_families"] = dict(sorted(transport_families.items()))
     summary["models"] = dict(sorted(models.items()))
     summary["agents"] = dict(sorted(agents.items()))
     return summary

@@ -188,6 +188,32 @@ Run the supervisor so that all future restart attempts also keep the same concur
 .venv/bin/python scripts/supervise_ab_compare.py \
   --start-date 2025-12-01 --end-date 2026-03-04 \
   --train-months 2 --test-months 1 --step-months 1 \
+
+#### Track LLM Metrics
+
+Every shared LLM call now writes structured metrics into the `logs/` directory.
+
+- One JSONL file records every logical LLM attempt, including provider, model, agent, duration, success/failure, and whether the error was a rate-limit.
+- One summary JSON file keeps an aggregated view by provider, model, and agent so you can quickly judge where the bottleneck is.
+
+Example output files:
+
+- `logs/llm_metrics_20260310_183246.jsonl`
+- `logs/llm_metrics_20260310_183246.summary.json`
+
+Summarize a metrics file after a run:
+
+```bash
+.venv/bin/python scripts/summarize_llm_metrics.py logs/llm_metrics_20260310_183246.jsonl
+```
+
+You can also save the aggregated result:
+
+```bash
+.venv/bin/python scripts/summarize_llm_metrics.py \
+  logs/llm_metrics_20260310_183246.jsonl \
+  --output data/reports/llm_metrics_summary.json
+```
   --analyst-concurrency-limit 3 \
   --report-file data/reports/ab_walk_forward_first_pilot.md \
   --report-json data/reports/ab_walk_forward_first_pilot.json \

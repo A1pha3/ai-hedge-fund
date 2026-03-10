@@ -17,15 +17,10 @@ _SUMMARY: dict[str, Any] = {
     "session_id": _SESSION_ID,
     "started_at": datetime.now().isoformat(timespec="seconds"),
     "updated_at": None,
-    "totals": {
-        "attempts": 0,
-        "successes": 0,
-        "errors": 0,
-        "rate_limit_errors": 0,
-        "total_duration_ms": 0.0,
-        "avg_duration_ms": 0.0,
-    },
+    "totals": {},
     "providers": {},
+    "routes": {},
+    "transport_families": {},
     "models": {},
     "agents": {},
 }
@@ -43,6 +38,9 @@ def _bucket_template() -> dict[str, Any]:
         "response_chars": 0,
         "error_types": {},
     }
+
+
+_SUMMARY["totals"] = _bucket_template()
 
 
 def _ensure_output_dir() -> None:
@@ -115,6 +113,8 @@ def record_llm_attempt(
     error: Exception | None = None,
     is_rate_limit: bool = False,
     used_fallback: bool = False,
+    route_id: str | None = None,
+    transport_family: str | None = None,
 ) -> None:
     _ensure_output_dir()
     entry = {
@@ -132,9 +132,13 @@ def record_llm_attempt(
         "error_message": _error_message(error),
         "is_rate_limit": is_rate_limit,
         "used_fallback": used_fallback,
+        "route_id": route_id,
+        "transport_family": transport_family,
     }
 
     provider_key = entry["model_provider"]
+    route_key = entry["route_id"] or "unknown"
+    transport_key = entry["transport_family"] or "unknown"
     model_key = f"{entry['model_provider']}:{entry['model_name']}"
     agent_key = entry["agent_name"] or "unknown"
 
@@ -144,9 +148,13 @@ def record_llm_attempt(
 
         _update_bucket(_SUMMARY["totals"], entry)
         providers = _SUMMARY.setdefault("providers", {})
+        routes = _SUMMARY.setdefault("routes", {})
+        transport_families = _SUMMARY.setdefault("transport_families", {})
         models = _SUMMARY.setdefault("models", {})
         agents = _SUMMARY.setdefault("agents", {})
         _update_bucket(providers.setdefault(provider_key, _bucket_template()), entry)
+        _update_bucket(routes.setdefault(route_key, _bucket_template()), entry)
+        _update_bucket(transport_families.setdefault(transport_key, _bucket_template()), entry)
         _update_bucket(models.setdefault(model_key, _bucket_template()), entry)
         _update_bucket(agents.setdefault(agent_key, _bucket_template()), entry)
         _write_summary()
@@ -158,6 +166,8 @@ def reset_llm_metrics_for_testing() -> None:
         _SUMMARY["updated_at"] = None
         _SUMMARY["totals"] = _bucket_template()
         _SUMMARY["providers"] = {}
+        _SUMMARY["routes"] = {}
+        _SUMMARY["transport_families"] = {}
         _SUMMARY["models"] = {}
         _SUMMARY["agents"] = {}
         if _JSONL_PATH.exists():

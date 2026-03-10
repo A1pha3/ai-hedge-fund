@@ -186,6 +186,44 @@ def test_tiered_llm_call():
     assert calls[1] == (6, "precise")
 
 
+def test_default_pipeline_runner_preserves_explicit_non_openai_provider(monkeypatch):
+    calls = []
+
+    def fake_run_hedge_fund(**kwargs):
+        calls.append(kwargs)
+        return {"analyst_signals": {}}
+
+    monkeypatch.setattr("src.main.run_hedge_fund", fake_run_hedge_fund)
+
+    pipeline = DailyPipeline(base_model_name="glm-4.7", base_model_provider="Zhipu")
+    pipeline.agent_runner(["000001"], "20260305", "fast")
+    pipeline.agent_runner(["000001"], "20260305", "precise")
+
+    assert calls[0]["model_name"] == "glm-4.7"
+    assert calls[0]["model_provider"] == "Zhipu"
+    assert calls[1]["model_name"] == "glm-4.7"
+    assert calls[1]["model_provider"] == "Zhipu"
+
+
+def test_default_pipeline_runner_keeps_openai_fast_precise_split(monkeypatch):
+    calls = []
+
+    def fake_run_hedge_fund(**kwargs):
+        calls.append(kwargs)
+        return {"analyst_signals": {}}
+
+    monkeypatch.setattr("src.main.run_hedge_fund", fake_run_hedge_fund)
+
+    pipeline = DailyPipeline(base_model_name="gpt-4.1", base_model_provider="OpenAI")
+    pipeline.agent_runner(["000001"], "20260305", "fast")
+    pipeline.agent_runner(["000001"], "20260305", "precise")
+
+    assert calls[0]["model_name"] == "gpt-4.1-mini"
+    assert calls[0]["model_provider"] == "OpenAI"
+    assert calls[1]["model_name"] == "gpt-4.1"
+    assert calls[1]["model_provider"] == "OpenAI"
+
+
 def test_recovery_protocol():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     plan = ExecutionPlan(date="20260305")

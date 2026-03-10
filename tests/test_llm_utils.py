@@ -310,8 +310,11 @@ def test_call_llm_records_structured_metrics(monkeypatch):
     assert len(lines) == 1
     assert summary["totals"]["attempts"] == 1
     assert summary["totals"]["successes"] == 1
+    assert summary["totals"]["prompt_chars"] > 0
     assert summary["agents"]["metrics_agent"]["attempts"] == 1
     assert len(summary["providers"]) == 1
+    assert "transport_families" in summary
+    assert "routes" in summary
 
 
 def test_call_llm_ignores_metrics_recording_failures(monkeypatch):

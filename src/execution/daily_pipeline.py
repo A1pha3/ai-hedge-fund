@@ -50,21 +50,15 @@ FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
 
 
-def _default_agent_runner(tickers: list[str], trade_date: str, model: str) -> dict[str, dict[str, dict]]:
-    from src.main import run_hedge_fund
+def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
+    """Resolves fast/precise pipeline model settings without silently switching providers."""
+    provider_name = str(base_model_provider or "OpenAI")
+    model_name = str(base_model_name or "gpt-4.1")
 
-    start_date = (datetime.strptime(trade_date, "%Y%m%d") - timedelta(days=365)).strftime("%Y-%m-%d")
-    end_date = datetime.strptime(trade_date, "%Y%m%d").strftime("%Y-%m-%d")
-    model_name = "gpt-4.1-mini" if model == "fast" else "gpt-4.1"
-    result = run_hedge_fund(
-        tickers=tickers,
-        start_date=start_date,
-        end_date=end_date,
-        portfolio={"cash": 1_000_000, "positions": {}, "margin_requirement": 0.0, "margin_used": 0.0, "realized_gains": {}},
-        show_reasoning=False,
-        model_name=model_name,
-    )
-    return result.get("analyst_signals", {})
+    if provider_name == "OpenAI" and model_name in {"gpt-4.1", "gpt-4.1-mini"}:
+        return ("gpt-4.1-mini" if model_tier == "fast" else "gpt-4.1"), provider_name
+
+    return model_name, provider_name
 
 
 def _default_exit_checker(portfolio_snapshot: dict, trade_date: str) -> list:
@@ -73,8 +67,31 @@ def _default_exit_checker(portfolio_snapshot: dict, trade_date: str) -> list:
 
 @dataclass
 class DailyPipeline:
-    agent_runner: AgentRunner = _default_agent_runner
+    agent_runner: AgentRunner | None = None
     exit_checker: ExitChecker = _default_exit_checker
+    base_model_name: str = "gpt-4.1"
+    base_model_provider: str = "OpenAI"
+
+    def __post_init__(self) -> None:
+        if self.agent_runner is None:
+            self.agent_runner = self._run_agents_with_base_model
+
+    def _run_agents_with_base_model(self, tickers: list[str], trade_date: str, model_tier: str) -> dict[str, dict[str, dict]]:
+        from src.main import run_hedge_fund
+
+        start_date = (datetime.strptime(trade_date, "%Y%m%d") - timedelta(days=365)).strftime("%Y-%m-%d")
+        end_date = datetime.strptime(trade_date, "%Y%m%d").strftime("%Y-%m-%d")
+        model_name, model_provider = _resolve_pipeline_model_config(model_tier, self.base_model_name, self.base_model_provider)
+        result = run_hedge_fund(
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date,
+            portfolio={"cash": 1_000_000, "positions": {}, "margin_requirement": 0.0, "margin_used": 0.0, "realized_gains": {}},
+            show_reasoning=False,
+            model_name=model_name,
+            model_provider=model_provider,
+        )
+        return result.get("analyst_signals", {})
 
     def run_post_market(self, trade_date: str, portfolio_snapshot: Optional[dict] = None) -> ExecutionPlan:
         total_started_at = perf_counter()
