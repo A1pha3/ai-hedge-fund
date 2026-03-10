@@ -1,0 +1,14 @@
+{
+  "summary": {
+    "window_count": 0,
+    "baseline_avg_sharpe": null,
+    "baseline_avg_sortino": null,
+    "mvp_avg_sharpe": null,
+    "mvp_avg_sortino": null,
+    "baseline_avg_max_drawdown": null,
+    "mvp_avg_max_drawdown": null,
+    "avg_sortino_delta": null,
+    "sortino_p_value_estimate": null
+  },
+  "windows": []
+}

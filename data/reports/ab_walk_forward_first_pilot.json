@@ -1,0 +1,45 @@
+{
+  "summary": {
+    "window_count": 1,
+    "baseline_avg_sharpe": 0.0,
+    "baseline_avg_sortino": 0.0,
+    "mvp_avg_sharpe": 0.5161696475113376,
+    "mvp_avg_sortino": 0.5488340980453138,
+    "baseline_avg_max_drawdown": 0.0,
+    "mvp_avg_max_drawdown": -0.4792035634690609,
+    "avg_sortino_delta": 0.5488340980453138,
+    "sortino_p_value_estimate": null
+  },
+  "windows": [
+    {
+      "window": {
+        "train_start": "2025-12-01",
+        "train_end": "2026-01-31",
+        "test_start": "2026-02-01",
+        "test_end": "2026-02-28"
+      },
+      "baseline": {
+        "sharpe_ratio": 0.0,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "long_short_ratio": null,
+        "gross_exposure": null,
+        "net_exposure": null,
+        "max_drawdown_date": null,
+        "calmar_ratio": 0.0,
+        "cvar_95": 0.0
+      },
+      "mvp": {
+        "sharpe_ratio": 0.5161696475113376,
+        "sortino_ratio": 0.5488340980453138,
+        "max_drawdown": -0.4792035634690609,
+        "long_short_ratio": null,
+        "gross_exposure": null,
+        "net_exposure": null,
+        "max_drawdown_date": "2026-02-05",
+        "calmar_ratio": 12.916369657165427,
+        "cvar_95": -0.004792035634690661
+      }
+    }
+  ]
+}

@@ -1,0 +1,699 @@
+WARNING:src.data.enhanced_cache:Redis not available, install with: pip install redis
+2026-03-09 16:23:34 | INFO     | __main__:main:99 | Using non-interactive model selection: Zhipu / glm-4.7
+
+Selected Zhipu model: glm-4.7
+
+[H[2J[3J
+PORTFOLIO SUMMARY:
+Cash Balance: $100,000.00
+Total Position Value: $0.00
+Total Value: $100,000.00
+Portfolio Return: +0.00%
+
+
+
+No ticker rows for this backtest day.
+
+
+
+
+
+[CandidatePool] 从缓存加载 200 只候选标的 (20260202)
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 3 篇
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 2 篇
+[AKShare] 已过滤 5 篇与 300045(华力创通) 无直接关联的通用市场文章
+2026-03-09 16:24:17 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 6 期
+2026-03-09 16:24:17 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 4 期
+2026-03-09 16:24:17 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 3 期
+2026-03-09 16:24:18 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:24:18 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.405087 seconds
+2026-03-09 16:24:18 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:24:18 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.824535 seconds
+2026-03-09 16:24:19 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:24:53 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:24:53 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 4 期
+2026-03-09 16:24:53 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:24:53 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.419894 seconds
+2026-03-09 16:24:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:24:54 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.969302 seconds
+2026-03-09 16:24:55 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:25:18 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:25:18 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 4 期
+2026-03-09 16:25:19 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:25:19 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.423217 seconds
+2026-03-09 16:25:19 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:25:19 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.814476 seconds
+2026-03-09 16:25:20 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:25:43 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:26:27 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:26:27 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 6 期
+2026-03-09 16:26:28 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:26:28 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 4 期
+2026-03-09 16:27:41 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:27:41 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 6 期
+2026-03-09 16:28:06 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:28:06 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 5 期
+2026-03-09 16:28:33 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:29:22 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:29:22 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 6 期
+2026-03-09 16:29:22 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 4 期
+2026-03-09 16:29:23 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:29:23 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.487620 seconds
+2026-03-09 16:29:23 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:29:23 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.903689 seconds
+2026-03-09 16:29:24 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:29:40 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:29:40 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:29:40 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.488674 seconds
+2026-03-09 16:29:41 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:29:41 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.846680 seconds
+2026-03-09 16:29:42 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:29:53 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:29:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:29:54 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.442076 seconds
+2026-03-09 16:29:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:29:54 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.793180 seconds
+2026-03-09 16:29:55 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:30:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:30:15 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:30:15 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 6 期
+2026-03-09 16:31:02 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:31:02 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 6 期
+2026-03-09 16:31:10 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:31:10 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 4 期
+2026-03-09 16:32:10 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:32:10 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 4 期
+2026-03-09 16:32:36 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:33:44 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:33:44 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 5 期
+2026-03-09 16:33:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:33:45 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.452618 seconds
+2026-03-09 16:33:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:33:45 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.968447 seconds
+2026-03-09 16:33:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:34:26 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:34:27 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:34:27 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.464123 seconds
+2026-03-09 16:34:27 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:34:28 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.811608 seconds
+2026-03-09 16:34:28 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:34:44 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:34:50 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:34:51 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:34:51 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.437411 seconds
+2026-03-09 16:34:51 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:34:51 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.868313 seconds
+2026-03-09 16:34:52 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:34:59 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:34:59 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 5 期
+2026-03-09 16:35:21 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:36:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:36:52 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:36:52 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 5 期
+2026-03-09 16:38:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:38:30 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:38:30 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 3 期
+2026-03-09 16:38:30 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 4 期
+2026-03-09 16:38:30 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 8 期
+2026-03-09 16:38:30 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 603993/2026-02-02, 246 条
+2026-03-09 16:38:30 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:38:30 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.444804 seconds
+2026-03-09 16:38:31 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:38:31 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.938628 seconds
+2026-03-09 16:38:32 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:39:21 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:39:21 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 4 期
+2026-03-09 16:39:21 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-02, 246 条
+2026-03-09 16:39:21 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:39:21 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.410034 seconds
+2026-03-09 16:39:22 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:39:22 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.969904 seconds
+2026-03-09 16:39:22 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:39:22 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 8 期
+2026-03-09 16:39:23 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:39:34 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:39:34 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 4 期
+2026-03-09 16:39:42 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:39:42 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 4 期
+2026-03-09 16:39:42 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 601600/2026-02-02, 246 条
+2026-03-09 16:39:42 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:39:42 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.384246 seconds
+2026-03-09 16:39:43 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:39:43 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.894385 seconds
+2026-03-09 16:39:44 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:40:09 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:40:27 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:40:27 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 10 期
+2026-03-09 16:41:12 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:41:12 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 5 期
+2026-03-09 16:41:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:42:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:42:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 8 期
+2026-03-09 16:42:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 10 期
+2026-03-09 16:42:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 10 期
+2026-03-09 16:42:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 10 期
+2026-03-09 16:42:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 11 期
+2026-03-09 16:42:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-02, 6 期
+2026-03-09 16:42:55 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-02, 6 期
+2026-03-09 16:42:55 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 601600/2026-02-02, 8 期
+2026-03-09 16:44:00 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+ ✓ Aswath Damodaran    [601600] Done                                            
+ ✓ Ben Graham          [601600] Done                                            
+ ✓ Bill Ackman         [601600] Done                                            
+ ✓ Cathie Wood         [601600] Done                                            
+ ✓ Charlie Munger      [601600] Done                                            
+ ✓ Fundamentals Analyst[601600] Done                                            
+ ✓ Growth Analyst      [601600] Done                                            
+ ✓ Michael Burry       [601600] Done                                            
+ ✓ Mohnish Pabrai      [601600] Done                                            
+ ✓ News Sentiment      [601600] Done                                            
+ ✓ Peter Lynch         [601600] Done                                            
+ ✓ Phil Fisher         [601600] Done                                            
+ ✓ Portfolio Manager   [601600] Done                                            
+ ✓ Rakesh Jhunjhunwala [601600] Done                                            
+ ✓ Sentiment Analyst   [601600] Done                                            
+ ✓ Stanley Druckenmiller[601600] Done                                           
+ ✓ Technical Analyst   [601600] Done                                            
+ ✓ Valuation Analyst   [601600] Done                                            
+ ✓ Warren Buffett      [601600] Done                                            
+ ✓ Risk Management     [601600] Done                                            [H[2J[3J
+PORTFOLIO SUMMARY:
+Cash Balance: $100,000.00
+Total Position Value: $0.00
+Total Value: $100,000.00
+Portfolio Return: +0.00%
+
+
+
+No ticker rows for this backtest day.
+
+
+
+
+
+[CandidatePool] 从缓存加载 200 只候选标的 (20260203)
+2026-03-09 16:44:02 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300308/2026-02-03, 267 条
+2026-03-09 16:44:02 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300502/2026-02-03, 267 条
+2026-03-09 16:44:03 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 603993/2026-02-03, 267 条
+2026-03-09 16:44:03 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-03, 267 条
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 3 篇
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 1 篇
+[AKShare] 已过滤 1 篇与 600879(航天电子) 无直接关联的通用市场文章
+[AKShare] 已过滤 5 篇与 300045(华力创通) 无直接关联的通用市场文章
+2026-03-09 16:44:12 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 3 期
+2026-03-09 16:44:12 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 4 期
+2026-03-09 16:44:12 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 6 期
+2026-03-09 16:44:12 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:44:12 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.448193 seconds
+2026-03-09 16:44:13 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:44:13 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.752051 seconds
+2026-03-09 16:44:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:44:49 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:44:49 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 6 期
+2026-03-09 16:44:49 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:44:49 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.387368 seconds
+2026-03-09 16:44:50 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:44:50 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.915042 seconds
+2026-03-09 16:44:51 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:45:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:45:14 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 5 期
+2026-03-09 16:45:15 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:45:15 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.463861 seconds
+2026-03-09 16:45:15 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:45:15 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.786626 seconds
+2026-03-09 16:45:16 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:45:34 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:45:34 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 6 期
+2026-03-09 16:45:34 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:45:34 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.498982 seconds
+2026-03-09 16:45:35 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:45:35 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.852127 seconds
+2026-03-09 16:45:36 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:45:52 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:45:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:45:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 4 期
+2026-03-09 16:46:07 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:46:07 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 4 期
+2026-03-09 16:46:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:46:46 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 4 期
+2026-03-09 16:47:43 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:47:43 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 4 期
+2026-03-09 16:47:43 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:47:43 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 4 期
+2026-03-09 16:49:25 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:49:35 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:49:36 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 5 期
+2026-03-09 16:49:36 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:49:36 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.468749 seconds
+2026-03-09 16:51:30 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:51:30 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 4 期
+2026-03-09 16:51:30 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 3 期
+2026-03-09 16:51:31 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:51:31 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.461533 seconds
+2026-03-09 16:51:32 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:51:32 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.985867 seconds
+2026-03-09 16:51:33 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:51:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:51:45 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 6 期
+2026-03-09 16:51:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:51:45 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.491274 seconds
+2026-03-09 16:51:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:51:45 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.982666 seconds
+2026-03-09 16:51:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:52:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:52:14 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 5 期
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 1 篇
+2026-03-09 16:52:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:52:14 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.460445 seconds
+2026-03-09 16:52:15 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:52:15 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.946619 seconds
+2026-03-09 16:52:16 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:52:22 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:52:22 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 4 期
+2026-03-09 16:52:40 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:52:40 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 6 期
+2026-03-09 16:52:40 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:52:40 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.389763 seconds
+2026-03-09 16:52:40 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:52:40 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.836735 seconds
+2026-03-09 16:52:41 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:52:55 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:53:37 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:53:37 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 4 期
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 1 篇
+2026-03-09 16:53:40 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:53:40 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 4 期
+2026-03-09 16:55:02 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:55:02 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 5 期
+2026-03-09 16:56:03 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:56:10 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:56:10 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 4 期
+2026-03-09 16:57:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:57:45 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 4 期
+2026-03-09 16:59:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 16:59:46 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 5 期
+2026-03-09 16:59:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:59:46 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.457101 seconds
+2026-03-09 16:59:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 16:59:46 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.964574 seconds
+2026-03-09 16:59:48 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:00:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:00:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:00:08 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.404742 seconds
+2026-03-09 17:00:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:00:08 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.898860 seconds
+2026-03-09 17:00:10 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:00:48 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 1 篇
+2026-03-09 17:00:49 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:00:49 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.420441 seconds
+2026-03-09 17:00:49 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:00:49 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.750346 seconds
+2026-03-09 17:00:50 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:01:16 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:01:16 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:01:16 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.416353 seconds
+2026-03-09 17:01:17 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:01:17 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.838236 seconds
+2026-03-09 17:01:18 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:01:42 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:02:36 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:02:36 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 5 期
+2026-03-09 17:02:36 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:02:36 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.420119 seconds
+2026-03-09 17:02:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:04:19 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:04:19 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 5 期
+2026-03-09 17:04:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:06:11 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:06:11 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 5 期
+2026-03-09 17:07:53 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:09:07 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:10:07 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:10:07 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 4 期
+2026-03-09 17:10:07 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 3 期
+2026-03-09 17:10:07 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 8 期
+2026-03-09 17:10:07 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 603993/2026-02-03, 247 条
+2026-03-09 17:10:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:10:08 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.412612 seconds
+2026-03-09 17:10:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:10:08 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.793862 seconds
+2026-03-09 17:10:09 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:10:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:10:45 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 4 期
+2026-03-09 17:10:45 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-03, 247 条
+2026-03-09 17:10:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:10:45 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.485225 seconds
+2026-03-09 17:10:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:10:46 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.801843 seconds
+2026-03-09 17:10:47 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:11:35 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:11:35 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 4 期
+2026-03-09 17:11:35 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300502/2026-02-03, 247 条
+2026-03-09 17:11:35 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:11:35 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.420566 seconds
+2026-03-09 17:11:36 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:11:36 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.885857 seconds
+2026-03-09 17:11:37 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:12:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:12:08 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 8 期
+2026-03-09 17:12:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:12:14 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 4 期
+2026-03-09 17:12:14 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300308/2026-02-03, 247 条
+2026-03-09 17:12:15 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:12:15 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 4 期
+2026-03-09 17:12:15 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:12:15 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.448040 seconds
+2026-03-09 17:12:16 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:12:16 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.843042 seconds
+2026-03-09 17:12:17 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:12:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:12:46 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 4 期
+2026-03-09 17:12:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:12:46 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.417354 seconds
+2026-03-09 17:12:47 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:12:47 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.946942 seconds
+2026-03-09 17:12:48 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:13:20 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:13:20 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 5 期
+2026-03-09 17:13:20 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:13:20 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.444006 seconds
+2026-03-09 17:13:21 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:13:21 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.817056 seconds
+2026-03-09 17:13:22 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:13:40 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:14:09 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:14:09 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 9 期
+2026-03-09 17:14:19 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:18:09 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:18:09 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 10 期
+2026-03-09 17:22:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 10 期
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 8 期
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 10 期
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 10 期
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 11 期
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 603993/2026-02-03, 6 期
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-03, 6 期
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300502/2026-02-03, 7 期
+2026-03-09 17:22:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300308/2026-02-03, 8 期
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 1 篇
+2026-03-09 17:23:44 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:24:04 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:25:36 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+ ✓ Aswath Damodaran    [300308] Done                                            
+ ✓ Ben Graham          [300308] Done                                            
+ ✓ Bill Ackman         [300308] Done                                            
+ ✓ Cathie Wood         [300308] Done                                            
+ ✓ Charlie Munger      [300308] Done                                            
+ ✓ Fundamentals Analyst[300308] Done                                            
+ ✓ Growth Analyst      [300308] Done                                            
+ ✓ Michael Burry       [300308] Done                                            
+ ✓ Mohnish Pabrai      [300308] Done                                            
+ ✓ News Sentiment      [300308] Done                                            
+ ✓ Peter Lynch         [300308] Done                                            
+ ✓ Phil Fisher         [300308] Done                                            
+ ✓ Portfolio Manager   [300308] Done                                            
+ ✓ Rakesh Jhunjhunwala [300308] Done                                            
+ ✓ Sentiment Analyst   [300308] Done                                            
+ ✓ Stanley Druckenmiller[300308] Done                                           
+ ✓ Technical Analyst   [300308] Done                                            
+ ✓ Valuation Analyst   [300308] Done                                            
+ ✓ Warren Buffett      [300308] Done                                            
+ ✓ Risk Management     [300308] Done                                            [H[2J[3J
+PORTFOLIO SUMMARY:
+Cash Balance: $100,000.00
+Total Position Value: $0.00
+Total Value: $100,000.00
+Portfolio Return: +0.00%
+
+
+
+No ticker rows for this backtest day.
+
+
+
+
+
+[CandidatePool] 从缓存加载 200 只候选标的 (20260204)
+[Tushare] get_northbound_flow 失败: 查询数据失败，请确认参数！可以反馈管理员协助您排查问题
+2026-03-09 17:25:46 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-04, 267 条
+[AKShare] 已过滤 1 篇与 600879(航天电子) 无直接关联的通用市场文章
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 1 篇
+2026-03-09 17:25:53 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 4 期
+2026-03-09 17:25:53 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 3 期
+2026-03-09 17:25:54 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 6 期
+2026-03-09 17:25:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:25:54 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.389829 seconds
+2026-03-09 17:25:54 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:25:54 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.954575 seconds
+2026-03-09 17:25:55 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:26:13 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:27:57 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:28:03 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:28:03 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 3 期
+2026-03-09 17:28:03 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 4 期
+2026-03-09 17:28:03 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:28:03 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.415592 seconds
+2026-03-09 17:28:04 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:28:04 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.926021 seconds
+2026-03-09 17:28:05 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:28:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:29:22 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:30:58 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:30:58 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 5 期
+2026-03-09 17:30:58 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:30:58 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.380443 seconds
+2026-03-09 17:30:58 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:30:58 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.474993 seconds
+2026-03-09 17:30:58 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:30:58 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.972730 seconds
+2026-03-09 17:30:59 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:31:27 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:33:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:33:47 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:33:47 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 3 期
+2026-03-09 17:33:47 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 4 期
+2026-03-09 17:33:47 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 8 期
+2026-03-09 17:33:47 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-04, 248 条
+2026-03-09 17:33:47 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:33:47 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.487965 seconds
+2026-03-09 17:33:48 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:33:48 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.868302 seconds
+2026-03-09 17:33:49 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:34:13 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:35:12 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:35:38 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:35:38 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 10 期
+2026-03-09 17:35:39 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-04, 6 期
+2026-03-09 17:36:21 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+ ✓ Aswath Damodaran    [300724] Done                                            
+ ✓ Ben Graham          [300724] Done                                            
+ ✓ Bill Ackman         [300724] Done                                            
+ ✓ Cathie Wood         [300724] Done                                            
+ ✓ Charlie Munger      [300724] Done                                            
+ ✓ Fundamentals Analyst[300724] Done                                            
+ ✓ Growth Analyst      [300724] Done                                            
+ ✓ Michael Burry       [300724] Done                                            
+ ✓ Mohnish Pabrai      [300724] Done                                            
+ ✓ News Sentiment      [300724] Done                                            
+ ✓ Peter Lynch         [300724] Done                                            
+ ✓ Phil Fisher         [300724] Done                                            
+ ✓ Portfolio Manager   [300724] Done                                            
+ ✓ Rakesh Jhunjhunwala [300724] Done                                            
+ ✓ Sentiment Analyst   [300724] Done                                            
+ ✓ Stanley Druckenmiller[300724] Done                                           
+ ✓ Technical Analyst   [300724] Done                                            
+ ✓ Valuation Analyst   [300724] Done                                            
+ ✓ Warren Buffett      [300724] Done                                            
+ ✓ Risk Management     [300724] Done                                            [H[2J[3J
+PORTFOLIO SUMMARY:
+Cash Balance: $100,000.00
+Total Position Value: $0.00
+Total Value: $100,000.00
+Portfolio Return: +0.00%
+Sharpe Ratio: 0.00
+Sortino Ratio: 0.00
+Max Drawdown: 0.00%
+
+
+
+No ticker rows for this backtest day.
+
+
+
+
+
+[CandidatePool] 从缓存加载 200 只候选标的 (20260205)
+2026-03-09 17:36:27 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-05, 267 条
+[AKShare] 已过滤 1 篇与 600879(航天电子) 无直接关联的通用市场文章
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 2 篇
+2026-03-09 17:36:34 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 4 期
+2026-03-09 17:36:34 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 6 期
+2026-03-09 17:36:34 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 4 期
+2026-03-09 17:36:34 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:36:34 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.460838 seconds
+2026-03-09 17:36:35 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:36:35 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.953949 seconds
+2026-03-09 17:36:36 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:37:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:37:41 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:38:04 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:38:05 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 6 期
+2026-03-09 17:38:05 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 4 期
+2026-03-09 17:38:05 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:38:05 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.428612 seconds
+2026-03-09 17:38:05 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:38:05 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.827373 seconds
+2026-03-09 17:38:06 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:38:16 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:38:50 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:39:24 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:39:24 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 5 期
+2026-03-09 17:39:24 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:39:24 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.474355 seconds
+2026-03-09 17:39:25 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:39:25 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.968889 seconds
+2026-03-09 17:39:26 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:39:58 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:40:38 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:40:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:40:45 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 4 期
+2026-03-09 17:40:45 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 4 期
+2026-03-09 17:40:45 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 8 期
+2026-03-09 17:40:46 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-05, 249 条
+2026-03-09 17:40:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:40:46 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.414182 seconds
+2026-03-09 17:40:46 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:40:46 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.887443 seconds
+2026-03-09 17:40:47 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:41:07 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:41:59 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:42:14 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:42:14 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 10 期
+2026-03-09 17:42:15 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-05, 6 期
+2026-03-09 17:42:48 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+ ✓ Aswath Damodaran    [300724] Done                                            
+ ✓ Ben Graham          [300724] Done                                            
+ ✓ Bill Ackman         [300724] Done                                            
+ ✓ Cathie Wood         [300724] Done                                            
+ ✓ Charlie Munger      [300724] Done                                            
+ ✓ Fundamentals Analyst[300724] Done                                            
+ ✓ Growth Analyst      [300724] Done                                            
+ ✓ Michael Burry       [300724] Done                                            
+ ✓ Mohnish Pabrai      [300724] Done                                            
+ ✓ News Sentiment      [300724] Done                                            
+ ✓ Peter Lynch         [300724] Done                                            
+ ✓ Phil Fisher         [300724] Done                                            
+ ✓ Portfolio Manager   [300724] Done                                            
+ ✓ Rakesh Jhunjhunwala [300724] Done                                            
+ ✓ Sentiment Analyst   [300724] Done                                            
+ ✓ Stanley Druckenmiller[300724] Done                                           
+ ✓ Technical Analyst   [300724] Done                                            
+ ✓ Valuation Analyst   [300724] Done                                            
+ ✓ Warren Buffett      [300724] Done                                            
+ ✓ Risk Management     [300724] Done                                            [H[2J[3J
+PORTFOLIO SUMMARY:
+Cash Balance: $100,000.00
+Total Position Value: $0.00
+Total Value: $100,000.00
+Portfolio Return: +0.00%
+Sharpe Ratio: 0.00
+Sortino Ratio: 0.00
+Max Drawdown: 0.00%
+
+
+
+No ticker rows for this backtest day.
+
+
+
+
+
+[CandidatePool] 从缓存加载 200 只候选标的 (20260206)
+2026-03-09 17:42:57 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-06, 268 条
+[AKShare] 已过滤 1 篇与 600879(航天电子) 无直接关联的通用市场文章
+[AKShare] 新闻去重：移除 1 篇重复报道（同一事件不同来源），保留 3 篇
+2026-03-09 17:43:08 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 4 期
+2026-03-09 17:43:08 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 6 期
+2026-03-09 17:43:08 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 4 期
+2026-03-09 17:43:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:43:08 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.436542 seconds
+2026-03-09 17:43:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:43:08 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.804634 seconds
+2026-03-09 17:43:09 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:43:25 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:45:57 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:46:07 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:46:07 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 6 期
+2026-03-09 17:46:07 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 4 期
+2026-03-09 17:46:07 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:46:07 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.410002 seconds
+2026-03-09 17:46:08 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:46:08 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.757957 seconds
+2026-03-09 17:46:09 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:46:25 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:47:47 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:48:16 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:48:16 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 5 期
+2026-03-09 17:48:16 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:48:16 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.463475 seconds
+2026-03-09 17:48:17 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:48:17 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.919438 seconds
+2026-03-09 17:48:18 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:48:42 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:50:23 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:50:38 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:50:38 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 4 期
+2026-03-09 17:50:38 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 4 期
+2026-03-09 17:50:38 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 8 期
+2026-03-09 17:50:38 | INFO     | src.data.snapshot:export_prices:97 | [Snapshot] 价格快照已导出: 300724/2026-02-06, 249 条
+2026-03-09 17:50:38 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:50:38 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.486479 seconds
+2026-03-09 17:50:39 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:50:39 | INFO     | openai._base_client:_sleep_for_retry:1094 | Retrying request to /chat/completions in 0.792732 seconds
+2026-03-09 17:50:40 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 429 Too Many Requests"
+2026-03-09 17:51:07 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://api.minimaxi.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:51:41 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:52:45 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+2026-03-09 17:52:45 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 10 期
+2026-03-09 17:52:45 | INFO     | src.data.snapshot:export_financial_metrics:132 | [Snapshot] 财务指标快照已导出: 300724/2026-02-06, 6 期
+2026-03-09 17:54:09 | INFO     | httpx:_send_single_request:1025 | HTTP Request: POST https://open.bigmodel.cn/api/coding/paas/v4/chat/completions "HTTP/1.1 200 OK"
+ ✓ Aswath Damodaran    [300724] Done                                            
+ ✓ Ben Graham          [300724] Done                                            
+ ✓ Bill Ackman         [300724] Done                                            
+ ✓ Cathie Wood         [300724] Done                                            
+ ✓ Charlie Munger      [300724] Done                                            
+ ✓ Fundamentals Analyst[300724] Done                                            
+ ✓ Growth Analyst      [300724] Done                                            
+ ✓ Michael Burry       [300724] Done                                            
+ ✓ Mohnish Pabrai      [300724] Done                                            
+ ✓ News Sentiment      [300724] Done                                            
+ ✓ Peter Lynch         [300724] Done                                            
+ ✓ Phil Fisher         [300724] Done                                            
+ ✓ Portfolio Manager   [300724] Done                                            
+ ✓ Rakesh Jhunjhunwala [300724] Done                                            
+ ✓ Sentiment Analyst   [300724] Done                                            
+ ✓ Stanley Druckenmiller[300724] Done                                           
+ ✓ Technical Analyst   [300724] Done                                            
+ ✓ Valuation Analyst   [300724] Done                                            
+ ✓ Warren Buffett      [300724] Done                                            
+ ✓ Risk Management     [300724] Done                                            # A/B Walk-Forward Comparison
+
+| Window | Baseline Sharpe | MVP Sharpe | Baseline Sortino | MVP Sortino | Baseline MDD | MVP MDD |
+|---|---:|---:|---:|---:|---:|---:|
+| 2026-02-01..2026-02-06 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+
+## Summary
+
+- Windows: 1
+- Baseline Avg Sharpe: 0.00
+- MVP Avg Sharpe: 0.00
+- Baseline Avg Sortino: 0.00
+- MVP Avg Sortino: 0.00
+- Avg Sortino Delta: 0.00
+
+注：当前 p 值为正态近似估计，用于轻量化本地验证；若要做正式研究结论，建议后续引入精确统计检验。
+
+Report saved to: data/reports/ab_walk_forward_validation_20260309_5d_clean.md
+JSON saved to: data/reports/ab_walk_forward_validation_20260309_5d_clean.json
