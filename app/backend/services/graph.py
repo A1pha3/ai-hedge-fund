@@ -1,4 +1,5 @@
 import asyncio
+import os
 import json
 import re
 from langchain_core.messages import HumanMessage
@@ -10,6 +11,7 @@ from src.agents.risk_manager import risk_management_agent
 from src.main import start
 from src.utils.analysts import ANALYST_CONFIG
 from src.graph.state import AgentState
+from src.utils.llm import build_parallel_provider_execution_plan
 
 
 def extract_base_agent_key(unique_id: str) -> str:
@@ -95,9 +97,7 @@ def create_graph(graph_nodes: list, graph_edges: list) -> StateGraph:
             nodes_with_outgoing_edges.add(edge.source)
             
             # Check if this is a direct connection from analyst to portfolio manager
-            if (source_base_key in ANALYST_CONFIG and 
-                source_base_key != "portfolio_manager" and 
-                target_base_key == "portfolio_manager"):
+            if source_base_key in ANALYST_CONFIG and source_base_key != "portfolio_manager" and target_base_key == "portfolio_manager":
                 # Don't add direct edge to portfolio manager - we'll route through risk manager
                 direct_to_portfolio_managers[edge.source] = edge.target
             else:
@@ -153,6 +153,22 @@ def run_graph(
     start date, end date, show reasoning, model name,
     and model provider.
     """
+    per_provider_limit_raw = os.getenv("ANALYST_CONCURRENCY_LIMIT", "2")
+    try:
+        per_provider_limit = max(1, int(per_provider_limit_raw))
+    except ValueError:
+        per_provider_limit = 2
+
+    request_api_keys = request.api_keys if request and hasattr(request, "api_keys") else None
+    agent_names = request.get_agent_ids() if request and hasattr(request, "get_agent_ids") else []
+    execution_plan = build_parallel_provider_execution_plan(
+        agent_names=agent_names,
+        base_model_name=model_name,
+        base_model_provider=model_provider,
+        api_keys=request_api_keys,
+        per_provider_limit=per_provider_limit,
+    )
+
     return graph.invoke(
         {
             "messages": [
@@ -171,6 +187,7 @@ def run_graph(
                 "show_reasoning": False,
                 "model_name": model_name,
                 "model_provider": model_provider,
+                "agent_llm_overrides": execution_plan["agent_llm_overrides"],
                 "request": request,  # Pass the request for agent-specific model access
             },
         },

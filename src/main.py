@@ -28,6 +28,7 @@ from src.utils.display import (
     save_daily_gainers_report,
     save_trading_report,
 )
+from src.utils.llm import build_parallel_provider_execution_plan
 from src.utils.logging import get_logger, setup_logging
 from src.utils.progress import progress
 
@@ -69,8 +70,18 @@ def run_hedge_fund(
     progress.start()
 
     try:
-        selected_analysts_key = tuple(selected_analysts) if selected_analysts else None
-        agent = _get_compiled_workflow(selected_analysts_key, _get_analyst_concurrency_limit())
+        analyst_nodes = get_analyst_nodes()
+        selected_analyst_keys = _order_selected_analysts(selected_analysts or list(analyst_nodes.keys()))
+        selected_analysts_key = tuple(selected_analyst_keys) if selected_analyst_keys else None
+        base_concurrency_limit = _get_analyst_concurrency_limit()
+        execution_plan = build_parallel_provider_execution_plan(
+            agent_names=[analyst_nodes[analyst_key][0] for analyst_key in selected_analyst_keys],
+            base_model_name=model_name,
+            base_model_provider=model_provider,
+            api_keys=None,
+            per_provider_limit=base_concurrency_limit,
+        )
+        agent = _get_compiled_workflow(selected_analysts_key, int(execution_plan["effective_concurrency_limit"]))
 
         final_state = agent.invoke(
             {
@@ -90,6 +101,7 @@ def run_hedge_fund(
                     "show_reasoning": show_reasoning,
                     "model_name": model_name,
                     "model_provider": model_provider,
+                    "agent_llm_overrides": execution_plan["agent_llm_overrides"],
                 },
             },
         )

@@ -135,14 +135,16 @@ poetry run python src/backtester.py --ticker AAPL,MSFT,NVDA
 
 #### Control Analyst Concurrency
 
-For pipeline-style hedge fund runs and A/B backtests, the environment variable `ANALYST_CONCURRENCY_LIMIT` controls how many analyst agents run at the same time in each wave.
+For pipeline-style hedge fund runs and A/B backtests, the environment variable `ANALYST_CONCURRENCY_LIMIT` controls the default size of each provider lane.
 
 - `1` means fully serialized analysis. This is the safest option when your LLM quota is tight, but also the slowest.
 - `2` means two analysts run in parallel per wave. This was the original conservative default used to stabilize long A-share runs.
-- `3` means three analysts run in parallel per wave. This is a practical middle ground when you want more speed without taking on the burst risk of full fan-out.
+- `3` means three analysts run in parallel per provider lane. When both Zhipu and MiniMax are available, the system can schedule them together for up to `6` analyst calls in the same wave.
+- `MINIMAX_PROVIDER_CONCURRENCY_LIMIT` and `ZHIPU_PROVIDER_CONCURRENCY_LIMIT` let you bias the split instead of keeping the two providers at `1:1`.
+- `LLM_PRIMARY_PROVIDER=MiniMax` makes the weighted wave start from MiniMax first, which is useful when MiniMax is your main workhorse and Zhipu is the overflow lane.
 - Larger values increase throughput, but they also increase the chance of provider-side `429`, quota exhaustion, or unstable long-running jobs.
 
-This setting does **not** change the number of stocks being processed. It only changes how many analyst personas are evaluated concurrently before the workflow moves on to the next batch.
+This setting does **not** change the number of stocks being processed. It only changes how many analyst personas are evaluated concurrently before the workflow moves on to the next batch. In dual-provider mode, total concurrency is approximately `MINIMAX_PROVIDER_CONCURRENCY_LIMIT + ZHIPU_PROVIDER_CONCURRENCY_LIMIT` when those two variables are set, otherwise it remains approximately `ANALYST_CONCURRENCY_LIMIT * 2`.
 
 **Examples**
 
@@ -162,6 +164,22 @@ ANALYST_CONCURRENCY_LIMIT=3 .venv/bin/backtester --ab-compare --mode pipeline \
   --analysts-all \
   --report-file data/reports/ab_walk_forward_first_pilot.md \
   --report-json data/reports/ab_walk_forward_first_pilot.json
+```
+
+Run a weighted dual-provider backtest where MiniMax carries more traffic and Zhipu stays as a spillover lane:
+
+```bash
+ANALYST_CONCURRENCY_LIMIT=3 \
+MINIMAX_PROVIDER_CONCURRENCY_LIMIT=4 \
+ZHIPU_PROVIDER_CONCURRENCY_LIMIT=2 \
+LLM_PRIMARY_PROVIDER=MiniMax \
+.venv/bin/backtester --ab-compare --mode pipeline \
+  --start-date 2025-12-01 --end-date 2026-03-04 \
+  --train-months 2 --test-months 1 --step-months 1 \
+  --model-provider Zhipu --model-name glm-4.7 \
+  --analysts-all \
+  --report-file data/reports/ab_weighted_dual_provider.md \
+  --report-json data/reports/ab_weighted_dual_provider.json
 ```
 
 Run the supervisor so that all future restart attempts also keep the same concurrency:

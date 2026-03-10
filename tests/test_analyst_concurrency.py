@@ -1,4 +1,5 @@
 from src.main import _build_analyst_batches, _get_analyst_concurrency_limit, _order_selected_analysts
+from src.utils.llm import build_parallel_provider_execution_plan
 
 
 def test_build_analyst_batches_respects_limit():
@@ -17,3 +18,62 @@ def test_order_selected_analysts_uses_config_order():
     ordered = _order_selected_analysts(["warren_buffett", "ben_graham", "aswath_damodaran"])
 
     assert ordered == ["aswath_damodaran", "ben_graham", "warren_buffett"]
+
+
+def test_build_parallel_provider_execution_plan_uses_dual_provider_wave(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=[f"agent_{index}" for index in range(1, 7)],
+        base_model_name="glm-4.7",
+        base_model_provider="Zhipu",
+        api_keys=None,
+        per_provider_limit=3,
+    )
+
+    overrides = plan["agent_llm_overrides"]
+
+    assert plan["effective_concurrency_limit"] == 6
+    assert plan["parallel_provider_count"] == 2
+    assert [overrides[f"agent_{index}"]["model_provider"] for index in range(1, 7)] == ["Zhipu", "MiniMax", "Zhipu", "MiniMax", "Zhipu", "MiniMax"]
+
+
+def test_build_parallel_provider_execution_plan_supports_weighted_provider_caps(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.setenv("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", "4")
+    monkeypatch.setenv("ZHIPU_PROVIDER_CONCURRENCY_LIMIT", "2")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=[f"agent_{index}" for index in range(1, 7)],
+        base_model_name="glm-4.7",
+        base_model_provider="Zhipu",
+        api_keys=None,
+        per_provider_limit=3,
+    )
+
+    overrides = plan["agent_llm_overrides"]
+    providers = [overrides[f"agent_{index}"]["model_provider"] for index in range(1, 7)]
+
+    assert plan["effective_concurrency_limit"] == 6
+    assert providers.count("MiniMax") == 4
+    assert providers.count("Zhipu") == 2
+    assert providers[0] == "MiniMax"
+
+
+def test_build_parallel_provider_execution_plan_keeps_single_provider_when_key_missing(monkeypatch):
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=["agent_1", "agent_2"],
+        base_model_name="glm-4.7",
+        base_model_provider="Zhipu",
+        api_keys=None,
+        per_provider_limit=3,
+    )
+
+    assert plan["effective_concurrency_limit"] == 3
+    assert plan["parallel_provider_count"] == 1
+    assert plan["agent_llm_overrides"] == {}
