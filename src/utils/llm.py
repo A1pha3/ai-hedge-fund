@@ -122,9 +122,29 @@ def _get_agent_llm_override(state: AgentState | None, agent_name: str | None) ->
     return override if isinstance(override, dict) else None
 
 
+def _get_parallel_provider_allowlist() -> set[str] | None:
+    """Returns an optional allowlist for providers participating in parallel waves."""
+    raw_value = os.getenv("LLM_PARALLEL_PROVIDER_ALLOWLIST", "").strip()
+    if not raw_value:
+        return None
+    providers = {item.strip() for item in raw_value.split(",") if item.strip()}
+    return providers or None
+
+
+def _filter_parallel_routes(routes: list[ProviderRoute]) -> list[ProviderRoute]:
+    """Applies optional provider allowlist filtering to parallel-routing candidates."""
+    allowlist = _get_parallel_provider_allowlist()
+    if not allowlist:
+        return routes
+    return [route for route in routes if route.provider_name in allowlist]
+
+
 def _get_available_provider_keys(api_keys: dict | None) -> dict[str, list[ProviderRoute]]:
     """Returns the available parallel-routing provider routes grouped by provider."""
-    return _group_provider_routes(api_keys, enabled_only_for="parallel")
+    grouped_routes: dict[str, list[ProviderRoute]] = {}
+    for route in _filter_parallel_routes(get_provider_routes(api_keys, enabled_only_for="parallel")):
+        grouped_routes.setdefault(route.provider_name, []).append(route)
+    return grouped_routes
 
 
 def _build_explicit_provider_config(
@@ -144,7 +164,7 @@ def _build_explicit_provider_config(
 
 def _build_parallel_fallback_chain(primary_provider: str, api_keys: dict | None, current_route_id: str | None = None) -> list[dict[str, object]]:
     """Builds parallel fallback order from the provider registry."""
-    available_routes = get_provider_routes(api_keys, enabled_only_for="parallel")
+    available_routes = _filter_parallel_routes(get_provider_routes(api_keys, enabled_only_for="parallel"))
     if not available_routes:
         return []
 
@@ -218,25 +238,29 @@ def build_parallel_provider_execution_plan(
     provider_routes = _get_available_provider_keys(api_keys)
     active_provider_names = list(provider_routes.keys())
 
-    if provider_name not in provider_routes or len(active_provider_names) < 2:
+    if len(active_provider_names) < 2:
         return {
             "effective_concurrency_limit": per_provider_limit,
             "agent_llm_overrides": {},
             "parallel_provider_count": 1,
         }
 
+    preferred_provider = os.getenv("LLM_PRIMARY_PROVIDER")
+    primary_provider_name = provider_name if provider_name in provider_routes else preferred_provider if preferred_provider in provider_routes else active_provider_names[0]
+
     provider_configs: dict[str, dict[str, object]] = {}
-    primary_route = provider_routes[provider_name][0]
-    provider_configs[provider_name] = primary_route.to_execution_config(status_message=f"Retrying with {provider_name}:{base_model_name}", model_name=base_model_name)
+    primary_route = provider_routes[primary_provider_name][0]
+    primary_model_name = base_model_name if primary_provider_name == provider_name else primary_route.model_name
+    provider_configs[primary_provider_name] = primary_route.to_execution_config(status_message=f"Retrying with {primary_provider_name}:{primary_model_name}", model_name=primary_model_name)
 
     for secondary_provider_name in active_provider_names:
-        if secondary_provider_name == provider_name:
+        if secondary_provider_name == primary_provider_name:
             continue
         secondary_route = provider_routes[secondary_provider_name][0]
         provider_configs[secondary_provider_name] = secondary_route.to_execution_config(status_message=f"Switching to {_describe_provider_route(secondary_route)}")
 
-    provider_limits = _get_provider_lane_limits(per_provider_limit, active_provider_names, provider_name)
-    provider_slot_names = _build_provider_slot_sequence(provider_limits, provider_name)
+    provider_limits = _get_provider_lane_limits(per_provider_limit, active_provider_names, primary_provider_name)
+    provider_slot_names = _build_provider_slot_sequence(provider_limits, primary_provider_name)
     provider_slots = [provider_configs[slot_name] for slot_name in provider_slot_names]
 
     overrides: dict[str, dict[str, object]] = {}

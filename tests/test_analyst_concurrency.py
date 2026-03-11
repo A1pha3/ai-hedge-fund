@@ -25,6 +25,7 @@ def test_order_selected_analysts_uses_config_order():
 def test_build_parallel_provider_execution_plan_uses_dual_provider_wave(monkeypatch):
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
 
     plan = build_parallel_provider_execution_plan(
         agent_names=[f"agent_{index}" for index in range(1, 7)],
@@ -44,6 +45,7 @@ def test_build_parallel_provider_execution_plan_uses_dual_provider_wave(monkeypa
 def test_build_parallel_provider_execution_plan_supports_weighted_provider_caps(monkeypatch):
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
     monkeypatch.setenv("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", "4")
     monkeypatch.setenv("ZHIPU_PROVIDER_CONCURRENCY_LIMIT", "2")
 
@@ -64,9 +66,64 @@ def test_build_parallel_provider_execution_plan_supports_weighted_provider_caps(
     assert providers[0] == "MiniMax"
 
 
+def test_build_parallel_provider_execution_plan_supports_three_provider_wave(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.setenv("ARK_API_KEY", "ark-key")
+    monkeypatch.setenv("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", "5")
+    monkeypatch.setenv("VOLCENGINE_PROVIDER_CONCURRENCY_LIMIT", "3")
+    monkeypatch.setenv("ZHIPU_PROVIDER_CONCURRENCY_LIMIT", "1")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=[f"agent_{index}" for index in range(1, 10)],
+        base_model_name="glm-4.7",
+        base_model_provider="Zhipu",
+        api_keys=None,
+        per_provider_limit=3,
+    )
+
+    overrides = plan["agent_llm_overrides"]
+    providers = [overrides[f"agent_{index}"]["model_provider"] for index in range(1, 10)]
+
+    assert plan["effective_concurrency_limit"] == 9
+    assert plan["parallel_provider_count"] == 3
+    assert providers.count("MiniMax") == 5
+    assert providers.count("Volcengine") == 3
+    assert providers.count("Zhipu") == 1
+
+
+def test_build_parallel_provider_execution_plan_supports_provider_allowlist(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.setenv("ARK_API_KEY", "ark-key")
+    monkeypatch.setenv("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", "5")
+    monkeypatch.setenv("VOLCENGINE_PROVIDER_CONCURRENCY_LIMIT", "3")
+    monkeypatch.setenv("ZHIPU_PROVIDER_CONCURRENCY_LIMIT", "1")
+    monkeypatch.setenv("LLM_PRIMARY_PROVIDER", "MiniMax")
+    monkeypatch.setenv("LLM_PARALLEL_PROVIDER_ALLOWLIST", "MiniMax,Volcengine")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=[f"agent_{index}" for index in range(1, 9)],
+        base_model_name="glm-4.7",
+        base_model_provider="Zhipu",
+        api_keys=None,
+        per_provider_limit=3,
+    )
+
+    overrides = plan["agent_llm_overrides"]
+    providers = [overrides[f"agent_{index}"]["model_provider"] for index in range(1, 9)]
+
+    assert plan["effective_concurrency_limit"] == 8
+    assert plan["parallel_provider_count"] == 2
+    assert providers.count("MiniMax") == 5
+    assert providers.count("Volcengine") == 3
+    assert "Zhipu" not in providers
+
+
 def test_build_parallel_provider_execution_plan_keeps_single_provider_when_key_missing(monkeypatch):
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
 
     plan = build_parallel_provider_execution_plan(
         agent_names=["agent_1", "agent_2"],

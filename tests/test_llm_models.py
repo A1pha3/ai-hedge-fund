@@ -6,21 +6,25 @@ def test_provider_registry_exposes_default_profiles():
 
     assert "Zhipu" in registry
     assert "MiniMax" in registry
+    assert "Volcengine" in registry
     assert "OpenRouter" in registry
     assert registry["Zhipu"].capabilities.supports_coding_plan is True
     assert registry["MiniMax"].capabilities.openai_compatible is True
+    assert registry["Volcengine"].capabilities.openai_compatible is True
 
 
 def test_get_provider_routes_orders_registered_routes_by_priority(monkeypatch):
     monkeypatch.setenv("ZHIPU_CODE_API_KEY", "coding-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "standard-key")
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ARK_API_KEY", "ark-key")
 
     routes = llm_models.get_provider_routes(api_keys=None, enabled_only_for="priority")
 
-    assert [(route.provider_name, route.variant_name) for route in routes[:3]] == [
+    assert [(route.provider_name, route.variant_name) for route in routes[:4]] == [
         ("Zhipu", "coding_plan"),
         ("MiniMax", "default"),
+        ("Volcengine", "coding_plan"),
         ("Zhipu", "standard"),
     ]
 
@@ -212,3 +216,27 @@ def test_get_zhipu_coding_plan_model_keeps_glm5_lowercase(monkeypatch):
         "api_key": "coding-key",
         "base_url": llm_models.ZHIPU_CODING_PLAN_BASE_URL,
     }
+
+
+def test_get_registered_provider_model_builds_volcengine_client(monkeypatch):
+    captured = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+
+    llm_models.get_registered_provider_model("doubao-seed-2.0-code", "Volcengine", {"ARK_API_KEY": "ark-key"})
+
+    assert captured == {
+        "model": "doubao-seed-2.0-code",
+        "api_key": "ark-key",
+        "base_url": llm_models.VOLCENGINE_ARK_CODING_BASE_URL,
+    }
+
+
+def test_volcengine_doubao_model_disables_json_mode():
+    model = llm_models.LLMModel(display_name="Doubao", model_name="doubao-seed-2.0-code", provider=llm_models.ModelProvider.VOLCENGINE)
+
+    assert model.has_json_mode() is False

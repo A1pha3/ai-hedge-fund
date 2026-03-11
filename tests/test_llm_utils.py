@@ -143,6 +143,7 @@ def test_call_llm_prefers_coding_plan_before_other_supported_providers(monkeypat
 
 def test_call_llm_falls_back_from_coding_plan_to_minimax_to_standard_zhipu(monkeypatch):
     calls = []
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
 
     class FakeModelInfo:
         def __init__(self, has_json_mode: bool):

@@ -95,6 +95,21 @@
     "provider": "MiniMax"
   },
   {
+    "display_name": "Doubao-Seed-2.0-Code (火山方舟)",
+    "model_name": "doubao-seed-2.0-code",
+    "provider": "Volcengine"
+  },
+  {
+    "display_name": "GLM-4.7 (火山方舟)",
+    "model_name": "glm-4.7",
+    "provider": "Volcengine"
+  },
+  {
+    "display_name": "Volcengine Custom Model (火山方舟自定义)",
+    "model_name": "-",
+    "provider": "Volcengine"
+  },
+  {
     "display_name": "GigaChat-2-Max",
     "model_name": "GigaChat-2-Max",
     "provider": "GigaChat"

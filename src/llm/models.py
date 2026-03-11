@@ -34,6 +34,7 @@ class ModelProvider(str, Enum):
     XAI = "xAI"
     ZHIPU = "Zhipu"
     MINIMAX = "MiniMax"
+    VOLCENGINE = "Volcengine"
 
 
 class LLMModel(BaseModel):
@@ -53,7 +54,7 @@ class LLMModel(BaseModel):
 
     def has_json_mode(self) -> bool:
         """Check if the model supports JSON mode"""
-        if self.is_deepseek() or self.is_gemini() or self.is_minimax():
+        if self.is_deepseek() or self.is_gemini() or self.is_minimax() or self.is_volcengine_non_json_mode():
             return False
         # Only certain Ollama models support JSON mode
         if self.is_ollama():
@@ -78,6 +79,11 @@ class LLMModel(BaseModel):
     def is_minimax(self) -> bool:
         """Check if the model is a MiniMax model"""
         return self.provider == ModelProvider.MINIMAX or self.model_name.lower().startswith("minimax")
+
+    def is_volcengine_non_json_mode(self) -> bool:
+        """Doubao coding models on Ark Coding Plan do not support response_format=json_object."""
+        lowered = self.model_name.lower()
+        return self.provider == ModelProvider.VOLCENGINE and lowered in {"doubao-seed-2.0-code", "ark-code-latest"}
 
 
 # Load models from JSON file
@@ -113,6 +119,7 @@ OLLAMA_LLM_ORDER = [model.to_choice_tuple() for model in OLLAMA_MODELS]
 
 ZHIPU_STANDARD_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 ZHIPU_CODING_PLAN_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4"
+VOLCENGINE_ARK_CODING_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
 
 
 @dataclass(frozen=True)
@@ -345,6 +352,31 @@ def _register_default_provider_profiles() -> None:
     )
     register_provider_profile(
         ProviderProfile(
+            name="Volcengine",
+            variants=(
+                ProviderVariantProfile(
+                    variant_name="coding_plan",
+                    display_name="Volcengine Ark",
+                    api_key_names=("ARK_API_KEY",),
+                    default_model_name="doubao-seed-2.0-code",
+                    model_env_var="ARK_FALLBACK_MODEL",
+                    openai_compatible_transport=OpenAICompatibleTransportConfig(
+                        api_key_name="ARK_API_KEY",
+                        base_url=VOLCENGINE_ARK_CODING_BASE_URL,
+                        base_url_env_var="ARK_API_BASE",
+                    ),
+                    route_order=25,
+                ),
+            ),
+            capabilities=ProviderCapabilities(supports_json_mode=True, supports_coding_plan=True, openai_compatible=True),
+            concurrency_limit_env_var="VOLCENGINE_PROVIDER_CONCURRENCY_LIMIT",
+            default_parallel_limit=1,
+            enable_priority_routing=True,
+            enable_parallel_scheduler=True,
+        )
+    )
+    register_provider_profile(
+        ProviderProfile(
             name="OpenRouter",
             variants=(
                 ProviderVariantProfile(
@@ -373,7 +405,6 @@ def _register_default_provider_profiles() -> None:
             enable_parallel_scheduler=False,
         )
     )
-
 
 
 def _normalize_zhipu_coding_plan_model_name(model_name: str) -> str:
