@@ -11,6 +11,9 @@
 
 1. [A/B Walk-Forward 测试流程、设计目的、运行耗时与优化过程记录](./ab-walk-forward-runtime-analysis-20260308.md)
 2. [Pipeline Fast / Precise 两阶段执行与去重优化说明](./pipeline-fast-precise-routing-optimization-20260311.md)
+3. [Analyst 批次 Barrier 优化方案说明](./analyst-batch-barrier-optimization-options-20260311.md)
+
+当前最新性能结论：在现有 batch/barrier 工作流下，已验证的最佳 5 日配置是 MiniMax=5 + Doubao=4，并通过 allowlist 将 Zhipu 排除出 analyst 并行波次；对应 5 日 wall-clock 为 933.64 秒。
 
 ## 目录
 
