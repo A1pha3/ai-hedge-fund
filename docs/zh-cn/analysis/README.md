@@ -7,6 +7,11 @@
 - **使用模型**: MiniMax-M2.5
 - **分析师数量**: 16位 AI 分析师
 
+## 专题分析
+
+1. [A/B Walk-Forward 测试流程、设计目的、运行耗时与优化过程记录](./ab-walk-forward-runtime-analysis-20260308.md)
+2. [Pipeline Fast / Precise 两阶段执行与去重优化说明](./pipeline-fast-precise-routing-optimization-20260311.md)
+
 ## 目录
 
 1. [分析师介绍](./analysts-overview.md)

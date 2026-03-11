@@ -61,6 +61,20 @@ def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_m
     return model_name, provider_name
 
 
+def _should_skip_precise_stage(base_model_name: str, base_model_provider: str) -> bool:
+    """Skips precise reruns when fast/precise tiers resolve to the same config."""
+    fast_model_name, fast_provider_name = _resolve_pipeline_model_config("fast", base_model_name, base_model_provider)
+    precise_model_name, precise_provider_name = _resolve_pipeline_model_config("precise", base_model_name, base_model_provider)
+    return fast_model_name == precise_model_name and fast_provider_name == precise_provider_name
+
+
+def _estimate_skipped_precise_seconds(fast_agent_seconds: float, fast_ticker_count: int, skipped_precise_ticker_count: int) -> float:
+    """Estimates the avoided precise-stage cost when the same model config would have been rerun."""
+    if fast_ticker_count <= 0 or skipped_precise_ticker_count <= 0:
+        return 0.0
+    return fast_agent_seconds * (skipped_precise_ticker_count / fast_ticker_count)
+
+
 def _default_exit_checker(portfolio_snapshot: dict, trade_date: str) -> list:
     return []
 
@@ -75,6 +89,7 @@ class DailyPipeline:
     def __post_init__(self) -> None:
         if self.agent_runner is None:
             self.agent_runner = self._run_agents_with_base_model
+        self._skip_precise_stage = _should_skip_precise_stage(self.base_model_name, self.base_model_provider)
 
     def _run_agents_with_base_model(self, tickers: list[str], trade_date: str, model_tier: str) -> dict[str, dict[str, dict]]:
         from src.main import run_hedge_fund
@@ -123,8 +138,10 @@ class DailyPipeline:
         fast_agent_seconds = perf_counter() - stage_started_at
 
         top_20 = high_pool[:PRECISE_AGENT_MAX_TICKERS]
+        skipped_precise_ticker_count = len(top_20) if self._skip_precise_stage else 0
+        estimated_skipped_precise_seconds = _estimate_skipped_precise_seconds(fast_agent_seconds, len(high_pool), skipped_precise_ticker_count)
         stage_started_at = perf_counter()
-        if top_20:
+        if top_20 and not self._skip_precise_stage:
             precise_results = self.agent_runner([item.ticker for item in top_20], trade_date, "precise")
             for agent_id, ticker_payload in precise_results.items():
                 agent_results.setdefault(agent_id, {}).update(ticker_payload)
@@ -150,6 +167,7 @@ class DailyPipeline:
             "fuse_batch": round(fuse_batch_seconds, 3),
             "fast_agent": round(fast_agent_seconds, 3),
             "precise_agent": round(precise_agent_seconds, 3),
+            "estimated_skipped_precise": round(estimated_skipped_precise_seconds, 3),
             "aggregate_layer_c": round(aggregate_layer_c_seconds, 3),
             "build_buy_orders": round(build_buy_orders_seconds, 3),
             "sell_check": round(sell_check_seconds, 3),
@@ -174,6 +192,8 @@ class DailyPipeline:
                     "sell_order_count": len(sell_orders),
                     "fast_agent_ticker_count": len(high_pool),
                     "precise_agent_ticker_count": len(top_20),
+                    "precise_stage_skipped": self._skip_precise_stage,
+                    "skipped_precise_ticker_count": skipped_precise_ticker_count,
                     "fast_agent_score_threshold": FAST_AGENT_SCORE_THRESHOLD,
                     "fast_agent_max_tickers": FAST_AGENT_MAX_TICKERS,
                     "precise_agent_max_tickers": PRECISE_AGENT_MAX_TICKERS,

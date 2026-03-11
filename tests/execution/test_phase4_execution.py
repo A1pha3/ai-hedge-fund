@@ -224,6 +224,114 @@ def test_default_pipeline_runner_keeps_openai_fast_precise_split(monkeypatch):
     assert calls[1]["model_provider"] == "OpenAI"
 
 
+def test_run_post_market_skips_duplicate_precise_stage_for_non_openai():
+    calls = []
+
+    def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
+        calls.append((tuple(tickers), model))
+        return {
+            "aswath_damodaran_agent": {ticker: {"signal": "bullish", "confidence": 70, "reasoning": "ok"} for ticker in tickers},
+        }
+
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="glm-4.7", base_model_provider="Zhipu")
+
+    import src.execution.daily_pipeline as daily_pipeline_module
+
+    original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    try:
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker=f"{i:06d}", name=str(i), industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403") for i in range(4)]
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})} for candidate in candidates}
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.46 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+
+    assert plan.layer_b_count == 4
+    assert calls == [(("000003", "000002", "000001", "000000"), "fast")]
+    assert plan.risk_metrics["timing_seconds"]["precise_agent"] == 0.0
+    assert plan.risk_metrics["counts"]["precise_stage_skipped"] is True
+    assert plan.risk_metrics["counts"]["skipped_precise_ticker_count"] == 4
+    assert plan.risk_metrics["timing_seconds"]["estimated_skipped_precise"] >= 0.0
+
+
+def test_run_post_market_keeps_precise_stage_for_openai():
+    calls = []
+
+    def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
+        calls.append((tuple(tickers), model))
+        return {
+            "aswath_damodaran_agent": {ticker: {"signal": "bullish", "confidence": 70, "reasoning": "ok"} for ticker in tickers},
+        }
+
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI")
+
+    import src.execution.daily_pipeline as daily_pipeline_module
+
+    original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    try:
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker=f"{i:06d}", name=str(i), industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403") for i in range(4)]
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})} for candidate in candidates}
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.46 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
+
+        pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+
+    assert calls == [(("000003", "000002", "000001", "000000"), "fast"), (("000003", "000002", "000001", "000000"), "precise")]
+    assert pipeline._skip_precise_stage is False
+
+
+def test_run_post_market_records_zero_skip_metrics_when_precise_runs():
+    calls = []
+
+    def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
+        calls.append((tuple(tickers), model))
+        return {
+            "aswath_damodaran_agent": {ticker: {"signal": "bullish", "confidence": 70, "reasoning": "ok"} for ticker in tickers},
+        }
+
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI")
+
+    import src.execution.daily_pipeline as daily_pipeline_module
+
+    original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    try:
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker=f"{i:06d}", name=str(i), industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403") for i in range(2)]
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})} for candidate in candidates}
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.46 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+
+    assert len(calls) == 2
+    assert plan.risk_metrics["counts"]["precise_stage_skipped"] is False
+    assert plan.risk_metrics["counts"]["skipped_precise_ticker_count"] == 0
+    assert plan.risk_metrics["timing_seconds"]["estimated_skipped_precise"] == 0.0
+
+
 def test_recovery_protocol():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     plan = ExecutionPlan(date="20260305")
