@@ -13,6 +13,7 @@
 2. [Pipeline Fast / Precise 两阶段执行与去重优化说明](./pipeline-fast-precise-routing-optimization-20260311.md)
 3. [Analyst 批次 Barrier 优化方案说明](./analyst-batch-barrier-optimization-options-20260311.md)
 4. [默认 Workflow Rolling Scheduler 设计文档](./default-workflow-rolling-scheduler-design-20260312.md)
+5. [Layer B 最小规则变更提案](./layer-b-minimal-rule-change-proposal-20260312.md)
 
 当前最新性能结论：在现有 batch/barrier 工作流下，已验证的最佳 5 日配置是 MiniMax=5 + Doubao=4，并通过 allowlist 将 Zhipu 排除出 analyst 并行波次；对应 5 日 wall-clock 为 933.64 秒。
 

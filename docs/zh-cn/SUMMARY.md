@@ -390,6 +390,9 @@ Q: 你目前的背景是什么？
 | 文档 | 内容 | 适用人群 | 更新频率 |
 |------|------|----------|----------|
 | [术语表](./references/terminology.md) | 金融与 AI 术语中英对照 | 所有读者 | 随内容更新 |
+| [因子聚合语义入门](./factors/01-aggregation-semantics-and-factor-traps.md) | 解释为什么 Layer B 中有些直觉调参会失效，适合新手反复学习 | 开发者、研究者 | 按需更新 |
+| [Layer B 问题 5 分钟速读版](./factors/02-layer-b-quick-read-for-non-developers.md) | 面向非开发同学的短文，快速解释为什么当前应先修局部规则语义，而不是先降总阈值 | 产品、运营、研究、业务 | 按需更新 |
+| [Layer B 最小规则变更提案](./analysis/layer-b-minimal-rule-change-proposal-20260312.md) | 收敛当前主业务线的最小改动方向，说明为什么先修语义问题，再考虑总阈值 | 开发者、研究者 | 按需更新 |
 | [练习题库](./exercises/README.md) | 分级练习题目与答案 | 所有读者 | 定期更新 |
 | [常见问题 FAQ](./references/faq.md) | 常见问题解答 | 所有读者 | 持续更新 |
 | [快速参考卡](./references/quick-reference.md) | 命令与参数速查 | 已熟悉系统 | 随功能更新 |
