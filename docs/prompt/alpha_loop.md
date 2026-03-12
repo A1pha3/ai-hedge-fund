@@ -1,3 +1,7 @@
+# new session
+
+- 现在的会话的context window 快满了，我要开一个新的会话，你写个提示词，能够让我们在新会话中继续完美完成我们的任务。
+- 
 # 分析单只股票
 
 - 运行此命令会生成report ./scripts/run-hedge-fund.sh --ticker 601016 --model MiniMax-M2.5 --start-date 2025-06-01 --analysts-all --show-reasoning 此命令会生成每只股票对应的markdown格式的分析报告, 保存到 /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports 目录下,

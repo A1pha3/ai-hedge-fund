@@ -1,9 +1,17 @@
 # 默认 Workflow Rolling Scheduler 设计文档
 
 **文档日期**：2026 年 3 月 12 日  
-**文档状态**：设计中，未实施  
+**文档状态**：设计完成，试验已回退  
 **目标读者**：维护默认 CLI / backtester 执行路径的开发者、性能优化审阅者  
 **适用范围**：默认工作流 [src/main.py](src/main.py)，不包含 Web 自定义图 [app/backend/services/graph.py](app/backend/services/graph.py)
+
+**2026-03-12 实装结果**：
+
+1. 已完成一版 default rolling scheduler 试验实现，并在 CLI / backtester 路径做过 feature flag 验证，Web 自定义图路径未改动。
+2. 在 `MiniMax=5`、`Volcengine=4`、`Zhipu=1`、`LLM_PRIMARY_PROVIDER=MiniMax`、`LLM_PARALLEL_PROVIDER_ALLOWLIST=MiniMax,Volcengine`、`ARK_FALLBACK_MODEL=doubao-seed-2.0-code` 的同口径 5 日验证下，rolling scheduler 实测 wall-clock 为 `878.67` 秒，优于 batch 基线 `933.64` 秒。
+3. 但在同口径 20 日验证下，rolling scheduler 实测 wall-clock 为 `2969.15` 秒，劣于 20 日 baseline `2521.76` 秒，也劣于 20 日 allowlist 候选 `2736.26` 秒。
+4. 20 日结果本身没有出现 `No ticker rows`、空仓或收益异常变平，收益侧与 baseline 一致为 `Total Return 0.33% / Max DD 0.48%`，因此本轮失败更像调度形态放大了长尾与 refill 开销，而不是状态边界污染。
+5. 按回滚要求，rolling scheduler 代码已从默认 workflow 中撤回，仓库代码恢复到稳定 batch/barrier 状态；本文件保留为后续设计与失败记录。
 
 ---
 
