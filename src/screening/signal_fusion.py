@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import os
 from typing import Optional
 
 from src.screening.candidate_pool import add_cooldown, get_cooled_tickers, load_cooldown_registry, save_cooldown_registry
@@ -12,11 +13,26 @@ SHORT_HOLD_STRATEGIES = {"trend", "event_sentiment"}
 LONG_HOLD_STRATEGIES = {"fundamental"}
 
 
+def _analysis_excludes_neutral_mean_reversion() -> bool:
+    raw_value = os.getenv("LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION")
+    if raw_value is None:
+        return False
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_active_for_normalization(name: str, signal: StrategySignal) -> bool:
+    if signal.completeness <= 0:
+        return False
+    if name == "mean_reversion" and signal.direction == 0 and _analysis_excludes_neutral_mean_reversion():
+        return False
+    return True
+
+
 def _normalize_for_available_signals(weights: dict[str, float], signals: dict[str, StrategySignal]) -> dict[str, float]:
     active = {
         name: max(weights.get(name, 0.0), 0.0)
         for name, signal in signals.items()
-        if signal.completeness > 0
+        if _is_active_for_normalization(name, signal)
     }
     total = sum(active.values())
     if total <= 0:

@@ -97,6 +97,21 @@ def _signal_to_direction(signal: str) -> int:
     return mapping.get(str(signal).lower(), 0)
 
 
+def _get_env_flag(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_env_mode(name: str, default: str) -> str:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    value = raw_value.strip().lower()
+    return value or default
+
+
 def _safe_date(date_str: str) -> Optional[datetime]:
     if not date_str:
         return None
@@ -350,6 +365,7 @@ def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
 def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
     available = 0
     positive = 0
+    zero_pass_mode = _get_env_mode("LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE", "bearish")
     metric_map = {
         "return_on_equity": (metrics.return_on_equity, 0.15),
         "net_margin": (metrics.net_margin, 0.20),
@@ -363,7 +379,30 @@ def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
     if available == 0:
         return _make_sub_factor("profitability", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"], completeness=0.0)
 
-    direction = 1 if positive >= 2 else -1 if positive == 0 else 0
+    if positive == 0 and zero_pass_mode == "inactive":
+        return _make_sub_factor(
+            "profitability",
+            0,
+            0.0,
+            FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
+            completeness=0.0,
+            metrics={
+                **{key: value for key, (value, _) in metric_map.items()},
+                "available_count": available,
+                "positive_count": positive,
+                "zero_pass_mode": zero_pass_mode,
+            },
+        )
+
+    if positive >= 2:
+        direction = 1
+    elif positive == 0 and zero_pass_mode == "neutral":
+        direction = 0
+    elif positive == 0:
+        direction = -1
+    else:
+        direction = 0
+
     confidence = 100.0 * positive / available if direction >= 0 else 100.0 * (available - positive) / available
     return _make_sub_factor(
         "profitability",
@@ -371,7 +410,12 @@ def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
         confidence,
         FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
         completeness=available / 3.0,
-        metrics={key: value for key, (value, _) in metric_map.items()},
+        metrics={
+            **{key: value for key, (value, _) in metric_map.items()},
+            "available_count": available,
+            "positive_count": positive,
+            "zero_pass_mode": zero_pass_mode,
+        },
     )
 
 

@@ -1,7 +1,9 @@
+import os
 from unittest.mock import patch
 
+from src.data.models import FinancialMetrics
 from src.screening.models import CandidateStock, StrategySignal
-from src.screening.strategy_scorer import score_batch
+from src.screening.strategy_scorer import _score_profitability, score_batch
 
 
 def _signal(direction: int, confidence: float, completeness: float = 1.0) -> StrategySignal:
@@ -135,3 +137,89 @@ def test_score_batch_limits_technical_scoring_to_ranked_subset():
     assert technical_calls == ["000001", "000002"]
     assert results["000003"]["trend"].completeness == 0.0
     assert results["000003"]["mean_reversion"].completeness == 0.0
+
+
+def _financial_metrics(**overrides) -> FinancialMetrics:
+    return FinancialMetrics.model_construct(
+        ticker="300065",
+        report_period="20251231",
+        period="ttm",
+        currency="CNY",
+        market_cap=0.0,
+        enterprise_value=0.0,
+        price_to_earnings_ratio=0.0,
+        price_to_book_ratio=0.0,
+        price_to_sales_ratio=0.0,
+        enterprise_value_to_ebitda_ratio=0.0,
+        enterprise_value_to_revenue_ratio=0.0,
+        free_cash_flow_yield=0.0,
+        peg_ratio=0.0,
+        gross_margin=0.0,
+        operating_margin=0.06,
+        net_margin=0.08,
+        return_on_equity=0.05,
+        return_on_assets=0.0,
+        return_on_invested_capital=0.0,
+        asset_turnover=0.0,
+        inventory_turnover=0.0,
+        receivables_turnover=0.0,
+        days_sales_outstanding=0.0,
+        operating_cycle=0.0,
+        working_capital_turnover=0.0,
+        current_ratio=0.0,
+        quick_ratio=0.0,
+        cash_ratio=0.0,
+        operating_cash_flow_ratio=0.0,
+        debt_to_equity=0.0,
+        debt_to_assets=0.0,
+        interest_coverage=0.0,
+        revenue_growth=0.0,
+        earnings_growth=0.0,
+        book_value_growth=0.0,
+        earnings_per_share_growth=0.0,
+        free_cash_flow_growth=0.0,
+        operating_income_growth=0.0,
+        ebitda_growth=0.0,
+        payout_ratio=0.0,
+        earnings_per_share=0.0,
+        book_value_per_share=0.0,
+        free_cash_flow_per_share=0.0,
+        **overrides,
+    )
+
+
+def test_profitability_zero_pass_defaults_to_bearish():
+    metrics = _financial_metrics()
+
+    with patch.dict(os.environ, {}, clear=False):
+        factor = _score_profitability(metrics)
+
+    assert factor.direction == -1
+    assert factor.confidence == 100.0
+    assert factor.metrics["positive_count"] == 0
+    assert factor.metrics["zero_pass_mode"] == "bearish"
+
+
+def test_profitability_zero_pass_can_switch_to_neutral_for_analysis():
+    metrics = _financial_metrics()
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "neutral"}, clear=False):
+        factor = _score_profitability(metrics)
+
+    assert factor.direction == 0
+    assert factor.confidence == 0.0
+    assert factor.metrics["positive_count"] == 0
+    assert factor.metrics["zero_pass_mode"] == "neutral"
+
+
+def test_profitability_zero_pass_can_be_excluded_for_analysis():
+    metrics = _financial_metrics()
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "inactive"}, clear=False):
+        factor = _score_profitability(metrics)
+
+    assert factor.direction == 0
+    assert factor.confidence == 0.0
+    assert factor.completeness == 0.0
+    assert factor.metrics["positive_count"] == 0
+    assert factor.metrics["zero_pass_mode"] == "inactive"

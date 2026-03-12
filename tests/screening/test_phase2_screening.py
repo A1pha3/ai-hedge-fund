@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from tempfile import mkdtemp
 
@@ -10,8 +11,8 @@ from unittest.mock import patch
 
 from src.screening.candidate_pool import load_cooldown_registry, save_cooldown_registry
 from src.screening.market_state import detect_market_state
-from src.screening.models import CandidateStock, MarketState, MarketStateType, StrategySignal, SubFactor
-from src.screening.signal_fusion import compute_score_b, fuse_signals_for_ticker, maybe_release_cooldown_early
+from src.screening.models import MarketState, MarketStateType, StrategySignal, SubFactor
+from src.screening.signal_fusion import _normalize_for_available_signals, compute_score_b, fuse_signals_for_ticker, maybe_release_cooldown_early
 from src.screening.strategy_scorer import aggregate_sub_factors, compute_event_decay, score_trend_strategy
 
 
@@ -175,3 +176,35 @@ def test_cooldown_early_release():
         registry = load_cooldown_registry()
     assert released is True
     assert "000001" not in registry
+
+
+def test_neutral_mean_reversion_remains_active_by_default():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 75),
+        "event_sentiment": _signal(0, 0, completeness=0.0),
+    }
+
+    with patch.dict(os.environ, {}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - 0.375) < 1e-12
+    assert normalized["mean_reversion"] == 0.25
+    assert abs(normalized["fundamental"] - 0.375) < 1e-12
+
+
+def test_neutral_mean_reversion_can_be_excluded_for_analysis():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 75),
+        "event_sentiment": _signal(0, 0, completeness=0.0),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION": "1"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert normalized == {"trend": 0.5, "fundamental": 0.5}
