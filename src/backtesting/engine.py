@@ -428,6 +428,7 @@ class BacktestEngine:
             post_market_seconds = 0.0
             previous_plan_counts: dict[str, int] = {}
             previous_plan_timing: dict[str, float] = {}
+            previous_plan_funnel_diagnostics: dict = {}
 
             if pending_plan is not None and self._pipeline is not None:
                 stage_started_at = perf_counter()
@@ -436,6 +437,7 @@ class BacktestEngine:
 
                 previous_plan_counts = dict((pending_plan.risk_metrics or {}).get("counts", {}))
                 previous_plan_timing = dict((pending_plan.risk_metrics or {}).get("timing_seconds", {}))
+                previous_plan_funnel_diagnostics = dict((pending_plan.risk_metrics or {}).get("funnel_diagnostics", {}))
 
                 stage_started_at = perf_counter()
                 confirmation_inputs = self._build_confirmation_inputs(prepared_plan, current_prices)
@@ -564,10 +566,12 @@ class BacktestEngine:
                 "current_plan": {
                     "counts": dict((pending_plan.risk_metrics or {}).get("counts", {})) if pending_plan is not None else {},
                     "timing_seconds": dict((pending_plan.risk_metrics or {}).get("timing_seconds", {})) if pending_plan is not None else {},
+                    "funnel_diagnostics": dict((pending_plan.risk_metrics or {}).get("funnel_diagnostics", {})) if pending_plan is not None else {},
                 },
                 "previous_plan": {
                     "counts": previous_plan_counts,
                     "timing_seconds": previous_plan_timing,
+                    "funnel_diagnostics": previous_plan_funnel_diagnostics,
                 },
             }
             self._append_timing_log(timing_payload)

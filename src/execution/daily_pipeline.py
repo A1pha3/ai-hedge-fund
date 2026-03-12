@@ -48,6 +48,7 @@ def _get_env_int(name: str, default: int) -> int:
 FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD", 0.38)
 FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
+WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.25)
 
 
 def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
@@ -77,6 +78,103 @@ def _estimate_skipped_precise_seconds(fast_agent_seconds: float, fast_ticker_cou
 
 def _default_exit_checker(portfolio_snapshot: dict, trade_date: str) -> list:
     return []
+
+
+def _build_filter_summary(entries: list[dict]) -> dict:
+    reason_counts: dict[str, int] = {}
+    for entry in entries:
+        reason = str(entry.get("reason") or "unknown")
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    return {
+        "filtered_count": len(entries),
+        "reason_counts": reason_counts,
+        "tickers": entries,
+    }
+
+
+def _build_layer_b_filter_diagnostics(fused: list, high_pool: list) -> dict:
+    selected_tickers = {item.ticker for item in high_pool}
+    entries: list[dict] = []
+    for rank, item in enumerate(sorted(fused, key=lambda current: current.score_b, reverse=True), start=1):
+        if item.ticker in selected_tickers:
+            continue
+        reason = "below_fast_score_threshold" if item.score_b < FAST_AGENT_SCORE_THRESHOLD else "high_pool_truncated_by_max_size"
+        entries.append(
+            {
+                "ticker": item.ticker,
+                "reason": reason,
+                "score_b": round(item.score_b, 4),
+                "decision": item.decision,
+                "rank": rank,
+            }
+        )
+    summary = _build_filter_summary(entries)
+    summary["selected_tickers"] = [item.ticker for item in high_pool]
+    return summary
+
+
+def _classify_watchlist_filter(item: LayerCResult) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    if item.decision == "avoid":
+        reasons.append("decision_avoid")
+    if item.score_final < WATCHLIST_SCORE_THRESHOLD:
+        reasons.append("score_final_below_watchlist_threshold")
+    if not reasons:
+        reasons.append("filtered_from_watchlist")
+    return reasons[0], reasons
+
+
+def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], watchlist: list[LayerCResult]) -> dict:
+    selected_tickers = {item.ticker for item in watchlist}
+    entries: list[dict] = []
+    for item in layer_c_results:
+        if item.ticker in selected_tickers:
+            continue
+        primary_reason, reasons = _classify_watchlist_filter(item)
+        entries.append(
+            {
+                "ticker": item.ticker,
+                "reason": primary_reason,
+                "reasons": reasons,
+                "score_b": round(item.score_b, 4),
+                "score_c": round(item.score_c, 4),
+                "score_final": round(item.score_final, 4),
+                "decision": item.decision,
+                "bc_conflict": item.bc_conflict,
+            }
+        )
+    summary = _build_filter_summary(entries)
+    summary["selected_tickers"] = [item.ticker for item in watchlist]
+    return summary
+
+
+def _extract_sell_order_value(order, field_name: str, default=None):
+    if isinstance(order, dict):
+        return order.get(field_name, default)
+    return getattr(order, field_name, default)
+
+
+def _build_sell_order_diagnostics(sell_orders: list) -> dict:
+    entries: list[dict] = []
+    for order in sell_orders:
+        reason = (
+            _extract_sell_order_value(order, "trigger_reason")
+            or _extract_sell_order_value(order, "level")
+            or _extract_sell_order_value(order, "reason")
+            or "sell_signal"
+        )
+        entries.append(
+            {
+                "ticker": _extract_sell_order_value(order, "ticker", ""),
+                "reason": str(reason),
+                "level": _extract_sell_order_value(order, "level"),
+                "urgency": _extract_sell_order_value(order, "urgency"),
+                "sell_ratio": _extract_sell_order_value(order, "sell_ratio"),
+            }
+        )
+    summary = _build_filter_summary(entries)
+    summary["count"] = len(sell_orders)
+    return summary
 
 
 @dataclass
@@ -150,15 +248,44 @@ class DailyPipeline:
         stage_started_at = perf_counter()
         layer_c_results = aggregate_layer_c_results(high_pool, agent_results)
         aggregate_layer_c_seconds = perf_counter() - stage_started_at
-        watchlist = [item for item in layer_c_results if item.score_final >= 0.25 and item.decision != "avoid"]
+        watchlist = [item for item in layer_c_results if item.score_final >= WATCHLIST_SCORE_THRESHOLD and item.decision != "avoid"]
+        layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(fused, high_pool)
+        watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(layer_c_results, watchlist)
 
         stage_started_at = perf_counter()
-        buy_orders = self._build_buy_orders(watchlist, portfolio_snapshot)
+        buy_orders, buy_order_filter_diagnostics = self._build_buy_orders_with_diagnostics(watchlist, portfolio_snapshot)
         build_buy_orders_seconds = perf_counter() - stage_started_at
 
         stage_started_at = perf_counter()
         sell_orders = self.exit_checker(portfolio_snapshot, trade_date)
         sell_check_seconds = perf_counter() - stage_started_at
+        sell_order_diagnostics = _build_sell_order_diagnostics(sell_orders)
+
+        counts = {
+            "layer_a_count": len(candidates),
+            "layer_b_count": len(high_pool),
+            "layer_c_count": len(layer_c_results),
+            "watchlist_count": len(watchlist),
+            "buy_order_count": len(buy_orders),
+            "sell_order_count": len(sell_orders),
+            "fast_agent_ticker_count": len(high_pool),
+            "precise_agent_ticker_count": len(top_20),
+            "precise_stage_skipped": self._skip_precise_stage,
+            "skipped_precise_ticker_count": skipped_precise_ticker_count,
+            "fast_agent_score_threshold": FAST_AGENT_SCORE_THRESHOLD,
+            "fast_agent_max_tickers": FAST_AGENT_MAX_TICKERS,
+            "precise_agent_max_tickers": PRECISE_AGENT_MAX_TICKERS,
+            "watchlist_score_threshold": WATCHLIST_SCORE_THRESHOLD,
+        }
+        funnel_diagnostics = {
+            "counts": counts,
+            "filters": {
+                "layer_b": layer_b_filter_diagnostics,
+                "watchlist": watchlist_filter_diagnostics,
+                "buy_orders": buy_order_filter_diagnostics,
+            },
+            "sell_orders": sell_order_diagnostics,
+        }
 
         timing_seconds = {
             "candidate_pool": round(candidate_pool_seconds, 3),
@@ -183,24 +310,12 @@ class DailyPipeline:
             risk_alerts=[],
             risk_metrics={
                 "timing_seconds": timing_seconds,
-                "counts": {
-                    "layer_a_count": len(candidates),
-                    "layer_b_count": len(high_pool),
-                    "layer_c_count": len(layer_c_results),
-                    "watchlist_count": len(watchlist),
-                    "buy_order_count": len(buy_orders),
-                    "sell_order_count": len(sell_orders),
-                    "fast_agent_ticker_count": len(high_pool),
-                    "precise_agent_ticker_count": len(top_20),
-                    "precise_stage_skipped": self._skip_precise_stage,
-                    "skipped_precise_ticker_count": skipped_precise_ticker_count,
-                    "fast_agent_score_threshold": FAST_AGENT_SCORE_THRESHOLD,
-                    "fast_agent_max_tickers": FAST_AGENT_MAX_TICKERS,
-                    "precise_agent_max_tickers": PRECISE_AGENT_MAX_TICKERS,
-                },
+                "counts": counts,
+                "funnel_diagnostics": funnel_diagnostics,
             },
             layer_a_count=len(candidates),
             layer_b_count=len(high_pool),
+            layer_c_count=len(layer_c_results),
         )
 
     def run_pre_market(
@@ -256,18 +371,31 @@ class DailyPipeline:
         exits = self.exit_checker(plan.portfolio_snapshot, trade_date_t1)
         return confirmed_orders, exits, crisis_response
 
-    def _build_buy_orders(self, watchlist: list[LayerCResult], portfolio_snapshot: dict) -> list:
+    def _build_buy_orders_with_diagnostics(self, watchlist: list[LayerCResult], portfolio_snapshot: dict) -> tuple[list, dict]:
         cash = float(portfolio_snapshot.get("cash", 0.0))
         nav = cash + sum(
             float(position.get("long", 0)) * float(position.get("long_cost_basis", 0.0))
             for position in portfolio_snapshot.get("positions", {}).values()
         )
         nav = nav if nav > 0 else cash
-        if not watchlist or cash <= 0:
-            return []
+        if not watchlist:
+            return [], _build_filter_summary([])
+        if cash <= 0:
+            entries = [
+                {
+                    "ticker": item.ticker,
+                    "reason": "no_available_cash",
+                    "score_final": round(item.score_final, 4),
+                }
+                for item in watchlist
+            ]
+            summary = _build_filter_summary(entries)
+            summary["selected_tickers"] = []
+            return [], summary
 
         per_name_cash = cash / max(1, min(3, len(watchlist)))
-        plans = []
+        candidate_plans = []
+        filtered_entries: list[dict] = []
         for item in watchlist:
             current_price = 10.0
             avg_volume_20d = 10_000_000.0
@@ -282,5 +410,35 @@ class DailyPipeline:
                 industry_remaining_quota=industry_quota,
             )
             if plan.shares > 0:
-                plans.append(plan)
-        return enforce_daily_trade_limit(plans, nav)
+                candidate_plans.append(plan)
+                continue
+            filtered_entries.append(
+                {
+                    "ticker": item.ticker,
+                    "reason": f"position_blocked_{plan.constraint_binding or 'unknown'}",
+                    "score_final": round(item.score_final, 4),
+                    "constraint_binding": plan.constraint_binding,
+                    "amount": round(plan.amount, 4),
+                    "execution_ratio": plan.execution_ratio,
+                }
+            )
+
+        buy_orders = enforce_daily_trade_limit(candidate_plans, nav)
+        selected_tickers = {plan.ticker for plan in buy_orders}
+        for plan in candidate_plans:
+            if plan.ticker in selected_tickers:
+                continue
+            filtered_entries.append(
+                {
+                    "ticker": plan.ticker,
+                    "reason": "filtered_by_daily_trade_limit",
+                    "score_final": round(plan.score_final, 4),
+                    "constraint_binding": plan.constraint_binding,
+                    "amount": round(plan.amount, 4),
+                    "execution_ratio": plan.execution_ratio,
+                }
+            )
+
+        summary = _build_filter_summary(filtered_entries)
+        summary["selected_tickers"] = [plan.ticker for plan in buy_orders]
+        return buy_orders, summary

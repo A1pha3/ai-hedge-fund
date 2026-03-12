@@ -7,7 +7,7 @@ from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import aggregate_layer_c_results, convert_agent_signal_to_strategy_signal
 from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
-from src.execution.models import ExecutionPlan
+from src.execution.models import ExecutionPlan, LayerCResult
 from src.portfolio.models import PositionPlan
 from src.screening.models import CandidateStock, FusedScore, MarketState, MarketStateType, StrategySignal
 
@@ -98,6 +98,85 @@ def test_full_pipeline_smoke():
     assert len(plan.watchlist) == 1
     assert calls[0][1] == "fast"
     assert calls[1][1] == "precise"
+
+
+def test_run_post_market_emits_structured_funnel_diagnostics():
+    calls = []
+
+    def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
+        calls.append((tuple(tickers), model))
+        payload = {}
+        for ticker in tickers:
+            if ticker == "000002":
+                payload[ticker] = {"signal": "bearish", "confidence": 95, "reasoning": "avoid"}
+            else:
+                payload[ticker] = {"signal": "bullish", "confidence": 80, "reasoning": "buy"}
+        return {
+            "aswath_damodaran_agent": payload,
+            "ben_graham_agent": payload,
+        }
+
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [])
+
+    import src.execution.daily_pipeline as daily_pipeline_module
+
+    original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    try:
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
+            CandidateStock(ticker="000001", name="甲", industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403"),
+            CandidateStock(ticker="000002", name="乙", industry_sw="银行", avg_volume_20d=9000, market_cap=90, listing_date="19910403"),
+            CandidateStock(ticker="000003", name="丙", industry_sw="银行", avg_volume_20d=8000, market_cap=80, listing_date="19910403"),
+        ]
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {
+                "trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}),
+                "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}),
+                "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}),
+                "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={}),
+            }
+            for candidate in candidates
+        }
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
+            _fused("000001", 0.60),
+            _fused("000002", 0.45),
+            _fused("000003", 0.20),
+        ]
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+
+    diagnostics = plan.risk_metrics["funnel_diagnostics"]
+    assert plan.layer_a_count == 3
+    assert plan.layer_b_count == 2
+    assert plan.layer_c_count == 2
+    assert diagnostics["counts"]["watchlist_count"] == 1
+    assert diagnostics["counts"]["buy_order_count"] == 0
+    assert diagnostics["filters"]["layer_b"]["reason_counts"] == {"below_fast_score_threshold": 1}
+    assert diagnostics["filters"]["watchlist"]["reason_counts"] == {"decision_avoid": 1}
+    assert diagnostics["filters"]["buy_orders"]["reason_counts"] == {"no_available_cash": 1}
+    assert calls[0][1] == "fast"
+
+
+def test_build_buy_orders_diagnostics_marks_daily_trade_limit():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker=f"00000{index}", score_c=0.4, score_final=0.4 + index / 100.0, score_b=0.5, decision="watch")
+        for index in range(4)
+    ]
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(watchlist, {"cash": 1_000_000, "positions": {}})
+
+    assert len(buy_orders) == 3
+    assert diagnostics["reason_counts"] == {"filtered_by_daily_trade_limit": 1}
+    assert diagnostics["filtered_count"] == 1
 
 
 def test_signal_decay_jump_gap():

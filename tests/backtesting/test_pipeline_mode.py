@@ -300,3 +300,57 @@ def test_pipeline_mode_pending_sell_executes_after_limit_down_releases(monkeypat
     snapshot = engine._portfolio.get_snapshot()
     assert snapshot["positions"]["000001"]["long"] == 0
     assert engine._pending_sell_queue == []
+
+
+def test_pipeline_mode_timing_log_includes_funnel_diagnostics(monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+    plan = ExecutionPlan(
+        date="20240301",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"layer_a_count": 3, "watchlist_count": 1},
+            "timing_seconds": {"total_post_market": 1.23},
+            "funnel_diagnostics": {
+                "counts": {"layer_a_count": 3, "watchlist_count": 1},
+                "filters": {"layer_b": {"filtered_count": 2, "reason_counts": {"below_fast_score_threshold": 2}, "tickers": []}},
+                "sell_orders": {"count": 0, "reason_counts": {}, "tickers": []},
+            },
+        },
+    )
+    pipeline = StubPipeline(post_market_plans=[plan], intraday_responses=[])
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+    )
+
+    timing_events = []
+    engine._append_timing_log = lambda payload: timing_events.append(payload)
+
+    engine.run_backtest()
+
+    pipeline_events = [event for event in timing_events if event.get("event") == "pipeline_day_timing"]
+    assert pipeline_events
+    assert pipeline_events[-1]["current_plan"]["funnel_diagnostics"]["counts"]["layer_a_count"] == 3
+    assert pipeline_events[-1]["current_plan"]["funnel_diagnostics"]["filters"]["layer_b"]["reason_counts"] == {"below_fast_score_threshold": 2}

@@ -18,6 +18,7 @@ def generate_execution_plan(
     risk_metrics: dict | None = None,
     layer_a_count: int = 0,
     layer_b_count: int = 0,
+    layer_c_count: int = 0,
 ) -> ExecutionPlan:
     return ExecutionPlan(
         date=trade_date,
@@ -30,6 +31,6 @@ def generate_execution_plan(
         risk_metrics=risk_metrics or {},
         layer_a_count=layer_a_count,
         layer_b_count=layer_b_count,
-        layer_c_count=len(watchlist),
+        layer_c_count=layer_c_count,
         watchlist=watchlist,
     )
