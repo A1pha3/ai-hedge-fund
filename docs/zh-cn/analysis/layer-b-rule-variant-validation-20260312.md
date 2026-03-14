@@ -243,3 +243,95 @@
 3. 所以如果后续继续推进 profitability 默认规则，候选实现应更接近“温和但不参与聚合”，而不是“中性但继续占位”。
 
 这点需要和前面的因子语义文档一起看，不能单独理解。
+
+---
+
+## 8. 2026-03-13 补充验证：扩窗 profitability 与 guarded mean_reversion
+
+补充结果产物：
+
+1. `data/reports/layer_b_rule_variants_20260_20260313.json`：把 profitability 继续扩到当前可用 `20260*` 快照，实际覆盖 `20260202 .. 20260303`。
+2. `data/reports/layer_b_rule_variants_202602_20260313.json`：在原 2026-02 窗口内加入 guarded neutral mean_reversion 版本后重新回放。
+
+### 8.1 profitability 扩窗后仍然稳定
+
+把 profitability inactive 分支继续扩到当前可用的 21 日窗口后，结论没有变化：
+
+1. baseline 仍是 `1` 次 Layer B 通过。
+2. profitability-only 仍是 `4` 次 Layer B 通过，净增仍是 `+3`。
+3. 新增样本仍然只有 `300065` on `20260223 / 20260224 / 20260225`。
+4. 新加入的 `20260303` 没有带来新的放量样本。
+
+这说明 profitability 的“温和但不参与聚合”语义，在当前可用扩窗范围内仍然只是在释放同一类硬 cliff 边缘票，没有出现向更多行业或更多结构扩散的迹象。
+
+### 8.2 guarded neutral mean_reversion 的四个版本
+
+为避免 full exclude 直接从 `1 -> 55`，本轮增加了四个带保护的 analysis 版本：
+
+1. `guarded_dual_leg_033`
+2. `guarded_dual_leg_032`
+3. `guarded_dual_leg_033_no_hard_cliff`
+4. `guarded_dual_leg_032_no_hard_cliff`
+
+四个版本都要求样本属于同一类结构：
+
+1. `trend` 为正
+2. `fundamental` 为正
+3. `mean_reversion` 为 neutral 且原本 active
+4. `event_sentiment` 缺席
+
+区别只在于：
+
+1. baseline `score_b` 至少要达到 `0.33` 还是 `0.32`
+2. 是否排除 profitability hard cliff 样本
+
+### 8.3 各 guard 的实际量级
+
+结果如下：
+
+1. `guarded_dual_leg_033`：Layer B `1 -> 14`，净增 `+13`
+2. `guarded_dual_leg_032`：Layer B `1 -> 25`，净增 `+24`
+3. `guarded_dual_leg_033_no_hard_cliff`：Layer B `1 -> 5`，净增 `+4`
+4. `guarded_dual_leg_032_no_hard_cliff`：Layer B `1 -> 16`，净增 `+15`
+
+和 full exclude 的 `+54` 相比，四个 guard 都确实把量级压下来了，但压缩效果差异很大。
+
+### 8.4 样本结构差异
+
+`guarded_dual_leg_033` 的新增 13 条样本主要集中在：
+
+1. `600111`：9 条
+2. `300724`：2 条
+3. `688008`：2 条
+
+这个版本虽然已经比 full exclude 收敛很多，但仍然把 profitability hard cliff 的 `600111` 连续多日放出来，说明它仍在和 profitability 问题强耦合，风险还不算低。
+
+`guarded_dual_leg_032` 进一步放宽阈值后，新增 24 条样本，基本由 `688008` 13 条和 `600111` 9 条主导，量级已经明显重新抬高，开始接近“中等规模持续放量”。
+
+`guarded_dual_leg_033_no_hard_cliff` 是最克制的一版：
+
+1. 只新增 `4` 条样本
+2. 只涉及 `300724` 2 条和 `688008` 2 条
+3. 不再把 profitability hard cliff 样本一起放出来
+4. 新增日期也只是 `20260210`、`20260211`、`20260225`、`20260227`
+
+这说明它保留了“修正 neutral mean_reversion 稀释双腿结构”的一部分收益，但明显切断了和 profitability cliff 的叠加放量。
+
+`guarded_dual_leg_032_no_hard_cliff` 介于两者之间：
+
+1. 净增 `+15`
+2. 其中 `688008` 单票就占了 `13` 条
+3. 另有 `300724` 2 条
+
+虽然它也排除了 profitability hard cliff，但 `0.32` 这个门槛仍然让单票连续多日释放过多，控制力不够稳。
+
+### 8.5 补充后的业务判断
+
+把 profitability 扩窗结果和 guarded mean_reversion 一起看，当前主线的优先级可以进一步收敛为：
+
+1. **最有希望继续向默认规则候选推进的，仍然是 profitability inactive 版本。** 它在当前可用扩窗内依然只释放 `300065` 这一类硬 cliff 边缘样本。
+2. **如果 neutral mean_reversion 要继续推进，最稳的下一步候选是 `guarded_dual_leg_033_no_hard_cliff`。** 它不是收益最大的版本，但它是唯一一个把 full exclude 的 `+54` 明显压回个位数、同时仍保留一部分结构性收益的 guard。
+3. `guarded_dual_leg_033` 虽然也收敛，但仍把 `600111` 这类 profitability hard cliff 样本持续放出来，说明它和 profitability 语义仍然耦合过深。
+4. 两个 `0.32` guard 都偏激进，不适合作为当前默认规则候选。
+
+因此，后续如果还要继续做 neutral mean_reversion 的最小规则分析，应优先把 `033_no_hard_cliff` 当作“可继续观察的保护版上限”，而不是重新回到 full exclude 或更宽的 `0.32` 版本。

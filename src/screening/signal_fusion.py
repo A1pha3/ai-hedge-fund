@@ -20,25 +20,98 @@ def _analysis_excludes_neutral_mean_reversion() -> bool:
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _get_neutral_mean_reversion_mode() -> str:
+    raw_value = os.getenv("LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE")
+    if raw_value is not None:
+        value = raw_value.strip().lower()
+        return value or "off"
+    return "full_exclude" if _analysis_excludes_neutral_mean_reversion() else "off"
+
+
+def _normalize_active_weights(weights: dict[str, float], signals: dict[str, StrategySignal], excluded_names: set[str] | None = None) -> dict[str, float]:
+    excluded_names = excluded_names or set()
+    active = {
+        name: max(weights.get(name, 0.0), 0.0)
+        for name, signal in signals.items()
+        if signal.completeness > 0 and name not in excluded_names
+    }
+    total = sum(active.values())
+    if total <= 0:
+        active = {name: DEFAULT_STRATEGY_WEIGHTS.get(name, 0.0) for name in signals if name not in excluded_names}
+        total = sum(active.values())
+    return {name: value / total for name, value in active.items()} if total > 0 else {}
+
+
+def _compute_raw_score(normalized_weights: dict[str, float], signals: dict[str, StrategySignal]) -> float:
+    score = 0.0
+    for name, signal in signals.items():
+        weight = normalized_weights.get(name, 0.0)
+        score += weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
+    return score
+
+
+def _is_hard_cliff_profitability(signals: dict[str, StrategySignal]) -> bool:
+    fundamental_signal = signals.get("fundamental")
+    if not fundamental_signal:
+        return False
+    profitability = fundamental_signal.sub_factors.get("profitability", {})
+    if not isinstance(profitability, dict):
+        return False
+    metrics = profitability.get("metrics", {})
+    return profitability.get("direction") == -1 and metrics.get("positive_count") == 0
+
+
+def _should_exclude_neutral_mean_reversion(weights: dict[str, float], signals: dict[str, StrategySignal]) -> bool:
+    mean_reversion_signal = signals.get("mean_reversion")
+    if not mean_reversion_signal or mean_reversion_signal.completeness <= 0 or mean_reversion_signal.direction != 0:
+        return False
+
+    mode = _get_neutral_mean_reversion_mode()
+    if mode == "off":
+        return False
+    if mode == "full_exclude":
+        return True
+
+    trend_signal = signals.get("trend", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
+    fundamental_signal = signals.get("fundamental", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
+    event_signal = signals.get("event_sentiment", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
+
+    if trend_signal.direction <= 0 or fundamental_signal.direction <= 0:
+        return False
+    if event_signal.completeness > 0:
+        return False
+
+    threshold_by_mode = {
+        "guarded_dual_leg_033": 0.33,
+        "guarded_dual_leg_032": 0.32,
+        "guarded_dual_leg_033_no_hard_cliff": 0.33,
+        "guarded_dual_leg_032_no_hard_cliff": 0.32,
+    }
+    min_score = threshold_by_mode.get(mode)
+    if min_score is None:
+        return False
+
+    if mode.endswith("_no_hard_cliff") and _is_hard_cliff_profitability(signals):
+        return False
+
+    baseline_weights = _normalize_active_weights(weights, signals)
+    baseline_score = _compute_raw_score(baseline_weights, signals)
+    return baseline_score >= min_score
+
+
 def _is_active_for_normalization(name: str, signal: StrategySignal) -> bool:
     if signal.completeness <= 0:
         return False
-    if name == "mean_reversion" and signal.direction == 0 and _analysis_excludes_neutral_mean_reversion():
+    if name == "mean_reversion" and signal.direction == 0 and _get_neutral_mean_reversion_mode() == "full_exclude":
         return False
     return True
 
 
 def _normalize_for_available_signals(weights: dict[str, float], signals: dict[str, StrategySignal]) -> dict[str, float]:
-    active = {
-        name: max(weights.get(name, 0.0), 0.0)
-        for name, signal in signals.items()
-        if _is_active_for_normalization(name, signal)
-    }
-    total = sum(active.values())
-    if total <= 0:
-        active = {name: DEFAULT_STRATEGY_WEIGHTS.get(name, 0.0) for name in signals}
-        total = sum(active.values())
-    return {name: value / total for name, value in active.items()} if total > 0 else {}
+    excluded_names: set[str] = set()
+    if _should_exclude_neutral_mean_reversion(weights, signals):
+        excluded_names.add("mean_reversion")
+    return _normalize_active_weights(weights, signals, excluded_names)
 
 
 def _signal_contribution(weight: float, signal: StrategySignal) -> float:

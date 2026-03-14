@@ -51,6 +51,17 @@ def _signal(direction: int, confidence: float, completeness: float = 1.0, sub_fa
     return StrategySignal(direction=direction, confidence=confidence, completeness=completeness, sub_factors=sub_factors or {})
 
 
+def _profitability_sub_factor(direction: int, positive_count: int) -> dict:
+    return {
+        "profitability": {
+            "metrics": {
+                "positive_count": positive_count,
+            },
+            "direction": direction,
+        }
+    }
+
+
 def test_completeness_derivation():
     factors = [
         SubFactor(name="a", direction=1, confidence=70, completeness=1.0, weight=0.5, metrics={}),
@@ -208,3 +219,35 @@ def test_neutral_mean_reversion_can_be_excluded_for_analysis():
         normalized = _normalize_for_available_signals(weights, signals)
 
     assert normalized == {"trend": 0.5, "fundamental": 0.5}
+
+
+def test_guarded_neutral_mean_reversion_excludes_only_near_threshold_dual_leg_candidates():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(1, 2)),
+        "event_sentiment": _signal(0, 0, completeness=0.0),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "guarded_dual_leg_033_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert normalized == {"trend": 0.5, "fundamental": 0.5}
+
+
+def test_guarded_neutral_mean_reversion_keeps_hard_cliff_candidates_active():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(-1, 0)),
+        "event_sentiment": _signal(0, 0, completeness=0.0),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "guarded_dual_leg_033_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - 0.375) < 1e-12
+    assert normalized["mean_reversion"] == 0.25
+    assert abs(normalized["fundamental"] - 0.375) < 1e-12

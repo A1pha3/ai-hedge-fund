@@ -23,6 +23,18 @@ VARIANTS = {
     "neutral_mean_reversion_only": {
         "LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION": "1",
     },
+    "neutral_mean_reversion_guarded_033": {
+        "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "guarded_dual_leg_033",
+    },
+    "neutral_mean_reversion_guarded_032": {
+        "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "guarded_dual_leg_032",
+    },
+    "neutral_mean_reversion_guarded_033_no_hard_cliff": {
+        "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "guarded_dual_leg_033_no_hard_cliff",
+    },
+    "neutral_mean_reversion_guarded_032_no_hard_cliff": {
+        "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "guarded_dual_leg_032_no_hard_cliff",
+    },
     "combined": {
         "LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "inactive",
         "LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION": "1",
