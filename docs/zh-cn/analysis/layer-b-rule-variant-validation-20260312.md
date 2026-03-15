@@ -578,3 +578,218 @@
 4. 聚焦执行层回归结果：`pytest tests/execution/test_phase4_execution.py -q` 通过，当前为 `23 passed`。
 
 需要强调的是：代码层面的 P1 已经落地，但业务层面的验证仍未完成。它目前更适合作为“当前工作区的候选默认参数”，而不是已经经过整窗 backtest 重新验证的最终结论。
+
+为了解决“真实 agent targeted replay 成本过高、容易超时”这个问题，当前工作区又补了一层**离线业务回归**到 `tests/execution/test_phase4_execution.py`：
+
+1. 把 focused replay 中已经确认的 8 个结构性强负样本固化成离线回归断言，验证它们在当前 P1 默认参数下仍然保持 `decision=avoid`，不会穿透 watchlist。
+2. 把 `600519` 的两个边缘样本也固化成离线回归断言，验证 `20260224` 这笔在当前 P1 默认参数下会通过，而 `20260226` 这笔仍然不会通过。
+3. 这层回归不依赖真实 agent 重放，只依赖前面已经产出的 focused replay cohort 贡献摘要，因此可以稳定、快速地重复执行。
+
+最新执行层测试结果已经更新为：`pytest tests/execution/test_phase4_execution.py -q` => `32 passed`。
+
+这意味着当前工作区的验证状态已经分成两层：
+
+1. **代码行为层**：P1 已实现，执行层单测与离线业务回归全部通过。
+2. **真实 agent / 端到端业务层**：仍缺少一次成本可控的 targeted replay 或小窗口 backtest 作为最终补证。
+
+为了让这层补证后续可执行，当前工作区还对 `scripts/replay_layer_c_agent_contributors.py` 做了工程化改造：
+
+1. 支持在 `--output` 打开时按日期增量写出 partial JSON，而不是等整批 replay 完成后才一次性落盘。
+2. 支持 `--resume` 从已有输出继续跑，自动跳过已经完成的日期。
+3. 支持通过 `--ticker` 把 live replay 收缩到单个目标 ticker，避免无关样本把整次验证拖慢。
+3. 这意味着后续如果继续做真实 targeted replay，应该优先按单日或少量日期切分执行，并始终开启 `--output --resume`，而不是再一次性跑整组日期。
+
+这项改造本身不构成新的业务结论，但它解决了前面真实 replay 容易超时、结果无法持久化的问题，为后续补最后一层端到端证据创造了可执行路径。
+
+不过，截至当前工作区状态，live targeted replay 仍然存在一个更底层的现实约束：即使已经把任务压到单日、单 variant、单 ticker，真实 agent 调用本身仍可能超过当前交互式运行预算并被中断。换句话说，当前未完成的不是“脚本不会保存结果”，而是“真实 LLM agent 链路本身仍然太慢，无法稳定在当前会话预算内跑完”。
+
+因此，当前最务实的判断应当是：
+
+1. 工具链已经足以支持可恢复的 live replay；
+2. 但真正把最后一层端到端补证跑完，仍然需要更长的离线执行窗口，而不是继续在当前交互式会话里反复硬跑。
+
+### 9.10 P1 变更说明
+
+下面这部分不再是分析结论，而是面向工程评审的变更摘要，描述当前工作区已经落地的 P1 改动边界、验证范围和回滚方式。
+
+#### 9.10.1 变更范围
+
+本次 P1 只修改 Layer C 与 watchlist，明确**不触碰 Layer B 规则**。
+
+已落地的代码范围如下：
+
+1. `src/execution/layer_c_aggregator.py`
+	- Layer C 最终融合从固定 `0.4 / 0.6` 改为可配置默认 `0.55 / 0.45`
+	- investor cohort 权重在归一化前增加 `0.90` 缩放
+	- avoid 冲突阈值改为可配置，但默认仍保持 `-0.30`
+2. `src/execution/daily_pipeline.py`
+	- watchlist 默认阈值从 `0.25` 调整到 `0.20`
+3. `tests/execution/test_phase4_execution.py`
+	- 新增参数行为测试
+	- 新增 focused replay 离线业务回归测试
+4. `scripts/replay_layer_c_agent_contributors.py`
+	- 支持 partial JSON 按日期增量写出
+	- 支持 `--resume`
+	- 支持 `--ticker-batch-size`
+	- 支持 `--ticker` 精确过滤
+
+#### 9.10.2 当前默认参数
+
+截至当前工作区，P1 默认参数是：
+
+1. Layer C blend：`b/c = 0.55 / 0.45`
+2. investor scale：`0.90`
+3. watchlist threshold：`0.20`
+4. avoid threshold：`-0.30`
+
+这些默认值的设计意图是：
+
+1. 允许少量 Layer B 已经偏正、但 Layer C 只是略微偏弱的边缘样本进入 watchlist
+2. 继续拦住已经形成强负一致性的 conflict 样本
+3. 不改变 `b_positive_c_strong_bearish` 这条风险语义的定义本身
+
+#### 9.10.3 已完成验证
+
+当前已完成的验证，分为三层：
+
+1. **执行层单元测试**
+	- `pytest tests/execution/test_phase4_execution.py -q` 已通过，当前结果为 `32 passed`
+2. **参数行为验证**
+	- 已验证 investor 缩放会在相同 raw weight 下轻微提高 analyst 相对影响力
+	- 已验证 `score_final` 处于 `0.20 .. 0.25` 之间的边缘样本现在可以进入 watchlist
+3. **离线业务回归**
+	- 已固化 8 个结构性强负样本，验证它们在 P1 下仍然保持 `avoid` / 不穿透
+	- 已固化 `600519` 两个边缘样本，验证 `20260224` 可以通过、`20260226` 仍然不会通过
+
+#### 9.10.4 尚未完成验证
+
+以下验证仍未完成，因此当前不能把 P1 说成“已经完成端到端业务验证”：
+
+1. 没有重新跑正式整窗 backtest
+2. 没有拿到完整成功落盘的 live targeted replay 新产物
+3. 没有证明 P1 在更长窗口或未来窗口下仍然不会引入额外误放
+
+当前 live replay 的阻塞点已经明确：
+
+1. replay 脚本的可恢复能力已经补齐
+2. 但真实 agent 链路本身仍然可能在单日、单 variant、甚至单 ticker 下超过当前交互式执行预算
+
+#### 9.10.5 残余风险
+
+当前最需要显式记录的风险有三类：
+
+1. **样本风险**
+	当前业务回归仅覆盖 focused replay 样本，不代表完整分布。
+2. **阈值迁移风险**
+	把 watchlist 默认值改到 `0.20` 后，未来可能出现新的边缘样本进入 watchlist，需要继续依赖 funnel diagnostics 监控。
+3. **权重解释风险**
+	investor 缩放虽然是温和调整，但本质上改变了 investor 与 analyst 的相对投票权，后续如果继续迭代，必须避免在多轮调参中失去可解释性。
+
+#### 9.10.6 回滚策略
+
+如果后续 targeted replay 或小窗口验证显示 P1 带来了不可接受的误放，回滚路径非常直接：
+
+1. `src/execution/layer_c_aggregator.py`
+	- blend 恢复到 `0.40 / 0.60`
+	- investor scale 恢复到 `1.00`
+	- avoid threshold 继续保持 `-0.30`
+2. `src/execution/daily_pipeline.py`
+	- watchlist threshold 恢复到 `0.25`
+3. 保留当前新增测试，但把预期值同步改回旧默认行为，确保回滚后测试仍然具备约束力
+
+#### 9.10.7 当前建议
+
+基于现有证据，当前最稳妥的工程建议是：
+
+1. 把 P1 视为**当前工作区中的候选默认参数**，而不是已经完成最终业务验证的正式发布结论。
+2. 如果下一步有离线长时执行窗口，应优先补 `20260224` / `20260226` 的 live targeted replay 证据。
+3. 在没有新增业务证据前，不建议继续向 P2 或更激进参数区间推进。
+
+### 9.11 离线 Live Replay 执行方案
+
+这一节不再扩展分析结论，而是把最后一层补证压缩成一个可以直接离线执行的最小流程。
+
+#### 9.11.1 验证目标
+
+只验证两个问题：
+
+1. `20260224 / 600519` 在当前 P1 默认参数下，真实 agent replay 是否会进入通过 watchlist 的区间。
+2. `20260226 / 600519` 在当前 P1 默认参数下，真实 agent replay 是否仍然不会通过，或者至少仍保持边缘不过线。
+
+这一步不再追求整窗覆盖，也不再同时验证全部强负样本，因为这些已经被离线业务回归覆盖。
+
+#### 9.11.2 执行原则
+
+live replay 必须严格遵守三条约束：
+
+1. 一次只跑一个日期。
+2. 一次只跑一个 ticker。
+3. 必须始终开启输出文件，以便中途中断后仍然留下可恢复产物。
+
+当前真正的瓶颈已经不是脚本持久化，而是 live agent 链路本身的执行耗时。
+
+#### 9.11.3 推荐命令
+
+先跑 `20260224 / 600519`：
+
+```bash
+/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
+scripts/replay_layer_c_agent_contributors.py \
+	--baseline data/reports/rule_variant_backtests/baseline.timings.jsonl \
+	--variant data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl \
+	--dates 20260224 \
+	--ticker 600519 \
+	--ticker-batch-size 1 \
+	--output data/reports/live_replay_600519_20260224_p1_20260316.json
+```
+
+再跑 `20260226 / 600519`：
+
+```bash
+/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
+scripts/replay_layer_c_agent_contributors.py \
+	--baseline data/reports/rule_variant_backtests/baseline.timings.jsonl \
+	--variant data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl \
+	--dates 20260226 \
+	--ticker 600519 \
+	--ticker-batch-size 1 \
+	--output data/reports/live_replay_600519_20260226_p1_20260316.json
+```
+
+如果任务中断，直接对同一个输出文件加 `--resume` 续跑，不要新开文件：
+
+```bash
+/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
+scripts/replay_layer_c_agent_contributors.py \
+	...同上参数... \
+	--resume
+```
+
+#### 9.11.4 验收标准
+
+这轮 live replay 的验收标准应当保持极窄：
+
+1. `20260224 / 600519`
+	 - 理想结果：`decision != avoid` 且 `score_final >= 0.20`
+	 - 可接受结果：`decision == watch`，并且 `score_final` 明显高于旧 replay 的 `0.1979`，至少证明 P1 在真实 replay 中保持了方向一致的改善
+2. `20260226 / 600519`
+	 - 理想结果：仍未通过，或保持边缘不过线
+	 - 解释意义：说明 P1 仍然是保守候选，没有直接滑向 P2 的更激进区间
+
+#### 9.11.5 结果记录格式
+
+完成后只需要补三类信息：
+
+1. replay 的 `score_c`
+2. replay 的 `score_final`
+3. replay 的 `decision / bc_conflict`
+
+除非 live replay 与当前离线回归方向明显冲突，否则不需要再次展开全部 top agents。
+
+#### 9.11.6 如果仍然超时
+
+如果连单日单 ticker 都无法在当前环境下稳定跑完，那么应直接接受以下判断：
+
+1. 当前工作区已经具备充分的代码级和离线业务级证据。
+2. live replay 需要被视为独立离线任务，而不是当前交互式会话中的下一步。
+3. 在这种情况下，P1 仍然可以作为候选默认参数进入评审，但必须显式标注 live replay 证据待补。

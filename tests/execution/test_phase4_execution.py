@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from src.execution.daily_pipeline import DailyPipeline
+from src.execution.daily_pipeline import DailyPipeline, WATCHLIST_SCORE_THRESHOLD
 from src.execution.crisis_handler import evaluate_crisis_response
-from src.execution.layer_c_aggregator import aggregate_layer_c_results, convert_agent_signal_to_strategy_signal
+from src.execution.layer_c_aggregator import (
+    LAYER_C_AVOID_SCORE_C_THRESHOLD,
+    LAYER_C_BLEND_B_WEIGHT,
+    LAYER_C_BLEND_C_WEIGHT,
+    LAYER_C_INVESTOR_WEIGHT_SCALE,
+    aggregate_layer_c_results,
+    convert_agent_signal_to_strategy_signal,
+)
 from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
 from src.execution.models import ExecutionPlan, LayerCResult
@@ -29,6 +36,29 @@ def _fused(ticker: str, score_b: float) -> FusedScore:
         weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
         decision="strong_buy" if score_b > 0.5 else "watch",
     )
+
+
+def _evaluate_default_layer_c_outcome(score_b: float, investor: float, analyst: float, other: float = 0.0) -> dict:
+    total_weight = LAYER_C_BLEND_B_WEIGHT + LAYER_C_BLEND_C_WEIGHT
+    blend_b = LAYER_C_BLEND_B_WEIGHT / total_weight
+    blend_c = LAYER_C_BLEND_C_WEIGHT / total_weight
+    score_c = (investor * LAYER_C_INVESTOR_WEIGHT_SCALE) + analyst + other
+    decision = "strong_buy" if score_b > 0.50 else "watch" if score_b >= 0.35 else "neutral"
+    bc_conflict = None
+    if score_b > 0.50 and score_c < 0:
+        bc_conflict = "b_strong_buy_c_negative"
+        decision = "watch"
+    if score_b > 0 and score_c < LAYER_C_AVOID_SCORE_C_THRESHOLD:
+        bc_conflict = "b_positive_c_strong_bearish"
+        decision = "avoid"
+    score_final = (score_b * blend_b) + (score_c * blend_c)
+    return {
+        "score_c": score_c,
+        "score_final": score_final,
+        "decision": decision,
+        "bc_conflict": bc_conflict,
+        "passes_watchlist": score_final >= WATCHLIST_SCORE_THRESHOLD and decision != "avoid",
+    }
 
 
 def test_layer_c_agent_conversion():
@@ -224,6 +254,42 @@ def test_watchlist_threshold_020_admits_edge_case_between_020_and_025():
     assert len(plan.watchlist) == 1
     assert plan.watchlist[0].score_final == pytest.approx(0.2024, abs=1e-4)
     assert plan.watchlist[0].score_final < 0.25
+
+
+@pytest.mark.parametrize(
+    ("ticker", "score_b", "investor", "analyst"),
+    [
+        ("300699_20260202", 0.3992, -0.5557, -0.1234),
+        ("600089_20260202", 0.4289, -0.5151, -0.1062),
+        ("300502_20260224", 0.4078, -0.4233, -0.0409),
+        ("300065_20260224", 0.3869, -0.5952, -0.0548),
+        ("002602_20260224", 0.3858, -0.5392, -0.0800),
+        ("600111_20260224", 0.3852, -0.3893, -0.0175),
+        ("300699_20260203", 0.4116, -0.5971, -0.1234),
+        ("600111_20260203", 0.3979, -0.4605, -0.0175),
+    ],
+)
+def test_p1_defaults_keep_structural_conflict_samples_blocked(ticker: str, score_b: float, investor: float, analyst: float):
+    result = _evaluate_default_layer_c_outcome(score_b, investor, analyst)
+    assert result["decision"] == "avoid", ticker
+    assert result["bc_conflict"] == "b_positive_c_strong_bearish", ticker
+    assert result["passes_watchlist"] is False, ticker
+    assert result["score_c"] < LAYER_C_AVOID_SCORE_C_THRESHOLD, ticker
+
+
+def test_p1_defaults_admit_only_stronger_600519_edge_case_from_focused_samples():
+    stronger_edge = _evaluate_default_layer_c_outcome(0.4023, 0.0617, 0.0)
+    weaker_edge = _evaluate_default_layer_c_outcome(0.3951, -0.1315, 0.0)
+
+    assert stronger_edge["decision"] == "watch"
+    assert stronger_edge["bc_conflict"] is None
+    assert stronger_edge["passes_watchlist"] is True
+    assert stronger_edge["score_final"] == pytest.approx(0.2463, abs=1e-4)
+
+    assert weaker_edge["decision"] == "watch"
+    assert weaker_edge["bc_conflict"] is None
+    assert weaker_edge["passes_watchlist"] is False
+    assert weaker_edge["score_final"] == pytest.approx(0.164, abs=1e-4)
 
 
 def test_build_buy_orders_diagnostics_marks_daily_trade_limit():
