@@ -335,3 +335,85 @@
 4. 两个 `0.32` guard 都偏激进，不适合作为当前默认规则候选。
 
 因此，后续如果还要继续做 neutral mean_reversion 的最小规则分析，应优先把 `033_no_hard_cliff` 当作“可继续观察的保护版上限”，而不是重新回到 full exclude 或更宽的 `0.32` 版本。
+
+---
+
+## 9. 2026-03-15 补充验证：端到端 pipeline backtest 结果
+
+补充结果产物：
+
+1. `data/reports/layer_b_backtest_variants_20260202_20260227_20260314.json`
+2. `data/reports/rule_variant_backtests/baseline.timings.jsonl`
+3. `data/reports/rule_variant_backtests/profitability_inactive.timings.jsonl`
+4. `data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl`
+
+这轮补充验证不再只看 Layer B 放量，而是直接跑完整条默认 backtester pipeline，对比三组规则在真实持仓、成交和收益上的差异。
+
+### 9.1 三组最终收益完全一致
+
+最终总表显示，三个变体的端到端结果完全相同：
+
+1. `start_value` 全部是 `100000.0`
+2. `end_value` 全部是 `100334.2000435`
+3. `total_return_pct` 全部是 `0.3342`
+4. `portfolio_value_points` 全部是 `15`
+5. `sharpe_ratio`、`sortino_ratio`、`max_drawdown`、`calmar_ratio` 也全部一致
+
+这说明前面在 Layer B 上看到的放量差异，并没有穿透到这段窗口内的最终收益结果。
+
+### 9.2 真实成交也没有形成分化
+
+按 timing 汇总看，三个变体的成交侧同样没有分化：
+
+1. `pipeline_days` 全部是 `14`
+2. `nonzero_buy_order_days` 全部是 `1`
+3. `executed_order_days` 全部是 `1`
+4. `avg_sell_order_count` 全部是 `0.0`
+
+换句话说，这轮 2026-02-02 至 2026-02-27 窗口内，三组规则最终都只落成了同一量级的极少数真实买入，没有形成新增成交路径，也没有形成新增卖出结果。
+
+### 9.3 规则变化主要停留在中游 funnel，没有穿透到最终订单
+
+虽然最终收益相同，中游 funnel 仍然出现了明显差异：
+
+1. baseline 的 `avg_layer_b_count = 2.14`
+2. profitability_inactive 的 `avg_layer_b_count = 3.00`
+3. guarded neutral mean_reversion 的 `avg_layer_b_count = 3.64`
+
+但三组的 `avg_watchlist_count` 都只有 `0.0714`，`avg_buy_order_count` 也都只有 `0.0714`。
+
+这说明本轮规则变化的真实效果是：
+
+1. 它们确实把更多标的送进了 Layer B / Layer C
+2. 但额外释放出来的标的，绝大部分都在 watchlist / final fusion / decision 阶段被重新压掉了
+3. 所以最终组合路径、成交路径和收益路径没有发生实质变化
+
+因此，当前主瓶颈已经不是“Layer B 候选太少”本身，而是“额外候选无法穿透后续决策链”。
+
+### 9.4 运行成本反而显著上升
+
+三组端到端平均日耗时如下：
+
+1. baseline：`199.96s`
+2. profitability_inactive：`282.46s`
+3. guarded neutral mean_reversion：`258.74s`
+
+也就是说，在这段窗口里：
+
+1. baseline 最快
+2. profitability_inactive 最慢
+3. guarded neutral mean_reversion 次之
+
+而它们最终收益完全一样，所以从端到端 ROI 看，这两种变体当前都没有证明自己值得替换 baseline。
+
+### 9.5 截至当前主线的业务结论
+
+把前面的 Layer B 验证和这轮端到端 backtest 放在一起，结论可以收敛为：
+
+1. profitability inactive 仍然是更温和、可解释的 Layer B 分析候选。
+2. `neutral_mean_reversion_guarded_033_no_hard_cliff` 仍然是比 full exclude 更安全的 protected MR 候选。
+3. 但在真实 backtest 窗口 `2026-02-02 .. 2026-02-27` 内，这两者都**没有带来任何额外收益或额外真实成交结果**。
+4. 因此，基于当前证据，不应把它们当成已经验证有效的默认规则升级。
+5. 如果后续还要继续推进，重点应该从“继续放大 Layer B”转向“为什么新增候选在后续 watchlist / final fusion 环节全部失效”。
+
+这意味着当前最稳妥的说法不是“这些规则无效”，而是：**它们只证明了自己能改变中游候选分布，还没有证明能改变最终交易结果。**
