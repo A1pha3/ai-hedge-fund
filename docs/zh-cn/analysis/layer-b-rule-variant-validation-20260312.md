@@ -437,15 +437,15 @@
 几个关键样本的 replay 证据如下：
 
 1. `300699`
-	20260202 replay：`investor = -0.5557`，`analyst = -0.1234`
-	20260203 replay：`investor = -0.5971`，`analyst = -0.1234`
-	两天都触发 `b_positive_c_strong_bearish`，属于稳定的结构性强压制样本。
+    20260202 replay：`investor = -0.5557`，`analyst = -0.1234`
+    20260203 replay：`investor = -0.5971`，`analyst = -0.1234`
+    两天都触发 `b_positive_c_strong_bearish`，属于稳定的结构性强压制样本。
 2. `600111`
-	20260224 replay：`investor = -0.3893`，`analyst = -0.0175`
-	20260203 replay：`investor = -0.4605`，`analyst = -0.0175`
-	也是典型的 investor 主导负向样本。
+    20260224 replay：`investor = -0.3893`，`analyst = -0.0175`
+    20260203 replay：`investor = -0.4605`，`analyst = -0.0175`
+    也是典型的 investor 主导负向样本。
 3. `300065`、`600089`、`002602`
-	三者的 `investor` 贡献分别约为 `-0.5952`、`-0.5151`、`-0.5392`，都明显强于 analyst 侧，且都落入 conflict-driven avoid。
+    三者的 `investor` 贡献分别约为 `-0.5952`、`-0.5151`、`-0.5392`，都明显强于 analyst 侧，且都落入 conflict-driven avoid。
 
 但 `600519` 的模式不同。它在 20260224 replay 中接近中性偏正，在 20260226 replay 中又转成轻负，且两次都没有触发 `avoid` 冲突，只是 `score_final` 过不了 watchlist 阈值。这说明 `600519` 更像“边缘不过线”的阈值样本，而不是像 `300699` 或 `300065` 那样被 investor 群体稳定一致地强压制。
 
@@ -478,9 +478,9 @@
 当前聚焦样本上，至少有两组组合表现为“放出 `600519`，但不泄漏任何结构性强负样本”：
 
 1. `investor_scale=0.90`、`b/c=0.55/0.45`、`watchlist=0.20`、`avoid=-0.30`
-	结果：只放出 `20260224 / 600519`，`score_final=0.2463`，结构性强负样本泄漏数 `0`
+    结果：只放出 `20260224 / 600519`，`score_final=0.2463`，结构性强负样本泄漏数 `0`
 2. `investor_scale=0.85`、`b/c=0.60/0.40`、`watchlist=0.20`、`avoid=-0.40`
-	结果：同样只放出 `20260224 / 600519`，结构性强负样本泄漏数 `0`
+    结果：同样只放出 `20260224 / 600519`，结构性强负样本泄漏数 `0`
 
 如果进一步把 watchlist 再降到 `0.18`，则：
 
@@ -496,13 +496,13 @@
 继续做细网格扫描后，候选矩阵还能再收敛一层。把 `investor_scale ∈ [0.85, 0.95]`、`b_weight ∈ [0.50, 0.60]`、`watchlist ∈ [0.18, 0.22]`、`avoid ∈ {-0.30, -0.35, -0.40}` 做组合搜索后，可以把当前聚焦样本上的 clean candidates 分成两档：
 
 1. **保守单样本候选**
-	代表组合：`investor_scale=0.90`、`b/c=0.55/0.45`、`watchlist=0.20`、`avoid=-0.30`
-	结果：只放出 `20260224 / 600519`，没有任何结构性强负样本泄漏。
-	含义：这是当前最接近“最小改动”的 clean gain 候选。
+    代表组合：`investor_scale=0.90`、`b/c=0.55/0.45`、`watchlist=0.20`、`avoid=-0.30`
+    结果：只放出 `20260224 / 600519`，没有任何结构性强负样本泄漏。
+    含义：这是当前最接近“最小改动”的 clean gain 候选。
 2. **边界双样本候选**
-	代表组合：`investor_scale=0.95`、`b/c=0.60/0.40`、`watchlist=0.18`、`avoid=-0.30`
-	结果：同时放出 `20260224 / 600519` 和 `20260226 / 600519`，仍然没有任何结构性强负样本泄漏。
-	含义：要拿到两次 `600519` 穿透，当前关键不在于大幅削弱 investor，而在于把 `b_weight` 提到 `0.60` 并把 watchlist 压到 `0.18` 左右。
+    代表组合：`investor_scale=0.95`、`b/c=0.60/0.40`、`watchlist=0.18`、`avoid=-0.30`
+    结果：同时放出 `20260224 / 600519` 和 `20260226 / 600519`，仍然没有任何结构性强负样本泄漏。
+    含义：要拿到两次 `600519` 穿透，当前关键不在于大幅削弱 investor，而在于把 `b_weight` 提到 `0.60` 并把 watchlist 压到 `0.18` 左右。
 
 这说明细网格下的主导因素可以进一步概括为：
 
@@ -515,17 +515,17 @@
 基于 `data/reports/layer_c_edge_tradeoff_20260315.json` 当前可以把下一步候选明确分成三档，而不是继续泛化地说“再调一调参数看看”。
 
 1. **P1 保守候选，优先继续验证**
-	参数：`investor_scale=0.90`、`b/c=0.55/0.45`、`watchlist=0.20`、`avoid=-0.30`
-	结果：只放出 `20260224 / 600519`，结构性强负样本泄漏 `0`
-	理由：这是当前最接近“最小改动”的 clean gain 方案，调参幅度相对小，业务语义也最容易解释。
+    参数：`investor_scale=0.90`、`b/c=0.55/0.45`、`watchlist=0.20`、`avoid=-0.30`
+    结果：只放出 `20260224 / 600519`，结构性强负样本泄漏 `0`
+    理由：这是当前最接近“最小改动”的 clean gain 方案，调参幅度相对小，业务语义也最容易解释。
 2. **P2 边界候选，只作为上界证据保留**
-	参数：`investor_scale=0.95`、`b/c=0.60/0.40`、`watchlist=0.18`、`avoid=-0.30`
-	结果：同时放出 `20260224 / 600519` 和 `20260226 / 600519`，结构性强负样本泄漏 `0`
-	理由：它证明“双样本穿透且不泄漏”在当前聚焦样本上是可达的，但需要进入更激进的 `b_weight=0.60` 与 `watchlist=0.18` 区域，不宜直接作为默认升级候选。
+    参数：`investor_scale=0.95`、`b/c=0.60/0.40`、`watchlist=0.18`、`avoid=-0.30`
+    结果：同时放出 `20260224 / 600519` 和 `20260226 / 600519`，结构性强负样本泄漏 `0`
+    理由：它证明“双样本穿透且不泄漏”在当前聚焦样本上是可达的，但需要进入更激进的 `b_weight=0.60` 与 `watchlist=0.18` 区域，不宜直接作为默认升级候选。
 3. **P3 暂不优先的单旋钮方案**
-	代表：只降 `watchlist` 到 `0.20`，或者只把 `investor_scale` 降到 `0.90`
-	结果：边缘样本通过数仍然是 `0`
-	理由：这些方案已经被当前 focused replay 证据否定，不值得再作为主线继续消耗分析预算。
+    代表：只降 `watchlist` 到 `0.20`，或者只把 `investor_scale` 降到 `0.90`
+    结果：边缘样本通过数仍然是 `0`
+    理由：这些方案已经被当前 focused replay 证据否定，不值得再作为主线继续消耗分析预算。
 
 如果下一步要把分析继续压缩成“最小规则提案”，当前最合理的顺序应当是：
 
@@ -573,8 +573,8 @@
 1. `src/execution/layer_c_aggregator.py` 现已引入可配置的 Layer C 融合权重、investor cohort 缩放和 avoid 阈值，当前默认值分别为 `0.55/0.45`、`0.90`、`-0.30`。
 2. `src/execution/daily_pipeline.py` 的 watchlist 默认阈值已调整为 `0.20`。
 3. `tests/execution/test_phase4_execution.py` 已补充两条针对新默认行为的测试：
-	一条验证 investor 缩放会在同 raw weight 下把相对权重轻微向 analyst 侧倾斜；
-	一条验证 `score_final` 落在 `0.20` 到 `0.25` 之间的边缘样本现在可以进入 watchlist。
+    一条验证 investor 缩放会在同 raw weight 下把相对权重轻微向 analyst 侧倾斜；
+    一条验证 `score_final` 落在 `0.20` 到 `0.25` 之间的边缘样本现在可以进入 watchlist。
 4. 聚焦执行层回归结果：`pytest tests/execution/test_phase4_execution.py -q` 通过，当前为 `23 passed`。
 
 需要强调的是：代码层面的 P1 已经落地，但业务层面的验证仍未完成。它目前更适合作为“当前工作区的候选默认参数”，而不是已经经过整窗 backtest 重新验证的最终结论。
@@ -597,16 +597,21 @@
 1. 支持在 `--output` 打开时按日期增量写出 partial JSON，而不是等整批 replay 完成后才一次性落盘。
 2. 支持 `--resume` 从已有输出继续跑，自动跳过已经完成的日期。
 3. 支持通过 `--ticker` 把 live replay 收缩到单个目标 ticker，避免无关样本把整次验证拖慢。
-3. 这意味着后续如果继续做真实 targeted replay，应该优先按单日或少量日期切分执行，并始终开启 `--output --resume`，而不是再一次性跑整组日期。
+4. 这意味着后续如果继续做真实 targeted replay，应该优先按单日或少量日期切分执行，并始终开启 `--output --resume`，而不是再一次性跑整组日期。
 
 这项改造本身不构成新的业务结论，但它解决了前面真实 replay 容易超时、结果无法持久化的问题，为后续补最后一层端到端证据创造了可执行路径。
 
-不过，截至当前工作区状态，live targeted replay 仍然存在一个更底层的现实约束：即使已经把任务压到单日、单 variant、单 ticker，真实 agent 调用本身仍可能超过当前交互式运行预算并被中断。换句话说，当前未完成的不是“脚本不会保存结果”，而是“真实 LLM agent 链路本身仍然太慢，无法稳定在当前会话预算内跑完”。
+2026-03-16 已经完成最小 live targeted replay：
 
-因此，当前最务实的判断应当是：
+1. `20260224 / 600519` 的 live replay `score_final = 0.2158`，已经跨过 `0.20` watchlist 门槛。
+2. `20260226 / 600519` 的 live replay `score_final = 0.1962`，仍然保持边缘不过线。
+3. 两次 replay 都成功落盘到 `data/reports/live_replay_600519_20260224_p1.json` 与 `data/reports/live_replay_600519_20260226_p1.json`。
+
+因此，当前最务实的判断已经更新为：
 
 1. 工具链已经足以支持可恢复的 live replay；
-2. 但真正把最后一层端到端补证跑完，仍然需要更长的离线执行窗口，而不是继续在当前交互式会话里反复硬跑。
+2. 最小 live 补证已经完成，并且结果符合 P1 的保守预期；
+3. 当前剩余缺口不再是“没有 live replay 证据”，而是“还没有更长窗口或未来窗口的业务覆盖”。
 
 ### 9.10 P1 变更说明
 
@@ -619,19 +624,19 @@
 已落地的代码范围如下：
 
 1. `src/execution/layer_c_aggregator.py`
-	- Layer C 最终融合从固定 `0.4 / 0.6` 改为可配置默认 `0.55 / 0.45`
-	- investor cohort 权重在归一化前增加 `0.90` 缩放
-	- avoid 冲突阈值改为可配置，但默认仍保持 `-0.30`
+    - Layer C 最终融合从固定 `0.4 / 0.6` 改为可配置默认 `0.55 / 0.45`
+    - investor cohort 权重在归一化前增加 `0.90` 缩放
+    - avoid 冲突阈值改为可配置，但默认仍保持 `-0.30`
 2. `src/execution/daily_pipeline.py`
-	- watchlist 默认阈值从 `0.25` 调整到 `0.20`
+    - watchlist 默认阈值从 `0.25` 调整到 `0.20`
 3. `tests/execution/test_phase4_execution.py`
-	- 新增参数行为测试
-	- 新增 focused replay 离线业务回归测试
+    - 新增参数行为测试
+    - 新增 focused replay 离线业务回归测试
 4. `scripts/replay_layer_c_agent_contributors.py`
-	- 支持 partial JSON 按日期增量写出
-	- 支持 `--resume`
-	- 支持 `--ticker-batch-size`
-	- 支持 `--ticker` 精确过滤
+    - 支持 partial JSON 按日期增量写出
+    - 支持 `--resume`
+    - 支持 `--ticker-batch-size`
+    - 支持 `--ticker` 精确过滤
 
 #### 9.10.2 当前默认参数
 
@@ -653,57 +658,61 @@
 当前已完成的验证，分为三层：
 
 1. **执行层单元测试**
-	- `pytest tests/execution/test_phase4_execution.py -q` 已通过，当前结果为 `32 passed`
+    - `pytest tests/execution/test_phase4_execution.py -q` 已通过，当前结果为 `32 passed`
 2. **参数行为验证**
-	- 已验证 investor 缩放会在相同 raw weight 下轻微提高 analyst 相对影响力
-	- 已验证 `score_final` 处于 `0.20 .. 0.25` 之间的边缘样本现在可以进入 watchlist
+    - 已验证 investor 缩放会在相同 raw weight 下轻微提高 analyst 相对影响力
+    - 已验证 `score_final` 处于 `0.20 .. 0.25` 之间的边缘样本现在可以进入 watchlist
 3. **离线业务回归**
-	- 已固化 8 个结构性强负样本，验证它们在 P1 下仍然保持 `avoid` / 不穿透
-	- 已固化 `600519` 两个边缘样本，验证 `20260224` 可以通过、`20260226` 仍然不会通过
+    - 已固化 8 个结构性强负样本，验证它们在 P1 下仍然保持 `avoid` / 不穿透
+    - 已固化 `600519` 两个边缘样本，验证 `20260224` 可以通过、`20260226` 仍然不会通过
+4. **最小 live targeted replay**
+    - `20260224 / 600519`：live replay `score_final = 0.2158`，达到 watchlist 通过区间
+    - `20260226 / 600519`：live replay `score_final = 0.1962`，仍保持边缘不过线
 
-#### 9.10.4 尚未完成验证
+#### 9.10.4 尚未完成的更大范围验证
 
 以下验证仍未完成，因此当前不能把 P1 说成“已经完成端到端业务验证”：
 
 1. 没有重新跑正式整窗 backtest
-2. 没有拿到完整成功落盘的 live targeted replay 新产物
-3. 没有证明 P1 在更长窗口或未来窗口下仍然不会引入额外误放
+2. 没有证明 P1 在更长窗口或未来窗口下仍然不会引入额外误放
+3. 没有覆盖更多边缘样本与更多日期的 live replay 分布
 
-当前 live replay 的阻塞点已经明确：
+当前 live replay 的状态已经更新为：
 
 1. replay 脚本的可恢复能力已经补齐
-2. 但真实 agent 链路本身仍然可能在单日、单 variant、甚至单 ticker 下超过当前交互式执行预算
+2. `600519` 两个目标日期的 live replay 已完成并成功落盘
+3. 当前剩余问题是样本覆盖范围，而不是“最后一层 live 证据完全缺失”
 
 #### 9.10.5 残余风险
 
 当前最需要显式记录的风险有三类：
 
 1. **样本风险**
-	当前业务回归仅覆盖 focused replay 样本，不代表完整分布。
+    当前业务回归与 live replay 仍只覆盖小样本，不代表完整分布。
 2. **阈值迁移风险**
-	把 watchlist 默认值改到 `0.20` 后，未来可能出现新的边缘样本进入 watchlist，需要继续依赖 funnel diagnostics 监控。
+    把 watchlist 默认值改到 `0.20` 后，未来可能出现新的边缘样本进入 watchlist，需要继续依赖 funnel diagnostics 监控。
 3. **权重解释风险**
-	investor 缩放虽然是温和调整，但本质上改变了 investor 与 analyst 的相对投票权，后续如果继续迭代，必须避免在多轮调参中失去可解释性。
+    investor 缩放虽然是温和调整，但本质上改变了 investor 与 analyst 的相对投票权，后续如果继续迭代，必须避免在多轮调参中失去可解释性。
 
 #### 9.10.6 回滚策略
 
 如果后续 targeted replay 或小窗口验证显示 P1 带来了不可接受的误放，回滚路径非常直接：
 
 1. `src/execution/layer_c_aggregator.py`
-	- blend 恢复到 `0.40 / 0.60`
-	- investor scale 恢复到 `1.00`
-	- avoid threshold 继续保持 `-0.30`
+    - blend 恢复到 `0.40 / 0.60`
+    - investor scale 恢复到 `1.00`
+    - avoid threshold 继续保持 `-0.30`
 2. `src/execution/daily_pipeline.py`
-	- watchlist threshold 恢复到 `0.25`
+    - watchlist threshold 恢复到 `0.25`
 3. 保留当前新增测试，但把预期值同步改回旧默认行为，确保回滚后测试仍然具备约束力
 
 #### 9.10.7 当前建议
 
 基于现有证据，当前最稳妥的工程建议是：
 
-1. 把 P1 视为**当前工作区中的候选默认参数**，而不是已经完成最终业务验证的正式发布结论。
-2. 如果下一步有离线长时执行窗口，应优先补 `20260224` / `20260226` 的 live targeted replay 证据。
-3. 在没有新增业务证据前，不建议继续向 P2 或更激进参数区间推进。
+1. 把 P1 视为**已经完成最小 live 补证的候选默认参数**，可以进入评审，但仍不是完整窗口 fully validated 的正式发布结论。
+2. 当前最合理的后续工作，不是继续推 P2，而是观察更长窗口下是否会出现新增误放。
+3. 在没有新的分布级证据前，不建议继续向 P2 或更激进参数区间推进。
 
 ### 9.11 离线 Live Replay 执行方案
 
@@ -735,12 +744,12 @@ live replay 必须严格遵守三条约束：
 ```bash
 /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
 scripts/replay_layer_c_agent_contributors.py \
-	--baseline data/reports/rule_variant_backtests/baseline.timings.jsonl \
-	--variant data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl \
-	--dates 20260224 \
-	--ticker 600519 \
-	--ticker-batch-size 1 \
-	--output data/reports/live_replay_600519_20260224_p1_20260316.json
+    --baseline data/reports/rule_variant_backtests/baseline.timings.jsonl \
+    --variant data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl \
+    --dates 20260224 \
+    --ticker 600519 \
+    --ticker-batch-size 1 \
+    --output data/reports/live_replay_600519_20260224_p1.json
 ```
 
 再跑 `20260226 / 600519`：
@@ -748,21 +757,42 @@ scripts/replay_layer_c_agent_contributors.py \
 ```bash
 /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
 scripts/replay_layer_c_agent_contributors.py \
-	--baseline data/reports/rule_variant_backtests/baseline.timings.jsonl \
-	--variant data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl \
-	--dates 20260226 \
-	--ticker 600519 \
-	--ticker-batch-size 1 \
-	--output data/reports/live_replay_600519_20260226_p1_20260316.json
+    --baseline data/reports/rule_variant_backtests/baseline.timings.jsonl \
+    --variant data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl \
+    --dates 20260226 \
+    --ticker 600519 \
+    --ticker-batch-size 1 \
+    --output data/reports/live_replay_600519_20260226_p1.json
 ```
 
 如果任务中断，直接对同一个输出文件加 `--resume` 续跑，不要新开文件：
 
 ```bash
+scripts/run_live_replay_600519_p1.sh 20260224 --resume
+scripts/run_live_replay_600519_p1.sh 20260226 --resume
+```
+
+如果希望一次把两个目标日期都顺序跑完，也可以直接调用包装脚本：
+
+```bash
+scripts/run_live_replay_600519_p1.sh all --resume
+```
+
+这个包装脚本会固定使用：
+
+1. `baseline.timings.jsonl`
+2. `neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl`
+3. 单 ticker `600519`
+4. `ticker-batch-size=1`
+5. 稳定输出路径 `data/reports/live_replay_600519_<date>_p1.json`
+
+因此后续补证时，优先使用它，而不是重新手工拼接长命令，以避免输出文件名漂移导致 `--resume` 无法复用。
+
+```bash
 /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
 scripts/replay_layer_c_agent_contributors.py \
-	...同上参数... \
-	--resume
+    ...同上参数... \
+    --resume
 ```
 
 #### 9.11.4 验收标准
@@ -770,11 +800,11 @@ scripts/replay_layer_c_agent_contributors.py \
 这轮 live replay 的验收标准应当保持极窄：
 
 1. `20260224 / 600519`
-	 - 理想结果：`decision != avoid` 且 `score_final >= 0.20`
-	 - 可接受结果：`decision == watch`，并且 `score_final` 明显高于旧 replay 的 `0.1979`，至少证明 P1 在真实 replay 中保持了方向一致的改善
+    - 理想结果：`decision != avoid` 且 `score_final >= 0.20`
+    - 可接受结果：`decision == watch`，并且 `score_final` 明显高于旧 replay 的 `0.1979`，至少证明 P1 在真实 replay 中保持了方向一致的改善
 2. `20260226 / 600519`
-	 - 理想结果：仍未通过，或保持边缘不过线
-	 - 解释意义：说明 P1 仍然是保守候选，没有直接滑向 P2 的更激进区间
+    - 理想结果：仍未通过，或保持边缘不过线
+    - 解释意义：说明 P1 仍然是保守候选，没有直接滑向 P2 的更激进区间
 
 #### 9.11.5 结果记录格式
 
@@ -786,10 +816,104 @@ scripts/replay_layer_c_agent_contributors.py \
 
 除非 live replay 与当前离线回归方向明显冲突，否则不需要再次展开全部 top agents。
 
+建议直接使用下面的汇总脚本，把 replay JSON 整理成可贴回文档的 markdown：
+
+```bash
+/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
+scripts/summarize_live_replay_600519_p1.py \
+    --output data/reports/live_replay_600519_p1_summary.md
+```
+
+如果只想汇总单个结果文件，也可以显式传入输入路径：
+
+```bash
+/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
+scripts/summarize_live_replay_600519_p1.py \
+    data/reports/live_replay_600519_20260224_p1.json
+```
+
+推荐判读模板如下：
+
+```md
+### 20260224 / 600519
+- replay：score_c=<value>，score_final=<value>，decision=<value>，bc_conflict=<value>
+- 对照：旧 replay score_final=0.1979，旧 logged score_final=0.1584
+- 结论：
+    - 若 `decision != avoid` 且 `score_final >= 0.20`，记为“达到理想验收”
+    - 若 `decision == watch` 且 `score_final > 0.1979`，记为“达到可接受验收”
+    - 否则记为“未达到验收”
+
+### 20260226 / 600519
+- replay：score_c=<value>，score_final=<value>，decision=<value>，bc_conflict=<value>
+- 对照：旧 replay score_final=0.0791，旧 logged score_final=0.1580
+- 结论：
+    - 若 `score_final < 0.20`，记为“达到理想验收”，说明仍保持边缘不过线
+    - 若 `score_final >= 0.20`，记为“未达到验收”，说明行为比 P1 预期更激进
+```
+
+如果 live replay 成功落盘，优先把脚本生成的 markdown 作为结果正文，再视是否存在方向冲突决定要不要补充 top agents 细节。
+
 #### 9.11.6 如果仍然超时
 
-如果连单日单 ticker 都无法在当前环境下稳定跑完，那么应直接接受以下判断：
+如果后续扩展到更多日期或更多 ticker 时再次超时，那么应直接接受以下判断：
 
 1. 当前工作区已经具备充分的代码级和离线业务级证据。
-2. live replay 需要被视为独立离线任务，而不是当前交互式会话中的下一步。
-3. 在这种情况下，P1 仍然可以作为候选默认参数进入评审，但必须显式标注 live replay 证据待补。
+2. 更大范围的 live replay 需要被视为独立离线任务，而不是当前交互式会话中的下一步。
+3. 在这种情况下，P1 仍然可以作为候选默认参数进入评审，但必须显式标注“更长窗口证据待补”，而不是“最小 live replay 证据缺失”。
+
+#### 9.11.7 Live Replay 实际结果
+
+如果已经生成 `data/reports/live_replay_600519_p1_summary.md`，可以直接用下面的脚本把结果自动回填到当前文档：
+
+```bash
+/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
+scripts/update_live_replay_doc_600519_p1.py
+```
+
+如果只想预览回填后的结果而不真正写入文档，可以加 `--dry-run`：
+
+```bash
+/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python \
+scripts/update_live_replay_doc_600519_p1.py \
+    --dry-run
+```
+
+<!-- LIVE_REPLAY_600519_P1:START -->
+
+## 600519 P1 Live Replay 汇总
+
+本摘要用于快速判断 20260224 和 20260226 两个目标日期是否符合 P1 的最小业务补证预期。
+
+### 20260224 / 600519
+
+- 来源文件：/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/live_replay_600519_20260224_p1.json
+- variant：neutral_mean_reversion_guarded_033_no_hard_cliff.timings
+- logged：score_final=0.1584，decision=watch，bc_conflict=None
+- replay：score_c=-0.0122，score_final=0.2158，decision=watch，bc_conflict=None
+- delta：score_c=-0.0079，score_final=0.0574
+- cohort：investor=-0.0122，analyst=0.0000，other=0.0000
+- 对照基线：旧 replay score_final=0.1979，旧 logged score_final=0.1584
+- 验收结论：ideal
+- 说明：达到理想验收：已跨过 0.20 watchlist 门槛。
+
+可直接贴入文档的结论：
+
+> 20260224 / 600519 的 live replay 结果为 score_c=-0.0122、score_final=0.2158、decision=watch、bc_conflict=None。相较既有 replay，score_final 变化 0.0574。达到理想验收：已跨过 0.20 watchlist 门槛。
+
+### 20260226 / 600519
+
+- 来源文件：/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/live_replay_600519_20260226_p1.json
+- variant：neutral_mean_reversion_guarded_033_no_hard_cliff.timings
+- logged：score_final=0.1580，decision=watch，bc_conflict=None
+- replay：score_c=-0.0469，score_final=0.1962，decision=watch，bc_conflict=None
+- delta：score_c=-0.0469，score_final=0.0382
+- cohort：investor=-0.0469，analyst=0.0000，other=0.0000
+- 对照基线：旧 replay score_final=0.0791，旧 logged score_final=0.1580
+- 验收结论：ideal
+- 说明：达到理想验收：仍保持边缘不过线，没有滑向更激进的 P2 区间。
+
+可直接贴入文档的结论：
+
+> 20260226 / 600519 的 live replay 结果为 score_c=-0.0469、score_final=0.1962、decision=watch、bc_conflict=None。相较既有 replay，score_final 变化 0.0382。达到理想验收：仍保持边缘不过线，没有滑向更激进的 P2 区间。
+
+<!-- LIVE_REPLAY_600519_P1:END -->

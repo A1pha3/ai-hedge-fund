@@ -1,0 +1,107 @@
+{
+  "model": {
+    "model_name": "MiniMax-M2.5",
+    "model_provider": "MiniMax"
+  },
+  "dates": [
+    "20260224"
+  ],
+  "comparisons": [
+    {
+      "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+      "trade_date": "20260224",
+      "ticker": "600519",
+      "logged": {
+        "score_b": 0.4023,
+        "score_c": -0.0043,
+        "score_final": 0.1584,
+        "decision": "watch",
+        "bc_conflict": null,
+        "reasons": [
+          "score_final_below_watchlist_threshold"
+        ]
+      },
+      "replay": {
+        "score_b": 0.4023,
+        "score_c": -0.0122,
+        "score_final": 0.2158,
+        "decision": "watch",
+        "bc_conflict": null,
+        "agent_contribution_summary": {
+          "active_agent_count": 17,
+          "positive_agent_count": 4,
+          "negative_agent_count": 4,
+          "neutral_agent_count": 9,
+          "cohort_contributions": {
+            "investor": -0.0122,
+            "analyst": 0.0,
+            "other": 0.0
+          },
+          "top_positive_agents": [
+            {
+              "agent_id": "sentiment_analyst_agent",
+              "contribution": 0.053,
+              "normalized_weight": 0.053,
+              "direction": 1,
+              "confidence": 100.0,
+              "completeness": 1.0,
+              "cohort": "analyst"
+            },
+            {
+              "agent_id": "phil_fisher_agent",
+              "contribution": 0.0464,
+              "normalized_weight": 0.0613,
+              "direction": 1,
+              "confidence": 75.7,
+              "completeness": 1.0,
+              "cohort": "investor"
+            },
+            {
+              "agent_id": "peter_lynch_agent",
+              "contribution": 0.046,
+              "normalized_weight": 0.0613,
+              "direction": 1,
+              "confidence": 75.0,
+              "completeness": 1.0,
+              "cohort": "investor"
+            }
+          ],
+          "top_negative_agents": [
+            {
+              "agent_id": "valuation_analyst_agent",
+              "contribution": -0.053,
+              "normalized_weight": 0.053,
+              "direction": -1,
+              "confidence": 100.0,
+              "completeness": 1.0,
+              "cohort": "analyst"
+            },
+            {
+              "agent_id": "bill_ackman_agent",
+              "contribution": -0.0521,
+              "normalized_weight": 0.0613,
+              "direction": -1,
+              "confidence": 85.0,
+              "completeness": 1.0,
+              "cohort": "investor"
+            },
+            {
+              "agent_id": "ben_graham_agent",
+              "contribution": -0.0502,
+              "normalized_weight": 0.0613,
+              "direction": -1,
+              "confidence": 82.0,
+              "completeness": 1.0,
+              "cohort": "investor"
+            }
+          ]
+        }
+      },
+      "delta": {
+        "score_c": -0.0079,
+        "score_final": 0.0574
+      }
+    }
+  ],
+  "partial": false
+}

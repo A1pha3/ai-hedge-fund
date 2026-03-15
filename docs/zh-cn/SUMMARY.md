@@ -393,7 +393,9 @@ Q: 你目前的背景是什么？
 | [因子聚合语义入门](./factors/01-aggregation-semantics-and-factor-traps.md) | 解释为什么 Layer B 中有些直觉调参会失效，适合新手反复学习 | 开发者、研究者 | 按需更新 |
 | [Layer B 问题 5 分钟速读版](./factors/02-layer-b-quick-read-for-non-developers.md) | 面向非开发同学的短文，快速解释为什么当前应先修局部规则语义，而不是先降总阈值 | 产品、运营、研究、业务 | 按需更新 |
 | [Layer B 最小规则变更提案](./analysis/layer-b-minimal-rule-change-proposal-20260312.md) | 收敛当前主业务线的最小改动方向，说明为什么先修语义问题，再考虑总阈值 | 开发者、研究者 | 按需更新 |
-| [Layer B 最小规则变体验证](./analysis/layer-b-rule-variant-validation-20260312.md) | 记录 profitability 单改、neutral mean_reversion 单改与联合回放的真实窗口结果，并标记与旧窗口扫描的绝对基线冲突 | 开发者、研究者 | 按需更新 |
+| [Layer B 最小规则变体验证](./analysis/layer-b-rule-variant-validation-20260312.md) | 记录 Layer B 变体验证、P1 收敛过程以及 600519 live replay 最小补证结果 | 开发者、研究者 | 按需更新 |
+| [Layer C P1 变更提交说明](./analysis/layer-b-p1-pr-summary-20260316.md) | 面向评审的较完整变更说明，覆盖改动范围、验证链、残余风险与评审口径 | 开发者、研究者 | 按需更新 |
+| [Layer C P1 短版提交模板](./analysis/layer-b-p1-short-templates-20260316.md) | 提供可直接复用的 commit message、PR 标题、PR description 与中文评审摘要 | 开发者、研究者 | 按需更新 |
 | [练习题库](./exercises/README.md) | 分级练习题目与答案 | 所有读者 | 定期更新 |
 | [常见问题 FAQ](./references/faq.md) | 常见问题解答 | 所有读者 | 持续更新 |
 | [快速参考卡](./references/quick-reference.md) | 命令与参数速查 | 已熟悉系统 | 随功能更新 |
