@@ -417,3 +417,164 @@
 5. 如果后续还要继续推进，重点应该从“继续放大 Layer B”转向“为什么新增候选在后续 watchlist / final fusion 环节全部失效”。
 
 这意味着当前最稳妥的说法不是“这些规则无效”，而是：**它们只证明了自己能改变中游候选分布，还没有证明能改变最终交易结果。**
+
+### 9.6 2026-03-15 focused replay：压票主因来自 investor cohort，而不是 analyst cohort
+
+为了继续回答“为什么新增候选没有变成真实订单”，这一轮没有重跑正式整窗 backtest，而是只对 timing 日志里相对 baseline 新增、但最终死在 watchlist 的少数 ticker 做 focused replay，产物为：
+
+1. `data/reports/layer_c_agent_contributors_focus_20260202_20260224_20260315.json`
+2. `data/reports/layer_c_agent_contributors_focus_20260203_20260226_20260315.json`
+
+这两份 replay 的用途不是替代正式回测，而是补出旧 timing 日志里没有记录的 agent 级贡献摘要，用来回答到底是谁在把这些新增候选压回去。
+
+从四个聚焦日期的 replay 结果看，结论已经比较稳定：
+
+1. `300699`、`300065`、`600089`、`002602`、`600111` 这类样本都不是被 analyst 群体主导压制，而是被 investor persona 群体一致性看空。
+2. 在这些强负向样本上，`investor` cohort 的总贡献通常在 `-0.39` 到 `-0.60` 之间，而 `analyst` cohort 往往只在 `0` 到 `-0.12` 之间，量级明显更小。
+3. 高频 top negative agents 主要集中在 `bill_ackman_agent`、`mohnish_pabrai_agent`、`rakesh_jhunjhunwala_agent`、`ben_graham_agent`、`aswath_damodaran_agent`，个别样本还会出现 `peter_lynch_agent`、`michael_burry_agent`。
+4. 这说明新增候选被压掉，并不是单个技术分析 agent 的偶发噪声，而是多位 investor persona 在 Layer C 上形成了方向一致的负反馈。
+
+几个关键样本的 replay 证据如下：
+
+1. `300699`
+	20260202 replay：`investor = -0.5557`，`analyst = -0.1234`
+	20260203 replay：`investor = -0.5971`，`analyst = -0.1234`
+	两天都触发 `b_positive_c_strong_bearish`，属于稳定的结构性强压制样本。
+2. `600111`
+	20260224 replay：`investor = -0.3893`，`analyst = -0.0175`
+	20260203 replay：`investor = -0.4605`，`analyst = -0.0175`
+	也是典型的 investor 主导负向样本。
+3. `300065`、`600089`、`002602`
+	三者的 `investor` 贡献分别约为 `-0.5952`、`-0.5151`、`-0.5392`，都明显强于 analyst 侧，且都落入 conflict-driven avoid。
+
+但 `600519` 的模式不同。它在 20260224 replay 中接近中性偏正，在 20260226 replay 中又转成轻负，且两次都没有触发 `avoid` 冲突，只是 `score_final` 过不了 watchlist 阈值。这说明 `600519` 更像“边缘不过线”的阈值样本，而不是像 `300699` 或 `300065` 那样被 investor 群体稳定一致地强压制。
+
+因此，把 focused replay 和前面的 watchlist suppression 结果合起来看，当前更准确的定位是：
+
+1. profitability inactive 与 guarded MR 确实释放了更多 Layer B 候选。
+2. 这些新增候选里，绝大多数强负向样本在 Layer C 被 investor persona 群体重新拉成负分，并触发 `b_positive_c_strong_bearish` 或把 `score_final` 压到 watchlist 阈值以下。
+3. 真正值得后续做最小规则实验的，不是继续单纯扩张 Layer B，而是测试 investor 权重、冲突规则和 watchlist 阈值对“边缘样本”和“结构性强负样本”是否能够被有效区分。
+
+### 9.7 2026-03-15 最小离线实验：存在“只放边缘样本、不泄漏强负样本”的干净增益区间
+
+基于上面的 focused replay 结论，新增了一个更小范围的离线分析脚本：
+
+1. `scripts/analyze_layer_c_edge_tradeoff.py`
+2. `data/reports/layer_c_edge_tradeoff_20260315.json`
+
+这个实验不重放 agent、不重跑整窗 backtest，只直接使用 focused replay 里已经提取出的 cohort 贡献摘要，把样本分成两类：
+
+1. `edge_watch_threshold`：没有 `avoid` 冲突、只是 `score_final` 差一点不过线的边缘样本。当前聚焦样本里主要就是 `600519` 的两次出现。
+2. `structural_conflict`：已经触发 `b_positive_c_strong_bearish` 的结构性强负样本。当前聚焦样本里包括 `300699`、`300065`、`600089`、`002602`、`600111`、`300502`。
+
+实验的目标很直接：看是否存在某些温和参数组合，可以让 `600519` 这种边缘样本穿透 watchlist，同时仍然不放行这些结构性强负样本。
+
+结果显示，有三档值得区分的结论：
+
+1. **单独降 watchlist 阈值没有用。** `watchlist=0.20` 仍然无法放出任何边缘样本。
+2. **单独削弱 investor 权重也没有用。** 把 `investor` cohort 缩到 `0.90`，在当前 `0.4/0.6` 融合和 `0.25` watchlist 下，仍然没有任何穿透。
+3. **只有“轻度削弱 investor 压制 + 提高 B 权重”组合，才开始出现干净增益。**
+
+当前聚焦样本上，至少有两组组合表现为“放出 `600519`，但不泄漏任何结构性强负样本”：
+
+1. `investor_scale=0.90`、`b/c=0.55/0.45`、`watchlist=0.20`、`avoid=-0.30`
+	结果：只放出 `20260224 / 600519`，`score_final=0.2463`，结构性强负样本泄漏数 `0`
+2. `investor_scale=0.85`、`b/c=0.60/0.40`、`watchlist=0.20`、`avoid=-0.40`
+	结果：同样只放出 `20260224 / 600519`，结构性强负样本泄漏数 `0`
+
+如果进一步把 watchlist 再降到 `0.18`，则：
+
+1. `investor_scale=0.90`、`b/c=0.60/0.40`、`watchlist=0.18` 可以同时放出 `20260224 / 600519` 和 `20260226 / 600519`
+2. 但这已经属于比前两组更激进的边界组合，不应直接当作默认升级候选
+
+因此，这一轮最小实验给出的新结论是：
+
+1. 当前并不是完全不存在“只放边缘样本、不泄漏强负样本”的参数空间。
+2. 这个空间不是通过简单放宽单一阈值得到的，而是要同时调节 investor cohort 压制强度和 B/C 融合权重。
+3. 从保守性看，下一步最值得验证的不是 `watchlist=0.18` 这类更激进组合，而是先围绕 `investor_scale≈0.90` 与 `b_weight≈0.55` 的小范围参数带做更细的离线验证。
+
+继续做细网格扫描后，候选矩阵还能再收敛一层。把 `investor_scale ∈ [0.85, 0.95]`、`b_weight ∈ [0.50, 0.60]`、`watchlist ∈ [0.18, 0.22]`、`avoid ∈ {-0.30, -0.35, -0.40}` 做组合搜索后，可以把当前聚焦样本上的 clean candidates 分成两档：
+
+1. **保守单样本候选**
+	代表组合：`investor_scale=0.90`、`b/c=0.55/0.45`、`watchlist=0.20`、`avoid=-0.30`
+	结果：只放出 `20260224 / 600519`，没有任何结构性强负样本泄漏。
+	含义：这是当前最接近“最小改动”的 clean gain 候选。
+2. **边界双样本候选**
+	代表组合：`investor_scale=0.95`、`b/c=0.60/0.40`、`watchlist=0.18`、`avoid=-0.30`
+	结果：同时放出 `20260224 / 600519` 和 `20260226 / 600519`，仍然没有任何结构性强负样本泄漏。
+	含义：要拿到两次 `600519` 穿透，当前关键不在于大幅削弱 investor，而在于把 `b_weight` 提到 `0.60` 并把 watchlist 压到 `0.18` 左右。
+
+这说明细网格下的主导因素可以进一步概括为：
+
+1. 想要一个更保守的默认候选，应优先围绕 `investor_scale≈0.90`、`b_weight≈0.55`、`watchlist≈0.20` 这一带继续验证。
+2. 想要拿到更完整的边缘样本穿透，则必须进入 `b_weight=0.60` 且 `watchlist<=0.19` 的更激进区域。
+3. 在当前聚焦样本上，`avoid` 阈值从 `-0.30` 放宽到 `-0.35/-0.40` 并不是决定性因素；真正决定穿透的是 B/C 融合权重与 watchlist 阈值的联动。
+
+### 9.8 候选优先级矩阵
+
+基于 `data/reports/layer_c_edge_tradeoff_20260315.json` 当前可以把下一步候选明确分成三档，而不是继续泛化地说“再调一调参数看看”。
+
+1. **P1 保守候选，优先继续验证**
+	参数：`investor_scale=0.90`、`b/c=0.55/0.45`、`watchlist=0.20`、`avoid=-0.30`
+	结果：只放出 `20260224 / 600519`，结构性强负样本泄漏 `0`
+	理由：这是当前最接近“最小改动”的 clean gain 方案，调参幅度相对小，业务语义也最容易解释。
+2. **P2 边界候选，只作为上界证据保留**
+	参数：`investor_scale=0.95`、`b/c=0.60/0.40`、`watchlist=0.18`、`avoid=-0.30`
+	结果：同时放出 `20260224 / 600519` 和 `20260226 / 600519`，结构性强负样本泄漏 `0`
+	理由：它证明“双样本穿透且不泄漏”在当前聚焦样本上是可达的，但需要进入更激进的 `b_weight=0.60` 与 `watchlist=0.18` 区域，不宜直接作为默认升级候选。
+3. **P3 暂不优先的单旋钮方案**
+	代表：只降 `watchlist` 到 `0.20`，或者只把 `investor_scale` 降到 `0.90`
+	结果：边缘样本通过数仍然是 `0`
+	理由：这些方案已经被当前 focused replay 证据否定，不值得再作为主线继续消耗分析预算。
+
+如果下一步要把分析继续压缩成“最小规则提案”，当前最合理的顺序应当是：
+
+1. 先以 P1 作为默认候选起点，因为它最接近可解释的最小变更。
+2. 把 P2 保留为边界对照，用来说明如果业务想追求更高边缘样本穿透，需要付出多大程度的参数放宽。
+3. 不再对 P3 这类单旋钮放宽方案投入时间，除非后续样本集出现新的反例。
+
+### 9.9 最小规则提案
+
+如果下一步要把分析转成真正可落地的规则提案，当前最合理的起点不是直接采用 P2，而是把 P1 翻译成一个**只影响 Layer C 和 watchlist、完全不触碰 Layer B 规则**的最小变更包。
+
+建议提案如下：
+
+1. 在 `src/execution/layer_c_aggregator.py` 中，把当前固定的 `score_final = 0.4 * score_b + 0.6 * score_c` 调整为**可配置**的 `0.55 / 0.45` 融合权重。
+2. 在 `src/execution/layer_c_aggregator.py` 中，为 investor cohort 引入一个**可配置缩放因子**，默认候选值为 `0.90`。实现方式应是先对 investor 原始权重整体乘以 `0.90`，再与 analyst 权重一起重新归一化，而不是在 `score_c` 算完之后做二次裁剪。
+3. 在 `src/execution/daily_pipeline.py` 中，把当前已经存在的 watchlist 阈值环境变量从默认 `0.25` 下调到候选值 `0.20`。
+4. **不调整** `b_positive_c_strong_bearish` 的 avoid 阈值，继续保持 `score_c < -0.30` 时直接 `avoid`，避免把这轮已确认的结构性强负样本错误放行。
+
+这样做的原因很明确：
+
+1. `watchlist=0.20` 本身并不能单独解决问题，但它是 P1 组合成立的必要组成部分。
+2. `investor_scale=0.90` 的作用不是“取消 investor 约束”，而是把 investor 群体从当前默认的强主导状态稍微往回拉一点，让 analyst 与 Layer B 的正向信息有更高机会保住边缘样本。
+3. `b_weight=0.55` 的作用是把 Layer B 已经给出正向信号的样本，向最终分数多保留一部分；这对 `600519` 这类边缘样本有效，但对已经落入 `avoid` 冲突区的样本并不构成充分放行条件。
+
+按当前 focused replay 样本估算，P1 的预期行为差异是：
+
+1. 对 `300699`、`300065`、`600089`、`002602`、`600111`、`300502` 这类结构性强负样本，仍然保持拦截，因为它们的 `score_c` 负向幅度远低于 `-0.30`，不会因为轻度调权就脱离 `avoid` 区。
+2. 对 `20260224 / 600519` 这类边缘 watch 样本，`score_final` 会从当前 replay 下的 `0.1979` 提升到约 `0.2463`，从而跨过 `0.20` 的 watchlist 门槛。
+3. 对 `20260226 / 600519` 这类更弱的边缘样本，P1 仍然不会放行；这正是它比 P2 更保守的地方。
+
+从工程落地角度看，这个提案的优点是：
+
+1. 改动面非常小，只涉及 `src/execution/layer_c_aggregator.py` 和 `src/execution/daily_pipeline.py` 的参数化，不要求重写任何筛选逻辑。
+2. 现有 observability 已经足够支撑验证，因为 watchlist diagnostics 里已经能看到 `score_b`、`score_c`、`score_final` 和 `agent_contribution_summary`。
+3. 如果后续验证失败，回滚路径也非常简单，本质上只是恢复三个参数。
+
+但它的风险也必须提前说清：
+
+1. 这仍然只是基于 10 个 focused replay 样本形成的最小提案，不是正式生产升级结论。
+2. 当前证据只能证明“它在聚焦样本上可能形成 clean gain”，不能证明它在完整窗口或未来窗口上同样不会引入额外误放。
+3. 因此，P1 最合理的后续动作不是直接替换默认逻辑，而是作为下一轮 targeted replay 或小窗口验证的唯一主候选。
+
+截至 2026-03-15 当前工作区，这个 P1 提案已经被实现为默认参数化版本：
+
+1. `src/execution/layer_c_aggregator.py` 现已引入可配置的 Layer C 融合权重、investor cohort 缩放和 avoid 阈值，当前默认值分别为 `0.55/0.45`、`0.90`、`-0.30`。
+2. `src/execution/daily_pipeline.py` 的 watchlist 默认阈值已调整为 `0.20`。
+3. `tests/execution/test_phase4_execution.py` 已补充两条针对新默认行为的测试：
+	一条验证 investor 缩放会在同 raw weight 下把相对权重轻微向 analyst 侧倾斜；
+	一条验证 `score_final` 落在 `0.20` 到 `0.25` 之间的边缘样本现在可以进入 watchlist。
+4. 聚焦执行层回归结果：`pytest tests/execution/test_phase4_execution.py -q` 通过，当前为 `23 passed`。
+
+需要强调的是：代码层面的 P1 已经落地，但业务层面的验证仍未完成。它目前更适合作为“当前工作区的候选默认参数”，而不是已经经过整窗 backtest 重新验证的最终结论。

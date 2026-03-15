@@ -1,0 +1,2090 @@
+{
+  "inputs": [
+    "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_agent_contributors_focus_20260202_20260224_20260315.json",
+    "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_agent_contributors_focus_20260203_20260226_20260315.json"
+  ],
+  "sample_counts": {
+    "total": 10,
+    "edge_watch_threshold": 2,
+    "structural_conflict": 8,
+    "other": 0
+  },
+  "scenarios": {
+    "current": {
+      "scenario": {
+        "b_weight": 0.4,
+        "c_weight": 0.6,
+        "watchlist_threshold": 0.25,
+        "avoid_score_c_threshold": -0.3,
+        "investor_scale": 1.0,
+        "analyst_scale": 1.0,
+        "other_scale": 1.0
+      },
+      "edge_total": 2,
+      "edge_pass_count": 0,
+      "edge_pass_examples": [],
+      "structural_total": 8,
+      "structural_blocked_count": 8,
+      "structural_leak_count": 0,
+      "structural_leak_examples": [],
+      "all_rows": [
+        {
+          "trade_date": "20260202",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6791,
+          "score_final": -0.2478,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260202",
+          "ticker": "600089",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6213,
+          "score_final": -0.2012,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300502",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4642,
+          "score_final": -0.1154,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0617,
+          "score_final": 0.1979,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300065",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.65,
+          "score_final": -0.2352,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "002602",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6192,
+          "score_final": -0.2172,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4068,
+          "score_final": -0.09,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.7205,
+          "score_final": -0.2677,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.478,
+          "score_final": -0.1276,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260226",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": -0.1315,
+          "score_final": 0.0791,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        }
+      ],
+      "status": "no_gain",
+      "scenario_name": "current"
+    },
+    "watchlist_020_only": {
+      "scenario": {
+        "b_weight": 0.4,
+        "c_weight": 0.6,
+        "watchlist_threshold": 0.2,
+        "avoid_score_c_threshold": -0.3,
+        "investor_scale": 1.0,
+        "analyst_scale": 1.0,
+        "other_scale": 1.0
+      },
+      "edge_total": 2,
+      "edge_pass_count": 0,
+      "edge_pass_examples": [],
+      "structural_total": 8,
+      "structural_blocked_count": 8,
+      "structural_leak_count": 0,
+      "structural_leak_examples": [],
+      "all_rows": [
+        {
+          "trade_date": "20260202",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6791,
+          "score_final": -0.2478,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260202",
+          "ticker": "600089",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6213,
+          "score_final": -0.2012,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300502",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4642,
+          "score_final": -0.1154,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0617,
+          "score_final": 0.1979,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300065",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.65,
+          "score_final": -0.2352,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "002602",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6192,
+          "score_final": -0.2172,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4068,
+          "score_final": -0.09,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.7205,
+          "score_final": -0.2677,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.478,
+          "score_final": -0.1276,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260226",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": -0.1315,
+          "score_final": 0.0791,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        }
+      ],
+      "status": "no_gain",
+      "scenario_name": "watchlist_020_only"
+    },
+    "investor_090_only": {
+      "scenario": {
+        "b_weight": 0.4,
+        "c_weight": 0.6,
+        "watchlist_threshold": 0.25,
+        "avoid_score_c_threshold": -0.3,
+        "investor_scale": 0.9,
+        "analyst_scale": 1.0,
+        "other_scale": 1.0
+      },
+      "edge_total": 2,
+      "edge_pass_count": 0,
+      "edge_pass_examples": [],
+      "structural_total": 8,
+      "structural_blocked_count": 8,
+      "structural_leak_count": 0,
+      "structural_leak_examples": [],
+      "all_rows": [
+        {
+          "trade_date": "20260202",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6235,
+          "score_final": -0.2144,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260202",
+          "ticker": "600089",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5698,
+          "score_final": -0.1703,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300502",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4219,
+          "score_final": -0.09,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0555,
+          "score_final": 0.1942,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300065",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5905,
+          "score_final": -0.1995,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "002602",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5653,
+          "score_final": -0.1848,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.3679,
+          "score_final": -0.0666,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6608,
+          "score_final": -0.2318,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.432,
+          "score_final": -0.1,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260226",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": -0.1184,
+          "score_final": 0.087,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        }
+      ],
+      "status": "no_gain",
+      "scenario_name": "investor_090_only"
+    },
+    "investor_090_b055_watch020": {
+      "scenario": {
+        "b_weight": 0.55,
+        "c_weight": 0.45,
+        "watchlist_threshold": 0.2,
+        "avoid_score_c_threshold": -0.3,
+        "investor_scale": 0.9,
+        "analyst_scale": 1.0,
+        "other_scale": 1.0
+      },
+      "edge_total": 2,
+      "edge_pass_count": 1,
+      "edge_pass_examples": [
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0555,
+          "score_final": 0.2463,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": true
+        }
+      ],
+      "structural_total": 8,
+      "structural_blocked_count": 8,
+      "structural_leak_count": 0,
+      "structural_leak_examples": [],
+      "all_rows": [
+        {
+          "trade_date": "20260202",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6235,
+          "score_final": -0.061,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260202",
+          "ticker": "600089",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5698,
+          "score_final": -0.0205,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300502",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4219,
+          "score_final": 0.0344,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0555,
+          "score_final": 0.2463,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": true
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300065",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5905,
+          "score_final": -0.0529,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "002602",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5653,
+          "score_final": -0.0422,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.3679,
+          "score_final": 0.0463,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6608,
+          "score_final": -0.071,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.432,
+          "score_final": 0.0245,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260226",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": -0.1184,
+          "score_final": 0.164,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        }
+      ],
+      "status": "clean_edge_gain",
+      "scenario_name": "investor_090_b055_watch020"
+    },
+    "investor_085_b060_watch020_relax040": {
+      "scenario": {
+        "b_weight": 0.6,
+        "c_weight": 0.4,
+        "watchlist_threshold": 0.2,
+        "avoid_score_c_threshold": -0.4,
+        "investor_scale": 0.85,
+        "analyst_scale": 1.0,
+        "other_scale": 1.0
+      },
+      "edge_total": 2,
+      "edge_pass_count": 1,
+      "edge_pass_examples": [
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0524,
+          "score_final": 0.2624,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": true
+        }
+      ],
+      "structural_total": 8,
+      "structural_blocked_count": 8,
+      "structural_leak_count": 0,
+      "structural_leak_examples": [],
+      "all_rows": [
+        {
+          "trade_date": "20260202",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5957,
+          "score_final": 0.0012,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260202",
+          "ticker": "600089",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.544,
+          "score_final": 0.0397,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300502",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4007,
+          "score_final": 0.0844,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0524,
+          "score_final": 0.2624,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": true
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300065",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5607,
+          "score_final": 0.0079,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "002602",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5383,
+          "score_final": 0.0162,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.3484,
+          "score_final": 0.0918,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6309,
+          "score_final": -0.0054,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4089,
+          "score_final": 0.0752,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260226",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": -0.1118,
+          "score_final": 0.1923,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": false
+        }
+      ],
+      "status": "clean_edge_gain",
+      "scenario_name": "investor_085_b060_watch020_relax040"
+    },
+    "investor_090_b060_watch018": {
+      "scenario": {
+        "b_weight": 0.6,
+        "c_weight": 0.4,
+        "watchlist_threshold": 0.18,
+        "avoid_score_c_threshold": -0.3,
+        "investor_scale": 0.9,
+        "analyst_scale": 1.0,
+        "other_scale": 1.0
+      },
+      "edge_total": 2,
+      "edge_pass_count": 2,
+      "edge_pass_examples": [
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0555,
+          "score_final": 0.2636,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": true
+        },
+        {
+          "trade_date": "20260226",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": -0.1184,
+          "score_final": 0.1897,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": true
+        }
+      ],
+      "structural_total": 8,
+      "structural_blocked_count": 8,
+      "structural_leak_count": 0,
+      "structural_leak_examples": [],
+      "all_rows": [
+        {
+          "trade_date": "20260202",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6235,
+          "score_final": -0.0099,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260202",
+          "ticker": "600089",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5698,
+          "score_final": 0.0294,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300502",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.4219,
+          "score_final": 0.0759,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": 0.0555,
+          "score_final": 0.2636,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": true
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "300065",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5905,
+          "score_final": -0.0041,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "002602",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.5653,
+          "score_final": 0.0054,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260224",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.3679,
+          "score_final": 0.084,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "300699",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.6608,
+          "score_final": -0.0174,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260203",
+          "ticker": "600111",
+          "variant": "profitability_inactive.timings",
+          "sample_class": "structural_conflict",
+          "score_c": -0.432,
+          "score_final": 0.066,
+          "decision": "avoid",
+          "bc_conflict": "b_positive_c_strong_bearish",
+          "passes_watchlist": false
+        },
+        {
+          "trade_date": "20260226",
+          "ticker": "600519",
+          "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+          "sample_class": "edge_watch_threshold",
+          "score_c": -0.1184,
+          "score_final": 0.1897,
+          "decision": "watch",
+          "bc_conflict": null,
+          "passes_watchlist": true
+        }
+      ],
+      "status": "clean_edge_gain",
+      "scenario_name": "investor_090_b060_watch018"
+    }
+  },
+  "grid_search": {
+    "grid_size": 375,
+    "top_clean_candidates": [
+      {
+        "scenario_name": "grid_inv_950_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.95,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0586,
+            "score_final": 0.2648,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1249,
+            "score_final": 0.1871,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.44
+      },
+      {
+        "scenario_name": "grid_inv_950_b_600_watch_180_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.95,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0586,
+            "score_final": 0.2648,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1249,
+            "score_final": 0.1871,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.49
+      },
+      {
+        "scenario_name": "grid_inv_925_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.925,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0571,
+            "score_final": 0.2642,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1216,
+            "score_final": 0.1884,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.49
+      },
+      {
+        "scenario_name": "grid_inv_950_b_600_watch_180_avoid_400",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.4,
+          "investor_scale": 0.95,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0586,
+            "score_final": 0.2648,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1249,
+            "score_final": 0.1871,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.54
+      },
+      {
+        "scenario_name": "grid_inv_925_b_600_watch_180_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.925,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0571,
+            "score_final": 0.2642,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1216,
+            "score_final": 0.1884,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.54
+      },
+      {
+        "scenario_name": "grid_inv_900_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.9,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0555,
+            "score_final": 0.2636,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1184,
+            "score_final": 0.1897,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.54
+      },
+      {
+        "scenario_name": "grid_inv_875_b_600_watch_190_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.19,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.875,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.054,
+            "score_final": 0.263,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1151,
+            "score_final": 0.191,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.57
+      },
+      {
+        "scenario_name": "grid_inv_925_b_600_watch_180_avoid_400",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.4,
+          "investor_scale": 0.925,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0571,
+            "score_final": 0.2642,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1216,
+            "score_final": 0.1884,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.59
+      },
+      {
+        "scenario_name": "grid_inv_900_b_600_watch_180_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.9,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0555,
+            "score_final": 0.2636,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1184,
+            "score_final": 0.1897,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.59
+      },
+      {
+        "scenario_name": "grid_inv_875_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.875,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.054,
+            "score_final": 0.263,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1151,
+            "score_final": 0.191,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.59
+      },
+      {
+        "scenario_name": "grid_inv_875_b_600_watch_190_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.19,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.875,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.054,
+            "score_final": 0.263,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1151,
+            "score_final": 0.191,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.62
+      },
+      {
+        "scenario_name": "grid_inv_850_b_600_watch_190_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.19,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.85,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0524,
+            "score_final": 0.2624,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1118,
+            "score_final": 0.1923,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.62
+      },
+      {
+        "scenario_name": "grid_inv_900_b_600_watch_180_avoid_400",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.4,
+          "investor_scale": 0.9,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0555,
+            "score_final": 0.2636,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1184,
+            "score_final": 0.1897,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.64
+      },
+      {
+        "scenario_name": "grid_inv_875_b_600_watch_180_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.875,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.054,
+            "score_final": 0.263,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1151,
+            "score_final": 0.191,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.64
+      },
+      {
+        "scenario_name": "grid_inv_850_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.85,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0524,
+            "score_final": 0.2624,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1118,
+            "score_final": 0.1923,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.64
+      }
+    ],
+    "top_all_candidates": [
+      {
+        "scenario_name": "grid_inv_950_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.95,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0586,
+            "score_final": 0.2648,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1249,
+            "score_final": 0.1871,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.44
+      },
+      {
+        "scenario_name": "grid_inv_950_b_600_watch_180_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.95,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0586,
+            "score_final": 0.2648,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1249,
+            "score_final": 0.1871,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.49
+      },
+      {
+        "scenario_name": "grid_inv_925_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.925,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0571,
+            "score_final": 0.2642,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1216,
+            "score_final": 0.1884,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.49
+      },
+      {
+        "scenario_name": "grid_inv_950_b_600_watch_180_avoid_400",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.4,
+          "investor_scale": 0.95,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0586,
+            "score_final": 0.2648,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1249,
+            "score_final": 0.1871,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.54
+      },
+      {
+        "scenario_name": "grid_inv_925_b_600_watch_180_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.925,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0571,
+            "score_final": 0.2642,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1216,
+            "score_final": 0.1884,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.54
+      },
+      {
+        "scenario_name": "grid_inv_900_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.9,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0555,
+            "score_final": 0.2636,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1184,
+            "score_final": 0.1897,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.54
+      },
+      {
+        "scenario_name": "grid_inv_875_b_600_watch_190_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.19,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.875,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.054,
+            "score_final": 0.263,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1151,
+            "score_final": 0.191,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.57
+      },
+      {
+        "scenario_name": "grid_inv_925_b_600_watch_180_avoid_400",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.4,
+          "investor_scale": 0.925,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0571,
+            "score_final": 0.2642,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1216,
+            "score_final": 0.1884,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.59
+      },
+      {
+        "scenario_name": "grid_inv_900_b_600_watch_180_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.9,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0555,
+            "score_final": 0.2636,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1184,
+            "score_final": 0.1897,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.59
+      },
+      {
+        "scenario_name": "grid_inv_875_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.875,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.054,
+            "score_final": 0.263,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1151,
+            "score_final": 0.191,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.59
+      },
+      {
+        "scenario_name": "grid_inv_875_b_600_watch_190_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.19,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.875,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.054,
+            "score_final": 0.263,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1151,
+            "score_final": 0.191,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.62
+      },
+      {
+        "scenario_name": "grid_inv_850_b_600_watch_190_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.19,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.85,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0524,
+            "score_final": 0.2624,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1118,
+            "score_final": 0.1923,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.62
+      },
+      {
+        "scenario_name": "grid_inv_900_b_600_watch_180_avoid_400",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.4,
+          "investor_scale": 0.9,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0555,
+            "score_final": 0.2636,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1184,
+            "score_final": 0.1897,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.64
+      },
+      {
+        "scenario_name": "grid_inv_875_b_600_watch_180_avoid_350",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.35,
+          "investor_scale": 0.875,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.054,
+            "score_final": 0.263,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1151,
+            "score_final": 0.191,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.64
+      },
+      {
+        "scenario_name": "grid_inv_850_b_600_watch_180_avoid_300",
+        "scenario": {
+          "b_weight": 0.6,
+          "c_weight": 0.4,
+          "watchlist_threshold": 0.18,
+          "avoid_score_c_threshold": -0.3,
+          "investor_scale": 0.85,
+          "analyst_scale": 1.0,
+          "other_scale": 1.0
+        },
+        "status": "clean_edge_gain",
+        "edge_pass_count": 2,
+        "edge_pass_examples": [
+          {
+            "trade_date": "20260224",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": 0.0524,
+            "score_final": 0.2624,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          },
+          {
+            "trade_date": "20260226",
+            "ticker": "600519",
+            "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff.timings",
+            "sample_class": "edge_watch_threshold",
+            "score_c": -0.1118,
+            "score_final": 0.1923,
+            "decision": "watch",
+            "bc_conflict": null,
+            "passes_watchlist": true
+          }
+        ],
+        "structural_leak_count": 0,
+        "structural_leak_examples": [],
+        "penalty": 0.64
+      }
+    ]
+  }
+}

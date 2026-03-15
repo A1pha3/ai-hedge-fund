@@ -48,7 +48,7 @@ def _get_env_int(name: str, default: int) -> int:
 FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD", 0.38)
 FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
-WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.25)
+WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.20)
 
 
 def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
@@ -127,24 +127,25 @@ def _classify_watchlist_filter(item: LayerCResult) -> tuple[str, list[str]]:
 def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], watchlist: list[LayerCResult]) -> dict:
     selected_tickers = {item.ticker for item in watchlist}
     entries: list[dict] = []
+    selected_entries: list[dict] = []
     for item in layer_c_results:
+        payload = {
+            "ticker": item.ticker,
+            "score_b": round(item.score_b, 4),
+            "score_c": round(item.score_c, 4),
+            "score_final": round(item.score_final, 4),
+            "decision": item.decision,
+            "bc_conflict": item.bc_conflict,
+            "agent_contribution_summary": item.agent_contribution_summary,
+        }
         if item.ticker in selected_tickers:
+            selected_entries.append(payload)
             continue
         primary_reason, reasons = _classify_watchlist_filter(item)
-        entries.append(
-            {
-                "ticker": item.ticker,
-                "reason": primary_reason,
-                "reasons": reasons,
-                "score_b": round(item.score_b, 4),
-                "score_c": round(item.score_c, 4),
-                "score_final": round(item.score_final, 4),
-                "decision": item.decision,
-                "bc_conflict": item.bc_conflict,
-            }
-        )
+        entries.append({**payload, "reason": primary_reason, "reasons": reasons})
     summary = _build_filter_summary(entries)
     summary["selected_tickers"] = [item.ticker for item in watchlist]
+    summary["selected_entries"] = selected_entries
     return summary
 
 
