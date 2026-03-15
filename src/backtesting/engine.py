@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, Sequence
+from typing import Callable, Dict, Sequence
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta
@@ -55,6 +55,7 @@ class BacktestEngine:
         backtest_mode: BacktestMode = "agent",
         pipeline: DailyPipeline | None = None,
         checkpoint_path: str | None = None,
+        pipeline_event_recorder: Callable[[dict], None] | None = None,
     ) -> None:
         self._agent = agent
         self._tickers = tickers
@@ -68,6 +69,7 @@ class BacktestEngine:
         self._pipeline = pipeline or (DailyPipeline(base_model_name=model_name, base_model_provider=model_provider) if backtest_mode == "pipeline" else None)
         self._checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self._timing_log_path = self._resolve_timing_log_path()
+        self._pipeline_event_recorder = pipeline_event_recorder
 
         self._portfolio = Portfolio(
             tickers=tickers,
@@ -114,6 +116,11 @@ class BacktestEngine:
         }
         with self._timing_log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def _append_pipeline_event(self, payload: dict) -> None:
+        if self._pipeline_event_recorder is None:
+            return
+        self._pipeline_event_recorder(payload)
 
     def _serialize_portfolio_values(self) -> list[dict]:
         serialized: list[dict] = []
@@ -429,6 +436,7 @@ class BacktestEngine:
             previous_plan_counts: dict[str, int] = {}
             previous_plan_timing: dict[str, float] = {}
             previous_plan_funnel_diagnostics: dict = {}
+            prepared_plan: ExecutionPlan | None = None
 
             if pending_plan is not None and self._pipeline is not None:
                 stage_started_at = perf_counter()
@@ -575,6 +583,22 @@ class BacktestEngine:
                 },
             }
             self._append_timing_log(timing_payload)
+            self._append_pipeline_event(
+                {
+                    "event": "paper_trading_day",
+                    "trade_date": trade_date_compact,
+                    "active_tickers": list(active_tickers),
+                    "executed_trades": dict(executed_trades),
+                    "decisions": dict(decisions),
+                    "current_prices": {ticker: float(price) for ticker, price in current_prices.items()},
+                    "portfolio_snapshot": self._portfolio.get_snapshot(),
+                    "pending_buy_queue": [order.model_dump() for order in self._pending_buy_queue],
+                    "pending_sell_queue": [order.model_dump() for order in self._pending_sell_queue],
+                    "prepared_plan": prepared_plan.model_dump() if prepared_plan is not None else None,
+                    "current_plan": pending_plan.model_dump() if pending_plan is not None else None,
+                    "timing_seconds": timing_payload["timing_seconds"],
+                }
+            )
 
             self._save_checkpoint(current_date_str, pending_plan)
 
@@ -612,3 +636,6 @@ class BacktestEngine:
 
     def get_portfolio_values(self) -> Sequence[PortfolioValuePoint]:
         return list(self._portfolio_values)
+
+    def get_portfolio_snapshot(self) -> dict:
+        return self._portfolio.get_snapshot()

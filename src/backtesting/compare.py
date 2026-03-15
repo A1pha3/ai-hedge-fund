@@ -106,7 +106,7 @@ class BaselineDailyGainersPipeline(DailyPipeline):
         watchlist = [item for item in layer_c_results if item.score_final >= 0.25 and item.decision != "avoid"]
 
         stage_started_at = perf_counter()
-        buy_orders = self._build_buy_orders(watchlist, portfolio_snapshot)
+        buy_orders, buy_order_filter_diagnostics = self._build_buy_orders_with_diagnostics(watchlist, portfolio_snapshot)
         build_buy_orders_seconds = perf_counter() - stage_started_at
 
         stage_started_at = perf_counter()
@@ -140,6 +140,11 @@ class BaselineDailyGainersPipeline(DailyPipeline):
                     "watchlist_count": len(watchlist),
                     "buy_order_count": len(buy_orders),
                     "sell_order_count": len(sell_orders),
+                },
+                "funnel_diagnostics": {
+                    "filters": {
+                        "buy_orders": buy_order_filter_diagnostics,
+                    }
                 },
             },
             layer_a_count=len(selected),
