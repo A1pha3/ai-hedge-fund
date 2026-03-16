@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from src.execution.daily_pipeline import DailyPipeline, WATCHLIST_SCORE_THRESHOLD
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import (
     LAYER_C_AVOID_SCORE_C_THRESHOLD,
+    LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE,
     LAYER_C_BLEND_B_WEIGHT,
     LAYER_C_BLEND_C_WEIGHT,
     LAYER_C_INVESTOR_WEIGHT_SCALE,
     aggregate_layer_c_results,
     convert_agent_signal_to_strategy_signal,
 )
+import src.execution.layer_c_aggregator as layer_c_aggregator_module
 from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
 from src.execution.models import ExecutionPlan, LayerCResult
@@ -38,21 +41,31 @@ def _fused(ticker: str, score_b: float) -> FusedScore:
     )
 
 
-def _evaluate_default_layer_c_outcome(score_b: float, investor: float, analyst: float, other: float = 0.0) -> dict:
+def _evaluate_default_layer_c_outcome(
+    score_b: float,
+    investor: float,
+    analyst: float,
+    other: float = 0.0,
+    bearish_investor_contribution_scale: float = 1.0,
+) -> dict:
     total_weight = LAYER_C_BLEND_B_WEIGHT + LAYER_C_BLEND_C_WEIGHT
     blend_b = LAYER_C_BLEND_B_WEIGHT / total_weight
     blend_c = LAYER_C_BLEND_C_WEIGHT / total_weight
-    score_c = (investor * LAYER_C_INVESTOR_WEIGHT_SCALE) + analyst + other
+    raw_investor = investor * LAYER_C_INVESTOR_WEIGHT_SCALE
+    score_c_raw = raw_investor + analyst + other
+    adjusted_investor = raw_investor if raw_investor >= 0 else raw_investor * bearish_investor_contribution_scale
+    score_c = adjusted_investor + analyst + other
     decision = "strong_buy" if score_b > 0.50 else "watch" if score_b >= 0.35 else "neutral"
     bc_conflict = None
-    if score_b > 0.50 and score_c < 0:
+    if score_b > 0.50 and score_c_raw < 0:
         bc_conflict = "b_strong_buy_c_negative"
         decision = "watch"
-    if score_b > 0 and score_c < LAYER_C_AVOID_SCORE_C_THRESHOLD:
+    if score_b > 0 and score_c_raw < LAYER_C_AVOID_SCORE_C_THRESHOLD:
         bc_conflict = "b_positive_c_strong_bearish"
         decision = "avoid"
     score_final = (score_b * blend_b) + (score_c * blend_c)
     return {
+        "raw_score_c": score_c_raw,
         "score_c": score_c,
         "score_final": score_final,
         "decision": decision,
@@ -97,6 +110,29 @@ def test_layer_c_investor_scale_tilts_equal_raw_weights_toward_analyst():
     )[0]
     assert result.score_c == pytest.approx(-0.0526, abs=1e-4)
     assert result.agent_contribution_summary["top_negative_agents"][0]["agent_id"] == "technical_analyst_agent"
+
+
+def test_layer_c_bearish_investor_attenuation_keeps_raw_avoid_veto_even_if_final_score_recovers(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(layer_c_aggregator_module, "LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE", 0.15)
+
+    fused = [_fused("000001", 0.45)]
+    analyst_signals = {
+        "bill_ackman_agent": {"000001": {"signal": "bearish", "confidence": 100, "reasoning": "x"}},
+        "technical_analyst_agent": {"000001": {"signal": "bullish", "confidence": 100, "reasoning": "x"}},
+    }
+    result = aggregate_layer_c_results(
+        fused,
+        analyst_signals,
+        agent_weights={
+            "bill_ackman_agent": 4.0,
+            "technical_analyst_agent": 1.0,
+        },
+    )[0]
+
+    assert result.decision == "avoid"
+    assert result.agent_contribution_summary["raw_score_c"] == pytest.approx(-0.5652, abs=1e-4)
+    assert result.score_c == pytest.approx(0.1, abs=1e-4)
+    assert result.score_final == pytest.approx(0.2925, abs=1e-4)
 
 
 def test_layer_c_bc_conflict_avoid():
@@ -274,7 +310,27 @@ def test_p1_defaults_keep_structural_conflict_samples_blocked(ticker: str, score
     assert result["decision"] == "avoid", ticker
     assert result["bc_conflict"] == "b_positive_c_strong_bearish", ticker
     assert result["passes_watchlist"] is False, ticker
-    assert result["score_c"] < LAYER_C_AVOID_SCORE_C_THRESHOLD, ticker
+    assert result["raw_score_c"] < LAYER_C_AVOID_SCORE_C_THRESHOLD, ticker
+
+
+def test_p1_bearish_investor_attenuation_preserves_avoid_veto_for_structural_conflict_sample():
+    result = _evaluate_default_layer_c_outcome(0.4078, -0.4233, -0.0409, bearish_investor_contribution_scale=0.15)
+
+    assert result["decision"] == "avoid"
+    assert result["bc_conflict"] == "b_positive_c_strong_bearish"
+    assert result["raw_score_c"] == pytest.approx(-0.4219, abs=1e-4)
+    assert result["score_c"] == pytest.approx(-0.0980, abs=1e-4)
+    assert result["passes_watchlist"] is False
+
+
+def test_p1_bearish_investor_attenuation_can_release_documented_watchlist_edge_case():
+    result = _evaluate_default_layer_c_outcome(0.4360, -0.2246 / LAYER_C_INVESTOR_WEIGHT_SCALE, -0.0460, bearish_investor_contribution_scale=0.15)
+
+    assert result["decision"] == "watch"
+    assert result["raw_score_c"] == pytest.approx(-0.2706, abs=1e-4)
+    assert result["score_c"] == pytest.approx(-0.0797, abs=1e-4)
+    assert result["score_final"] == pytest.approx(0.2039, abs=1e-4)
+    assert result["passes_watchlist"] is True
 
 
 def test_p1_defaults_admit_only_stronger_600519_edge_case_from_focused_samples():
@@ -304,6 +360,126 @@ def test_build_buy_orders_diagnostics_marks_daily_trade_limit():
     assert len(buy_orders) == 3
     assert diagnostics["reason_counts"] == {"filtered_by_daily_trade_limit": 1}
     assert diagnostics["filtered_count"] == 1
+
+
+def test_build_buy_orders_allows_small_edge_position_for_watchlist_threshold_sample():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=-0.0792, score_final=0.2042, score_b=0.4360, decision="watch")
+    ]
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(watchlist, {"cash": 100_000, "positions": {}})
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert buy_orders[0].shares == 300
+    assert buy_orders[0].amount == 3000.0
+    assert buy_orders[0].constraint_binding == "single_name"
+    assert buy_orders[0].execution_ratio == pytest.approx(0.3)
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_build_buy_orders_uses_real_price_map_for_high_price_ticker_position_sizing():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=0.2, score_final=0.6, score_b=0.6, decision="watch")
+    ]
+    candidate_by_ticker = {
+        "300724": CandidateStock(ticker="300724", name="光伏样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="20100520")
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert buy_orders[0].constraint_binding == "single_name"
+    assert buy_orders[0].shares == 100
+    assert buy_orders[0].amount == pytest.approx(14271.0)
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkeypatch: pytest.MonkeyPatch):
+    def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
+        return {
+            "aswath_damodaran_agent": {ticker: {"signal": "bullish", "confidence": 100, "reasoning": "ok"} for ticker in tickers},
+            "technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 100, "reasoning": "ok"} for ticker in tickers},
+        }
+
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [])
+
+    import src.execution.daily_pipeline as daily_pipeline_module
+
+    original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    original_get_daily_basic_batch = daily_pipeline_module.get_daily_basic_batch
+    try:
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
+            CandidateStock(ticker="300724", name="光伏样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="20100520")
+        ]
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            "300724": {
+                "trend": StrategySignal(direction=1, confidence=90, completeness=1.0, sub_factors={}),
+                "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}),
+                "fundamental": StrategySignal(direction=1, confidence=85, completeness=1.0, sub_factors={}),
+                "event_sentiment": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}),
+            }
+        }
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused("300724", 0.60)]
+        daily_pipeline_module.get_daily_basic_batch = lambda trade_date: pd.DataFrame(
+            [{"ts_code": "300724.SZ", "close": 142.71}]
+        )
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 200_000, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+        daily_pipeline_module.get_daily_basic_batch = original_get_daily_basic_batch
+
+    assert len(plan.buy_orders) == 1
+    assert plan.buy_orders[0].ticker == "300724"
+    assert plan.buy_orders[0].shares == 100
+    assert plan.buy_orders[0].amount == pytest.approx(14271.0)
+
+
+def test_build_buy_orders_treats_candidate_avg_volume_as_wan_cny_when_evaluating_liquidity_blockers():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=-0.0350, score_final=0.2246, score_b=0.4370, decision="watch")
+    ]
+    candidate_by_ticker = {
+        "300724": CandidateStock(
+            ticker="300724",
+            name="捷佳伟创",
+            industry_sw="电力设备",
+            avg_volume_20d=253_911.41073,
+            market_cap=462.0,
+            listing_date="20180810",
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 100_000, "positions": {}},
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert buy_orders[0].constraint_binding == "single_name"
+    assert buy_orders[0].shares == 100
+    assert buy_orders[0].amount == pytest.approx(14271.0)
+    assert diagnostics["reason_counts"] == {}
 
 
 def test_signal_decay_jump_gap():

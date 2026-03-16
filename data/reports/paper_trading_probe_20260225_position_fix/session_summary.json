@@ -1,0 +1,50 @@
+{
+  "mode": "paper_trading",
+  "start_date": "2026-02-25",
+  "end_date": "2026-02-25",
+  "tickers": [],
+  "initial_capital": 100000.0,
+  "model_name": "MiniMax-M2.5",
+  "model_provider": "MiniMax",
+  "selected_analysts": null,
+  "performance_metrics": {
+    "sharpe_ratio": null,
+    "sortino_ratio": null,
+    "max_drawdown": null,
+    "long_short_ratio": null,
+    "gross_exposure": null,
+    "net_exposure": null
+  },
+  "portfolio_values": [
+    {
+      "Date": "2026-02-25",
+      "Portfolio Value": 100000.0
+    },
+    {
+      "Date": "2026-02-25",
+      "Portfolio Value": 100000.0,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    }
+  ],
+  "final_portfolio_snapshot": {
+    "cash": 100000.0,
+    "margin_used": 0.0,
+    "margin_requirement": 0.0,
+    "positions": {},
+    "realized_gains": {}
+  },
+  "daily_event_stats": {
+    "day_count": 1,
+    "executed_trade_days": 0,
+    "total_executed_orders": 0
+  },
+  "artifacts": {
+    "daily_events": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260225_position_fix/daily_events.jsonl",
+    "timing_log": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260225_position_fix/pipeline_timings.jsonl",
+    "summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260225_position_fix/session_summary.json"
+  }
+}

@@ -47,6 +47,7 @@ def _get_env_float(name: str, default: float) -> float:
 
 
 LAYER_C_INVESTOR_WEIGHT_SCALE = _get_env_float("DAILY_PIPELINE_LAYER_C_INVESTOR_WEIGHT_SCALE", 0.90)
+LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE = _get_env_float("DAILY_PIPELINE_LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE", 0.15)
 LAYER_C_BLEND_B_WEIGHT = _get_env_float("DAILY_PIPELINE_LAYER_C_BLEND_B_WEIGHT", 0.55)
 LAYER_C_BLEND_C_WEIGHT = _get_env_float("DAILY_PIPELINE_LAYER_C_BLEND_C_WEIGHT", 0.45)
 LAYER_C_AVOID_SCORE_C_THRESHOLD = _get_env_float("DAILY_PIPELINE_LAYER_C_AVOID_SCORE_C_THRESHOLD", -0.30)
@@ -69,13 +70,22 @@ def _apply_investor_weight_scale(agent_weights: dict[str, float]) -> dict[str, f
     return scaled_weights
 
 
-def _build_agent_contribution_summary(agent_signals: dict[str, StrategySignal], normalized_weights: dict[str, float]) -> dict:
+def _scale_investor_bearish_contribution(agent_id: str, contribution: float) -> float:
+    if agent_id not in INVESTOR_AGENT_IDS or contribution >= 0:
+        return contribution
+    return contribution * max(0.0, min(1.0, LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE))
+
+
+def _build_agent_contribution_summary(agent_signals: dict[str, StrategySignal], normalized_weights: dict[str, float]) -> tuple[dict, float, float]:
     contributions: list[dict] = []
     cohort_contributions = {"investor": 0.0, "analyst": 0.0, "other": 0.0}
+    raw_score_c = 0.0
+    adjusted_score_c = 0.0
 
     for agent_id, signal in agent_signals.items():
         normalized_weight = normalized_weights.get(agent_id, 0.0)
-        contribution = normalized_weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
+        raw_contribution = normalized_weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
+        contribution = _scale_investor_bearish_contribution(agent_id, raw_contribution)
         if agent_id in INVESTOR_AGENT_IDS:
             cohort = "investor"
         elif agent_id in ANALYST_AGENT_IDS:
@@ -83,10 +93,13 @@ def _build_agent_contribution_summary(agent_signals: dict[str, StrategySignal], 
         else:
             cohort = "other"
         cohort_contributions[cohort] += contribution
+        raw_score_c += raw_contribution
+        adjusted_score_c += contribution
         contributions.append(
             {
                 "agent_id": agent_id,
                 "contribution": round(contribution, 4),
+                "raw_contribution": round(raw_contribution, 4),
                 "normalized_weight": round(normalized_weight, 4),
                 "direction": signal.direction,
                 "confidence": round(signal.confidence, 2),
@@ -104,10 +117,12 @@ def _build_agent_contribution_summary(agent_signals: dict[str, StrategySignal], 
         "positive_agent_count": len(positive),
         "negative_agent_count": len(negative),
         "neutral_agent_count": len(neutral),
+        "raw_score_c": round(raw_score_c, 4),
+        "adjusted_score_c": round(adjusted_score_c, 4),
         "cohort_contributions": {name: round(value, 4) for name, value in cohort_contributions.items()},
         "top_positive_agents": sorted(positive, key=lambda item: item["contribution"], reverse=True)[:3],
         "top_negative_agents": sorted(negative, key=lambda item: item["contribution"])[:3],
-    }
+    }, raw_score_c, adjusted_score_c
 
 
 def convert_agent_signal_to_strategy_signal(agent_payload: dict) -> StrategySignal:
@@ -162,19 +177,17 @@ def aggregate_layer_c_results(
     for ticker, fused in fused_by_ticker.items():
         ticker_agent_signals = signals_by_ticker.get(ticker, {})
         normalized_weights = _normalize_agent_weights(ticker_agent_signals, adjusted_agent_weights)
-        score_c = 0.0
-        for agent_id, signal in ticker_agent_signals.items():
-            score_c += normalized_weights.get(agent_id, 0.0) * signal.direction * (signal.confidence / 100.0) * signal.completeness
-        score_c = max(-1.0, min(1.0, score_c))
-        agent_contribution_summary = _build_agent_contribution_summary(ticker_agent_signals, normalized_weights)
+        agent_contribution_summary, raw_score_c, adjusted_score_c = _build_agent_contribution_summary(ticker_agent_signals, normalized_weights)
+        raw_score_c = max(-1.0, min(1.0, raw_score_c))
+        score_c = max(-1.0, min(1.0, adjusted_score_c))
 
         score_final = (blend_b_weight * fused.score_b) + (blend_c_weight * score_c)
         bc_conflict = None
         decision = fused.decision
-        if fused.score_b > 0.50 and score_c < 0:
+        if fused.score_b > 0.50 and raw_score_c < 0:
             bc_conflict = "b_strong_buy_c_negative"
             decision = "watch"
-        if fused.score_b > 0 and score_c < LAYER_C_AVOID_SCORE_C_THRESHOLD:
+        if fused.score_b > 0 and raw_score_c < LAYER_C_AVOID_SCORE_C_THRESHOLD:
             bc_conflict = "b_positive_c_strong_bearish"
             decision = "avoid"
 

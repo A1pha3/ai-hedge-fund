@@ -16,9 +16,11 @@ from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
 from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
 from src.screening.candidate_pool import build_candidate_pool
+from src.screening.models import CandidateStock
 from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
+from src.tools.tushare_api import get_daily_basic_batch
 
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
@@ -178,6 +180,47 @@ def _build_sell_order_diagnostics(sell_orders: list) -> dict:
     return summary
 
 
+def _to_ts_code_for_price_lookup(ticker: str) -> str:
+    ticker = ticker.strip().lower()
+    if ticker.startswith("sh"):
+        return f"{ticker[2:]}.SH"
+    if ticker.startswith("sz"):
+        return f"{ticker[2:]}.SZ"
+    if ticker.startswith("bj"):
+        return f"{ticker[2:]}.BJ"
+    if ticker.startswith(("6", "68", "51", "56", "58", "60")):
+        return f"{ticker}.SH"
+    if ticker.startswith(("0", "3", "15", "16", "18", "20")):
+        return f"{ticker}.SZ"
+    if ticker.startswith(("4", "8", "43", "83", "87", "92")):
+        return f"{ticker}.BJ"
+    return f"{ticker}.SZ"
+
+
+def _build_watchlist_price_map(trade_date: str, tickers: list[str]) -> dict[str, float]:
+    if not tickers:
+        return {}
+    df = get_daily_basic_batch(trade_date)
+    if df is None or df.empty or "ts_code" not in df.columns or "close" not in df.columns:
+        return {}
+
+    ts_to_ticker = {_to_ts_code_for_price_lookup(ticker): ticker for ticker in tickers}
+    filtered = df[df["ts_code"].isin(ts_to_ticker.keys())]
+    if filtered.empty:
+        return {}
+
+    price_map: dict[str, float] = {}
+    for _, row in filtered.iterrows():
+        ticker = ts_to_ticker.get(str(row["ts_code"]))
+        close = row.get("close")
+        if ticker and close is not None:
+            try:
+                price_map[ticker] = float(close)
+            except (TypeError, ValueError):
+                continue
+    return price_map
+
+
 @dataclass
 class DailyPipeline:
     agent_runner: AgentRunner | None = None
@@ -253,8 +296,16 @@ class DailyPipeline:
         layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(fused, high_pool)
         watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(layer_c_results, watchlist)
 
+        candidate_by_ticker = {candidate.ticker: candidate for candidate in candidates}
+        price_map = _build_watchlist_price_map(trade_date, [item.ticker for item in watchlist])
+
         stage_started_at = perf_counter()
-        buy_orders, buy_order_filter_diagnostics = self._build_buy_orders_with_diagnostics(watchlist, portfolio_snapshot)
+        buy_orders, buy_order_filter_diagnostics = self._build_buy_orders_with_diagnostics(
+            watchlist,
+            portfolio_snapshot,
+            candidate_by_ticker=candidate_by_ticker,
+            price_map=price_map,
+        )
         build_buy_orders_seconds = perf_counter() - stage_started_at
 
         stage_started_at = perf_counter()
@@ -372,13 +423,21 @@ class DailyPipeline:
         exits = self.exit_checker(plan.portfolio_snapshot, trade_date_t1)
         return confirmed_orders, exits, crisis_response
 
-    def _build_buy_orders_with_diagnostics(self, watchlist: list[LayerCResult], portfolio_snapshot: dict) -> tuple[list, dict]:
+    def _build_buy_orders_with_diagnostics(
+        self,
+        watchlist: list[LayerCResult],
+        portfolio_snapshot: dict,
+        candidate_by_ticker: dict[str, CandidateStock] | None = None,
+        price_map: dict[str, float] | None = None,
+    ) -> tuple[list, dict]:
         cash = float(portfolio_snapshot.get("cash", 0.0))
         nav = cash + sum(
             float(position.get("long", 0)) * float(position.get("long_cost_basis", 0.0))
             for position in portfolio_snapshot.get("positions", {}).values()
         )
         nav = nav if nav > 0 else cash
+        candidate_by_ticker = candidate_by_ticker or {}
+        price_map = price_map or {}
         if not watchlist:
             return [], _build_filter_summary([])
         if cash <= 0:
@@ -398,8 +457,9 @@ class DailyPipeline:
         candidate_plans = []
         filtered_entries: list[dict] = []
         for item in watchlist:
-            current_price = 10.0
-            avg_volume_20d = 10_000_000.0
+            current_price = float(price_map.get(item.ticker, 10.0))
+            candidate = candidate_by_ticker.get(item.ticker)
+            avg_volume_20d = float(candidate.avg_volume_20d) if candidate and candidate.avg_volume_20d > 0 else 10_000_000.0
             industry_quota = nav * 0.25
             plan = calculate_position(
                 ticker=item.ticker,
