@@ -191,3 +191,36 @@ def test_l4_l5_mutual_exclusion():
     signal = check_exit_signal(holding, current_price=12.0, trade_date="20260307")
     assert signal is not None
     assert signal.level == "L5"
+
+
+def test_time_stop_uses_trading_day_state_instead_of_calendar_gap():
+    holding = HoldingState(
+        ticker="603993",
+        entry_price=6.0,
+        entry_date="20260203",
+        shares=1000,
+        cost_basis=6000.0,
+        industry_sw="有色金属",
+        holding_days=15,
+    )
+
+    signal = check_exit_signal(holding, current_price=5.88, trade_date="20260224")
+
+    assert signal is None
+
+
+def test_time_stop_triggers_once_trading_day_limit_is_exceeded():
+    holding = HoldingState(
+        ticker="603993",
+        entry_price=6.0,
+        entry_date="20260203",
+        shares=1000,
+        cost_basis=6000.0,
+        industry_sw="有色金属",
+        holding_days=21,
+    )
+
+    signal = check_exit_signal(holding, current_price=5.88, trade_date="20260224")
+
+    assert signal is not None
+    assert signal.trigger_reason == "time_stop"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from types import MappingProxyType
 from typing import Dict, Mapping
 
@@ -46,13 +45,6 @@ class Portfolio:
             "realized_gains": {ticker: {"long": 0.0, "short": 0.0} for ticker in tickers},
         }
 
-    @staticmethod
-    def _days_between(start_date: str, end_date: str) -> int:
-        try:
-            return (datetime.strptime(end_date, "%Y%m%d") - datetime.strptime(start_date, "%Y%m%d")).days
-        except ValueError:
-            return 0
-
     def get_snapshot(self) -> PortfolioSnapshot:
         positions_copy: Dict[str, PositionState] = {
             t: {
@@ -62,6 +54,7 @@ class Portfolio:
                 "short_cost_basis": p["short_cost_basis"],
                 "short_margin_used": p["short_margin_used"],
                 "entry_date": str(p.get("entry_date", "")),
+                "last_trade_date": str(p.get("last_trade_date", "")),
                 "holding_days": int(p.get("holding_days", 0)),
                 "max_unrealized_pnl_pct": float(p.get("max_unrealized_pnl_pct", 0.0)),
                 "profit_take_stage": int(p.get("profit_take_stage", 0)),
@@ -93,6 +86,7 @@ class Portfolio:
                     "short_cost_basis": float(position["short_cost_basis"]),
                     "short_margin_used": float(position["short_margin_used"]),
                     "entry_date": str(position.get("entry_date", "")),
+                    "last_trade_date": str(position.get("last_trade_date", "")),
                     "holding_days": int(position.get("holding_days", 0)),
                     "max_unrealized_pnl_pct": float(position.get("max_unrealized_pnl_pct", 0.0)),
                     "profit_take_stage": int(position.get("profit_take_stage", 0)),
@@ -132,6 +126,7 @@ class Portfolio:
             "short_cost_basis": 0.0,
             "short_margin_used": 0.0,
             "entry_date": "",
+            "last_trade_date": "",
             "holding_days": 0,
             "max_unrealized_pnl_pct": 0.0,
             "profit_take_stage": 0,
@@ -155,6 +150,7 @@ class Portfolio:
         position = self._portfolio["positions"][ticker]
         if reset:
             position["entry_date"] = trade_date
+            position["last_trade_date"] = trade_date
             position["holding_days"] = 0
             position["max_unrealized_pnl_pct"] = 0.0
             position["profit_take_stage"] = 0
@@ -167,6 +163,7 @@ class Portfolio:
         position = self._portfolio["positions"][ticker]
         if position["long"] <= 0:
             position["entry_date"] = ""
+            position["last_trade_date"] = ""
             position["holding_days"] = 0
             position["max_unrealized_pnl_pct"] = 0.0
             position["profit_take_stage"] = 0
@@ -183,14 +180,25 @@ class Portfolio:
         for ticker, position in self._portfolio["positions"].items():
             if position["long"] <= 0:
                 continue
-            if not position.get("entry_date"):
+            entry_date = str(position.get("entry_date") or "")
+            if not entry_date:
+                entry_date = trade_date
                 position["entry_date"] = trade_date
             current_price = float(current_prices.get(ticker, 0.0))
             cost_basis = float(position.get("long_cost_basis", 0.0))
             if current_price > 0 and cost_basis > 0:
                 pnl_pct = (current_price - cost_basis) / cost_basis
                 position["max_unrealized_pnl_pct"] = max(float(position.get("max_unrealized_pnl_pct", 0.0)), pnl_pct)
-            position["holding_days"] = max(int(position.get("holding_days", 0)), self._days_between(str(position.get("entry_date", trade_date)), trade_date))
+            last_trade_date = str(position.get("last_trade_date") or "")
+            if not last_trade_date:
+                if trade_date > entry_date:
+                    position["holding_days"] = max(0, int(position.get("holding_days", 0))) + 1
+                position["last_trade_date"] = trade_date
+                continue
+            if trade_date > last_trade_date:
+                if trade_date > entry_date:
+                    position["holding_days"] = max(0, int(position.get("holding_days", 0))) + 1
+                position["last_trade_date"] = trade_date
 
     def adjust_cash(self, delta: float) -> None:
         self._portfolio["cash"] += float(delta)

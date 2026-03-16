@@ -34,6 +34,7 @@ class PositionState(PositionStateRequired, total=False):
     """Represents per-ticker position state plus optional lifecycle metadata."""
 
     entry_date: str
+    last_trade_date: str
     holding_days: int
     max_unrealized_pnl_pct: float
     profit_take_stage: int

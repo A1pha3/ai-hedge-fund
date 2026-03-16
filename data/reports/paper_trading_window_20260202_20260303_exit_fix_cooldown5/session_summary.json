@@ -1,0 +1,244 @@
+{
+  "mode": "paper_trading",
+  "start_date": "2026-02-02",
+  "end_date": "2026-03-03",
+  "tickers": [],
+  "initial_capital": 100000.0,
+  "model_name": "gpt-4.1",
+  "model_provider": "OpenAI",
+  "selected_analysts": null,
+  "performance_metrics": {
+    "sharpe_ratio": -4.465443003711886,
+    "sortino_ratio": -3.622559544351355,
+    "max_drawdown": -3.0787431486330368,
+    "long_short_ratio": null,
+    "gross_exposure": null,
+    "net_exposure": null,
+    "max_drawdown_date": "2026-03-03",
+    "calmar_ratio": -12.05984320534682,
+    "cvar_95": -0.02630806695697374
+  },
+  "portfolio_values": [
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0
+    },
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-03",
+      "Portfolio Value": 99982.70279425,
+      "Long Exposure": 9882.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 9882.0,
+      "Net Exposure": 9882.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-04",
+      "Portfolio Value": 100180.70661787501,
+      "Long Exposure": 27247.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 27247.0,
+      "Net Exposure": 27247.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-05",
+      "Portfolio Value": 97545.14588037501,
+      "Long Exposure": 11707.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 11707.0,
+      "Net Exposure": 11707.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-06",
+      "Portfolio Value": 97591.14588037501,
+      "Long Exposure": 11753.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 11753.0,
+      "Net Exposure": 11753.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-09",
+      "Portfolio Value": 97784.14588037501,
+      "Long Exposure": 11946.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 11946.0,
+      "Net Exposure": 11946.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-10",
+      "Portfolio Value": 97863.14588037501,
+      "Long Exposure": 12025.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 12025.0,
+      "Net Exposure": 12025.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-11",
+      "Portfolio Value": 98129.14588037501,
+      "Long Exposure": 12291.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 12291.0,
+      "Net Exposure": 12291.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-12",
+      "Portfolio Value": 98070.14588037501,
+      "Long Exposure": 12232.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 12232.0,
+      "Net Exposure": 12232.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-13",
+      "Portfolio Value": 97468.25917787502,
+      "Long Exposure": 23940.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 23940.0,
+      "Net Exposure": 23940.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-24",
+      "Portfolio Value": 97795.39997662502,
+      "Long Exposure": 12266.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 12266.0,
+      "Net Exposure": 12266.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-25",
+      "Portfolio Value": 97889.39997662502,
+      "Long Exposure": 12360.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 12360.0,
+      "Net Exposure": 12360.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-26",
+      "Portfolio Value": 97681.39997662502,
+      "Long Exposure": 12152.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 12152.0,
+      "Net Exposure": 12152.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-27",
+      "Portfolio Value": 97901.39997662502,
+      "Long Exposure": 12372.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 12372.0,
+      "Net Exposure": 12372.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-03-02",
+      "Portfolio Value": 97462.39997662502,
+      "Long Exposure": 11933.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 11933.0,
+      "Net Exposure": 11933.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-03-03",
+      "Portfolio Value": 97096.39997662502,
+      "Long Exposure": 11567.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 11567.0,
+      "Net Exposure": 11567.0,
+      "Long/Short Ratio": Infinity
+    }
+  ],
+  "final_portfolio_snapshot": {
+    "cash": 85529.39997662502,
+    "margin_used": 0.0,
+    "margin_requirement": 0.0,
+    "positions": {
+      "601600": {
+        "long": 0,
+        "short": 0,
+        "long_cost_basis": 0.0,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "",
+        "holding_days": 0,
+        "max_unrealized_pnl_pct": 0.0,
+        "profit_take_stage": 0,
+        "entry_score": 0.0,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      },
+      "603993": {
+        "long": 0,
+        "short": 0,
+        "long_cost_basis": 0.0,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "",
+        "holding_days": 0,
+        "max_unrealized_pnl_pct": 0.0,
+        "profit_take_stage": 0,
+        "entry_score": 0.0,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      },
+      "300724": {
+        "long": 100,
+        "short": 0,
+        "long_cost_basis": 123.0681,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "20260213",
+        "holding_days": 18,
+        "max_unrealized_pnl_pct": 0.005297067233507284,
+        "profit_take_stage": 0,
+        "entry_score": 0.200466657750971,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      }
+    },
+    "realized_gains": {
+      "601600": {
+        "long": -95.43600000000012,
+        "short": 0.0
+      },
+      "603993": {
+        "long": -155.77650000000034,
+        "short": 0.0
+      },
+      "300724": {
+        "long": -1871.5649999999982,
+        "short": 0.0
+      }
+    }
+  },
+  "daily_event_stats": {
+    "day_count": 16,
+    "executed_trade_days": 5,
+    "total_executed_orders": 8
+  },
+  "artifacts": {
+    "daily_events": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl",
+    "timing_log": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/pipeline_timings.jsonl",
+    "summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/session_summary.json"
+  }
+}

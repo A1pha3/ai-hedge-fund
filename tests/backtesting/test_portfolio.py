@@ -101,6 +101,19 @@ def test_apply_short_cover_clamps_to_existing_short() -> None:
     assert p.get_snapshot()["positions"]["AAPL"]["short"] == 0
 
 
+def test_refresh_position_lifecycle_counts_trading_days_not_calendar_days() -> None:
+    p = Portfolio(tickers=["AAPL"], initial_cash=10_000.0, margin_requirement=0.5)
+    p.apply_long_buy("AAPL", 100, 10.0)
+    p.record_long_entry("AAPL", "20240301", reset=True)
+
+    p.refresh_position_lifecycle({"AAPL": 10.0}, "20240301")
+    p.refresh_position_lifecycle({"AAPL": 10.5}, "20240304")
+
+    snap = p.get_snapshot()
+    assert snap["positions"]["AAPL"]["holding_days"] == 1
+    assert snap["positions"]["AAPL"]["last_trade_date"] == "20240304"
+
+
 @pytest.mark.parametrize("action", [("buy"), ("sell"), ("short"), ("cover")])
 def test_zero_or_negative_quantity_is_noop(portfolio: Portfolio, action: str) -> None:
     before = portfolio.get_snapshot()

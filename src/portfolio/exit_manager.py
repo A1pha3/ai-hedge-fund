@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from src.portfolio.models import ExitSignal, HoldingState
@@ -22,13 +21,6 @@ def _atr_stop_price(holding: HoldingState, atr_14: float) -> float:
     return holding.entry_price - (2.0 * atr_14)
 
 
-def _days_between(start_date: str, end_date: str) -> int:
-    try:
-        return (datetime.strptime(end_date, "%Y%m%d") - datetime.strptime(start_date, "%Y%m%d")).days
-    except ValueError:
-        return 0
-
-
 def check_exit_signal(
     holding: HoldingState,
     current_price: float,
@@ -37,7 +29,7 @@ def check_exit_signal(
     logic_score: Optional[float] = None,
 ) -> Optional[ExitSignal]:
     pnl_pct = _holding_pnl_pct(holding, current_price)
-    holding_days = max(holding.holding_days, _days_between(holding.entry_date, trade_date))
+    holding_days = max(0, int(holding.holding_days))
     max_pnl = max(holding.max_unrealized_pnl_pct, pnl_pct)
 
     if pnl_pct <= HARD_STOP_LOSS_PCT:
