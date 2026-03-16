@@ -461,6 +461,9 @@ class DailyPipeline:
             candidate = candidate_by_ticker.get(item.ticker)
             avg_volume_20d = float(candidate.avg_volume_20d) if candidate and candidate.avg_volume_20d > 0 else 10_000_000.0
             industry_quota = nav * 0.25
+            existing_position = portfolio_snapshot.get("positions", {}).get(item.ticker, {})
+            existing_long_shares = float(existing_position.get("long", 0.0))
+            existing_position_ratio = ((existing_long_shares * current_price) / nav) if nav > 0 else 0.0
             plan = calculate_position(
                 ticker=item.ticker,
                 current_price=current_price,
@@ -469,6 +472,7 @@ class DailyPipeline:
                 available_cash=min(cash, per_name_cash),
                 avg_volume_20d=avg_volume_20d,
                 industry_remaining_quota=industry_quota,
+                existing_position_ratio=existing_position_ratio,
             )
             if plan.shares > 0:
                 candidate_plans.append(plan)

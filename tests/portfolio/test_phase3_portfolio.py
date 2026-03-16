@@ -86,6 +86,23 @@ def test_watchlist_edge_high_price_name_keeps_one_lot_when_constraints_allow_it(
     assert plan.amount == 14271.0
 
 
+def test_existing_position_ratio_blocks_additional_single_name_pyramiding():
+    plan = calculate_position(
+        ticker="300724",
+        current_price=142.71,
+        score_final=0.2269,
+        portfolio_nav=100_000,
+        available_cash=20_000,
+        avg_volume_20d=253_911.41073,
+        industry_remaining_quota=25_000,
+        existing_position_ratio=0.857,
+    )
+
+    assert plan.constraint_binding == "single_name"
+    assert plan.shares == 0
+    assert plan.amount == 0.0
+
+
 def test_industry_limit():
     holdings = [
         HoldingState(ticker="000001", entry_price=10, entry_date="20260201", shares=10_000, cost_basis=100_000, industry_sw="银行"),

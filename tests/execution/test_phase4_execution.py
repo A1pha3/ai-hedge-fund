@@ -482,6 +482,40 @@ def test_build_buy_orders_treats_candidate_avg_volume_as_wan_cny_when_evaluating
     assert diagnostics["reason_counts"] == {}
 
 
+def test_build_buy_orders_respects_existing_single_name_exposure_when_position_already_large():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=-0.0120, score_final=0.2269, score_b=0.4330, decision="watch")
+    ]
+    candidate_by_ticker = {
+        "300724": CandidateStock(
+            ticker="300724",
+            name="捷佳伟创",
+            industry_sw="电力设备",
+            avg_volume_20d=253_911.41073,
+            market_cap=462.0,
+            listing_date="20180810",
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {
+            "cash": 8_718.0,
+            "positions": {
+                "300724": {"long": 600, "long_cost_basis": 136.4752},
+                "603993": {"long": 400, "long_cost_basis": 23.4351},
+            },
+        },
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={"300724": 129.61},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"position_blocked_single_name": 1}
+    assert diagnostics["tickers"][0]["constraint_binding"] == "single_name"
+
+
 def test_signal_decay_jump_gap():
     plan = ExecutionPlan(
         date="20260305",
