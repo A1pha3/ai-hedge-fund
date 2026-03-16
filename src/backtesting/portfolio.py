@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import MappingProxyType
 from typing import Dict, Mapping
 
@@ -32,11 +33,25 @@ class Portfolio:
                     "long_cost_basis": 0.0,
                     "short_cost_basis": 0.0,
                     "short_margin_used": 0.0,
+                    "entry_date": "",
+                    "holding_days": 0,
+                    "max_unrealized_pnl_pct": 0.0,
+                    "profit_take_stage": 0,
+                    "entry_score": 0.0,
+                    "is_fundamental_driven": False,
+                    "industry_sw": "",
                 }
                 for ticker in tickers
             },
             "realized_gains": {ticker: {"long": 0.0, "short": 0.0} for ticker in tickers},
         }
+
+    @staticmethod
+    def _days_between(start_date: str, end_date: str) -> int:
+        try:
+            return (datetime.strptime(end_date, "%Y%m%d") - datetime.strptime(start_date, "%Y%m%d")).days
+        except ValueError:
+            return 0
 
     def get_snapshot(self) -> PortfolioSnapshot:
         positions_copy: Dict[str, PositionState] = {
@@ -46,6 +61,13 @@ class Portfolio:
                 "long_cost_basis": p["long_cost_basis"],
                 "short_cost_basis": p["short_cost_basis"],
                 "short_margin_used": p["short_margin_used"],
+                "entry_date": str(p.get("entry_date", "")),
+                "holding_days": int(p.get("holding_days", 0)),
+                "max_unrealized_pnl_pct": float(p.get("max_unrealized_pnl_pct", 0.0)),
+                "profit_take_stage": int(p.get("profit_take_stage", 0)),
+                "entry_score": float(p.get("entry_score", 0.0)),
+                "is_fundamental_driven": bool(p.get("is_fundamental_driven", False)),
+                "industry_sw": str(p.get("industry_sw", "")),
             }
             for t, p in self._portfolio["positions"].items()
         }
@@ -70,6 +92,13 @@ class Portfolio:
                     "long_cost_basis": float(position["long_cost_basis"]),
                     "short_cost_basis": float(position["short_cost_basis"]),
                     "short_margin_used": float(position["short_margin_used"]),
+                    "entry_date": str(position.get("entry_date", "")),
+                    "holding_days": int(position.get("holding_days", 0)),
+                    "max_unrealized_pnl_pct": float(position.get("max_unrealized_pnl_pct", 0.0)),
+                    "profit_take_stage": int(position.get("profit_take_stage", 0)),
+                    "entry_score": float(position.get("entry_score", 0.0)),
+                    "is_fundamental_driven": bool(position.get("is_fundamental_driven", False)),
+                    "industry_sw": str(position.get("industry_sw", "")),
                 }
                 for ticker, position in snapshot["positions"].items()
             },
@@ -102,8 +131,66 @@ class Portfolio:
             "long_cost_basis": 0.0,
             "short_cost_basis": 0.0,
             "short_margin_used": 0.0,
+            "entry_date": "",
+            "holding_days": 0,
+            "max_unrealized_pnl_pct": 0.0,
+            "profit_take_stage": 0,
+            "entry_score": 0.0,
+            "is_fundamental_driven": False,
+            "industry_sw": "",
         }
         self._portfolio["realized_gains"][ticker] = {"long": 0.0, "short": 0.0}
+
+    def record_long_entry(
+        self,
+        ticker: str,
+        trade_date: str,
+        *,
+        reset: bool,
+        entry_score: float = 0.0,
+        is_fundamental_driven: bool = False,
+        industry_sw: str = "",
+    ) -> None:
+        self.ensure_ticker(ticker)
+        position = self._portfolio["positions"][ticker]
+        if reset:
+            position["entry_date"] = trade_date
+            position["holding_days"] = 0
+            position["max_unrealized_pnl_pct"] = 0.0
+            position["profit_take_stage"] = 0
+            position["entry_score"] = float(entry_score)
+            position["is_fundamental_driven"] = bool(is_fundamental_driven)
+            position["industry_sw"] = industry_sw
+
+    def record_long_exit(self, ticker: str, trigger_reason: str = "") -> None:
+        self.ensure_ticker(ticker)
+        position = self._portfolio["positions"][ticker]
+        if position["long"] <= 0:
+            position["entry_date"] = ""
+            position["holding_days"] = 0
+            position["max_unrealized_pnl_pct"] = 0.0
+            position["profit_take_stage"] = 0
+            position["entry_score"] = 0.0
+            position["is_fundamental_driven"] = False
+            position["industry_sw"] = ""
+            return
+        if trigger_reason == "profit_take_stage_1":
+            position["profit_take_stage"] = max(int(position.get("profit_take_stage", 0)), 1)
+        elif trigger_reason == "profit_take_stage_2":
+            position["profit_take_stage"] = max(int(position.get("profit_take_stage", 0)), 2)
+
+    def refresh_position_lifecycle(self, current_prices: Mapping[str, float], trade_date: str) -> None:
+        for ticker, position in self._portfolio["positions"].items():
+            if position["long"] <= 0:
+                continue
+            if not position.get("entry_date"):
+                position["entry_date"] = trade_date
+            current_price = float(current_prices.get(ticker, 0.0))
+            cost_basis = float(position.get("long_cost_basis", 0.0))
+            if current_price > 0 and cost_basis > 0:
+                pnl_pct = (current_price - cost_basis) / cost_basis
+                position["max_unrealized_pnl_pct"] = max(float(position.get("max_unrealized_pnl_pct", 0.0)), pnl_pct)
+            position["holding_days"] = max(int(position.get("holding_days", 0)), self._days_between(str(position.get("entry_date", trade_date)), trade_date))
 
     def adjust_cash(self, delta: float) -> None:
         self._portfolio["cash"] += float(delta)

@@ -20,14 +20,26 @@ ActionLiteral = Literal["buy", "sell", "short", "cover", "hold"]
 BacktestMode = Literal["agent", "pipeline"]
 
 
-class PositionState(TypedDict):
-    """Represents per-ticker position state in the portfolio."""
+class PositionStateRequired(TypedDict):
+    """Represents required per-ticker position state in the portfolio."""
 
     long: int
     short: int
     long_cost_basis: float
     short_cost_basis: float
     short_margin_used: float
+
+
+class PositionState(PositionStateRequired, total=False):
+    """Represents per-ticker position state plus optional lifecycle metadata."""
+
+    entry_date: str
+    holding_days: int
+    max_unrealized_pnl_pct: float
+    profit_take_stage: int
+    entry_score: float
+    is_fundamental_driven: bool
+    industry_sw: str
 
 
 class TickerRealizedGains(TypedDict):

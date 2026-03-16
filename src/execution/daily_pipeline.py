@@ -14,6 +14,8 @@ from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.plan_generator import generate_execution_plan
 from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
+from src.portfolio.exit_manager import check_exit_signal
+from src.portfolio.models import HoldingState
 from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
 from src.screening.candidate_pool import build_candidate_pool
 from src.screening.models import CandidateStock
@@ -79,7 +81,39 @@ def _estimate_skipped_precise_seconds(fast_agent_seconds: float, fast_ticker_cou
 
 
 def _default_exit_checker(portfolio_snapshot: dict, trade_date: str) -> list:
-    return []
+    positions = portfolio_snapshot.get("positions", {})
+    active_tickers = [ticker for ticker, position in positions.items() if float(position.get("long", 0.0)) > 0]
+    if not active_tickers:
+        return []
+
+    price_map = _build_watchlist_price_map(trade_date, active_tickers)
+    exits = []
+    for ticker in active_tickers:
+        current_price = price_map.get(ticker)
+        if current_price is None or current_price <= 0:
+            continue
+        position = positions.get(ticker, {})
+        shares = int(position.get("long", 0))
+        entry_price = float(position.get("long_cost_basis", 0.0))
+        if shares <= 0 or entry_price <= 0:
+            continue
+        holding = HoldingState(
+            ticker=ticker,
+            entry_price=entry_price,
+            entry_date=str(position.get("entry_date") or trade_date),
+            shares=shares,
+            cost_basis=entry_price * shares,
+            industry_sw=str(position.get("industry_sw", "")),
+            max_unrealized_pnl_pct=float(position.get("max_unrealized_pnl_pct", 0.0)),
+            holding_days=int(position.get("holding_days", 0)),
+            profit_take_stage=int(position.get("profit_take_stage", 0)),
+            entry_score=float(position.get("entry_score", 0.0)),
+            is_fundamental_driven=bool(position.get("is_fundamental_driven", False)),
+        )
+        signal = check_exit_signal(holding, current_price=float(current_price), trade_date=trade_date)
+        if signal is not None:
+            exits.append(signal)
+    return exits
 
 
 def _build_filter_summary(entries: list[dict]) -> dict:
@@ -180,6 +214,13 @@ def _build_sell_order_diagnostics(sell_orders: list) -> dict:
     return summary
 
 
+def _normalize_blocked_buy_tickers(blocked_buy_tickers: dict[str, dict] | None) -> dict[str, dict]:
+    normalized: dict[str, dict] = {}
+    for ticker, payload in (blocked_buy_tickers or {}).items():
+        normalized[str(ticker)] = dict(payload or {})
+    return normalized
+
+
 def _to_ts_code_for_price_lookup(ticker: str) -> str:
     ticker = ticker.strip().lower()
     if ticker.startswith("sh"):
@@ -250,9 +291,10 @@ class DailyPipeline:
         )
         return result.get("analyst_signals", {})
 
-    def run_post_market(self, trade_date: str, portfolio_snapshot: Optional[dict] = None) -> ExecutionPlan:
+    def run_post_market(self, trade_date: str, portfolio_snapshot: Optional[dict] = None, blocked_buy_tickers: dict[str, dict] | None = None) -> ExecutionPlan:
         total_started_at = perf_counter()
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
+        blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
 
         stage_started_at = perf_counter()
         candidates = build_candidate_pool(trade_date)
@@ -305,6 +347,7 @@ class DailyPipeline:
             portfolio_snapshot,
             candidate_by_ticker=candidate_by_ticker,
             price_map=price_map,
+            blocked_buy_tickers=blocked_buy_tickers,
         )
         build_buy_orders_seconds = perf_counter() - stage_started_at
 
@@ -337,6 +380,7 @@ class DailyPipeline:
                 "buy_orders": buy_order_filter_diagnostics,
             },
             "sell_orders": sell_order_diagnostics,
+            "blocked_buy_tickers": blocked_buy_tickers,
         }
 
         timing_seconds = {
@@ -429,6 +473,7 @@ class DailyPipeline:
         portfolio_snapshot: dict,
         candidate_by_ticker: dict[str, CandidateStock] | None = None,
         price_map: dict[str, float] | None = None,
+        blocked_buy_tickers: dict[str, dict] | None = None,
     ) -> tuple[list, dict]:
         cash = float(portfolio_snapshot.get("cash", 0.0))
         nav = cash + sum(
@@ -438,6 +483,7 @@ class DailyPipeline:
         nav = nav if nav > 0 else cash
         candidate_by_ticker = candidate_by_ticker or {}
         price_map = price_map or {}
+        blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
         if not watchlist:
             return [], _build_filter_summary([])
         if cash <= 0:
@@ -457,6 +503,19 @@ class DailyPipeline:
         candidate_plans = []
         filtered_entries: list[dict] = []
         for item in watchlist:
+            cooldown_payload = blocked_buy_tickers.get(item.ticker)
+            if cooldown_payload is not None:
+                filtered_entries.append(
+                    {
+                        "ticker": item.ticker,
+                        "reason": "blocked_by_exit_cooldown",
+                        "score_final": round(item.score_final, 4),
+                        "blocked_until": cooldown_payload.get("blocked_until", ""),
+                        "trigger_reason": cooldown_payload.get("trigger_reason", ""),
+                        "exit_trade_date": cooldown_payload.get("exit_trade_date", ""),
+                    }
+                )
+                continue
             current_price = float(price_map.get(item.ticker, 10.0))
             candidate = candidate_by_ticker.get(item.ticker)
             avg_volume_20d = float(candidate.avg_volume_20d) if candidate and candidate.avg_volume_20d > 0 else 10_000_000.0

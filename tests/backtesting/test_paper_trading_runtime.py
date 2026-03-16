@@ -14,7 +14,7 @@ class StubPipeline:
         self.post_market_plans = list(post_market_plans)
         self.intraday_responses = list(intraday_responses)
 
-    def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None) -> ExecutionPlan:
+    def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None, blocked_buy_tickers: dict | None = None) -> ExecutionPlan:
         if self.post_market_plans:
             return self.post_market_plans.pop(0)
         return ExecutionPlan(date=trade_date, portfolio_snapshot=portfolio_snapshot or {})

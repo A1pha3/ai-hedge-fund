@@ -32,6 +32,10 @@ from .types import AgentOutput, BacktestMode, PerformanceMetrics, PortfolioValue
 from .valuation import calculate_portfolio_value, compute_exposures
 
 
+DEFENSIVE_EXIT_REASONS = {"hard_stop_loss", "atr_stop_loss"}
+EXIT_REENTRY_COOLDOWN_TRADING_DAYS = max(0, int(os.getenv("PIPELINE_EXIT_REENTRY_COOLDOWN_TRADING_DAYS", "5")))
+
+
 class BacktestEngine:
     """Coordinates the backtest loop using the new components.
 
@@ -96,6 +100,7 @@ class BacktestEngine:
         }
         self._pending_buy_queue: list[PendingOrder] = []
         self._pending_sell_queue: list[PendingOrder] = []
+        self._exit_reentry_cooldowns: dict[str, dict] = {}
 
     def _resolve_timing_log_path(self) -> Path | None:
         explicit_path = os.getenv("BACKTEST_TIMING_LOG_PATH")
@@ -143,6 +148,7 @@ class BacktestEngine:
             "performance_metrics": dict(self._performance_metrics),
             "pending_buy_queue": [order.model_dump() for order in self._pending_buy_queue],
             "pending_sell_queue": [order.model_dump() for order in self._pending_sell_queue],
+            "exit_reentry_cooldowns": dict(self._exit_reentry_cooldowns),
             "pending_plan": pending_plan.model_dump() if pending_plan is not None else None,
         }
         self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +170,10 @@ class BacktestEngine:
         self._performance_metrics.update(payload.get("performance_metrics", {}))
         self._pending_buy_queue = [PendingOrder.model_validate(item) for item in payload.get("pending_buy_queue", [])]
         self._pending_sell_queue = [PendingOrder.model_validate(item) for item in payload.get("pending_sell_queue", [])]
+        self._exit_reentry_cooldowns = {
+            str(ticker): dict(item or {})
+            for ticker, item in payload.get("exit_reentry_cooldowns", {}).items()
+        }
         pending_plan_payload = payload.get("pending_plan")
         pending_plan = ExecutionPlan.model_validate(pending_plan_payload) if pending_plan_payload else None
         return payload.get("last_processed_date"), pending_plan
@@ -192,6 +202,33 @@ class BacktestEngine:
     @staticmethod
     def _normalize_ticker(ticker: str) -> str:
         return str(ticker).split(".")[0].upper()
+
+    @staticmethod
+    def _shift_business_days(trade_date_compact: str, business_days: int) -> str:
+        shifted = pd.Timestamp(datetime.strptime(trade_date_compact, "%Y%m%d")) + pd.offsets.BDay(max(0, business_days))
+        return shifted.strftime("%Y%m%d")
+
+    def _register_exit_reentry_cooldown(self, ticker: str, trade_date_compact: str, trigger_reason: str) -> None:
+        if EXIT_REENTRY_COOLDOWN_TRADING_DAYS <= 0 or trigger_reason not in DEFENSIVE_EXIT_REASONS:
+            return
+        self._exit_reentry_cooldowns[ticker] = {
+            "trigger_reason": trigger_reason,
+            "exit_trade_date": trade_date_compact,
+            "blocked_until": self._shift_business_days(trade_date_compact, EXIT_REENTRY_COOLDOWN_TRADING_DAYS),
+        }
+
+    def _get_active_exit_reentry_cooldowns(self, trade_date_compact: str) -> dict[str, dict]:
+        active: dict[str, dict] = {}
+        expired_tickers: list[str] = []
+        for ticker, payload in self._exit_reentry_cooldowns.items():
+            blocked_until = str(payload.get("blocked_until") or "")
+            if blocked_until and trade_date_compact < blocked_until:
+                active[ticker] = dict(payload)
+                continue
+            expired_tickers.append(ticker)
+        for ticker in expired_tickers:
+            self._exit_reentry_cooldowns.pop(ticker, None)
+        return active
 
     def _get_limit_state(self, trade_date_compact: str) -> tuple[set[str], set[str]]:
         limit_df = get_limit_list(trade_date_compact)
@@ -394,7 +431,7 @@ class BacktestEngine:
             result = process_pending_sell(order, is_limit_down=normalized_ticker in limit_down)
             if result["action"] == "execute" and order.shares > 0:
                 existing_qty = int(decisions.get(order.ticker, {}).get("quantity", 0))
-                decisions[order.ticker] = {"action": "sell", "quantity": max(existing_qty, order.shares)}
+                decisions[order.ticker] = {"action": "sell", "quantity": max(existing_qty, order.shares), "reason": order.reason}
                 alerts.append(f"pending_sell_execute:{order.ticker}")
             elif result["action"] == "keep":
                 next_pending_sell.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
@@ -464,6 +501,8 @@ class BacktestEngine:
                     crisis_inputs={"drawdown_pct": 0.0},
                 )
                 intraday_seconds = perf_counter() - stage_started_at
+                buy_order_by_ticker = {order.ticker: order for order in prepared_plan.buy_orders}
+                watchlist_by_ticker = {item.ticker: item for item in prepared_plan.watchlist}
 
                 if crisis_response.get("pause_new_buys"):
                     confirmed_orders = []
@@ -477,7 +516,7 @@ class BacktestEngine:
                     long_shares = self._portfolio.get_positions()[exit_signal.ticker]["long"]
                     sell_quantity = int(long_shares * exit_signal.sell_ratio)
                     if sell_quantity > 0:
-                        decisions[exit_signal.ticker] = {"action": "sell", "quantity": sell_quantity}
+                        decisions[exit_signal.ticker] = {"action": "sell", "quantity": sell_quantity, "reason": str(getattr(exit_signal, "trigger_reason", "") or "")}
 
                 reduce_ratio = float(crisis_response.get("forced_reduce_ratio", 0.0) or 0.0)
                 if reduce_ratio > 0:
@@ -515,6 +554,7 @@ class BacktestEngine:
                                 ticker,
                                 original_score=-1.0,
                                 queue_date=trade_date_compact,
+                                reason=str(decision.get("reason") or "limit_down_block"),
                                 shares=int(decision["quantity"]),
                                 sell_ratio=sell_ratio,
                             )
@@ -532,9 +572,27 @@ class BacktestEngine:
                         daily_turnover=daily_turnovers.get(ticker),
                     )
                     executed_trades[ticker] = executed_qty
+                    if executed_qty > 0 and decision["action"] == "buy":
+                        existing_long_before = int(self._portfolio.get_positions()[ticker]["long"]) - int(executed_qty)
+                        watch_item = watchlist_by_ticker.get(ticker)
+                        matching_order = buy_order_by_ticker.get(ticker)
+                        self._portfolio.record_long_entry(
+                            ticker,
+                            trade_date_compact,
+                            reset=existing_long_before <= 0,
+                            entry_score=(matching_order.score_final if matching_order is not None else (watch_item.score_final if watch_item is not None else 0.0)),
+                            industry_sw="",
+                            is_fundamental_driven=False,
+                        )
+                    elif executed_qty > 0 and decision["action"] == "sell":
+                        trigger_reason = str(decision.get("reason") or "")
+                        self._portfolio.record_long_exit(ticker, trigger_reason=trigger_reason)
+                        self._register_exit_reentry_cooldown(ticker, trade_date_compact, trigger_reason)
                 prepared_plan.risk_alerts.extend(queue_alerts)
                 self._pending_buy_queue = self._dedupe_pending_orders(next_pending_buy)
                 self._pending_sell_queue = self._dedupe_pending_orders(next_pending_sell)
+
+            self._portfolio.refresh_position_lifecycle(current_prices, trade_date_compact)
 
             agent_output = self._build_pipeline_agent_output(decisions, active_tickers)
             stage_started_at = perf_counter()
@@ -550,7 +608,7 @@ class BacktestEngine:
 
             if self._pipeline is not None:
                 stage_started_at = perf_counter()
-                pending_plan = self._pipeline.run_post_market(trade_date_compact, self._portfolio.get_snapshot())
+                pending_plan = self._pipeline.run_post_market(trade_date_compact, self._portfolio.get_snapshot(), blocked_buy_tickers=self._get_active_exit_reentry_cooldowns(trade_date_compact))
                 pending_plan.pending_buy_queue = list(self._pending_buy_queue)
                 pending_plan.pending_sell_queue = list(self._pending_sell_queue)
                 post_market_seconds = perf_counter() - stage_started_at
@@ -594,6 +652,7 @@ class BacktestEngine:
                     "portfolio_snapshot": self._portfolio.get_snapshot(),
                     "pending_buy_queue": [order.model_dump() for order in self._pending_buy_queue],
                     "pending_sell_queue": [order.model_dump() for order in self._pending_sell_queue],
+                    "exit_reentry_cooldowns": dict(self._exit_reentry_cooldowns),
                     "prepared_plan": prepared_plan.model_dump() if prepared_plan is not None else None,
                     "current_plan": pending_plan.model_dump() if pending_plan is not None else None,
                     "timing_seconds": timing_payload["timing_seconds"],

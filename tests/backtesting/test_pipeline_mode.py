@@ -1,7 +1,9 @@
 import pandas as pd
+import pytest
 
 from src.backtesting.engine import BacktestEngine
 from src.execution.models import ExecutionPlan
+from src.portfolio.models import ExitSignal
 from src.portfolio.models import PositionPlan
 
 
@@ -13,8 +15,8 @@ class StubPipeline:
         self.pre_market_calls = []
         self.intraday_calls = []
 
-    def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None) -> ExecutionPlan:
-        self.post_market_calls.append((trade_date, portfolio_snapshot or {}))
+    def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None, blocked_buy_tickers: dict | None = None) -> ExecutionPlan:
+        self.post_market_calls.append((trade_date, portfolio_snapshot or {}, blocked_buy_tickers or {}))
         if self.post_market_plans:
             return self.post_market_plans.pop(0)
         return ExecutionPlan(date=trade_date, portfolio_snapshot=portfolio_snapshot or {})
@@ -100,6 +102,9 @@ def test_pipeline_mode_executes_buy_on_t_plus_one(monkeypatch):
 
     snapshot = engine._portfolio.get_snapshot()
     assert snapshot["positions"]["AAPL"]["long"] == 100
+    assert snapshot["positions"]["AAPL"]["entry_date"] == "20240304"
+    assert snapshot["positions"]["AAPL"]["holding_days"] == 1
+    assert snapshot["positions"]["AAPL"]["max_unrealized_pnl_pct"] == pytest.approx(0.0876, abs=1e-4)
     assert pipeline.post_market_calls[0][0] == "20240301"
     assert pipeline.pre_market_calls[0][0] == "20240304"
     assert pipeline.intraday_calls[0][0] == "20240304"
@@ -250,6 +255,106 @@ def test_pipeline_mode_pending_buy_executes_after_board_opens(monkeypatch):
     snapshot = engine._portfolio.get_snapshot()
     assert snapshot["positions"]["000001"]["long"] == 100
     assert engine._pending_buy_queue == []
+
+
+def test_pipeline_mode_registers_defensive_exit_cooldown_for_same_day_post_market(monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 9.0,
+                "2024-03-05": 8.5,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+                "2024-03-05": 102.0,
+            },
+        },
+    )
+    pipeline = StubPipeline(
+        post_market_plans=[ExecutionPlan(date="20240301", portfolio_snapshot={}), ExecutionPlan(date="20240304", portfolio_snapshot={})],
+        intraday_responses=[([], [ExitSignal(ticker="AAPL", level="position", trigger_reason="hard_stop_loss", sell_ratio=1.0)], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+    )
+    engine._portfolio.apply_long_buy("AAPL", 100, 10.0)
+
+    engine.run_backtest()
+
+    assert pipeline.post_market_calls[1][0] == "20240304"
+    assert pipeline.post_market_calls[1][2]["AAPL"]["trigger_reason"] == "hard_stop_loss"
+    assert pipeline.post_market_calls[1][2]["AAPL"]["blocked_until"] == "20240311"
+
+
+def test_pipeline_checkpoint_persists_exit_reentry_cooldowns(tmp_path, monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+    checkpoint_path = tmp_path / "pipeline-checkpoint.json"
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=StubPipeline(post_market_plans=[], intraday_responses=[]),
+        checkpoint_path=str(checkpoint_path),
+    )
+    engine._exit_reentry_cooldowns = {
+        "AAPL": {"trigger_reason": "hard_stop_loss", "exit_trade_date": "20240304", "blocked_until": "20240311"}
+    }
+
+    engine._save_checkpoint("2024-03-04")
+
+    restored = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=StubPipeline(post_market_plans=[], intraday_responses=[]),
+        checkpoint_path=str(checkpoint_path),
+    )
+    last_processed_date, pending_plan = restored._load_checkpoint()
+
+    assert last_processed_date == "2024-03-04"
+    assert pending_plan is None
+    assert restored._exit_reentry_cooldowns["AAPL"]["blocked_until"] == "20240311"
 
 
 def test_pipeline_mode_pending_sell_executes_after_limit_down_releases(monkeypatch):

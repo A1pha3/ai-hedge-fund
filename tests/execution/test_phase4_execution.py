@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from src.execution.daily_pipeline import DailyPipeline, WATCHLIST_SCORE_THRESHOLD
+import src.execution.daily_pipeline as daily_pipeline_module
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import (
     LAYER_C_AVOID_SCORE_C_THRESHOLD,
@@ -403,6 +404,25 @@ def test_build_buy_orders_uses_real_price_map_for_high_price_ticker_position_siz
     assert diagnostics["reason_counts"] == {}
 
 
+def test_build_buy_orders_blocks_ticker_during_exit_cooldown():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=0.2, score_final=0.6, score_b=0.6, decision="watch")
+    ]
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        blocked_buy_tickers={"300724": {"trigger_reason": "hard_stop_loss", "exit_trade_date": "20260305", "blocked_until": "20260312"}},
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_exit_cooldown": 1}
+    assert diagnostics["tickers"][0]["trigger_reason"] == "hard_stop_loss"
+    assert diagnostics["tickers"][0]["blocked_until"] == "20260312"
+
+
 def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkeypatch: pytest.MonkeyPatch):
     def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
         return {
@@ -514,6 +534,42 @@ def test_build_buy_orders_respects_existing_single_name_exposure_when_position_a
     assert buy_orders == []
     assert diagnostics["reason_counts"] == {"position_blocked_single_name": 1}
     assert diagnostics["tickers"][0]["constraint_binding"] == "single_name"
+
+
+def test_default_exit_checker_emits_hard_stop_from_position_snapshot_metadata(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "get_daily_basic_batch",
+        lambda trade_date: pd.DataFrame([{"ts_code": "300724.SZ", "close": 130.0}]),
+    )
+
+    exits = daily_pipeline_module._default_exit_checker(
+        {
+            "cash": 50_000,
+            "positions": {
+                "300724": {
+                    "long": 100,
+                    "short": 0,
+                    "long_cost_basis": 142.924065,
+                    "short_cost_basis": 0.0,
+                    "short_margin_used": 0.0,
+                    "entry_date": "20260203",
+                    "holding_days": 5,
+                    "max_unrealized_pnl_pct": 0.0,
+                    "profit_take_stage": 0,
+                    "entry_score": 0.22,
+                    "is_fundamental_driven": False,
+                    "industry_sw": "电力设备",
+                }
+            },
+            "realized_gains": {},
+        },
+        "20260211",
+    )
+
+    assert len(exits) == 1
+    assert exits[0].ticker == "300724"
+    assert exits[0].trigger_reason == "hard_stop_loss"
 
 
 def test_signal_decay_jump_gap():
