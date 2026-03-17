@@ -5,7 +5,7 @@ from __future__ import annotations
 from src.portfolio.models import PositionPlan
 
 
-WATCHLIST_MIN_SCORE = 0.20
+WATCHLIST_MIN_SCORE = 0.225
 FULL_EXECUTION_SCORE = 0.50
 STANDARD_EXECUTION_SCORE = 0.25
 WATCHLIST_EDGE_EXECUTION_RATIO = 0.3

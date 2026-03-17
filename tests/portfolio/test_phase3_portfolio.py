@@ -35,7 +35,7 @@ def test_round_to_100():
     assert plan.shares % 100 == 0
 
 
-def test_watchlist_edge_score_gets_small_position_instead_of_full_block():
+def test_score_below_buy_threshold_is_blocked_even_if_it_remains_on_watchlist():
     plan = calculate_position(
         ticker="000001",
         current_price=10.0,
@@ -46,17 +46,17 @@ def test_watchlist_edge_score_gets_small_position_instead_of_full_block():
         industry_remaining_quota=25_000,
     )
 
-    assert plan.constraint_binding == "single_name"
-    assert plan.execution_ratio == 0.3
-    assert plan.shares == 300
-    assert plan.amount == 3000.0
+    assert plan.constraint_binding == "score"
+    assert plan.execution_ratio == 0.0
+    assert plan.shares == 0
+    assert plan.amount == 0.0
 
 
 def test_avg_volume_20d_uses_wan_cny_unit_before_liquidity_cap_is_applied():
     plan = calculate_position(
         ticker="300724",
         current_price=142.71,
-        score_final=0.2209,
+        score_final=0.2309,
         portfolio_nav=100_000,
         available_cash=33_333,
         avg_volume_20d=253_911.41073,
@@ -73,7 +73,7 @@ def test_watchlist_edge_high_price_name_keeps_one_lot_when_constraints_allow_it(
     plan = calculate_position(
         ticker="300724",
         current_price=142.71,
-        score_final=0.2186,
+        score_final=0.2260,
         portfolio_nav=100_000,
         available_cash=50_000,
         avg_volume_20d=253_911.41073,

@@ -363,7 +363,7 @@ def test_build_buy_orders_diagnostics_marks_daily_trade_limit():
     assert diagnostics["filtered_count"] == 1
 
 
-def test_build_buy_orders_allows_small_edge_position_for_watchlist_threshold_sample():
+def test_build_buy_orders_blocks_watchlist_name_below_buy_threshold_sample():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     watchlist = [
         LayerCResult(ticker="300724", score_c=-0.0792, score_final=0.2042, score_b=0.4360, decision="watch")
@@ -371,13 +371,11 @@ def test_build_buy_orders_allows_small_edge_position_for_watchlist_threshold_sam
 
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(watchlist, {"cash": 100_000, "positions": {}})
 
-    assert len(buy_orders) == 1
-    assert buy_orders[0].ticker == "300724"
-    assert buy_orders[0].shares == 300
-    assert buy_orders[0].amount == 3000.0
-    assert buy_orders[0].constraint_binding == "single_name"
-    assert buy_orders[0].execution_ratio == pytest.approx(0.3)
-    assert diagnostics["reason_counts"] == {}
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"position_blocked_score": 1}
+    assert diagnostics["tickers"][0]["ticker"] == "300724"
+    assert diagnostics["tickers"][0]["constraint_binding"] == "score"
+    assert diagnostics["tickers"][0]["execution_ratio"] == 0.0
 
 
 def test_build_buy_orders_uses_real_price_map_for_high_price_ticker_position_sizing():
@@ -474,7 +472,7 @@ def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkey
 def test_build_buy_orders_treats_candidate_avg_volume_as_wan_cny_when_evaluating_liquidity_blockers():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     watchlist = [
-        LayerCResult(ticker="300724", score_c=-0.0350, score_final=0.2246, score_b=0.4370, decision="watch")
+        LayerCResult(ticker="300724", score_c=-0.0350, score_final=0.2260, score_b=0.4370, decision="watch")
     ]
     candidate_by_ticker = {
         "300724": CandidateStock(
