@@ -298,6 +298,7 @@ def test_pipeline_mode_registers_defensive_exit_cooldown_for_same_day_post_marke
     assert pipeline.post_market_calls[1][0] == "20240304"
     assert pipeline.post_market_calls[1][2]["AAPL"]["trigger_reason"] == "hard_stop_loss"
     assert pipeline.post_market_calls[1][2]["AAPL"]["blocked_until"] == "20240311"
+    assert pipeline.post_market_calls[1][2]["AAPL"]["reentry_review_until"] == "20240318"
 
 
 def test_pipeline_checkpoint_persists_exit_reentry_cooldowns(tmp_path, monkeypatch):
@@ -331,7 +332,7 @@ def test_pipeline_checkpoint_persists_exit_reentry_cooldowns(tmp_path, monkeypat
         checkpoint_path=str(checkpoint_path),
     )
     engine._exit_reentry_cooldowns = {
-        "AAPL": {"trigger_reason": "hard_stop_loss", "exit_trade_date": "20240304", "blocked_until": "20240311"}
+        "AAPL": {"trigger_reason": "hard_stop_loss", "exit_trade_date": "20240304", "blocked_until": "20240311", "reentry_review_until": "20240318"}
     }
 
     engine._save_checkpoint("2024-03-04")
@@ -355,6 +356,7 @@ def test_pipeline_checkpoint_persists_exit_reentry_cooldowns(tmp_path, monkeypat
     assert last_processed_date == "2024-03-04"
     assert pending_plan is None
     assert restored._exit_reentry_cooldowns["AAPL"]["blocked_until"] == "20240311"
+    assert restored._exit_reentry_cooldowns["AAPL"]["reentry_review_until"] == "20240318"
 
 
 def test_pipeline_mode_pending_sell_executes_after_limit_down_releases(monkeypatch):

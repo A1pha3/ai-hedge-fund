@@ -17,7 +17,7 @@ from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
-from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
+from src.portfolio.position_calculator import STANDARD_EXECUTION_SCORE, calculate_position, enforce_daily_trade_limit
 from src.screening.candidate_pool import build_candidate_pool
 from src.screening.models import CandidateStock
 from src.screening.market_state import detect_market_state
@@ -54,6 +54,7 @@ FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD
 FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
 WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.20)
+EXIT_REENTRY_CONFIRM_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_CONFIRM_SCORE_MIN", STANDARD_EXECUTION_SCORE)
 
 
 def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
@@ -231,6 +232,41 @@ def _normalize_blocked_buy_tickers(blocked_buy_tickers: dict[str, dict] | None) 
     return normalized
 
 
+def _build_reentry_filter_payload(ticker: str, score_final: float, cooldown_payload: dict, trade_date: str) -> dict | None:
+    normalized_ticker = str(ticker)
+    blocked_until = str(cooldown_payload.get("blocked_until") or "")
+    trigger_reason = str(cooldown_payload.get("trigger_reason") or "")
+    exit_trade_date = str(cooldown_payload.get("exit_trade_date") or "")
+    if blocked_until and trade_date and trade_date < blocked_until:
+        return {
+            "ticker": normalized_ticker,
+            "reason": "blocked_by_exit_cooldown",
+            "score_final": round(score_final, 4),
+            "blocked_until": blocked_until,
+            "trigger_reason": trigger_reason,
+            "exit_trade_date": exit_trade_date,
+        }
+
+    reentry_review_until = str(cooldown_payload.get("reentry_review_until") or "")
+    required_score = float(cooldown_payload.get("reentry_min_score", EXIT_REENTRY_CONFIRM_SCORE_MIN))
+    if reentry_review_until and trade_date and trade_date <= reentry_review_until and score_final < required_score:
+        return {
+            "ticker": normalized_ticker,
+            "reason": "blocked_by_reentry_score_confirmation",
+            "score_final": round(score_final, 4),
+            "required_score": round(required_score, 4),
+            "reentry_review_until": reentry_review_until,
+            "trigger_reason": trigger_reason,
+            "exit_trade_date": exit_trade_date,
+        }
+
+    return None
+
+
+def _build_reentry_filter_entry(item: LayerCResult, cooldown_payload: dict, trade_date: str) -> dict | None:
+    return _build_reentry_filter_payload(item.ticker, item.score_final, cooldown_payload, trade_date)
+
+
 def _to_ts_code_for_price_lookup(ticker: str) -> str:
     ticker = ticker.strip().lower()
     if ticker.startswith("sh"):
@@ -314,16 +350,60 @@ class DailyPipeline:
         )
         return result.get("analyst_signals", {})
 
+    def _apply_frozen_buy_order_filters(self, frozen_plan: ExecutionPlan, trade_date: str, blocked_buy_tickers: dict[str, dict]) -> ExecutionPlan:
+        plan = frozen_plan.model_copy(deep=True)
+        if not blocked_buy_tickers or not plan.buy_orders:
+            return plan
+
+        watchlist_by_ticker = {item.ticker: item for item in plan.watchlist}
+        retained_orders = []
+        filtered_entries: list[dict] = []
+        for order in plan.buy_orders:
+            cooldown_payload = blocked_buy_tickers.get(order.ticker)
+            if cooldown_payload is None:
+                retained_orders.append(order)
+                continue
+
+            watch_item = watchlist_by_ticker.get(order.ticker)
+            score_final = float(watch_item.score_final if watch_item is not None else order.score_final)
+            filter_entry = _build_reentry_filter_payload(order.ticker, score_final, cooldown_payload, trade_date)
+            if filter_entry is None:
+                retained_orders.append(order)
+                continue
+            filtered_entries.append(filter_entry)
+
+        if not filtered_entries:
+            return plan
+
+        plan.buy_orders = retained_orders
+        risk_metrics = dict(plan.risk_metrics or {})
+        counts = dict(risk_metrics.get("counts", {}))
+        funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics", {}))
+        filters = dict(funnel_diagnostics.get("filters", {}))
+        existing_buy_order_summary = dict(filters.get("buy_orders", {}))
+        existing_entries = list(existing_buy_order_summary.get("tickers", []))
+        existing_entries.extend(filtered_entries)
+        buy_order_summary = _build_filter_summary(existing_entries)
+        buy_order_summary["selected_tickers"] = [order.ticker for order in retained_orders]
+        filters["buy_orders"] = buy_order_summary
+        funnel_diagnostics["filters"] = filters
+        funnel_diagnostics["blocked_buy_tickers"] = blocked_buy_tickers
+        counts["buy_order_count"] = len(retained_orders)
+        risk_metrics["counts"] = counts
+        risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+        plan.risk_metrics = risk_metrics
+        return plan
+
     def run_post_market(self, trade_date: str, portfolio_snapshot: Optional[dict] = None, blocked_buy_tickers: dict[str, dict] | None = None) -> ExecutionPlan:
+        blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
         if self.frozen_post_market_plans is not None:
             frozen_plan = self.frozen_post_market_plans.get(trade_date)
             if frozen_plan is None:
                 raise ValueError(f"Missing frozen current_plan for trade_date={trade_date}")
-            return frozen_plan.model_copy(deep=True)
+            return self._apply_frozen_buy_order_filters(frozen_plan, trade_date, blocked_buy_tickers)
 
         total_started_at = perf_counter()
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
-        blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
 
         stage_started_at = perf_counter()
         candidates = build_candidate_pool(trade_date)
@@ -375,6 +455,7 @@ class DailyPipeline:
         buy_orders, buy_order_filter_diagnostics = self._build_buy_orders_with_diagnostics(
             watchlist,
             portfolio_snapshot,
+            trade_date=trade_date,
             candidate_by_ticker=candidate_by_ticker,
             price_map=price_map,
             blocked_buy_tickers=blocked_buy_tickers,
@@ -502,6 +583,7 @@ class DailyPipeline:
         self,
         watchlist: list[LayerCResult],
         portfolio_snapshot: dict,
+        trade_date: str = "",
         candidate_by_ticker: dict[str, CandidateStock] | None = None,
         price_map: dict[str, float] | None = None,
         blocked_buy_tickers: dict[str, dict] | None = None,
@@ -536,17 +618,10 @@ class DailyPipeline:
         for item in watchlist:
             cooldown_payload = blocked_buy_tickers.get(item.ticker)
             if cooldown_payload is not None:
-                filtered_entries.append(
-                    {
-                        "ticker": item.ticker,
-                        "reason": "blocked_by_exit_cooldown",
-                        "score_final": round(item.score_final, 4),
-                        "blocked_until": cooldown_payload.get("blocked_until", ""),
-                        "trigger_reason": cooldown_payload.get("trigger_reason", ""),
-                        "exit_trade_date": cooldown_payload.get("exit_trade_date", ""),
-                    }
-                )
-                continue
+                reentry_filter_entry = _build_reentry_filter_entry(item, cooldown_payload, trade_date)
+                if reentry_filter_entry is not None:
+                    filtered_entries.append(reentry_filter_entry)
+                    continue
             current_price = float(price_map.get(item.ticker, 10.0))
             candidate = candidate_by_ticker.get(item.ticker)
             avg_volume_20d = float(candidate.avg_volume_20d) if candidate and candidate.avg_volume_20d > 0 else 10_000_000.0

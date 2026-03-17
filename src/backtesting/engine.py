@@ -34,6 +34,7 @@ from .valuation import calculate_portfolio_value, compute_exposures
 
 DEFENSIVE_EXIT_REASONS = {"hard_stop_loss", "atr_stop_loss"}
 EXIT_REENTRY_COOLDOWN_TRADING_DAYS = max(0, int(os.getenv("PIPELINE_EXIT_REENTRY_COOLDOWN_TRADING_DAYS", "5")))
+EXIT_REENTRY_REVIEW_TRADING_DAYS = max(0, int(os.getenv("PIPELINE_EXIT_REENTRY_REVIEW_TRADING_DAYS", "5")))
 
 
 class BacktestEngine:
@@ -211,10 +212,12 @@ class BacktestEngine:
     def _register_exit_reentry_cooldown(self, ticker: str, trade_date_compact: str, trigger_reason: str) -> None:
         if EXIT_REENTRY_COOLDOWN_TRADING_DAYS <= 0 or trigger_reason not in DEFENSIVE_EXIT_REASONS:
             return
+        blocked_until = self._shift_business_days(trade_date_compact, EXIT_REENTRY_COOLDOWN_TRADING_DAYS)
         self._exit_reentry_cooldowns[ticker] = {
             "trigger_reason": trigger_reason,
             "exit_trade_date": trade_date_compact,
-            "blocked_until": self._shift_business_days(trade_date_compact, EXIT_REENTRY_COOLDOWN_TRADING_DAYS),
+            "blocked_until": blocked_until,
+            "reentry_review_until": self._shift_business_days(blocked_until, EXIT_REENTRY_REVIEW_TRADING_DAYS),
         }
 
     def _get_active_exit_reentry_cooldowns(self, trade_date_compact: str) -> dict[str, dict]:
@@ -222,7 +225,8 @@ class BacktestEngine:
         expired_tickers: list[str] = []
         for ticker, payload in self._exit_reentry_cooldowns.items():
             blocked_until = str(payload.get("blocked_until") or "")
-            if blocked_until and trade_date_compact < blocked_until:
+            reentry_review_until = str(payload.get("reentry_review_until") or blocked_until)
+            if (blocked_until and trade_date_compact < blocked_until) or (reentry_review_until and trade_date_compact <= reentry_review_until):
                 active[ticker] = dict(payload)
                 continue
             expired_tickers.append(ticker)

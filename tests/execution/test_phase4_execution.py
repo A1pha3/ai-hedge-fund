@@ -411,6 +411,7 @@ def test_build_buy_orders_blocks_ticker_during_exit_cooldown():
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
         watchlist,
         {"cash": 200_000, "positions": {}},
+        trade_date="20260310",
         blocked_buy_tickers={"300724": {"trigger_reason": "hard_stop_loss", "exit_trade_date": "20260305", "blocked_until": "20260312"}},
         price_map={"300724": 142.71},
     )
@@ -419,6 +420,58 @@ def test_build_buy_orders_blocks_ticker_during_exit_cooldown():
     assert diagnostics["reason_counts"] == {"blocked_by_exit_cooldown": 1}
     assert diagnostics["tickers"][0]["trigger_reason"] == "hard_stop_loss"
     assert diagnostics["tickers"][0]["blocked_until"] == "20260312"
+
+
+def test_build_buy_orders_requires_stronger_score_after_exit_cooldown_expires():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=0.2, score_final=0.24, score_b=0.6, decision="watch")
+    ]
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        blocked_buy_tickers={
+            "300724": {
+                "trigger_reason": "hard_stop_loss",
+                "exit_trade_date": "20260305",
+                "blocked_until": "20260312",
+                "reentry_review_until": "20260318",
+            }
+        },
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_reentry_score_confirmation": 1}
+    assert diagnostics["tickers"][0]["required_score"] == 0.25
+
+
+def test_build_buy_orders_allows_stronger_score_after_exit_cooldown_expires():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=0.2, score_final=0.26, score_b=0.6, decision="watch")
+    ]
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        blocked_buy_tickers={
+            "300724": {
+                "trigger_reason": "hard_stop_loss",
+                "exit_trade_date": "20260305",
+                "blocked_until": "20260312",
+                "reentry_review_until": "20260318",
+            }
+        },
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert diagnostics["reason_counts"] == {}
 
 
 def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkeypatch: pytest.MonkeyPatch):
@@ -892,10 +945,46 @@ def test_daily_pipeline_returns_frozen_current_plan_without_running_live_stages(
 
     monkeypatch.setattr("src.execution.daily_pipeline.build_candidate_pool", lambda trade_date: (_ for _ in ()).throw(AssertionError("live candidate build should be bypassed")))
 
-    replayed = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 1.0, "positions": {}}, blocked_buy_tickers={"600000": {"blocked_until": "20260310"}})
+    replayed = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 1.0, "positions": {}}, blocked_buy_tickers={"600000": {"blocked_until": "20260304"}})
 
     assert replayed.model_dump() == frozen_plan.model_dump()
     assert replayed is not frozen_plan
+
+
+def test_daily_pipeline_applies_reentry_filter_to_frozen_buy_orders():
+    frozen_plan = ExecutionPlan(
+        date="20260310",
+        buy_orders=[PositionPlan(ticker="300724", shares=100, amount=12000.0, score_final=0.24, execution_ratio=0.3)],
+        watchlist=[LayerCResult(ticker="300724", score_c=-0.05, score_final=0.24, score_b=0.43, decision="watch")],
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"watchlist_count": 1, "buy_order_count": 1},
+            "funnel_diagnostics": {
+                "filters": {
+                    "buy_orders": {"filtered_count": 0, "reason_counts": {}, "tickers": [], "selected_tickers": ["300724"]}
+                }
+            },
+        },
+    )
+    pipeline = DailyPipeline(frozen_post_market_plans={"20260310": frozen_plan}, frozen_plan_source="/tmp/frozen.jsonl")
+
+    replayed = pipeline.run_post_market(
+        "20260310",
+        portfolio_snapshot={"cash": 1.0, "positions": {}},
+        blocked_buy_tickers={
+            "300724": {
+                "trigger_reason": "hard_stop_loss",
+                "exit_trade_date": "20260303",
+                "blocked_until": "20260306",
+                "reentry_review_until": "20260312",
+            }
+        },
+    )
+
+    assert replayed.buy_orders == []
+    assert replayed.risk_metrics["counts"]["buy_order_count"] == 0
+    assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["reason_counts"] == {"blocked_by_reentry_score_confirmation": 1}
+    assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["selected_tickers"] == []
 
 
 def test_recovery_protocol():
