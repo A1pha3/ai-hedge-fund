@@ -147,6 +147,23 @@ def test_trailing_stop():
     assert signal.trigger_reason == "trailing_profit_stop"
 
 
+def test_profit_retrace_triggers_after_six_percent_peak_reverses_to_one_percent():
+    holding = HoldingState(
+        ticker="603993",
+        entry_price=10.0,
+        entry_date="20260203",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="有色金属",
+        max_unrealized_pnl_pct=0.062,
+    )
+
+    signal = check_exit_signal(holding, current_price=10.0, trade_date="20260303")
+
+    assert signal is not None
+    assert signal.trigger_reason == "profit_retrace"
+
+
 def test_staged_profit_take():
     holding = HoldingState(ticker="000001", entry_price=10.0, entry_date="20260201", shares=1000, cost_basis=10_000, industry_sw="银行")
     signal_stage_1 = check_exit_signal(holding, current_price=11.6, trade_date="20260307")

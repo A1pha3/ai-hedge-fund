@@ -7,6 +7,8 @@ from typing import Optional
 from src.portfolio.models import ExitSignal, HoldingState
 
 HARD_STOP_LOSS_PCT = -0.07
+PROFIT_RETRACE_ARM_PCT = 0.06
+PROFIT_RETRACE_EXIT_PCT = 0.01
 MAX_HOLDING_DAYS = 20
 FUNDAMENTAL_MAX_HOLDING_DAYS = 40
 
@@ -40,7 +42,7 @@ def check_exit_signal(
     if atr_14 > 0 and atr_stop > hard_stop_price and current_price < atr_stop:
         return ExitSignal(ticker=holding.ticker, level="L2", trigger_reason="atr_stop_loss", urgency="next_day", sell_ratio=1.0)
 
-    if holding.profit_take_stage == 0 and max_pnl >= 0.08 and pnl_pct <= 0.01:
+    if holding.profit_take_stage == 0 and max_pnl >= PROFIT_RETRACE_ARM_PCT and pnl_pct <= PROFIT_RETRACE_EXIT_PCT:
         return ExitSignal(ticker=holding.ticker, level="L2.5", trigger_reason="profit_retrace", urgency="next_day", sell_ratio=1.0)
 
     if logic_score is not None and logic_score <= -0.20:
