@@ -1,0 +1,105 @@
+{
+  "mode": "paper_trading",
+  "start_date": "2026-02-02",
+  "end_date": "2026-02-05",
+  "tickers": [],
+  "initial_capital": 100000.0,
+  "model_name": "MiniMax-M2.5",
+  "model_provider": "MiniMax",
+  "selected_analysts": null,
+  "plan_generation": {
+    "mode": "frozen_current_plan_replay",
+    "frozen_plan_source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_20260202_20260205_logic_scores_logic_stop_source/daily_events.jsonl"
+  },
+  "performance_metrics": {
+    "sharpe_ratio": -6.861992602289449,
+    "sortino_ratio": -6.534737285383437,
+    "max_drawdown": -0.4678297873127496,
+    "long_short_ratio": null,
+    "gross_exposure": null,
+    "net_exposure": null,
+    "max_drawdown_date": "2026-02-05",
+    "calmar_ratio": -44.78716272155868,
+    "cvar_95": -0.004678297873127457
+  },
+  "portfolio_values": [
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0
+    },
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-03",
+      "Portfolio Value": 99991.90276525001,
+      "Long Exposure": 4626.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 4626.0,
+      "Net Exposure": 4626.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-04",
+      "Portfolio Value": 100095.75962762501,
+      "Long Exposure": 7101.000000000001,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 7101.000000000001,
+      "Net Exposure": 7101.000000000001,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-05",
+      "Portfolio Value": 99627.48184825001,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    }
+  ],
+  "final_portfolio_snapshot": {
+    "cash": 99627.48184825001,
+    "margin_used": 0.0,
+    "margin_requirement": 0.0,
+    "positions": {
+      "603993": {
+        "long": 0,
+        "short": 0,
+        "long_cost_basis": 0.0,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "",
+        "last_trade_date": "",
+        "holding_days": 0,
+        "max_unrealized_pnl_pct": 0.0,
+        "profit_take_stage": 0,
+        "entry_score": 0.0,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      }
+    },
+    "realized_gains": {
+      "603993": {
+        "long": -362.46600000000024,
+        "short": 0.0
+      }
+    }
+  },
+  "daily_event_stats": {
+    "day_count": 4,
+    "executed_trade_days": 3,
+    "total_executed_orders": 3
+  },
+  "artifacts": {
+    "daily_events": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_m0_20/daily_events.jsonl",
+    "timing_log": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_m0_20/pipeline_timings.jsonl",
+    "summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_m0_20/session_summary.json"
+  }
+}

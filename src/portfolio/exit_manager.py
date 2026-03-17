@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from src.portfolio.models import ExitSignal, HoldingState
 
+
+def _get_env_float(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
 HARD_STOP_LOSS_PCT = -0.06
+LOGIC_STOP_LOSS_SCORE_THRESHOLD = _get_env_float("LOGIC_STOP_LOSS_SCORE_THRESHOLD", -0.20)
 PROFIT_RETRACE_ARM_PCT = 0.06
 PROFIT_RETRACE_EXIT_PCT = 0.01
 MAX_HOLDING_DAYS = 20
@@ -45,7 +58,7 @@ def check_exit_signal(
     if holding.profit_take_stage == 0 and max_pnl >= PROFIT_RETRACE_ARM_PCT and pnl_pct <= PROFIT_RETRACE_EXIT_PCT:
         return ExitSignal(ticker=holding.ticker, level="L2.5", trigger_reason="profit_retrace", urgency="next_day", sell_ratio=1.0)
 
-    if logic_score is not None and logic_score <= -0.20:
+    if logic_score is not None and logic_score <= LOGIC_STOP_LOSS_SCORE_THRESHOLD:
         return ExitSignal(ticker=holding.ticker, level="L3", trigger_reason="logic_stop_loss", urgency="next_day", sell_ratio=1.0)
 
     max_days = FUNDAMENTAL_MAX_HOLDING_DAYS if holding.is_fundamental_driven else MAX_HOLDING_DAYS

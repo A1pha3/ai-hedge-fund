@@ -1,5 +1,6 @@
 """Phase 3 组合风控核心测试。"""
 
+import src.portfolio.exit_manager as exit_manager_module
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.industry_exposure import calculate_industry_exposures, calculate_portfolio_hhi, get_industry_remaining_quota
 from src.portfolio.models import HoldingState
@@ -170,6 +171,16 @@ def test_profit_retrace_triggers_after_six_percent_peak_reverses_to_one_percent(
 
     assert signal is not None
     assert signal.trigger_reason == "profit_retrace"
+
+
+def test_logic_stop_loss_threshold_is_configurable(monkeypatch):
+    monkeypatch.setattr(exit_manager_module, "LOGIC_STOP_LOSS_SCORE_THRESHOLD", -0.10)
+    holding = HoldingState(ticker="603993", entry_price=10.0, entry_date="20260203", shares=1000, cost_basis=10_000, industry_sw="有色金属")
+
+    signal = check_exit_signal(holding, current_price=10.0, trade_date="20260303", logic_score=-0.15)
+
+    assert signal is not None
+    assert signal.trigger_reason == "logic_stop_loss"
 
 
 def test_staged_profit_take():
