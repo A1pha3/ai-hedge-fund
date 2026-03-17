@@ -10,6 +10,7 @@ from src.backtesting.engine import BacktestEngine
 from src.backtesting.types import PerformanceMetrics
 from src.execution.daily_pipeline import DailyPipeline
 from src.main import run_hedge_fund
+from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 
 
 def _serialize_portfolio_values(portfolio_values: Sequence[dict]) -> list[dict]:
@@ -62,14 +63,26 @@ def run_paper_trading_session(
     initial_margin_requirement: float = 0.0,
     agent: Callable = run_hedge_fund,
     pipeline: DailyPipeline | None = None,
+    frozen_plan_source: str | Path | None = None,
 ) -> PaperTradingArtifacts:
     output_dir_path = Path(output_dir).resolve()
     output_dir_path.mkdir(parents=True, exist_ok=True)
+    frozen_plan_source_path = Path(frozen_plan_source).resolve() if frozen_plan_source is not None else None
 
     daily_events_path = output_dir_path / "daily_events.jsonl"
     timing_log_path = output_dir_path / "pipeline_timings.jsonl"
     summary_path = output_dir_path / "session_summary.json"
     checkpoint_path = output_dir_path / "session.checkpoint.json"
+
+    if frozen_plan_source_path is not None:
+        if pipeline is not None:
+            raise ValueError("pipeline and frozen_plan_source cannot be used together")
+        pipeline = DailyPipeline(
+            base_model_name=model_name,
+            base_model_provider=model_provider,
+            frozen_post_market_plans=load_frozen_post_market_plans(frozen_plan_source_path),
+            frozen_plan_source=str(frozen_plan_source_path),
+        )
 
     recorder = JsonlPaperTradingRecorder(daily_events_path)
     engine = BacktestEngine(
@@ -101,6 +114,10 @@ def run_paper_trading_session(
         "model_name": model_name,
         "model_provider": model_provider,
         "selected_analysts": selected_analysts,
+        "plan_generation": {
+            "mode": "frozen_current_plan_replay" if frozen_plan_source_path is not None else "live_pipeline",
+            "frozen_plan_source": str(frozen_plan_source_path) if frozen_plan_source_path is not None else None,
+        },
         "performance_metrics": dict(metrics),
         "portfolio_values": _serialize_portfolio_values(engine.get_portfolio_values()),
         "final_portfolio_snapshot": engine.get_portfolio_snapshot(),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from inspect import signature
 from time import perf_counter
 from typing import Callable, Optional
 import os
@@ -26,7 +27,7 @@ from src.tools.tushare_api import get_daily_basic_batch
 
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
-ExitChecker = Callable[[dict, str], list]
+ExitChecker = Callable[..., list]
 
 
 def _get_env_float(name: str, default: float) -> float:
@@ -80,7 +81,11 @@ def _estimate_skipped_precise_seconds(fast_agent_seconds: float, fast_ticker_cou
     return fast_agent_seconds * (skipped_precise_ticker_count / fast_ticker_count)
 
 
-def _default_exit_checker(portfolio_snapshot: dict, trade_date: str) -> list:
+def _build_logic_score_map(layer_c_results: list[LayerCResult]) -> dict[str, float]:
+    return {item.ticker: float(item.score_final) for item in layer_c_results}
+
+
+def _default_exit_checker(portfolio_snapshot: dict, trade_date: str, logic_scores: dict[str, float] | None = None) -> list:
     positions = portfolio_snapshot.get("positions", {})
     active_tickers = [ticker for ticker, position in positions.items() if float(position.get("long", 0.0)) > 0]
     if not active_tickers:
@@ -110,7 +115,12 @@ def _default_exit_checker(portfolio_snapshot: dict, trade_date: str) -> list:
             entry_score=float(position.get("entry_score", 0.0)),
             is_fundamental_driven=bool(position.get("is_fundamental_driven", False)),
         )
-        signal = check_exit_signal(holding, current_price=float(current_price), trade_date=trade_date)
+        signal = check_exit_signal(
+            holding,
+            current_price=float(current_price),
+            trade_date=trade_date,
+            logic_score=(logic_scores or {}).get(ticker),
+        )
         if signal is not None:
             exits.append(signal)
     return exits
@@ -268,11 +278,24 @@ class DailyPipeline:
     exit_checker: ExitChecker = _default_exit_checker
     base_model_name: str = "gpt-4.1"
     base_model_provider: str = "OpenAI"
+    frozen_post_market_plans: dict[str, ExecutionPlan] | None = None
+    frozen_plan_source: str | None = None
 
     def __post_init__(self) -> None:
         if self.agent_runner is None:
             self.agent_runner = self._run_agents_with_base_model
         self._skip_precise_stage = _should_skip_precise_stage(self.base_model_name, self.base_model_provider)
+        self._exit_checker_accepts_logic_scores = len(signature(self.exit_checker).parameters) >= 3
+        if self.frozen_post_market_plans is not None:
+            self.frozen_post_market_plans = {
+                str(trade_date): ExecutionPlan.model_validate(plan)
+                for trade_date, plan in self.frozen_post_market_plans.items()
+            }
+
+    def _run_exit_checker(self, portfolio_snapshot: dict, trade_date: str, logic_scores: dict[str, float] | None = None) -> list:
+        if self._exit_checker_accepts_logic_scores:
+            return self.exit_checker(portfolio_snapshot, trade_date, logic_scores or {})
+        return self.exit_checker(portfolio_snapshot, trade_date)
 
     def _run_agents_with_base_model(self, tickers: list[str], trade_date: str, model_tier: str) -> dict[str, dict[str, dict]]:
         from src.main import run_hedge_fund
@@ -292,6 +315,12 @@ class DailyPipeline:
         return result.get("analyst_signals", {})
 
     def run_post_market(self, trade_date: str, portfolio_snapshot: Optional[dict] = None, blocked_buy_tickers: dict[str, dict] | None = None) -> ExecutionPlan:
+        if self.frozen_post_market_plans is not None:
+            frozen_plan = self.frozen_post_market_plans.get(trade_date)
+            if frozen_plan is None:
+                raise ValueError(f"Missing frozen current_plan for trade_date={trade_date}")
+            return frozen_plan.model_copy(deep=True)
+
         total_started_at = perf_counter()
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
         blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
@@ -334,6 +363,7 @@ class DailyPipeline:
         stage_started_at = perf_counter()
         layer_c_results = aggregate_layer_c_results(high_pool, agent_results)
         aggregate_layer_c_seconds = perf_counter() - stage_started_at
+        logic_scores = _build_logic_score_map(layer_c_results)
         watchlist = [item for item in layer_c_results if item.score_final >= WATCHLIST_SCORE_THRESHOLD and item.decision != "avoid"]
         layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(fused, high_pool)
         watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(layer_c_results, watchlist)
@@ -352,7 +382,7 @@ class DailyPipeline:
         build_buy_orders_seconds = perf_counter() - stage_started_at
 
         stage_started_at = perf_counter()
-        sell_orders = self.exit_checker(portfolio_snapshot, trade_date)
+        sell_orders = self._run_exit_checker(portfolio_snapshot, trade_date, logic_scores)
         sell_check_seconds = perf_counter() - stage_started_at
         sell_order_diagnostics = _build_sell_order_diagnostics(sell_orders)
 
@@ -400,6 +430,7 @@ class DailyPipeline:
             trade_date=trade_date,
             market_state=market_state,
             watchlist=watchlist,
+            logic_scores=logic_scores,
             buy_orders=buy_orders,
             sell_orders=sell_orders,
             portfolio_snapshot=portfolio_snapshot,
@@ -464,7 +495,7 @@ class DailyPipeline:
             recent_total_volumes=list(crisis_inputs.get("recent_total_volumes", [])),
             drawdown_pct=float(crisis_inputs.get("drawdown_pct", 0.0)),
         )
-        exits = self.exit_checker(plan.portfolio_snapshot, trade_date_t1)
+        exits = self._run_exit_checker(plan.portfolio_snapshot, trade_date_t1, plan.logic_scores)
         return confirmed_orders, exits, crisis_response
 
     def _build_buy_orders_with_diagnostics(

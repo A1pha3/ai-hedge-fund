@@ -130,6 +130,14 @@ def test_hard_stop_loss():
     assert signal.level == "L1"
 
 
+def test_hard_stop_loss_triggers_at_six_percent_drawdown_boundary():
+    holding = HoldingState(ticker="000001", entry_price=10.0, entry_date="20260201", shares=1000, cost_basis=10_000, industry_sw="银行")
+    signal = check_exit_signal(holding, current_price=9.39, trade_date="20260307")
+    assert signal is not None
+    assert signal.level == "L1"
+    assert signal.trigger_reason == "hard_stop_loss"
+
+
 def test_trailing_stop():
     holding = HoldingState(
         ticker="000001",

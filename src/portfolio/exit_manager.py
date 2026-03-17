@@ -6,7 +6,7 @@ from typing import Optional
 
 from src.portfolio.models import ExitSignal, HoldingState
 
-HARD_STOP_LOSS_PCT = -0.07
+HARD_STOP_LOSS_PCT = -0.06
 PROFIT_RETRACE_ARM_PCT = 0.06
 PROFIT_RETRACE_EXIT_PCT = 0.01
 MAX_HOLDING_DAYS = 20

@@ -570,6 +570,43 @@ def test_default_exit_checker_emits_hard_stop_from_position_snapshot_metadata(mo
     assert exits[0].trigger_reason == "hard_stop_loss"
 
 
+def test_default_exit_checker_uses_logic_scores_when_available(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "get_daily_basic_batch",
+        lambda trade_date: pd.DataFrame([{"ts_code": "300724.SZ", "close": 142.92}]),
+    )
+
+    exits = daily_pipeline_module._default_exit_checker(
+        {
+            "cash": 50_000,
+            "positions": {
+                "300724": {
+                    "long": 100,
+                    "short": 0,
+                    "long_cost_basis": 142.924065,
+                    "short_cost_basis": 0.0,
+                    "short_margin_used": 0.0,
+                    "entry_date": "20260203",
+                    "holding_days": 5,
+                    "max_unrealized_pnl_pct": 0.0,
+                    "profit_take_stage": 0,
+                    "entry_score": 0.22,
+                    "is_fundamental_driven": False,
+                    "industry_sw": "电力设备",
+                }
+            },
+            "realized_gains": {},
+        },
+        "20260211",
+        {"300724": -0.25},
+    )
+
+    assert len(exits) == 1
+    assert exits[0].ticker == "300724"
+    assert exits[0].trigger_reason == "logic_stop_loss"
+
+
 def test_signal_decay_jump_gap():
     plan = ExecutionPlan(
         date="20260305",
@@ -800,6 +837,65 @@ def test_run_post_market_records_zero_skip_metrics_when_precise_runs():
     assert plan.risk_metrics["counts"]["precise_stage_skipped"] is False
     assert plan.risk_metrics["counts"]["skipped_precise_ticker_count"] == 0
     assert plan.risk_metrics["timing_seconds"]["estimated_skipped_precise"] == 0.0
+    assert set(plan.logic_scores.keys()) == {"000000", "000001"}
+
+
+def test_intraday_exit_checker_reads_logic_scores_from_plan(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "get_daily_basic_batch",
+        lambda trade_date: pd.DataFrame([{"ts_code": "300724.SZ", "close": 142.92}]),
+    )
+
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {})
+    plan = ExecutionPlan(
+        date="20260305",
+        logic_scores={"300724": -0.25},
+        portfolio_snapshot={
+            "cash": 50_000,
+            "positions": {
+                "300724": {
+                    "long": 100,
+                    "short": 0,
+                    "long_cost_basis": 142.924065,
+                    "short_cost_basis": 0.0,
+                    "short_margin_used": 0.0,
+                    "entry_date": "20260203",
+                    "holding_days": 5,
+                    "max_unrealized_pnl_pct": 0.0,
+                    "profit_take_stage": 0,
+                    "entry_score": 0.22,
+                    "is_fundamental_driven": False,
+                    "industry_sw": "电力设备",
+                }
+            },
+            "realized_gains": {},
+        },
+    )
+
+    confirmed, exits, crisis = pipeline.run_intraday(plan, "20260211")
+
+    assert confirmed == []
+    assert len(exits) == 1
+    assert exits[0].trigger_reason == "logic_stop_loss"
+    assert crisis["mode"] == "normal"
+
+
+def test_daily_pipeline_returns_frozen_current_plan_without_running_live_stages(monkeypatch):
+    frozen_plan = ExecutionPlan(
+        date="20260305",
+        buy_orders=[PositionPlan(ticker="600000", shares=100, amount=1000.0, score_final=0.42, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}},
+    )
+    pipeline = DailyPipeline(frozen_post_market_plans={"20260305": frozen_plan}, frozen_plan_source="/tmp/frozen.jsonl")
+
+    monkeypatch.setattr("src.execution.daily_pipeline.build_candidate_pool", lambda trade_date: (_ for _ in ()).throw(AssertionError("live candidate build should be bypassed")))
+
+    replayed = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 1.0, "positions": {}}, blocked_buy_tickers={"600000": {"blocked_until": "20260310"}})
+
+    assert replayed.model_dump() == frozen_plan.model_dump()
+    assert replayed is not frozen_plan
 
 
 def test_recovery_protocol():

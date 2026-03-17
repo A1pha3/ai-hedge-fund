@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name", default="gpt-4.1")
     parser.add_argument("--model-provider", default="OpenAI")
     parser.add_argument("--output-dir", default=None, help="Directory for daily events, timing logs, and session summary")
+    parser.add_argument("--frozen-plan-source", default=None, help="Path to a historical daily_events.jsonl file whose current_plan records will be replayed")
     return parser.parse_args()
 
 
@@ -36,11 +37,14 @@ def main() -> None:
         initial_capital=args.initial_capital,
         model_name=args.model_name,
         model_provider=args.model_provider,
+        frozen_plan_source=args.frozen_plan_source,
     )
     print(f"paper_trading_output_dir={artifacts.output_dir}")
     print(f"paper_trading_daily_events={artifacts.daily_events_path}")
     print(f"paper_trading_timing_log={artifacts.timing_log_path}")
     print(f"paper_trading_summary={artifacts.summary_path}")
+    if args.frozen_plan_source:
+        print(f"paper_trading_frozen_plan_source={Path(args.frozen_plan_source).resolve()}")
 
 
 if __name__ == "__main__":

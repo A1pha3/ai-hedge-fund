@@ -38,6 +38,7 @@ class ExecutionPlan(BaseModel):
     date: str
     market_state: Optional[MarketState] = None
     strategy_weights: dict[str, float] = Field(default_factory=dict)
+    logic_scores: dict[str, float] = Field(default_factory=dict)
     buy_orders: list[PositionPlan] = Field(default_factory=list)
     sell_orders: list[ExitSignal] = Field(default_factory=list)
     pending_buy_queue: list[PendingOrder] = Field(default_factory=list)

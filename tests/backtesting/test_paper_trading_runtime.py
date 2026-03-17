@@ -103,5 +103,63 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["mode"] == "paper_trading"
+    assert summary["plan_generation"]["mode"] == "live_pipeline"
     assert summary["daily_event_stats"]["day_count"] >= 1
     assert summary["artifacts"]["summary"] == str(artifacts.summary_path)
+
+
+def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+    monkeypatch.setattr("src.execution.daily_pipeline.build_candidate_pool", lambda trade_date: (_ for _ in ()).throw(AssertionError("live pipeline should not run during frozen replay")))
+
+    source_path = tmp_path / "baseline_daily_events.jsonl"
+    plan_day_1 = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}},
+    )
+    plan_day_2 = ExecutionPlan(date="20240304", portfolio_snapshot={"cash": 98900.0, "positions": {}})
+    source_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"event": "paper_trading_day", "trade_date": "20240301", "current_plan": plan_day_1.model_dump()}, ensure_ascii=False),
+                json.dumps({"event": "paper_trading_day", "trade_date": "20240304", "current_plan": plan_day_2.model_dump()}, ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        output_dir=tmp_path / "paper_trading_replay",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["plan_generation"] == {
+        "mode": "frozen_current_plan_replay",
+        "frozen_plan_source": str(source_path.resolve()),
+    }
+    assert summary["final_portfolio_snapshot"]["positions"]["AAPL"]["long"] == 100
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert lines[0]["current_plan"]["date"] == "20240301"
+    assert lines[-1]["current_plan"]["date"] == "20240304"

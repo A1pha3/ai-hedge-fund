@@ -103,6 +103,7 @@ class BaselineDailyGainersPipeline(DailyPipeline):
         fused = [_baseline_fused_score(ticker, market_state) for ticker in tickers]
         layer_c_results = aggregate_layer_c_results(fused, agent_results)
         aggregate_layer_c_seconds = perf_counter() - stage_started_at
+        logic_scores = {item.ticker: float(item.score_final) for item in layer_c_results}
         watchlist = [item for item in layer_c_results if item.score_final >= 0.25 and item.decision != "avoid"]
 
         stage_started_at = perf_counter()
@@ -110,7 +111,7 @@ class BaselineDailyGainersPipeline(DailyPipeline):
         build_buy_orders_seconds = perf_counter() - stage_started_at
 
         stage_started_at = perf_counter()
-        sell_orders = self.exit_checker(portfolio_snapshot, trade_date)
+        sell_orders = self._run_exit_checker(portfolio_snapshot, trade_date, logic_scores)
         sell_check_seconds = perf_counter() - stage_started_at
 
         timing_seconds = {
@@ -126,6 +127,7 @@ class BaselineDailyGainersPipeline(DailyPipeline):
             trade_date=trade_date,
             market_state=market_state,
             watchlist=watchlist,
+            logic_scores=logic_scores,
             buy_orders=buy_orders,
             sell_orders=sell_orders,
             portfolio_snapshot=portfolio_snapshot,
