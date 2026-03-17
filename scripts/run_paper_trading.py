@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+from scripts.model_selection import resolve_model_selection
 from src.paper_trading.runtime import run_paper_trading_session
 
 
@@ -18,8 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", required=True, help="End date in YYYY-MM-DD format")
     parser.add_argument("--tickers", default="", help="Optional comma-separated tracking tickers")
     parser.add_argument("--initial-capital", type=float, default=100000.0)
-    parser.add_argument("--model-name", default="gpt-4.1")
-    parser.add_argument("--model-provider", default="OpenAI")
+    parser.add_argument("--model-name", default=None, help="Model name override; omitted means use the primary route detected from .env")
+    parser.add_argument("--model-provider", default=None, help="Model provider override; omitted means use the primary route detected from .env")
     parser.add_argument("--output-dir", default=None, help="Directory for daily events, timing logs, and session summary")
     parser.add_argument("--frozen-plan-source", default=None, help="Path to a historical daily_events.jsonl file whose current_plan records will be replayed")
     return parser.parse_args()
@@ -29,16 +30,18 @@ def main() -> None:
     args = parse_args()
     tickers = [ticker.strip() for ticker in args.tickers.split(",") if ticker.strip()]
     output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir(args.start_date, args.end_date)
+    resolved_model_name, resolved_model_provider = resolve_model_selection(args.model_name, args.model_provider)
     artifacts = run_paper_trading_session(
         start_date=args.start_date,
         end_date=args.end_date,
         output_dir=output_dir,
         tickers=tickers,
         initial_capital=args.initial_capital,
-        model_name=args.model_name,
-        model_provider=args.model_provider,
+        model_name=resolved_model_name,
+        model_provider=resolved_model_provider,
         frozen_plan_source=args.frozen_plan_source,
     )
+    print(f"paper_trading_model_route={resolved_model_provider}:{resolved_model_name}")
     print(f"paper_trading_output_dir={artifacts.output_dir}")
     print(f"paper_trading_daily_events={artifacts.daily_events_path}")
     print(f"paper_trading_timing_log={artifacts.timing_log_path}")

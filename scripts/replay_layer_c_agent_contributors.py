@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from scripts.analyze_layer_b_backtest_variants import _resolve_model_selection
+from scripts.model_selection import resolve_model_selection
 from src.backtesting.rule_variant_compare import make_pipeline_agent_runner
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.screening.models import FusedScore
@@ -207,7 +207,7 @@ def main() -> int:
     selected_dates = {item.strip() for item in args.dates.split(",") if item.strip()}
     selected_tickers = {item.strip() for item in args.tickers if str(item).strip()} or None
     baseline_rows = _load_pipeline_rows(Path(args.baseline).resolve())
-    resolved_model_name, resolved_model_provider = _resolve_model_selection(args.model_name, args.model_provider)
+    resolved_model_name, resolved_model_provider = resolve_model_selection(args.model_name, args.model_provider)
     selected_analysts = [value for _, value in ANALYST_ORDER]
     agent_runner = make_pipeline_agent_runner(
         model_name=resolved_model_name,
