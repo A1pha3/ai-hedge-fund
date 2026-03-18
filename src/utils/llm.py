@@ -10,6 +10,7 @@ from time import perf_counter
 from pydantic import BaseModel
 
 from src.graph.state import AgentState
+from src.llm.defaults import get_default_model_config
 from src.llm.models import ProviderRoute, get_model, get_model_info, get_provider_concurrency_limit_env_var, get_provider_primary_route, get_provider_profile, get_provider_routes
 from src.monitoring.llm_metrics import record_llm_attempt
 from src.utils.progress import progress
@@ -300,7 +301,9 @@ def _apply_priority_strategy(model_name: str, model_provider: str, api_keys: dic
         return model_name, model_provider, api_keys, [], None, _get_transport_family(model_provider, None, api_keys)
 
     primary = fallback_chain[0]
-    return primary["model_name"], primary["model_provider"], primary.get("api_keys"), fallback_chain[1:], primary.get("route_id"), str(primary.get("transport_family") or _get_transport_family(str(primary["model_provider"]), primary.get("route_id"), api_keys))
+    primary_provider = str(primary["model_provider"])
+    primary_model_name = model_name if primary_provider == str(model_provider) and model_name else str(primary["model_name"])
+    return primary_model_name, primary_provider, primary.get("api_keys"), fallback_chain[1:], primary.get("route_id"), str(primary.get("transport_family") or _get_transport_family(primary_provider, primary.get("route_id"), api_keys))
 
 
 def _compute_retry_delay(attempt: int, error: Exception) -> float:
@@ -346,8 +349,7 @@ def call_llm(
         model_name, model_provider = get_agent_model_config(state, agent_name)
     else:
         # Use system defaults when no state or agent_name is provided
-        model_name = "gpt-4.1"
-        model_provider = "OPENAI"
+        model_name, model_provider = get_default_model_config()
 
     # Extract API keys from state if available
     api_keys = _extract_state_api_keys(state)
@@ -596,8 +598,9 @@ def get_agent_model_config(state, agent_name):
             return model_name, model_provider.value if hasattr(model_provider, "value") else str(model_provider)
 
     # Fall back to global configuration (system defaults)
-    model_name = state.get("metadata", {}).get("model_name") or "gpt-4.1"
-    model_provider = state.get("metadata", {}).get("model_provider") or "OPENAI"
+    default_model_name, default_model_provider = get_default_model_config()
+    model_name = state.get("metadata", {}).get("model_name") or default_model_name
+    model_provider = state.get("metadata", {}).get("model_provider") or default_model_provider
 
     # Convert enum to string if necessary
     if hasattr(model_provider, "value"):

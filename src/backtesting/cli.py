@@ -9,6 +9,7 @@ import questionary
 from colorama import Fore, init, Style
 from dateutil.relativedelta import relativedelta
 
+from src.llm.defaults import get_default_model_config
 from src.llm.models import get_model_info, LLM_ORDER, ModelProvider, OLLAMA_LLM_ORDER
 from src.main import run_hedge_fund
 from src.utils.analysts import ANALYST_ORDER
@@ -24,6 +25,11 @@ logger = get_logger(__name__)
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run backtesting engine (modular)")
+    parser.add_argument(
+        "--show-default-model",
+        action="store_true",
+        help="Print the currently resolved default model/provider from .env and exit",
+    )
     parser.add_argument("--tickers", type=str, required=False, help="Comma-separated tickers")
     parser.add_argument(
         "--end-date",
@@ -58,6 +64,12 @@ def main() -> int:
 
     args = parser.parse_args()
     init(autoreset=True)
+
+    if args.show_default_model:
+        default_model_name, default_model_provider = get_default_model_config()
+        print(f"default_model_provider={default_model_provider}")
+        print(f"default_model_name={default_model_name}")
+        return 0
 
     tickers = [t.strip() for t in args.tickers.split(",")] if args.tickers else []
 
@@ -131,30 +143,7 @@ def main() -> int:
         logger.info(f"Selected Ollama model: {model_name}")
         print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
     else:
-        model_choice = questionary.select(
-            "Select your LLM model:",
-            choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-        if not model_choice:
-            logger.info("Interrupt received. Exiting...")
-            print("\n\nInterrupt received. Exiting...")
-            return 1
-        model_name, model_provider = model_choice
-        model_info = get_model_info(model_name, model_provider)
-        if model_info and model_info.is_custom():
-            model_name = questionary.text("Enter the custom model name:").ask()
-            if not model_name:
-                logger.info("Interrupt received. Exiting...")
-                print("\n\nInterrupt received. Exiting...")
-                return 1
+        model_name, model_provider = get_default_model_config()
         logger.info(f"Selected {model_provider} model: {model_name}")
         print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
 

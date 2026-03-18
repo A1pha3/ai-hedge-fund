@@ -1,6 +1,8 @@
+import { Badge } from '@/components/ui/badge';
+import { getDefaultModel, type LanguageModel } from '@/data/models';
 import { cn } from '@/lib/utils';
 import { Cloud, Server } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CloudModels } from './models/cloud';
 import { OllamaSettings } from './models/ollama';
 
@@ -18,6 +20,24 @@ interface ModelSection {
 
 export function Models({ className }: ModelsProps) {
   const [selectedSection, setSelectedSection] = useState('cloud');
+  const [defaultModel, setDefaultModel] = useState<LanguageModel | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadDefaultModel = async () => {
+      const model = await getDefaultModel();
+      if (mounted) {
+        setDefaultModel(model);
+      }
+    };
+
+    void loadDefaultModel();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const modelSections: ModelSection[] = [
     {
@@ -52,6 +72,17 @@ export function Models({ className }: ModelsProps) {
           Manage your AI models from local and cloud providers.
         </p>
       </div>
+
+      {defaultModel && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
+          <span className="text-muted-foreground">Current unified default:</span>
+          <Badge className="text-xs text-primary bg-primary/10 border-primary/30 hover:bg-primary/10">
+            {defaultModel.provider}
+          </Badge>
+          <span className="font-medium text-primary">{defaultModel.display_name}</span>
+          <span className="font-mono text-xs text-muted-foreground">{defaultModel.model_name}</span>
+        </div>
+      )}
 
       {/* Model Type Navigation */}
       <div className="flex space-x-1 bg-muted p-1 rounded-lg">

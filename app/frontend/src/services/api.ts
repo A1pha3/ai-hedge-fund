@@ -58,6 +58,20 @@ export const api = {
     }
   },
 
+  getDefaultLanguageModel: async (): Promise<LanguageModel | null> => {
+    try {
+      const response = await authFetch(`${API_BASE_URL}/language-models/default`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      return data.model || null;
+    } catch (error) {
+      console.error('Failed to fetch default model:', error);
+      throw error;
+    }
+  },
+
   /**
    * Saves JSON data to a file in the project's /outputs directory
    * @param filename The name of the file to save

@@ -40,11 +40,11 @@ python analyze_ashare.py --ticker 600519 --mock
 ### 2. 在主系统中使用
 
 ```bash
-# 分析 A 股股票（使用 MiniMax 模型）
-python src/main.py --ticker 600519 --model MiniMax-M2.5 --show-reasoning
+# 分析 A 股股票（使用 .env 中的默认模型）
+python src/main.py --ticker 600519 --show-reasoning
 
 # 分析多只 A 股
-python src/main.py --ticker 600519,000001,300001 --model MiniMax-M2.5
+python src/main.py --ticker 600519,000001,300001
 ```
 
 ## 股票代码规则

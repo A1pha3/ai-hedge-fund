@@ -343,3 +343,22 @@ def test_call_llm_ignores_metrics_recording_failures(monkeypatch):
     )
 
     assert result.signal == "ok"
+
+
+def test_apply_priority_strategy_keeps_requested_primary_model_name(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("MINIMAX_FALLBACK_MODEL", "MiniMax-M2.5")
+
+    model_name, model_provider, api_keys, fallback_chain, route_id, transport_family = llm_utils._apply_priority_strategy(
+        "MiniMax-M2.7",
+        "MiniMax",
+        None,
+    )
+
+    assert model_provider == "MiniMax"
+    assert model_name == "MiniMax-M2.7"
+    assert api_keys is not None
+    assert api_keys["MINIMAX_API_KEY"] == "minimax-key"
+    assert route_id == "MiniMax:default"
+    assert transport_family == "openai-compatible"
+    assert isinstance(fallback_chain, list)

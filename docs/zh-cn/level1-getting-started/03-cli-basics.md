@@ -163,8 +163,16 @@ poetry run python src/main.py --ticker AAPL
 # 指定具体模型
 poetry run python src/main.py --ticker AAPL --model gpt-4.1
 
-# 分析 A 股（科创板）使用 MiniMax 原生模型
-uv run python src/main.py --ticker 688363 --model MiniMax-M2.5
+# 分析 A 股（科创板）使用当前 .env 默认模型
+uv run python src/main.py --ticker 688363
+```
+
+默认模型来自 .env：优先读取 LLM_DEFAULT_MODEL_PROVIDER 和 LLM_DEFAULT_MODEL_NAME；如果未设置全局默认型号，则继续读取 provider 对应的型号变量，例如 MiniMax 使用 MINIMAX_MODEL。
+
+如果你只想检查当前解析出的默认模型，而不实际运行分析，可以执行：
+
+```bash
+uv run python src/main.py --show-default-model
 ```
 
 #### 可用模型列表
@@ -247,8 +255,8 @@ poetry run python src/main.py --ticker AAPL,MSFT,GOOGL --model gemini-3-pro-prev
 **A 股分析示例**：
 
 ```bash
-# 使用 MiniMax 原生模型分析科创板股票
-uv run python src/main.py --ticker 688363 --model MiniMax-M2.5
+# 使用当前 .env 默认模型分析科创板股票
+uv run python src/main.py --ticker 688363
 
 # 使用智谱 GLM 分析 A 股
 uv run python src/main.py --ticker 000001 --model glm-4.7

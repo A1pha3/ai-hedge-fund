@@ -9,6 +9,7 @@ from typing import Callable, Sequence
 from src.backtesting.engine import BacktestEngine
 from src.backtesting.types import PerformanceMetrics
 from src.execution.daily_pipeline import DailyPipeline
+from src.llm.defaults import get_default_model_config
 from src.main import run_hedge_fund
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 
@@ -57,14 +58,16 @@ def run_paper_trading_session(
     output_dir: str | Path,
     tickers: list[str] | None = None,
     initial_capital: float = 100000.0,
-    model_name: str = "gpt-4.1",
-    model_provider: str = "OpenAI",
+    model_name: str | None = None,
+    model_provider: str | None = None,
     selected_analysts: list[str] | None = None,
     initial_margin_requirement: float = 0.0,
     agent: Callable = run_hedge_fund,
     pipeline: DailyPipeline | None = None,
     frozen_plan_source: str | Path | None = None,
 ) -> PaperTradingArtifacts:
+    resolved_model_name, resolved_model_provider = (model_name, model_provider) if model_name and model_provider else get_default_model_config()
+
     output_dir_path = Path(output_dir).resolve()
     output_dir_path.mkdir(parents=True, exist_ok=True)
     frozen_plan_source_path = Path(frozen_plan_source).resolve() if frozen_plan_source is not None else None
@@ -78,8 +81,8 @@ def run_paper_trading_session(
         if pipeline is not None:
             raise ValueError("pipeline and frozen_plan_source cannot be used together")
         pipeline = DailyPipeline(
-            base_model_name=model_name,
-            base_model_provider=model_provider,
+            base_model_name=resolved_model_name,
+            base_model_provider=resolved_model_provider,
             frozen_post_market_plans=load_frozen_post_market_plans(frozen_plan_source_path),
             frozen_plan_source=str(frozen_plan_source_path),
         )
@@ -91,8 +94,8 @@ def run_paper_trading_session(
         start_date=start_date,
         end_date=end_date,
         initial_capital=initial_capital,
-        model_name=model_name,
-        model_provider=model_provider,
+        model_name=resolved_model_name,
+        model_provider=resolved_model_provider,
         selected_analysts=selected_analysts,
         initial_margin_requirement=initial_margin_requirement,
         backtest_mode="pipeline",
@@ -111,8 +114,8 @@ def run_paper_trading_session(
         "end_date": end_date,
         "tickers": list(tickers or []),
         "initial_capital": float(initial_capital),
-        "model_name": model_name,
-        "model_provider": model_provider,
+        "model_name": resolved_model_name,
+        "model_provider": resolved_model_provider,
         "selected_analysts": selected_analysts,
         "plan_generation": {
             "mode": "frozen_current_plan_replay" if frozen_plan_source_path is not None else "live_pipeline",

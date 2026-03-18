@@ -4,7 +4,6 @@
 # 从 Markdown 文件中读取股票代码列表，逐个进行分析
 
 # 默认值
-DEFAULT_MODEL="MiniMax-M2.5"
 DEFAULT_ANALYSTS_ALL=false
 DEFAULT_START_DATE=""
 DEFAULT_END_DATE=""
@@ -18,7 +17,7 @@ show_help() {
     echo "  --file FILE             Markdown 文件路径，包含股票代码列表"
     echo ""
     echo "可选参数:"
-    echo "  --model MODEL           模型名称 (默认: $DEFAULT_MODEL)"
+    echo "  --model MODEL           模型名称 (默认: 读取 .env 中的统一默认模型)"
     echo "  --analysts-all          使用所有分析师"
     echo "  --start-date DATE       开始日期 (YYYY-MM-DD)"
     echo "  --end-date DATE         结束日期 (YYYY-MM-DD)"
@@ -30,12 +29,12 @@ show_help() {
     echo "  ./scripts/batch-run-hedge-fund.sh --file /path/to/daily_gainers.md --analysts-all"
     echo "  ./scripts/batch-run-hedge-fund.sh --file /path/to/daily_gainers.md --limit 10 --show-reasoning"
     echo "  ./scripts/batch-run-hedge-fund.sh --file /path/to/daily_gainers.md --start-date 2025-06-01 --analysts-all"
-    echo "  ./scripts/batch-run-hedge-fund.sh --file /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/stock/daliy/daily_gainers_20260226_gt5p0_20260226_233140.md --model MiniMax-M2.5 --start-date 2025-06-01 --analysts-all --show-reasoning"
+    echo "  ./scripts/batch-run-hedge-fund.sh --file /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/stock/daliy/daily_gainers_20260226_gt5p0_20260226_233140.md --start-date 2025-06-01 --analysts-all --show-reasoning"
 }
 
 # 解析命令行参数
 FILE=""
-MODEL="$DEFAULT_MODEL"
+MODEL=""
 ANALYSTS_ALL=false
 START_DATE="$DEFAULT_START_DATE"
 END_DATE="$DEFAULT_END_DATE"
@@ -124,7 +123,11 @@ if [ "$LIMIT" -gt 0 ] && [ "$LIMIT" -lt "$TICKER_COUNT" ]; then
 fi
 
 # 构建基础命令参数
-BASE_ARGS="--model $MODEL"
+BASE_ARGS=""
+
+if [ -n "$MODEL" ]; then
+    BASE_ARGS="--model $MODEL"
+fi
 
 if [ "$ANALYSTS_ALL" = true ]; then
     BASE_ARGS="$BASE_ARGS --analysts-all"

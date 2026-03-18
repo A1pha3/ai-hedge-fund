@@ -20,6 +20,6 @@ for key, config in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"]):
 
 # 显示使用示例
 echo "\n使用示例:"
-echo "  ./scripts/run-hedge-fund.sh --ticker 600158 --model MiniMax-M2.5 --analysts warren_buffett,ben_graham"
+echo "  ./scripts/run-hedge-fund.sh --ticker 600158 --analysts warren_buffett,ben_graham"
 echo "  ./scripts/run-hedge-fund.sh --ticker AAPL --model gpt-4o --analysts-all"
 echo "  ./scripts/run-hedge-fund.sh --ticker MSFT --model gpt-4o --analysts technical_analyst,fundamentals_analyst"

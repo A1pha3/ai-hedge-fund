@@ -83,11 +83,23 @@ Open and edit the `.env` file to add your API keys:
 # For running LLMs hosted by openai (gpt-4o, gpt-4o-mini, etc.)
 OPENAI_API_KEY=your-openai-api-key
 
+# Optional: set a unified default model route for every CLI/script/web entry
+LLM_DEFAULT_MODEL_PROVIDER=MiniMax
+LLM_DEFAULT_MODEL_NAME=MiniMax-M2.7
+
 # For getting financial data to power the hedge fund
 FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
 ```
 
 **Important**: You must set at least one LLM API key (e.g. `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, or `DEEPSEEK_API_KEY`) for the hedge fund to work. 
+
+**Default Model Routing**: If you set `LLM_DEFAULT_MODEL_PROVIDER` and optionally `LLM_DEFAULT_MODEL_NAME`, all major entry points will use that same default model unless you explicitly pass `--model` or an equivalent override. If `LLM_DEFAULT_MODEL_NAME` is omitted, the system falls back to the provider-specific model variable such as `MINIMAX_MODEL`.
+
+You can inspect the currently resolved default model with:
+
+```bash
+.venv/bin/python scripts/list-models.py
+```
 
 **Financial Data**: Data for AAPL, GOOGL, MSFT, NVDA, and TSLA is free and does not require an API key. For any other ticker, you will need to set the `FINANCIAL_DATASETS_API_KEY` in the .env file.
 
@@ -126,6 +138,12 @@ You can optionally specify the start and end dates to make decisions over a spec
 
 ```bash
 poetry run python src/main.py --ticker AAPL,MSFT,NVDA --start-date 2024-01-01 --end-date 2024-03-01
+```
+
+You can inspect the currently resolved default model directly from the main CLI.
+
+```bash
+poetry run python src/main.py --show-default-model
 ```
 
 #### Run the Backtester

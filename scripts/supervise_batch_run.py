@@ -10,7 +10,6 @@ INPUT_FILE = os.path.join(REPO, 'data/stock/daliy/daily_gainers_20260227_gt5p0_2
 CMD = [
     'uv', 'run', 'python', 'scripts/batch_run_hedge_fund.py',
     '--file', 'data/stock/daliy/daily_gainers_20260227_gt5p0_20260227_224118.md',
-    '--model', 'MiniMax-M2.5',
     '--start-date', '2024-05-30',
     '--analysts-all',
     '--show-reasoning',

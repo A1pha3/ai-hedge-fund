@@ -5,6 +5,7 @@
 
 import os
 from dotenv import load_dotenv
+from src.llm.defaults import get_default_model_config
 from src.llm.models import AVAILABLE_MODELS, OLLAMA_MODELS, ModelProvider
 
 # 加载.env文件中的环境变量
@@ -75,6 +76,16 @@ def check_api_key(provider):
 
 def main():
     """主函数"""
+    default_model_name, default_model_provider = get_default_model_config()
+
+    print("统一默认模型配置:")
+    print("-" * 80)
+    print(f"默认提供商: {default_model_provider}")
+    print(f"默认型号: {default_model_name}")
+    print(f"LLM_DEFAULT_MODEL_PROVIDER = {os.getenv('LLM_DEFAULT_MODEL_PROVIDER') or '(未设置)'}")
+    print(f"LLM_DEFAULT_MODEL_NAME = {os.getenv('LLM_DEFAULT_MODEL_NAME') or '(未设置)'}")
+    print("")
+
     print("可用大模型列表:")
     print("-" * 80)
     
@@ -121,6 +132,7 @@ def main():
     
     # 显示使用示例，使用已配置的模型
     print("\n使用示例:")
+    print(f"  ./.venv/bin/python scripts/list-models.py  # 当前默认: {default_model_provider} / {default_model_name}")
     if configured_models:
         # 使用第一个已配置的模型
         first_model = configured_models[0]

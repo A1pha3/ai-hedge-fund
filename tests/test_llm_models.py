@@ -1,3 +1,4 @@
+from src.llm import defaults as llm_defaults
 from src.llm import models as llm_models
 
 
@@ -22,9 +23,9 @@ def test_get_provider_routes_orders_registered_routes_by_priority(monkeypatch):
     routes = llm_models.get_provider_routes(api_keys=None, enabled_only_for="priority")
 
     assert [(route.provider_name, route.variant_name) for route in routes[:4]] == [
-        ("Zhipu", "coding_plan"),
         ("MiniMax", "default"),
         ("Volcengine", "coding_plan"),
+        ("Zhipu", "coding_plan"),
         ("Zhipu", "standard"),
     ]
 
@@ -240,3 +241,26 @@ def test_volcengine_doubao_model_disables_json_mode():
     model = llm_models.LLMModel(display_name="Doubao", model_name="doubao-seed-2.0-code", provider=llm_models.ModelProvider.VOLCENGINE)
 
     assert model.has_json_mode() is False
+
+
+def test_default_model_config_prefers_env_provider_and_provider_specific_model(monkeypatch):
+    monkeypatch.setenv("LLM_DEFAULT_MODEL_PROVIDER", "MiniMax")
+    monkeypatch.delenv("LLM_DEFAULT_MODEL_NAME", raising=False)
+    monkeypatch.delenv("BACKTEST_MODEL_NAME", raising=False)
+    monkeypatch.setenv("MINIMAX_MODEL", "MiniMax-M2.7")
+
+    model_name, model_provider = llm_defaults.get_default_model_config()
+
+    assert model_provider == "MiniMax"
+    assert model_name == "MiniMax-M2.7"
+
+
+def test_default_model_config_prefers_explicit_global_model_name(monkeypatch):
+    monkeypatch.setenv("LLM_DEFAULT_MODEL_PROVIDER", "MiniMax")
+    monkeypatch.setenv("LLM_DEFAULT_MODEL_NAME", "MiniMax-M2.5")
+    monkeypatch.setenv("MINIMAX_MODEL", "MiniMax-M2.7")
+
+    model_name, model_provider = llm_defaults.get_default_model_config()
+
+    assert model_provider == "MiniMax"
+    assert model_name == "MiniMax-M2.5"

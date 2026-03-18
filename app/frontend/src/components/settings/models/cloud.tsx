@@ -1,7 +1,11 @@
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { authFetch } from '@/services/auth-api';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { Cloud, RefreshCw } from 'lucide-react';
+import { Cloud, RefreshCw, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 interface CloudModelsProps {
   className?: string;
@@ -21,8 +25,15 @@ interface ModelProvider {
   }>;
 }
 
+interface DefaultModel {
+  display_name: string;
+  model_name: string;
+  provider: string;
+}
+
 export function CloudModels({ className }: CloudModelsProps) {
   const [providers, setProviders] = useState<ModelProvider[]>([]);
+  const [defaultModel, setDefaultModel] = useState<DefaultModel | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,13 +41,25 @@ export function CloudModels({ className }: CloudModelsProps) {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('http://localhost:8000/language-models/providers');
-      if (response.ok) {
-        const data = await response.json();
-        setProviders(data.providers);
-      } else {
-        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      const [providersResponse, defaultResponse] = await Promise.all([
+        authFetch(`${API_BASE_URL}/language-models/providers`),
+        authFetch(`${API_BASE_URL}/language-models/default`),
+      ]);
+
+      if (!providersResponse.ok) {
+        const errorData = await providersResponse.json().catch(() => ({ detail: 'Unknown error' }));
         setError(`Failed to fetch providers: ${errorData.detail}`);
+        return;
+      }
+
+      const providersData = await providersResponse.json();
+      setProviders(providersData.providers);
+
+      if (defaultResponse.ok) {
+        const defaultData = await defaultResponse.json();
+        setDefaultModel(defaultData.model || null);
+      } else {
+        setDefaultModel(null);
       }
     } catch (error) {
       console.error('Failed to fetch cloud model providers:', error);
@@ -59,6 +82,31 @@ export function CloudModels({ className }: CloudModelsProps) {
 
   return (
     <div className={cn("space-y-6", className)}>
+
+      <Card className="border-primary/20 bg-primary/5">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <CardTitle className="text-base">Current Default Model</CardTitle>
+          </div>
+          <CardDescription>
+            This is the unified default model resolved from the backend environment and shared by CLI, scripts, and web flows.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {defaultModel ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge className="text-xs text-primary bg-primary/10 border-primary/30 hover:bg-primary/10">
+                {defaultModel.provider}
+              </Badge>
+              <span className="font-medium text-primary">{defaultModel.display_name}</span>
+              <span className="font-mono text-xs text-muted-foreground">{defaultModel.model_name}</span>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Default model could not be resolved from the backend.</p>
+          )}
+        </CardContent>
+      </Card>
 
       {error && (
         <div className="bg-red-900/20 border border-red-600/30 rounded-lg p-4">

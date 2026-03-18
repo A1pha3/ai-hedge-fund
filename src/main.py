@@ -15,6 +15,7 @@ from src.agents.risk_manager import risk_management_agent
 from src.cli.input import (
     parse_cli_inputs,
 )
+from src.llm.defaults import get_default_model_config
 from src.execution.daily_pipeline import DailyPipeline
 from src.graph.state import AgentState
 from src.screening.candidate_pool import build_candidate_pool
@@ -63,9 +64,11 @@ def run_hedge_fund(
     portfolio: dict,
     show_reasoning: bool = False,
     selected_analysts: list[str] = [],
-    model_name: str = "gpt-4.1",
-    model_provider: str = "OpenAI",
+    model_name: str | None = None,
+    model_provider: str | None = None,
 ):
+    resolved_model_name, resolved_model_provider = (model_name, model_provider) if model_name and model_provider else get_default_model_config()
+
     # Start progress tracking
     progress.start()
 
@@ -76,8 +79,8 @@ def run_hedge_fund(
         base_concurrency_limit = _get_analyst_concurrency_limit()
         execution_plan = build_parallel_provider_execution_plan(
             agent_names=[analyst_nodes[analyst_key][0] for analyst_key in selected_analyst_keys],
-            base_model_name=model_name,
-            base_model_provider=model_provider,
+            base_model_name=resolved_model_name,
+            base_model_provider=resolved_model_provider,
             api_keys=None,
             per_provider_limit=base_concurrency_limit,
         )
@@ -99,8 +102,8 @@ def run_hedge_fund(
                 },
                 "metadata": {
                     "show_reasoning": show_reasoning,
-                    "model_name": model_name,
-                    "model_provider": model_provider,
+                    "model_name": resolved_model_name,
+                    "model_provider": resolved_model_provider,
                     "agent_llm_overrides": execution_plan["agent_llm_overrides"],
                 },
             },

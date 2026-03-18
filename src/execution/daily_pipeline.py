@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import signature
 from time import perf_counter
@@ -23,6 +23,7 @@ from src.screening.models import CandidateStock
 from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
+from src.llm.defaults import get_default_model_config
 from src.tools.tushare_api import get_daily_basic_batch
 
 
@@ -59,8 +60,9 @@ EXIT_REENTRY_CONFIRM_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_CONFIRM_S
 
 def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
     """Resolves fast/precise pipeline model settings without silently switching providers."""
-    provider_name = str(base_model_provider or "OpenAI")
-    model_name = str(base_model_name or "gpt-4.1")
+    default_model_name, default_model_provider = get_default_model_config()
+    provider_name = str(base_model_provider or default_model_provider)
+    model_name = str(base_model_name or default_model_name)
 
     if provider_name == "OpenAI" and model_name in {"gpt-4.1", "gpt-4.1-mini"}:
         return ("gpt-4.1-mini" if model_tier == "fast" else "gpt-4.1"), provider_name
@@ -312,8 +314,8 @@ def _build_watchlist_price_map(trade_date: str, tickers: list[str]) -> dict[str,
 class DailyPipeline:
     agent_runner: AgentRunner | None = None
     exit_checker: ExitChecker = _default_exit_checker
-    base_model_name: str = "gpt-4.1"
-    base_model_provider: str = "OpenAI"
+    base_model_name: str = field(default_factory=lambda: get_default_model_config()[0])
+    base_model_provider: str = field(default_factory=lambda: get_default_model_config()[1])
     frozen_post_market_plans: dict[str, ExecutionPlan] | None = None
     frozen_plan_source: str | None = None
 

@@ -8,6 +8,7 @@ import questionary
 from colorama import Fore, Style
 from dateutil.relativedelta import relativedelta
 
+from src.llm.defaults import get_default_model_config
 from src.llm.models import (
     find_model_by_name,
     get_model_info,
@@ -30,9 +31,14 @@ def add_common_args(
     include_ollama: bool = True,
 ) -> argparse.ArgumentParser:
     parser.add_argument(
+        "--show-default-model",
+        action="store_true",
+        help="Print the currently resolved default model/provider from .env and exit",
+    )
+    parser.add_argument(
         "--tickers",
         type=str,
-        required=require_tickers,
+        required=False,
         help="Comma-separated list of stock ticker symbols (e.g., AAPL,MSFT,GOOGL)",
     )
     if include_analyst_flags:
@@ -124,6 +130,15 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
             logger.warning(f"Model '{model_flag}' not found. Please select a model.")
             print(f"{Fore.RED}Model '{model_flag}' not found. Please select a model.{Style.RESET_ALL}")
 
+    if not use_ollama:
+        default_model_name, default_model_provider = get_default_model_config()
+        logger.info(f"Using default model from environment: {default_model_provider} - {default_model_name}")
+        print(
+            f"\nUsing default model from environment: {Fore.CYAN}{default_model_provider}{Style.RESET_ALL}"
+            f" - {Fore.GREEN + Style.BRIGHT}{default_model_name}{Style.RESET_ALL}\n"
+        )
+        return default_model_name, default_model_provider
+
     if use_ollama:
         logger.info("Using Ollama for local LLM inference.")
         print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
@@ -158,41 +173,6 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
         model_provider = ModelProvider.OLLAMA.value
         logger.info(f"Selected Ollama model: {model_name}")
         print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-    else:
-        model_choice = questionary.select(
-            "Select your LLM model:",
-            choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-
-        if not model_choice:
-            logger.info("Interrupt received. Exiting...")
-            sys.exit(0)
-
-        model_name, model_provider = model_choice
-
-        model_info = get_model_info(model_name, model_provider)
-        if model_info and model_info.is_custom():
-            model_name = questionary.text("Enter the custom model name:").ask()
-            if not model_name:
-                logger.info("Interrupt received. Exiting...")
-                sys.exit(0)
-
-        if model_info:
-            logger.info(f"Selected {model_provider} model: {model_name}")
-            print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-        else:
-            model_provider = "Unknown"
-            logger.info(f"Selected model: {model_name}")
-            print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-
     return model_name, model_provider or ""
 
 
@@ -271,8 +251,17 @@ def parse_cli_inputs(
 
     args = parser.parse_args()
 
+    if getattr(args, "show_default_model", False):
+        default_model_name, default_model_provider = get_default_model_config()
+        print(f"default_model_provider={default_model_provider}")
+        print(f"default_model_name={default_model_name}")
+        sys.exit(0)
+
     # Normalize parsed values
     tickers = parse_tickers(getattr(args, "tickers", None))
+    if require_tickers and not tickers:
+        parser.error("the following arguments are required: --tickers")
+
     selected_analysts = select_analysts(
         {
             "analysts_all": getattr(args, "analysts_all", False),

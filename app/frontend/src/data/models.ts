@@ -3,7 +3,7 @@ import { api } from '@/services/api';
 export interface LanguageModel {
   display_name: string;
   model_name: string;
-  provider: "Anthropic" | "DeepSeek" | "Google" | "Groq" | "OpenAI";
+  provider: string;
 }
 
 // Cache for models to avoid repeated API calls
@@ -28,12 +28,16 @@ export const getModels = async (): Promise<LanguageModel[]> => {
 };
 
 /**
- * Get the default model (GPT-4.1) from the models list
+ * Get the default model resolved by the backend environment
  */
 export const getDefaultModel = async (): Promise<LanguageModel | null> => {
   try {
+    const defaultModel = await api.getDefaultLanguageModel();
+    if (defaultModel) {
+      return defaultModel;
+    }
     const models = await getModels();
-    return models.find(model => model.model_name === "gpt-4.1") || models[0] || null;
+    return models[0] || null;
   } catch (error) {
     console.error('Failed to get default model:', error);
     return null;

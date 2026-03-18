@@ -1,8 +1,8 @@
 import { cn } from '@/lib/utils';
 import { CubeIcon } from '@radix-ui/react-icons';
-import { Key, Palette } from 'lucide-react';
+import { Database, Key, Palette } from 'lucide-react';
 import { useState } from 'react';
-import { ApiKeysSettings, Models } from './';
+import { ApiKeysSettings, Models, ReplayArtifactsSettings } from './';
 import { ThemeSettings } from './appearance';
 
 interface SettingsProps {
@@ -38,10 +38,18 @@ export function Settings({ className }: SettingsProps) {
       icon: Palette,
       description: 'Theme and display preferences',
     },
+    {
+      id: 'artifacts',
+      label: 'Replay Artifacts',
+      icon: Database,
+      description: 'Replay summaries and execution digests',
+    },
   ];
 
   const renderContent = () => {
     switch (selectedSection) {
+      case 'artifacts':
+        return <ReplayArtifactsSettings />;
       case 'models':
         return <Models />;
       case 'theme':

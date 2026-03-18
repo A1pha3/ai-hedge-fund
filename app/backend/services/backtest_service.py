@@ -5,6 +5,7 @@ import numpy as np
 from typing import Callable, Dict, List, Optional, Any
 import asyncio
 
+from src.llm.defaults import get_default_model_config
 from src.tools.api import (
     get_company_news,
     get_price_data,
@@ -29,8 +30,8 @@ class BacktestService:
         start_date: str,
         end_date: str,
         initial_capital: float,
-        model_name: str = "gpt-4.1",
-        model_provider: str = "OpenAI",
+        model_name: str | None = None,
+        model_provider: str | None = None,
         request: dict = {},
     ):
         """
@@ -52,8 +53,9 @@ class BacktestService:
         self.start_date = start_date
         self.end_date = end_date
         self.initial_capital = initial_capital
-        self.model_name = model_name
-        self.model_provider = model_provider
+        resolved_model_name, resolved_model_provider = (model_name, model_provider) if model_name and model_provider else get_default_model_config()
+        self.model_name = resolved_model_name
+        self.model_provider = resolved_model_provider
         self.request = request
         self.portfolio_values = []
 

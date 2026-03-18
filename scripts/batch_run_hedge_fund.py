@@ -71,7 +71,7 @@ def extract_stocks_from_markdown(file_path: Path) -> List[StockInfo]:
 
 def build_run_hedge_fund_command(
     ticker: str,
-    model: str,
+    model: Optional[str],
     analysts_all: bool,
     start_date: Optional[str],
     end_date: Optional[str],
@@ -79,7 +79,10 @@ def build_run_hedge_fund_command(
 ) -> List[str]:
     """构建 run-hedge-fund.sh 命令参数"""
     script_path = Path(__file__).parent / "run-hedge-fund.sh"
-    cmd = [str(script_path), "--ticker", ticker, "--model", model]
+    cmd = [str(script_path), "--ticker", ticker]
+
+    if model:
+        cmd.extend(["--model", model])
 
     if analysts_all:
         cmd.append("--analysts-all")
@@ -141,7 +144,6 @@ def main() -> int:
   # 完整参数示例（注意：反斜杠后不能有空格）
   python scripts/batch_run_hedge_fund.py \
 --file data/stock/daliy/daily_gainers_20260226_gt5p0_20260226_233140.md \
---model MiniMax-M2.5 \
 --start-date 2025-06-01 \
 --analysts-all \
 --show-reasoning
@@ -149,7 +151,7 @@ def main() -> int:
     )
 
     parser.add_argument("--file", type=Path, required=True, help="Markdown 文件路径，包含股票代码列表")
-    parser.add_argument("--model", default="MiniMax-M2.5", help="模型名称 (默认: MiniMax-M2.5)")
+    parser.add_argument("--model", default=None, help="模型名称 (默认: 读取 .env 中的统一默认模型)")
     parser.add_argument("--analysts-all", action="store_true", help="使用所有分析师")
     parser.add_argument("--start-date", help="开始日期 (YYYY-MM-DD)")
     parser.add_argument("--end-date", help="结束日期 (YYYY-MM-DD)")

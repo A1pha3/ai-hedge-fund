@@ -9,6 +9,7 @@ from app.backend.routes.ollama import router as ollama_router
 from app.backend.routes.language_models import router as language_models_router
 from app.backend.routes.api_keys import router as api_keys_router
 from app.backend.routes.auth import router as auth_router
+from app.backend.routes.replay_artifacts import router as replay_artifacts_router
 from app.backend.auth.dependencies import get_current_user
 
 # Main API router
@@ -27,3 +28,4 @@ api_router.include_router(flow_runs_router, tags=["flow-runs"], dependencies=_au
 api_router.include_router(ollama_router, tags=["ollama"], dependencies=_auth)
 api_router.include_router(language_models_router, tags=["language-models"], dependencies=_auth)
 api_router.include_router(api_keys_router, tags=["api-keys"], dependencies=_auth)
+api_router.include_router(replay_artifacts_router, tags=["replay-artifacts"], dependencies=_auth)
