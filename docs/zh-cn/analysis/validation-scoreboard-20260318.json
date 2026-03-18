@@ -1,0 +1,377 @@
+{
+  "generated_on": "2026-03-18",
+  "purpose": "P0-1 validation scoreboard with benchmark guardrails, long-window replay metrics, deployment, concentration, funnel, blockers, and runtime.",
+  "baseline_resolution": {
+    "alias": "baseline",
+    "report_dir": "data/reports/paper_trading_window_20260202_20260304_reentry_confirm_validation_20260317",
+    "reason": "Current default paper-trading baseline was frozen in paper-trading-reentry-validation-20260317.md after re-entry confirmation was accepted as the safer default."
+  },
+  "benchmark_guardrails": [
+    {
+      "id": "20260224_600519",
+      "expected_behavior": "should_release",
+      "summary": "Near-threshold watch sample should remain released or no weaker than score_final 0.2158.",
+      "status": "reference_locked",
+      "source": "docs/zh-cn/analysis/edge-sample-benchmark-20260318.md"
+    },
+    {
+      "id": "20260226_600519",
+      "expected_behavior": "stay_below_watch_threshold",
+      "summary": "Near-threshold sample should remain below 0.20 and must not be promoted aggressively.",
+      "status": "reference_locked",
+      "source": "docs/zh-cn/analysis/edge-sample-benchmark-20260318.md"
+    },
+    {
+      "id": "20260226_300724",
+      "expected_behavior": "blocked_by_reentry_confirmation",
+      "summary": "Watch-edge sample at score_final 0.2250 must not bypass re-entry confirmation and re-enter.",
+      "status": "active_guardrail",
+      "source": "docs/zh-cn/analysis/edge-sample-benchmark-20260318.md"
+    }
+  ],
+  "field_definitions": {
+    "total_return_pct": "Recomputed from initial capital and final marked-to-market portfolio value.",
+    "final_value": "Final cash plus marked-to-market long positions using the last current_prices snapshot.",
+    "avg_invested_ratio": "Average daily invested capital ratio from portfolio_snapshot plus current_prices.",
+    "peak_single_name_weight": "Highest single-name portfolio weight observed in the window under the same mark-to-market method.",
+    "avg_layer_b_count": "Average layer_b_count from current_plan.risk_metrics.counts.",
+    "avg_watchlist_count": "Average watchlist_count from current_plan.risk_metrics.counts.",
+    "avg_buy_order_count": "Average buy_order_count from current_plan.risk_metrics.counts.",
+    "top_buy_blockers": "Top aggregated reason_counts from funnel_diagnostics.filters.buy_orders.",
+    "top_watchlist_blockers": "Top aggregated reason_counts from funnel_diagnostics.filters.watchlist.",
+    "avg_total_day_seconds": "Average timing_seconds.total_day from pipeline_timings.jsonl.",
+    "guardrail_status": "Benchmark interpretation status for this run; only baseline and prod_validation are directly evaluated against the current 300724 re-entry guardrail."
+  },
+  "runs": [
+    {
+      "alias": "baseline",
+      "report_dir": "data/reports/paper_trading_window_20260202_20260304_reentry_confirm_validation_20260317",
+      "window": "2026-02-02..2026-03-04",
+      "plan_generation_mode": "frozen_current_plan_replay",
+      "total_return_pct": -0.552,
+      "final_value": 99447.9922,
+      "sharpe_ratio": -1.7564,
+      "max_drawdown_pct": -1.8893,
+      "executed_trade_days": 5,
+      "total_executed_orders": 6,
+      "avg_layer_b_count": 2.294118,
+      "avg_watchlist_count": 0.705882,
+      "avg_buy_order_count": 0.235294,
+      "top_buy_blockers": [
+        {
+          "reason": "position_blocked_score",
+          "count": 6
+        },
+        {
+          "reason": "position_blocked_single_name",
+          "count": 1
+        },
+        {
+          "reason": "blocked_by_reentry_score_confirmation",
+          "count": 1
+        }
+      ],
+      "top_watchlist_blockers": [
+        {
+          "reason": "decision_avoid",
+          "count": 24
+        },
+        {
+          "reason": "score_final_below_watchlist_threshold",
+          "count": 3
+        }
+      ],
+      "avg_invested_ratio": 0.1451,
+      "peak_single_name_weight": 0.1349,
+      "final_cash_ratio": 0.9419,
+      "precise_stage_skipped_days": 17,
+      "prefetch_seconds": 1.097,
+      "avg_total_day_seconds": 1.3196,
+      "avg_post_market_seconds": 0.0011,
+      "guardrail_status": {
+        "status": "pass_current_default_baseline",
+        "note": "Doc-locked current default baseline after re-entry confirmation acceptance."
+      }
+    },
+    {
+      "alias": "existing_position_fix",
+      "report_dir": "data/reports/paper_trading_window_20260202_20260303_existing_position_fix",
+      "window": "2026-02-02..2026-03-03",
+      "plan_generation_mode": "live_pipeline",
+      "total_return_pct": -2.6902,
+      "final_value": 97309.78,
+      "sharpe_ratio": -4.2225,
+      "max_drawdown_pct": -3.2415,
+      "executed_trade_days": 2,
+      "total_executed_orders": 3,
+      "avg_layer_b_count": 1.625,
+      "avg_watchlist_count": 0.75,
+      "avg_buy_order_count": 0.1875,
+      "top_buy_blockers": [
+        {
+          "reason": "position_blocked_single_name",
+          "count": 9
+        }
+      ],
+      "top_watchlist_blockers": [
+        {
+          "reason": "decision_avoid",
+          "count": 12
+        },
+        {
+          "reason": "score_final_below_watchlist_threshold",
+          "count": 2
+        }
+      ],
+      "avg_invested_ratio": 0.1864,
+      "peak_single_name_weight": 0.1469,
+      "final_cash_ratio": 0.8087,
+      "precise_stage_skipped_days": 0,
+      "prefetch_seconds": 1.109,
+      "avg_total_day_seconds": 242.1786,
+      "avg_post_market_seconds": 240.8749,
+      "guardrail_status": {
+        "status": "legacy_not_benchmark_revalidated",
+        "note": "Historical stepping-stone run kept for comparison only."
+      }
+    },
+    {
+      "alias": "exit_fix",
+      "report_dir": "data/reports/paper_trading_window_20260202_20260303_exit_fix",
+      "window": "2026-02-02..2026-03-03",
+      "plan_generation_mode": "live_pipeline",
+      "total_return_pct": -3.9769,
+      "final_value": 96023.1103,
+      "sharpe_ratio": -6.7707,
+      "max_drawdown_pct": -4.044,
+      "executed_trade_days": 7,
+      "total_executed_orders": 8,
+      "avg_layer_b_count": 1.625,
+      "avg_watchlist_count": 0.75,
+      "avg_buy_order_count": 0.3125,
+      "top_buy_blockers": [
+        {
+          "reason": "position_blocked_single_name",
+          "count": 7
+        }
+      ],
+      "top_watchlist_blockers": [
+        {
+          "reason": "decision_avoid",
+          "count": 13
+        },
+        {
+          "reason": "score_final_below_watchlist_threshold",
+          "count": 1
+        }
+      ],
+      "avg_invested_ratio": 0.1277,
+      "peak_single_name_weight": 0.1476,
+      "final_cash_ratio": 0.8795,
+      "precise_stage_skipped_days": 0,
+      "prefetch_seconds": 1.034,
+      "avg_total_day_seconds": 252.4293,
+      "avg_post_market_seconds": 250.8228,
+      "guardrail_status": {
+        "status": "legacy_not_benchmark_revalidated",
+        "note": "Historical stepping-stone run kept for comparison only."
+      }
+    },
+    {
+      "alias": "cooldown",
+      "report_dir": "data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5",
+      "window": "2026-02-02..2026-03-03",
+      "plan_generation_mode": "live_pipeline",
+      "total_return_pct": -2.9036,
+      "final_value": 97096.4,
+      "sharpe_ratio": -4.4654,
+      "max_drawdown_pct": -3.0787,
+      "executed_trade_days": 5,
+      "total_executed_orders": 8,
+      "avg_layer_b_count": 2.375,
+      "avg_watchlist_count": 0.8125,
+      "avg_buy_order_count": 0.3125,
+      "top_buy_blockers": [
+        {
+          "reason": "position_blocked_single_name",
+          "count": 4
+        },
+        {
+          "reason": "blocked_by_exit_cooldown",
+          "count": 3
+        },
+        {
+          "reason": "filtered_by_daily_trade_limit",
+          "count": 1
+        }
+      ],
+      "top_watchlist_blockers": [
+        {
+          "reason": "decision_avoid",
+          "count": 23
+        },
+        {
+          "reason": "score_final_below_watchlist_threshold",
+          "count": 2
+        }
+      ],
+      "avg_invested_ratio": 0.131,
+      "peak_single_name_weight": 0.1474,
+      "final_cash_ratio": 0.8809,
+      "precise_stage_skipped_days": 0,
+      "prefetch_seconds": 1.079,
+      "avg_total_day_seconds": 384.6357,
+      "avg_post_market_seconds": 383.0771,
+      "guardrail_status": {
+        "status": "legacy_not_benchmark_revalidated",
+        "note": "Historical stepping-stone run kept for comparison only."
+      }
+    },
+    {
+      "alias": "trading_days",
+      "report_dir": "data/reports/paper_trading_window_20260202_20260304_exit_fix_cooldown5_trading_days",
+      "window": "2026-02-02..2026-03-04",
+      "plan_generation_mode": "live_pipeline",
+      "total_return_pct": -2.4428,
+      "final_value": 97557.173,
+      "sharpe_ratio": -3.447,
+      "max_drawdown_pct": -2.6677,
+      "executed_trade_days": 5,
+      "total_executed_orders": 7,
+      "avg_layer_b_count": 2.294118,
+      "avg_watchlist_count": 0.647059,
+      "avg_buy_order_count": 0.294118,
+      "top_buy_blockers": [
+        {
+          "reason": "blocked_by_exit_cooldown",
+          "count": 3
+        },
+        {
+          "reason": "position_blocked_single_name",
+          "count": 2
+        },
+        {
+          "reason": "filtered_by_daily_trade_limit",
+          "count": 1
+        }
+      ],
+      "top_watchlist_blockers": [
+        {
+          "reason": "decision_avoid",
+          "count": 25
+        },
+        {
+          "reason": "score_final_below_watchlist_threshold",
+          "count": 3
+        }
+      ],
+      "avg_invested_ratio": 0.1611,
+      "peak_single_name_weight": 0.1474,
+      "final_cash_ratio": 0.8701,
+      "precise_stage_skipped_days": 0,
+      "prefetch_seconds": 1.182,
+      "avg_total_day_seconds": 323.3429,
+      "avg_post_market_seconds": 321.7395,
+      "guardrail_status": {
+        "status": "legacy_not_benchmark_revalidated",
+        "note": "Historical stepping-stone run kept for comparison only."
+      }
+    },
+    {
+      "alias": "retrace6",
+      "report_dir": "data/reports/paper_trading_window_20260202_20260304_exit_fix_cooldown5_trading_days_retrace6",
+      "window": "2026-02-02..2026-03-04",
+      "plan_generation_mode": "live_pipeline",
+      "total_return_pct": -2.3152,
+      "final_value": 97684.8152,
+      "sharpe_ratio": -3.268,
+      "max_drawdown_pct": -2.6677,
+      "executed_trade_days": 6,
+      "total_executed_orders": 8,
+      "avg_layer_b_count": 2.294118,
+      "avg_watchlist_count": 0.705882,
+      "avg_buy_order_count": 0.294118,
+      "top_buy_blockers": [
+        {
+          "reason": "blocked_by_exit_cooldown",
+          "count": 4
+        },
+        {
+          "reason": "position_blocked_single_name",
+          "count": 2
+        },
+        {
+          "reason": "filtered_by_daily_trade_limit",
+          "count": 1
+        }
+      ],
+      "top_watchlist_blockers": [
+        {
+          "reason": "decision_avoid",
+          "count": 25
+        },
+        {
+          "reason": "score_final_below_watchlist_threshold",
+          "count": 2
+        }
+      ],
+      "avg_invested_ratio": 0.1527,
+      "peak_single_name_weight": 0.1474,
+      "final_cash_ratio": 0.9408,
+      "precise_stage_skipped_days": 0,
+      "prefetch_seconds": 1.073,
+      "avg_total_day_seconds": 412.9991,
+      "avg_post_market_seconds": 411.4975,
+      "guardrail_status": {
+        "status": "legacy_not_benchmark_revalidated",
+        "note": "Historical stepping-stone run kept for comparison only."
+      }
+    },
+    {
+      "alias": "prod_validation",
+      "report_dir": "data/reports/paper_trading_window_20260202_20260304_prod_validation_20260317",
+      "window": "2026-02-02..2026-03-04",
+      "plan_generation_mode": "live_pipeline",
+      "total_return_pct": -1.2525,
+      "final_value": 98747.4891,
+      "sharpe_ratio": -3.0307,
+      "max_drawdown_pct": -1.8893,
+      "executed_trade_days": 6,
+      "total_executed_orders": 7,
+      "avg_layer_b_count": 2.294118,
+      "avg_watchlist_count": 0.705882,
+      "avg_buy_order_count": 0.294118,
+      "top_buy_blockers": [
+        {
+          "reason": "position_blocked_score",
+          "count": 6
+        },
+        {
+          "reason": "position_blocked_single_name",
+          "count": 1
+        }
+      ],
+      "top_watchlist_blockers": [
+        {
+          "reason": "decision_avoid",
+          "count": 24
+        },
+        {
+          "reason": "score_final_below_watchlist_threshold",
+          "count": 3
+        }
+      ],
+      "avg_invested_ratio": 0.1805,
+      "peak_single_name_weight": 0.1349,
+      "final_cash_ratio": 0.8251,
+      "precise_stage_skipped_days": 17,
+      "prefetch_seconds": 1.077,
+      "avg_total_day_seconds": 237.6892,
+      "avg_post_market_seconds": 235.9799,
+      "guardrail_status": {
+        "status": "fail_20260226_300724_reentered",
+        "note": "20260226 executed_trades contains 300724:100 before re-entry confirmation was enforced."
+      }
+    }
+  ]
+}

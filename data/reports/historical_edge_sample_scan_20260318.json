@@ -1,0 +1,479 @@
+{
+  "reports_dir": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports",
+  "files_scanned": 189,
+  "raw_record_count": 3679,
+  "deduped_record_count": 3471,
+  "bands": {
+    "near_threshold_watch": {
+      "record_count": 1075,
+      "unique_ticker_count": 3,
+      "tickers": [
+        {
+          "ticker": "300724",
+          "count": 1061,
+          "dates": [
+            "20260202",
+            "20260203",
+            "20260204",
+            "20260205",
+            "20260206",
+            "20260209",
+            "20260210",
+            "20260211",
+            "20260212",
+            "20260213",
+            "20260224",
+            "20260225",
+            "20260226",
+            "20260227",
+            "20260302"
+          ],
+          "score_final_min": 0.1808,
+          "score_final_max": 0.2526,
+          "sources": [
+            "daily_events.jsonl",
+            "pipeline_timings.jsonl",
+            "session.checkpoint.timings.jsonl"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260202",
+              "score_final": 0.1925,
+              "score_b": 0.3864,
+              "score_c": -0.0445,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.1925,
+              "score_b": 0.3864,
+              "score_c": -0.0445,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.2196,
+              "score_b": 0.4337,
+              "score_c": -0.0421,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.2196,
+              "score_b": 0.4337,
+              "score_c": -0.0421,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260204",
+              "score_final": 0.2196,
+              "score_b": 0.4337,
+              "score_c": -0.0421,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            }
+          ]
+        },
+        {
+          "ticker": "600519",
+          "count": 10,
+          "dates": [
+            "20260224",
+            "20260226"
+          ],
+          "score_final_min": 0.1871,
+          "score_final_max": 0.2463,
+          "sources": [
+            "layer_c_edge_tradeoff_20260315.json",
+            "layer_c_sensitivity_20260315.json"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260224",
+              "score_final": 0.1979,
+              "score_b": null,
+              "score_c": 0.0617,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260224",
+              "score_final": 0.1942,
+              "score_b": null,
+              "score_c": 0.0555,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260224",
+              "score_final": 0.2463,
+              "score_b": null,
+              "score_c": 0.0555,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260226",
+              "score_final": 0.1923,
+              "score_b": null,
+              "score_c": -0.1118,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260226",
+              "score_final": 0.1897,
+              "score_b": null,
+              "score_c": -0.1184,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            }
+          ]
+        },
+        {
+          "ticker": "600988",
+          "count": 4,
+          "dates": [
+            "20260226",
+            "20260227"
+          ],
+          "score_final_min": 0.174,
+          "score_final_max": 0.174,
+          "sources": [
+            "daily_events.jsonl",
+            "pipeline_timings.jsonl"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260226",
+              "score_final": 0.174,
+              "score_b": 0.3846,
+              "score_c": -0.0834,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260227_position_fix/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260227",
+              "score_final": 0.174,
+              "score_b": 0.3846,
+              "score_c": -0.0834,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260227_position_fix/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260226",
+              "score_final": 0.174,
+              "score_b": 0.3846,
+              "score_c": -0.0834,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260227_position_fix/pipeline_timings.jsonl"
+            },
+            {
+              "trade_date": "20260227",
+              "score_final": 0.174,
+              "score_b": 0.3846,
+              "score_c": -0.0834,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260227_position_fix/pipeline_timings.jsonl"
+            }
+          ]
+        }
+      ]
+    },
+    "sub_threshold_watch": {
+      "record_count": 11,
+      "unique_ticker_count": 2,
+      "tickers": [
+        {
+          "ticker": "600519",
+          "count": 9,
+          "dates": [
+            "20260224",
+            "20260225",
+            "20260226",
+            "20260227"
+          ],
+          "score_final_min": 0.158,
+          "score_final_max": 0.164,
+          "sources": [
+            "layer_c_edge_tradeoff_20260315.json",
+            "layer_c_sensitivity_20260315.json",
+            "neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl",
+            "watchlist_suppression_analysis_20260315.json"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260226",
+              "score_final": 0.164,
+              "score_b": null,
+              "score_c": -0.1184,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260224",
+              "score_final": 0.1584,
+              "score_b": 0.4023,
+              "score_c": -0.0043,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_sensitivity_20260315.json"
+            },
+            {
+              "trade_date": "20260226",
+              "score_final": 0.158,
+              "score_b": 0.3951,
+              "score_c": 0.0,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_sensitivity_20260315.json"
+            },
+            {
+              "trade_date": "20260224",
+              "score_final": 0.1584,
+              "score_b": 0.4023,
+              "score_c": -0.0043,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl"
+            },
+            {
+              "trade_date": "20260225",
+              "score_final": 0.1584,
+              "score_b": 0.4023,
+              "score_c": -0.0043,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/rule_variant_backtests/neutral_mean_reversion_guarded_033_no_hard_cliff.timings.jsonl"
+            }
+          ]
+        },
+        {
+          "ticker": "603993",
+          "count": 2,
+          "dates": [
+            "20260203",
+            "20260204"
+          ],
+          "score_final_min": 0.145,
+          "score_final_max": 0.145,
+          "sources": [
+            "baseline.timings.jsonl"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260203",
+              "score_final": 0.145,
+              "score_b": 0.4536,
+              "score_c": -0.0607,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/rule_variant_backtests/baseline.timings.jsonl"
+            },
+            {
+              "trade_date": "20260204",
+              "score_final": 0.145,
+              "score_b": 0.4536,
+              "score_c": -0.0607,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/rule_variant_backtests/baseline.timings.jsonl"
+            }
+          ]
+        }
+      ]
+    },
+    "high_score_watch": {
+      "record_count": 517,
+      "unique_ticker_count": 4,
+      "tickers": [
+        {
+          "ticker": "300724",
+          "count": 11,
+          "dates": [
+            "20260202",
+            "20260203"
+          ],
+          "score_final_min": 0.2604,
+          "score_final_max": 0.2611,
+          "sources": [
+            "daily_events.jsonl",
+            "pipeline_timings.jsonl",
+            "session.checkpoint.json",
+            "session.checkpoint.timings.jsonl"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260202",
+              "score_final": 0.2604,
+              "score_b": 0.437,
+              "score_c": 0.0446,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260202",
+              "score_final": 0.2604,
+              "score_b": 0.437,
+              "score_c": 0.0446,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.2604,
+              "score_b": 0.437,
+              "score_c": 0.0446,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.2604,
+              "score_b": 0.437,
+              "score_c": 0.0446,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260202",
+              "score_final": 0.2604,
+              "score_b": 0.437,
+              "score_c": 0.0446,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/pipeline_timings.jsonl"
+            }
+          ]
+        },
+        {
+          "ticker": "600519",
+          "count": 5,
+          "dates": [
+            "20260224"
+          ],
+          "score_final_min": 0.2624,
+          "score_final_max": 0.2648,
+          "sources": [
+            "layer_c_edge_tradeoff_20260315.json"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260224",
+              "score_final": 0.2624,
+              "score_b": null,
+              "score_c": 0.0524,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260224",
+              "score_final": 0.2636,
+              "score_b": null,
+              "score_c": 0.0555,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260224",
+              "score_final": 0.2648,
+              "score_b": null,
+              "score_c": 0.0586,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260224",
+              "score_final": 0.2642,
+              "score_b": null,
+              "score_c": 0.0571,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            },
+            {
+              "trade_date": "20260224",
+              "score_final": 0.263,
+              "score_b": null,
+              "score_c": 0.054,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/layer_c_edge_tradeoff_20260315.json"
+            }
+          ]
+        },
+        {
+          "ticker": "601600",
+          "count": 53,
+          "dates": [
+            "20260202",
+            "20260203"
+          ],
+          "score_final_min": 0.3195,
+          "score_final_max": 0.363,
+          "sources": [
+            "daily_events.jsonl",
+            "pipeline_timings.jsonl",
+            "session.checkpoint.json",
+            "session.checkpoint.timings.jsonl"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260202",
+              "score_final": 0.363,
+              "score_b": 0.3838,
+              "score_c": 0.3375,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260202",
+              "score_final": 0.363,
+              "score_b": 0.3838,
+              "score_c": 0.3375,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.363,
+              "score_b": 0.3838,
+              "score_c": 0.3375,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.363,
+              "score_b": 0.3838,
+              "score_c": 0.3375,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260202",
+              "score_final": 0.363,
+              "score_b": 0.3838,
+              "score_c": 0.3375,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260202_20260303_exit_fix_cooldown5/pipeline_timings.jsonl"
+            }
+          ]
+        },
+        {
+          "ticker": "603993",
+          "count": 448,
+          "dates": [
+            "20260202",
+            "20260203",
+            "20260204"
+          ],
+          "score_final_min": 0.265,
+          "score_final_max": 0.2954,
+          "sources": [
+            "daily_events.jsonl",
+            "pipeline_timings.jsonl",
+            "session.checkpoint.json",
+            "session.checkpoint.timings.jsonl"
+          ],
+          "examples": [
+            {
+              "trade_date": "20260202",
+              "score_final": 0.265,
+              "score_b": 0.4122,
+              "score_c": 0.0852,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260202",
+              "score_final": 0.265,
+              "score_b": 0.4122,
+              "score_c": 0.0852,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.265,
+              "score_b": 0.4122,
+              "score_c": 0.0852,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.265,
+              "score_b": 0.4122,
+              "score_c": 0.0852,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            },
+            {
+              "trade_date": "20260203",
+              "score_final": 0.2881,
+              "score_b": 0.4536,
+              "score_c": 0.0859,
+              "source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/logic_stop_threshold_scan_0_10 0_15 0_20 0_25/daily_events.jsonl"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
