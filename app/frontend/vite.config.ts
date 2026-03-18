@@ -10,4 +10,39 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return undefined
+          }
+
+          if (id.includes('@xyflow/react')) {
+            return 'reactflow'
+          }
+
+          if (id.includes('@radix-ui') || id.includes('react-resizable-panels')) {
+            return 'ui-vendor'
+          }
+
+          if (id.includes('lucide-react')) {
+            return 'icons'
+          }
+
+          if (
+            id.includes('/react/') ||
+            id.includes('/react-dom/') ||
+            id.includes('scheduler') ||
+            id.includes('next-themes') ||
+            id.includes('sonner')
+          ) {
+            return 'framework'
+          }
+
+          return 'vendor'
+        },
+      },
+    },
+  },
 })

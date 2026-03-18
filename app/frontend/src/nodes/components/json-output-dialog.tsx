@@ -1,7 +1,5 @@
 import { Copy, Download } from 'lucide-react';
 import { useState } from 'react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -10,6 +8,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import { createHighlightedJson } from '@/utils/text-utils';
 
 interface JsonOutputDialogProps {
   isOpen: boolean;
@@ -44,6 +43,7 @@ export function JsonOutputDialog({
   };
 
   const jsonString = JSON.stringify(filteredOutputData, null, 2);
+  const highlightedJson = createHighlightedJson(jsonString);
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(jsonString)
@@ -105,23 +105,10 @@ export function JsonOutputDialog({
         </DialogHeader>
         
         <div className="flex-1 min-h-0 my-4 overflow-auto rounded-md border border-border bg-muted/30">
-          <SyntaxHighlighter
-            language="json"
-            style={vscDarkPlus}
-            customStyle={{
-              margin: 0,
-              padding: '0.75rem',
-              fontSize: '0.875rem',
-              lineHeight: 1.5,
-              whiteSpace: 'pre-wrap',
-              wordWrap: 'break-word',
-              overflowWrap: 'break-word',
-            }}
-            wrapLines={true}
-            wrapLongLines={true}
-          >
-            {jsonString}
-          </SyntaxHighlighter>
+          <pre
+            className="whitespace-pre-wrap break-words bg-[#1e1e1e] p-3 text-sm leading-relaxed text-[#d4d4d4]"
+            dangerouslySetInnerHTML={{ __html: highlightedJson }}
+          />
         </div>
       </DialogContent>
     </Dialog>

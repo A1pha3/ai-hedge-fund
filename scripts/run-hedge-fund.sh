@@ -35,10 +35,11 @@ show_help() {
     echo ""
     echo "示例:"
     echo "  ./scripts/run-hedge-fund.sh --ticker 600158"
-    echo "  ./scripts/run-hedge-fund.sh --ticker AAPL,MSFT --model gpt-4o --analysts-all"
+    echo "  ./scripts/run-hedge-fund.sh --ticker AAPL,MSFT --model MODEL_NAME --analysts-all"
     echo "  ./scripts/run-hedge-fund.sh --ticker 600519 --initial-cash 500000"
     echo "  ./scripts/run-hedge-fund.sh --ticker 600158 --start-date 2026-01-01 --end-date 2026-02-25"
     echo "  ./scripts/run-hedge-fund.sh --ticker 600158 --end-date 2026-02-25"
+    echo "  ./scripts/run-hedge-fund.sh --show-default-model"
 }
 
 # 显示分析师帮助信息
@@ -62,8 +63,8 @@ for key, config in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"]):
     # 显示使用示例
     echo "\n使用示例:"
     echo "  ./scripts/run-hedge-fund.sh --ticker 600158 --analysts warren_buffett,ben_graham"
-    echo "  ./scripts/run-hedge-fund.sh --ticker AAPL --model gpt-4o --analysts-all"
-    echo "  ./scripts/run-hedge-fund.sh --ticker MSFT --model gpt-4o --analysts technical_analyst,fundamentals_analyst"
+    echo "  ./scripts/run-hedge-fund.sh --ticker AAPL --model MODEL_NAME --analysts-all"
+    echo "  ./scripts/run-hedge-fund.sh --ticker MSFT --model MODEL_NAME --analysts technical_analyst,fundamentals_analyst"
     exit 0
 }
 

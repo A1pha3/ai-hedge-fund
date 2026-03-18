@@ -27,10 +27,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { extractBaseAgentKey } from '@/data/node-mappings';
-import { createAgentDisplayNames } from '@/utils/text-utils';
+import { createAgentDisplayNames, createHighlightedJson } from '@/utils/text-utils';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface InvestmentReportDialogProps {
   isOpen: boolean;
@@ -204,19 +202,10 @@ export function InvestmentReportDialog({
                                   </p>
                                 ) : (
                                   <div className="max-h-48 overflow-y-auto bg-muted/30">
-                                    <SyntaxHighlighter
-                                      language="json"
-                                      style={vscDarkPlus}
-                                      className="text-sm rounded-md"
-                                      customStyle={{
-                                        fontSize: '0.875rem',
-                                        margin: 0,
-                                        padding: '12px',
-                                        backgroundColor: 'hsl(var(--muted))',
-                                      }}
-                                    >
-                                      {JSON.stringify(signal.reasoning, null, 2)}
-                                    </SyntaxHighlighter>
+                                    <pre
+                                      className="whitespace-pre-wrap break-words rounded-md bg-[#1e1e1e] p-3 text-sm leading-relaxed text-[#d4d4d4]"
+                                      dangerouslySetInnerHTML={{ __html: createHighlightedJson(JSON.stringify(signal.reasoning, null, 2)) }}
+                                    />
                                   </div>
                                 )}
                               </CardContent>
