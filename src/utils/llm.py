@@ -313,6 +313,11 @@ def _compute_retry_delay(attempt: int, error: Exception) -> float:
     return min(1.0 * (attempt + 1), 3.0)
 
 
+def _is_provider_fallback_disabled() -> bool:
+    """Returns whether cross-provider fallback is explicitly disabled for the current process."""
+    return os.getenv("LLM_DISABLE_FALLBACK", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _record_llm_attempt_safely(**kwargs) -> None:
     """Records metrics on a best-effort basis without affecting business logic."""
     try:
@@ -430,17 +435,20 @@ def call_llm(
                 transport_family=active_transport_family,
             )
             if fallback_index < len(fallback_chain) and _is_rate_limit_error(e):
-                fallback_config = fallback_chain[fallback_index]
-                fallback_index += 1
-                active_model_name = fallback_config["model_name"]
-                active_model_provider = fallback_config["model_provider"]
-                active_api_keys = fallback_config.get("api_keys")
-                active_route_id = str(fallback_config.get("route_id") or "") or None
-                active_transport_family = str(fallback_config.get("transport_family") or _get_transport_family(active_model_provider, active_route_id, active_api_keys))
-                llm, model_info = _build_llm(active_model_name, active_model_provider, active_api_keys, pydantic_model)
-                if agent_name:
-                    progress.update_status(agent_name, None, str(fallback_config["status_message"]))
-                    continue
+                if _is_provider_fallback_disabled():
+                    fallback_chain = []
+                else:
+                    fallback_config = fallback_chain[fallback_index]
+                    fallback_index += 1
+                    active_model_name = fallback_config["model_name"]
+                    active_model_provider = fallback_config["model_provider"]
+                    active_api_keys = fallback_config.get("api_keys")
+                    active_route_id = str(fallback_config.get("route_id") or "") or None
+                    active_transport_family = str(fallback_config.get("transport_family") or _get_transport_family(active_model_provider, active_route_id, active_api_keys))
+                    llm, model_info = _build_llm(active_model_name, active_model_provider, active_api_keys, pydantic_model)
+                    if agent_name:
+                        progress.update_status(agent_name, None, str(fallback_config["status_message"]))
+                        continue
 
             if agent_name:
                 progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
@@ -532,6 +540,68 @@ def _extract_balanced_json_candidates(content: str) -> list[str]:
     return candidates
 
 
+def _try_json_loads(payload: str) -> dict | None:
+    """Attempts strict JSON parsing with a couple of bounded cleanups."""
+    if not payload:
+        return None
+
+    candidates = [payload]
+    cleaned_payload = re.sub(r",\s*([}\]])", r"\1", payload)
+    if cleaned_payload != payload:
+        candidates.append(cleaned_payload)
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    return None
+
+
+def _extract_common_signal_payload(content: str) -> dict | None:
+    """Best-effort extractor for the common agent response schema when JSON is malformed."""
+    signal_match = re.search(r'"signal"\s*:\s*"(?P<value>[^"]+)"', content)
+    confidence_match = re.search(r'"confidence"\s*:\s*(?P<value>-?\d+(?:\.\d+)?)', content)
+    reasoning_start = re.search(r'"reasoning"\s*:\s*"', content)
+    reasoning_cn_start = re.search(r'"reasoning_cn"\s*:\s*"', content)
+
+    if not (signal_match and confidence_match and reasoning_start and reasoning_cn_start):
+        return None
+
+    reasoning_value_start = reasoning_start.end()
+    reasoning_value_end = reasoning_cn_start.start()
+    reasoning_segment = content[reasoning_value_start:reasoning_value_end]
+    reasoning_segment = re.sub(r'",\s*$', "", reasoning_segment, flags=re.DOTALL).strip()
+
+    reasoning_cn_value_start = reasoning_cn_start.end()
+    reasoning_cn_tail = content[reasoning_cn_value_start:]
+    reasoning_cn_end = reasoning_cn_tail.rfind('"')
+    if reasoning_cn_end == -1:
+        return None
+    reasoning_cn_segment = reasoning_cn_tail[:reasoning_cn_end].strip()
+
+    try:
+        confidence_value = float(confidence_match.group("value"))
+    except ValueError:
+        return None
+
+    confidence: int | float
+    if confidence_value.is_integer():
+        confidence = int(confidence_value)
+    else:
+        confidence = confidence_value
+
+    return {
+        "signal": signal_match.group("value").strip(),
+        "confidence": confidence,
+        "reasoning": reasoning_segment.replace('\\"', '"').strip(),
+        "reasoning_cn": reasoning_cn_segment.replace('\\"', '"').strip(),
+    }
+
+
 def extract_json_from_response(content: str) -> dict | None:
     """Extracts JSON from markdown-formatted response, handling various response formats."""
     try:
@@ -544,10 +614,9 @@ def extract_json_from_response(content: str) -> dict | None:
 
         # Try direct JSON first after cleaning.
         if content.startswith("{") or content.startswith("["):
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                pass
+            parsed = _try_json_loads(content)
+            if parsed is not None:
+                return parsed
 
         # Try to find JSON in markdown code block with 'json' marker
         json_start = content.find("```json")
@@ -556,7 +625,9 @@ def extract_json_from_response(content: str) -> dict | None:
             json_end = json_text.find("```")
             if json_end != -1:
                 json_text = json_text[:json_end].strip()
-                return json.loads(json_text)
+                parsed = _try_json_loads(json_text)
+                if parsed is not None:
+                    return parsed
 
         # Try to find JSON in markdown code block without 'json' marker
         json_start = content.find("```")
@@ -566,14 +637,19 @@ def extract_json_from_response(content: str) -> dict | None:
             if json_end != -1:
                 json_text = json_text[:json_end].strip()
                 if json_text.startswith("{") or json_text.startswith("["):
-                    return json.loads(json_text)
+                    parsed = _try_json_loads(json_text)
+                    if parsed is not None:
+                        return parsed
 
         # Try to find raw JSON object with balanced braces.
         for json_str in _extract_balanced_json_candidates(content):
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                continue
+            parsed = _try_json_loads(json_str)
+            if parsed is not None:
+                return parsed
+
+        repaired_signal_payload = _extract_common_signal_payload(content)
+        if repaired_signal_payload is not None:
+            return repaired_signal_payload
 
     except Exception as e:
         print(f"Error extracting JSON from response: {e}")

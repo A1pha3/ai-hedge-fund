@@ -11,6 +11,7 @@ from src.backtesting.types import PerformanceMetrics
 from src.execution.daily_pipeline import DailyPipeline
 from src.llm.defaults import get_default_model_config
 from src.main import run_hedge_fund
+from src.monitoring.llm_metrics import get_llm_metrics_paths
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 
 
@@ -23,6 +24,62 @@ def _serialize_portfolio_values(portfolio_values: Sequence[dict]) -> list[dict]:
             payload["Date"] = date_value.strftime("%Y-%m-%d")
         serialized.append(payload)
     return serialized
+
+
+def _build_llm_route_provenance() -> tuple[dict, dict]:
+    metrics_paths = get_llm_metrics_paths()
+    summary_path = Path(metrics_paths["summary_path"])
+    jsonl_path = Path(metrics_paths["jsonl_path"])
+    artifacts = {
+        "llm_metrics_jsonl": str(jsonl_path),
+        "llm_metrics_summary": str(summary_path),
+    }
+    provenance = {
+        "session_id": metrics_paths["session_id"],
+        "summary_available": False,
+        "attempts": 0,
+        "successes": 0,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "fallback_observed": False,
+        "contaminated_by_provider_fallback": False,
+        "providers_seen": [],
+        "models_seen": [],
+        "routes_seen": [],
+    }
+
+    if not summary_path.exists():
+        return provenance, artifacts
+
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        provenance["summary_read_error"] = str(error)
+        return provenance, artifacts
+
+    totals = summary.get("totals") or {}
+    providers = summary.get("providers") or {}
+    models = summary.get("models") or {}
+    routes = summary.get("routes") or {}
+    fallback_attempts = int(totals.get("fallback_attempts") or 0)
+
+    provenance.update(
+        {
+            "summary_available": True,
+            "attempts": int(totals.get("attempts") or 0),
+            "successes": int(totals.get("successes") or 0),
+            "errors": int(totals.get("errors") or 0),
+            "rate_limit_errors": int(totals.get("rate_limit_errors") or 0),
+            "fallback_attempts": fallback_attempts,
+            "fallback_observed": fallback_attempts > 0,
+            "contaminated_by_provider_fallback": fallback_attempts > 0,
+            "providers_seen": sorted(key for key, bucket in providers.items() if int((bucket or {}).get("attempts") or 0) > 0),
+            "models_seen": sorted(key for key, bucket in models.items() if int((bucket or {}).get("attempts") or 0) > 0),
+            "routes_seen": sorted(key for key, bucket in routes.items() if int((bucket or {}).get("attempts") or 0) > 0),
+        }
+    )
+    return provenance, artifacts
 
 
 class JsonlPaperTradingRecorder:
@@ -108,6 +165,8 @@ def run_paper_trading_session(
     if engine._timing_log_path is not None and engine._timing_log_path != timing_log_path and engine._timing_log_path.exists():
         engine._timing_log_path.replace(timing_log_path)
 
+    llm_route_provenance, llm_metrics_artifacts = _build_llm_route_provenance()
+
     summary = {
         "mode": "paper_trading",
         "start_date": start_date,
@@ -124,6 +183,7 @@ def run_paper_trading_session(
         "performance_metrics": dict(metrics),
         "portfolio_values": _serialize_portfolio_values(engine.get_portfolio_values()),
         "final_portfolio_snapshot": engine.get_portfolio_snapshot(),
+        "llm_route_provenance": llm_route_provenance,
         "daily_event_stats": {
             "day_count": recorder.day_count,
             "executed_trade_days": recorder.executed_trade_days,
@@ -133,6 +193,7 @@ def run_paper_trading_session(
             "daily_events": str(daily_events_path),
             "timing_log": str(timing_log_path),
             "summary": str(summary_path),
+            **llm_metrics_artifacts,
         },
     }
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

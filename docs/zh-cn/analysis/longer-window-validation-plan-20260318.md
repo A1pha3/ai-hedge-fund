@@ -110,6 +110,12 @@ P2-3 先定义一条窗口阶梯，而不是一次性拉成超长整窗。
 1. 如果 `2026-03-14` 前的数据未完全就绪，则把终点回退到 `2026-03-04` 之后第一个“数据完整、可重放、可生成 summary”的交易日。
 2. 如果 `2026-03-04` 之后没有完整连续数据，则 W1 暂缓，不跳做 W2。
 
+2026-03-19 补充约束：
+
+1. 如果 W1 使用 `MiniMax-M2.7`，则必须作为独立验证分支单列，不并入当前 `MiniMax-M2.5` 主表。
+2. W1 的解释必须同时引用 [m2-5-vs-m2-7-bridge-summary-20260319.md](./m2-5-vs-m2-7-bridge-summary-20260319.md) 与 [llm-routing-and-minimax-config-20260319.md](./llm-routing-and-minimax-config-20260319.md)。
+3. 若运行期间出现 provider fallback、非结构化 JSON 重试或统计口径混杂，W1 只能记为 bridge/probe，不得提升为新的可比基线。
+
 ### 4.3 W2 对称扩展窗口
 
 目标：在 W1 可执行之后，再向前补 7 到 10 个交易日，验证当前结论是否只是在 `2026-02` 初段成立。
@@ -122,6 +128,21 @@ P2-3 先定义一条窗口阶梯，而不是一次性拉成超长整窗。
 
 1. 如果 `2026-01-20` 附近数据不完整，则向后收缩到最早可连续执行的交易日。
 2. 若早段数据质量显著低于锚点窗口，W2 仅保留为 `data_gap_probe`，不进入 scoreboard 主表。
+
+2026-03-19 运行补充：
+
+1. 已启动 `paper_trading_window_20260120_20260313_w2_live_m2_7_20260319` 作为 `MiniMax-M2.7` 分支 W2 live 探针。
+2. 当前运行已确认 `2026-01-20`、`2026-01-21` 段并非数据缺口，但终端输出中反复出现 `MiniMax limited, switching to Volcengine Ark:doubao-seed-2.0-pro`。
+3. 该 W2 live 已完成落盘，墙钟耗时约 `2h43m09s`；`pipeline_timings.jsonl` 显示主要耗时不在数据段，而在长窗口下的 post-market fast-agent 路径。
+4. 同窗 `paper_trading_window_20260120_20260313_w2_frozen_replay_m2_7_20260319` 已完成，且与 live 在 `performance_metrics`、`daily_event_stats`、期末组合价值和最近 5 个交易日资金曲线尾段上完全一致。
+5. 已确认事件包括：`603993` 于 `2026-02-02` hard stop 退出、`300724` 于 `2026-02-05` hard stop 退出，`601600` 在窗口末仍持有 `400` 股；这些事件在 W2 live / frozen 中保持一致。
+6. 由于 provider fallback 事实在 live 期间已经成立，本轮 W2 的最终归档口径应是 `fallback_contaminated_probe`，而不是 clean validation；它可以进入分支记录，但不能提升为新的可比主表基线。
+7. 因此 W2 已从 `branch_probe_in_progress` 收口为“强 replay 对齐但路由受污染”的分支探针，后续若进入 W3，必须先解决 provider 污染和长窗口成本问题。
+8. 之后又完成 `paper_trading_window_20260120_20260313_w2_live_m2_7_clean_rerun_20260319` strict rerun；`session_summary.json.llm_route_provenance` 显示 `rate_limit_errors=0`、`fallback_attempts=0`、`contaminated_by_provider_fallback=false`。
+9. 这条 clean rerun 证据应解释为“strict default-route clean / no provider fallback contamination”，而不是“整个 session 没有其它 provider”。本次 metrics summary 仍记录到 `Volcengine` 与 `Zhipu`，说明系统原生多 provider 路由仍在，只是没有发生 fallback 污染。
+10. clean rerun 的摘要指标为：`Return=-1.6097%`、`Final Value=98390.3041`、`Sharpe=-2.3683`、`Max Drawdown=-2.6003%`、`day_count=33`、`executed_trade_days=5`、`total_executed_orders=6`。
+11. 因此 W2 现在应保留两条并存证据：`fallback_contaminated_probe` 与 `clean strict-route validation`；前者回答 contaminated live 是否可 replay，后者回答默认路由能否在长窗口下无 provider fallback 地跑完。
+12. 两条证据都只属于 `MiniMax-M2.7` 分支记录，不改变 `MiniMax-M2.5` baseline 仍为主基线的事实。
 
 ### 4.4 W3 非重叠 holdout 窗口
 

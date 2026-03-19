@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.llm.models import ModelProvider, get_provider_primary_route, get_provider_routes
+from src.llm.models import ModelProvider
 
 
 DEFAULT_MODEL_NAME = "gpt-4.1"
@@ -21,36 +21,6 @@ _API_KEY_ENV_VARS = (
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
 )
-_PROVIDER_MODEL_ENV_VARS: dict[str, tuple[str, ...]] = {
-    ModelProvider.MINIMAX.value: ("MINIMAX_MODEL", "MINIMAX_FALLBACK_MODEL"),
-    ModelProvider.ZHIPU.value: ("ZHIPU_MODEL", "ZHIPU_FALLBACK_MODEL", "ZHIPU_CODING_FALLBACK_MODEL"),
-    ModelProvider.VOLCENGINE.value: ("ARK_MODEL", "ARK_FALLBACK_MODEL"),
-    ModelProvider.OPENROUTER.value: ("OPENROUTER_MODEL", "OPENROUTER_FALLBACK_MODEL"),
-    ModelProvider.OPENAI.value: ("OPENAI_MODEL",),
-    ModelProvider.ANTHROPIC.value: ("ANTHROPIC_MODEL",),
-    ModelProvider.DEEPSEEK.value: ("DEEPSEEK_MODEL",),
-    ModelProvider.GOOGLE.value: ("GOOGLE_MODEL",),
-    ModelProvider.XAI.value: ("XAI_MODEL",),
-    ModelProvider.GROQ.value: ("GROQ_MODEL",),
-    ModelProvider.GIGACHAT.value: ("GIGACHAT_MODEL",),
-    ModelProvider.AZURE_OPENAI.value: ("AZURE_OPENAI_MODEL", "AZURE_OPENAI_DEPLOYMENT_NAME"),
-    ModelProvider.OLLAMA.value: ("OLLAMA_MODEL",),
-}
-_BUILTIN_PROVIDER_DEFAULTS: dict[str, str] = {
-    ModelProvider.OPENAI.value: "gpt-4.1",
-    ModelProvider.ANTHROPIC.value: "claude-sonnet-4-5-20250929",
-    ModelProvider.DEEPSEEK.value: "deepseek-chat",
-    ModelProvider.GOOGLE.value: "gemini-3-pro-preview",
-    ModelProvider.GROQ.value: "deepseek-chat",
-    ModelProvider.GIGACHAT.value: "GigaChat-2-Max",
-    ModelProvider.MINIMAX.value: "MiniMax-M2.5",
-    ModelProvider.OPENROUTER.value: "openai/gpt-4.1-mini",
-    ModelProvider.OLLAMA.value: "llama3",
-    ModelProvider.XAI.value: "grok-4-0709",
-    ModelProvider.ZHIPU.value: "glm-4.7",
-    ModelProvider.VOLCENGINE.value: "doubao-seed-2.0-code",
-    ModelProvider.AZURE_OPENAI.value: "",
-}
 _PROVIDER_ALIASES = {provider.value.lower(): provider.value for provider in ModelProvider}
 _PROVIDER_ALIASES.update(
     {
@@ -60,6 +30,18 @@ _PROVIDER_ALIASES.update(
         "openai": ModelProvider.OPENAI.value,
     }
 )
+
+
+class DefaultModelConfigurationError(ValueError):
+    """Raised when the default LLM model configuration is missing or ambiguous."""
+
+
+def _build_missing_default_model_message() -> str:
+    return (
+        "默认模型必须显式配置。请同时设置 LLM_DEFAULT_MODEL_PROVIDER 与 LLM_DEFAULT_MODEL_NAME，"
+        "或同时设置 BACKTEST_MODEL_PROVIDER 与 BACKTEST_MODEL_NAME。为避免静默降级，"
+        "系统不再从 MINIMAX_MODEL、MINIMAX_FALLBACK_MODEL 等 provider 变量推断默认模型。"
+    )
 
 
 def _read_env(*names: str) -> str | None:
@@ -74,8 +56,6 @@ def _read_env(*names: str) -> str | None:
 
 def _ensure_default_env_loaded() -> None:
     sentinel_names = set(_MODEL_NAME_ENV_VARS + _MODEL_PROVIDER_ENV_VARS)
-    for names in _PROVIDER_MODEL_ENV_VARS.values():
-        sentinel_names.update(names)
 
     if os.getenv("PYTEST_CURRENT_TEST"):
         sentinel_names.update(_API_KEY_ENV_VARS)
@@ -96,41 +76,34 @@ def normalize_provider_name(provider_name: str | None) -> str:
 
 
 def get_default_model_provider() -> str:
-    _ensure_default_env_loaded()
-    env_provider = _read_env(*_MODEL_PROVIDER_ENV_VARS)
-    if env_provider:
-        return normalize_provider_name(env_provider)
-
-    routes = get_provider_routes(None)
-    if routes:
-        return normalize_provider_name(routes[0].provider_name)
-
-    return DEFAULT_MODEL_PROVIDER
+    _, model_provider = get_default_model_config()
+    return model_provider
 
 
 def get_default_model_name(provider_name: str | None = None) -> str:
-    _ensure_default_env_loaded()
-    env_model_name = _read_env(*_MODEL_NAME_ENV_VARS)
-    if env_model_name:
-        return env_model_name
-
-    resolved_provider = normalize_provider_name(provider_name or get_default_model_provider())
-    provider_model_env_vars = _PROVIDER_MODEL_ENV_VARS.get(resolved_provider, ())
-    provider_model_name = _read_env(*provider_model_env_vars)
-    if provider_model_name:
-        return provider_model_name
-
-    route = get_provider_primary_route(resolved_provider, None)
-    if route and route.model_name:
-        return route.model_name
-
-    return _BUILTIN_PROVIDER_DEFAULTS.get(resolved_provider, DEFAULT_MODEL_NAME)
+    model_name, resolved_provider = get_default_model_config()
+    if provider_name and normalize_provider_name(provider_name) != resolved_provider:
+        raise DefaultModelConfigurationError(
+            f"默认模型 provider 已配置为 {resolved_provider}，但请求读取的是 {normalize_provider_name(provider_name)}。"
+        )
+    return model_name
 
 
 def get_default_model_config() -> tuple[str, str]:
-    model_provider = get_default_model_provider()
-    model_name = get_default_model_name(model_provider)
-    return model_name, model_provider
+    _ensure_default_env_loaded()
+    env_model_name = _read_env(*_MODEL_NAME_ENV_VARS)
+    env_provider = _read_env(*_MODEL_PROVIDER_ENV_VARS)
+
+    if not env_model_name and not env_provider:
+        raise DefaultModelConfigurationError(_build_missing_default_model_message())
+
+    if bool(env_model_name) != bool(env_provider):
+        raise DefaultModelConfigurationError(
+            "默认模型配置不完整。LLM_DEFAULT_MODEL_PROVIDER 与 LLM_DEFAULT_MODEL_NAME "
+            "或 BACKTEST_MODEL_PROVIDER 与 BACKTEST_MODEL_NAME 必须成对出现。"
+        )
+
+    return env_model_name or DEFAULT_MODEL_NAME, normalize_provider_name(env_provider or DEFAULT_MODEL_PROVIDER)
 
 
 def resolve_model_selection(model_name: str | None, model_provider: str | None) -> tuple[str, str]:

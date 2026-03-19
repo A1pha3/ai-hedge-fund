@@ -83,7 +83,7 @@ class LLMModel(BaseModel):
     def is_volcengine_non_json_mode(self) -> bool:
         """Doubao coding models on Ark Coding Plan do not support response_format=json_object."""
         lowered = self.model_name.lower()
-        return self.provider == ModelProvider.VOLCENGINE and lowered in {"doubao-seed-2.0-code", "ark-code-latest"}
+        return self.provider == ModelProvider.VOLCENGINE and lowered in {"doubao-seed-2.0-code", "doubao-seed-2.0-pro", "ark-code-latest"}
 
 
 # Load models from JSON file
@@ -295,7 +295,7 @@ def _register_default_provider_profiles() -> None:
                     display_name="Coding Plan Zhipu",
                     api_key_names=("ZHIPU_CODE_API_KEY",),
                     default_model_name="glm-4.7",
-                    model_env_var="ZHIPU_CODING_FALLBACK_MODEL",
+                    model_env_var="ZHIPU_MODEL",
                     extra_api_keys={"ZHIPU_USE_CODING_PLAN": True},
                     openai_compatible_transport=OpenAICompatibleTransportConfig(
                         api_key_name="ZHIPU_CODE_API_KEY",
@@ -310,7 +310,7 @@ def _register_default_provider_profiles() -> None:
                     display_name="standard Zhipu",
                     api_key_names=("ZHIPU_API_KEY",),
                     default_model_name="glm-4.7",
-                    model_env_var="ZHIPU_FALLBACK_MODEL",
+                    model_env_var="ZHIPU_MODEL",
                     openai_compatible_transport=OpenAICompatibleTransportConfig(
                         api_key_name="ZHIPU_API_KEY",
                         base_url=ZHIPU_STANDARD_BASE_URL,
@@ -335,7 +335,7 @@ def _register_default_provider_profiles() -> None:
                     display_name="MiniMax",
                     api_key_names=("MINIMAX_API_KEY",),
                     default_model_name="MiniMax-M2.5",
-                    model_env_var="MINIMAX_FALLBACK_MODEL",
+                    model_env_var="MINIMAX_MODEL",
                     openai_compatible_transport=OpenAICompatibleTransportConfig(
                         api_key_name="MINIMAX_API_KEY",
                         base_url="https://api.minimaxi.com/v1",
@@ -359,7 +359,7 @@ def _register_default_provider_profiles() -> None:
                     display_name="Volcengine Ark",
                     api_key_names=("ARK_API_KEY",),
                     default_model_name="doubao-seed-2.0-code",
-                    model_env_var="ARK_FALLBACK_MODEL",
+                    model_env_var="ARK_MODEL",
                     openai_compatible_transport=OpenAICompatibleTransportConfig(
                         api_key_name="ARK_API_KEY",
                         base_url=VOLCENGINE_ARK_CODING_BASE_URL,
@@ -384,7 +384,7 @@ def _register_default_provider_profiles() -> None:
                     display_name="OpenRouter",
                     api_key_names=("OPENROUTER_API_KEY",),
                     default_model_name="openai/gpt-4.1-mini",
-                    model_env_var="OPENROUTER_FALLBACK_MODEL",
+                    model_env_var="OPENROUTER_MODEL",
                     openai_compatible_transport=OpenAICompatibleTransportConfig(
                         api_key_name="OPENROUTER_API_KEY",
                         base_url="https://openrouter.ai/api/v1",
@@ -494,7 +494,16 @@ def get_zhipu_model(model_name: str, api_keys: dict | None = None) -> ChatOpenAI
 def get_model_info(model_name: str, model_provider: str) -> LLMModel | None:
     """Get model information by model_name"""
     all_models = AVAILABLE_MODELS + OLLAMA_MODELS
-    return next((model for model in all_models if model.model_name == model_name and model.provider == model_provider), None)
+    matched_model = next((model for model in all_models if model.model_name == model_name and model.provider == model_provider), None)
+    if matched_model:
+        return matched_model
+
+    try:
+        provider_enum = model_provider if isinstance(model_provider, ModelProvider) else ModelProvider(str(model_provider))
+    except ValueError:
+        return None
+
+    return LLMModel(display_name=str(model_name), model_name=str(model_name), provider=provider_enum)
 
 
 def find_model_by_name(model_name: str) -> LLMModel | None:

@@ -167,7 +167,7 @@ poetry run python src/main.py --ticker AAPL --model gpt-4.1
 uv run python src/main.py --ticker 688363
 ```
 
-默认模型来自 .env：优先读取 LLM_DEFAULT_MODEL_PROVIDER 和 LLM_DEFAULT_MODEL_NAME；如果未设置全局默认型号，则继续读取 provider 对应的型号变量，例如 MiniMax 使用 MINIMAX_MODEL。
+默认模型来自 .env：必须显式同时设置 LLM_DEFAULT_MODEL_PROVIDER 和 LLM_DEFAULT_MODEL_NAME；如果缺少其中任意一个，系统会直接报错，而不是继续读取 provider 对应的型号变量。这是为了避免静默切到旧模型或 fallback 模型。
 
 如果你只想检查当前解析出的默认模型，而不实际运行分析，可以执行：
 

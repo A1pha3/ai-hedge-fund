@@ -93,7 +93,7 @@ FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
 
 **Important**: You must set at least one LLM API key (e.g. `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, or `DEEPSEEK_API_KEY`) for the hedge fund to work. 
 
-**Default Model Routing**: If you set `LLM_DEFAULT_MODEL_PROVIDER` and optionally `LLM_DEFAULT_MODEL_NAME`, all major entry points will use that same default model unless you explicitly pass `--model` or an equivalent override. If `LLM_DEFAULT_MODEL_NAME` is omitted, the system falls back to the provider-specific model variable such as `MINIMAX_MODEL`.
+**Default Model Routing**: You must explicitly set both `LLM_DEFAULT_MODEL_PROVIDER` and `LLM_DEFAULT_MODEL_NAME` for default routing. To avoid silent model downgrades, the system no longer falls back to provider-specific model variables such as `MINIMAX_MODEL` or `MINIMAX_FALLBACK_MODEL` when resolving the default model.
 
 You can inspect the currently resolved default model with:
 

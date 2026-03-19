@@ -13,6 +13,8 @@
 4. 20 日结果本身没有出现 `No ticker rows`、空仓或收益异常变平，收益侧与 baseline 一致为 `Total Return 0.33% / Max DD 0.48%`，因此本轮失败更像调度形态放大了长尾与 refill 开销，而不是状态边界污染。
 5. 按回滚要求，rolling scheduler 代码已从默认 workflow 中撤回，仓库代码恢复到稳定 batch/barrier 状态；本文件保留为后续设计与失败记录。
 
+说明：这里的 `ARK_FALLBACK_MODEL` 只是 2026-03-12 当时实验环境里的历史配置快照。当前主链路语义已收口到 `ARK_MODEL`，详见 [llm-routing-and-minimax-config-20260319.md](./llm-routing-and-minimax-config-20260319.md)。
+
 ---
 
 ## 1. 背景与目标
@@ -414,6 +416,8 @@ sequenceDiagram
 4. `LLM_PRIMARY_PROVIDER=MiniMax`
 5. `LLM_PARALLEL_PROVIDER_ALLOWLIST=MiniMax,Volcengine`
 6. `ARK_FALLBACK_MODEL=doubao-seed-2.0-code`
+
+这里同样是历史 benchmark 配置记录，不代表当前 provider route 的现行配置名。当前运行时主模型变量以 `ARK_MODEL` 为准。
 
 第一轮 benchmark 目标不是极致优化，而是满足下面两个条件：
 

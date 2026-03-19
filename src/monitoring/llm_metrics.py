@@ -32,6 +32,7 @@ def _bucket_template() -> dict[str, Any]:
         "successes": 0,
         "errors": 0,
         "rate_limit_errors": 0,
+        "fallback_attempts": 0,
         "total_duration_ms": 0.0,
         "avg_duration_ms": 0.0,
         "prompt_chars": 0,
@@ -72,6 +73,7 @@ def _update_bucket(bucket: dict[str, Any], entry: dict[str, Any]) -> None:
     bucket["successes"] += 1 if entry["success"] else 0
     bucket["errors"] += 0 if entry["success"] else 1
     bucket["rate_limit_errors"] += 1 if entry["is_rate_limit"] else 0
+    bucket["fallback_attempts"] += 1 if entry["used_fallback"] else 0
     bucket["total_duration_ms"] += entry["duration_ms"]
     bucket["avg_duration_ms"] = round(bucket["total_duration_ms"] / bucket["attempts"], 3)
     bucket["prompt_chars"] += entry["prompt_chars"]

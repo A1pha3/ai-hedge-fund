@@ -1,3 +1,5 @@
+import pytest
+
 from src.llm import defaults as llm_defaults
 from src.llm import models as llm_models
 
@@ -28,6 +30,38 @@ def test_get_provider_routes_orders_registered_routes_by_priority(monkeypatch):
         ("Zhipu", "coding_plan"),
         ("Zhipu", "standard"),
     ]
+
+
+def test_provider_primary_routes_use_primary_model_env_vars(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("MINIMAX_MODEL", "MiniMax-M2.7")
+    monkeypatch.setenv("ARK_API_KEY", "ark-key")
+    monkeypatch.setenv("ARK_MODEL", "doubao-seed-2.0-pro")
+    monkeypatch.setenv("ZHIPU_API_KEY", "standard-key")
+    monkeypatch.setenv("ZHIPU_CODE_API_KEY", "coding-key")
+    monkeypatch.setenv("ZHIPU_MODEL", "glm-4.7")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-4.1")
+
+    minimax_route = llm_models.get_provider_primary_route("MiniMax", api_keys=None, enabled_only_for="priority")
+    ark_route = llm_models.get_provider_primary_route("Volcengine", api_keys=None, enabled_only_for="priority")
+    zhipu_coding_route = llm_models.get_provider_primary_route("Zhipu", api_keys={"ZHIPU_CODE_API_KEY": "coding-key"}, enabled_only_for="priority")
+    openrouter_route = llm_models.get_provider_primary_route("OpenRouter", api_keys=None)
+
+    assert minimax_route is not None
+    assert minimax_route.model_name == "MiniMax-M2.7"
+    assert ark_route is not None
+    assert ark_route.model_name == "doubao-seed-2.0-pro"
+    assert zhipu_coding_route is not None
+    assert zhipu_coding_route.variant_name == "coding_plan"
+    assert zhipu_coding_route.model_name == "glm-4.7"
+    monkeypatch.delenv("ZHIPU_CODE_API_KEY")
+    zhipu_standard_route = llm_models.get_provider_primary_route("Zhipu", api_keys={"ZHIPU_API_KEY": "standard-key"})
+    assert zhipu_standard_route is not None
+    assert zhipu_standard_route.variant_name == "standard"
+    assert zhipu_standard_route.model_name == "glm-4.7"
+    assert openrouter_route is not None
+    assert openrouter_route.model_name == "openai/gpt-4.1"
 
 
 def test_register_provider_profile_supports_new_registry_entries(monkeypatch):
@@ -243,16 +277,14 @@ def test_volcengine_doubao_model_disables_json_mode():
     assert model.has_json_mode() is False
 
 
-def test_default_model_config_prefers_env_provider_and_provider_specific_model(monkeypatch):
+def test_default_model_config_requires_explicit_global_model_name(monkeypatch):
     monkeypatch.setenv("LLM_DEFAULT_MODEL_PROVIDER", "MiniMax")
     monkeypatch.delenv("LLM_DEFAULT_MODEL_NAME", raising=False)
     monkeypatch.delenv("BACKTEST_MODEL_NAME", raising=False)
     monkeypatch.setenv("MINIMAX_MODEL", "MiniMax-M2.7")
 
-    model_name, model_provider = llm_defaults.get_default_model_config()
-
-    assert model_provider == "MiniMax"
-    assert model_name == "MiniMax-M2.7"
+    with pytest.raises(llm_defaults.DefaultModelConfigurationError, match="默认模型配置不完整"):
+        llm_defaults.get_default_model_config()
 
 
 def test_default_model_config_prefers_explicit_global_model_name(monkeypatch):

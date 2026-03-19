@@ -90,6 +90,11 @@
     "provider": "MiniMax"
   },
   {
+    "display_name": "MiniMax-M2.7 (原生)",
+    "model_name": "MiniMax-M2.7",
+    "provider": "MiniMax"
+  },
+  {
     "display_name": "MiniMax-M2 (原生)",
     "model_name": "MiniMax-M2",
     "provider": "MiniMax"
@@ -97,6 +102,11 @@
   {
     "display_name": "Doubao-Seed-2.0-Code (火山方舟)",
     "model_name": "doubao-seed-2.0-code",
+    "provider": "Volcengine"
+  },
+  {
+    "display_name": "Doubao-Seed-2.0-Pro (火山方舟)",
+    "model_name": "doubao-seed-2.0-pro",
     "provider": "Volcengine"
   },
   {

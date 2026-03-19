@@ -55,6 +55,17 @@ def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]
 
 
 def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "test-session",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
     _patch_market_data(
         monkeypatch,
         {
@@ -104,11 +115,65 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["mode"] == "paper_trading"
     assert summary["plan_generation"]["mode"] == "live_pipeline"
+    assert summary["llm_route_provenance"] == {
+        "session_id": "test-session",
+        "summary_available": False,
+        "attempts": 0,
+        "successes": 0,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "fallback_observed": False,
+        "contaminated_by_provider_fallback": False,
+        "providers_seen": [],
+        "models_seen": [],
+        "routes_seen": [],
+    }
     assert summary["daily_event_stats"]["day_count"] >= 1
     assert summary["artifacts"]["summary"] == str(artifacts.summary_path)
+    assert summary["artifacts"]["llm_metrics_summary"] == str(metrics_summary_path)
+    assert summary["artifacts"]["llm_metrics_jsonl"] == str(metrics_jsonl_path)
 
 
 def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    metrics_summary_path.write_text(
+        json.dumps(
+            {
+                "totals": {
+                    "attempts": 12,
+                    "successes": 10,
+                    "errors": 2,
+                    "rate_limit_errors": 2,
+                    "fallback_attempts": 3,
+                },
+                "providers": {
+                    "MiniMax": {"attempts": 9},
+                    "Volcengine Ark": {"attempts": 3},
+                },
+                "models": {
+                    "MiniMax:MiniMax-M2.7": {"attempts": 9},
+                    "Volcengine Ark:doubao-seed-2.0-pro": {"attempts": 3},
+                },
+                "routes": {
+                    "MiniMax:default": {"attempts": 9},
+                    "Volcengine Ark:default": {"attempts": 3},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "replay-session",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
     _patch_market_data(
         monkeypatch,
         {
@@ -158,6 +223,10 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
         "mode": "frozen_current_plan_replay",
         "frozen_plan_source": str(source_path.resolve()),
     }
+    assert summary["llm_route_provenance"]["summary_available"] is True
+    assert summary["llm_route_provenance"]["fallback_attempts"] == 3
+    assert summary["llm_route_provenance"]["contaminated_by_provider_fallback"] is True
+    assert summary["llm_route_provenance"]["providers_seen"] == ["MiniMax", "Volcengine Ark"]
     assert summary["final_portfolio_snapshot"]["positions"]["AAPL"]["long"] == 100
 
     lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
