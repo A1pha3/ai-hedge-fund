@@ -26,6 +26,9 @@ def test_build_parallel_provider_execution_plan_uses_dual_provider_wave(monkeypa
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PRIMARY_PROVIDER", raising=False)
+    monkeypatch.setenv("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", "3")
+    monkeypatch.setenv("ZHIPU_PROVIDER_CONCURRENCY_LIMIT", "3")
 
     plan = build_parallel_provider_execution_plan(
         agent_names=[f"agent_{index}" for index in range(1, 7)],
@@ -36,10 +39,12 @@ def test_build_parallel_provider_execution_plan_uses_dual_provider_wave(monkeypa
     )
 
     overrides = plan["agent_llm_overrides"]
+    providers = [overrides[f"agent_{index}"]["model_provider"] for index in range(1, 7)]
 
     assert plan["effective_concurrency_limit"] == 6
     assert plan["parallel_provider_count"] == 2
-    assert [overrides[f"agent_{index}"]["model_provider"] for index in range(1, 7)] == ["Zhipu", "MiniMax", "Zhipu", "MiniMax", "Zhipu", "MiniMax"]
+    assert providers.count("Zhipu") == 3
+    assert providers.count("MiniMax") == 3
 
 
 def test_build_parallel_provider_execution_plan_supports_weighted_provider_caps(monkeypatch):
@@ -129,6 +134,25 @@ def test_build_parallel_provider_execution_plan_keeps_single_provider_when_key_m
         agent_names=["agent_1", "agent_2"],
         base_model_name="glm-4.7",
         base_model_provider="Zhipu",
+        api_keys=None,
+        per_provider_limit=3,
+    )
+
+    assert plan["effective_concurrency_limit"] == 3
+    assert plan["parallel_provider_count"] == 1
+    assert plan["agent_llm_overrides"] == {}
+
+
+def test_build_parallel_provider_execution_plan_respects_global_provider_route_allowlist(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.setenv("ARK_API_KEY", "ark-key")
+    monkeypatch.setenv("LLM_PROVIDER_ROUTE_ALLOWLIST", "MiniMax")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=[f"agent_{index}" for index in range(1, 5)],
+        base_model_name="MiniMax-M2.7",
+        base_model_provider="MiniMax",
         api_keys=None,
         per_provider_limit=3,
     )

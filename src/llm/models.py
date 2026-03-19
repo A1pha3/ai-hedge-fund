@@ -236,6 +236,16 @@ def _default_concurrency_env_var(provider_name: str) -> str:
     return f"{normalized}_PROVIDER_CONCURRENCY_LIMIT"
 
 
+def _get_provider_route_allowlist() -> set[str] | None:
+    """Returns an optional global allowlist for routable providers."""
+    raw_value = os.getenv("LLM_PROVIDER_ROUTE_ALLOWLIST", "").strip()
+    if not raw_value:
+        return None
+
+    providers = {item.strip().lower() for item in raw_value.split(",") if item.strip()}
+    return providers or None
+
+
 _PROVIDER_REGISTRY: dict[str, ProviderProfile] = {}
 
 
@@ -257,7 +267,11 @@ def get_provider_registry() -> dict[str, ProviderProfile]:
 def get_provider_routes(api_keys: dict | None, *, enabled_only_for: str | None = None) -> list[ProviderRoute]:
     """Returns all available provider routes ordered by routing priority."""
     routes: list[ProviderRoute] = []
+    provider_allowlist = _get_provider_route_allowlist()
+
     for profile in _PROVIDER_REGISTRY.values():
+        if provider_allowlist and profile.name.lower() not in provider_allowlist:
+            continue
         if enabled_only_for == "parallel" and not profile.enable_parallel_scheduler:
             continue
         if enabled_only_for == "priority" and not profile.enable_priority_routing:

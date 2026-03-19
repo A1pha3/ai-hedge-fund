@@ -157,6 +157,14 @@ P2-3 先定义一条窗口阶梯，而不是一次性拉成超长整窗。
 1. W3 只在 W1 完成且 benchmark guardrail 未出现新增破坏时才启动。
 2. W3 不要求与 W0 有完全相同的 ticker 分布，但必须继续用同一份 taxonomy 和 refresh protocol 解释结果。
 
+2026-03-20 决策门槛补充：
+
+1. W2 已形成两条并存证据：`fallback_contaminated_probe` 与 `clean strict-route validation`，详见 [w2_minimax_m2_7_branch_decision_gate_20260320.md](./w2_minimax_m2_7_branch_decision_gate_20260320.md)。
+2. 若进入 W3，默认应继承 clean strict-route 口径，而不是继续把 contaminated live 作为主验证线扩窗。
+3. W3 的结论措辞必须延续同一限制：`clean = no provider fallback contamination`，不等于 `single-provider-only session`。
+4. 若 W3 仍保持平均资金利用率低于 `10%` 且没有新增高质量机制样本，则停止继续扩窗，优先回到候选生成、持仓生命周期和组合构造问题。
+5. 同日的数据就绪检查已确认本地 `data/stock/daliy/` 目前没有形成 `2026-03-13` 之后连续交易日覆盖，因此 W3 当前状态应记为 `data_not_ready`，详见 [w3_data_readiness_check_20260320.md](./w3_data_readiness_check_20260320.md)。
+
 ## 5. 统一比较口径
 
 P2-3 的关键不是窗口多，而是比较口径单一。
@@ -241,6 +249,7 @@ P2-3 不是无限滚动任务，必须显式定义停止条件。
 1. 更长窗口验证现在缺的不是模板，而是“数据就绪检查 + bridge run + 扩窗顺序”。
 2. 当前默认基线仍是 `W0 frozen anchor`，不会因为后续 live 窗口出现而被直接替换。
 3. 更长窗口验证必须先解决语义对齐问题，再扩时间长度；否则 scoreboard 会失去可比性。
+4. 截至 `2026-03-20`，W3 尚未进入运行阶段，原因不是 W2 口径未收口，而是本地扩窗数据尚未就绪。
 
 ## 10. 关联文档
 
@@ -250,3 +259,4 @@ P2-3 不是无限滚动任务，必须显式定义停止条件。
 4. [replay-artifact-api-20260318.md](./replay-artifact-api-20260318.md)
 5. [historical-edge-date-coverage-matrix-20260318.md](./historical-edge-date-coverage-matrix-20260318.md)
 6. [paper-trading-reentry-validation-20260317.md](./paper-trading-reentry-validation-20260317.md)
+7. [w3_data_readiness_check_20260320.md](./w3_data_readiness_check_20260320.md)

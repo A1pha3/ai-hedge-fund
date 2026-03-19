@@ -532,6 +532,27 @@ def test_apply_priority_strategy_keeps_requested_primary_model_name(monkeypatch)
     assert isinstance(fallback_chain, list)
 
 
+def test_apply_priority_strategy_respects_global_provider_route_allowlist(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.setenv("ARK_API_KEY", "ark-key")
+    monkeypatch.setenv("LLM_PROVIDER_ROUTE_ALLOWLIST", "MiniMax")
+
+    model_name, model_provider, api_keys, fallback_chain, route_id, transport_family = llm_utils._apply_priority_strategy(
+        "MiniMax-M2.7",
+        "MiniMax",
+        None,
+    )
+
+    assert model_provider == "MiniMax"
+    assert model_name == "MiniMax-M2.7"
+    assert api_keys is not None
+    assert api_keys["MINIMAX_API_KEY"] == "minimax-key"
+    assert route_id == "MiniMax:default"
+    assert transport_family == "openai-compatible"
+    assert fallback_chain == []
+
+
 def test_build_llm_skips_structured_output_for_unlisted_minimax_model(monkeypatch):
     calls = []
 

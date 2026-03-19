@@ -64,6 +64,21 @@ def test_provider_primary_routes_use_primary_model_env_vars(monkeypatch):
     assert openrouter_route.model_name == "openai/gpt-4.1"
 
 
+def test_get_provider_routes_respects_global_provider_route_allowlist(monkeypatch):
+    monkeypatch.setenv("ZHIPU_CODE_API_KEY", "coding-key")
+    monkeypatch.setenv("ZHIPU_API_KEY", "standard-key")
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ARK_API_KEY", "ark-key")
+    monkeypatch.setenv("LLM_PROVIDER_ROUTE_ALLOWLIST", "MiniMax")
+
+    routes = llm_models.get_provider_routes(api_keys=None, enabled_only_for="priority")
+
+    assert routes
+    assert {route.provider_name for route in routes} == {"MiniMax"}
+    assert llm_models.get_provider_primary_route("Zhipu", api_keys=None, enabled_only_for="priority") is None
+    assert llm_models.get_provider_primary_route("MiniMax", api_keys=None, enabled_only_for="priority") is not None
+
+
 def test_register_provider_profile_supports_new_registry_entries(monkeypatch):
     monkeypatch.setattr(llm_models, "_PROVIDER_REGISTRY", llm_models.get_provider_registry())
 

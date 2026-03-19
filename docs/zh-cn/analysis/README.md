@@ -16,6 +16,12 @@
 5. [Layer B 最小规则变更提案](./layer-b-minimal-rule-change-proposal-20260312.md)
 6. [M2.5 与 M2.7 的 benchmark / bridge 对照摘要](./m2-5-vs-m2-7-bridge-summary-20260319.md)
 7. [W1 MiniMax-M2.7 live / frozen 验证纪要](./w1_minimax_m2_7_live_frozen_validation_20260319.md)
+8. [W2 MiniMax-M2.7 live / frozen contaminated probe 纪要](./w2_minimax_m2_7_live_frozen_contaminated_probe_20260319.md)
+9. [W2 MiniMax-M2.7 clean strict-route 验证纪要](./w2_minimax_m2_7_clean_strict_route_validation_20260320.md)
+10. [W2 MiniMax-M2.7 分支决策门槛页](./w2_minimax_m2_7_branch_decision_gate_20260320.md)
+11. [W3 数据就绪检查纪要](./w3_data_readiness_check_20260320.md)
+12. [Single-provider session 验证方案](./single-provider-session-validation-plan-20260320.md)
+13. [Single-provider session 单日 probe 纪要](./single-provider-session-probe-20260320.md)
 
 当前最新性能结论：在现有 batch/barrier 工作流下，已验证的最佳 5 日配置是 MiniMax=5 + Doubao=4，并通过 allowlist 将 Zhipu 排除出 analyst 并行波次；对应 5 日 wall-clock 为 933.64 秒。
 
