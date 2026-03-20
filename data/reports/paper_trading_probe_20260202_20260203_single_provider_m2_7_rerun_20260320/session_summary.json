@@ -1,0 +1,125 @@
+{
+  "mode": "paper_trading",
+  "start_date": "2026-02-02",
+  "end_date": "2026-02-03",
+  "tickers": [],
+  "initial_capital": 100000.0,
+  "model_name": "MiniMax-M2.7",
+  "model_provider": "MiniMax",
+  "selected_analysts": null,
+  "plan_generation": {
+    "mode": "live_pipeline",
+    "frozen_plan_source": null
+  },
+  "performance_metrics": {
+    "sharpe_ratio": null,
+    "sortino_ratio": null,
+    "max_drawdown": null,
+    "long_short_ratio": null,
+    "gross_exposure": null,
+    "net_exposure": null
+  },
+  "portfolio_values": [
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0
+    },
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-03",
+      "Portfolio Value": 99982.70279425,
+      "Long Exposure": 9882.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 9882.0,
+      "Net Exposure": 9882.0,
+      "Long/Short Ratio": Infinity
+    }
+  ],
+  "final_portfolio_snapshot": {
+    "cash": 90100.70279425,
+    "margin_used": 0.0,
+    "margin_requirement": 0.0,
+    "positions": {
+      "601600": {
+        "long": 400,
+        "short": 0,
+        "long_cost_basis": 13.15971,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "20260203",
+        "last_trade_date": "20260203",
+        "holding_days": 0,
+        "max_unrealized_pnl_pct": 0.0,
+        "profit_take_stage": 0,
+        "entry_score": 0.3403025763679898,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      },
+      "603993": {
+        "long": 200,
+        "short": 0,
+        "long_cost_basis": 23.164695000000002,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "20260203",
+        "last_trade_date": "20260203",
+        "holding_days": 0,
+        "max_unrealized_pnl_pct": 0.0,
+        "profit_take_stage": 0,
+        "entry_score": 0.2844698724185851,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      }
+    },
+    "realized_gains": {
+      "601600": {
+        "long": 0.0,
+        "short": 0.0
+      },
+      "603993": {
+        "long": 0.0,
+        "short": 0.0
+      }
+    }
+  },
+  "llm_route_provenance": {
+    "session_id": "20260320_115009",
+    "summary_available": true,
+    "attempts": 99,
+    "successes": 99,
+    "errors": 0,
+    "rate_limit_errors": 0,
+    "fallback_attempts": 0,
+    "fallback_observed": false,
+    "contaminated_by_provider_fallback": false,
+    "providers_seen": [
+      "MiniMax"
+    ],
+    "models_seen": [
+      "MiniMax:MiniMax-M2.7"
+    ],
+    "routes_seen": [
+      "MiniMax:default"
+    ]
+  },
+  "daily_event_stats": {
+    "day_count": 2,
+    "executed_trade_days": 1,
+    "total_executed_orders": 2
+  },
+  "artifacts": {
+    "daily_events": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260203_single_provider_m2_7_rerun_20260320/daily_events.jsonl",
+    "timing_log": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260203_single_provider_m2_7_rerun_20260320/pipeline_timings.jsonl",
+    "summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260203_single_provider_m2_7_rerun_20260320/session_summary.json",
+    "llm_metrics_jsonl": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/logs/llm_metrics_20260320_115009.jsonl",
+    "llm_metrics_summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/logs/llm_metrics_20260320_115009.summary.json"
+  }
+}

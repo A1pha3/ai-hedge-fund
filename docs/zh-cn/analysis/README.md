@@ -21,7 +21,7 @@
 10. [W2 MiniMax-M2.7 分支决策门槛页](./w2_minimax_m2_7_branch_decision_gate_20260320.md)
 11. [W3 数据就绪检查纪要](./w3_data_readiness_check_20260320.md)
 12. [Single-provider session 验证方案](./single-provider-session-validation-plan-20260320.md)
-13. [Single-provider session 单日 probe 纪要](./single-provider-session-probe-20260320.md)
+13. [Single-provider session probe 纪要](./single-provider-session-probe-20260320.md)
 
 当前最新性能结论：在现有 batch/barrier 工作流下，已验证的最佳 5 日配置是 MiniMax=5 + Doubao=4，并通过 allowlist 将 Zhipu 排除出 analyst 并行波次；对应 5 日 wall-clock 为 933.64 秒。
 

@@ -164,6 +164,7 @@ P2-3 先定义一条窗口阶梯，而不是一次性拉成超长整窗。
 3. W3 的结论措辞必须延续同一限制：`clean = no provider fallback contamination`，不等于 `single-provider-only session`。
 4. 若 W3 仍保持平均资金利用率低于 `10%` 且没有新增高质量机制样本，则停止继续扩窗，优先回到候选生成、持仓生命周期和组合构造问题。
 5. 同日的数据就绪检查已确认本地 `data/stock/daliy/` 目前没有形成 `2026-03-13` 之后连续交易日覆盖，因此 W3 当前状态应记为 `data_not_ready`，详见 [w3_data_readiness_check_20260320.md](./w3_data_readiness_check_20260320.md)。
+6. 同日已先后完成 `2026-02-02` 单日 probe、`2026-02-02..2026-02-03` 两日 rerun 与 `2026-02-02..2026-02-06` 五日 rerun，三者都显示 `providers_seen=["MiniMax"]`、`routes_seen=["MiniMax:default"]`；说明 session 级单 provider 闸门已在 `1d + 2d + 5d` 窗口下成立，后续若继续推进这条线，应把它视为独立分支继续扩窗，而不是直接把它混入 W3 结论。
 
 ## 5. 统一比较口径
 
@@ -241,6 +242,7 @@ P2-3 不是无限滚动任务，必须显式定义停止条件。
 3. 若数据就绪，优先执行 `W1_live` 和配套的 `W1_frozen_replay`。
 4. 为 `W1` 产出一份符合 P2-1 模板的 replay 摘要。
 5. 仅当 `W1` 通过 guardrail 且可比性成立时，再进入 `W2` 或 `W3`。
+6. 若继续推进 provider 隔离验证，则以 [single-provider-session-probe-20260320.md](./single-provider-session-probe-20260320.md) 为当前已验证起点，在 `1d -> 2d -> 5d` 已成立的前提下，再决定是否继续向更长窗口扩展，而不是直接把 single-provider 结论并入 W3。
 
 ## 9. 当前收口
 
@@ -260,3 +262,4 @@ P2-3 不是无限滚动任务，必须显式定义停止条件。
 5. [historical-edge-date-coverage-matrix-20260318.md](./historical-edge-date-coverage-matrix-20260318.md)
 6. [paper-trading-reentry-validation-20260317.md](./paper-trading-reentry-validation-20260317.md)
 7. [w3_data_readiness_check_20260320.md](./w3_data_readiness_check_20260320.md)
+8. [single-provider-session-probe-20260320.md](./single-provider-session-probe-20260320.md)
