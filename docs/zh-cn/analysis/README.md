@@ -25,6 +25,7 @@
 14. [Single-provider extended-window 稳定性分析](./single-provider-session-extended-window-stability-20260320.md)
 15. [Single-provider / ARK / Volcengine 并发场景矩阵](./single-provider-ark-volcengine-matrix-20260320.md)
 16. [LLM 路由与压力观测使用说明](./llm-routing-observability-usage-guide-20260321.md)
+17. [MiniMax 与 Volcengine 分流实证纪要](./minimax-volcengine-load-sharing-evidence-20260321.md)
 
 当前最新性能结论：在现有 batch/barrier 工作流下，已验证的最佳 5 日配置是 MiniMax=5 + Doubao=4，并通过 allowlist 将 Zhipu 排除出 analyst 并行波次；对应 5 日 wall-clock 为 933.64 秒。
 

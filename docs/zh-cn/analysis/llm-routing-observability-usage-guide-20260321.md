@@ -143,9 +143,9 @@
 
 再看 `llm_observability_summary`：
 
-1. `by_provider` 里是否存在 `Volcengine Ark`
+1. `by_provider` 里是否存在 `Volcengine`
 2. `context_breakdown` 里是否存在：
-   - `provider = Volcengine Ark`
+   - `provider = Volcengine`
    - `model_tier = fast` 或 `precise`
    - 对应 `trade_date`
 
@@ -182,6 +182,12 @@
 
 1. MiniMax 出错后的兜底
 2. 而不是正常路径的吞吐分流
+
+注意：
+
+1. `execution_plan_provenance.provider_routes` 里展示的 `display_name` 仍可能是 `Volcengine Ark`。
+2. 但 metrics / summary 里的 provider 归类键使用的是 `provider_name`，也就是 `Volcengine`。
+3. 排查时要按字段语义看，不要把 display name 和 provider key 混用。
 
 ---
 
