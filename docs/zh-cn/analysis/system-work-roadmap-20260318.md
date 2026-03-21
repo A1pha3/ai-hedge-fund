@@ -97,6 +97,7 @@
 1. 固定长窗口 replay 的运行计划和产物归档方式。
 2. 统一 session_summary 的关键指标定义，减少人工二次计算。
 3. 如有必要，再补一层可视化或汇总脚本，把 funnel、PnL、utilization、blocker 合成单页摘要。
+4. 对 `single-provider-only session` 分支继续把 provenance 与稳定性分开归档：provider 隔离已经可由 [single-provider-session-probe-20260320.md](./single-provider-session-probe-20260320.md) 证明，extended-window 的错误与耗时压力则由 [single-provider-session-extended-window-stability-20260320.md](./single-provider-session-extended-window-stability-20260320.md) 解释。
 
 这条线的意义是降低每次验证的人工成本，而不是改变策略本身。
 
@@ -162,3 +163,5 @@
 ## 8. 一句话路线判断
 
 从整个系统看，下一阶段不该再围绕“把链路跑通”做工作，而该围绕“让研究结果可信、让组合行为可解释、让新样本进入有纪律”来推进。
+
+补充到 `2026-03-20` 的分支状态：`single-provider-only session` 目前已经不缺 provider provenance 证据，缺的是并发、节流与观测面控制；因此后续若继续推进该分支，重点应从“是否单 provider”转向“为什么 fast-agent 路径在 fail-closed MiniMax-only 条件下出现连接抖动和 runtime inflation”。

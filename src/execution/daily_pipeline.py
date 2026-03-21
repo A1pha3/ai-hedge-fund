@@ -318,6 +318,7 @@ class DailyPipeline:
     base_model_provider: str = field(default_factory=lambda: get_default_model_config()[1])
     frozen_post_market_plans: dict[str, ExecutionPlan] | None = None
     frozen_plan_source: str | None = None
+    execution_plan_provenance_log: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.agent_runner is None:
@@ -349,7 +350,22 @@ class DailyPipeline:
             show_reasoning=False,
             model_name=model_name,
             model_provider=model_provider,
+            llm_observability={
+                "trade_date": trade_date,
+                "pipeline_stage": "daily_pipeline_post_market",
+                "model_tier": model_tier,
+            },
         )
+        execution_plan_provenance = result.get("execution_plan_provenance")
+        if isinstance(execution_plan_provenance, dict):
+            self.execution_plan_provenance_log.append(
+                {
+                    "trade_date": trade_date,
+                    "model_tier": model_tier,
+                    "tickers": list(tickers),
+                    "execution_plan_provenance": execution_plan_provenance,
+                }
+            )
         return result.get("analyst_signals", {})
 
     def _apply_frozen_buy_order_filters(self, frozen_plan: ExecutionPlan, trade_date: str, blocked_buy_tickers: dict[str, dict]) -> ExecutionPlan:

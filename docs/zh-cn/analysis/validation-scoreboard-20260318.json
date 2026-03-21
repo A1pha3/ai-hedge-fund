@@ -2,6 +2,7 @@
   "generated_on": "2026-03-18",
   "purpose": "P0-1 validation scoreboard with benchmark guardrails, long-window replay metrics, deployment, concentration, funnel, blockers, and runtime.",
   "branch_validation_note": "MiniMax-M2.7 W1/W2 runs are included as branch-validation records only. W1 validates branch-level live-to-frozen parity on core outcomes, while W2 validates stronger parity but is contaminated by live provider fallback; neither replaces the locked MiniMax-M2.5 baseline.",
+  "single_provider_validation_note": "The MiniMax-M2.7 single-provider branch now includes 1d, 2d, 5d, and extended-window evidence. The 2026-02-02..2026-02-10 extended-window rerun passes provider provenance with fallback_attempts=0 and providers_seen=[\"MiniMax\"], but should be described as stability pressured rather than clean because attempts=325, successes=142, errors=183, APIConnectionError=159, and RateLimitError=23.",
   "baseline_resolution": {
     "alias": "baseline",
     "report_dir": "data/reports/paper_trading_window_20260202_20260304_reentry_confirm_validation_20260317",

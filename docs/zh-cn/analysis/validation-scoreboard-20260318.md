@@ -8,7 +8,7 @@
 
 `MiniMax-M2.7` 的 W1 / W2 结果从本次开始纳入本页，但只作为分支验证记录，用于回答“新模型分支是否具备 live-to-frozen 可复验性”。它们不替代当前 `baseline`，也不参与 M2.5 主基线优先级排序。W2 目前同时保留两条证据：一条是 contaminated probe，回答污染 live 是否可 replay；另一条是 strict-route clean rerun，回答默认路由是否能在长窗口下无 provider fallback 污染地完成。两者都不等于 M2.5 baseline 替换条件。
 
-`single-provider-only session` 也已从本次开始有分级实测证据，当前已完成 `2026-02-02` 单日 probe、`2026-02-02..2026-02-03` 两日 rerun、`2026-02-02..2026-02-06` 五日 rerun 和 `2026-02-02..2026-02-10` extended-window rerun。它回答的是“在全局 route allowlist + fallback 禁用下，session 级 provider 使用面是否会收敛为单 provider”，不回答收益质量，也不替代 W1/W2 长窗口分支记录。
+`single-provider-only session` 也已从本次开始有分级实测证据，当前已完成 `2026-02-02` 单日 probe、`2026-02-02..2026-02-03` 两日 rerun、`2026-02-02..2026-02-06` 五日 rerun 和 `2026-02-02..2026-02-10` extended-window rerun。它回答的是“在全局 route allowlist + fallback 禁用下，session 级 provider 使用面是否会收敛为单 provider”，不回答收益质量，也不替代 W1/W2 长窗口分支记录。extended-window 的稳定性解释已单独归档到 [single-provider-session-extended-window-stability-20260320.md](./single-provider-session-extended-window-stability-20260320.md)。
 
 ## 2. Benchmark Guardrail
 
@@ -52,6 +52,7 @@
 13. `paper_trading_probe_20260202_single_provider_m2_7_20260320`、`paper_trading_probe_20260202_20260203_single_provider_m2_7_rerun_20260320` 与 `paper_trading_probe_20260202_20260206_single_provider_m2_7_rerun_20260320` 进一步把 provider 隔离验证往前推了一步：三者分别给出 `attempts=49/99/138`、`fallback_attempts=0/0/0`、`providers_seen=["MiniMax"]` 与 `routes_seen=["MiniMax:default"]`，说明 whole-session single-provider routing 已在 `1d + 2d + 5d` 窗口下成立。
 14. 这条 single-provider 验证线仍然是路由隔离 artifact，不应与 W1/W2 的收益比较混为一谈；它当前最直接的价值是证明 session 级 provider 变量已经可被独立隔离，而不是改变主 scoreboard 的 baseline 排位。
 15. `paper_trading_probe_20260202_20260210_single_provider_m2_7_rerun_20260320` 进一步把该结论扩到 `7` 个交易日：`fallback_attempts=0`、`providers_seen=["MiniMax"]`、`routes_seen=["MiniMax:default"]` 继续成立，但同时出现 `attempts=325`、`successes=142`、`errors=183`、`rate_limit_errors=23`，因此它应归档为“single-provider provenance pass, stability pressured”，而不是“高稳定度 clean extended run”。
+16. 对这档 extended-window 的进一步拆解已经确认失败主因是 `APIConnectionError=159`，`RateLimitError=23` 为次级压力，且最长耗时日的压力主要堆积在 `fast_agent`，并非 precise stage 负载；详见 [single-provider-session-extended-window-stability-20260320.md](./single-provider-session-extended-window-stability-20260320.md)。
 
 ## 5. 字段定义
 
@@ -80,3 +81,4 @@
 8. [w2_minimax_m2_7_live_frozen_contaminated_probe_20260319.md](./w2_minimax_m2_7_live_frozen_contaminated_probe_20260319.md)
 9. [w2_minimax_m2_7_clean_strict_route_validation_20260320.md](./w2_minimax_m2_7_clean_strict_route_validation_20260320.md)
 10. [single-provider-session-probe-20260320.md](./single-provider-session-probe-20260320.md)
+11. [single-provider-session-extended-window-stability-20260320.md](./single-provider-session-extended-window-stability-20260320.md)

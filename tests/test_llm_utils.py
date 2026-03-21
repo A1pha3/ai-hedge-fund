@@ -11,6 +11,7 @@ class _FallbackSignal(BaseModel):
 
 def setup_function():
     reset_llm_metrics_for_testing()
+    llm_utils._reset_provider_rate_limit_cooldowns_for_testing()
 
 
 def test_extract_json_from_response_strips_think_tags():
@@ -337,7 +338,15 @@ def test_call_llm_records_structured_metrics(monkeypatch):
         prompt="hello metrics",
         pydantic_model=_FallbackSignal,
         agent_name="metrics_agent",
-        state={"metadata": {}},
+        state={
+            "metadata": {
+                "llm_observability": {
+                    "trade_date": "20260320",
+                    "pipeline_stage": "daily_pipeline_post_market",
+                    "model_tier": "fast",
+                }
+            }
+        },
     )
 
     paths = get_llm_metrics_paths()
@@ -359,6 +368,14 @@ def test_call_llm_records_structured_metrics(monkeypatch):
     assert len(summary["providers"]) == 1
     assert "transport_families" in summary
     assert "routes" in summary
+    assert summary["trade_dates"]["20260320"]["attempts"] == 1
+    assert summary["pipeline_stages"]["daily_pipeline_post_market"]["attempts"] == 1
+    assert summary["model_tiers"]["fast"]["attempts"] == 1
+
+    entry = __import__("json").loads(lines[0])
+    assert entry["trade_date"] == "20260320"
+    assert entry["pipeline_stage"] == "daily_pipeline_post_market"
+    assert entry["model_tier"] == "fast"
 
 
 def test_call_llm_records_fallback_attempt_metrics(monkeypatch):
@@ -511,6 +528,84 @@ def test_call_llm_ignores_metrics_recording_failures(monkeypatch):
     )
 
     assert result.signal == "ok"
+
+
+def test_provider_rate_limit_cooldown_waits_until_expiry(monkeypatch):
+    current_time = {"value": 100.0}
+    sleep_calls = []
+
+    def fake_monotonic():
+        return current_time["value"]
+
+    def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+        current_time["value"] += seconds
+
+    monkeypatch.setattr(llm_utils.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(llm_utils.time, "sleep", fake_sleep)
+
+    llm_utils._register_provider_rate_limit_cooldown("MiniMax", "MiniMax:default", 2.5)
+    waited = llm_utils._wait_for_provider_rate_limit_cooldown("MiniMax", "MiniMax:default")
+
+    assert waited == 2.5
+    assert sleep_calls == [2.5]
+
+
+def test_call_llm_reuses_provider_cooldown_for_rate_limit_retry(monkeypatch):
+    current_time = {"value": 100.0}
+    sleep_calls = []
+    invoke_attempts = []
+
+    class FakeModelInfo:
+        def has_json_mode(self):
+            return True
+
+    class FakeLLM:
+        def with_structured_output(self, pydantic_model, method="json_mode"):
+            return self
+
+        def invoke(self, prompt):
+            invoke_attempts.append(prompt)
+            if len(invoke_attempts) == 1:
+                raise RuntimeError("429 rate limit")
+            return _FallbackSignal(signal="ok")
+
+    def fake_monotonic():
+        return current_time["value"]
+
+    def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+        current_time["value"] += seconds
+
+    monkeypatch.setattr(llm_utils, "get_model_info", lambda model_name, model_provider: FakeModelInfo())
+    monkeypatch.setattr(llm_utils, "get_model", lambda model_name, model_provider, api_keys=None: FakeLLM())
+    monkeypatch.setattr(llm_utils.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(llm_utils.time, "sleep", fake_sleep)
+
+    result = call_llm(
+        prompt="hello cooldown",
+        pydantic_model=_FallbackSignal,
+        agent_name="cooldown_agent",
+        state={
+            "metadata": {
+                "agent_llm_overrides": {
+                    "cooldown_agent": {
+                        "model_name": "MiniMax-M2.7",
+                        "model_provider": "MiniMax",
+                        "api_keys": {},
+                        "fallback_chain": [],
+                        "route_id": "MiniMax:default",
+                        "transport_family": "openai-compatible",
+                    }
+                }
+            }
+        },
+        max_retries=2,
+    )
+
+    assert result.signal == "ok"
+    assert len(invoke_attempts) == 2
+    assert sleep_calls == [2.0]
 
 
 def test_apply_priority_strategy_keeps_requested_primary_model_name(monkeypatch):

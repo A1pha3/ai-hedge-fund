@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from time import perf_counter
 
@@ -17,6 +18,10 @@ from src.utils.progress import progress
 
 
 logger = logging.getLogger(__name__)
+
+
+_PROVIDER_RATE_LIMIT_LOCK = threading.Lock()
+_PROVIDER_RATE_LIMIT_UNTIL: dict[str, float] = {}
 
 
 DEFAULT_ZHIPU_FALLBACK_MODEL = "glm-4.7"
@@ -123,6 +128,23 @@ def _get_agent_llm_override(state: AgentState | None, agent_name: str | None) ->
     return override if isinstance(override, dict) else None
 
 
+def _get_llm_observability_context(state: AgentState | None) -> dict[str, str]:
+    """Extracts optional observability context injected into graph metadata."""
+    if not state:
+        return {}
+
+    raw_context = state.get("metadata", {}).get("llm_observability") or {}
+    if not isinstance(raw_context, dict):
+        return {}
+
+    context: dict[str, str] = {}
+    for key in ("trade_date", "pipeline_stage", "model_tier"):
+        value = raw_context.get(key)
+        if value is not None and str(value).strip():
+            context[key] = str(value)
+    return context
+
+
 def _get_parallel_provider_allowlist() -> set[str] | None:
     """Returns an optional allowlist for providers participating in parallel waves."""
     raw_value = os.getenv("LLM_PARALLEL_PROVIDER_ALLOWLIST", "").strip()
@@ -130,6 +152,15 @@ def _get_parallel_provider_allowlist() -> set[str] | None:
         return None
     providers = {item.strip() for item in raw_value.split(",") if item.strip()}
     return providers or None
+
+
+def _get_allowlist_summary(env_var_name: str) -> list[str] | None:
+    """Returns a normalized allowlist summary for execution-plan provenance."""
+    raw_value = os.getenv(env_var_name, "").strip()
+    if not raw_value:
+        return None
+    values = [item.strip() for item in raw_value.split(",") if item.strip()]
+    return values or None
 
 
 def _filter_parallel_routes(routes: list[ProviderRoute]) -> list[ProviderRoute]:
@@ -227,6 +258,51 @@ def _get_provider_lane_limits(per_provider_limit: int, active_providers: list[st
     return limits
 
 
+def _build_execution_plan_provenance(
+    *,
+    planning_mode: str,
+    base_model_name: str,
+    base_model_provider: str,
+    per_provider_limit: int,
+    effective_concurrency_limit: int,
+    parallel_provider_count: int,
+    provider_routes: dict[str, list[ProviderRoute]],
+    provider_lane_limits: dict[str, int],
+    provider_slot_sequence: list[str],
+    primary_provider_name: str,
+    single_provider_reason: str | None = None,
+) -> dict[str, object]:
+    """Builds a human-readable execution-plan summary for logging and reports."""
+    return {
+        "planning_mode": planning_mode,
+        "base_model_name": str(base_model_name),
+        "base_model_provider": str(base_model_provider),
+        "per_provider_limit": int(per_provider_limit),
+        "effective_concurrency_limit": int(effective_concurrency_limit),
+        "parallel_provider_count": int(parallel_provider_count),
+        "primary_provider_name": str(primary_provider_name),
+        "active_provider_names": list(provider_routes.keys()),
+        "provider_lane_limits": {provider: int(limit) for provider, limit in provider_lane_limits.items()},
+        "provider_slot_sequence": list(provider_slot_sequence),
+        "provider_routes": {
+            provider: [
+                {
+                    "route_id": route.route_id,
+                    "display_name": route.display_name,
+                    "model_name": route.model_name,
+                    "transport_family": route.transport_family,
+                }
+                for route in routes
+            ]
+            for provider, routes in provider_routes.items()
+        },
+        "llm_provider_route_allowlist": _get_allowlist_summary("LLM_PROVIDER_ROUTE_ALLOWLIST"),
+        "llm_parallel_provider_allowlist": _get_allowlist_summary("LLM_PARALLEL_PROVIDER_ALLOWLIST"),
+        "llm_primary_provider": os.getenv("LLM_PRIMARY_PROVIDER") or None,
+        "single_provider_reason": single_provider_reason,
+    }
+
+
 def build_parallel_provider_execution_plan(
     agent_names: list[str],
     base_model_name: str,
@@ -240,10 +316,26 @@ def build_parallel_provider_execution_plan(
     active_provider_names = list(provider_routes.keys())
 
     if len(active_provider_names) < 2:
+        single_provider_name = active_provider_names[0] if active_provider_names else provider_name
+        single_provider_limits = _get_provider_lane_limits(per_provider_limit, [single_provider_name], single_provider_name)
+        effective_concurrency_limit = single_provider_limits.get(single_provider_name, per_provider_limit)
         return {
-            "effective_concurrency_limit": per_provider_limit,
+            "effective_concurrency_limit": effective_concurrency_limit,
             "agent_llm_overrides": {},
             "parallel_provider_count": 1,
+            "execution_provenance": _build_execution_plan_provenance(
+                planning_mode="single-provider",
+                base_model_name=base_model_name,
+                base_model_provider=base_model_provider,
+                per_provider_limit=per_provider_limit,
+                effective_concurrency_limit=effective_concurrency_limit,
+                parallel_provider_count=1,
+                provider_routes=provider_routes,
+                provider_lane_limits=single_provider_limits,
+                provider_slot_sequence=[single_provider_name] * max(1, effective_concurrency_limit),
+                primary_provider_name=single_provider_name,
+                single_provider_reason="fewer than two active providers after route filtering",
+            ),
         }
 
     preferred_provider = os.getenv("LLM_PRIMARY_PROVIDER")
@@ -282,6 +374,18 @@ def build_parallel_provider_execution_plan(
         "effective_concurrency_limit": wave_size,
         "agent_llm_overrides": overrides,
         "parallel_provider_count": len(active_provider_names),
+        "execution_provenance": _build_execution_plan_provenance(
+            planning_mode="parallel",
+            base_model_name=base_model_name,
+            base_model_provider=base_model_provider,
+            per_provider_limit=per_provider_limit,
+            effective_concurrency_limit=wave_size,
+            parallel_provider_count=len(active_provider_names),
+            provider_routes=provider_routes,
+            provider_lane_limits=provider_limits,
+            provider_slot_sequence=provider_slot_names,
+            primary_provider_name=primary_provider_name,
+        ),
     }
 
 
@@ -311,6 +415,43 @@ def _compute_retry_delay(attempt: int, error: Exception) -> float:
     if _is_rate_limit_error(error):
         return min(2.0 * (attempt + 1), 10.0)
     return min(1.0 * (attempt + 1), 3.0)
+
+
+def _provider_rate_limit_key(model_provider: str, route_id: str | None) -> str:
+    """Builds a stable key for provider/route-scoped cooldown tracking."""
+    return str(route_id or model_provider)
+
+
+def _register_provider_rate_limit_cooldown(model_provider: str, route_id: str | None, delay_seconds: float) -> None:
+    """Registers a process-local cooldown window for a provider route after a 429-style failure."""
+    if delay_seconds <= 0:
+        return
+
+    cooldown_key = _provider_rate_limit_key(model_provider, route_id)
+    cooldown_until = time.monotonic() + delay_seconds
+    with _PROVIDER_RATE_LIMIT_LOCK:
+        current_until = _PROVIDER_RATE_LIMIT_UNTIL.get(cooldown_key, 0.0)
+        _PROVIDER_RATE_LIMIT_UNTIL[cooldown_key] = max(current_until, cooldown_until)
+
+
+def _wait_for_provider_rate_limit_cooldown(model_provider: str, route_id: str | None) -> float:
+    """Sleeps until an active provider cooldown expires and returns the waited seconds."""
+    cooldown_key = _provider_rate_limit_key(model_provider, route_id)
+    with _PROVIDER_RATE_LIMIT_LOCK:
+        cooldown_until = _PROVIDER_RATE_LIMIT_UNTIL.get(cooldown_key, 0.0)
+
+    remaining = cooldown_until - time.monotonic()
+    if remaining <= 0:
+        return 0.0
+
+    time.sleep(remaining)
+    return remaining
+
+
+def _reset_provider_rate_limit_cooldowns_for_testing() -> None:
+    """Clears process-local provider cooldown state for deterministic tests."""
+    with _PROVIDER_RATE_LIMIT_LOCK:
+        _PROVIDER_RATE_LIMIT_UNTIL.clear()
 
 
 def _is_provider_fallback_disabled() -> bool:
@@ -359,6 +500,7 @@ def call_llm(
     # Extract API keys from state if available
     api_keys = _extract_state_api_keys(state)
     agent_override = _get_agent_llm_override(state, agent_name)
+    llm_observability = _get_llm_observability_context(state)
 
     if agent_override:
         model_name = str(agent_override.get("model_name") or model_name)
@@ -378,6 +520,7 @@ def call_llm(
 
     # Call the LLM with retries
     for attempt in range(max_retries):
+        _wait_for_provider_rate_limit_cooldown(active_model_provider, active_route_id)
         attempt_started_at = perf_counter()
         try:
             # Call the LLM
@@ -399,6 +542,9 @@ def call_llm(
                         used_fallback=fallback_index > 0,
                         route_id=active_route_id,
                         transport_family=active_transport_family,
+                        trade_date=llm_observability.get("trade_date"),
+                        pipeline_stage=llm_observability.get("pipeline_stage"),
+                        model_tier=llm_observability.get("model_tier"),
                     )
                     return pydantic_model(**parsed_result)
                 else:
@@ -416,10 +562,14 @@ def call_llm(
                     used_fallback=fallback_index > 0,
                     route_id=active_route_id,
                     transport_family=active_transport_family,
+                    trade_date=llm_observability.get("trade_date"),
+                    pipeline_stage=llm_observability.get("pipeline_stage"),
+                    model_tier=llm_observability.get("model_tier"),
                 )
                 return result
 
         except Exception as e:
+            retry_delay = _compute_retry_delay(attempt, e)
             _record_llm_attempt_safely(
                 agent_name=agent_name,
                 model_provider=active_model_provider,
@@ -433,7 +583,13 @@ def call_llm(
                 used_fallback=fallback_index > 0,
                 route_id=active_route_id,
                 transport_family=active_transport_family,
+                trade_date=llm_observability.get("trade_date"),
+                pipeline_stage=llm_observability.get("pipeline_stage"),
+                model_tier=llm_observability.get("model_tier"),
             )
+            if _is_rate_limit_error(e):
+                _register_provider_rate_limit_cooldown(active_model_provider, active_route_id, retry_delay)
+
             if fallback_index < len(fallback_chain) and _is_rate_limit_error(e):
                 if _is_provider_fallback_disabled():
                     fallback_chain = []
@@ -460,7 +616,8 @@ def call_llm(
                     return default_factory()
                 return create_default_response(pydantic_model)
 
-            time.sleep(_compute_retry_delay(attempt, e))
+            if not _is_rate_limit_error(e):
+                time.sleep(retry_delay)
 
     # This should never be reached due to the retry logic above
     return create_default_response(pydantic_model)

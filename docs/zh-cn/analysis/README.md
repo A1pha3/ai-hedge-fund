@@ -22,8 +22,13 @@
 11. [W3 数据就绪检查纪要](./w3_data_readiness_check_20260320.md)
 12. [Single-provider session 验证方案](./single-provider-session-validation-plan-20260320.md)
 13. [Single-provider session probe 纪要](./single-provider-session-probe-20260320.md)
+14. [Single-provider extended-window 稳定性分析](./single-provider-session-extended-window-stability-20260320.md)
+15. [Single-provider / ARK / Volcengine 并发场景矩阵](./single-provider-ark-volcengine-matrix-20260320.md)
+16. [LLM 路由与压力观测使用说明](./llm-routing-observability-usage-guide-20260321.md)
 
 当前最新性能结论：在现有 batch/barrier 工作流下，已验证的最佳 5 日配置是 MiniMax=5 + Doubao=4，并通过 allowlist 将 Zhipu 排除出 analyst 并行波次；对应 5 日 wall-clock 为 933.64 秒。
+
+当前最新 provider 隔离结论：`single-provider-only session` 已形成 `1d + 2d + 5d + extended-window` artifact 链；其中 extended-window 证明了 MiniMax-only provenance，但应写成 `provenance pass, stability pressured`，而不是 clean extended run。
 
 ## 目录
 

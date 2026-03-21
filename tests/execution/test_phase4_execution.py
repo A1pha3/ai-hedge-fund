@@ -761,8 +761,10 @@ def test_default_pipeline_runner_preserves_explicit_non_openai_provider(monkeypa
 
     assert calls[0]["model_name"] == "glm-4.7"
     assert calls[0]["model_provider"] == "Zhipu"
+    assert calls[0]["llm_observability"] == {"trade_date": "20260305", "pipeline_stage": "daily_pipeline_post_market", "model_tier": "fast"}
     assert calls[1]["model_name"] == "glm-4.7"
     assert calls[1]["model_provider"] == "Zhipu"
+    assert calls[1]["llm_observability"] == {"trade_date": "20260305", "pipeline_stage": "daily_pipeline_post_market", "model_tier": "precise"}
 
 
 def test_default_pipeline_runner_keeps_openai_fast_precise_split(monkeypatch):
@@ -780,8 +782,10 @@ def test_default_pipeline_runner_keeps_openai_fast_precise_split(monkeypatch):
 
     assert calls[0]["model_name"] == "gpt-4.1-mini"
     assert calls[0]["model_provider"] == "OpenAI"
+    assert calls[0]["llm_observability"] == {"trade_date": "20260305", "pipeline_stage": "daily_pipeline_post_market", "model_tier": "fast"}
     assert calls[1]["model_name"] == "gpt-4.1"
     assert calls[1]["model_provider"] == "OpenAI"
+    assert calls[1]["llm_observability"] == {"trade_date": "20260305", "pipeline_stage": "daily_pipeline_post_market", "model_tier": "precise"}
 
 
 def test_run_post_market_skips_duplicate_precise_stage_for_non_openai():

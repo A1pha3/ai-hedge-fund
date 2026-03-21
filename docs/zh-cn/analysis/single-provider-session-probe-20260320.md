@@ -131,7 +131,7 @@
 1. `single-provider-only session` 这条验证线现在已经从“设计方案”升级为“已完成 `1d + 2d + 5d + extended-window` 实证”。
 2. 下一步若继续扩展，应从当前 extended-window 结果继续向更长窗口推进，或单独做稳定性/限流压力分析，而不是回退到仅讨论开关设计。
 3. 即使继续扩窗，这条线仍应归档为 `MiniMax-M2.7` 分支验证，不进入当前 `MiniMax-M2.5` baseline 主序列。
-4. 当前最值得补的不是“是否 single-provider”，而是 extended-window 下高错误率与 rate-limit 压力的解释与可控性分析。
+4. 当前最值得补的不是“是否 single-provider”，而是 extended-window 下高错误率与 rate-limit 压力的解释与可控性分析；该解释已单独落在 [single-provider-session-extended-window-stability-20260320.md](./single-provider-session-extended-window-stability-20260320.md)。
 
 ## 6. 相关产物
 
@@ -155,3 +155,4 @@
 18. `data/reports/paper_trading_probe_20260202_20260210_single_provider_m2_7_rerun_20260320/pipeline_timings.jsonl`
 19. `logs/single_provider_probe_20260202_20260210_m2_7_rerun_20260320.log`
 20. `logs/llm_metrics_20260320_143631.summary.json`
+21. [single-provider-session-extended-window-stability-20260320.md](./single-provider-session-extended-window-stability-20260320.md)

@@ -23,6 +23,9 @@ _SUMMARY: dict[str, Any] = {
     "transport_families": {},
     "models": {},
     "agents": {},
+    "trade_dates": {},
+    "pipeline_stages": {},
+    "model_tiers": {},
 }
 
 
@@ -117,6 +120,9 @@ def record_llm_attempt(
     used_fallback: bool = False,
     route_id: str | None = None,
     transport_family: str | None = None,
+    trade_date: str | None = None,
+    pipeline_stage: str | None = None,
+    model_tier: str | None = None,
 ) -> None:
     _ensure_output_dir()
     entry = {
@@ -136,6 +142,9 @@ def record_llm_attempt(
         "used_fallback": used_fallback,
         "route_id": route_id,
         "transport_family": transport_family,
+        "trade_date": trade_date,
+        "pipeline_stage": pipeline_stage,
+        "model_tier": model_tier,
     }
 
     provider_key = entry["model_provider"]
@@ -143,6 +152,9 @@ def record_llm_attempt(
     transport_key = entry["transport_family"] or "unknown"
     model_key = f"{entry['model_provider']}:{entry['model_name']}"
     agent_key = entry["agent_name"] or "unknown"
+    trade_date_key = entry["trade_date"] or "unknown"
+    pipeline_stage_key = entry["pipeline_stage"] or "unknown"
+    model_tier_key = entry["model_tier"] or "unknown"
 
     with _LOCK:
         with _JSONL_PATH.open("a", encoding="utf-8") as handle:
@@ -154,11 +166,17 @@ def record_llm_attempt(
         transport_families = _SUMMARY.setdefault("transport_families", {})
         models = _SUMMARY.setdefault("models", {})
         agents = _SUMMARY.setdefault("agents", {})
+        trade_dates = _SUMMARY.setdefault("trade_dates", {})
+        pipeline_stages = _SUMMARY.setdefault("pipeline_stages", {})
+        model_tiers = _SUMMARY.setdefault("model_tiers", {})
         _update_bucket(providers.setdefault(provider_key, _bucket_template()), entry)
         _update_bucket(routes.setdefault(route_key, _bucket_template()), entry)
         _update_bucket(transport_families.setdefault(transport_key, _bucket_template()), entry)
         _update_bucket(models.setdefault(model_key, _bucket_template()), entry)
         _update_bucket(agents.setdefault(agent_key, _bucket_template()), entry)
+        _update_bucket(trade_dates.setdefault(trade_date_key, _bucket_template()), entry)
+        _update_bucket(pipeline_stages.setdefault(pipeline_stage_key, _bucket_template()), entry)
+        _update_bucket(model_tiers.setdefault(model_tier_key, _bucket_template()), entry)
         _write_summary()
 
 
@@ -172,6 +190,9 @@ def reset_llm_metrics_for_testing() -> None:
         _SUMMARY["transport_families"] = {}
         _SUMMARY["models"] = {}
         _SUMMARY["agents"] = {}
+        _SUMMARY["trade_dates"] = {}
+        _SUMMARY["pipeline_stages"] = {}
+        _SUMMARY["model_tiers"] = {}
         if _JSONL_PATH.exists():
             _JSONL_PATH.unlink()
         if _SUMMARY_PATH.exists():

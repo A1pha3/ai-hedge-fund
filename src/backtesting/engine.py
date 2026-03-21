@@ -618,6 +618,11 @@ class BacktestEngine:
                 post_market_seconds = perf_counter() - stage_started_at
 
             executed_order_count = sum(1 for quantity in executed_trades.values() if quantity)
+            execution_plan_observations = [
+                dict(observation)
+                for observation in list(getattr(self._pipeline, "execution_plan_provenance_log", []) or [])
+                if str(observation.get("trade_date") or "") == trade_date_compact
+            ] if self._pipeline is not None else []
             timing_payload = {
                 "event": "pipeline_day_timing",
                 "trade_date": trade_date_compact,
@@ -625,6 +630,7 @@ class BacktestEngine:
                 "pending_buy_queue_count": len(self._pending_buy_queue),
                 "pending_sell_queue_count": len(self._pending_sell_queue),
                 "executed_order_count": executed_order_count,
+                "execution_plan_provenance": execution_plan_observations,
                 "timing_seconds": {
                     "load_market_data": round(load_market_data_seconds, 3),
                     "pre_market": round(pre_market_seconds, 3),
@@ -659,6 +665,7 @@ class BacktestEngine:
                     "exit_reentry_cooldowns": dict(self._exit_reentry_cooldowns),
                     "prepared_plan": prepared_plan.model_dump() if prepared_plan is not None else None,
                     "current_plan": pending_plan.model_dump() if pending_plan is not None else None,
+                    "execution_plan_provenance": execution_plan_observations,
                     "timing_seconds": timing_payload["timing_seconds"],
                 }
             )

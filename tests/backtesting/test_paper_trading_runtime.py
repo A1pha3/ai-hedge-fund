@@ -91,6 +91,18 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         post_market_plans=[plan, ExecutionPlan(date="20240304", portfolio_snapshot={})],
         intraday_responses=[(plan.buy_orders, [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
     )
+    pipeline.execution_plan_provenance_log = [
+        {
+            "trade_date": "20240301",
+            "model_tier": "fast",
+            "tickers": ["AAPL"],
+            "execution_plan_provenance": {
+                "planning_mode": "parallel",
+                "active_provider_names": ["MiniMax", "Volcengine Ark"],
+                "effective_concurrency_limit": 9,
+            },
+        }
+    ]
 
     artifacts = run_paper_trading_session(
         start_date="2024-03-01",
@@ -111,10 +123,41 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     assert lines
     assert lines[0]["event"] == "paper_trading_day"
     assert "current_plan" in lines[0]
+    assert lines[0]["execution_plan_provenance"] == [
+        {
+            "trade_date": "20240301",
+            "model_tier": "fast",
+            "tickers": ["AAPL"],
+            "execution_plan_provenance": {
+                "planning_mode": "parallel",
+                "active_provider_names": ["MiniMax", "Volcengine Ark"],
+                "effective_concurrency_limit": 9,
+            },
+        }
+    ]
+
+    timing_lines = [json.loads(line) for line in artifacts.timing_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    day_timing = next(line for line in timing_lines if line.get("event") == "pipeline_day_timing" and line.get("trade_date") == "20240301")
+    assert day_timing["execution_plan_provenance"] == lines[0]["execution_plan_provenance"]
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["mode"] == "paper_trading"
     assert summary["plan_generation"]["mode"] == "live_pipeline"
+    assert summary["execution_plan_provenance"] == {
+        "observation_count": 1,
+        "observations": [
+            {
+                "trade_date": "20240301",
+                "model_tier": "fast",
+                "tickers": ["AAPL"],
+                "execution_plan_provenance": {
+                    "planning_mode": "parallel",
+                    "active_provider_names": ["MiniMax", "Volcengine Ark"],
+                    "effective_concurrency_limit": 9,
+                },
+            }
+        ],
+    }
     assert summary["llm_route_provenance"] == {
         "session_id": "test-session",
         "summary_available": False,
@@ -128,6 +171,14 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         "providers_seen": [],
         "models_seen": [],
         "routes_seen": [],
+    }
+    assert summary["llm_observability_summary"] == {
+        "jsonl_available": False,
+        "entry_count": 0,
+        "by_trade_date": {},
+        "by_model_tier": {},
+        "by_provider": {},
+        "context_breakdown": [],
     }
     assert summary["daily_event_stats"]["day_count"] >= 1
     assert summary["artifacts"]["summary"] == str(artifacts.summary_path)
@@ -163,6 +214,53 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
             },
             ensure_ascii=False,
         ),
+        encoding="utf-8",
+    )
+    metrics_jsonl_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "trade_date": "20240301",
+                        "pipeline_stage": "daily_pipeline_post_market",
+                        "model_tier": "fast",
+                        "model_provider": "MiniMax",
+                        "success": True,
+                        "is_rate_limit": False,
+                        "used_fallback": False,
+                        "duration_ms": 1200.0,
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "trade_date": "20240301",
+                        "pipeline_stage": "daily_pipeline_post_market",
+                        "model_tier": "fast",
+                        "model_provider": "Volcengine Ark",
+                        "success": False,
+                        "is_rate_limit": True,
+                        "used_fallback": True,
+                        "duration_ms": 2200.0,
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "trade_date": "20240304",
+                        "pipeline_stage": "daily_pipeline_post_market",
+                        "model_tier": "precise",
+                        "model_provider": "MiniMax",
+                        "success": True,
+                        "is_rate_limit": False,
+                        "used_fallback": False,
+                        "duration_ms": 3200.0,
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -223,12 +321,64 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
         "mode": "frozen_current_plan_replay",
         "frozen_plan_source": str(source_path.resolve()),
     }
+    assert summary["execution_plan_provenance"] == {"observation_count": 0, "observations": []}
     assert summary["llm_route_provenance"]["summary_available"] is True
     assert summary["llm_route_provenance"]["fallback_attempts"] == 3
     assert summary["llm_route_provenance"]["contaminated_by_provider_fallback"] is True
     assert summary["llm_route_provenance"]["providers_seen"] == ["MiniMax", "Volcengine Ark"]
+    assert summary["llm_observability_summary"]["jsonl_available"] is True
+    assert summary["llm_observability_summary"]["entry_count"] == 3
+    assert summary["llm_observability_summary"]["by_trade_date"]["20240301"]["attempts"] == 2
+    assert summary["llm_observability_summary"]["by_model_tier"]["fast"]["attempts"] == 2
+    assert summary["llm_observability_summary"]["by_provider"]["Volcengine Ark"]["rate_limit_errors"] == 1
+    assert summary["llm_observability_summary"]["context_breakdown"] == [
+        {
+            "trade_date": "20240301",
+            "pipeline_stage": "daily_pipeline_post_market",
+            "model_tier": "fast",
+            "provider": "MiniMax",
+            "attempts": 1,
+            "successes": 1,
+            "errors": 0,
+            "rate_limit_errors": 0,
+            "fallback_attempts": 0,
+            "total_duration_ms": 1200.0,
+            "avg_duration_ms": 1200.0,
+        },
+        {
+            "trade_date": "20240301",
+            "pipeline_stage": "daily_pipeline_post_market",
+            "model_tier": "fast",
+            "provider": "Volcengine Ark",
+            "attempts": 1,
+            "successes": 0,
+            "errors": 1,
+            "rate_limit_errors": 1,
+            "fallback_attempts": 1,
+            "total_duration_ms": 2200.0,
+            "avg_duration_ms": 2200.0,
+        },
+        {
+            "trade_date": "20240304",
+            "pipeline_stage": "daily_pipeline_post_market",
+            "model_tier": "precise",
+            "provider": "MiniMax",
+            "attempts": 1,
+            "successes": 1,
+            "errors": 0,
+            "rate_limit_errors": 0,
+            "fallback_attempts": 0,
+            "total_duration_ms": 3200.0,
+            "avg_duration_ms": 3200.0,
+        },
+    ]
     assert summary["final_portfolio_snapshot"]["positions"]["AAPL"]["long"] == 100
 
     lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert lines[0]["current_plan"]["date"] == "20240301"
     assert lines[-1]["current_plan"]["date"] == "20240304"
+    assert lines[0]["execution_plan_provenance"] == []
+
+    timing_lines = [json.loads(line) for line in artifacts.timing_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    replay_day_timing = next(line for line in timing_lines if line.get("event") == "pipeline_day_timing" and line.get("trade_date") == "20240301")
+    assert replay_day_timing["execution_plan_provenance"] == []

@@ -4,6 +4,11 @@ from src.utils import llm as llm_utils
 from src.utils.llm import build_parallel_provider_execution_plan
 
 
+def _clear_provider_allowlists(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER_ROUTE_ALLOWLIST", raising=False)
+    monkeypatch.delenv("LLM_PARALLEL_PROVIDER_ALLOWLIST", raising=False)
+
+
 def test_build_analyst_batches_respects_limit():
     batches = _build_analyst_batches(["a", "b", "c", "d", "e"], 2)
 
@@ -23,6 +28,7 @@ def test_order_selected_analysts_uses_config_order():
 
 
 def test_build_parallel_provider_execution_plan_uses_dual_provider_wave(monkeypatch):
+    _clear_provider_allowlists(monkeypatch)
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
@@ -48,6 +54,7 @@ def test_build_parallel_provider_execution_plan_uses_dual_provider_wave(monkeypa
 
 
 def test_build_parallel_provider_execution_plan_supports_weighted_provider_caps(monkeypatch):
+    _clear_provider_allowlists(monkeypatch)
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
@@ -72,6 +79,7 @@ def test_build_parallel_provider_execution_plan_supports_weighted_provider_caps(
 
 
 def test_build_parallel_provider_execution_plan_supports_three_provider_wave(monkeypatch):
+    _clear_provider_allowlists(monkeypatch)
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.setenv("ARK_API_KEY", "ark-key")
@@ -98,6 +106,7 @@ def test_build_parallel_provider_execution_plan_supports_three_provider_wave(mon
 
 
 def test_build_parallel_provider_execution_plan_supports_provider_allowlist(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER_ROUTE_ALLOWLIST", raising=False)
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.setenv("ARK_API_KEY", "ark-key")
@@ -123,12 +132,19 @@ def test_build_parallel_provider_execution_plan_supports_provider_allowlist(monk
     assert providers.count("MiniMax") == 5
     assert providers.count("Volcengine") == 3
     assert "Zhipu" not in providers
+    assert plan["execution_provenance"]["planning_mode"] == "parallel"
+    assert plan["execution_provenance"]["active_provider_names"] == ["MiniMax", "Volcengine"]
+    assert plan["execution_provenance"]["provider_lane_limits"] == {"MiniMax": 5, "Volcengine": 3}
+    assert plan["execution_provenance"]["llm_parallel_provider_allowlist"] == ["MiniMax", "Volcengine"]
+    assert plan["execution_provenance"]["primary_provider_name"] == "MiniMax"
 
 
 def test_build_parallel_provider_execution_plan_keeps_single_provider_when_key_missing(monkeypatch):
+    _clear_provider_allowlists(monkeypatch)
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.delenv("ZHIPU_PROVIDER_CONCURRENCY_LIMIT", raising=False)
 
     plan = build_parallel_provider_execution_plan(
         agent_names=["agent_1", "agent_2"],
@@ -148,6 +164,7 @@ def test_build_parallel_provider_execution_plan_respects_global_provider_route_a
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.setenv("ARK_API_KEY", "ark-key")
     monkeypatch.setenv("LLM_PROVIDER_ROUTE_ALLOWLIST", "MiniMax")
+    monkeypatch.delenv("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", raising=False)
 
     plan = build_parallel_provider_execution_plan(
         agent_names=[f"agent_{index}" for index in range(1, 5)],
@@ -160,9 +177,36 @@ def test_build_parallel_provider_execution_plan_respects_global_provider_route_a
     assert plan["effective_concurrency_limit"] == 3
     assert plan["parallel_provider_count"] == 1
     assert plan["agent_llm_overrides"] == {}
+    assert plan["execution_provenance"]["planning_mode"] == "single-provider"
+    assert plan["execution_provenance"]["active_provider_names"] == ["MiniMax"]
+    assert plan["execution_provenance"]["llm_provider_route_allowlist"] == ["MiniMax"]
+    assert plan["execution_provenance"]["single_provider_reason"] == "fewer than two active providers after route filtering"
+
+
+def test_build_parallel_provider_execution_plan_respects_single_provider_soft_limit(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER_ROUTE_ALLOWLIST", "MiniMax")
+    monkeypatch.setenv("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", "1")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=[f"agent_{index}" for index in range(1, 5)],
+        base_model_name="MiniMax-M2.7",
+        base_model_provider="MiniMax",
+        api_keys=None,
+        per_provider_limit=3,
+    )
+
+    assert plan["effective_concurrency_limit"] == 1
+    assert plan["parallel_provider_count"] == 1
+    assert plan["agent_llm_overrides"] == {}
+    assert plan["execution_provenance"]["provider_lane_limits"] == {"MiniMax": 1}
+    assert plan["execution_provenance"]["provider_slot_sequence"] == ["MiniMax"]
 
 
 def test_build_parallel_provider_execution_plan_supports_generic_registered_providers(monkeypatch):
+    _clear_provider_allowlists(monkeypatch)
     fake_routes = [
         llm_models.ProviderRoute(
             provider_name="Alpha",

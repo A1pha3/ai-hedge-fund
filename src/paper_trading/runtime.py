@@ -82,6 +82,85 @@ def _build_llm_route_provenance() -> tuple[dict, dict]:
     return provenance, artifacts
 
 
+def _empty_llm_observability_summary() -> dict:
+    return {
+        "jsonl_available": False,
+        "entry_count": 0,
+        "by_trade_date": {},
+        "by_model_tier": {},
+        "by_provider": {},
+        "context_breakdown": [],
+    }
+
+
+def _update_observability_bucket(bucket: dict, entry: dict) -> None:
+    bucket["attempts"] = int(bucket.get("attempts") or 0) + 1
+    bucket["successes"] = int(bucket.get("successes") or 0) + (1 if entry.get("success") else 0)
+    bucket["errors"] = int(bucket.get("errors") or 0) + (0 if entry.get("success") else 1)
+    bucket["rate_limit_errors"] = int(bucket.get("rate_limit_errors") or 0) + (1 if entry.get("is_rate_limit") else 0)
+    bucket["fallback_attempts"] = int(bucket.get("fallback_attempts") or 0) + (1 if entry.get("used_fallback") else 0)
+    bucket["total_duration_ms"] = round(float(bucket.get("total_duration_ms") or 0.0) + float(entry.get("duration_ms") or 0.0), 3)
+    attempts = int(bucket.get("attempts") or 0)
+    bucket["avg_duration_ms"] = round(bucket["total_duration_ms"] / attempts, 3) if attempts else 0.0
+
+
+def _build_llm_observability_summary(jsonl_path: Path) -> dict:
+    summary = _empty_llm_observability_summary()
+    if not jsonl_path.exists():
+        return summary
+
+    try:
+        lines = [line for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError as error:
+        summary["jsonl_read_error"] = str(error)
+        return summary
+
+    context_buckets: dict[tuple[str, str, str, str], dict] = {}
+    summary["jsonl_available"] = True
+    summary["entry_count"] = len(lines)
+
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        trade_date = str(entry.get("trade_date") or "unknown")
+        model_tier = str(entry.get("model_tier") or "unknown")
+        pipeline_stage = str(entry.get("pipeline_stage") or "unknown")
+        provider = str(entry.get("model_provider") or "unknown")
+
+        _update_observability_bucket(summary["by_trade_date"].setdefault(trade_date, {}), entry)
+        _update_observability_bucket(summary["by_model_tier"].setdefault(model_tier, {}), entry)
+        _update_observability_bucket(summary["by_provider"].setdefault(provider, {}), entry)
+
+        context_key = (trade_date, pipeline_stage, model_tier, provider)
+        context_bucket = context_buckets.setdefault(
+            context_key,
+            {
+                "trade_date": trade_date,
+                "pipeline_stage": pipeline_stage,
+                "model_tier": model_tier,
+                "provider": provider,
+            },
+        )
+        _update_observability_bucket(context_bucket, entry)
+
+    summary["context_breakdown"] = sorted(
+        context_buckets.values(),
+        key=lambda item: (item["trade_date"], item["pipeline_stage"], item["model_tier"], item["provider"]),
+    )
+    return summary
+
+
+def _build_execution_plan_provenance_summary(pipeline: DailyPipeline | None) -> dict:
+    observations = list(getattr(pipeline, "execution_plan_provenance_log", []) or [])
+    return {
+        "observation_count": len(observations),
+        "observations": observations,
+    }
+
+
 class JsonlPaperTradingRecorder:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -166,6 +245,8 @@ def run_paper_trading_session(
         engine._timing_log_path.replace(timing_log_path)
 
     llm_route_provenance, llm_metrics_artifacts = _build_llm_route_provenance()
+    llm_observability_summary = _build_llm_observability_summary(Path(llm_metrics_artifacts["llm_metrics_jsonl"]))
+    execution_plan_provenance = _build_execution_plan_provenance_summary(pipeline)
 
     summary = {
         "mode": "paper_trading",
@@ -184,6 +265,8 @@ def run_paper_trading_session(
         "portfolio_values": _serialize_portfolio_values(engine.get_portfolio_values()),
         "final_portfolio_snapshot": engine.get_portfolio_snapshot(),
         "llm_route_provenance": llm_route_provenance,
+        "execution_plan_provenance": execution_plan_provenance,
+        "llm_observability_summary": llm_observability_summary,
         "daily_event_stats": {
             "day_count": recorder.day_count,
             "executed_trade_days": recorder.executed_trade_days,

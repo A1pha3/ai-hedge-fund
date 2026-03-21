@@ -66,6 +66,7 @@ def run_hedge_fund(
     selected_analysts: list[str] = [],
     model_name: str | None = None,
     model_provider: str | None = None,
+    llm_observability: dict | None = None,
 ):
     resolved_model_name, resolved_model_provider = (model_name, model_provider) if model_name and model_provider else get_default_model_config()
 
@@ -84,6 +85,7 @@ def run_hedge_fund(
             api_keys=None,
             per_provider_limit=base_concurrency_limit,
         )
+        logger.info("LLM execution plan: %s", json.dumps(execution_plan["execution_provenance"], ensure_ascii=False, sort_keys=True))
         agent = _get_compiled_workflow(selected_analysts_key, int(execution_plan["effective_concurrency_limit"]))
 
         final_state = agent.invoke(
@@ -105,6 +107,7 @@ def run_hedge_fund(
                     "model_name": resolved_model_name,
                     "model_provider": resolved_model_provider,
                     "agent_llm_overrides": execution_plan["agent_llm_overrides"],
+                    "llm_observability": dict(llm_observability or {}),
                 },
             },
         )
@@ -112,6 +115,7 @@ def run_hedge_fund(
         return {
             "decisions": parse_hedge_fund_response(final_state["messages"][-1].content),
             "analyst_signals": final_state["data"]["analyst_signals"],
+            "execution_plan_provenance": execution_plan["execution_provenance"],
         }
     finally:
         # Stop progress tracking
