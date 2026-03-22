@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+RESEARCH_FEEDBACK_LABEL_VERSION = "v1"
+RESEARCH_FEEDBACK_ALLOWED_TAGS = (
+    "high_quality_selection",
+    "thesis_clear",
+    "crowded_trade_risk",
+    "weak_edge",
+    "threshold_false_negative",
+    "event_noise_suspected",
+)
+RESEARCH_FEEDBACK_ALLOWED_REVIEW_STATUS = (
+    "draft",
+    "final",
+    "adjudicated",
+)
 
 
 class SelectedCandidate(BaseModel):
@@ -51,6 +68,7 @@ class SelectionSnapshot(BaseModel):
 class ResearchFeedbackRecord(BaseModel):
     feedback_version: str = "v1"
     artifact_version: str = "v1"
+    label_version: str = RESEARCH_FEEDBACK_LABEL_VERSION
     run_id: str
     trade_date: str
     symbol: str
@@ -63,6 +81,58 @@ class ResearchFeedbackRecord(BaseModel):
     research_verdict: str
     notes: str = ""
     created_at: str
+
+    @model_validator(mode="after")
+    def _normalize_tags(self) -> "ResearchFeedbackRecord":
+        normalized_tags = []
+        seen_tags: set[str] = set()
+        for tag in [self.primary_tag, *self.tags]:
+            normalized_tag = str(tag or "").strip()
+            if not normalized_tag:
+                continue
+            if normalized_tag not in RESEARCH_FEEDBACK_ALLOWED_TAGS:
+                raise ValueError(f"Unsupported research feedback tag: {normalized_tag}")
+            if normalized_tag not in seen_tags:
+                normalized_tags.append(normalized_tag)
+                seen_tags.add(normalized_tag)
+        if self.review_status not in RESEARCH_FEEDBACK_ALLOWED_REVIEW_STATUS:
+            raise ValueError(f"Unsupported review_status: {self.review_status}")
+        if self.label_version != RESEARCH_FEEDBACK_LABEL_VERSION:
+            raise ValueError(f"Unsupported label_version: {self.label_version}")
+        self.tags = normalized_tags
+        return self
+
+
+class ResearchFeedbackSummary(BaseModel):
+    label_version: str = RESEARCH_FEEDBACK_LABEL_VERSION
+    feedback_count: int = 0
+    final_feedback_count: int = 0
+    symbols: list[str] = Field(default_factory=list)
+    reviewers: list[str] = Field(default_factory=list)
+    primary_tag_counts: dict[str, int] = Field(default_factory=dict)
+    tag_counts: dict[str, int] = Field(default_factory=dict)
+    review_status_counts: dict[str, int] = Field(default_factory=dict)
+    verdict_counts: dict[str, int] = Field(default_factory=dict)
+    latest_created_at: str | None = None
+
+    @classmethod
+    def from_records(cls, records: list[ResearchFeedbackRecord]) -> "ResearchFeedbackSummary":
+        primary_tag_counts = Counter(record.primary_tag for record in records)
+        tag_counts = Counter(tag for record in records for tag in record.tags)
+        review_status_counts = Counter(record.review_status for record in records)
+        verdict_counts = Counter(record.research_verdict for record in records)
+        latest_created_at = max((record.created_at for record in records), default=None)
+        return cls(
+            feedback_count=len(records),
+            final_feedback_count=sum(1 for record in records if record.review_status == "final"),
+            symbols=sorted({record.symbol for record in records}),
+            reviewers=sorted({record.reviewer for record in records}),
+            primary_tag_counts=dict(primary_tag_counts),
+            tag_counts=dict(tag_counts),
+            review_status_counts=dict(review_status_counts),
+            verdict_counts=dict(verdict_counts),
+            latest_created_at=latest_created_at,
+        )
 
 
 class SelectionArtifactWriteResult(BaseModel):

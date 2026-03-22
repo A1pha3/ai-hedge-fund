@@ -1,0 +1,92 @@
+{
+  "mode": "paper_trading",
+  "start_date": "2026-02-24",
+  "end_date": "2026-02-25",
+  "tickers": [],
+  "initial_capital": 100000.0,
+  "model_name": "MiniMax-M2.7",
+  "model_provider": "MiniMax",
+  "selected_analysts": null,
+  "plan_generation": {
+    "mode": "frozen_current_plan_replay",
+    "frozen_plan_source": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260225/daily_events.jsonl"
+  },
+  "performance_metrics": {
+    "sharpe_ratio": null,
+    "sortino_ratio": null,
+    "max_drawdown": null,
+    "long_short_ratio": null,
+    "gross_exposure": null,
+    "net_exposure": null
+  },
+  "portfolio_values": [
+    {
+      "Date": "2026-02-24",
+      "Portfolio Value": 100000.0
+    },
+    {
+      "Date": "2026-02-24",
+      "Portfolio Value": 100000.0,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-25",
+      "Portfolio Value": 100000.0,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    }
+  ],
+  "final_portfolio_snapshot": {
+    "cash": 100000.0,
+    "margin_used": 0.0,
+    "margin_requirement": 0.0,
+    "positions": {},
+    "realized_gains": {}
+  },
+  "llm_route_provenance": {
+    "session_id": "20260322_171825",
+    "summary_available": false,
+    "attempts": 0,
+    "successes": 0,
+    "errors": 0,
+    "rate_limit_errors": 0,
+    "fallback_attempts": 0,
+    "fallback_observed": false,
+    "contaminated_by_provider_fallback": false,
+    "providers_seen": [],
+    "models_seen": [],
+    "routes_seen": []
+  },
+  "execution_plan_provenance": {
+    "observation_count": 0,
+    "observations": []
+  },
+  "llm_observability_summary": {
+    "jsonl_available": false,
+    "entry_count": 0,
+    "by_trade_date": {},
+    "by_model_tier": {},
+    "by_provider": {},
+    "context_breakdown": []
+  },
+  "daily_event_stats": {
+    "day_count": 2,
+    "executed_trade_days": 0,
+    "total_executed_orders": 0
+  },
+  "artifacts": {
+    "daily_events": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260225_selection_artifact_validation_20260322/daily_events.jsonl",
+    "timing_log": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260225_selection_artifact_validation_20260322/pipeline_timings.jsonl",
+    "summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260225_selection_artifact_validation_20260322/session_summary.json",
+    "selection_artifact_root": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260225_selection_artifact_validation_20260322/selection_artifacts",
+    "llm_metrics_jsonl": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/logs/llm_metrics_20260322_171825.jsonl",
+    "llm_metrics_summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/logs/llm_metrics_20260322_171825.summary.json"
+  }
+}

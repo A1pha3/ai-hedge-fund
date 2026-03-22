@@ -1,5 +1,79 @@
 # 选股优先优化方案实施设计文档
 
+## 0. 当前落地状态
+
+本文档已经不再只是实施提案。截至 2026-03-22，第一批代码骨架已落地，因此本文档需要同时承担两种职责：
+
+1. 记录目标设计。
+2. 记录当前已完成状态，避免文档与代码脱节。
+
+当前已完成事项：
+
+- 已新增 research artifact 模块：src/research/models.py、src/research/artifacts.py、src/research/review_renderer.py、src/research/feedback.py。
+- 已在 src/backtesting/engine.py 中接入 selection_artifact_writer 注入点。
+- 已在 src/paper_trading/runtime.py 中接入 FileSelectionArtifactWriter，并将产物写入 output_dir/selection_artifacts/。
+- 已在 src/execution/models.py 中为 ExecutionPlan 增加 selection_artifacts 字段。
+- 已在 src/execution/models.py 和 src/execution/layer_c_aggregator.py 中补通 Layer B strategy_signals 到 Layer C 结果的透传。
+- 已补充 feedback 读取、聚合与标签治理骨架：支持受控标签校验、label_version 校验、JSONL 读取与汇总统计。
+- 已新增最小 file-based feedback CLI：scripts/manage_research_feedback.py，支持 append 与 summarize 两个子命令。
+- 已补充基础测试，当前通过的文件包括：tests/research/test_selection_review_renderer.py、tests/research/test_selection_artifact_writer.py、tests/research/test_selection_artifact_engine.py、tests/research/test_feedback_schema.py、tests/research/test_manage_research_feedback_cli.py。
+
+当前尚未完成事项：
+
+- research_feedback.jsonl 已具备最小读取、聚合、标签治理和 CLI 操作能力，但尚未接入 UI、数据库或更高层的人工工作流。
+- 完整 backtesting / paper trading 集成测试尚未补齐。
+- 历史 frozen replay 源的 Layer B 解释已补齐回退兼容，但回退摘要只能基于 plan.logic_scores 与 strategy_weights 或 adjusted_weights 近似重建，精度仍低于新源中的原生 strategy_signals。
+
+### 0.1 已完成验收记录
+
+2026-03-22 已完成一次最小真实落盘验收，验证方式为 2 天 frozen replay paper trading：
+
+1. frozen_plan_source：data/reports/paper_trading_probe_20260224_20260225/daily_events.jsonl
+2. output_dir：data/reports/paper_trading_probe_20260224_20260225_selection_artifact_validation_20260322
+3. 成功生成 session_summary.json、daily_events.jsonl、pipeline_timings.jsonl 和 selection_artifacts/ 日期目录。
+4. 2026-02-24 与 2026-02-25 两个交易日均成功生成 selection_snapshot.json、selection_review.md、research_feedback.jsonl。
+5. session_summary.json 已记录 selection_artifact_root。
+6. daily_events.jsonl 与 pipeline_timings.jsonl 中的 current_plan 均已包含 selection_artifacts 元信息。
+
+这次验证的意义是确认“真实运行路径下 artifact 确实落盘且能回填事件流”，而不是验证选股效果本身。由于该样本窗口中 watchlist 为空，本次验收更偏向工程链路验收，而非研究可用性上限验收。
+
+2026-03-22 还完成了一次“非空 watchlist 场景”验收，验证方式为 1 天 frozen replay paper trading：
+
+1. frozen_plan_source：data/reports/logic_stop_threshold_scan_m0_20/daily_events.jsonl
+2. output_dir：data/reports/logic_stop_threshold_scan_m0_20_selection_artifact_validation_20260322
+3. 成功生成 2026-02-05 对应的 selection_snapshot.json、selection_review.md、research_feedback.jsonl。
+4. selection_review.md 已正确展示 1 个入选股票、buy_order 桥接信息以及研究复核提示。
+5. daily_events.jsonl 与 pipeline_timings.jsonl 中的 selection_artifacts 仍为 write_status=success。
+6. 该窗口确认当前 artifact 已具备基本研究可读性，而不只是工程链路可用。
+
+2026-03-22 随后完成了一次“历史 replay 兼容回退”验收，仍使用 1 天 frozen replay paper trading：
+
+1. frozen_plan_source：data/reports/logic_stop_threshold_scan_m0_20/daily_events.jsonl
+2. output_dir：data/reports/logic_stop_threshold_scan_m0_20_selection_artifact_fallback_validation_20260322
+3. selection_snapshot.json 中的 layer_b_summary 已不再为空，而是使用 plan.logic_scores 与 market_state.adjusted_weights 回退生成 top_factors，并标记 explanation_source=legacy_plan_fields。
+4. selection_review.md 已新增 Layer B 因子摘要区块，可直接看到 logic_score、fundamental、trend 等回退解释项。
+5. session_summary.json、daily_events.jsonl、pipeline_timings.jsonl 中的 artifact 元信息仍保持 write_status=success。
+
+这次验收说明：历史 frozen replay 源的 Layer B 解释不再是“空白”，但因为老源缺失原生 strategy_signals，回退摘要本质上仍是兼容解释而不是原始策略证据，研究员在复核时应优先将其视为辅助线索。
+
+2026-03-22 同日还完成了 research_feedback.jsonl 的最小闭环实现：
+
+1. 新增受控标签词表与 label_version=v1 校验。
+2. 新增 review_status 受控枚举校验，当前支持 draft、final、adjudicated。
+3. 新增 JSONL 读取函数与汇总聚合函数，可统计 primary_tag、tags、review_status、research_verdict、reviewer、symbol 等维度。
+4. 新增 tests/research/test_feedback_schema.py，覆盖正常读写、聚合统计、非法标签拦截与 skip_invalid 路径。
+5. 与 selection artifact 相关测试合并运行后已通过，共 7 个测试通过。
+
+2026-03-22 同日还完成了最小 feedback CLI 集成：
+
+1. 新增 scripts/manage_research_feedback.py，支持 append 与 summarize 子命令。
+2. summarize 支持直接指定 feedback 文件，或基于 selection_artifacts 根目录加 trade_date 自动定位 research_feedback.jsonl。
+3. append 支持从命令行直接录入 reviewer、primary_tag、tags、review_status、confidence、research_verdict、notes 等核心字段。
+4. 新增 tests/research/test_manage_research_feedback_cli.py，覆盖路径解析与 append/summarize 命令闭环。
+5. 与既有 research 测试合并运行后已通过，共 9 个测试通过；并已在现有 selection_artifacts 目录上完成一次 summarize 实际命令验证。
+
+后续章节中，凡是“建议”“推荐”与“已实现”不一致时，以“已实现”说明为准，并在后续迭代中继续向目标态收敛。
+
 ## 1. 文档目标
 
 本文档是 [arch_optimize.md](docs/zh-cn/product/arch/arch_optimize.md) 的实施落地版本，目标不是再次解释为什么要这样设计，而是明确回答以下问题：
@@ -48,7 +122,7 @@
 本次实施建议围绕以下现有模块扩展：
 
 1. [src/execution/daily_pipeline.py](src/execution/daily_pipeline.py)
-   负责每日筛选与执行准备主流程，是生成 selection_snapshot 的首选位置。
+  负责每日筛选与执行准备主流程，是 selection_snapshot 的事实来源，但当前首版实现并不在此文件直接写 artifact。
 2. [src/paper_trading/runtime.py](src/paper_trading/runtime.py)
    负责纸面交易会话目录、daily_events.jsonl、session_summary.json 等产物落盘，是注入 artifact writer 的关键位置。
 3. [src/backtesting/engine.py](src/backtesting/engine.py)
@@ -74,6 +148,8 @@
    负责本次新增的 Pydantic 模型定义。
 
 如果项目当前不希望新增 research 子包，也可以放入 src/execution/selection_artifacts.py，但从长期维护性看不如独立 research 模块清晰。
+
+当前状态：上述 research 子包方案已经落地，后续应继续沿用，不再建议回退到 src/execution/selection_artifacts.py 的混合方案。
 
 ---
 
@@ -308,22 +384,29 @@ research_feedback.jsonl 每行一条记录，建议 schema 如下：
 
 ## 7. 模块接口设计
 
-### 7.1 建议接口一览
+### 7.1 当前首版接口
 
 ```python
 class SelectionArtifactWriter(Protocol):
-    def write_selection_artifacts(self, snapshot: SelectionSnapshot) -> SelectionArtifactWriteResult:
+  def write_for_plan(
+    self,
+    *,
+    plan: ExecutionPlan,
+    trade_date: str,
+    pipeline: DailyPipeline | None,
+    selected_analysts: list[str] | None,
+  ) -> SelectionArtifactWriteResult:
         ...
 
 
 def build_selection_snapshot(
     *,
-    trade_date: date,
+  plan: ExecutionPlan,
+  trade_date: str,
     run_id: str,
-    experiment_id: str | None,
-    pipeline_result: DailyPipelineResult,
-    pipeline_config_snapshot: PipelineConfigSnapshot,
-    artifact_context: ArtifactContext,
+  pipeline: DailyPipeline | None,
+  selected_analysts: list[str] | None,
+  experiment_id: str | None = None,
 ) -> SelectionSnapshot:
     ...
 
@@ -338,7 +421,30 @@ def append_research_feedback(
     record: ResearchFeedbackRecord,
 ) -> None:
     ...
+
+
+def read_research_feedback(
+  *,
+  file_path: Path,
+  skip_invalid: bool = False,
+) -> list[ResearchFeedbackRecord]:
+  ...
+
+
+def summarize_research_feedback(
+  *,
+  records: list[ResearchFeedbackRecord] | None = None,
+  file_path: Path | None = None,
+  skip_invalid: bool = False,
+) -> ResearchFeedbackSummary:
+  ...
 ```
+
+说明：
+
+1. 当前实现使用 write_for_plan，而不是先手工构造 snapshot 再调用 write_selection_artifacts。
+2. 这是为了减少运行时层样板代码，并把 snapshot 构造和文件落盘集中在同一个 writer 编排模块中。
+3. 后续如果要进一步解耦，可以再演进为“builder + writer”双对象模式，但第一版没有必要为了形式完整而增加复杂度。
 
 ### 7.2 推荐集成方式
 
@@ -347,9 +453,8 @@ def append_research_feedback(
 具体做法：
 
 1. DailyPipeline 返回原有结果对象。
-2. 运行时层在拿到结果后调用 build_selection_snapshot。
-3. 运行时层再通过 SelectionArtifactWriter 写 snapshot 与 review。
-4. 写入结果回填到事件流或 current_plan 元信息中。
+2. 运行时层在拿到结果后调用 writer，由 writer 内部完成 snapshot 构建与 review 渲染。
+3. 写入结果回填到事件流或 current_plan 元信息中。
 
 这样 DailyPipeline 只承担“产出事实”的责任，不知道具体路径，也不关心 Markdown 格式。
 
@@ -378,11 +483,14 @@ def append_research_feedback(
 ```text
 reports/
   session_xxx/
-    2026-03-22/
-      selection_snapshot.json
-      selection_review.md
-      research_feedback.jsonl
+    selection_artifacts/
+      2026-03-22/
+        selection_snapshot.json
+        selection_review.md
+        research_feedback.jsonl
 ```
+
+当前状态：首版代码已经按上述 selection_artifacts 子目录结构落地。
 
 ### 8.3 命名规则
 
@@ -410,6 +518,12 @@ reports/
 }
 ```
 
+当前状态：
+
+1. ExecutionPlan 已新增 selection_artifacts 字段。
+2. backtesting timing payload 中的 current_plan 已包含 selection_artifacts 元信息。
+3. daily_events.jsonl 中的 current_plan 会随 model_dump 一并带出 selection_artifacts。
+
 ### 9.2 写入失败状态
 
 write_status 建议取值：
@@ -436,6 +550,8 @@ write_status 建议取值：
 
 目标：先把 schema 固化，不先动主流程。
 
+当前状态：已完成。
+
 ### 10.2 第二步：从现有 pipeline result 提取快照
 
 在运行时层接 DailyPipeline 结果后，将以下信息映射进 snapshot：
@@ -447,6 +563,14 @@ write_status 建议取值：
 5. funnel_diagnostics。
 6. pipeline_config_snapshot。
 
+当前状态：已完成首版。
+
+当前实现说明：
+
+1. 实际提取入口是运行时层持有的 ExecutionPlan，而不是单独定义一个 DailyPipelineResult。
+2. Layer B 信号解释通过 LayerCResult.strategy_signals 透传获得。
+3. near-miss rejected 样本当前来自 funnel_diagnostics.filters.watchlist。
+
 ### 10.3 第三步：写 snapshot 和 review
 
 实现 SelectionArtifactWriter：
@@ -455,9 +579,13 @@ write_status 建议取值：
 2. 再从 snapshot 渲染 selection_review.md。
 3. 如果 feedback 文件不存在，仅初始化空文件或延迟到首次写入时创建。
 
+当前状态：已完成。
+
 ### 10.4 第四步：把路径回填事件流
 
 将 artifact 元信息写入 current_plan 或 daily event，形成完整追溯链。
+
+当前状态：已完成首版。
 
 ### 10.5 第五步：加入基础测试
 
@@ -468,6 +596,22 @@ write_status 建议取值：
 3. writer 写入成功与失败降级测试。
 4. 纸面交易集成测试。
 5. 回测集成测试。
+
+当前状态：部分完成。
+
+已完成：
+
+1. review 渲染测试。
+2. writer 写入测试。
+3. 引擎回填 selection_artifacts 测试。
+4. feedback schema 读写与聚合测试。
+5. feedback CLI 路径解析与 append or summarize 命令测试。
+
+未完成：
+
+1. 真实 paper trading 集成测试。
+2. 真实 backtesting 运行级集成测试。
+3. feedback 与更高层人工工作流、标签平台或 UI 的集成测试。
 
 ---
 
@@ -480,6 +624,8 @@ write_status 建议取值：
 1. [tests](tests)/research/test_selection_snapshot_models.py
 2. [tests](tests)/research/test_selection_review_renderer.py
 3. [tests](tests)/research/test_feedback_schema.py
+4. [tests](tests)/research/test_selection_artifact_writer.py
+5. [tests](tests)/research/test_selection_artifact_engine.py
 
 重点检查：
 
@@ -494,6 +640,13 @@ write_status 建议取值：
 
 1. [tests](tests)/paper_trading/test_selection_artifacts_in_runtime.py
 2. [tests](tests)/backtesting/test_selection_artifacts_in_engine.py
+
+当前状态：
+
+1. tests/research/test_selection_artifact_engine.py 已经覆盖了“引擎将 selection_artifacts 回填到 plan”的最小集成路径。
+2. 真实 paper trading 短窗口 frozen replay 验证已完成一次。
+3. 非空 watchlist 场景的 frozen replay 验证也已完成一次。
+4. 但这仍然不能替代更长窗口或 live pipeline 的运行级验收。
 
 重点检查：
 
@@ -591,6 +744,13 @@ write_status 建议取值：
 3. selection_review.md 与 snapshot 内容一致，没有额外杜撰字段。
 4. event / current_plan 中存在 artifact 路径。
 5. artifact 写入失败时主流程仍返回成功，但有清晰错误记录。
+
+当前完成度：
+
+1. 第 1、2、3、4 项已经具备基础代码、测试或最小真实运行验证支撑。
+2. 第 5 项已有失败降级实现，但尚缺对应的显式异常测试。
+
+补充说明：当前第 3 项“selection_review.md 与 snapshot 内容一致”已经通过非空 watchlist 窗口与历史 replay 回退窗口得到更强验证；旧 frozen 源下虽然缺少原生 strategy_signals，但 review 已能显示兼容回退后的 Layer B 摘要。
 
 ### 15.2 研究可用性验收
 

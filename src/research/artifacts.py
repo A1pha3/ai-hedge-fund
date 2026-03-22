@@ -58,7 +58,47 @@ def _extract_top_factors(item: LayerCResult) -> list[dict[str, Any]]:
     return factors[:3]
 
 
-def _build_selected_reasoning(item: LayerCResult, included_in_buy_orders: bool) -> dict[str, list[str]]:
+def _extract_fallback_top_factors(plan: ExecutionPlan, item: LayerCResult) -> list[dict[str, Any]]:
+    factors: list[dict[str, Any]] = []
+    logic_score = float(plan.logic_scores.get(item.ticker, item.score_b) or 0.0)
+    factors.append(
+        {
+            "name": "logic_score",
+            "value": round(logic_score, 4),
+            "source": "plan.logic_scores",
+        }
+    )
+
+    adjusted_weights = dict(getattr(plan.market_state, "adjusted_weights", {}) or {})
+    source_name = "market_state.adjusted_weights" if adjusted_weights else "plan.strategy_weights"
+    ranked_weights = sorted((adjusted_weights or plan.strategy_weights or {}).items(), key=lambda current: float(current[1] or 0.0), reverse=True)
+    for strategy_name, weight in ranked_weights[:2]:
+        factors.append(
+            {
+                "name": str(strategy_name),
+                "weight": round(float(weight or 0.0), 4),
+                "source": source_name,
+            }
+        )
+    return factors[:3]
+
+
+def _build_layer_b_summary(plan: ExecutionPlan, item: LayerCResult) -> dict[str, Any]:
+    top_factors = _extract_top_factors(item)
+    if top_factors:
+        return {
+            "top_factors": top_factors,
+            "explanation_source": "strategy_signals",
+            "fallback_used": False,
+        }
+    return {
+        "top_factors": _extract_fallback_top_factors(plan, item),
+        "explanation_source": "legacy_plan_fields",
+        "fallback_used": True,
+    }
+
+
+def _build_selected_reasoning(item: LayerCResult, included_in_buy_orders: bool, layer_b_fallback_used: bool) -> dict[str, list[str]]:
     why_selected = [
         f"Layer B 综合分数为 {item.score_b:.4f}",
         f"Layer C 综合分数为 {item.score_c:.4f}",
@@ -72,6 +112,8 @@ def _build_selected_reasoning(item: LayerCResult, included_in_buy_orders: bool) 
     what_to_check = []
     if item.bc_conflict:
         what_to_check.append("B/C 分歧是否意味着选股逻辑仍然不够稳定")
+    if layer_b_fallback_used:
+        what_to_check.append("当前 Layer B 因子摘要来自历史回放兼容字段，需结合原始 plan 字段复核")
     if float(item.quality_score) < 0.5:
         what_to_check.append("基本面质量分偏低，需复核是否为估值陷阱或质量陷阱")
     if not what_to_check:
@@ -90,6 +132,7 @@ def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
         matching_order = buy_order_by_ticker.get(item.ticker)
         included_in_buy_orders = matching_order is not None
         amount = float(getattr(matching_order, "amount", 0.0) or 0.0) if matching_order is not None else 0.0
+        layer_b_summary = _build_layer_b_summary(plan, item)
         selected.append(
             SelectedCandidate(
                 symbol=item.ticker,
@@ -98,9 +141,7 @@ def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
                 score_c=round(float(item.score_c), 4),
                 score_final=round(float(item.score_final), 4),
                 rank_in_watchlist=rank,
-                layer_b_summary={
-                    "top_factors": _extract_top_factors(item),
-                },
+                layer_b_summary=layer_b_summary,
                 layer_c_summary={
                     **dict(item.agent_contribution_summary or {}),
                     "bc_conflict": item.bc_conflict,
@@ -111,7 +152,7 @@ def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
                     "planned_amount": round(amount, 4),
                     "target_weight": round((amount / nav), 4) if nav > 0 and amount > 0 else 0.0,
                 },
-                research_prompts=_build_selected_reasoning(item, included_in_buy_orders),
+                research_prompts=_build_selected_reasoning(item, included_in_buy_orders, bool(layer_b_summary.get("fallback_used"))),
             )
         )
     return selected

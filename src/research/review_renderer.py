@@ -3,6 +3,17 @@ from __future__ import annotations
 from src.research.models import SelectionSnapshot
 
 
+def _format_layer_b_factor(factor: dict) -> str:
+    name = str(factor.get("name", "unknown"))
+    if "direction" in factor and "confidence" in factor:
+        return f"{name}: direction={float(factor.get('direction', 0.0)):.2f}, confidence={float(factor.get('confidence', 0.0)):.2f}"
+    if "weight" in factor:
+        return f"{name}: weight={float(factor.get('weight', 0.0)):.4f} ({factor.get('source', 'fallback')})"
+    if "value" in factor:
+        return f"{name}: value={float(factor.get('value', 0.0)):.4f} ({factor.get('source', 'fallback')})"
+    return name
+
+
 def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
     lines = ["## 今日入选股票", ""]
     if not snapshot.selected:
@@ -14,6 +25,11 @@ def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
         lines.append(f"### {index}. {candidate.symbol} {candidate.name}".rstrip())
         lines.append(f"- final_score: {candidate.score_final:.4f}")
         lines.append(f"- buy_order: {'yes' if candidate.execution_bridge.get('included_in_buy_orders') else 'no'}")
+        top_factors = list((candidate.layer_b_summary or {}).get("top_factors", []) or [])
+        if top_factors:
+            lines.append("- Layer B 因子摘要:")
+            for factor in top_factors[:3]:
+                lines.append(f"  - {_format_layer_b_factor(factor)}")
         lines.append("- 入选原因:")
         for reason in list(candidate.research_prompts.get("why_selected", []))[:3]:
             lines.append(f"  - {reason}")

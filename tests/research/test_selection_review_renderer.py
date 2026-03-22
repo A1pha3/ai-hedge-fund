@@ -19,6 +19,11 @@ def test_render_selection_review_contains_key_sections():
             SelectedCandidate(
                 symbol="000001",
                 score_final=0.72,
+                layer_b_summary={
+                    "top_factors": [
+                        {"name": "trend", "weight": 0.3, "source": "market_state.adjusted_weights"},
+                    ]
+                },
                 execution_bridge={"included_in_buy_orders": True},
                 research_prompts={
                     "why_selected": ["Layer B 综合分数高"],
@@ -40,5 +45,7 @@ def test_render_selection_review_contains_key_sections():
     assert "# 选股审查日报 - 2026-03-22" in markdown
     assert "## 今日入选股票" in markdown
     assert "000001" in markdown
+    assert "Layer B 因子摘要" in markdown
+    assert "trend: weight=0.3000" in markdown
     assert "## 接近入选但落选" in markdown
     assert "300750" in markdown

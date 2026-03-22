@@ -108,3 +108,4 @@ max-line-length = 420
 
 [tool.poetry.scripts]
 backtester = "src.backtesting.cli:main"
+research-feedback = "scripts.manage_research_feedback:main"
