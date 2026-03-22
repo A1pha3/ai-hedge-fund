@@ -246,7 +246,7 @@ def run_paper_trading_session(
 
     llm_route_provenance, llm_metrics_artifacts = _build_llm_route_provenance()
     llm_observability_summary = _build_llm_observability_summary(Path(llm_metrics_artifacts["llm_metrics_jsonl"]))
-    execution_plan_provenance = _build_execution_plan_provenance_summary(pipeline)
+    execution_plan_provenance = _build_execution_plan_provenance_summary(getattr(engine, "_pipeline", None))
 
     summary = {
         "mode": "paper_trading",

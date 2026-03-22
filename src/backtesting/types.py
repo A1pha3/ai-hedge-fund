@@ -39,6 +39,7 @@ class PositionState(PositionStateRequired, total=False):
     max_unrealized_pnl_pct: float
     profit_take_stage: int
     entry_score: float
+    quality_score: float
     is_fundamental_driven: bool
     industry_sw: str
 

@@ -157,7 +157,7 @@ def test_full_pipeline_smoke():
             "technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 65, "reasoning": "ok"} for ticker in tickers},
         }
 
-    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [])
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI")
 
     import src.execution.daily_pipeline as daily_pipeline_module
 
@@ -202,7 +202,7 @@ def test_run_post_market_emits_structured_funnel_diagnostics():
             "ben_graham_agent": payload,
         }
 
-    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [])
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI")
 
     import src.execution.daily_pipeline as daily_pipeline_module
 
@@ -260,7 +260,7 @@ def test_watchlist_threshold_020_admits_edge_case_between_020_and_025():
             "technical_analyst_agent": {ticker: {"signal": "bearish", "confidence": 100, "reasoning": "ok"} for ticker in tickers},
         }
 
-    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [])
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI")
 
     import src.execution.daily_pipeline as daily_pipeline_module
 
@@ -402,6 +402,31 @@ def test_build_buy_orders_uses_real_price_map_for_high_price_ticker_position_siz
     assert diagnostics["reason_counts"] == {}
 
 
+def test_build_buy_orders_gives_higher_quality_candidate_more_size_when_scores_match():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="000001", score_c=0.2, score_final=0.30, score_b=0.5, quality_score=0.9, decision="watch"),
+        LayerCResult(ticker="000002", score_c=0.2, score_final=0.30, score_b=0.5, quality_score=0.1, decision="watch"),
+    ]
+    candidate_by_ticker = {
+        "000001": CandidateStock(ticker="000001", name="高质量", industry_sw="银行", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403"),
+        "000002": CandidateStock(ticker="000002", name="低质量", industry_sw="银行", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403"),
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 120_000, "positions": {}},
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={"000001": 10.0, "000002": 10.0},
+    )
+
+    assert len(buy_orders) == 2
+    plans_by_ticker = {plan.ticker: plan for plan in buy_orders}
+    assert plans_by_ticker["000001"].execution_ratio > plans_by_ticker["000002"].execution_ratio
+    assert plans_by_ticker["000001"].amount > plans_by_ticker["000002"].amount
+    assert diagnostics["reason_counts"] == {}
+
+
 def test_build_buy_orders_blocks_ticker_during_exit_cooldown():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     watchlist = [
@@ -481,7 +506,7 @@ def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkey
             "technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 100, "reasoning": "ok"} for ticker in tickers},
         }
 
-    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [])
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI")
 
     import src.execution.daily_pipeline as daily_pipeline_module
 
@@ -722,7 +747,12 @@ def test_tiered_llm_call():
             "aswath_damodaran_agent": {ticker: {"signal": "bullish", "confidence": 60, "reasoning": "ok"} for ticker in tickers},
         }
 
-    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [])
+    pipeline = DailyPipeline(
+        agent_runner=fake_agent_runner,
+        exit_checker=lambda portfolio, trade_date: [],
+        base_model_name="gpt-4.1",
+        base_model_provider="OpenAI",
+    )
 
     import src.execution.daily_pipeline as daily_pipeline_module
 

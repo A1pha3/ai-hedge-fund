@@ -54,11 +54,42 @@ def _signal(direction: int, confidence: float, completeness: float = 1.0, sub_fa
 def _profitability_sub_factor(direction: int, positive_count: int) -> dict:
     return {
         "profitability": {
+            "confidence": 100,
             "metrics": {
                 "positive_count": positive_count,
             },
             "direction": direction,
         }
+    }
+
+
+def _quality_guard_sub_factors(
+    profitability_direction: int,
+    profitability_positive_count: int,
+    financial_health_direction: int,
+    growth_direction: int,
+    profitability_confidence: float = 100.0,
+    financial_health_confidence: float = 85.0,
+    growth_confidence: float = 75.0,
+) -> dict:
+    return {
+        "profitability": {
+            "direction": profitability_direction,
+            "confidence": profitability_confidence,
+            "metrics": {
+                "positive_count": profitability_positive_count,
+            },
+        },
+        "financial_health": {
+            "direction": financial_health_direction,
+            "confidence": financial_health_confidence,
+            "metrics": {},
+        },
+        "growth": {
+            "direction": growth_direction,
+            "confidence": growth_confidence,
+            "metrics": {},
+        },
     }
 
 
@@ -175,6 +206,40 @@ def test_consensus_bonus_and_score_range():
     assert "consensus_bonus" in fused.arbitration_applied
     assert fused.score_b > base_score
     assert -1.0 <= fused.score_b <= 1.0
+
+
+def test_quality_first_guard_blocks_low_quality_candidates_despite_positive_momentum():
+    market_state = MarketState(adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+    signals = {
+        "trend": _signal(1, 85),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 70, sub_factors=_quality_guard_sub_factors(-1, 0, -1, 1)),
+        "event_sentiment": _signal(1, 70),
+    }
+
+    with patch.dict(os.environ, {}, clear=False):
+        fused = fuse_signals_for_ticker("000001", signals, market_state, "20260305")
+
+    assert fused.decision == "strong_sell"
+    assert "avoid" in fused.arbitration_applied
+    assert fused.score_b == -1.0
+
+
+def test_quality_first_guard_can_be_disabled_when_analyzing_other_hypotheses():
+    market_state = MarketState(adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+    signals = {
+        "trend": _signal(1, 85),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 70, sub_factors=_quality_guard_sub_factors(-1, 0, -1, 1)),
+        "event_sentiment": _signal(1, 70),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_QUALITY_FIRST_GUARD": "0"}, clear=False):
+        fused = fuse_signals_for_ticker("000001", signals, market_state)
+
+    assert fused.decision == "strong_buy"
+    assert "avoid" not in fused.arbitration_applied
+    assert fused.score_b > 0.5
 
 
 def test_cooldown_early_release():

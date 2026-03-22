@@ -14,6 +14,7 @@ class LayerCResult(BaseModel):
     score_c: float = Field(ge=-1, le=1)
     score_final: float = 0.0
     score_b: float = 0.0
+    quality_score: float = Field(ge=0, le=1, default=0.5)
     agent_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     agent_contribution_summary: dict = Field(default_factory=dict)
     bc_conflict: Optional[str] = None

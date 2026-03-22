@@ -104,6 +104,34 @@ def test_existing_position_ratio_blocks_additional_single_name_pyramiding():
     assert plan.amount == 0.0
 
 
+def test_quality_score_tilts_execution_ratio_for_same_score_band():
+    high_quality = calculate_position(
+        ticker="300724",
+        current_price=20.0,
+        score_final=0.30,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=500_000,
+        industry_remaining_quota=25_000,
+        quality_score=0.90,
+    )
+    low_quality = calculate_position(
+        ticker="300724",
+        current_price=20.0,
+        score_final=0.30,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=500_000,
+        industry_remaining_quota=25_000,
+        quality_score=0.10,
+    )
+
+    assert high_quality.execution_ratio > low_quality.execution_ratio
+    assert high_quality.amount > low_quality.amount
+    assert high_quality.quality_score == 0.9
+    assert low_quality.quality_score == 0.1
+
+
 def test_industry_limit():
     holdings = [
         HoldingState(ticker="000001", entry_price=10, entry_date="20260201", shares=10_000, cost_basis=100_000, industry_sw="银行"),
@@ -168,6 +196,41 @@ def test_profit_retrace_triggers_after_six_percent_peak_reverses_to_one_percent(
     )
 
     signal = check_exit_signal(holding, current_price=10.0, trade_date="20260303")
+
+    assert signal is not None
+    assert signal.trigger_reason == "profit_retrace"
+
+
+def test_high_quality_holding_tolerates_shallow_profit_retrace():
+    holding = HoldingState(
+        ticker="603993",
+        entry_price=10.0,
+        entry_date="20260203",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="有色金属",
+        max_unrealized_pnl_pct=0.082,
+        quality_score=0.85,
+    )
+
+    signal = check_exit_signal(holding, current_price=10.0, trade_date="20260303")
+
+    assert signal is None
+
+
+def test_low_quality_holding_exits_on_shallower_profit_retrace():
+    holding = HoldingState(
+        ticker="603993",
+        entry_price=10.0,
+        entry_date="20260203",
+        shares=1000,
+        cost_basis=10_000,
+        industry_sw="有色金属",
+        max_unrealized_pnl_pct=0.055,
+        quality_score=0.2,
+    )
+
+    signal = check_exit_signal(holding, current_price=10.19, trade_date="20260303")
 
     assert signal is not None
     assert signal.trigger_reason == "profit_retrace"
@@ -254,6 +317,41 @@ def test_time_stop_triggers_once_trading_day_limit_is_exceeded():
         cost_basis=6000.0,
         industry_sw="有色金属",
         holding_days=21,
+    )
+
+    signal = check_exit_signal(holding, current_price=5.88, trade_date="20260224")
+
+    assert signal is not None
+    assert signal.trigger_reason == "time_stop"
+
+
+def test_high_quality_holding_gets_longer_time_stop_grace_period():
+    holding = HoldingState(
+        ticker="603993",
+        entry_price=6.0,
+        entry_date="20260203",
+        shares=1000,
+        cost_basis=6000.0,
+        industry_sw="有色金属",
+        holding_days=25,
+        quality_score=0.9,
+    )
+
+    signal = check_exit_signal(holding, current_price=5.88, trade_date="20260224")
+
+    assert signal is None
+
+
+def test_low_quality_holding_hits_time_stop_earlier():
+    holding = HoldingState(
+        ticker="603993",
+        entry_price=6.0,
+        entry_date="20260203",
+        shares=1000,
+        cost_basis=6000.0,
+        industry_sw="有色金属",
+        holding_days=16,
+        quality_score=0.2,
     )
 
     signal = check_exit_signal(holding, current_price=5.88, trade_date="20260224")

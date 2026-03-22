@@ -1,0 +1,1161 @@
+{
+  "mode": "paper_trading",
+  "start_date": "2026-02-02",
+  "end_date": "2026-02-13",
+  "tickers": [],
+  "initial_capital": 100000.0,
+  "model_name": "MiniMax-M2.7",
+  "model_provider": "MiniMax",
+  "selected_analysts": null,
+  "plan_generation": {
+    "mode": "live_pipeline",
+    "frozen_plan_source": null
+  },
+  "performance_metrics": {
+    "sharpe_ratio": -6.583123582100246,
+    "sortino_ratio": -6.854602684128175,
+    "max_drawdown": -1.8893071369153913,
+    "long_short_ratio": null,
+    "gross_exposure": null,
+    "net_exposure": null,
+    "max_drawdown_date": "2026-02-13",
+    "calmar_ratio": -18.452231685746064,
+    "cvar_95": -0.010697720353986973
+  },
+  "portfolio_values": [
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0
+    },
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-03",
+      "Portfolio Value": 99982.70279425,
+      "Long Exposure": 9882.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 9882.0,
+      "Net Exposure": 9882.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-04",
+      "Portfolio Value": 100206.559656625,
+      "Long Exposure": 12477.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 12477.0,
+      "Net Exposure": 12477.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-05",
+      "Portfolio Value": 99436.559656625,
+      "Long Exposure": 11707.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 11707.0,
+      "Net Exposure": 11707.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-06",
+      "Portfolio Value": 99439.451460875,
+      "Long Exposure": 25014.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 25014.0,
+      "Net Exposure": 25014.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-09",
+      "Portfolio Value": 99834.451460875,
+      "Long Exposure": 25409.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 25409.0,
+      "Net Exposure": 25409.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-10",
+      "Portfolio Value": 99448.451460875,
+      "Long Exposure": 25023.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 25023.0,
+      "Net Exposure": 25023.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-11",
+      "Portfolio Value": 99468.451460875,
+      "Long Exposure": 25043.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 25043.0,
+      "Net Exposure": 25043.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-12",
+      "Portfolio Value": 99376.451460875,
+      "Long Exposure": 24951.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 24951.0,
+      "Net Exposure": 24951.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-13",
+      "Portfolio Value": 98313.349973375,
+      "Long Exposure": 11670.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 11670.0,
+      "Net Exposure": 11670.0,
+      "Long/Short Ratio": Infinity
+    }
+  ],
+  "final_portfolio_snapshot": {
+    "cash": 86643.349973375,
+    "margin_used": 0.0,
+    "margin_requirement": 0.0,
+    "positions": {
+      "601600": {
+        "long": 400,
+        "short": 0,
+        "long_cost_basis": 13.15971,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "20260203",
+        "last_trade_date": "20260213",
+        "holding_days": 8,
+        "max_unrealized_pnl_pct": 0.02129910157594651,
+        "profit_take_stage": 0,
+        "entry_score": 0.31628748559643155,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      },
+      "603993": {
+        "long": 300,
+        "short": 0,
+        "long_cost_basis": 23.344965000000002,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "20260203",
+        "last_trade_date": "20260213",
+        "holding_days": 8,
+        "max_unrealized_pnl_pct": 0.013923130747893591,
+        "profit_take_stage": 0,
+        "entry_score": 0.2903509503308393,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      },
+      "300724": {
+        "long": 0,
+        "short": 0,
+        "long_cost_basis": 0.0,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "",
+        "last_trade_date": "",
+        "holding_days": 0,
+        "max_unrealized_pnl_pct": 0.0,
+        "profit_take_stage": 0,
+        "entry_score": 0.0,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      }
+    },
+    "realized_gains": {
+      "601600": {
+        "long": 0.0,
+        "short": 0.0
+      },
+      "603993": {
+        "long": 0.0,
+        "short": 0.0
+      },
+      "300724": {
+        "long": -1067.5930000000008,
+        "short": 0.0
+      }
+    }
+  },
+  "llm_route_provenance": {
+    "session_id": "20260322_103741",
+    "summary_available": true,
+    "attempts": 274,
+    "successes": 274,
+    "errors": 0,
+    "rate_limit_errors": 0,
+    "fallback_attempts": 0,
+    "fallback_observed": false,
+    "contaminated_by_provider_fallback": false,
+    "providers_seen": [
+      "MiniMax",
+      "Volcengine"
+    ],
+    "models_seen": [
+      "MiniMax:MiniMax-M2.7",
+      "Volcengine:doubao-seed-2.0-pro"
+    ],
+    "routes_seen": [
+      "MiniMax:default",
+      "unknown"
+    ]
+  },
+  "execution_plan_provenance": {
+    "observation_count": 9,
+    "observations": [
+      {
+        "trade_date": "20260202",
+        "model_tier": "fast",
+        "tickers": [
+          "603993",
+          "300724",
+          "601899",
+          "601600"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      },
+      {
+        "trade_date": "20260203",
+        "model_tier": "fast",
+        "tickers": [
+          "603993",
+          "300724",
+          "300502",
+          "300308"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      },
+      {
+        "trade_date": "20260204",
+        "model_tier": "fast",
+        "tickers": [
+          "300724"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      },
+      {
+        "trade_date": "20260205",
+        "model_tier": "fast",
+        "tickers": [
+          "300724"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      },
+      {
+        "trade_date": "20260206",
+        "model_tier": "fast",
+        "tickers": [
+          "300724"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      },
+      {
+        "trade_date": "20260209",
+        "model_tier": "fast",
+        "tickers": [
+          "600111",
+          "300724",
+          "002602"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      },
+      {
+        "trade_date": "20260210",
+        "model_tier": "fast",
+        "tickers": [
+          "300724",
+          "002602"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      },
+      {
+        "trade_date": "20260211",
+        "model_tier": "fast",
+        "tickers": [
+          "300724",
+          "600988",
+          "002602"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      },
+      {
+        "trade_date": "20260212",
+        "model_tier": "fast",
+        "tickers": [
+          "300724",
+          "600988",
+          "002602"
+        ],
+        "execution_plan_provenance": {
+          "planning_mode": "parallel",
+          "base_model_name": "MiniMax-M2.7",
+          "base_model_provider": "MiniMax",
+          "per_provider_limit": 2,
+          "effective_concurrency_limit": 9,
+          "parallel_provider_count": 2,
+          "primary_provider_name": "MiniMax",
+          "active_provider_names": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "provider_lane_limits": {
+            "MiniMax": 5,
+            "Volcengine": 4
+          },
+          "provider_slot_sequence": [
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax",
+            "Volcengine",
+            "MiniMax"
+          ],
+          "provider_routes": {
+            "MiniMax": [
+              {
+                "route_id": "MiniMax:default",
+                "display_name": "MiniMax",
+                "model_name": "MiniMax-M2.7",
+                "transport_family": "openai-compatible"
+              }
+            ],
+            "Volcengine": [
+              {
+                "route_id": "Volcengine:coding_plan",
+                "display_name": "Volcengine Ark",
+                "model_name": "doubao-seed-2.0-pro",
+                "transport_family": "openai-compatible"
+              }
+            ]
+          },
+          "llm_provider_route_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_parallel_provider_allowlist": [
+            "MiniMax",
+            "Volcengine"
+          ],
+          "llm_primary_provider": null,
+          "single_provider_reason": null
+        }
+      }
+    ]
+  },
+  "llm_observability_summary": {
+    "jsonl_available": true,
+    "entry_count": 274,
+    "by_trade_date": {
+      "20260202": {
+        "attempts": 49,
+        "successes": 49,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 1198590.054,
+        "avg_duration_ms": 24461.022
+      },
+      "20260203": {
+        "attempts": 50,
+        "successes": 50,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 1170544.213,
+        "avg_duration_ms": 23410.884
+      },
+      "20260204": {
+        "attempts": 13,
+        "successes": 13,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 297058.755,
+        "avg_duration_ms": 22850.673
+      },
+      "20260205": {
+        "attempts": 13,
+        "successes": 13,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 315894.048,
+        "avg_duration_ms": 24299.542
+      },
+      "20260206": {
+        "attempts": 13,
+        "successes": 13,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 296320.532,
+        "avg_duration_ms": 22793.887
+      },
+      "20260209": {
+        "attempts": 37,
+        "successes": 37,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 866354.5,
+        "avg_duration_ms": 23414.986
+      },
+      "20260210": {
+        "attempts": 25,
+        "successes": 25,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 588109.936,
+        "avg_duration_ms": 23524.397
+      },
+      "20260211": {
+        "attempts": 37,
+        "successes": 37,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 870243.438,
+        "avg_duration_ms": 23520.093
+      },
+      "20260212": {
+        "attempts": 37,
+        "successes": 37,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 932672.51,
+        "avg_duration_ms": 25207.365
+      }
+    },
+    "by_model_tier": {
+      "fast": {
+        "attempts": 274,
+        "successes": 274,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 6535787.986,
+        "avg_duration_ms": 23853.241
+      }
+    },
+    "by_provider": {
+      "MiniMax": {
+        "attempts": 164,
+        "successes": 164,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 3776955.087,
+        "avg_duration_ms": 23030.214
+      },
+      "Volcengine": {
+        "attempts": 110,
+        "successes": 110,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 2758832.899,
+        "avg_duration_ms": 25080.299
+      }
+    },
+    "context_breakdown": [
+      {
+        "trade_date": "20260202",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 29,
+        "successes": 29,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 683407.325,
+        "avg_duration_ms": 23565.77
+      },
+      {
+        "trade_date": "20260202",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 20,
+        "successes": 20,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 515182.729,
+        "avg_duration_ms": 25759.136
+      },
+      {
+        "trade_date": "20260203",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 30,
+        "successes": 30,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 660765.138,
+        "avg_duration_ms": 22025.505
+      },
+      {
+        "trade_date": "20260203",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 20,
+        "successes": 20,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 509779.075,
+        "avg_duration_ms": 25488.954
+      },
+      {
+        "trade_date": "20260204",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 8,
+        "successes": 8,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 170467.256,
+        "avg_duration_ms": 21308.407
+      },
+      {
+        "trade_date": "20260204",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 5,
+        "successes": 5,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 126591.499,
+        "avg_duration_ms": 25318.3
+      },
+      {
+        "trade_date": "20260205",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 8,
+        "successes": 8,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 175672.747,
+        "avg_duration_ms": 21959.093
+      },
+      {
+        "trade_date": "20260205",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 5,
+        "successes": 5,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 140221.301,
+        "avg_duration_ms": 28044.26
+      },
+      {
+        "trade_date": "20260206",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 8,
+        "successes": 8,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 171640.455,
+        "avg_duration_ms": 21455.057
+      },
+      {
+        "trade_date": "20260206",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 5,
+        "successes": 5,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 124680.077,
+        "avg_duration_ms": 24936.015
+      },
+      {
+        "trade_date": "20260209",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 22,
+        "successes": 22,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 526466.859,
+        "avg_duration_ms": 23930.312
+      },
+      {
+        "trade_date": "20260209",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 15,
+        "successes": 15,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 339887.641,
+        "avg_duration_ms": 22659.176
+      },
+      {
+        "trade_date": "20260210",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 15,
+        "successes": 15,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 350277.802,
+        "avg_duration_ms": 23351.853
+      },
+      {
+        "trade_date": "20260210",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 10,
+        "successes": 10,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 237832.134,
+        "avg_duration_ms": 23783.213
+      },
+      {
+        "trade_date": "20260211",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 22,
+        "successes": 22,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 501394.998,
+        "avg_duration_ms": 22790.682
+      },
+      {
+        "trade_date": "20260211",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 15,
+        "successes": 15,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 368848.44,
+        "avg_duration_ms": 24589.896
+      },
+      {
+        "trade_date": "20260212",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 22,
+        "successes": 22,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 536862.507,
+        "avg_duration_ms": 24402.841
+      },
+      {
+        "trade_date": "20260212",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 15,
+        "successes": 15,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 395810.003,
+        "avg_duration_ms": 26387.334
+      }
+    ]
+  },
+  "daily_event_stats": {
+    "day_count": 10,
+    "executed_trade_days": 4,
+    "total_executed_orders": 5
+  },
+  "artifacts": {
+    "daily_events": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260213_dual_provider_m2_7_pro_strict_allowlist_venv_20260322/daily_events.jsonl",
+    "timing_log": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260213_dual_provider_m2_7_pro_strict_allowlist_venv_20260322/pipeline_timings.jsonl",
+    "summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260213_dual_provider_m2_7_pro_strict_allowlist_venv_20260322/session_summary.json",
+    "llm_metrics_jsonl": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/logs/llm_metrics_20260322_103741.jsonl",
+    "llm_metrics_summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/logs/llm_metrics_20260322_103741.summary.json"
+  }
+}

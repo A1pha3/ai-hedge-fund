@@ -81,6 +81,18 @@ def test_daily_trade_limit():
     assert sum(plan.amount for plan in selected) <= 200_000
 
 
+def test_daily_trade_limit_prefers_higher_quality_when_scores_tie():
+    plans = [
+        PositionPlan(ticker="A", shares=100, amount=60_000, constraint_binding="cash", score_final=0.8, execution_ratio=1.0, quality_score=0.2),
+        PositionPlan(ticker="B", shares=100, amount=60_000, constraint_binding="cash", score_final=0.8, execution_ratio=1.0, quality_score=0.9),
+        PositionPlan(ticker="C", shares=100, amount=60_000, constraint_binding="cash", score_final=0.8, execution_ratio=1.0, quality_score=0.8),
+    ]
+
+    selected = enforce_daily_trade_limit(plans, portfolio_nav=600_000, limit_ratio=0.20, max_new_positions=2)
+
+    assert [plan.ticker for plan in selected] == ["B", "C"]
+
+
 def test_cvar_warning():
     result = evaluate_portfolio_risk_guardrails(
         industry_hhi=0.10,

@@ -28,6 +28,13 @@ def _get_neutral_mean_reversion_mode() -> str:
     return "full_exclude" if _analysis_excludes_neutral_mean_reversion() else "off"
 
 
+def _quality_first_guard_enabled() -> bool:
+    raw_value = os.getenv("LAYER_B_ANALYSIS_QUALITY_FIRST_GUARD")
+    if raw_value is None:
+        return True
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _normalize_active_weights(weights: dict[str, float], signals: dict[str, StrategySignal], excluded_names: set[str] | None = None) -> dict[str, float]:
     excluded_names = excluded_names or set()
     active = {
@@ -59,6 +66,43 @@ def _is_hard_cliff_profitability(signals: dict[str, StrategySignal]) -> bool:
         return False
     metrics = profitability.get("metrics", {})
     return profitability.get("direction") == -1 and metrics.get("positive_count") == 0
+
+
+def _get_sub_factor_snapshot(signal: StrategySignal, name: str) -> dict:
+    sub_factor = signal.sub_factors.get(name, {})
+    return sub_factor if isinstance(sub_factor, dict) else {}
+
+
+def _has_quality_first_red_flag(signals: dict[str, StrategySignal]) -> bool:
+    if not _quality_first_guard_enabled():
+        return False
+
+    fundamental_signal = signals.get("fundamental")
+    if not fundamental_signal or fundamental_signal.completeness <= 0:
+        return False
+
+    profitability = _get_sub_factor_snapshot(fundamental_signal, "profitability")
+    financial_health = _get_sub_factor_snapshot(fundamental_signal, "financial_health")
+    growth = _get_sub_factor_snapshot(fundamental_signal, "growth")
+
+    profitability_direction = profitability.get("direction")
+    profitability_confidence = float(profitability.get("confidence", 0.0) or 0.0)
+    financial_health_direction = financial_health.get("direction")
+    financial_health_confidence = float(financial_health.get("confidence", 0.0) or 0.0)
+    growth_direction = growth.get("direction")
+
+    paired_quality_breakdown = (
+        profitability_direction == -1
+        and financial_health_direction == -1
+        and profitability_confidence >= 55
+        and financial_health_confidence >= 55
+    )
+    hard_cliff_with_no_offset = (
+        _is_hard_cliff_profitability(signals)
+        and financial_health_direction in {-1, 0}
+        and growth_direction in {-1, 0, None}
+    )
+    return paired_quality_breakdown or hard_cliff_with_no_offset
 
 
 def _should_exclude_neutral_mean_reversion(weights: dict[str, float], signals: dict[str, StrategySignal]) -> bool:
@@ -153,6 +197,13 @@ def apply_arbitration_rules(
 
     if trade_date:
         maybe_release_cooldown_early(ticker, trade_date, fundamental_signal)
+
+    if _has_quality_first_red_flag(signals):
+        arbitration_applied.append(ArbitrationAction.AVOID.value)
+        if trade_date:
+            add_cooldown(ticker, trade_date, days=15)
+        forced_avoid = True
+        return signals, arbitration_applied, hold_hint, forced_avoid
 
     if fundamental_signal.direction == -1 and any(
         signal.direction == -1 and signal.confidence >= 75

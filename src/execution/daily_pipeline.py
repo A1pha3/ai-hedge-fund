@@ -116,6 +116,7 @@ def _default_exit_checker(portfolio_snapshot: dict, trade_date: str, logic_score
             holding_days=int(position.get("holding_days", 0)),
             profit_take_stage=int(position.get("profit_take_stage", 0)),
             entry_score=float(position.get("entry_score", 0.0)),
+            quality_score=float(position.get("quality_score", 0.5)),
             is_fundamental_driven=bool(position.get("is_fundamental_driven", False)),
         )
         signal = check_exit_signal(
@@ -655,6 +656,7 @@ class DailyPipeline:
                 available_cash=min(cash, per_name_cash),
                 avg_volume_20d=avg_volume_20d,
                 industry_remaining_quota=industry_quota,
+                quality_score=item.quality_score,
                 existing_position_ratio=existing_position_ratio,
             )
             if plan.shares > 0:
@@ -668,6 +670,7 @@ class DailyPipeline:
                     "constraint_binding": plan.constraint_binding,
                     "amount": round(plan.amount, 4),
                     "execution_ratio": plan.execution_ratio,
+                    "quality_score": round(plan.quality_score, 4),
                 }
             )
 
@@ -684,6 +687,7 @@ class DailyPipeline:
                     "constraint_binding": plan.constraint_binding,
                     "amount": round(plan.amount, 4),
                     "execution_ratio": plan.execution_ratio,
+                    "quality_score": round(plan.quality_score, 4),
                 }
             )
 

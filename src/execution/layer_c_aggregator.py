@@ -35,6 +35,12 @@ ANALYST_AGENT_IDS = [
 DEFAULT_AGENT_WEIGHTS = {agent_id: 0.06 for agent_id in INVESTOR_AGENT_IDS}
 DEFAULT_AGENT_WEIGHTS.update({agent_id: (0.28 / len(ANALYST_AGENT_IDS)) for agent_id in ANALYST_AGENT_IDS})
 
+QUALITY_SUBFACTOR_WEIGHTS = {
+    "profitability": 0.40,
+    "financial_health": 0.35,
+    "growth": 0.25,
+}
+
 
 def _get_env_float(name: str, default: float) -> float:
     raw_value = os.getenv(name)
@@ -156,6 +162,40 @@ def _normalize_agent_weights(agent_signals: dict[str, StrategySignal], agent_wei
     return {agent_id: weight / total for agent_id, weight in active.items()}
 
 
+def _derive_quality_score(fused: FusedScore) -> float:
+    fundamental_signal = fused.strategy_signals.get("fundamental")
+    if not fundamental_signal or fundamental_signal.completeness <= 0:
+        return 0.5
+
+    weighted_total = 0.0
+    weighted_score = 0.0
+    for sub_factor_name, weight in QUALITY_SUBFACTOR_WEIGHTS.items():
+        snapshot = fundamental_signal.sub_factors.get(sub_factor_name, {})
+        if not isinstance(snapshot, dict):
+            continue
+        direction = snapshot.get("direction")
+        if direction not in {-1, 0, 1}:
+            continue
+        confidence = max(0.0, min(100.0, float(snapshot.get("confidence", 0.0) or 0.0)))
+        completeness = max(0.0, min(1.0, float(snapshot.get("completeness", 1.0) or 1.0)))
+        effective_weight = weight * completeness
+        if effective_weight <= 0:
+            continue
+        sub_score = max(0.0, min(1.0, 0.5 + (0.5 * direction * (confidence / 100.0))))
+        weighted_total += effective_weight
+        weighted_score += effective_weight * sub_score
+
+    if weighted_total <= 0:
+        return max(
+            0.0,
+            min(
+                1.0,
+                0.5 + (0.5 * fundamental_signal.direction * (fundamental_signal.confidence / 100.0) * fundamental_signal.completeness),
+            ),
+        )
+    return max(0.0, min(1.0, weighted_score / weighted_total))
+
+
 def aggregate_layer_c_results(
     fused_scores: list[FusedScore],
     analyst_signals: dict[str, dict[str, dict]],
@@ -180,6 +220,7 @@ def aggregate_layer_c_results(
         agent_contribution_summary, raw_score_c, adjusted_score_c = _build_agent_contribution_summary(ticker_agent_signals, normalized_weights)
         raw_score_c = max(-1.0, min(1.0, raw_score_c))
         score_c = max(-1.0, min(1.0, adjusted_score_c))
+        quality_score = _derive_quality_score(fused)
 
         score_final = (blend_b_weight * fused.score_b) + (blend_c_weight * score_c)
         bc_conflict = None
@@ -197,6 +238,7 @@ def aggregate_layer_c_results(
                 score_c=score_c,
                 score_final=score_final,
                 score_b=fused.score_b,
+                quality_score=quality_score,
                 agent_signals=ticker_agent_signals,
                 agent_contribution_summary=agent_contribution_summary,
                 bc_conflict=bc_conflict,

@@ -1,7 +1,12 @@
+# 终极目标
+
+- 我觉得目前的测试和结论已经足够了，不需要再花时间去20日了。我们回归的任务主线，继续优化选股策略和我的产品最终目的：选到优质的好股票，能够让我买了赚钱。这也是所有量化交易系统的终极目标
+- 
 # new session
 
 - 现在的会话的context window 快满了，我要开一个新的会话，你写个提示词，能够让我们在新会话中继续完美完成我们的后续任务。
-- 
+  
+
 # 分析单只股票
 
 - 运行此命令会生成report ./scripts/run-hedge-fund.sh --ticker 601016 --start-date 2025-06-01 --analysts-all --show-reasoning 此命令会生成每只股票对应的markdown格式的分析报告, 保存到 /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports 目录下, 默认模型从 .env 读取。

@@ -10,7 +10,7 @@ from src.portfolio.models import PositionPlan
 
 
 class StubPipeline:
-    def __init__(self, post_market_plans, intraday_responses):
+    def __init__(self, post_market_plans, intraday_responses, *args, **kwargs):
         self.post_market_plans = list(post_market_plans)
         self.intraday_responses = list(intraday_responses)
 
@@ -184,6 +184,85 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     assert summary["artifacts"]["summary"] == str(artifacts.summary_path)
     assert summary["artifacts"]["llm_metrics_summary"] == str(metrics_summary_path)
     assert summary["artifacts"]["llm_metrics_jsonl"] == str(metrics_jsonl_path)
+
+
+def test_run_paper_trading_session_collects_engine_created_pipeline_provenance(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "test-session-engine-pipeline",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+
+    plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}},
+    )
+
+    class AutoPipeline(StubPipeline):
+        def __init__(self, *args, **kwargs):
+            super().__init__([plan], [(plan.buy_orders, [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})], *args, **kwargs)
+            self.execution_plan_provenance_log = [
+                {
+                    "trade_date": "20240301",
+                    "model_tier": "fast",
+                    "tickers": ["AAPL"],
+                    "execution_plan_provenance": {
+                        "planning_mode": "parallel",
+                        "active_provider_names": ["MiniMax", "Volcengine"],
+                        "effective_concurrency_limit": 9,
+                    },
+                }
+            ]
+
+    monkeypatch.setattr("src.backtesting.engine.DailyPipeline", AutoPipeline)
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        output_dir=tmp_path / "paper_trading_engine_pipeline",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["execution_plan_provenance"] == {
+        "observation_count": 1,
+        "observations": [
+            {
+                "trade_date": "20240301",
+                "model_tier": "fast",
+                "tickers": ["AAPL"],
+                "execution_plan_provenance": {
+                    "planning_mode": "parallel",
+                    "active_provider_names": ["MiniMax", "Volcengine"],
+                    "effective_concurrency_limit": 9,
+                },
+            }
+        ],
+    }
 
 
 def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkeypatch):

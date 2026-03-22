@@ -37,6 +37,7 @@ class Portfolio:
                     "max_unrealized_pnl_pct": 0.0,
                     "profit_take_stage": 0,
                     "entry_score": 0.0,
+                    "quality_score": 0.5,
                     "is_fundamental_driven": False,
                     "industry_sw": "",
                 }
@@ -59,6 +60,7 @@ class Portfolio:
                 "max_unrealized_pnl_pct": float(p.get("max_unrealized_pnl_pct", 0.0)),
                 "profit_take_stage": int(p.get("profit_take_stage", 0)),
                 "entry_score": float(p.get("entry_score", 0.0)),
+                "quality_score": float(p.get("quality_score", 0.5)),
                 "is_fundamental_driven": bool(p.get("is_fundamental_driven", False)),
                 "industry_sw": str(p.get("industry_sw", "")),
             }
@@ -91,6 +93,7 @@ class Portfolio:
                     "max_unrealized_pnl_pct": float(position.get("max_unrealized_pnl_pct", 0.0)),
                     "profit_take_stage": int(position.get("profit_take_stage", 0)),
                     "entry_score": float(position.get("entry_score", 0.0)),
+                    "quality_score": float(position.get("quality_score", 0.5)),
                     "is_fundamental_driven": bool(position.get("is_fundamental_driven", False)),
                     "industry_sw": str(position.get("industry_sw", "")),
                 }
@@ -131,6 +134,7 @@ class Portfolio:
             "max_unrealized_pnl_pct": 0.0,
             "profit_take_stage": 0,
             "entry_score": 0.0,
+            "quality_score": 0.5,
             "is_fundamental_driven": False,
             "industry_sw": "",
         }
@@ -143,6 +147,7 @@ class Portfolio:
         *,
         reset: bool,
         entry_score: float = 0.0,
+        quality_score: float = 0.5,
         is_fundamental_driven: bool = False,
         industry_sw: str = "",
     ) -> None:
@@ -155,6 +160,7 @@ class Portfolio:
             position["max_unrealized_pnl_pct"] = 0.0
             position["profit_take_stage"] = 0
             position["entry_score"] = float(entry_score)
+            position["quality_score"] = float(quality_score)
             position["is_fundamental_driven"] = bool(is_fundamental_driven)
             position["industry_sw"] = industry_sw
 
@@ -168,6 +174,7 @@ class Portfolio:
             position["max_unrealized_pnl_pct"] = 0.0
             position["profit_take_stage"] = 0
             position["entry_score"] = 0.0
+            position["quality_score"] = 0.5
             position["is_fundamental_driven"] = False
             position["industry_sw"] = ""
             return

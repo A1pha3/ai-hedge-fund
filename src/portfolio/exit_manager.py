@@ -26,6 +26,25 @@ MAX_HOLDING_DAYS = 20
 FUNDAMENTAL_MAX_HOLDING_DAYS = 40
 
 
+def _quality_adjusted_profit_retrace_thresholds(holding: HoldingState) -> tuple[float, float]:
+    quality_score = max(0.0, min(1.0, float(holding.quality_score)))
+    if quality_score >= 0.75:
+        return 0.08, -0.01
+    if quality_score <= 0.35:
+        return 0.05, 0.02
+    return PROFIT_RETRACE_ARM_PCT, PROFIT_RETRACE_EXIT_PCT
+
+
+def _quality_adjusted_max_holding_days(holding: HoldingState) -> int:
+    base_days = FUNDAMENTAL_MAX_HOLDING_DAYS if holding.is_fundamental_driven else MAX_HOLDING_DAYS
+    quality_score = max(0.0, min(1.0, float(holding.quality_score)))
+    if quality_score >= 0.75:
+        return base_days + 10
+    if quality_score <= 0.35:
+        return max(10, base_days - 5)
+    return base_days
+
+
 def _holding_pnl_pct(holding: HoldingState, current_price: float) -> float:
     if holding.entry_price <= 0:
         return 0.0
@@ -46,6 +65,7 @@ def check_exit_signal(
     pnl_pct = _holding_pnl_pct(holding, current_price)
     holding_days = max(0, int(holding.holding_days))
     max_pnl = max(holding.max_unrealized_pnl_pct, pnl_pct)
+    profit_retrace_arm_pct, profit_retrace_exit_pct = _quality_adjusted_profit_retrace_thresholds(holding)
 
     if pnl_pct <= HARD_STOP_LOSS_PCT:
         return ExitSignal(ticker=holding.ticker, level="L1", trigger_reason="hard_stop_loss", urgency="next_day", sell_ratio=1.0)
@@ -55,13 +75,13 @@ def check_exit_signal(
     if atr_14 > 0 and atr_stop > hard_stop_price and current_price < atr_stop:
         return ExitSignal(ticker=holding.ticker, level="L2", trigger_reason="atr_stop_loss", urgency="next_day", sell_ratio=1.0)
 
-    if holding.profit_take_stage == 0 and max_pnl >= PROFIT_RETRACE_ARM_PCT and pnl_pct <= PROFIT_RETRACE_EXIT_PCT:
+    if holding.profit_take_stage == 0 and max_pnl >= profit_retrace_arm_pct and pnl_pct <= profit_retrace_exit_pct:
         return ExitSignal(ticker=holding.ticker, level="L2.5", trigger_reason="profit_retrace", urgency="next_day", sell_ratio=1.0)
 
     if logic_score is not None and logic_score <= LOGIC_STOP_LOSS_SCORE_THRESHOLD:
         return ExitSignal(ticker=holding.ticker, level="L3", trigger_reason="logic_stop_loss", urgency="next_day", sell_ratio=1.0)
 
-    max_days = FUNDAMENTAL_MAX_HOLDING_DAYS if holding.is_fundamental_driven else MAX_HOLDING_DAYS
+    max_days = _quality_adjusted_max_holding_days(holding)
     if holding.profit_take_stage == 0 and holding_days > max_days and pnl_pct < 0.03:
         return ExitSignal(ticker=holding.ticker, level="L4", trigger_reason="time_stop", urgency="next_day", sell_ratio=1.0)
 

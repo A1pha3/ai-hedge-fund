@@ -1,0 +1,241 @@
+{
+  "mode": "paper_trading",
+  "start_date": "2026-02-02",
+  "end_date": "2026-02-03",
+  "tickers": [],
+  "initial_capital": 100000.0,
+  "model_name": "MiniMax-M2.7",
+  "model_provider": "MiniMax",
+  "selected_analysts": null,
+  "plan_generation": {
+    "mode": "live_pipeline",
+    "frozen_plan_source": null
+  },
+  "performance_metrics": {
+    "sharpe_ratio": null,
+    "sortino_ratio": null,
+    "max_drawdown": null,
+    "long_short_ratio": null,
+    "gross_exposure": null,
+    "net_exposure": null
+  },
+  "portfolio_values": [
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0
+    },
+    {
+      "Date": "2026-02-02",
+      "Portfolio Value": 100000.0,
+      "Long Exposure": 0.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 0.0,
+      "Net Exposure": 0.0,
+      "Long/Short Ratio": Infinity
+    },
+    {
+      "Date": "2026-02-03",
+      "Portfolio Value": 99982.70279425,
+      "Long Exposure": 9882.0,
+      "Short Exposure": 0.0,
+      "Gross Exposure": 9882.0,
+      "Net Exposure": 9882.0,
+      "Long/Short Ratio": Infinity
+    }
+  ],
+  "final_portfolio_snapshot": {
+    "cash": 90100.70279425,
+    "margin_used": 0.0,
+    "margin_requirement": 0.0,
+    "positions": {
+      "601600": {
+        "long": 400,
+        "short": 0,
+        "long_cost_basis": 13.15971,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "20260203",
+        "last_trade_date": "20260203",
+        "holding_days": 0,
+        "max_unrealized_pnl_pct": 0.0,
+        "profit_take_stage": 0,
+        "entry_score": 0.31716978514257377,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      },
+      "603993": {
+        "long": 200,
+        "short": 0,
+        "long_cost_basis": 23.164695000000002,
+        "short_cost_basis": 0.0,
+        "short_margin_used": 0.0,
+        "entry_date": "20260203",
+        "last_trade_date": "20260203",
+        "holding_days": 0,
+        "max_unrealized_pnl_pct": 0.0,
+        "profit_take_stage": 0,
+        "entry_score": 0.2911698345971025,
+        "is_fundamental_driven": false,
+        "industry_sw": ""
+      }
+    },
+    "realized_gains": {
+      "601600": {
+        "long": 0.0,
+        "short": 0.0
+      },
+      "603993": {
+        "long": 0.0,
+        "short": 0.0
+      }
+    }
+  },
+  "llm_route_provenance": {
+    "session_id": "20260321_230128",
+    "summary_available": true,
+    "attempts": 99,
+    "successes": 99,
+    "errors": 0,
+    "rate_limit_errors": 0,
+    "fallback_attempts": 0,
+    "fallback_observed": false,
+    "contaminated_by_provider_fallback": false,
+    "providers_seen": [
+      "MiniMax",
+      "Volcengine"
+    ],
+    "models_seen": [
+      "MiniMax:MiniMax-M2.7",
+      "Volcengine:doubao-seed-2.0-pro"
+    ],
+    "routes_seen": [
+      "MiniMax:default",
+      "unknown"
+    ]
+  },
+  "execution_plan_provenance": {
+    "observation_count": 0,
+    "observations": []
+  },
+  "llm_observability_summary": {
+    "jsonl_available": true,
+    "entry_count": 99,
+    "by_trade_date": {
+      "20260202": {
+        "attempts": 49,
+        "successes": 49,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 1273296.109,
+        "avg_duration_ms": 25985.635
+      },
+      "20260203": {
+        "attempts": 50,
+        "successes": 50,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 1357729.559,
+        "avg_duration_ms": 27154.591
+      }
+    },
+    "by_model_tier": {
+      "fast": {
+        "attempts": 99,
+        "successes": 99,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 2631025.668,
+        "avg_duration_ms": 26576.017
+      }
+    },
+    "by_provider": {
+      "Volcengine": {
+        "attempts": 40,
+        "successes": 40,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 950312.506,
+        "avg_duration_ms": 23757.813
+      },
+      "MiniMax": {
+        "attempts": 59,
+        "successes": 59,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 1680713.162,
+        "avg_duration_ms": 28486.664
+      }
+    },
+    "context_breakdown": [
+      {
+        "trade_date": "20260202",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 29,
+        "successes": 29,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 816606.02,
+        "avg_duration_ms": 28158.828
+      },
+      {
+        "trade_date": "20260202",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 20,
+        "successes": 20,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 456690.089,
+        "avg_duration_ms": 22834.504
+      },
+      {
+        "trade_date": "20260203",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "MiniMax",
+        "attempts": 30,
+        "successes": 30,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 864107.142,
+        "avg_duration_ms": 28803.571
+      },
+      {
+        "trade_date": "20260203",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "provider": "Volcengine",
+        "attempts": 20,
+        "successes": 20,
+        "errors": 0,
+        "rate_limit_errors": 0,
+        "fallback_attempts": 0,
+        "total_duration_ms": 493622.417,
+        "avg_duration_ms": 24681.121
+      }
+    ]
+  },
+  "daily_event_stats": {
+    "day_count": 2,
+    "executed_trade_days": 1,
+    "total_executed_orders": 2
+  },
+  "artifacts": {
+    "daily_events": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260203_dual_provider_m2_7_pro_20260321/daily_events.jsonl",
+    "timing_log": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260203_dual_provider_m2_7_pro_20260321/pipeline_timings.jsonl",
+    "summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260202_20260203_dual_provider_m2_7_pro_20260321/session_summary.json",
+    "llm_metrics_jsonl": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/logs/llm_metrics_20260321_230128.jsonl",
+    "llm_metrics_summary": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/logs/llm_metrics_20260321_230128.summary.json"
+  }
+}

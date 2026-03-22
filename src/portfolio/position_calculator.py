@@ -20,6 +20,26 @@ def _round_down_lot(shares: float, lot_size: int = 100) -> int:
     return int(shares // lot_size) * lot_size
 
 
+def _quality_execution_multiplier(quality_score: float) -> float:
+    clamped = max(0.0, min(1.0, quality_score))
+    return 0.85 + (0.30 * clamped)
+
+
+def _compute_beta(portfolio_returns: list[float], benchmark_returns: list[float]) -> float | None:
+    import numpy as np
+
+    if len(portfolio_returns) < 10 or len(benchmark_returns) < 10:
+        return None
+    sample_size = min(len(portfolio_returns), len(benchmark_returns))
+    portfolio_array = np.array(portfolio_returns[:sample_size])
+    benchmark_array = np.array(benchmark_returns[:sample_size])
+    benchmark_variance = np.var(benchmark_array)
+    if benchmark_variance < 1e-12:
+        return None
+    covariance = np.cov(portfolio_array, benchmark_array)[0][1]
+    return float(covariance / benchmark_variance)
+
+
 def calculate_position(
     ticker: str,
     current_price: float,
@@ -28,13 +48,14 @@ def calculate_position(
     available_cash: float,
     avg_volume_20d: float,
     industry_remaining_quota: float,
+    quality_score: float = 0.5,
     correlation_adjustment: float = 1.0,
     vol_adjusted_ratio: float = 0.10,
     existing_position_ratio: float = 0.0,
     allow_extended_limit: bool = False,
 ) -> PositionPlan:
     if current_price <= 0 or portfolio_nav <= 0 or score_final < WATCHLIST_MIN_SCORE:
-        return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=score_final, execution_ratio=0.0)
+        return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=score_final, execution_ratio=0.0, quality_score=quality_score)
 
     min_lot_amount = current_price * A_SHARE_MIN_LOT
     allow_min_lot_override = existing_position_ratio <= 0 and min_lot_amount <= portfolio_nav * MIN_LOT_OVERRIDE_MAX_RATIO
@@ -69,6 +90,8 @@ def calculate_position(
     else:
         execution_ratio = 0.0
 
+    execution_ratio = min(1.0, execution_ratio * _quality_execution_multiplier(quality_score))
+
     final_shares = _round_down_lot(base_shares * execution_ratio)
     if final_shares == 0 and execution_ratio > 0 and base_shares >= A_SHARE_MIN_LOT:
         final_shares = A_SHARE_MIN_LOT
@@ -80,6 +103,7 @@ def calculate_position(
         constraint_binding=binding_constraint,
         score_final=score_final,
         execution_ratio=execution_ratio,
+        quality_score=max(0.0, min(1.0, quality_score)),
     )
 
 
@@ -87,7 +111,7 @@ def enforce_daily_trade_limit(plans: list[PositionPlan], portfolio_nav: float, l
     allowed_amount = portfolio_nav * limit_ratio
     selected: list[PositionPlan] = []
     consumed = 0.0
-    for plan in sorted(plans, key=lambda item: item.score_final, reverse=True):
+    for plan in sorted(plans, key=lambda item: (item.score_final, item.quality_score), reverse=True):
         if len(selected) >= max_new_positions:
             break
         if consumed + plan.amount > allowed_amount:
@@ -105,13 +129,12 @@ def evaluate_portfolio_risk_guardrails(
     candidate_beta: float,
     candidate_is_high_vol: bool,
 ) -> dict:
-    calculator = PerformanceMetricsCalculator()
     cvar_95 = 0.0
     if portfolio_returns:
         sorted_returns = sorted(portfolio_returns)
         tail_size = max(1, int(len(sorted_returns) * 0.05))
         cvar_95 = sum(sorted_returns[:tail_size]) / tail_size
-    portfolio_beta = calculator.compute_beta(portfolio_returns, benchmark_returns)
+    portfolio_beta = _compute_beta(portfolio_returns, benchmark_returns)
 
     alerts: list[str] = []
     block_buy = False

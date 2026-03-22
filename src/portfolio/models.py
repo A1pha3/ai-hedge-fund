@@ -11,6 +11,7 @@ class PositionPlan(BaseModel):
     constraint_binding: str = ""
     score_final: float = 0.0
     execution_ratio: float = 0.0
+    quality_score: float = Field(ge=0, le=1, default=0.5)
 
 
 class ExitSignal(BaseModel):
@@ -34,6 +35,7 @@ class HoldingState(BaseModel):
     holding_days: int = 0
     profit_take_stage: int = Field(ge=0, le=3, default=0)
     entry_score: float = 0.0
+    quality_score: float = Field(ge=0, le=1, default=0.5)
     is_fundamental_driven: bool = False
 
 

@@ -585,6 +585,7 @@ class BacktestEngine:
                             trade_date_compact,
                             reset=existing_long_before <= 0,
                             entry_score=(matching_order.score_final if matching_order is not None else (watch_item.score_final if watch_item is not None else 0.0)),
+                            quality_score=(matching_order.quality_score if matching_order is not None else (watch_item.quality_score if watch_item is not None else 0.5)),
                             industry_sw="",
                             is_fundamental_driven=False,
                         )
