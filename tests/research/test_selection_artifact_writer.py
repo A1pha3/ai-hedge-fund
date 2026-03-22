@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pytest
+
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.screening.models import MarketState
 from src.portfolio.models import ExitSignal, PositionPlan
@@ -99,3 +103,69 @@ def test_file_selection_artifact_writer_builds_fallback_layer_b_factors_for_lega
     assert '"name": "trend"' in snapshot_text
     assert "Layer B 因子摘要" in review_text
     assert "logic_score: value=0.5629 (plan.logic_scores)" in review_text
+
+
+def test_file_selection_artifact_writer_returns_partial_success_when_snapshot_write_fails(tmp_path, monkeypatch):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_partial")
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        watchlist=[
+            LayerCResult(
+                ticker="000001",
+                score_b=0.71,
+                score_c=0.66,
+                score_final=0.69,
+                quality_score=0.65,
+                decision="watch",
+            )
+        ],
+    )
+
+    original_write_text = Path.write_text
+
+    def _patched_write_text(self, data, *args, **kwargs):
+        if self.name == "selection_snapshot.json":
+            raise OSError("snapshot write failed")
+        return original_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _patched_write_text)
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "partial_success"
+    assert result.snapshot_path is None
+    assert result.review_path is not None
+    assert result.feedback_path is not None
+    assert "snapshot write failed" in str(result.error_message)
+
+
+def test_file_selection_artifact_writer_returns_failed_when_directory_creation_fails(tmp_path, monkeypatch):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_failed")
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        watchlist=[
+            LayerCResult(
+                ticker="000001",
+                score_b=0.71,
+                score_c=0.66,
+                score_final=0.69,
+                quality_score=0.65,
+                decision="watch",
+            )
+        ],
+    )
+
+    def _patched_mkdir(self, *args, **kwargs):
+        raise OSError("mkdir failed")
+
+    monkeypatch.setattr(Path, "mkdir", _patched_mkdir)
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "failed"
+    assert result.snapshot_path is None
+    assert result.review_path is None
+    assert result.feedback_path is None
+    assert "mkdir failed" in str(result.error_message)

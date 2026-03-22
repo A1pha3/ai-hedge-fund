@@ -135,6 +135,15 @@ class ResearchFeedbackSummary(BaseModel):
         )
 
 
+class ResearchFeedbackDirectorySummary(BaseModel):
+    label_version: str = RESEARCH_FEEDBACK_LABEL_VERSION
+    artifact_root: str
+    feedback_file_count: int = 0
+    trade_date_count: int = 0
+    overall: ResearchFeedbackSummary = Field(default_factory=ResearchFeedbackSummary)
+    by_trade_date: dict[str, ResearchFeedbackSummary] = Field(default_factory=dict)
+
+
 class SelectionArtifactWriteResult(BaseModel):
     artifact_version: str = "v1"
     snapshot_path: str | None = None

@@ -16,11 +16,13 @@
 - 已在 src/execution/models.py 和 src/execution/layer_c_aggregator.py 中补通 Layer B strategy_signals 到 Layer C 结果的透传。
 - 已补充 feedback 读取、聚合与标签治理骨架：支持受控标签校验、label_version 校验、JSONL 读取与汇总统计。
 - 已新增最小 file-based feedback CLI：scripts/manage_research_feedback.py，支持 append 与 summarize 两个子命令。
-- 已补充基础测试，当前通过的文件包括：tests/research/test_selection_review_renderer.py、tests/research/test_selection_artifact_writer.py、tests/research/test_selection_artifact_engine.py、tests/research/test_feedback_schema.py、tests/research/test_manage_research_feedback_cli.py。
+- 已将 research_feedback_summary 自动接入 paper trading session_summary.json，并额外写出 selection_artifacts/research_feedback_summary.json。
+- 已补齐 artifact 写入失败降级测试，并修正目录创建异常未进入 writer 降级路径的问题。
+- 已补充基础测试，当前通过的文件包括：tests/research/test_selection_review_renderer.py、tests/research/test_selection_artifact_writer.py、tests/research/test_selection_artifact_engine.py、tests/research/test_feedback_schema.py、tests/research/test_manage_research_feedback_cli.py、tests/research/test_paper_trading_runtime_feedback_summary.py。
 
 当前尚未完成事项：
 
-- research_feedback.jsonl 已具备最小读取、聚合、标签治理和 CLI 操作能力，但尚未接入 UI、数据库或更高层的人工工作流。
+- research_feedback.jsonl 已具备最小读取、聚合、标签治理、CLI 操作以及 session 级 summary 接入能力，但尚未接入 UI、数据库或更高层的人工工作流。
 - 完整 backtesting / paper trading 集成测试尚未补齐。
 - 历史 frozen replay 源的 Layer B 解释已补齐回退兼容，但回退摘要只能基于 plan.logic_scores 与 strategy_weights 或 adjusted_weights 近似重建，精度仍低于新源中的原生 strategy_signals。
 
@@ -71,6 +73,22 @@
 3. append 支持从命令行直接录入 reviewer、primary_tag、tags、review_status、confidence、research_verdict、notes 等核心字段。
 4. 新增 tests/research/test_manage_research_feedback_cli.py，覆盖路径解析与 append/summarize 命令闭环。
 5. 与既有 research 测试合并运行后已通过，共 9 个测试通过；并已在现有 selection_artifacts 目录上完成一次 summarize 实际命令验证。
+
+2026-03-22 同日还完成了 feedback summary 的运行时接入：
+
+1. 新增目录级聚合能力，可扫描 selection_artifacts/*/research_feedback.jsonl 并生成按 trade_date 拆分的汇总。
+2. paper trading 运行结束后会自动写出 selection_artifacts/research_feedback_summary.json。
+3. session_summary.json 现已包含 research_feedback_summary 摘要内容，以及 artifacts.research_feedback_summary 文件路径。
+4. 新增 tests/research/test_paper_trading_runtime_feedback_summary.py，覆盖 summary 文件写出路径。
+5. 与既有 research 测试合并运行后已通过，共 11 个测试通过；并已通过 1 天 frozen replay 在真实 output_dir 中验证 summary 文件和 session_summary 挂接成功。
+
+2026-03-22 同日还完成了 artifact 失败降级边界补强：
+
+1. 修正 FileSelectionArtifactWriter 中目录创建位于 try 之外的问题，避免部分文件系统异常绕过降级返回。
+2. 新增 partial_success 路径测试，覆盖 review 与 feedback 已生成但 snapshot 写入失败的场景。
+3. 新增 failed 路径测试，覆盖目录创建失败导致三个 artifact 都未生成的场景。
+4. 新增引擎级异常降级测试，覆盖 writer 抛出异常时 plan.selection_artifacts 仍能回填 write_status=failed 与 error_message。
+5. 与既有 research 测试合并运行后已通过，共 14 个测试通过。
 
 后续章节中，凡是“建议”“推荐”与“已实现”不一致时，以“已实现”说明为准，并在后续迭代中继续向目标态收敛。
 
@@ -438,6 +456,14 @@ def summarize_research_feedback(
   skip_invalid: bool = False,
 ) -> ResearchFeedbackSummary:
   ...
+
+
+def summarize_research_feedback_directory(
+  *,
+  artifact_root: Path,
+  skip_invalid: bool = False,
+) -> ResearchFeedbackDirectorySummary:
+  ...
 ```
 
 说明：
@@ -606,6 +632,8 @@ write_status 建议取值：
 3. 引擎回填 selection_artifacts 测试。
 4. feedback schema 读写与聚合测试。
 5. feedback CLI 路径解析与 append or summarize 命令测试。
+6. session 级 feedback summary 写出测试。
+7. artifact 写入失败降级测试。
 
 未完成：
 
@@ -748,7 +776,7 @@ write_status 建议取值：
 当前完成度：
 
 1. 第 1、2、3、4 项已经具备基础代码、测试或最小真实运行验证支撑。
-2. 第 5 项已有失败降级实现，但尚缺对应的显式异常测试。
+2. 第 5 项已具备失败降级实现与显式异常测试支撑，包括 partial_success、failed 和引擎级异常降级路径。
 
 补充说明：当前第 3 项“selection_review.md 与 snapshot 内容一致”已经通过非空 watchlist 窗口与历史 replay 回退窗口得到更强验证；旧 frozen 源下虽然缺少原生 strategy_signals，但 review 已能显示兼容回退后的 Layer B 摘要。
 

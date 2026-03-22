@@ -12,7 +12,6 @@ from src.research.review_renderer import render_selection_review
 if TYPE_CHECKING:
     from src.execution.daily_pipeline import DailyPipeline
     from src.execution.models import ExecutionPlan, LayerCResult
-    from src.portfolio.models import ExitSignal, PositionPlan
 
 
 class SelectionArtifactWriter(Protocol):
@@ -279,11 +278,11 @@ class FileSelectionArtifactWriter:
             artifact_version=self._artifact_version,
         )
         day_dir = self._artifact_root / snapshot.trade_date
-        day_dir.mkdir(parents=True, exist_ok=True)
         snapshot_path = day_dir / "selection_snapshot.json"
         review_path = day_dir / "selection_review.md"
         feedback_path = day_dir / "research_feedback.jsonl"
         try:
+            day_dir.mkdir(parents=True, exist_ok=True)
             review_path.write_text(render_selection_review(snapshot), encoding="utf-8")
             feedback_path.touch(exist_ok=True)
             finalized_snapshot = snapshot.model_copy(

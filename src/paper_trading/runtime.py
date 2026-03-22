@@ -14,6 +14,7 @@ from src.main import run_hedge_fund
 from src.monitoring.llm_metrics import get_llm_metrics_paths
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.research.artifacts import FileSelectionArtifactWriter
+from src.research.feedback import summarize_research_feedback_directory
 
 
 def _serialize_portfolio_values(portfolio_values: Sequence[dict]) -> list[dict]:
@@ -187,6 +188,15 @@ class PaperTradingArtifacts:
     timing_log_path: Path
     summary_path: Path
     selection_artifact_root: Path
+    feedback_summary_path: Path
+
+
+def _write_research_feedback_summary(selection_artifact_root: Path) -> tuple[dict, Path]:
+    feedback_summary_path = selection_artifact_root / "research_feedback_summary.json"
+    summary = summarize_research_feedback_directory(artifact_root=selection_artifact_root)
+    feedback_summary_path.parent.mkdir(parents=True, exist_ok=True)
+    feedback_summary_path.write_text(json.dumps(summary.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary.model_dump(mode="json"), feedback_summary_path
 
 
 def run_paper_trading_session(
@@ -251,6 +261,8 @@ def run_paper_trading_session(
     if engine._timing_log_path is not None and engine._timing_log_path != timing_log_path and engine._timing_log_path.exists():
         engine._timing_log_path.replace(timing_log_path)
 
+    research_feedback_summary, feedback_summary_path = _write_research_feedback_summary(selection_artifact_root)
+
     llm_route_provenance, llm_metrics_artifacts = _build_llm_route_provenance()
     llm_observability_summary = _build_llm_observability_summary(Path(llm_metrics_artifacts["llm_metrics_jsonl"]))
     execution_plan_provenance = _build_execution_plan_provenance_summary(getattr(engine, "_pipeline", None))
@@ -274,6 +286,7 @@ def run_paper_trading_session(
         "llm_route_provenance": llm_route_provenance,
         "execution_plan_provenance": execution_plan_provenance,
         "llm_observability_summary": llm_observability_summary,
+        "research_feedback_summary": research_feedback_summary,
         "daily_event_stats": {
             "day_count": recorder.day_count,
             "executed_trade_days": recorder.executed_trade_days,
@@ -284,6 +297,7 @@ def run_paper_trading_session(
             "timing_log": str(timing_log_path),
             "summary": str(summary_path),
             "selection_artifact_root": str(selection_artifact_root),
+            "research_feedback_summary": str(feedback_summary_path),
             **llm_metrics_artifacts,
         },
     }
@@ -295,4 +309,5 @@ def run_paper_trading_session(
         timing_log_path=timing_log_path,
         summary_path=summary_path,
         selection_artifact_root=selection_artifact_root,
+        feedback_summary_path=feedback_summary_path,
     )

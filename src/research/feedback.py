@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from src.research.models import ResearchFeedbackRecord, ResearchFeedbackSummary
+from src.research.models import ResearchFeedbackDirectorySummary, ResearchFeedbackRecord, ResearchFeedbackSummary
 
 
 def append_research_feedback(*, file_path: Path, record: ResearchFeedbackRecord) -> None:
@@ -40,3 +40,23 @@ def summarize_research_feedback(*, records: list[ResearchFeedbackRecord] | None 
             raise ValueError("Either records or file_path must be provided")
         records = read_research_feedback(file_path=file_path, skip_invalid=skip_invalid)
     return ResearchFeedbackSummary.from_records(records)
+
+
+def summarize_research_feedback_directory(*, artifact_root: Path, skip_invalid: bool = False) -> ResearchFeedbackDirectorySummary:
+    feedback_files = sorted(path for path in artifact_root.glob("*/research_feedback.jsonl") if path.is_file())
+    by_trade_date: dict[str, ResearchFeedbackSummary] = {}
+    all_records: list[ResearchFeedbackRecord] = []
+
+    for feedback_file in feedback_files:
+        trade_date = feedback_file.parent.name
+        records = read_research_feedback(file_path=feedback_file, skip_invalid=skip_invalid)
+        by_trade_date[trade_date] = ResearchFeedbackSummary.from_records(records)
+        all_records.extend(records)
+
+    return ResearchFeedbackDirectorySummary(
+        artifact_root=str(artifact_root),
+        feedback_file_count=len(feedback_files),
+        trade_date_count=len(by_trade_date),
+        overall=ResearchFeedbackSummary.from_records(all_records),
+        by_trade_date=by_trade_date,
+    )
