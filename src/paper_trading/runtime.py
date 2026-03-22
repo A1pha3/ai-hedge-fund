@@ -13,6 +13,7 @@ from src.llm.defaults import get_default_model_config
 from src.main import run_hedge_fund
 from src.monitoring.llm_metrics import get_llm_metrics_paths
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
+from src.research.artifacts import FileSelectionArtifactWriter
 
 
 def _serialize_portfolio_values(portfolio_values: Sequence[dict]) -> list[dict]:
@@ -185,6 +186,7 @@ class PaperTradingArtifacts:
     daily_events_path: Path
     timing_log_path: Path
     summary_path: Path
+    selection_artifact_root: Path
 
 
 def run_paper_trading_session(
@@ -212,6 +214,7 @@ def run_paper_trading_session(
     timing_log_path = output_dir_path / "pipeline_timings.jsonl"
     summary_path = output_dir_path / "session_summary.json"
     checkpoint_path = output_dir_path / "session.checkpoint.json"
+    selection_artifact_root = output_dir_path / "selection_artifacts"
 
     if frozen_plan_source_path is not None:
         if pipeline is not None:
@@ -238,6 +241,10 @@ def run_paper_trading_session(
         pipeline=pipeline,
         checkpoint_path=str(checkpoint_path),
         pipeline_event_recorder=recorder.record,
+        selection_artifact_writer=FileSelectionArtifactWriter(
+            artifact_root=selection_artifact_root,
+            run_id=output_dir_path.name,
+        ),
     )
 
     metrics: PerformanceMetrics = engine.run_backtest()
@@ -276,6 +283,7 @@ def run_paper_trading_session(
             "daily_events": str(daily_events_path),
             "timing_log": str(timing_log_path),
             "summary": str(summary_path),
+            "selection_artifact_root": str(selection_artifact_root),
             **llm_metrics_artifacts,
         },
     }
@@ -286,4 +294,5 @@ def run_paper_trading_session(
         daily_events_path=daily_events_path,
         timing_log_path=timing_log_path,
         summary_path=summary_path,
+        selection_artifact_root=selection_artifact_root,
     )

@@ -13,6 +13,7 @@ from dateutil.relativedelta import relativedelta
 from src.execution.daily_pipeline import DailyPipeline
 from src.execution.models import ExecutionPlan, PendingOrder
 from src.portfolio.limit_handler import process_pending_buy, process_pending_sell, queue_pending_buy, queue_pending_sell
+from src.research.artifacts import SelectionArtifactWriter
 from src.tools.tushare_api import get_limit_list
 from src.tools.api import (
     get_company_news,
@@ -61,6 +62,7 @@ class BacktestEngine:
         pipeline: DailyPipeline | None = None,
         checkpoint_path: str | None = None,
         pipeline_event_recorder: Callable[[dict], None] | None = None,
+        selection_artifact_writer: SelectionArtifactWriter | None = None,
     ) -> None:
         self._agent = agent
         self._tickers = tickers
@@ -75,6 +77,7 @@ class BacktestEngine:
         self._checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self._timing_log_path = self._resolve_timing_log_path()
         self._pipeline_event_recorder = pipeline_event_recorder
+        self._selection_artifact_writer = selection_artifact_writer
 
         self._portfolio = Portfolio(
             tickers=tickers,
@@ -127,6 +130,23 @@ class BacktestEngine:
         if self._pipeline_event_recorder is None:
             return
         self._pipeline_event_recorder(payload)
+
+    def _write_selection_artifacts(self, plan: ExecutionPlan, trade_date_compact: str) -> None:
+        if self._selection_artifact_writer is None:
+            return
+        try:
+            result = self._selection_artifact_writer.write_for_plan(
+                plan=plan,
+                trade_date=trade_date_compact,
+                pipeline=self._pipeline,
+                selected_analysts=self._selected_analysts,
+            )
+            plan.selection_artifacts = result.model_dump(mode="json", exclude_none=True)
+        except Exception as error:
+            plan.selection_artifacts = {
+                "write_status": "failed",
+                "error_message": str(error),
+            }
 
     def _serialize_portfolio_values(self) -> list[dict]:
         serialized: list[dict] = []
@@ -616,6 +636,7 @@ class BacktestEngine:
                 pending_plan = self._pipeline.run_post_market(trade_date_compact, self._portfolio.get_snapshot(), blocked_buy_tickers=self._get_active_exit_reentry_cooldowns(trade_date_compact))
                 pending_plan.pending_buy_queue = list(self._pending_buy_queue)
                 pending_plan.pending_sell_queue = list(self._pending_sell_queue)
+                self._write_selection_artifacts(pending_plan, trade_date_compact)
                 post_market_seconds = perf_counter() - stage_started_at
 
             executed_order_count = sum(1 for quantity in executed_trades.values() if quantity)
@@ -644,6 +665,7 @@ class BacktestEngine:
                     "counts": dict((pending_plan.risk_metrics or {}).get("counts", {})) if pending_plan is not None else {},
                     "timing_seconds": dict((pending_plan.risk_metrics or {}).get("timing_seconds", {})) if pending_plan is not None else {},
                     "funnel_diagnostics": dict((pending_plan.risk_metrics or {}).get("funnel_diagnostics", {})) if pending_plan is not None else {},
+                    "selection_artifacts": dict(getattr(pending_plan, "selection_artifacts", {}) or {}) if pending_plan is not None else {},
                 },
                 "previous_plan": {
                     "counts": previous_plan_counts,

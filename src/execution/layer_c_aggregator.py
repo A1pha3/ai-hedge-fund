@@ -239,6 +239,7 @@ def aggregate_layer_c_results(
                 score_final=score_final,
                 score_b=fused.score_b,
                 quality_score=quality_score,
+                strategy_signals=fused.strategy_signals,
                 agent_signals=ticker_agent_signals,
                 agent_contribution_summary=agent_contribution_summary,
                 bc_conflict=bc_conflict,

@@ -15,6 +15,7 @@ class LayerCResult(BaseModel):
     score_final: float = 0.0
     score_b: float = 0.0
     quality_score: float = Field(ge=0, le=1, default=0.5)
+    strategy_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     agent_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     agent_contribution_summary: dict = Field(default_factory=dict)
     bc_conflict: Optional[str] = None
@@ -51,3 +52,4 @@ class ExecutionPlan(BaseModel):
     layer_b_count: int = 0
     layer_c_count: int = 0
     watchlist: list[LayerCResult] = Field(default_factory=list)
+    selection_artifacts: dict = Field(default_factory=dict)
