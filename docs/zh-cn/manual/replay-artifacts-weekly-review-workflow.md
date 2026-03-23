@@ -5,7 +5,8 @@
 > 1. [Replay Artifacts 选股复核 5 分钟速查](./replay-artifacts-stock-selection-quickstart.md)
 > 2. [Replay Artifacts 选股复核页面使用手册](./replay-artifacts-stock-selection-manual.md)
 > 3. [Replay Artifacts 研究反馈标签规范手册](./replay-artifacts-feedback-labeling-handbook.md)
-> 4. [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)
+> 4. [研究结论到优化 Backlog 的转换手册](./research-conclusion-to-optimization-backlog-handbook.md)
+> 5. [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)
 
 ## 1. 这份手册解决什么问题
 
@@ -315,6 +316,8 @@ near-miss 的价值不是补充信息，而是帮助判断系统边界。
 5. Explainability
 
 这能让研究结论直接对接后续工程或策略优化。
+
+如果你已经能把问题归到这五类，但还缺少“如何把一句复盘结论改写成具体 backlog 动作”的模板，继续阅读 [研究结论到优化 Backlog 的转换手册](./research-conclusion-to-optimization-backlog-handbook.md)。
 
 ---
 

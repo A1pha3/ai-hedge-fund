@@ -6,6 +6,7 @@
 > 2. [Replay Artifacts 研究反馈标签规范手册](./replay-artifacts-feedback-labeling-handbook.md)
 > 3. [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
 > 4. [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)
+> 5. [研究结论到优化 Backlog 的转换手册](./research-conclusion-to-optimization-backlog-handbook.md)
 
 ## 1. 文档目的
 
@@ -949,6 +950,8 @@ near-miss 往往最能暴露阈值误伤和可调边界。
 5. Explainability 问题
 
 这样后续优化才不会混在一起。
+
+如果你已经能把问题归到这五类，但还不确定应该如何变成后续策略或工程动作，请继续阅读 [研究结论到优化 Backlog 的转换手册](./research-conclusion-to-optimization-backlog-handbook.md)。
 
 ---
 

@@ -28,6 +28,7 @@
 - 已补充配套文档 [docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md](docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md) 与 [docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md](docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md)，分别面向“快速上手”和“真实 blocker 样本判读”两类场景，降低从登录成功到形成稳定复核习惯之间的学习门槛。
 - 已补充标签治理配套文档 [docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md](docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md)，统一说明 primary_tag、tags、review_status 与 research_verdict 的职责边界，以及 6 个受控标签在 selected、near-miss 和 execution blocker 场景中的使用口径，降低多人写 feedback 时的语义漂移风险。
 - 已补充周度复盘工作流文档 [docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md](docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md)，将日常 `draft`、稳定 `final` 与争议样本 `adjudicated` 串成一套最小团队复盘节奏，便于将页面浏览、标签治理与后续系统优化 backlog 直接衔接。
+- 已补充 [docs/zh-cn/manual/research-conclusion-to-optimization-backlog-handbook.md](docs/zh-cn/manual/research-conclusion-to-optimization-backlog-handbook.md)，把周度复盘中形成的研究结论进一步标准化映射到 Layer B、Layer C、Execution、Threshold、Explainability 五类优化动作，降低“能复盘但不会落任务”的交付断层。
 
 当前尚未完成事项：
 
