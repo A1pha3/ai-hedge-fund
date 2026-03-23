@@ -378,6 +378,31 @@ def test_build_buy_orders_blocks_watchlist_name_below_buy_threshold_sample():
     assert diagnostics["tickers"][0]["execution_ratio"] == 0.0
 
 
+def test_build_buy_orders_allows_edge_watchlist_name_when_execution_score_floor_is_lowered(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("PIPELINE_WATCHLIST_MIN_SCORE", "0.21")
+
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")
+    ]
+    candidate_by_ticker = {
+        "600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 100_000, "positions": {}},
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={"600988": 20.0},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "600988"
+    assert buy_orders[0].constraint_binding == "single_name"
+    assert buy_orders[0].shares == 100
+    assert diagnostics["reason_counts"] == {}
+
+
 def test_build_buy_orders_uses_real_price_map_for_high_price_ticker_position_sizing():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     watchlist = [

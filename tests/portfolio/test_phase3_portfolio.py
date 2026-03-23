@@ -1,5 +1,7 @@
 """Phase 3 组合风控核心测试。"""
 
+import pytest
+
 import src.portfolio.exit_manager as exit_manager_module
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.industry_exposure import calculate_industry_exposures, calculate_portfolio_hhi, get_industry_remaining_quota
@@ -130,6 +132,25 @@ def test_quality_score_tilts_execution_ratio_for_same_score_band():
     assert high_quality.amount > low_quality.amount
     assert high_quality.quality_score == 0.9
     assert low_quality.quality_score == 0.1
+
+
+def test_watchlist_min_score_can_be_lowered_via_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("PIPELINE_WATCHLIST_MIN_SCORE", "0.21")
+
+    plan = calculate_position(
+        ticker="600988",
+        current_price=20.0,
+        score_final=0.217,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=10_000_000,
+        industry_remaining_quota=25_000,
+    )
+
+    assert plan.constraint_binding == "single_name"
+    assert plan.execution_ratio == 0.3
+    assert plan.shares == 100
+    assert plan.amount == 2000.0
 
 
 def test_industry_limit():

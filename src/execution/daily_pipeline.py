@@ -94,7 +94,7 @@ def _default_exit_checker(portfolio_snapshot: dict, trade_date: str, logic_score
     if not active_tickers:
         return []
 
-    price_map = _build_watchlist_price_map(trade_date, active_tickers)
+    price_map = build_watchlist_price_map(trade_date, active_tickers)
     exits = []
     for ticker in active_tickers:
         current_price = price_map.get(ticker)
@@ -287,7 +287,7 @@ def _to_ts_code_for_price_lookup(ticker: str) -> str:
     return f"{ticker}.SZ"
 
 
-def _build_watchlist_price_map(trade_date: str, tickers: list[str]) -> dict[str, float]:
+def build_watchlist_price_map(trade_date: str, tickers: list[str]) -> dict[str, float]:
     if not tickers:
         return {}
     df = get_daily_basic_batch(trade_date)
@@ -309,6 +309,103 @@ def _build_watchlist_price_map(trade_date: str, tickers: list[str]) -> dict[str,
             except (TypeError, ValueError):
                 continue
     return price_map
+
+
+def build_buy_orders_with_diagnostics(
+    watchlist: list[LayerCResult],
+    portfolio_snapshot: dict,
+    trade_date: str = "",
+    candidate_by_ticker: dict[str, CandidateStock] | None = None,
+    price_map: dict[str, float] | None = None,
+    blocked_buy_tickers: dict[str, dict] | None = None,
+) -> tuple[list, dict]:
+    cash = float(portfolio_snapshot.get("cash", 0.0))
+    nav = cash + sum(
+        float(position.get("long", 0)) * float(position.get("long_cost_basis", 0.0))
+        for position in portfolio_snapshot.get("positions", {}).values()
+    )
+    nav = nav if nav > 0 else cash
+    candidate_by_ticker = candidate_by_ticker or {}
+    price_map = price_map or {}
+    blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
+    if not watchlist:
+        return [], _build_filter_summary([])
+    if cash <= 0:
+        entries = [
+            {
+                "ticker": item.ticker,
+                "reason": "no_available_cash",
+                "score_final": round(item.score_final, 4),
+            }
+            for item in watchlist
+        ]
+        summary = _build_filter_summary(entries)
+        summary["selected_tickers"] = []
+        return [], summary
+
+    per_name_cash = cash / max(1, min(3, len(watchlist)))
+    candidate_plans = []
+    filtered_entries: list[dict] = []
+    for item in watchlist:
+        cooldown_payload = blocked_buy_tickers.get(item.ticker)
+        if cooldown_payload is not None:
+            reentry_filter_entry = _build_reentry_filter_entry(item, cooldown_payload, trade_date)
+            if reentry_filter_entry is not None:
+                filtered_entries.append(reentry_filter_entry)
+                continue
+        current_price = float(price_map.get(item.ticker, 10.0))
+        candidate = candidate_by_ticker.get(item.ticker)
+        avg_volume_20d = float(candidate.avg_volume_20d) if candidate and candidate.avg_volume_20d > 0 else 10_000_000.0
+        industry_quota = nav * 0.25
+        existing_position = portfolio_snapshot.get("positions", {}).get(item.ticker, {})
+        existing_long_shares = float(existing_position.get("long", 0.0))
+        existing_position_ratio = ((existing_long_shares * current_price) / nav) if nav > 0 else 0.0
+        plan = calculate_position(
+            ticker=item.ticker,
+            current_price=current_price,
+            score_final=item.score_final,
+            portfolio_nav=nav,
+            available_cash=min(cash, per_name_cash),
+            avg_volume_20d=avg_volume_20d,
+            industry_remaining_quota=industry_quota,
+            quality_score=item.quality_score,
+            existing_position_ratio=existing_position_ratio,
+        )
+        if plan.shares > 0:
+            candidate_plans.append(plan)
+            continue
+        filtered_entries.append(
+            {
+                "ticker": item.ticker,
+                "reason": f"position_blocked_{plan.constraint_binding or 'unknown'}",
+                "score_final": round(item.score_final, 4),
+                "constraint_binding": plan.constraint_binding,
+                "amount": round(plan.amount, 4),
+                "execution_ratio": plan.execution_ratio,
+                "quality_score": round(plan.quality_score, 4),
+            }
+        )
+
+    buy_orders = enforce_daily_trade_limit(candidate_plans, nav)
+    selected_tickers = {plan.ticker for plan in buy_orders}
+    for plan in candidate_plans:
+        if plan.ticker in selected_tickers:
+            continue
+        filtered_entries.append(
+            {
+                "ticker": plan.ticker,
+                "reason": "filtered_by_daily_trade_limit",
+                "score_final": round(plan.score_final, 4),
+                "constraint_binding": plan.constraint_binding,
+                "amount": round(plan.amount, 4),
+                "execution_ratio": plan.execution_ratio,
+                "quality_score": round(plan.quality_score, 4),
+            }
+        )
+
+    summary = _build_filter_summary(filtered_entries)
+    summary["selected_tickers"] = [plan.ticker for plan in buy_orders]
+    return buy_orders, summary
 
 
 @dataclass
@@ -468,7 +565,7 @@ class DailyPipeline:
         watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(layer_c_results, watchlist)
 
         candidate_by_ticker = {candidate.ticker: candidate for candidate in candidates}
-        price_map = _build_watchlist_price_map(trade_date, [item.ticker for item in watchlist])
+        price_map = build_watchlist_price_map(trade_date, [item.ticker for item in watchlist])
 
         stage_started_at = perf_counter()
         buy_orders, buy_order_filter_diagnostics = self._build_buy_orders_with_diagnostics(
@@ -607,90 +704,11 @@ class DailyPipeline:
         price_map: dict[str, float] | None = None,
         blocked_buy_tickers: dict[str, dict] | None = None,
     ) -> tuple[list, dict]:
-        cash = float(portfolio_snapshot.get("cash", 0.0))
-        nav = cash + sum(
-            float(position.get("long", 0)) * float(position.get("long_cost_basis", 0.0))
-            for position in portfolio_snapshot.get("positions", {}).values()
+        return build_buy_orders_with_diagnostics(
+            watchlist,
+            portfolio_snapshot,
+            trade_date=trade_date,
+            candidate_by_ticker=candidate_by_ticker,
+            price_map=price_map,
+            blocked_buy_tickers=blocked_buy_tickers,
         )
-        nav = nav if nav > 0 else cash
-        candidate_by_ticker = candidate_by_ticker or {}
-        price_map = price_map or {}
-        blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
-        if not watchlist:
-            return [], _build_filter_summary([])
-        if cash <= 0:
-            entries = [
-                {
-                    "ticker": item.ticker,
-                    "reason": "no_available_cash",
-                    "score_final": round(item.score_final, 4),
-                }
-                for item in watchlist
-            ]
-            summary = _build_filter_summary(entries)
-            summary["selected_tickers"] = []
-            return [], summary
-
-        per_name_cash = cash / max(1, min(3, len(watchlist)))
-        candidate_plans = []
-        filtered_entries: list[dict] = []
-        for item in watchlist:
-            cooldown_payload = blocked_buy_tickers.get(item.ticker)
-            if cooldown_payload is not None:
-                reentry_filter_entry = _build_reentry_filter_entry(item, cooldown_payload, trade_date)
-                if reentry_filter_entry is not None:
-                    filtered_entries.append(reentry_filter_entry)
-                    continue
-            current_price = float(price_map.get(item.ticker, 10.0))
-            candidate = candidate_by_ticker.get(item.ticker)
-            avg_volume_20d = float(candidate.avg_volume_20d) if candidate and candidate.avg_volume_20d > 0 else 10_000_000.0
-            industry_quota = nav * 0.25
-            existing_position = portfolio_snapshot.get("positions", {}).get(item.ticker, {})
-            existing_long_shares = float(existing_position.get("long", 0.0))
-            existing_position_ratio = ((existing_long_shares * current_price) / nav) if nav > 0 else 0.0
-            plan = calculate_position(
-                ticker=item.ticker,
-                current_price=current_price,
-                score_final=item.score_final,
-                portfolio_nav=nav,
-                available_cash=min(cash, per_name_cash),
-                avg_volume_20d=avg_volume_20d,
-                industry_remaining_quota=industry_quota,
-                quality_score=item.quality_score,
-                existing_position_ratio=existing_position_ratio,
-            )
-            if plan.shares > 0:
-                candidate_plans.append(plan)
-                continue
-            filtered_entries.append(
-                {
-                    "ticker": item.ticker,
-                    "reason": f"position_blocked_{plan.constraint_binding or 'unknown'}",
-                    "score_final": round(item.score_final, 4),
-                    "constraint_binding": plan.constraint_binding,
-                    "amount": round(plan.amount, 4),
-                    "execution_ratio": plan.execution_ratio,
-                    "quality_score": round(plan.quality_score, 4),
-                }
-            )
-
-        buy_orders = enforce_daily_trade_limit(candidate_plans, nav)
-        selected_tickers = {plan.ticker for plan in buy_orders}
-        for plan in candidate_plans:
-            if plan.ticker in selected_tickers:
-                continue
-            filtered_entries.append(
-                {
-                    "ticker": plan.ticker,
-                    "reason": "filtered_by_daily_trade_limit",
-                    "score_final": round(plan.score_final, 4),
-                    "constraint_binding": plan.constraint_binding,
-                    "amount": round(plan.amount, 4),
-                    "execution_ratio": plan.execution_ratio,
-                    "quality_score": round(plan.quality_score, 4),
-                }
-            )
-
-        summary = _build_filter_summary(filtered_entries)
-        summary["selected_tickers"] = [plan.ticker for plan in buy_orders]
-        return buy_orders, summary

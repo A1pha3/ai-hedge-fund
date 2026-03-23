@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from src.portfolio.models import PositionPlan
 
 
@@ -12,6 +14,25 @@ WATCHLIST_EDGE_EXECUTION_RATIO = 0.3
 AVG_VOLUME_20D_AMOUNT_UNIT = 10_000.0
 A_SHARE_MIN_LOT = 100
 MIN_LOT_OVERRIDE_MAX_RATIO = 0.15
+
+
+def _get_env_float(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
+def _get_execution_thresholds() -> tuple[float, float, float, float]:
+    return (
+        _get_env_float("PIPELINE_WATCHLIST_MIN_SCORE", WATCHLIST_MIN_SCORE),
+        _get_env_float("PIPELINE_FULL_EXECUTION_SCORE", FULL_EXECUTION_SCORE),
+        _get_env_float("PIPELINE_STANDARD_EXECUTION_SCORE", STANDARD_EXECUTION_SCORE),
+        _get_env_float("PIPELINE_WATCHLIST_EDGE_EXECUTION_RATIO", WATCHLIST_EDGE_EXECUTION_RATIO),
+    )
 
 
 def _round_down_lot(shares: float, lot_size: int = 100) -> int:
@@ -54,7 +75,9 @@ def calculate_position(
     existing_position_ratio: float = 0.0,
     allow_extended_limit: bool = False,
 ) -> PositionPlan:
-    if current_price <= 0 or portfolio_nav <= 0 or score_final < WATCHLIST_MIN_SCORE:
+    watchlist_min_score, full_execution_score, standard_execution_score, watchlist_edge_execution_ratio = _get_execution_thresholds()
+
+    if current_price <= 0 or portfolio_nav <= 0 or score_final < watchlist_min_score:
         return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=score_final, execution_ratio=0.0, quality_score=quality_score)
 
     min_lot_amount = current_price * A_SHARE_MIN_LOT
@@ -81,12 +104,12 @@ def calculate_position(
     binding_constraint, allowed_amount = min(constraints.items(), key=lambda item: item[1])
     base_shares = _round_down_lot(allowed_amount / current_price)
 
-    if score_final > FULL_EXECUTION_SCORE:
+    if score_final > full_execution_score:
         execution_ratio = 1.0
-    elif score_final >= STANDARD_EXECUTION_SCORE:
+    elif score_final >= standard_execution_score:
         execution_ratio = 0.6
-    elif score_final >= WATCHLIST_MIN_SCORE:
-        execution_ratio = WATCHLIST_EDGE_EXECUTION_RATIO
+    elif score_final >= watchlist_min_score:
+        execution_ratio = watchlist_edge_execution_ratio
     else:
         execution_ratio = 0.0
 

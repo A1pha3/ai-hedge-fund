@@ -29,11 +29,12 @@
 - 已补充标签治理配套文档 [docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md](docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md)，统一说明 primary_tag、tags、review_status 与 research_verdict 的职责边界，以及 6 个受控标签在 selected、near-miss 和 execution blocker 场景中的使用口径，降低多人写 feedback 时的语义漂移风险。
 - 已补充周度复盘工作流文档 [docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md](docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md)，将日常 `draft`、稳定 `final` 与争议样本 `adjudicated` 串成一套最小团队复盘节奏，便于将页面浏览、标签治理与后续系统优化 backlog 直接衔接。
 - 已补充 [docs/zh-cn/manual/research-conclusion-to-optimization-backlog-handbook.md](docs/zh-cn/manual/research-conclusion-to-optimization-backlog-handbook.md)，把周度复盘中形成的研究结论进一步标准化映射到 Layer B、Layer C、Execution、Threshold、Explainability 五类优化动作，降低“能复盘但不会落任务”的交付断层。
+- 已完成一次真实 live pipeline 纸面交易窗口验收：2026-03-16 至 2026-03-23 使用 MiniMax-M2.7 运行后成功生成 selection_artifacts、daily_events.jsonl、pipeline_timings.jsonl 与 session_summary.json，并形成窗口复盘文档 data/reports/paper_trading_window_20260316_20260323_live_m2_7_20260323/window_review_20260316_20260323.md；该窗口确认当前 artifact 机制在真实 live pipeline 下也能稳定解释“前置筛选无候选”“Layer C 否决 near-miss”与“T 日生成计划、T+1 执行”的实际执行链路。
 
 当前尚未完成事项：
 
 - research_feedback.jsonl 已具备最小读取、聚合、标签治理、CLI 操作、session 级 summary 接入以及 replay viewer 内最小可写 UI；但仍未接入数据库、批量标注工作台或更高层人工工作流编排。
-- 轻量级 backtesting / paper trading 运行级集成测试已补齐，且更长窗口 frozen replay 验证已完成一次，但真实 live pipeline 与更高层人工工作流集成仍未完成。
+- 轻量级 backtesting / paper trading 运行级集成测试已补齐，更长窗口 frozen replay 验证已完成一次，且真实 live pipeline 的最小运行级窗口验收也已完成一次；但真实 live pipeline 的自动化集成测试与更高层人工工作流集成仍未完成。
 - 历史 frozen replay 源的 Layer B 解释已补齐回退兼容，但回退摘要只能基于 plan.logic_scores 与 strategy_weights 或 adjusted_weights 近似重建，精度仍低于新源中的原生 strategy_signals。
 
 ### 0.1 已完成验收记录
@@ -115,6 +116,7 @@
 3. 共生成 24 个 trade_date 子目录和 1 个 selection_artifacts/research_feedback_summary.json，session_summary.json 中也同步记录了 selection_artifact_root 与 research_feedback_summary。
 4. pipeline_timings.jsonl 与 daily_events.jsonl 中每个 trade_date 的 current_plan.selection_artifacts 均保持 write_status=success。
 5. 这次长窗口验证说明 selection artifact 机制不仅在 1 到 2 天样本中可用，在 W1 级别多日 replay 中也能稳定落盘与回填。
+6. 基于该窗口已补充统计复盘文档 data/reports/paper_trading_window_20260202_20260313_w1_selection_artifact_validation_20260323/gating_summary_20260202_20260313.md；其中汇总显示 24 个 trade_date 共 4800 个 candidate 中有 4750 个直接被 Layer B `below_fast_score_threshold` 过滤，进一步支持“候选 scarcity 主因在 Layer B、near-miss 否决主因在 Layer C、300724 属于稳定边界样本”的分层判断。
 
 2026-03-23 同日还补齐了 watchlist 未承接 buy_order 的执行阻塞原因透传：
 
@@ -135,6 +137,15 @@
 2. 已确认 selection artifact 日级接口可返回 funnel_diagnostics.filters.layer_b、watchlist、buy_orders，能支撑前端 Funnel Drilldown 区块直接消费。
 3. 已将 feedback_records 的 created_at 倒序语义下沉到后端 ReplayArtifactService，避免只有前端页面能看到正确顺序。
 4. tests/backend/test_replay_artifact_service.py 已新增对应断言并重新运行通过。
+
+2026-03-23 同日还完成了一次“真实 live pipeline 窗口复盘”验收，验证方式为 2026-03-16 至 2026-03-23 的纸面交易运行：
+
+1. output_dir：data/reports/paper_trading_window_20260316_20260323_live_m2_7_20260323。
+2. 运行模式为 live_pipeline，模型路由为 MiniMax:MiniMax-M2.7，成功生成 session_summary.json、daily_events.jsonl、pipeline_timings.jsonl 与 selection_artifacts/ 日期目录。
+3. 该窗口共覆盖 6 个交易日，其中 3 个交易日因为 Layer B `below_fast_score_threshold` 未产生任何 high_pool 样本，1 个交易日出现 near-miss `002916` 并被 Layer C 否决，2 个交易日出现 `300724` 进入 watchlist。
+4. `300724` 在 2026-03-20 生成 buy_order，并在 2026-03-23 通过 daily_events.jsonl 中的 `executed_trades.300724=100` 得到实际执行确认，同时 2026-03-23 当天新的 post-market plan 又因 `position_blocked_score` 未继续生成新的 buy_order。
+5. 这次窗口补强了一个此前只在代码层推断、未在真实样本中明确写下的结论：当前 paper trading pipeline 的执行时序是“T 日 post-market 生成计划，T+1 交易日执行 pending plan”，而 event 持久化中的实际成交字段名为 `executed_trades`，不是 `executed_orders`。
+6. 该次验收产出了专门的窗口复盘文档 data/reports/paper_trading_window_20260316_20260323_live_m2_7_20260323/window_review_20260316_20260323.md，可作为后续 live pipeline 复盘样板。
 
 后续章节中，凡是“建议”“推荐”与“已实现”不一致时，以“已实现”说明为准，并在后续迭代中继续向目标态收敛。
 
