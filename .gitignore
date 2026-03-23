@@ -3,6 +3,10 @@
 data/reports/archive
 data/snapshots
 
+# Local validation report outputs
+data/reports/paper_trading_20260311_selection_artifact_blocker_validation_20260323/
+data/reports/paper_trading_window_20260202_20260313_w1_selection_artifact_validation_20260323/
+
 # Python
 __pycache__/
 *.py[cod]

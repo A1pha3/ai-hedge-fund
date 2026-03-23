@@ -12,6 +12,7 @@ from src.research.review_renderer import render_selection_review
 if TYPE_CHECKING:
     from src.execution.daily_pipeline import DailyPipeline
     from src.execution.models import ExecutionPlan, LayerCResult
+    from src.portfolio.models import PositionPlan
 
 
 class SelectionArtifactWriter(Protocol):
@@ -123,6 +124,48 @@ def _build_selected_reasoning(item: LayerCResult, included_in_buy_orders: bool, 
     }
 
 
+def _build_execution_bridge(plan: ExecutionPlan, item: LayerCResult, nav: float, matching_order: PositionPlan | None) -> dict[str, Any]:
+    funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
+    buy_order_filters = dict((funnel_diagnostics.get("filters", {}) or {}).get("buy_orders", {}) or {})
+    filtered_by_ticker = {
+        str(entry.get("ticker") or ""): dict(entry)
+        for entry in list((buy_order_filters or {}).get("tickers", []) or [])
+        if entry.get("ticker")
+    }
+    blocked_buy_tickers = {
+        str(ticker): dict(details or {})
+        for ticker, details in dict(funnel_diagnostics.get("blocked_buy_tickers", {}) or {}).items()
+    }
+
+    included_in_buy_orders = matching_order is not None
+    amount = float(getattr(matching_order, "amount", 0.0) or 0.0) if matching_order is not None else 0.0
+    filter_details = filtered_by_ticker.get(item.ticker, {})
+    blocked_details = blocked_buy_tickers.get(item.ticker, {})
+    block_reason = str(filter_details.get("reason") or blocked_details.get("trigger_reason") or "").strip() or None
+
+    execution_bridge = {
+        "included_in_buy_orders": included_in_buy_orders,
+        "planned_shares": int(getattr(matching_order, "shares", 0) or 0) if matching_order is not None else 0,
+        "planned_amount": round(amount, 4),
+        "target_weight": round((amount / nav), 4) if nav > 0 and amount > 0 else 0.0,
+    }
+    if block_reason:
+        execution_bridge["block_reason"] = block_reason
+    if filter_details.get("constraint_binding"):
+        execution_bridge["constraint_binding"] = str(filter_details.get("constraint_binding"))
+    if filter_details.get("execution_ratio") is not None:
+        execution_bridge["execution_ratio"] = round(float(filter_details.get("execution_ratio") or 0.0), 4)
+    if blocked_details.get("blocked_until"):
+        execution_bridge["blocked_until"] = str(blocked_details.get("blocked_until"))
+    if blocked_details.get("reentry_review_until"):
+        execution_bridge["reentry_review_until"] = str(blocked_details.get("reentry_review_until"))
+    if blocked_details.get("exit_trade_date"):
+        execution_bridge["exit_trade_date"] = str(blocked_details.get("exit_trade_date"))
+    if blocked_details.get("trigger_reason"):
+        execution_bridge["trigger_reason"] = str(blocked_details.get("trigger_reason"))
+    return execution_bridge
+
+
 def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
     buy_order_by_ticker = {order.ticker: order for order in plan.buy_orders}
     nav = _portfolio_nav(plan.portfolio_snapshot)
@@ -130,8 +173,15 @@ def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
     for rank, item in enumerate(sorted(plan.watchlist, key=lambda current: current.score_final, reverse=True), start=1):
         matching_order = buy_order_by_ticker.get(item.ticker)
         included_in_buy_orders = matching_order is not None
-        amount = float(getattr(matching_order, "amount", 0.0) or 0.0) if matching_order is not None else 0.0
         layer_b_summary = _build_layer_b_summary(plan, item)
+        execution_bridge = _build_execution_bridge(plan, item, nav, matching_order)
+        research_prompts = _build_selected_reasoning(item, included_in_buy_orders, bool(layer_b_summary.get("fallback_used")))
+        if not included_in_buy_orders and execution_bridge.get("block_reason"):
+            blocker = f"执行层未生成 buy_order，原因: {execution_bridge['block_reason']}"
+            constraint_binding = execution_bridge.get("constraint_binding")
+            if constraint_binding:
+                blocker = f"{blocker} (binding={constraint_binding})"
+            research_prompts["what_to_check"] = [blocker, *list(research_prompts.get("what_to_check", []))][:2]
         selected.append(
             SelectedCandidate(
                 symbol=item.ticker,
@@ -145,13 +195,8 @@ def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
                     **dict(item.agent_contribution_summary or {}),
                     "bc_conflict": item.bc_conflict,
                 },
-                execution_bridge={
-                    "included_in_buy_orders": included_in_buy_orders,
-                    "planned_shares": int(getattr(matching_order, "shares", 0) or 0) if matching_order is not None else 0,
-                    "planned_amount": round(amount, 4),
-                    "target_weight": round((amount / nav), 4) if nav > 0 and amount > 0 else 0.0,
-                },
-                research_prompts=_build_selected_reasoning(item, included_in_buy_orders, bool(layer_b_summary.get("fallback_used"))),
+                execution_bridge=execution_bridge,
+                research_prompts=research_prompts,
             )
         )
     return selected

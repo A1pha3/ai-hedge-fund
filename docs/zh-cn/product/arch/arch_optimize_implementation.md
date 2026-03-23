@@ -2,7 +2,7 @@
 
 ## 0. 当前落地状态
 
-本文档已经不再只是实施提案。截至 2026-03-22，第一批代码骨架已落地，因此本文档需要同时承担两种职责：
+本文档已经不再只是实施提案。截至 2026-03-23，第一批代码骨架及其最小上层消费界面已落地，因此本文档需要同时承担两种职责：
 
 1. 记录目标设计。
 2. 记录当前已完成状态，避免文档与代码脱节。
@@ -19,11 +19,20 @@
 - 已将 research_feedback_summary 自动接入 paper trading session_summary.json，并额外写出 selection_artifacts/research_feedback_summary.json。
 - 已补齐 artifact 写入失败降级测试，并修正目录创建异常未进入 writer 降级路径的问题。
 - 已补充基础测试，当前通过的文件包括：tests/research/test_selection_review_renderer.py、tests/research/test_selection_artifact_writer.py、tests/research/test_selection_artifact_engine.py、tests/research/test_feedback_schema.py、tests/research/test_manage_research_feedback_cli.py、tests/research/test_paper_trading_runtime_feedback_summary.py。
+- 已补充轻量级运行级集成测试，覆盖现有 tests/backtesting/test_paper_trading_runtime.py 与 tests/backtesting/test_pipeline_mode.py 中 selection_artifacts 与 research_feedback_summary 的真实挂接断言。
+- 已补充 watchlist 未承接 buy_order 时的执行阻塞原因透传，selection_snapshot.json 与 selection_review.md 现可展示 buy_order_blocker、reentry_review_until 等执行层约束信息。
+- 已扩展现有 replay artifacts 后端/前端浏览面：后端可返回 selection_artifact_overview、按 trade_date 读取 selection snapshot/review，并支持以当前登录用户身份追加 research feedback；前端 Replay Artifacts 页面已可直接切换交易日查看 selection_review.md，结构化展示 selected/rejected、top_factors、Layer C analyst 共识、research prompts 与 execution blocker，并直接提交和筛选 research feedback，而无需手动翻 data/reports 目录或调用 CLI。
+- 前端 Replay Artifacts 页面已进一步补齐 funnel_diagnostics 结构化 drilldown，可直接查看 layer_b、watchlist、buy_orders 三段过滤摘要、reason_counts 与代表性 ticker；feedback records 现按 created_at 倒序展示，并显式显示创建时间，便于研究员按时间线回看人工判断。
+- Replay artifact 日级后端接口现已直接按 created_at 倒序返回 feedback_records，避免排序语义只存在于前端；localhost 环境下已完成一次真实登录、replay 列表、report/day detail、feedback append 与回读顺序校验的接口级冒烟验证。
+- 已新增操作手册 [docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md](docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md)，面向已登录用户详细说明如何使用 Replay Artifacts 页面完成选股复核、执行阻塞分析、near-miss 排查与 research feedback 回写。
+- 已补充配套文档 [docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md](docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md) 与 [docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md](docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md)，分别面向“快速上手”和“真实 blocker 样本判读”两类场景，降低从登录成功到形成稳定复核习惯之间的学习门槛。
+- 已补充标签治理配套文档 [docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md](docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md)，统一说明 primary_tag、tags、review_status 与 research_verdict 的职责边界，以及 6 个受控标签在 selected、near-miss 和 execution blocker 场景中的使用口径，降低多人写 feedback 时的语义漂移风险。
+- 已补充周度复盘工作流文档 [docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md](docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md)，将日常 `draft`、稳定 `final` 与争议样本 `adjudicated` 串成一套最小团队复盘节奏，便于将页面浏览、标签治理与后续系统优化 backlog 直接衔接。
 
 当前尚未完成事项：
 
-- research_feedback.jsonl 已具备最小读取、聚合、标签治理、CLI 操作以及 session 级 summary 接入能力，但尚未接入 UI、数据库或更高层的人工工作流。
-- 完整 backtesting / paper trading 集成测试尚未补齐。
+- research_feedback.jsonl 已具备最小读取、聚合、标签治理、CLI 操作、session 级 summary 接入以及 replay viewer 内最小可写 UI；但仍未接入数据库、批量标注工作台或更高层人工工作流编排。
+- 轻量级 backtesting / paper trading 运行级集成测试已补齐，且更长窗口 frozen replay 验证已完成一次，但真实 live pipeline 与更高层人工工作流集成仍未完成。
 - 历史 frozen replay 源的 Layer B 解释已补齐回退兼容，但回退摘要只能基于 plan.logic_scores 与 strategy_weights 或 adjusted_weights 近似重建，精度仍低于新源中的原生 strategy_signals。
 
 ### 0.1 已完成验收记录
@@ -88,7 +97,43 @@
 2. 新增 partial_success 路径测试，覆盖 review 与 feedback 已生成但 snapshot 写入失败的场景。
 3. 新增 failed 路径测试，覆盖目录创建失败导致三个 artifact 都未生成的场景。
 4. 新增引擎级异常降级测试，覆盖 writer 抛出异常时 plan.selection_artifacts 仍能回填 write_status=failed 与 error_message。
-5. 与既有 research 测试合并运行后已通过，共 14 个测试通过。
+5. 与既有 research 测试合并运行后已通过，共 15 个测试通过。
+
+2026-03-22 同日继续补齐了轻量级运行级集成测试：
+
+1. 在 tests/backtesting/test_paper_trading_runtime.py 中新增断言，验证 session_summary.json 中的 artifacts.selection_artifact_root、artifacts.research_feedback_summary 与内联 research_feedback_summary 已成功挂接。
+2. 同一测试中新增对 daily_events.jsonl 与 pipeline_timings.jsonl 的校验，确认 current_plan.selection_artifacts.write_status=success 已进入真实 paper trading 运行输出。
+3. 在 tests/backtesting/test_pipeline_mode.py 中新增 pipeline mode 运行级断言，确认 pipeline_event_recorder、checkpoint.timings.jsonl 与 selection_artifacts/日期目录之间保持一致。
+4. 运行 tests/backtesting/test_paper_trading_runtime.py 与 tests/backtesting/test_pipeline_mode.py 后共 12 个测试通过。
+5. 这轮测试说明最小 runtime 路径已经从“单元与引擎级可用”推进到“paper trading/backtesting 现有测试骨架下可观测输出一致”。
+
+2026-03-23 已完成一次“更长窗口 frozen replay”验收，并顺带补强了 execution blocker 的研究可解释性：
+
+1. frozen_plan_source：data/reports/paper_trading_window_20260202_20260313_w1_live_m2_7_20260319/daily_events.jsonl。
+2. output_dir：data/reports/paper_trading_window_20260202_20260313_w1_selection_artifact_validation_20260323。
+3. 共生成 24 个 trade_date 子目录和 1 个 selection_artifacts/research_feedback_summary.json，session_summary.json 中也同步记录了 selection_artifact_root 与 research_feedback_summary。
+4. pipeline_timings.jsonl 与 daily_events.jsonl 中每个 trade_date 的 current_plan.selection_artifacts 均保持 write_status=success。
+5. 这次长窗口验证说明 selection artifact 机制不仅在 1 到 2 天样本中可用，在 W1 级别多日 replay 中也能稳定落盘与回填。
+
+2026-03-23 同日还补齐了 watchlist 未承接 buy_order 的执行阻塞原因透传：
+
+1. selected[*].execution_bridge 新增 block_reason、blocked_until、reentry_review_until、exit_trade_date、trigger_reason 等字段。
+2. selection_review.md 现会直接展示 buy_order_blocker 与 reentry_review_until，避免研究员只能看到“watchlist=1, buy_order=0”但不知道阻塞原因。
+3. 已通过单日真实 frozen replay 验证 2026-03-11 场景：300724 因 blocked_by_reentry_score_confirmation 未生成 buy_order，同时 review 中已出现对应 blocker 提示。
+4. tests/research 全量回归已重新运行通过，共 15 个测试通过。
+
+2026-03-23 同日还完成了 replay viewer 的一轮前端可用性补强与构建验收：
+
+1. Replay Artifacts 页面新增 Funnel Drilldown 区块，直接展示 selection_snapshot.funnel_diagnostics.filters.layer_b、watchlist、buy_orders 的 filtered_count、reason_counts 与代表性 ticker 行。
+2. feedback records 表格改为按 created_at 倒序展示，并新增创建时间列，降低研究员按时间线回看反馈时对原始 JSONL 的依赖。
+3. app/frontend 执行 npm run build 已通过，说明上述 viewer 增强未破坏现有 TypeScript 类型和生产构建链路。
+
+2026-03-23 同日还完成了一轮本地接口级冒烟验收与服务层一致性补强：
+
+1. 在 localhost 环境下完成了 auth/login、GET /replay-artifacts/、GET /replay-artifacts/{report_name}、GET /replay-artifacts/{report_name}/selection-artifacts/{trade_date} 与 POST /replay-artifacts/{report_name}/selection-artifacts/{trade_date}/feedback 的真实调用验证。
+2. 已确认 selection artifact 日级接口可返回 funnel_diagnostics.filters.layer_b、watchlist、buy_orders，能支撑前端 Funnel Drilldown 区块直接消费。
+3. 已将 feedback_records 的 created_at 倒序语义下沉到后端 ReplayArtifactService，避免只有前端页面能看到正确顺序。
+4. tests/backend/test_replay_artifact_service.py 已新增对应断言并重新运行通过。
 
 后续章节中，凡是“建议”“推荐”与“已实现”不一致时，以“已实现”说明为准，并在后续迭代中继续向目标态收敛。
 
@@ -634,11 +679,12 @@ write_status 建议取值：
 5. feedback CLI 路径解析与 append or summarize 命令测试。
 6. session 级 feedback summary 写出测试。
 7. artifact 写入失败降级测试。
+8. watchlist 已入选但 buy_order 被执行层规则阻塞时的 blocker 透传测试。
 
 未完成：
 
-1. 真实 paper trading 集成测试。
-2. 真实 backtesting 运行级集成测试。
+1. 真实 live pipeline 集成测试。
+2. 真实 backtesting 的更长窗口运行级集成测试。
 3. feedback 与更高层人工工作流、标签平台或 UI 的集成测试。
 
 ---
@@ -672,9 +718,13 @@ write_status 建议取值：
 当前状态：
 
 1. tests/research/test_selection_artifact_engine.py 已经覆盖了“引擎将 selection_artifacts 回填到 plan”的最小集成路径。
-2. 真实 paper trading 短窗口 frozen replay 验证已完成一次。
-3. 非空 watchlist 场景的 frozen replay 验证也已完成一次。
-4. 但这仍然不能替代更长窗口或 live pipeline 的运行级验收。
+2. tests/backtesting/test_paper_trading_runtime.py 已补充 selection_artifacts 与 research_feedback_summary 的运行输出断言。
+3. tests/backtesting/test_pipeline_mode.py 已补充 pipeline mode 下 event、timing log 与 artifact 落盘的一致性断言。
+4. 上述两组 backtesting runtime 测试已在 2026-03-22 合并运行通过，共 12 个测试通过。
+5. 真实 paper trading 短窗口 frozen replay 验证已完成一次。
+6. 非空 watchlist 场景的 frozen replay 验证也已完成一次。
+7. 更长窗口 frozen replay 验证已在 2026-03-23 完成一次，覆盖 W1 级别 24 个 trade_date 的 artifact 连续落盘与 summary 聚合。
+8. 但这仍然不能替代真实 live pipeline 的运行级验收。
 
 重点检查：
 

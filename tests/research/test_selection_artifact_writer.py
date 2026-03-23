@@ -169,3 +169,65 @@ def test_file_selection_artifact_writer_returns_failed_when_directory_creation_f
     assert result.review_path is None
     assert result.feedback_path is None
     assert "mkdir failed" in str(result.error_message)
+
+
+def test_file_selection_artifact_writer_captures_buy_order_blocker_details(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_blocker")
+    plan = ExecutionPlan(
+        date="20260311",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {
+                "layer_a_count": 200,
+                "layer_b_count": 1,
+                "watchlist_count": 1,
+                "buy_order_count": 0,
+            },
+            "funnel_diagnostics": {
+                "filters": {
+                    "buy_orders": {
+                        "tickers": [
+                            {
+                                "ticker": "300724",
+                                "reason": "blocked_by_reentry_score_confirmation",
+                                "constraint_binding": "score",
+                                "execution_ratio": 0.0,
+                            }
+                        ]
+                    }
+                },
+                "blocked_buy_tickers": {
+                    "300724": {
+                        "trigger_reason": "hard_stop_loss",
+                        "exit_trade_date": "20260226",
+                        "blocked_until": "20260305",
+                        "reentry_review_until": "20260312",
+                    }
+                },
+            },
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="300724",
+                score_b=0.3897,
+                score_c=0.0002,
+                score_final=0.2144,
+                quality_score=0.72,
+                decision="watch",
+            )
+        ],
+        buy_orders=[],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260311", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+
+    snapshot_text = (tmp_path / "2026-03-11" / "selection_snapshot.json").read_text(encoding="utf-8")
+    review_text = (tmp_path / "2026-03-11" / "selection_review.md").read_text(encoding="utf-8")
+
+    assert '"block_reason": "blocked_by_reentry_score_confirmation"' in snapshot_text
+    assert '"constraint_binding": "score"' in snapshot_text
+    assert '"reentry_review_until": "20260312"' in snapshot_text
+    assert "buy_order_blocker: blocked_by_reentry_score_confirmation (binding=score)" in review_text
+    assert "reentry_review_until: 20260312" in review_text

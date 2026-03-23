@@ -290,6 +290,8 @@ http://localhost:5173
 
 **如果页面无法加载**，参见 [4.6 节：常见问题与解决](#46-常见问题与解决)。
 
+> 补充说明：本章主要解决“如何启动和进入 Web 界面”。如果你已经登录，并希望系统化使用 `Settings -> Replay Artifacts` 做选股复核、blocker 诊断、near-miss 分析和 feedback 回写，建议按“[Replay Artifacts 选股复核 5 分钟速查](../manual/replay-artifacts-stock-selection-quickstart.md) -> [Replay Artifacts 选股复核页面使用手册](../manual/replay-artifacts-stock-selection-manual.md) -> [Replay Artifacts 研究反馈标签规范手册](../manual/replay-artifacts-feedback-labeling-handbook.md)”的顺序阅读。
+
 ---
 
 ## 4.3 界面布局与功能

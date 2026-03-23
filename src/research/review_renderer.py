@@ -25,6 +25,14 @@ def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
         lines.append(f"### {index}. {candidate.symbol} {candidate.name}".rstrip())
         lines.append(f"- final_score: {candidate.score_final:.4f}")
         lines.append(f"- buy_order: {'yes' if candidate.execution_bridge.get('included_in_buy_orders') else 'no'}")
+        if candidate.execution_bridge.get("block_reason"):
+            blocker = str(candidate.execution_bridge.get("block_reason"))
+            constraint_binding = candidate.execution_bridge.get("constraint_binding")
+            if constraint_binding:
+                blocker = f"{blocker} (binding={constraint_binding})"
+            lines.append(f"- buy_order_blocker: {blocker}")
+        if candidate.execution_bridge.get("reentry_review_until"):
+            lines.append(f"- reentry_review_until: {candidate.execution_bridge.get('reentry_review_until')}")
         top_factors = list((candidate.layer_b_summary or {}).get("top_factors", []) or [])
         if top_factors:
             lines.append("- Layer B 因子摘要:")

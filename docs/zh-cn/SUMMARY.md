@@ -120,6 +120,16 @@ Level 1 ⭐ (入门)
 
 本文档采用四级递进体系，每个级别对应不同的认知层次和学习目标。读者可以根据自己的背景和目标选择合适的起点，也可以按照顺序系统学习以获得更全面的理解。
 
+## 专题手册
+
+| 文档 | 内容概要 | 适用人群 | 难度 |
+|------|----------|----------|------|
+| [Replay Artifacts 选股复核 5 分钟速查](./manual/replay-artifacts-stock-selection-quickstart.md) | 用最短路径说明登录后如何在 5 分钟内完成 report 选择、trade date 切换、候选股判读、blocker 诊断和 feedback 草稿记录 | 已登录系统、希望快速上手 Replay Artifacts 的用户 | ⭐ |
+| [Replay Artifacts 选股复核页面使用手册](./manual/replay-artifacts-stock-selection-manual.md) | 详细说明如何在 Replay Artifacts 页面中完成 report 选择、trade date 切换、selected 与 near-miss 解读、blocker 分析、feedback 写入和研究复核闭环 | 已能登录 Web 界面、希望系统化使用选股复核页的研究员和开发者 | ⭐⭐ |
+| [Replay Artifacts 研究反馈标签规范手册](./manual/replay-artifacts-feedback-labeling-handbook.md) | 统一说明 primary_tag、tags、review_status 和 research_verdict 的分工，以及 6 个受控标签在 selected、near-miss 和 execution blocker 场景中的使用口径 | 已开始写 research feedback、希望团队口径一致的研究员和复核人员 | ⭐⭐ |
+| [Replay Artifacts 周度复盘工作流手册](./manual/replay-artifacts-weekly-review-workflow.md) | 把日常 draft、final、adjudicated 串成一套最小周度复盘节奏，说明谁来汇总、什么样的样本应升级、周会该讨论哪些系统性问题 | 已经开始使用 Replay Artifacts，准备把个人复核升级为团队周度工作流的研究员和负责人 | ⭐⭐⭐ |
+| [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./manual/replay-artifacts-case-study-20260311-300724.md) | 用真实 blocker 样本逐步演示如何判断“已入选但未承接”为执行层问题而非选股失败 | 已理解基本页面结构、希望通过真实样本建立判读直觉的用户 | ⭐⭐ |
+
 ### Level 1：入门教程 ⭐
 
 **定位**：让新手成功运行第一个示例，建立信心

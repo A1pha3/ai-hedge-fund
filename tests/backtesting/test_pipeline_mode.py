@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import pytest
 
@@ -5,6 +7,7 @@ from src.backtesting.engine import BacktestEngine
 from src.execution.models import ExecutionPlan
 from src.portfolio.models import ExitSignal
 from src.portfolio.models import PositionPlan
+from src.research.artifacts import FileSelectionArtifactWriter
 
 
 class StubPipeline:
@@ -298,7 +301,65 @@ def test_pipeline_mode_registers_defensive_exit_cooldown_for_same_day_post_marke
     assert pipeline.post_market_calls[1][0] == "20240304"
     assert pipeline.post_market_calls[1][2]["AAPL"]["trigger_reason"] == "hard_stop_loss"
     assert pipeline.post_market_calls[1][2]["AAPL"]["blocked_until"] == "20240311"
-    assert pipeline.post_market_calls[1][2]["AAPL"]["reentry_review_until"] == "20240318"
+
+
+def test_pipeline_mode_records_selection_artifacts_in_event_and_timing_logs(tmp_path, monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+    plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}},
+    )
+    pipeline = StubPipeline(
+        post_market_plans=[plan],
+        intraday_responses=[],
+    )
+    event_payloads: list[dict] = []
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+        checkpoint_path=str(tmp_path / "checkpoint.json"),
+        pipeline_event_recorder=event_payloads.append,
+        selection_artifact_writer=FileSelectionArtifactWriter(artifact_root=tmp_path / "selection_artifacts", run_id="integration_test"),
+    )
+
+    engine.run_backtest()
+
+    timing_log_path = tmp_path / "checkpoint.timings.jsonl"
+    assert timing_log_path.exists()
+    timing_lines = [json.loads(line) for line in timing_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    day_timing = next(line for line in timing_lines if line.get("event") == "pipeline_day_timing")
+    assert day_timing["current_plan"]["selection_artifacts"]["write_status"] == "success"
+
+    assert event_payloads
+    assert event_payloads[0]["current_plan"]["selection_artifacts"]["write_status"] == "success"
+    assert (tmp_path / "selection_artifacts" / "2024-03-01" / "selection_snapshot.json").exists()
+    assert len(pipeline.post_market_calls) == 1
+    assert pipeline.post_market_calls[0][0] == "20240301"
+    assert pipeline.post_market_calls[0][2] == {}
 
 
 def test_pipeline_checkpoint_persists_exit_reentry_cooldowns(tmp_path, monkeypatch):

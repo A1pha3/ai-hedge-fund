@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from src.research.feedback import append_research_feedback, read_research_feedback, summarize_research_feedback, summarize_research_feedback_directory
+from src.research.models import RESEARCH_FEEDBACK_ALLOWED_REVIEW_STATUS, RESEARCH_FEEDBACK_ALLOWED_TAGS, ResearchFeedbackRecord
 
 
 class ReplayArtifactService:
@@ -23,10 +27,128 @@ class ReplayArtifactService:
         return summaries
 
     def get_replay(self, report_name: str) -> dict[str, Any]:
-        report_dir = self._reports_root / report_name
-        if not report_dir.is_dir():
-            raise FileNotFoundError(f"Replay report not found: {report_name}")
+        report_dir = self._get_report_dir(report_name)
         return self._build_replay_summary(report_dir, include_tickers=True)
+
+    def get_selection_artifact_day(self, report_name: str, trade_date: str) -> dict[str, Any]:
+        report_dir = self._get_report_dir(report_name)
+        session_summary = self._read_json(report_dir / "session_summary.json")
+        artifact_root = self._resolve_selection_artifact_root(report_dir, session_summary)
+        if artifact_root is None:
+            raise FileNotFoundError(f"Selection artifact root not found for report: {report_name}")
+
+        day_dir = artifact_root / trade_date
+        if not day_dir.is_dir():
+            raise FileNotFoundError(f"Selection artifact day not found: {report_name}/{trade_date}")
+
+        snapshot_path = day_dir / "selection_snapshot.json"
+        review_path = day_dir / "selection_review.md"
+        feedback_path = day_dir / "research_feedback.jsonl"
+        snapshot = self._read_json(snapshot_path)
+        feedback_records = read_research_feedback(file_path=feedback_path, skip_invalid=False)
+        feedback_records = sorted(
+            feedback_records,
+            key=lambda record: record.created_at,
+            reverse=True,
+        )
+        feedback_summary = summarize_research_feedback(records=feedback_records)
+
+        selected = snapshot.get("selected") or []
+        blocker_counts: Counter[str] = Counter()
+        for candidate in selected:
+            if not isinstance(candidate, dict):
+                continue
+            execution_bridge = candidate.get("execution_bridge") or {}
+            block_reason = execution_bridge.get("block_reason")
+            if block_reason:
+                blocker_counts[str(block_reason)] += 1
+
+        return {
+            "report_dir": report_dir.name,
+            "trade_date": trade_date,
+            "paths": {
+                "snapshot_path": str(snapshot_path),
+                "review_path": str(review_path),
+                "feedback_path": str(feedback_path),
+            },
+            "snapshot": snapshot,
+            "review_markdown": self._read_text(review_path),
+            "feedback_record_count": len(feedback_records),
+            "feedback_records": [record.model_dump(mode="json") for record in feedback_records],
+            "feedback_summary": feedback_summary.model_dump(mode="json"),
+            "feedback_options": {
+                "allowed_tags": list(RESEARCH_FEEDBACK_ALLOWED_TAGS),
+                "allowed_review_statuses": list(RESEARCH_FEEDBACK_ALLOWED_REVIEW_STATUS),
+            },
+            "blocker_counts": self._counter_to_list(blocker_counts),
+        }
+
+    def append_selection_artifact_feedback(
+        self,
+        *,
+        report_name: str,
+        trade_date: str,
+        reviewer: str,
+        symbol: str,
+        primary_tag: str,
+        research_verdict: str,
+        tags: list[str] | None = None,
+        review_status: str = "draft",
+        review_scope: str | None = None,
+        confidence: float = 0.0,
+        notes: str = "",
+        created_at: str | None = None,
+    ) -> dict[str, Any]:
+        report_dir = self._get_report_dir(report_name)
+        session_summary = self._read_json(report_dir / "session_summary.json")
+        artifact_root = self._resolve_selection_artifact_root(report_dir, session_summary)
+        if artifact_root is None:
+            raise FileNotFoundError(f"Selection artifact root not found for report: {report_name}")
+
+        day_dir = artifact_root / trade_date
+        if not day_dir.is_dir():
+            raise FileNotFoundError(f"Selection artifact day not found: {report_name}/{trade_date}")
+
+        snapshot = self._read_json(day_dir / "selection_snapshot.json")
+        selected_symbols = {str(item.get("symbol")) for item in (snapshot.get("selected") or []) if isinstance(item, dict) and item.get("symbol")}
+        rejected_symbols = {str(item.get("symbol")) for item in (snapshot.get("rejected") or []) if isinstance(item, dict) and item.get("symbol")}
+        known_symbols = selected_symbols | rejected_symbols
+        if symbol not in known_symbols:
+            raise ValueError(f"Symbol not found in selection snapshot: {symbol}")
+
+        normalized_review_scope = review_scope or ("watchlist" if symbol in selected_symbols else "near_miss")
+        record = ResearchFeedbackRecord(
+            run_id=str(snapshot.get("run_id") or report_name),
+            trade_date=str(snapshot.get("trade_date") or trade_date),
+            symbol=symbol,
+            review_scope=normalized_review_scope,
+            reviewer=reviewer,
+            review_status=review_status,
+            primary_tag=primary_tag,
+            tags=list(tags or []),
+            confidence=confidence,
+            research_verdict=research_verdict,
+            notes=notes,
+            created_at=created_at or datetime.now().astimezone().isoformat(timespec="seconds"),
+            artifact_version=str(snapshot.get("artifact_version") or "v1"),
+        )
+
+        feedback_path = day_dir / "research_feedback.jsonl"
+        append_research_feedback(file_path=feedback_path, record=record)
+        directory_summary = summarize_research_feedback_directory(artifact_root=artifact_root, skip_invalid=False)
+        summary_path = artifact_root / "research_feedback_summary.json"
+        summary_path.write_text(json.dumps(directory_summary.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+        self._sync_session_feedback_summary(report_dir=report_dir, directory_summary=directory_summary, summary_path=summary_path)
+
+        day_records = read_research_feedback(file_path=feedback_path, skip_invalid=False)
+        day_summary = summarize_research_feedback(records=day_records)
+        return {
+            "record": record.model_dump(mode="json"),
+            "feedback_record_count": len(day_records),
+            "feedback_summary": day_summary.model_dump(mode="json"),
+            "directory_summary": directory_summary.model_dump(mode="json"),
+            "feedback_path": str(feedback_path),
+        }
 
     def _build_replay_summary(self, report_dir: Path, include_tickers: bool) -> dict[str, Any]:
         session_summary = self._read_json(report_dir / "session_summary.json")
@@ -70,6 +192,7 @@ class ReplayArtifactService:
                 **runtime,
             },
             "artifacts": session_summary.get("artifacts") or {},
+            "selection_artifact_overview": self._derive_selection_artifact_overview(report_dir, session_summary, daily_events),
         }
 
         if include_tickers:
@@ -211,10 +334,93 @@ class ReplayArtifactService:
             "avg_post_market_seconds": self._safe_average(post_market_seconds),
         }
 
+    def _derive_selection_artifact_overview(
+        self,
+        report_dir: Path,
+        session_summary: dict[str, Any],
+        daily_events: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        artifact_root = self._resolve_selection_artifact_root(report_dir, session_summary)
+        if artifact_root is None or not artifact_root.exists():
+            return {
+                "available": False,
+                "trade_date_count": 0,
+                "available_trade_dates": [],
+                "write_status_counts": {},
+                "blocker_counts": [],
+                "feedback_summary": None,
+            }
+
+        write_status_counts: Counter[str] = Counter()
+        for record in daily_events:
+            selection_artifacts = (record.get("current_plan") or {}).get("selection_artifacts") or record.get("selection_artifacts") or {}
+            write_status = selection_artifacts.get("write_status")
+            if write_status:
+                write_status_counts[str(write_status)] += 1
+
+        trade_dates: list[str] = []
+        blocker_counts: Counter[str] = Counter()
+        for day_dir in sorted(path for path in artifact_root.iterdir() if path.is_dir()):
+            snapshot_path = day_dir / "selection_snapshot.json"
+            if not snapshot_path.exists():
+                continue
+            trade_dates.append(day_dir.name)
+            snapshot = self._read_json(snapshot_path)
+            for candidate in snapshot.get("selected") or []:
+                if not isinstance(candidate, dict):
+                    continue
+                execution_bridge = candidate.get("execution_bridge") or {}
+                block_reason = execution_bridge.get("block_reason")
+                if block_reason:
+                    blocker_counts[str(block_reason)] += 1
+
+        feedback_summary_path = artifact_root / "research_feedback_summary.json"
+        feedback_summary = self._read_json(feedback_summary_path) if feedback_summary_path.exists() else None
+
+        return {
+            "available": True,
+            "artifact_root": str(artifact_root),
+            "trade_date_count": len(trade_dates),
+            "available_trade_dates": trade_dates,
+            "write_status_counts": dict(write_status_counts),
+            "blocker_counts": self._counter_to_list(blocker_counts),
+            "feedback_summary": feedback_summary,
+        }
+
+    def _get_report_dir(self, report_name: str) -> Path:
+        report_dir = self._reports_root / report_name
+        if not report_dir.is_dir():
+            raise FileNotFoundError(f"Replay report not found: {report_name}")
+        return report_dir
+
+    def _resolve_selection_artifact_root(self, report_dir: Path, session_summary: dict[str, Any]) -> Path | None:
+        artifact_root_value = (session_summary.get("artifacts") or {}).get("selection_artifact_root")
+        if artifact_root_value:
+            artifact_root = Path(str(artifact_root_value))
+            if artifact_root.exists():
+                return artifact_root
+        fallback_root = report_dir / "selection_artifacts"
+        return fallback_root if fallback_root.exists() else None
+
     def _read_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             raise FileNotFoundError(path)
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _read_text(self, path: Path) -> str:
+        if not path.exists():
+            raise FileNotFoundError(path)
+        return path.read_text(encoding="utf-8")
+
+    def _sync_session_feedback_summary(self, *, report_dir: Path, directory_summary: Any, summary_path: Path) -> None:
+        session_summary_path = report_dir / "session_summary.json"
+        if not session_summary_path.exists():
+            return
+        session_summary = self._read_json(session_summary_path)
+        artifacts = session_summary.setdefault("artifacts", {})
+        artifacts["research_feedback_summary"] = str(summary_path)
+        session_summary["research_feedback_summary"] = directory_summary.model_dump(mode="json")
+        session_summary_path.write_text(json.dumps(session_summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():

@@ -118,11 +118,14 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     assert artifacts.daily_events_path.exists()
     assert artifacts.timing_log_path.exists()
     assert artifacts.summary_path.exists()
+    assert artifacts.selection_artifact_root.exists()
+    assert artifacts.feedback_summary_path.exists()
 
     lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert lines
     assert lines[0]["event"] == "paper_trading_day"
     assert "current_plan" in lines[0]
+    assert lines[0]["current_plan"]["selection_artifacts"]["write_status"] == "success"
     assert lines[0]["execution_plan_provenance"] == [
         {
             "trade_date": "20240301",
@@ -139,6 +142,7 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     timing_lines = [json.loads(line) for line in artifacts.timing_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     day_timing = next(line for line in timing_lines if line.get("event") == "pipeline_day_timing" and line.get("trade_date") == "20240301")
     assert day_timing["execution_plan_provenance"] == lines[0]["execution_plan_provenance"]
+    assert day_timing["current_plan"]["selection_artifacts"]["write_status"] == "success"
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["mode"] == "paper_trading"
@@ -180,8 +184,12 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         "by_provider": {},
         "context_breakdown": [],
     }
+    assert summary["research_feedback_summary"]["feedback_file_count"] >= 1
+    assert summary["research_feedback_summary"]["trade_date_count"] >= 1
     assert summary["daily_event_stats"]["day_count"] >= 1
     assert summary["artifacts"]["summary"] == str(artifacts.summary_path)
+    assert summary["artifacts"]["selection_artifact_root"] == str(artifacts.selection_artifact_root)
+    assert summary["artifacts"]["research_feedback_summary"] == str(artifacts.feedback_summary_path)
     assert summary["artifacts"]["llm_metrics_summary"] == str(metrics_summary_path)
     assert summary["artifacts"]["llm_metrics_jsonl"] == str(metrics_jsonl_path)
 

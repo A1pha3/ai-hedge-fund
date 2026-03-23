@@ -24,7 +24,7 @@ def test_render_selection_review_contains_key_sections():
                         {"name": "trend", "weight": 0.3, "source": "market_state.adjusted_weights"},
                     ]
                 },
-                execution_bridge={"included_in_buy_orders": True},
+                execution_bridge={"included_in_buy_orders": False, "block_reason": "blocked_by_reentry_score_confirmation", "constraint_binding": "score", "reentry_review_until": "20260312"},
                 research_prompts={
                     "why_selected": ["Layer B 综合分数高"],
                     "what_to_check": ["确认逻辑不是事件噪声"],
@@ -45,6 +45,8 @@ def test_render_selection_review_contains_key_sections():
     assert "# 选股审查日报 - 2026-03-22" in markdown
     assert "## 今日入选股票" in markdown
     assert "000001" in markdown
+    assert "buy_order_blocker: blocked_by_reentry_score_confirmation (binding=score)" in markdown
+    assert "reentry_review_until: 20260312" in markdown
     assert "Layer B 因子摘要" in markdown
     assert "trend: weight=0.3000" in markdown
     assert "## 接近入选但落选" in markdown
