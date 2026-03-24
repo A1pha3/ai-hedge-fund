@@ -18,6 +18,15 @@ data/reports/gate_experiment_smoke_20260205_20260323/
 data/reports/gate_experiment_smoke_warning_20260205_20260324/
 data/reports/gate_experiment_w1_20260202_20260313_20260323/
 data/reports/execution_probe_fixed_watchlist_20260324/
+data/reports/fresh_rerun_20260206_fast_0375_20260324/
+data/reports/fresh_rerun_20260224_fast_0375_20260324/
+data/reports/fresh_rerun_20260225_fast_0375_20260324/
+data/reports/fresh_rerun_20260304_20260305_fast_0375_exec021_20260324/
+data/reports/fresh_rerun_20260304_20260305_fast_0375_exec0225_20260324/
+data/reports/fresh_rerun_20260304_20260306_fast_0375_exec021_20260324/
+data/reports/fresh_rerun_20260304_20260306_fast_0375_exec0225_20260324/
+data/reports/fresh_rerun_20260310_fast_0375_20260324/
+data/reports/fresh_rerun_20260311_fast_0375_20260324/
 
 # Python
 __pycache__/

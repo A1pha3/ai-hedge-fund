@@ -1,18 +1,93 @@
+import hashlib
+import json
 import os
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from src.data.enhanced_cache import get_enhanced_cache
 from src.data.models import FinancialMetrics, InsiderTrade, LineItem, Price
 
 _pro = None
 _stock_name_cache: Dict[str, str] = {}
+_persistent_cache = get_enhanced_cache()
 
 # Tushare 原始 DataFrame 内存缓存 — 同一次运行内复用，避免多 Agent 并行重复请求
 _tushare_df_cache: Dict[str, pd.DataFrame] = {}
 _tushare_df_cache_lock = threading.Lock()
+
+
+def _normalize_tushare_cache_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _normalize_tushare_cache_value(inner_value) for key, inner_value in sorted(value.items()) if inner_value is not None}
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_tushare_cache_value(item) for item in value]
+    return value
+
+
+def _make_tushare_query_cache_key(api_name: str, **kwargs) -> str:
+    normalized_payload = {
+        "api_name": api_name,
+        "params": _normalize_tushare_cache_value(kwargs),
+    }
+    payload = json.dumps(normalized_payload, sort_keys=True, ensure_ascii=True, default=str)
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()
+    return f"tushare_df:{api_name}:{digest}"
+
+
+def _resolve_tushare_cache_ttl(api_name: str, **kwargs) -> int:
+    reference_date = str(kwargs.get("trade_date") or kwargs.get("end_date") or kwargs.get("ann_date") or "")
+    today = datetime.now().strftime("%Y%m%d")
+    is_historical = bool(reference_date) and reference_date < today
+
+    if api_name in {"daily", "daily_basic", "limit_list_d", "suspend_d", "trade_cal"}:
+        return 30 * 86400 if is_historical else 6 * 3600
+    if api_name in {"stock_basic", "index_classify", "index_member"}:
+        return 7 * 86400
+    if api_name in {"fina_indicator", "cashflow", "balancesheet", "income"}:
+        return 14 * 86400
+    if api_name == "stk_holdertrade":
+        return 24 * 3600
+    return 24 * 3600
+
+
+def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl: Optional[int] = None, **kwargs) -> Optional[pd.DataFrame]:
+    """带进程内 + 持久化缓存的通用 Tushare DataFrame 调用。"""
+    cache_key = _make_tushare_query_cache_key(api_name, **kwargs)
+
+    with _tushare_df_cache_lock:
+        cached_df = _tushare_df_cache.get(cache_key)
+        if cached_df is not None:
+            return cached_df.copy()
+
+    persisted_df = _persistent_cache.get(cache_key)
+    if isinstance(persisted_df, pd.DataFrame):
+        with _tushare_df_cache_lock:
+            _tushare_df_cache[cache_key] = persisted_df
+        return persisted_df.copy()
+
+    api_func = getattr(pro, api_name, None)
+    if api_func is None:
+        return None
+
+    try:
+        df = api_func(**kwargs)
+    except Exception as e:
+        print(f"[Tushare] API {api_name}({kwargs}) 调用失败: {e}")
+        return None
+
+    if dedupe and df is not None and not df.empty:
+        df = _dedupe_tushare_df(df)
+
+    if df is not None:
+        with _tushare_df_cache_lock:
+            _tushare_df_cache[cache_key] = df
+        _persistent_cache.set(cache_key, df, ttl=ttl if ttl is not None else _resolve_tushare_cache_ttl(api_name, **kwargs))
+        return df.copy()
+
+    return None
 
 
 def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: bool = False) -> Optional[pd.DataFrame]:
@@ -23,55 +98,7 @@ def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: b
     limit 取已缓存和请求中的较大值，确保不会因 limit 不同而丢失数据。
     重新获取失败时，保留已有的有效缓存（防止空数据覆盖有效数据）。
     """
-    cache_key = f"{ts_code}_{api_name}"
-
-    with _tushare_df_cache_lock:
-        if cache_key in _tushare_df_cache:
-            cached_df = _tushare_df_cache[cache_key]
-            if cached_df is not None and len(cached_df) >= limit:
-                return cached_df.copy()
-            # 已缓存但数据量不足，需要重新获取更多
-            fetch_limit = max(limit, len(cached_df) if cached_df is not None else 0)
-        else:
-            fetch_limit = limit
-
-    # 实际请求 Tushare
-    api_func = getattr(pro, api_name, None)
-    if api_func is None:
-        # API 不存在，返回已有缓存（如果有）
-        with _tushare_df_cache_lock:
-            existing = _tushare_df_cache.get(cache_key)
-            if existing is not None and not existing.empty:
-                return existing.copy()
-        return None
-
-    try:
-        df = api_func(ts_code=ts_code, limit=fetch_limit)
-    except Exception as e:
-        print(f"[Tushare] API {api_name}({ts_code}) 调用失败: {e}")
-        # 请求失败时返回已有缓存
-        with _tushare_df_cache_lock:
-            existing = _tushare_df_cache.get(cache_key)
-            if existing is not None and not existing.empty:
-                return existing.copy()
-        return None
-
-    if dedupe and df is not None and not df.empty:
-        df = _dedupe_tushare_df(df)
-
-    with _tushare_df_cache_lock:
-        if df is not None and not df.empty:
-            # 新数据有效，更新缓存
-            _tushare_df_cache[cache_key] = df
-        else:
-            # 重新获取返回空数据，保留已有有效缓存
-            existing = _tushare_df_cache.get(cache_key)
-            if existing is not None and not existing.empty:
-                return existing.copy()
-            # 首次获取也为空，缓存空结果
-            _tushare_df_cache[cache_key] = df
-
-    return df.copy() if df is not None else None
+    return _cached_tushare_dataframe_call(pro, api_name, ts_code=ts_code, limit=limit, dedupe=dedupe)
 
 
 def _get_pro():
@@ -133,7 +160,7 @@ def get_stock_name(ticker: str) -> str:
 
     try:
         ts_code = _to_ts_code(ticker)
-        df = pro.stock_basic(ts_code=ts_code, fields="ts_code,name")
+        df = _cached_tushare_dataframe_call(pro, "stock_basic", ts_code=ts_code, fields="ts_code,name")
         if df is not None and not df.empty:
             name = str(df.iloc[0]["name"])
             _stock_name_cache[ticker] = name
@@ -157,7 +184,7 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
         start_fmt = start_date.replace("-", "")
         end_fmt = end_date.replace("-", "")
         print(f"[Tushare] 调用 daily API: ts_code={ts_code}, start_date={start_fmt}, end_date={end_fmt}")
-        df = pro.daily(ts_code=ts_code, start_date=start_fmt, end_date=end_fmt)
+        df = _cached_tushare_dataframe_call(pro, "daily", ts_code=ts_code, start_date=start_fmt, end_date=end_fmt)
         print(f"[Tushare] 返回数据: {df.shape if df is not None else 'None'}")
         if df is None or df.empty:
             return []
@@ -197,15 +224,15 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
     try:
         trade_fmt = trade_date.replace("-", "")
         fields = "ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg"
-        df = pro.daily(trade_date=trade_fmt, fields=fields)
+        df = _cached_tushare_dataframe_call(pro, "daily", trade_date=trade_fmt, fields=fields)
         if df is None or df.empty:
             try:
                 end_dt = datetime.strptime(trade_fmt, "%Y%m%d")
                 start_dt = end_dt - timedelta(days=30)
-                df_cal = pro.trade_cal(exchange="", start_date=start_dt.strftime("%Y%m%d"), end_date=trade_fmt, is_open=1, fields="cal_date,is_open")
+                df_cal = _cached_tushare_dataframe_call(pro, "trade_cal", exchange="", start_date=start_dt.strftime("%Y%m%d"), end_date=trade_fmt, is_open=1, fields="cal_date,is_open")
                 if df_cal is not None and not df_cal.empty:
                     last_open = str(df_cal.iloc[-1]["cal_date"])
-                    df = pro.daily(trade_date=last_open, fields=fields)
+                    df = _cached_tushare_dataframe_call(pro, "daily", trade_date=last_open, fields=fields)
             except Exception:
                 df = None
         if df is None or df.empty:
@@ -225,7 +252,7 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
         list_date_map: dict[str, str] = {}
         st_codes: set[str] = set()
         if include_name:
-            df_basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name,area,industry,market,list_date")
+            df_basic = _cached_tushare_dataframe_call(pro, "stock_basic", exchange="", list_status="L", fields="ts_code,name,area,industry,market,list_date")
             if df_basic is not None and not df_basic.empty:
                 name_map = {str(row["ts_code"]): str(row["name"]) for _, row in df_basic.iterrows()}
                 st_codes = {str(row["ts_code"]) for _, row in df_basic.iterrows() if "ST" in str(row["name"]).upper()}
@@ -395,7 +422,14 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
 
         # 补充默认字段集不包含的字段（inv_turn, dp_dt_ratio 不在默认返回中）
         try:
-            df_extra = pro.fina_indicator(ts_code=ts_code, limit=fetch_limit, fields="ts_code,end_date,inv_turn,dp_dt_ratio")
+            df_extra = _cached_tushare_dataframe_call(
+                pro,
+                "fina_indicator",
+                ts_code=ts_code,
+                limit=fetch_limit,
+                fields="ts_code,end_date,inv_turn,dp_dt_ratio",
+                dedupe=True,
+            )
             if df_extra is not None and not df_extra.empty:
                 extra_cols = [c for c in df_extra.columns if c not in df_fin.columns]
                 if extra_cols:
@@ -1371,7 +1405,7 @@ def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_dat
             start_fmt = start_date.replace("-", "")
             kwargs["start_date"] = start_fmt
 
-        df = pro.stk_holdertrade(**kwargs)
+        df = _cached_tushare_dataframe_call(pro, "stk_holdertrade", **kwargs)
         if df is None or df.empty:
             return []
 
@@ -1473,7 +1507,7 @@ def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
         ts_code = _to_ts_code(ticker)
         
         # 获取基本信息
-        df_basic = pro.stock_basic(ts_code=ts_code, fields="ts_code,name,area,industry,market,list_date")
+        df_basic = _cached_tushare_dataframe_call(pro, "stock_basic", ts_code=ts_code, fields="ts_code,name,area,industry,market,list_date")
         basic_info = {
             "name": ticker,
             "area": "N/A",
@@ -1499,10 +1533,10 @@ def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
         
         if trade_date is None:
             # 获取最新日期的数据
-            df_daily = pro.daily(ts_code=ts_code, limit=1, fields="trade_date,close,pre_close,pct_chg")
+            df_daily = _cached_tushare_dataframe_call(pro, "daily", ts_code=ts_code, limit=1, fields="trade_date,close,pre_close,pct_chg")
         else:
             # 获取指定日期的数据
-            df_daily = pro.daily(trade_date=trade_date, ts_code=ts_code, fields="trade_date,close,pre_close,pct_chg")
+            df_daily = _cached_tushare_dataframe_call(pro, "daily", trade_date=trade_date, ts_code=ts_code, fields="trade_date,close,pre_close,pct_chg")
         
         if df_daily is not None and not df_daily.empty:
             row = df_daily.iloc[0]
@@ -1557,10 +1591,13 @@ def get_all_stock_basic() -> Optional[pd.DataFrame]:
         return None
 
     try:
-        df = pro.stock_basic(
+        df = _cached_tushare_dataframe_call(
+            pro,
+            "stock_basic",
             exchange="",
             list_status="L",
             fields="ts_code,symbol,name,area,industry,market,list_date,list_status,is_hs",
+            ttl=7 * 86400,
         )
         if df is not None and not df.empty:
             with _stock_basic_cache_lock:
@@ -1593,7 +1630,9 @@ def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
         return None
 
     try:
-        df = pro.daily_basic(
+        df = _cached_tushare_dataframe_call(
+            pro,
+            "daily_basic",
             trade_date=trade_date,
             fields="ts_code,trade_date,close,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm,"
                    "dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv",
@@ -1629,10 +1668,10 @@ def get_sw_industry_classification() -> Optional[Dict[str, str]]:
         import time
 
         # 获取申万一级行业列表
-        index_df = pro.index_classify(level="L1", src="SW2021")
+        index_df = _cached_tushare_dataframe_call(pro, "index_classify", level="L1", src="SW2021", ttl=7 * 86400)
         if index_df is None or index_df.empty:
             # 尝试旧版：SW2014
-            index_df = pro.index_classify(level="L1", src="SW2014")
+            index_df = _cached_tushare_dataframe_call(pro, "index_classify", level="L1", src="SW2014", ttl=7 * 86400)
         if index_df is None or index_df.empty:
             print("[Tushare] 无法获取申万行业分类")
             return None
@@ -1643,7 +1682,7 @@ def get_sw_industry_classification() -> Optional[Dict[str, str]]:
             industry_name = str(row["industry_name"])
             try:
                 time.sleep(0.35)  # tushare 限流：200次/分钟
-                member_df = pro.index_member(index_code=index_code)
+                member_df = _cached_tushare_dataframe_call(pro, "index_member", index_code=index_code, ttl=7 * 86400)
                 if member_df is not None and not member_df.empty:
                     for _, m_row in member_df.iterrows():
                         con_code = str(m_row["con_code"])
@@ -1685,7 +1724,7 @@ def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
         return None
 
     try:
-        df = pro.limit_list_d(trade_date=trade_date)
+        df = _cached_tushare_dataframe_call(pro, "limit_list_d", trade_date=trade_date)
         if df is not None and not df.empty:
             with _tushare_df_cache_lock:
                 _tushare_df_cache[cache_key] = df
@@ -1715,7 +1754,7 @@ def get_suspend_list(trade_date: str) -> Optional[pd.DataFrame]:
         return None
 
     try:
-        df = pro.suspend_d(trade_date=trade_date)
+        df = _cached_tushare_dataframe_call(pro, "suspend_d", trade_date=trade_date)
         if df is not None and not df.empty:
             with _tushare_df_cache_lock:
                 _tushare_df_cache[cache_key] = df

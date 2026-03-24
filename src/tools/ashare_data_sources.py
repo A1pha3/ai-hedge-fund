@@ -84,6 +84,7 @@ class TushareDataSource(BaseDataSource):
 
         try:
             from src.tools.akshare_api import AShareTicker
+            from src.tools.tushare_api import _cached_tushare_dataframe_call
 
             ashare = AShareTicker.from_symbol(ticker)
 
@@ -91,7 +92,7 @@ class TushareDataSource(BaseDataSource):
             start_date_fmt = start_date.replace("-", "")
             end_date_fmt = end_date.replace("-", "")
 
-            df = cls._pro.daily(ts_code=ts_code, start_date=start_date_fmt, end_date=end_date_fmt)
+            df = _cached_tushare_dataframe_call(cls._pro, "daily", ts_code=ts_code, start_date=start_date_fmt, end_date=end_date_fmt)
 
             if df.empty:
                 raise DataSourceError(f"Tushare 返回空数据: {ticker}")

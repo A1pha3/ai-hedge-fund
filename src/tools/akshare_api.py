@@ -10,13 +10,15 @@ A股数据接口模块 - 使用 AKShare 获取中国股票数据
 """
 
 import datetime
+import hashlib
+import json
 import os
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from pydantic import BaseModel
 
-from src.data.enhanced_cache import get_cache
+from src.data.enhanced_cache import get_cache, get_enhanced_cache
 from src.data.models import (
     CompanyNews,
     FinancialMetrics,
@@ -27,6 +29,7 @@ from src.data.models import (
 
 # Global cache instance
 _cache = get_cache()
+_persistent_cache = get_enhanced_cache()
 
 # AKShare 是否可用标志
 _akshare_available = False
@@ -44,6 +47,52 @@ class AShareDataError(Exception):
     """A股数据获取错误"""
 
     pass
+
+
+def _normalize_akshare_cache_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _normalize_akshare_cache_value(inner_value) for key, inner_value in sorted(value.items()) if inner_value is not None}
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_akshare_cache_value(item) for item in value]
+    return value
+
+
+def _make_akshare_df_cache_key(api_name: str, **kwargs) -> str:
+    payload = json.dumps({"api_name": api_name, "params": _normalize_akshare_cache_value(kwargs)}, sort_keys=True, ensure_ascii=True, default=str)
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()
+    return f"akshare_df:{api_name}:{digest}"
+
+
+def _resolve_akshare_cache_ttl(api_name: str, **kwargs) -> int:
+    reference_date = str(kwargs.get("end_date") or kwargs.get("start_date") or "")
+    today = datetime.datetime.now().strftime("%Y%m%d")
+    is_historical = bool(reference_date) and reference_date < today
+
+    if api_name in {"stock_zh_a_hist"}:
+        return 30 * 86400 if is_historical else 6 * 3600
+    if api_name in {"stock_financial_analysis_indicator", "stock_financial_report_sina"}:
+        return 14 * 86400
+    if api_name in {"stock_news_em"}:
+        return 6 * 3600
+    return 24 * 3600
+
+
+def _cached_akshare_dataframe_call(api_name: str, func, ttl: Optional[int] = None, **kwargs) -> Optional[pd.DataFrame]:
+    cache_key = _make_akshare_df_cache_key(api_name, **kwargs)
+    cached_df = _persistent_cache.get(cache_key)
+    if isinstance(cached_df, pd.DataFrame):
+        return cached_df.copy()
+
+    try:
+        df = func(**kwargs)
+    except Exception:
+        raise
+
+    if df is not None:
+        _persistent_cache.set(cache_key, df, ttl=ttl if ttl is not None else _resolve_akshare_cache_ttl(api_name, **kwargs))
+        return df.copy()
+
+    return None
 
 
 class AShareTicker(BaseModel):
@@ -379,9 +428,17 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
 
         # 尝试使用 AKShare 获取数据
         try:
-            df = ak_module.stock_zh_a_hist(symbol=ashare.symbol, period=period, start_date=start_date_fmt, end_date=end_date_fmt, adjust="qfq")
+            df = _cached_akshare_dataframe_call(
+                "stock_zh_a_hist",
+                ak_module.stock_zh_a_hist,
+                symbol=ashare.symbol,
+                period=period,
+                start_date=start_date_fmt,
+                end_date=end_date_fmt,
+                adjust="qfq",
+            )
 
-            if not df.empty:
+            if df is not None and not df.empty:
                 prices = []
                 for _, row in df.iterrows():
                     price = Price(time=row["日期"], open=float(row["开盘"]), high=float(row["最高"]), low=float(row["最低"]), close=float(row["收盘"]), volume=int(row["成交量"]))
@@ -448,14 +505,14 @@ def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_mock:
         ashare = AShareTicker.from_symbol(ticker)
 
         # 尝试使用 stock_financial_analysis_indicator 获取主要财务指标
-        df = ak_module.stock_financial_analysis_indicator(symbol=ashare.symbol)
+        df = _cached_akshare_dataframe_call("stock_financial_analysis_indicator", ak_module.stock_financial_analysis_indicator, symbol=ashare.symbol)
 
         # 如果返回空数据，尝试使用 stock_financial_report_sina 接口
-        if df.empty:
+        if df is None or df.empty:
             # 使用新浪财务数据接口，对科创板等股票更可靠
-            df_profit = ak_module.stock_financial_report_sina(stock=ashare.symbol, symbol="利润表")
+            df_profit = _cached_akshare_dataframe_call("stock_financial_report_sina", ak_module.stock_financial_report_sina, stock=ashare.symbol, symbol="利润表")
 
-            if df_profit.empty:
+            if df_profit is None or df_profit.empty:
                 raise AShareDataError(f"无法获取股票 {ticker} 的财务数据（AKShare 返回空数据）。\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
 
             # 从新浪接口数据中提取财务指标
@@ -1078,7 +1135,7 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
         if symbol.startswith(("sh", "sz", "bj")):
             symbol = symbol[2:]
 
-        df = ak.stock_news_em(symbol=symbol)
+        df = _cached_akshare_dataframe_call("stock_news_em", ak.stock_news_em, symbol=symbol)
         if df is None or df.empty:
             return []
 

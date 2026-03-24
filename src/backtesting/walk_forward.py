@@ -6,7 +6,7 @@ from typing import Callable, Sequence
 
 from dateutil.relativedelta import relativedelta
 
-from src.tools.tushare_api import _get_pro
+from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
 from .types import PerformanceMetrics
 
@@ -73,7 +73,9 @@ def _truncate_test_end_by_trading_days(test_start: datetime, test_end: datetime,
     if pro is None:
         raise RuntimeError("Tushare trade calendar is required when max_test_trading_days is set")
 
-    df = pro.trade_cal(
+    df = _cached_tushare_dataframe_call(
+        pro,
+        "trade_cal",
         exchange="",
         start_date=test_start.strftime("%Y%m%d"),
         end_date=test_end.strftime("%Y%m%d"),

@@ -28,6 +28,7 @@ import pandas as pd
 from src.screening.models import CandidateStock
 from src.tools.tushare_api import (
     _get_pro,
+    _cached_tushare_dataframe_call,
     _to_ts_code,
     get_all_stock_basic,
     get_daily_basic_batch,
@@ -132,7 +133,9 @@ def _get_avg_amount_20d(pro, ts_code: str, trade_date: str) -> float:
         # 使用 daily 接口获取近 20 日成交额
         end_dt = datetime.strptime(trade_date, "%Y%m%d")
         start_dt = end_dt - timedelta(days=35)  # 多取几天确保覆盖 20 个交易日
-        df = pro.daily(
+        df = _cached_tushare_dataframe_call(
+            pro,
+            "daily",
             ts_code=ts_code,
             start_date=start_dt.strftime("%Y%m%d"),
             end_date=trade_date,
@@ -154,7 +157,9 @@ def _get_recent_open_dates(pro, trade_date: str, lookback_sessions: int = 20) ->
     try:
         end_dt = datetime.strptime(trade_date, "%Y%m%d")
         start_dt = end_dt - timedelta(days=45)
-        df_cal = pro.trade_cal(
+        df_cal = _cached_tushare_dataframe_call(
+            pro,
+            "trade_cal",
             exchange="",
             start_date=start_dt.strftime("%Y%m%d"),
             end_date=trade_date,
@@ -179,7 +184,7 @@ def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_
 
     for open_date in recent_open_dates:
         try:
-            df = pro.daily(trade_date=open_date, fields="ts_code,amount")
+            df = _cached_tushare_dataframe_call(pro, "daily", trade_date=open_date, fields="ts_code,amount")
         except Exception:
             return {}
         if df is None or df.empty:
