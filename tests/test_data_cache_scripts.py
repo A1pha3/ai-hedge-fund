@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from scripts import manage_data_cache, validate_data_cache_reuse
+from scripts import benchmark_data_cache_reuse, manage_data_cache, validate_data_cache_reuse
 from src.data import enhanced_cache as enhanced_cache_module
 from src.data.enhanced_cache import DiskCache, EnhancedCache, clear_cache, diff_cache_stats, get_cache_runtime_info
 
@@ -49,6 +50,8 @@ def test_disk_cache_persists_across_instances_and_clear(tmp_path: Path):
 
     writer = DiskCache(path=str(cache_path), default_ttl=3600)
     writer.set("selection:test", {"rows": 3}, ttl=3600)
+    assert writer.count_entries() == 1
+    assert writer.get_file_size_bytes() > 0
 
     reader = DiskCache(path=str(cache_path), default_ttl=3600)
     assert reader.get("selection:test") == {"rows": 3}
@@ -76,10 +79,13 @@ def test_get_cache_runtime_info_and_clear_cache_use_temp_disk_path(tmp_path: Pat
     assert first_read == {"rows": 2}
     assert runtime_before_clear["disk_available"] is True
     assert runtime_before_clear["disk_path"] == str(cache_path)
+    assert runtime_before_clear["disk_entry_count"] == 1
+    assert runtime_before_clear["disk_file_size_bytes"] > 0
     assert runtime_before_clear["stats"]["sets"] == 1
     assert runtime_before_clear["stats"]["total_hits"] == 1
     assert reloaded_cache.get("selection:test") is None
     assert runtime_after_clear["disk_path"] == str(cache_path)
+    assert runtime_after_clear["disk_entry_count"] == 0
 
 
 def test_manage_data_cache_stats_command_writes_output(tmp_path, monkeypatch: pytest.MonkeyPatch):
@@ -88,6 +94,8 @@ def test_manage_data_cache_stats_command_writes_output(tmp_path, monkeypatch: py
         "redis_available": False,
         "disk_available": True,
         "disk_path": "/tmp/cache.sqlite",
+        "disk_entry_count": 12,
+        "disk_file_size_bytes": 4096,
         "stats": {"disk_hits": 6},
     }
     output_path = tmp_path / "cache_stats.json"
@@ -133,6 +141,8 @@ def test_manage_data_cache_main_prints_stats_json(monkeypatch: pytest.MonkeyPatc
         "redis_available": False,
         "disk_available": True,
         "disk_path": "/tmp/cache.sqlite",
+        "disk_entry_count": 12,
+        "disk_file_size_bytes": 4096,
         "stats": {"total_requests": 6},
     }
 
@@ -175,6 +185,8 @@ def test_validate_data_cache_reuse_main_writes_payload(tmp_path, monkeypatch: py
         "redis_available": False,
         "disk_available": True,
         "disk_path": "/tmp/cache.sqlite",
+        "disk_entry_count": 12,
+        "disk_file_size_bytes": 4096,
         "stats": {
             "lru_hits": 2,
             "redis_hits": 0,
@@ -233,3 +245,101 @@ def test_validate_data_cache_reuse_main_writes_payload(tmp_path, monkeypatch: py
         "suspend_list_rows": 0,
     }
     assert payload["stock_details"] == {"ticker": "300724", "trade_date": "20260324", "name": "捷佳伟创"}
+
+
+def test_benchmark_data_cache_reuse_builds_validation_command():
+    command = benchmark_data_cache_reuse._build_validation_command(
+        python_executable="/tmp/python",
+        repo_root=Path("/repo"),
+        trade_date="20260324",
+        ticker="300724",
+    )
+
+    assert command == [
+        "/tmp/python",
+        "/repo/scripts/validate_data_cache_reuse.py",
+        "--trade-date",
+        "20260324",
+        "--ticker",
+        "300724",
+    ]
+
+
+def test_benchmark_data_cache_reuse_summarizes_cold_and_warm_runs():
+    first_run = {
+        "session_stats": {"disk_hits": 0, "misses": 6, "sets": 6, "hit_rate": 0.0},
+        "result_shapes": {"stock_basic_rows": 3, "daily_basic_rows": 2, "limit_list_rows": 1, "suspend_list_rows": 0},
+    }
+    second_run = {
+        "session_stats": {"disk_hits": 6, "misses": 0, "sets": 0, "hit_rate": 1.0},
+        "result_shapes": {"stock_basic_rows": 3, "daily_basic_rows": 2, "limit_list_rows": 1, "suspend_list_rows": 0},
+    }
+
+    payload = benchmark_data_cache_reuse._summarize_benchmark(
+        first_run=first_run,
+        second_run=second_run,
+        trade_date="20260324",
+        ticker="300724",
+        clear_first=True,
+    )
+
+    assert payload["trade_date"] == "20260324"
+    assert payload["ticker"] == "300724"
+    assert payload["clear_first"] is True
+    assert payload["summary"] == {
+        "first_total_rows": 6,
+        "second_total_rows": 6,
+        "first_disk_hits": 0,
+        "second_disk_hits": 6,
+        "first_misses": 6,
+        "second_misses": 0,
+        "first_sets": 6,
+        "second_sets": 0,
+        "disk_hit_gain": 6,
+        "miss_reduction": 6,
+        "set_reduction": 6,
+        "first_hit_rate": 0.0,
+        "second_hit_rate": 1.0,
+        "reuse_confirmed": True,
+    }
+
+
+def test_benchmark_data_cache_reuse_main_runs_twice_and_writes_output(tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    output_path = tmp_path / "benchmark.json"
+    completed_runs = iter(
+        [
+            SimpleNamespace(returncode=0, stdout=json.dumps({"session_stats": {"disk_hits": 0, "misses": 6, "sets": 6, "hit_rate": 0.0}, "result_shapes": {"stock_basic_rows": 3, "daily_basic_rows": 2, "limit_list_rows": 1, "suspend_list_rows": 0}}), stderr=""),
+            SimpleNamespace(returncode=0, stdout=json.dumps({"session_stats": {"disk_hits": 6, "misses": 0, "sets": 0, "hit_rate": 1.0}, "result_shapes": {"stock_basic_rows": 3, "daily_basic_rows": 2, "limit_list_rows": 1, "suspend_list_rows": 0}}), stderr=""),
+        ]
+    )
+    clear_calls: list[str] = []
+    subprocess_commands: list[list[str]] = []
+
+    def _fake_run(command, cwd, env, capture_output, text, check):
+        subprocess_commands.append(command)
+        return next(completed_runs)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "benchmark_data_cache_reuse.py",
+            "--trade-date",
+            "20260324",
+            "--ticker",
+            "300724",
+            "--clear-first",
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr("scripts.benchmark_data_cache_reuse.clear_cache", lambda: clear_calls.append("cleared"))
+    monkeypatch.setattr("scripts.benchmark_data_cache_reuse.subprocess.run", _fake_run)
+
+    benchmark_data_cache_reuse.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == json.loads(output_path.read_text(encoding="utf-8"))
+    assert clear_calls == ["cleared"]
+    assert len(subprocess_commands) == 2
+    assert payload["summary"]["reuse_confirmed"] is True
+    assert payload["summary"]["disk_hit_gain"] == 6

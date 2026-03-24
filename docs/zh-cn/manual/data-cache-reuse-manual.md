@@ -66,6 +66,16 @@ DISK_CACHE_PATH=/custom/path/cache.sqlite
 6. `total_requests`：总请求数。
 7. `hit_rate`：总体命中率。
 
+除了 `stats` 之外，你还会直接看到两个磁盘体量字段：
+
+1. `disk_entry_count`：当前 SQLite cache 中有多少条记录。
+2. `disk_file_size_bytes`：当前 SQLite 文件大小。
+
+这两个字段适合回答两个很实际的问题：
+
+1. 缓存有没有随着实验逐步沉淀。
+2. 当前 cache 文件是否已经大到需要人工清理或迁移路径。
+
 如果你想把结果存档到 report 目录：
 
 ```bash
@@ -141,6 +151,24 @@ source .env && \
 2. 第二次运行：`disk_hits=6`, `misses=0`, `sets=0`, `hit_rate=1.0`
 
 这说明跨进程 SQLite 复用链路已经实际跑通。
+
+如果你不想手工执行两次并自己对比 JSON，可以直接运行 benchmark 脚本：
+
+```bash
+source .env && \
+.venv/bin/python scripts/benchmark_data_cache_reuse.py \
+  --trade-date 20260305 \
+  --ticker 300724 \
+  --clear-first \
+  --output data/reports/data_cache_benchmark_20260305.json
+```
+
+这个脚本会：
+
+1. 可选先清本地缓存。
+2. 跑一次 cold run。
+3. 再跑一次 warm run。
+4. 自动输出 `disk_hit_gain`、`miss_reduction`、`set_reduction` 与 `reuse_confirmed` 汇总字段。
 
 ---
 

@@ -373,6 +373,32 @@ class DiskCache:
         except Exception as e:
             logger.warning(f"Disk cache clear error: {e}")
 
+    def count_entries(self) -> int:
+        """返回当前磁盘缓存中的条目数。"""
+        if not self.is_available():
+            return 0
+        try:
+            conn = self._get_conn()
+            try:
+                cursor = conn.execute("SELECT COUNT(*) FROM cache")
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Disk cache count error: {e}")
+            return 0
+
+    def get_file_size_bytes(self) -> int:
+        """返回 SQLite 缓存文件大小。"""
+        if not self.is_available():
+            return 0
+        try:
+            return int(os.path.getsize(self._path)) if os.path.exists(self._path) else 0
+        except Exception as e:
+            logger.warning(f"Disk cache size error: {e}")
+            return 0
+
 
 class EnhancedCache:
     """
@@ -619,5 +645,7 @@ def get_cache_runtime_info() -> Dict[str, Any]:
         "redis_available": cache.redis.is_available(),
         "disk_available": cache.disk.is_available(),
         "disk_path": getattr(cache.disk, "_path", None),
+        "disk_entry_count": cache.disk.count_entries(),
+        "disk_file_size_bytes": cache.disk.get_file_size_bytes(),
         "stats": cache.get_stats(),
     }

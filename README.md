@@ -277,11 +277,24 @@ source .env && \
   --output data/reports/data_cache_reuse_20260305.json
 ```
 
+Run a cold-vs-warm benchmark summary in one command:
+
+```bash
+source .env && \
+.venv/bin/python scripts/benchmark_data_cache_reuse.py \
+  --trade-date 20260305 \
+  --ticker 300724 \
+  --clear-first \
+  --output data/reports/data_cache_benchmark_20260305.json
+```
+
 Interpretation guidelines:
 
 - The first run should usually show `misses` and `sets` increasing.
 - Re-running the exact same command should shift the session toward `disk_hits` with few or no new `misses`.
+- `manage_data_cache.py stats` now also reports `disk_entry_count` and `disk_file_size_bytes`, which is useful when you want to confirm the local cache is actually growing across experiments.
 - `session_summary.json` for paper-trading runs now also records `data_cache`, `data_cache.session_stats`, and `artifacts.data_cache_path` for later inspection.
+- `benchmark_data_cache_reuse.py` wraps the first and second runs into one JSON summary so you can compare cold-start vs warm-cache behavior without manual diffing.
 - For a Chinese quickstart focused on cache inspection and reuse validation, see `docs/zh-cn/manual/data-cache-reuse-manual.md`.
 
 If you are running under unstable quota conditions, increase concurrency gradually. In practice, moving from `2` to `3` is usually a safer step than jumping directly to `4` or higher.
