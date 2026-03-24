@@ -24,7 +24,10 @@ from src.data.cache import (
 from src.data.enhanced_cache import (
     CacheAdapter,
     EnhancedCache,
+    diff_cache_stats,
+    get_cache_runtime_info,
     get_enhanced_cache,
+    snapshot_cache_stats,
 )
 
 # 基础模型
@@ -91,6 +94,9 @@ __all__ = [
     "get_cache",
     "EnhancedCache",
     "CacheAdapter",
+    "snapshot_cache_stats",
+    "diff_cache_stats",
+    "get_cache_runtime_info",
     "get_enhanced_cache",
     # 验证和清洗
     "DataValidator",

@@ -186,10 +186,15 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     }
     assert summary["research_feedback_summary"]["feedback_file_count"] >= 1
     assert summary["research_feedback_summary"]["trade_date_count"] >= 1
+    assert summary["data_cache"]["disk_available"] is True
+    assert "stats" in summary["data_cache"]
+    assert "session_stats" in summary["data_cache"]
+    assert "hit_rate" in summary["data_cache"]["session_stats"]
     assert summary["daily_event_stats"]["day_count"] >= 1
     assert summary["artifacts"]["summary"] == str(artifacts.summary_path)
     assert summary["artifacts"]["selection_artifact_root"] == str(artifacts.selection_artifact_root)
     assert summary["artifacts"]["research_feedback_summary"] == str(artifacts.feedback_summary_path)
+    assert summary["artifacts"]["data_cache_path"] == summary["data_cache"]["disk_path"]
     assert summary["artifacts"]["llm_metrics_summary"] == str(metrics_summary_path)
     assert summary["artifacts"]["llm_metrics_jsonl"] == str(metrics_jsonl_path)
 

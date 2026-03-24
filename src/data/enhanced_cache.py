@@ -595,3 +595,29 @@ def get_cache_stats() -> Dict[str, int]:
     """
     cache = get_enhanced_cache()
     return cache.get_stats()
+
+
+def snapshot_cache_stats() -> Dict[str, int]:
+    """获取当前缓存统计快照，用于计算单次运行的增量。"""
+    return dict(get_cache_stats())
+
+
+def diff_cache_stats(before: Dict[str, int], after: Dict[str, int]) -> Dict[str, int | float]:
+    """计算缓存统计的增量值。"""
+    numeric_keys = ["lru_hits", "redis_hits", "disk_hits", "misses", "sets", "total_hits", "total_requests"]
+    delta = {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in numeric_keys}
+    total_requests = delta["total_requests"]
+    delta["hit_rate"] = round((delta["total_hits"] / total_requests), 4) if total_requests > 0 else 0.0
+    return delta
+
+
+def get_cache_runtime_info() -> Dict[str, Any]:
+    """获取缓存运行时信息，便于排查命中率和落盘位置。"""
+    cache = get_enhanced_cache()
+    return {
+        "lru_maxsize": cache.lru.maxsize,
+        "redis_available": cache.redis.is_available(),
+        "disk_available": cache.disk.is_available(),
+        "disk_path": getattr(cache.disk, "_path", None),
+        "stats": cache.get_stats(),
+    }

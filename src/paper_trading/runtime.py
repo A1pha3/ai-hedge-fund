@@ -8,6 +8,7 @@ from typing import Callable, Sequence
 
 from src.backtesting.engine import BacktestEngine
 from src.backtesting.types import PerformanceMetrics
+from src.data.enhanced_cache import diff_cache_stats, get_cache_runtime_info, snapshot_cache_stats
 from src.execution.daily_pipeline import DailyPipeline
 from src.llm.defaults import get_default_model_config
 from src.main import run_hedge_fund
@@ -236,6 +237,8 @@ def run_paper_trading_session(
             frozen_plan_source=str(frozen_plan_source_path),
         )
 
+    cache_stats_before_run = snapshot_cache_stats()
+
     recorder = JsonlPaperTradingRecorder(daily_events_path)
     engine = BacktestEngine(
         agent=agent,
@@ -266,6 +269,8 @@ def run_paper_trading_session(
     llm_route_provenance, llm_metrics_artifacts = _build_llm_route_provenance()
     llm_observability_summary = _build_llm_observability_summary(Path(llm_metrics_artifacts["llm_metrics_jsonl"]))
     execution_plan_provenance = _build_execution_plan_provenance_summary(getattr(engine, "_pipeline", None))
+    data_cache_summary = get_cache_runtime_info()
+    data_cache_summary["session_stats"] = diff_cache_stats(cache_stats_before_run, data_cache_summary.get("stats", {}))
 
     summary = {
         "mode": "paper_trading",
@@ -286,6 +291,7 @@ def run_paper_trading_session(
         "llm_route_provenance": llm_route_provenance,
         "execution_plan_provenance": execution_plan_provenance,
         "llm_observability_summary": llm_observability_summary,
+        "data_cache": data_cache_summary,
         "research_feedback_summary": research_feedback_summary,
         "daily_event_stats": {
             "day_count": recorder.day_count,
@@ -298,6 +304,7 @@ def run_paper_trading_session(
             "summary": str(summary_path),
             "selection_artifact_root": str(selection_artifact_root),
             "research_feedback_summary": str(feedback_summary_path),
+            "data_cache_path": data_cache_summary.get("disk_path"),
             **llm_metrics_artifacts,
         },
     }

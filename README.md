@@ -54,6 +54,7 @@ By using this software, you agree to use it solely for learning purposes.
       - [Run the AI Hedge Fund](#run-the-ai-hedge-fund)
       - [Run the Backtester](#run-the-backtester)
       - [Control Analyst Concurrency](#control-analyst-concurrency)
+        - [Track Data Cache](#track-data-cache)
     - [🖥️ Web Application](#️-web-application)
   - [How to Contribute](#how-to-contribute)
   - [Feature Requests](#feature-requests)
@@ -206,6 +207,11 @@ Run the supervisor so that all future restart attempts also keep the same concur
 .venv/bin/python scripts/supervise_ab_compare.py \
   --start-date 2025-12-01 --end-date 2026-03-04 \
   --train-months 2 --test-months 1 --step-months 1 \
+  --analyst-concurrency-limit 3 \
+  --report-file data/reports/ab_walk_forward_first_pilot.md \
+  --report-json data/reports/ab_walk_forward_first_pilot.json \
+  --first-reset '2026-03-08 05:00:00'
+```
 
 #### Track LLM Metrics
 
@@ -232,11 +238,51 @@ You can also save the aggregated result:
   logs/llm_metrics_20260310_183246.jsonl \
   --output data/reports/llm_metrics_summary.json
 ```
-  --analyst-concurrency-limit 3 \
-  --report-file data/reports/ab_walk_forward_first_pilot.md \
-  --report-json data/reports/ab_walk_forward_first_pilot.json \
-  --first-reset '2026-03-08 05:00:00'
+
+#### Track Data Cache
+
+Repeated stock-selection, replay, and backtesting windows often reuse the same Tushare and AKShare payloads. The project now persists hot market-data responses through the multi-layer cache in `src/data/enhanced_cache.py`, so overlapping reruns can hit the local SQLite cache instead of refetching from upstream providers.
+
+Default cache location:
+
+- `~/.cache/ai-hedge-fund/cache.sqlite`
+- Override with `DISK_CACHE_PATH=/custom/path/cache.sqlite`
+
+Inspect cache runtime info and counters:
+
+```bash
+.venv/bin/python scripts/manage_data_cache.py stats
 ```
+
+Write the same runtime payload to a file:
+
+```bash
+.venv/bin/python scripts/manage_data_cache.py stats \
+  --output data/reports/data_cache_stats.json
+```
+
+Clear the local cache explicitly:
+
+```bash
+.venv/bin/python scripts/manage_data_cache.py clear --yes
+```
+
+Validate cross-process reuse on a representative trade date:
+
+```bash
+source .env && \
+.venv/bin/python scripts/validate_data_cache_reuse.py \
+  --trade-date 20260305 \
+  --ticker 300724 \
+  --output data/reports/data_cache_reuse_20260305.json
+```
+
+Interpretation guidelines:
+
+- The first run should usually show `misses` and `sets` increasing.
+- Re-running the exact same command should shift the session toward `disk_hits` with few or no new `misses`.
+- `session_summary.json` for paper-trading runs now also records `data_cache`, `data_cache.session_stats`, and `artifacts.data_cache_path` for later inspection.
+- For a Chinese quickstart focused on cache inspection and reuse validation, see `docs/zh-cn/manual/data-cache-reuse-manual.md`.
 
 If you are running under unstable quota conditions, increase concurrency gradually. In practice, moving from `2` to `3` is usually a safer step than jumping directly to `4` or higher.
 
