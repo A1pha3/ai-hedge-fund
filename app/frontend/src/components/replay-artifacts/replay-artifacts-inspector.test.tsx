@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { ReplayArtifactsInspector } from '@/components/replay-artifacts/replay-artifacts-inspector';
-import type { ReplayArtifactDetail, ReplaySelectionArtifactDay } from '@/services/replay-artifact-api';
+import type { ReplayArtifactDetail, ReplaySelectionArtifactDay, ReplayFeedbackActivity } from '@/services/replay-artifact-api';
 
 const detail: ReplayArtifactDetail = {
   report_dir: '/tmp/reports/paper_trading_window_demo',
@@ -114,17 +114,108 @@ const selectionArtifactDetail: ReplaySelectionArtifactDay = {
   blocker_counts: [{ reason: 'position_blocked_score', count: 1 }],
 };
 
+const feedbackActivity: ReplayFeedbackActivity = {
+  report_name: 'paper_trading_window_demo',
+  reviewer: null,
+  limit: 8,
+  record_count: 2,
+  recent_records: [
+    {
+      report_name: 'paper_trading_window_demo',
+      trade_date: '2026-03-23',
+      symbol: '300724',
+      review_scope: 'watchlist',
+      reviewer: 'einstein',
+      review_status: 'final',
+      primary_tag: 'high_quality_selection',
+      tags: ['high_quality_selection', 'thesis_clear'],
+      confidence: 0.92,
+      research_verdict: 'selected_for_good_reason',
+      notes: 'clear thesis',
+      created_at: '2026-03-23T11:00:00+08:00',
+      feedback_path: '/tmp/reports/paper_trading_window_demo/selection_artifacts/2026-03-23/research_feedback.jsonl',
+    },
+    {
+      report_name: 'paper_trading_window_demo',
+      trade_date: '2026-03-20',
+      symbol: '002916',
+      review_scope: 'near_miss',
+      reviewer: 'curie',
+      review_status: 'draft',
+      primary_tag: 'threshold_false_negative',
+      tags: ['threshold_false_negative'],
+      confidence: 0.61,
+      research_verdict: 'needs_more_confirmation',
+      notes: 'near miss sample',
+      created_at: '2026-03-23T09:00:00+08:00',
+      feedback_path: '/tmp/reports/paper_trading_window_demo/selection_artifacts/2026-03-20/research_feedback.jsonl',
+    },
+  ],
+  review_status_counts: { final: 1, draft: 1 },
+  tag_counts: { high_quality_selection: 1, thesis_clear: 1, threshold_false_negative: 1 },
+  reviewer_counts: { einstein: 1, curie: 1 },
+  report_counts: { paper_trading_window_demo: 2 },
+  workflow_status_counts: { draft: 1, final: 1 },
+  workflow_queue: {
+    draft: [
+      {
+        report_name: 'paper_trading_window_demo',
+        trade_date: '2026-03-20',
+        symbol: '002916',
+        review_scope: 'near_miss',
+        reviewer: 'curie',
+        review_status: 'draft',
+        primary_tag: 'threshold_false_negative',
+        tags: ['threshold_false_negative'],
+        confidence: 0.61,
+        research_verdict: 'needs_more_confirmation',
+        notes: 'near miss sample',
+        created_at: '2026-03-23T09:00:00+08:00',
+        feedback_path: '/tmp/reports/paper_trading_window_demo/selection_artifacts/2026-03-20/research_feedback.jsonl',
+      },
+    ],
+    final: [
+      {
+        report_name: 'paper_trading_window_demo',
+        trade_date: '2026-03-23',
+        symbol: '300724',
+        review_scope: 'watchlist',
+        reviewer: 'einstein',
+        review_status: 'final',
+        primary_tag: 'high_quality_selection',
+        tags: ['high_quality_selection', 'thesis_clear'],
+        confidence: 0.92,
+        research_verdict: 'selected_for_good_reason',
+        notes: 'clear thesis',
+        created_at: '2026-03-23T11:00:00+08:00',
+        feedback_path: '/tmp/reports/paper_trading_window_demo/selection_artifacts/2026-03-23/research_feedback.jsonl',
+      },
+    ],
+    adjudicated: [],
+  },
+};
+
 describe('ReplayArtifactsInspector', () => {
   it('renders workspace inspector summaries and leaf file names', () => {
     render(
       <ReplayArtifactsInspector
         detail={detail}
         selectionArtifactDetail={selectionArtifactDetail}
+        feedbackActivity={feedbackActivity}
         isDetailLoading={false}
+        isActivityLoading={false}
       />,
     );
 
     expect(screen.getByText('Inspector')).toBeInTheDocument();
+    expect(screen.getByText('Feedback Activity')).toBeInTheDocument();
+    expect(screen.getByText('2 recent records')).toBeInTheDocument();
+    expect(screen.getByText('status final:1 | draft:1')).toBeInTheDocument();
+    expect(screen.getByText('draft:1 | final:1')).toBeInTheDocument();
+    expect(screen.getByText('Pending Draft Queue')).toBeInTheDocument();
+    expect(screen.getByText('near miss sample')).toBeInTheDocument();
+    expect(screen.getByText('high_quality_selection')).toBeInTheDocument();
+    expect(screen.getByText('clear thesis')).toBeInTheDocument();
     expect(screen.getByText('reuse confirmed | disk +6')).toBeInTheDocument();
     expect(screen.getByText('selection_snapshot.json')).toBeInTheDocument();
     expect(screen.getByText('selection_review.md')).toBeInTheDocument();

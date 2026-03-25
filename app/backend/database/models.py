@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, Float, UniqueConstraint
 from sqlalchemy.sql import func
 from .connection import Base
 
@@ -114,6 +114,74 @@ class ApiKey(Base):
     # Optional metadata
     description = Column(Text, nullable=True)  # Human-readable description
     last_used = Column(DateTime(timezone=True), nullable=True)  # Track usage
+
+
+class ReplayResearchFeedbackLedger(Base):
+    """Normalized ledger of replay research feedback for workflow-level queries."""
+
+    __tablename__ = "replay_research_feedback_ledger"
+    __table_args__ = (
+        UniqueConstraint(
+            "report_name",
+            "trade_date",
+            "symbol",
+            "reviewer",
+            "primary_tag",
+            "created_at",
+            name="uq_replay_feedback_ledger_record",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_name = Column(String(255), nullable=False, index=True)
+    trade_date = Column(String(32), nullable=False, index=True)
+    feedback_path = Column(Text, nullable=False)
+    run_id = Column(String(255), nullable=False)
+    artifact_version = Column(String(32), nullable=False)
+    label_version = Column(String(32), nullable=False)
+    symbol = Column(String(32), nullable=False, index=True)
+    review_scope = Column(String(64), nullable=False)
+    reviewer = Column(String(64), nullable=False, index=True)
+    review_status = Column(String(32), nullable=False, index=True)
+    primary_tag = Column(String(128), nullable=False, index=True)
+    tags = Column(JSON, nullable=True)
+    confidence = Column(Float, nullable=False, default=0.0)
+    research_verdict = Column(String(128), nullable=False, index=True)
+    notes = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    synced_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ReplayResearchFeedbackWorkflowItem(Base):
+    """Cross-report workflow queue state derived from the latest replay feedback record per sample."""
+
+    __tablename__ = "replay_research_feedback_workflow_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "report_name",
+            "trade_date",
+            "symbol",
+            "review_scope",
+            name="uq_replay_feedback_workflow_item",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_name = Column(String(255), nullable=False, index=True)
+    trade_date = Column(String(32), nullable=False, index=True)
+    symbol = Column(String(32), nullable=False, index=True)
+    review_scope = Column(String(64), nullable=False, index=True)
+    feedback_path = Column(Text, nullable=False)
+    latest_feedback_created_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    latest_reviewer = Column(String(64), nullable=False, index=True)
+    latest_review_status = Column(String(32), nullable=False, index=True)
+    latest_primary_tag = Column(String(128), nullable=False, index=True)
+    latest_tags = Column(JSON, nullable=True)
+    latest_research_verdict = Column(String(128), nullable=False, index=True)
+    latest_notes = Column(Text, nullable=False, default="")
+    assignee = Column(String(64), nullable=True, index=True)
+    workflow_status = Column(String(32), nullable=False, index=True, default="unassigned")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
  

@@ -131,3 +131,189 @@ def test_append_replay_selection_feedback_route_returns_400(monkeypatch) -> None
 
     assert response.status_code == 400
     assert "Symbol not found in selection snapshot" in response.json()["detail"]
+
+
+def test_append_replay_selection_feedback_batch_route_returns_payload(monkeypatch) -> None:
+    def _fake_append_selection_artifact_feedback_batch(self: ReplayArtifactService, **kwargs) -> dict:
+        assert kwargs["reviewer"] == "tester"
+        assert kwargs["symbols"] == ["300724", "002916"]
+        return {
+            "records": [
+                {
+                    "symbol": "300724",
+                    "review_scope": "watchlist",
+                    "reviewer": kwargs["reviewer"],
+                },
+                {
+                    "symbol": "002916",
+                    "review_scope": "near_miss",
+                    "reviewer": kwargs["reviewer"],
+                },
+            ],
+            "appended_count": 2,
+            "feedback_record_count": 2,
+            "feedback_summary": {"feedback_count": 2},
+            "directory_summary": {"overall": {"feedback_count": 2}},
+            "feedback_path": "/tmp/research_feedback.jsonl",
+        }
+
+    monkeypatch.setattr(ReplayArtifactService, "append_selection_artifact_feedback_batch", _fake_append_selection_artifact_feedback_batch)
+
+    client = _build_client()
+    response = client.post(
+        "/replay-artifacts/demo_report/selection-artifacts/2026-03-11/feedback/batch",
+        json={
+            "symbols": ["300724", "002916"],
+            "primary_tag": "threshold_false_negative",
+            "research_verdict": "needs_weekly_review",
+            "tags": ["thesis_clear"],
+            "review_status": "draft",
+            "confidence": 0.55,
+            "notes": "weekly batch triage",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["feedback"]
+    assert payload["appended_count"] == 2
+    assert payload["records"][0]["symbol"] == "300724"
+    assert payload["records"][1]["review_scope"] == "near_miss"
+
+
+def test_get_replay_feedback_activity_route_returns_payload(monkeypatch) -> None:
+    def _fake_get_feedback_activity(self: ReplayArtifactService, **kwargs) -> dict:
+        assert kwargs["report_name"] == "demo_report"
+        assert kwargs["reviewer"] == "tester"
+        assert kwargs["limit"] == 5
+        return {
+            "report_name": "demo_report",
+            "reviewer": "tester",
+            "limit": 5,
+            "record_count": 1,
+            "recent_records": [
+                {
+                    "report_name": "demo_report",
+                    "trade_date": "2026-03-11",
+                    "symbol": "300724",
+                    "reviewer": "tester",
+                    "review_status": "final",
+                    "primary_tag": "high_quality_selection",
+                    "tags": ["high_quality_selection"],
+                    "confidence": 0.82,
+                    "research_verdict": "selected_for_good_reason",
+                    "notes": "looks good",
+                    "created_at": "2026-03-23T10:00:00+08:00",
+                    "review_scope": "watchlist",
+                    "feedback_path": "/tmp/research_feedback.jsonl",
+                }
+            ],
+            "review_status_counts": {"final": 1},
+            "tag_counts": {"high_quality_selection": 1},
+            "reviewer_counts": {"tester": 1},
+            "report_counts": {"demo_report": 1},
+        }
+
+    monkeypatch.setattr(ReplayArtifactService, "get_feedback_activity", _fake_get_feedback_activity)
+
+    client = _build_client()
+    response = client.get("/replay-artifacts/feedback-activity", params={"report_name": "demo_report", "reviewer": "tester", "limit": 5})
+
+    assert response.status_code == 200
+    payload = response.json()["activity"]
+    assert payload["record_count"] == 1
+    assert payload["recent_records"][0]["symbol"] == "300724"
+
+
+def test_get_replay_workflow_queue_route_returns_payload(monkeypatch) -> None:
+    def _fake_list_workflow_queue(self: ReplayArtifactService, **kwargs) -> dict:
+        assert kwargs["assignee"] == "einstein"
+        assert kwargs["workflow_status"] == "assigned"
+        assert kwargs["report_name"] == "demo_report"
+        assert kwargs["limit"] == 5
+        return {
+            "assignee": "einstein",
+            "workflow_status": "assigned",
+            "report_name": "demo_report",
+            "limit": 5,
+            "item_count": 1,
+            "items": [
+                {
+                    "report_name": "demo_report",
+                    "trade_date": "2026-03-11",
+                    "symbol": "300724",
+                    "review_scope": "watchlist",
+                    "assignee": "einstein",
+                    "workflow_status": "assigned",
+                    "latest_review_status": "draft",
+                    "latest_primary_tag": "high_quality_selection",
+                    "latest_tags": ["high_quality_selection"],
+                    "latest_research_verdict": "selected_for_good_reason",
+                    "latest_notes": "needs owner",
+                    "latest_feedback_created_at": "2026-03-25T10:00:00+08:00",
+                    "latest_reviewer": "einstein",
+                    "feedback_path": "/tmp/research_feedback.jsonl",
+                }
+            ],
+            "workflow_status_counts": {"assigned": 1},
+            "assignee_counts": {"einstein": 1},
+            "report_counts": {"demo_report": 1},
+        }
+
+    monkeypatch.setattr(ReplayArtifactService, "list_workflow_queue", _fake_list_workflow_queue)
+
+    client = _build_client()
+    response = client.get(
+        "/replay-artifacts/workflow-queue",
+        params={"assignee": "einstein", "workflow_status": "assigned", "report_name": "demo_report", "limit": 5},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["queue"]
+    assert payload["item_count"] == 1
+    assert payload["items"][0]["assignee"] == "einstein"
+
+
+def test_update_replay_workflow_item_route_returns_payload(monkeypatch) -> None:
+    def _fake_update_workflow_item(self: ReplayArtifactService, **kwargs) -> dict:
+        assert kwargs["report_name"] == "demo_report"
+        assert kwargs["trade_date"] == "2026-03-11"
+        assert kwargs["symbol"] == "300724"
+        assert kwargs["review_scope"] == "watchlist"
+        assert kwargs["assignee"] == "einstein"
+        assert kwargs["workflow_status"] == "assigned"
+        return {
+            "report_name": "demo_report",
+            "trade_date": "2026-03-11",
+            "symbol": "300724",
+            "review_scope": "watchlist",
+            "assignee": "einstein",
+            "workflow_status": "assigned",
+            "latest_review_status": "draft",
+            "latest_primary_tag": "high_quality_selection",
+            "latest_tags": ["high_quality_selection"],
+            "latest_research_verdict": "selected_for_good_reason",
+            "latest_notes": "needs owner",
+            "latest_feedback_created_at": "2026-03-25T10:00:00+08:00",
+            "latest_reviewer": "einstein",
+            "feedback_path": "/tmp/research_feedback.jsonl",
+        }
+
+    monkeypatch.setattr(ReplayArtifactService, "update_workflow_item", _fake_update_workflow_item)
+
+    client = _build_client()
+    response = client.patch(
+        "/replay-artifacts/workflow-queue/item",
+        json={
+            "report_name": "demo_report",
+            "trade_date": "2026-03-11",
+            "symbol": "300724",
+            "review_scope": "watchlist",
+            "assignee": "einstein",
+            "workflow_status": "assigned",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["item"]
+    assert payload["assignee"] == "einstein"
+    assert payload["workflow_status"] == "assigned"

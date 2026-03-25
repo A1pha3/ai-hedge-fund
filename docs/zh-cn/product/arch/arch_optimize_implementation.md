@@ -7,7 +7,97 @@
 1. 记录目标设计。
 2. 记录当前已完成状态，避免文档与代码脱节。
 
-当前已完成事项：
+为避免继续把“主线迁移”和“后续增强”混在一起，当前收口状态先明确分成三层：
+
+### 0.1 收口状态总览
+
+#### 0.1.1 主线任务：已完成
+
+这里的主线特指：把 Replay Artifacts 从零散的 artifact/CLI 能力，推进到一个可直接使用的研究工作台。
+
+当前可以认为主线已经完成，判断标准如下：
+
+1. selection_artifacts 已在 backtesting / paper trading / live pipeline 的真实输出链路中稳定落盘，并能回填到 session_summary.json、daily_events.jsonl 与 pipeline_timings.jsonl。
+2. Replay Artifacts 已从“只可读文件/CLI”推进为“后端接口 + 前端工作台”闭环，用户可直接浏览 report、切换 trade_date、查看 selection_review、execution blocker、funnel diagnostics，并回写 research feedback。
+3. 前端工作台迁移已经完成，当前实现不再依赖手工翻 data/reports 或只停留在 settings 内嵌块才能完成最小研究闭环。
+4. 自动化验证已经覆盖 research、runtime、backend routes/services、frontend regression 与生产构建，说明这不是仅停留在演示层的迁移。
+
+试用验收执行入口见 [docs/zh-cn/manual/replay-artifacts-trial-acceptance-plan.md](docs/zh-cn/manual/replay-artifacts-trial-acceptance-plan.md)。
+
+#### 0.1.2 增强项：已完成首轮可用版本
+
+下列能力已经超出“迁移成功”本身，但现已具备首轮可用版本：
+
+1. feedback 标签治理、CLI、summary 聚合与 SQLite-backed ledger。
+2. Replay Artifacts inspector 中的 recent activity、review_status/tag/reviewer 聚合。
+3. Batch Label Workspace，用于多只 watchlist / near-miss 样本的批量反馈写入。
+4. report 级 workflow queue 与 pending draft queue。
+5. 跨 report 的 workflow ownership queue，以及 `Assign to me` / `Unassign` 归属入口。
+6. cache benchmark 摘要透传与页面可视化。
+7. 配套操作手册、标签规范、周度复盘与 backlog 映射文档。
+
+这些增强项说明当前系统已经不只是“迁移完成”，而是已经具备了最小可持续使用的研究工作台形态。
+
+#### 0.1.3 治理项：明确留待后续
+
+以下内容不再视为“本轮主线是否完成”的判断条件，而是后续是否继续投入的治理项：
+
+1. SLA、超时、升级路径、团队级人工工作流编排。
+2. 更高层真实生产条件下的人工作流验收。
+3. 历史 frozen replay 源在缺失原生 strategy_signals 时的 Layer B 解释精度继续提升。
+
+后续如果确实需要继续投入，应优先把这些项目视为第二阶段治理工程，而不是继续混入“工作台迁移是否成功”的判断。
+
+#### 0.1.4 第二阶段治理 Backlog：待按需启动
+
+如果后续确认需要继续推进，建议按下面顺序恢复，而不是再次从“是否还要继续做工作台”开始发散。
+
+P0：流程治理最小闭环
+
+1. 为 workflow item 增加 SLA 字段，例如 due_at、age_bucket、last_transition_at。
+2. 定义最小升级路径，例如 `unassigned -> assigned -> in_review -> ready_for_adjudication -> closed`，并明确谁可以推动状态迁移。
+3. 在 Cross-Report Workflow Queue 中增加逾期、即将到期、长时间无人认领等过滤能力。
+4. 输出最小审计轨迹，至少保留 assignee、workflow_status 的变更时间与操作者。
+
+P1：团队级运转能力
+
+1. 增加团队视角的队列摘要，例如按 assignee、status、report_name 的工作量分布。
+2. 增加周度复盘入口，把 `ready_for_adjudication` 样本稳定沉淀成固定 review 节奏。
+3. 明确 adjudication 结果如何映射回优化 backlog，避免停留在“有人看过”而不是“形成后续动作”。
+
+P2：生产条件验收
+
+1. 选一段真实使用窗口，验证多人协作下的 research feedback、batch label、queue ownership 与 adjudication 流程是否顺畅。
+2. 补充生产条件下的操作手册或 SOP，尤其是交接、认领、复核、关闭四类动作。
+3. 记录真实卡点，再决定是否要继续投入通知、提醒、权限或更复杂的任务系统。
+
+P3：历史解释精度补强
+
+1. 继续提高历史 frozen replay 源在缺失 strategy_signals 时的 Layer B 解释精度。
+2. 如果无法获得更高保真原始信号，则应明确区分“兼容解释”和“原始证据”，避免研究员误判其可信度。
+
+#### 0.1.5 当前建议动作：暂停新增开发，转入试用验收
+
+基于当前已实现状态，本文档建议当前阶段不要继续把 Replay Artifacts 当作“主线开发中”项目推进，而是先转入试用验收。
+
+建议原因如下：
+
+1. 主线迁移已经完成，继续新增功能的收益边际明显下降。
+2. 第一轮增强项已经足够支撑真实研究闭环，当前更缺的是使用证据，而不是更多界面或接口。
+3. 第二阶段 backlog 中的大部分事项都属于治理问题，是否值得继续投入，必须依赖真实使用反馈，而不是继续从设计侧预判。
+
+建议执行方式如下：
+
+1. 以当前版本作为试用基线，不再主动追加新功能。
+2. 组织一段有限窗口的真实使用，重点观察 report 浏览、feedback 写入、batch label、queue ownership 与周度复盘是否顺畅。
+3. 把试用期间出现的问题分成两类：
+  1. 阻断当前使用的缺陷，回到主线修复。
+  2. 不阻断当前使用但影响团队效率的治理问题，纳入第二阶段 Backlog。
+4. 只有当试用证据表明 SLA、升级流、通知、权限或更复杂协作机制已经成为主矛盾时，再启动第二阶段治理开发。
+
+简化结论：截至当前版本，Replay Artifacts 更适合进入“试用验收 + 收集证据”阶段，而不是继续无边界扩展实现范围。
+
+### 0.2 已完成事项（详细清单）
 
 - 已新增 research artifact 模块：src/research/models.py、src/research/artifacts.py、src/research/review_renderer.py、src/research/feedback.py。
 - 已在 src/backtesting/engine.py 中接入 selection_artifact_writer 注入点。
@@ -20,26 +110,36 @@
 - 已补齐 artifact 写入失败降级测试，并修正目录创建异常未进入 writer 降级路径的问题。
 - 已补充基础测试，当前通过的文件包括：tests/research/test_selection_review_renderer.py、tests/research/test_selection_artifact_writer.py、tests/research/test_selection_artifact_engine.py、tests/research/test_feedback_schema.py、tests/research/test_manage_research_feedback_cli.py、tests/research/test_paper_trading_runtime_feedback_summary.py。
 - 已补充轻量级运行级集成测试，覆盖现有 tests/backtesting/test_paper_trading_runtime.py 与 tests/backtesting/test_pipeline_mode.py 中 selection_artifacts 与 research_feedback_summary 的真实挂接断言。
+- 已补充多交易日 live pipeline 自动化集成测试，验证 paper trading runtime 在连续 trade_date 下可稳定生成 selection_artifacts、写入 daily_events/current_plan.selection_artifacts，并把 research_feedback_summary 与 execution_plan_provenance 聚合进 session_summary.json。
 - 已补充 watchlist 未承接 buy_order 时的执行阻塞原因透传，selection_snapshot.json 与 selection_review.md 现可展示 buy_order_blocker、reentry_review_until 等执行层约束信息。
 - 已扩展现有 replay artifacts 后端/前端浏览面：后端可返回 selection_artifact_overview、按 trade_date 读取 selection snapshot/review，并支持以当前登录用户身份追加 research feedback；前端 Replay Artifacts 页面已可直接切换交易日查看 selection_review.md，结构化展示 selected/rejected、top_factors、Layer C analyst 共识、research prompts 与 execution blocker，并直接提交和筛选 research feedback，而无需手动翻 data/reports 目录或调用 CLI。
 - 前端 Replay Artifacts 页面已进一步补齐 funnel_diagnostics 结构化 drilldown，可直接查看 layer_b、watchlist、buy_orders 三段过滤摘要、reason_counts 与代表性 ticker；feedback records 现按 created_at 倒序展示，并显式显示创建时间，便于研究员按时间线回看人工判断。
 - Replay Artifacts 报告级摘要现已额外聚合并展示 `data_cache_benchmark` / `data_cache_benchmark_status`，页面可直接看到 post-session cache benchmark 的 success、failed、skipped 状态，以及 reuse_confirmed、disk_hit_gain、hit rate 变化和失败原因，无需手工打开 session_summary.json。
 - 2026-03-25 已完成一次带 `--cache-benchmark` 的真实 frozen replay paper trading 验收：`data/reports/paper_trading_probe_20260205_cache_benchmark_20260325` 成功生成 `data_cache_benchmark.json`、`data_cache_benchmark.md` 与追加摘要后的 `window_review.md`，并确认 `reuse_confirmed=true`、`disk_hit_gain=6`、`first_hit_rate=0.0`、`second_hit_rate=1.0`，说明 report 级 cache benchmark 不只是 UI 字段可见，而是已经有真实运行样本支撑。
 - Replay artifact 日级后端接口现已直接按 created_at 倒序返回 feedback_records，避免排序语义只存在于前端；localhost 环境下已完成一次真实登录、replay 列表、report/day detail、feedback append 与回读顺序校验的接口级冒烟验证。
+- 已补充 Replay Artifacts feedback UI 自动化回归测试，覆盖填写表单、调用 appendSelectionFeedback、刷新 report/day detail，以及 feedback records 按 created_at 倒序展示的前端工作流，前端全量测试与生产构建已重新通过。
+- 已补充 SQLite-backed replay feedback ledger：后端现会在读取 selection artifact 日详情或追加 feedback 时把 JSONL 记录同步入库，并新增 recent feedback activity 查询接口，供更高层复盘工作流按 report_name、reviewer 与时间序消费。
+- Replay Artifacts workspace 右侧 inspector 现已直接消费 recent feedback activity 接口，按当前 report 展示 recent records、review_status/tag/reviewer 聚合与最新复核时间线；提交 feedback 后 activity 面板会同步刷新，前端定向回归、全量测试与生产构建均已通过。
+- Replay Artifacts 页面现已补充 Batch Label Workspace，可在当前 trade date 下对多只 watchlist / near-miss 样本一次写入同一组 research feedback；后端已提供 batch append 接口，前端提交后会同步刷新 report detail、trade date detail 与 activity 面板。
+- recent feedback activity 现已进一步扩展为 report 级 workflow queue：后端会按每个 symbol/review_scope 的最新记录生成 draft/final/adjudicated 队列，前端 inspector 可直接看到 pending draft queue 与 workflow status 分布，作为周度复盘和集中裁决的最小工作流入口。
+- 2026-03-26 已继续补齐跨 report 的 workflow ownership：后端新增持久化 workflow item 表与跨 report 查询/更新接口，前端 Replay Artifacts workspace 已新增 Cross-Report Workflow Queue，可按 my queue / unassigned / all 查看待办，并直接执行 Assign to me / Unassign。
 - 已新增操作手册 [docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md](docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md)，面向已登录用户详细说明如何使用 Replay Artifacts 页面完成选股复核、执行阻塞分析、near-miss 排查与 research feedback 回写。
 - 已补充配套文档 [docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md](docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md) 与 [docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md](docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md)，分别面向“快速上手”和“真实 blocker 样本判读”两类场景，降低从登录成功到形成稳定复核习惯之间的学习门槛。
 - 已补充标签治理配套文档 [docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md](docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md)，统一说明 primary_tag、tags、review_status 与 research_verdict 的职责边界，以及 6 个受控标签在 selected、near-miss 和 execution blocker 场景中的使用口径，降低多人写 feedback 时的语义漂移风险。
 - 已补充周度复盘工作流文档 [docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md](docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md)，将日常 `draft`、稳定 `final` 与争议样本 `adjudicated` 串成一套最小团队复盘节奏，便于将页面浏览、标签治理与后续系统优化 backlog 直接衔接。
+- 已补充试用验收手册 [docs/zh-cn/manual/replay-artifacts-trial-acceptance-plan.md](docs/zh-cn/manual/replay-artifacts-trial-acceptance-plan.md)，用于在暂停新增开发后按统一窗口验证 report 浏览、feedback 写入、batch label、queue ownership 与周度复盘是否已足够支撑真实使用。
 - 已补充 [docs/zh-cn/manual/research-conclusion-to-optimization-backlog-handbook.md](docs/zh-cn/manual/research-conclusion-to-optimization-backlog-handbook.md)，把周度复盘中形成的研究结论进一步标准化映射到 Layer B、Layer C、Execution、Threshold、Explainability 五类优化动作，降低“能复盘但不会落任务”的交付断层。
 - 已完成一次真实 live pipeline 纸面交易窗口验收：2026-03-16 至 2026-03-23 使用 MiniMax-M2.7 运行后成功生成 selection_artifacts、daily_events.jsonl、pipeline_timings.jsonl 与 session_summary.json，并形成窗口复盘文档 data/reports/paper_trading_window_20260316_20260323_live_m2_7_20260323/window_review_20260316_20260323.md；该窗口确认当前 artifact 机制在真实 live pipeline 下也能稳定解释“前置筛选无候选”“Layer C 否决 near-miss”与“T 日生成计划、T+1 执行”的实际执行链路。
 
-当前尚未完成事项：
+### 0.3 未完成事项（治理项）
 
-- research_feedback.jsonl 已具备最小读取、聚合、标签治理、CLI 操作、session 级 summary 接入以及 replay viewer 内最小可写 UI；但仍未接入数据库、批量标注工作台或更高层人工工作流编排。
-- 轻量级 backtesting / paper trading 运行级集成测试已补齐，更长窗口 frozen replay 验证已完成一次，且真实 live pipeline 的最小运行级窗口验收也已完成一次；但真实 live pipeline 的自动化集成测试与更高层人工工作流集成仍未完成。
+- research_feedback.jsonl 已具备最小读取、聚合、标签治理、CLI 操作、session 级 summary 接入、replay viewer 内最小可写 UI、对应前端自动化回归，以及 SQLite-backed ledger、recent activity 查询接口、report 级 activity 面板、批量标注工作台、基于最新状态的 workflow queue 与跨 report 的指派/归属入口；当前剩余缺口主要收敛为 SLA 级别的人工作流编排与真实生产条件下的流程验收。
+- 轻量级 backtesting / paper trading 运行级集成测试已补齐，更长窗口 frozen replay 验证已完成一次，且现已补充对应的 W1 级别 frozen replay 自动化集成测试；真实 live pipeline 的最小运行级窗口验收也已完成一次，且其最小自动化集成测试亦已补齐，但更高层人工工作流集成仍未完成。
 - 历史 frozen replay 源的 Layer B 解释已补齐回退兼容，但回退摘要只能基于 plan.logic_scores 与 strategy_weights 或 adjusted_weights 近似重建，精度仍低于新源中的原生 strategy_signals。
 
-### 0.1 已完成验收记录
+建议理解方式：以上未完成项默认全部归入“第二阶段治理 Backlog”，除非后续有新的使用证据证明这些项已经成为当前主矛盾，否则不建议再把它们并回本轮主线。
+
+### 0.4 已完成验收记录
 
 2026-03-22 已完成一次最小真实落盘验收，验证方式为 2 天 frozen replay paper trading：
 
@@ -110,6 +210,61 @@
 3. 在 tests/backtesting/test_pipeline_mode.py 中新增 pipeline mode 运行级断言，确认 pipeline_event_recorder、checkpoint.timings.jsonl 与 selection_artifacts/日期目录之间保持一致。
 4. 运行 tests/backtesting/test_paper_trading_runtime.py 与 tests/backtesting/test_pipeline_mode.py 后共 12 个测试通过。
 5. 这轮测试说明最小 runtime 路径已经从“单元与引擎级可用”推进到“paper trading/backtesting 现有测试骨架下可观测输出一致”。
+
+2026-03-25 继续补齐了多交易日 live pipeline 自动化集成测试：
+
+1. 在 tests/backtesting/test_paper_trading_runtime.py 中新增多 trade_date live pipeline 测试，覆盖 2024-03-01 与 2024-03-04 两个交易日的连续 post-market 计划生成与 T+1 执行衔接。
+2. 该测试自动验证两个 trade_date 对应的 selection_snapshot.json、selection_review.md、research_feedback.jsonl 均成功落盘。
+3. daily_events.jsonl 中两个交易日的 current_plan.selection_artifacts 均保持 write_status=success，且 snapshot_path 会落到各自 trade_date 目录。
+4. session_summary.json 中的 research_feedback_summary 已正确聚合为 feedback_file_count=2、trade_date_count=2，同时 execution_plan_provenance 也会按两天观测汇总。
+5. 这轮补强意味着“live pipeline 自动化集成测试缺位”这一工程缺口已被最小可维护测试覆盖掉，不再只依赖手工窗口验收。
+
+2026-03-25 继续补齐了更长窗口 frozen replay 自动化集成测试：
+
+1. 在 tests/backtesting/test_paper_trading_runtime.py 中新增 W1 级别 frozen replay 长窗口测试，覆盖 2024-03-01 至 2024-03-07 共 5 个 trade_date 的连续 current_plan 回放。
+2. 该测试自动验证 5 个 trade_date 对应的 selection_snapshot.json、selection_review.md、research_feedback.jsonl 全部成功落盘。
+3. daily_events.jsonl 与 pipeline_timings.jsonl 中 5 个 trade_date 的 current_plan.selection_artifacts 均保持 write_status=success，且 snapshot_path 会落到各自 trade_date 目录。
+4. session_summary.json 中的 daily_event_stats.day_count、research_feedback_summary.feedback_file_count 与 trade_date_count 会稳定聚合到 5 天窗口，不再只依赖 2026-03-23 的手工 W1 验收样本。
+5. 这轮补强意味着“更长窗口 frozen replay 只做过手工验收”这一缺口也已经转为可回归的自动化覆盖。
+
+2026-03-25 继续补齐了 Replay Artifacts feedback UI 自动化回归测试：
+
+1. 在 app/frontend/src/components/settings/replay-artifacts.test.tsx 中新增 feedback workflow 测试，覆盖表单填写、appendSelectionFeedback 调用、提交后 detail/day detail 刷新，以及 feedback records 倒序展示。
+2. 该测试会验证 review_scope 会跟随 symbolOptions 推导为 watchlist，额外 tags 会按逗号切分，并把 confidence、review_status、research_verdict、notes 一并提交给前端 API 层。
+3. 新增回归后 app/frontend 执行 npm test -- --run 与 npm run build 已重新通过，前端测试集现为 4 个文件、6 个测试全部通过。
+4. 这轮补强意味着 feedback 的最小 UI 写入闭环不再只依赖手工点击与 localhost 冒烟，而是有可回归的自动化保护。
+
+2026-03-25 继续补齐了 Replay feedback 的数据库接入与 activity 查询：
+
+1. 在 app/backend/database/models.py 中新增 replay_research_feedback_ledger 表，并补充对应 Alembic migration，用于把 JSONL feedback 规范化同步到 SQLite。
+2. ReplayArtifactService 现会在读取 selection artifact 日详情和追加 feedback 后自动同步对应 trade_date 的 feedback ledger，保持数据库视图与 research_feedback.jsonl 一致。
+3. 后端新增 recent feedback activity 查询接口，可按 report_name、reviewer 与 limit 检索最近反馈记录，并返回 review_status、tag、reviewer、report 维度的聚合统计。
+4. tests/backend/test_replay_artifact_service.py 与 tests/backend/test_replay_artifact_routes.py 已补充对应断言，验证历史 JSONL 同步入库、append 后 activity 可见以及 activity 路由返回语义；本轮后端相关测试共 9 个通过。
+5. 这轮补强意味着“feedback 完全不接数据库”这一工程缺口已被最小可维护实现覆盖，后续剩余重点转向批量标注与更高层人工工作流编排。
+
+2026-03-25 同日继续补齐了 Replay feedback activity 的前端消费闭环：
+
+1. app/frontend/src/services/replay-artifact-api.ts 已补充 getFeedbackActivity API，并为 recent records、status/tag/reviewer 聚合定义稳定前端类型。
+2. Replay Artifacts workspace 的右侧 inspector 已新增 Feedback Activity 卡片，按当前 report 展示 recent records、review_status 汇总、top tags 与 recent reviewers，避免研究员切换到数据库或接口层手工查活动轨迹。
+3. 在追加 feedback 成功后，前端现会同步刷新 report detail、trade date detail 与 report 级 feedback activity，确保工作台内的最近复核时间线不会滞后于 research_feedback.jsonl 与 SQLite ledger。
+4. app/frontend/src/components/replay-artifacts/replay-artifacts-inspector.test.tsx 与 app/frontend/src/components/settings/replay-artifacts.test.tsx 已补充对应断言；本轮执行 npm test -- --run 与 npm run build 均通过，随后前端全量测试仍保持 4 个文件、6 个测试全部通过。
+5. 这轮补强意味着 recent activity 不再只是“后端可查但页面不可见”的隐式能力，而是已经成为 Replay Artifacts 工作台的一部分；当前剩余重点仍是批量标注工作台与更高层人工工作流编排。
+
+2026-03-25 同日继续补齐了 Replay feedback 的批量标注工作台与最小 workflow queue：
+
+1. 后端新增 batch append 接口，可在单次请求内为当前 trade_date 的多只 selected / near-miss 样本追加同一组 research feedback，并只重算一次目录级 summary 与 SQLite ledger 同步。
+2. Replay Artifacts 主工作台已新增 Batch Label Workspace，可勾选多只 watchlist / near-miss 样本，统一写入 primary_tag、tags、review_status、research_verdict、confidence 与 notes。
+3. recent feedback activity 现已补充 workflow_status_counts 与按 symbol/review_scope 最新记录归档的 workflow_queue，前端 inspector 可直接展示 pending draft queue，减少周度复盘时手工筛 JSONL 或数据库的成本。
+4. tests/backend/test_replay_artifact_service.py、tests/backend/test_replay_artifact_routes.py、app/frontend/src/components/settings/replay-artifacts.test.tsx 与 app/frontend/src/components/replay-artifacts/replay-artifacts-inspector.test.tsx 已补充对应断言；本轮执行 backend pytest、前端定向回归、前端全量测试与 npm run build 均通过。
+5. 这轮补强意味着“批量标注工作台或更高层人工工作流编排完全缺位”的状态已被最小可维护实现替代；当前更高层剩余缺口主要收敛为跨 report 的任务指派/归属、团队级 SLA 与真实生产条件下的流程验收。
+
+2026-03-26 已继续补齐跨 report 的 replay feedback ownership workflow：
+
+1. 后端新增 ReplayResearchFeedbackWorkflowItem 表与对应 Alembic migration，用于持久化每个 report/trade_date/symbol/review_scope 的最新 workflow ownership 状态，而不是把 assignee 语义硬塞进 append-only ledger。
+2. replay_artifact_service 新增跨 report 的 list_workflow_queue / update_workflow_item，并在单条或批量 feedback append 后自动同步 workflow item，确保 report 内 activity 面板与全局 queue 使用同一份最新状态。
+3. Replay Artifacts 主工作台已新增 Cross-Report Workflow Queue，可切换 my queue、unassigned、all，并直接对条目执行 Assign to me / Unassign。
+4. tests/backend/test_replay_artifact_service.py、tests/backend/test_replay_artifact_routes.py 与 app/frontend/src/components/settings/replay-artifacts.test.tsx 已补充对应断言；本轮 backend pytest、前端定向回归与 npm run build 均通过。
+5. 这意味着“跨 report 指派/归属完全缺位”的状态已被最小可操作实现替代；当前高层剩余缺口进一步收敛为团队级 SLA、升级路径与真实生产条件下的流程验收。
 
 2026-03-23 已完成一次“更长窗口 frozen replay”验收，并顺带补强了 execution blocker 的研究可解释性：
 
@@ -706,9 +861,7 @@ write_status 建议取值：
 
 未完成：
 
-1. 真实 live pipeline 集成测试。
-2. 真实 backtesting 的更长窗口运行级集成测试。
-3. feedback 与更高层人工工作流、标签平台或 UI 的集成测试。
+1. feedback 与更高层人工工作流、标签平台或批量标注工作台的集成测试。
 
 ---
 
@@ -747,7 +900,14 @@ write_status 建议取值：
 5. 真实 paper trading 短窗口 frozen replay 验证已完成一次。
 6. 非空 watchlist 场景的 frozen replay 验证也已完成一次。
 7. 更长窗口 frozen replay 验证已在 2026-03-23 完成一次，覆盖 W1 级别 24 个 trade_date 的 artifact 连续落盘与 summary 聚合。
-8. 但这仍然不能替代真实 live pipeline 的运行级验收。
+8. 2026-03-25 已补充多交易日 live pipeline 自动化集成测试，用于覆盖连续 trade_date 下的 selection_artifacts 与 session_summary 聚合一致性。
+9. 2026-03-25 已补充对应的 W1 级别 frozen replay 自动化集成测试，用于覆盖长窗口 current_plan 回放下的 selection_artifacts 连续落盘、daily_events/pipeline_timings 一致性以及 research_feedback_summary 聚合稳定性。
+10. 2026-03-25 已补充 Replay Artifacts feedback UI 自动化回归测试，用于覆盖前端最小写入闭环与 feedback records 时间序排序语义。
+11. 2026-03-25 已补充 Replay feedback 的 SQLite ledger 与 recent activity 查询接口，并通过 backend service/route 测试验证历史 JSONL 同步与追加后可查询语义。
+12. 2026-03-25 已补充 Replay Artifacts workspace 对 recent activity 的前端消费与自动刷新，并通过前端定向回归、全量测试与生产构建验证。
+13. 2026-03-25 已补充 Batch Label Workspace 与基于最新 review_status 的 workflow queue，使批量标注和 pending draft 排队首次进入 Replay Artifacts 工作台。
+14. 2026-03-26 已补充跨 report 的 workflow ownership queue 与 Assign to me / Unassign 入口，使“我的待办”和“未归属待办”首次进入同一工作台。
+15. 但这仍然不能完全替代真实生产参数、真实外部依赖条件下的更高层人工工作流验收。
 
 重点检查：
 

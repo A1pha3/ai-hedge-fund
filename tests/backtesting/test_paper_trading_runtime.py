@@ -7,6 +7,7 @@ import sys
 import pandas as pd
 
 from src.execution.models import ExecutionPlan
+from src.execution.models import LayerCResult
 from src.paper_trading.runtime import run_paper_trading_session
 from src.portfolio.models import PositionPlan
 
@@ -278,6 +279,146 @@ def test_run_paper_trading_session_collects_engine_created_pipeline_provenance(t
             }
         ],
     }
+
+
+def test_run_paper_trading_session_live_pipeline_multi_day_artifacts_are_aggregated(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "test-session-live-pipeline-multi-day",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "MSFT": {
+                "2024-03-01": 20.0,
+                "2024-03-04": 21.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+
+    first_day_plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.81, execution_ratio=1.0, quality_score=0.7)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {
+                "layer_a_count": 20,
+                "layer_b_count": 3,
+                "watchlist_count": 1,
+                "buy_order_count": 1,
+            }
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="AAPL",
+                score_b=0.82,
+                score_c=0.8,
+                score_final=0.81,
+                quality_score=0.7,
+                decision="watch",
+            )
+        ],
+    )
+    second_day_plan = ExecutionPlan(
+        date="20240304",
+        buy_orders=[PositionPlan(ticker="MSFT", shares=50, amount=1000.0, score_final=0.76, execution_ratio=1.0, quality_score=0.68)],
+        portfolio_snapshot={"cash": 99000.0, "positions": {"AAPL": {"long": 100, "short": 0, "long_cost_basis": 10.0, "short_cost_basis": 0.0}}},
+        risk_metrics={
+            "counts": {
+                "layer_a_count": 22,
+                "layer_b_count": 4,
+                "watchlist_count": 1,
+                "buy_order_count": 1,
+            }
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="MSFT",
+                score_b=0.77,
+                score_c=0.75,
+                score_final=0.76,
+                quality_score=0.68,
+                decision="watch",
+            )
+        ],
+    )
+
+    pipeline = StubPipeline(
+        post_market_plans=[first_day_plan, second_day_plan],
+        intraday_responses=[(first_day_plan.buy_orders, [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+    pipeline.execution_plan_provenance_log = [
+        {
+            "trade_date": "20240301",
+            "model_tier": "fast",
+            "tickers": ["AAPL"],
+            "execution_plan_provenance": {
+                "planning_mode": "parallel",
+                "active_provider_names": ["MiniMax"],
+                "effective_concurrency_limit": 9,
+            },
+        },
+        {
+            "trade_date": "20240304",
+            "model_tier": "fast",
+            "tickers": ["MSFT"],
+            "execution_plan_provenance": {
+                "planning_mode": "parallel",
+                "active_provider_names": ["MiniMax"],
+                "effective_concurrency_limit": 9,
+            },
+        },
+    ]
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        output_dir=tmp_path / "paper_trading_live_pipeline_multi_day",
+        tickers=["AAPL", "MSFT"],
+        model_name="test-model",
+        model_provider="test-provider",
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        pipeline=pipeline,
+    )
+
+    first_day_dir = artifacts.selection_artifact_root / "2024-03-01"
+    second_day_dir = artifacts.selection_artifact_root / "2024-03-04"
+    assert (first_day_dir / "selection_snapshot.json").exists()
+    assert (first_day_dir / "selection_review.md").exists()
+    assert (first_day_dir / "research_feedback.jsonl").exists()
+    assert (second_day_dir / "selection_snapshot.json").exists()
+    assert (second_day_dir / "selection_review.md").exists()
+    assert (second_day_dir / "research_feedback.jsonl").exists()
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert [line["trade_date"] for line in lines] == ["20240301", "20240304"]
+    assert lines[0]["current_plan"]["selection_artifacts"]["write_status"] == "success"
+    assert lines[0]["current_plan"]["selection_artifacts"]["snapshot_path"].endswith("2024-03-01/selection_snapshot.json")
+    assert lines[1]["current_plan"]["selection_artifacts"]["write_status"] == "success"
+    assert lines[1]["current_plan"]["selection_artifacts"]["snapshot_path"].endswith("2024-03-04/selection_snapshot.json")
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["plan_generation"]["mode"] == "live_pipeline"
+    assert summary["research_feedback_summary"]["feedback_file_count"] == 2
+    assert summary["research_feedback_summary"]["trade_date_count"] == 2
+    assert sorted(summary["research_feedback_summary"]["by_trade_date"].keys()) == ["2024-03-01", "2024-03-04"]
+    assert summary["execution_plan_provenance"]["observation_count"] == 2
+    assert [item["trade_date"] for item in summary["execution_plan_provenance"]["observations"]] == ["20240301", "20240304"]
 
 
 def test_run_paper_trading_session_writes_cache_benchmark_artifacts(tmp_path, monkeypatch):
@@ -693,3 +834,103 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
     timing_lines = [json.loads(line) for line in artifacts.timing_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     replay_day_timing = next(line for line in timing_lines if line.get("event") == "pipeline_day_timing" and line.get("trade_date") == "20240301")
     assert replay_day_timing["execution_plan_provenance"] == []
+
+
+def test_run_paper_trading_session_frozen_replay_long_window_preserves_artifact_and_log_consistency(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics_long_window.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics_long_window.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "replay-session-long-window",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 10.8,
+                "2024-03-05": 11.1,
+                "2024-03-06": 11.4,
+                "2024-03-07": 11.7,
+            },
+            "MSFT": {
+                "2024-03-01": 20.0,
+                "2024-03-04": 20.5,
+                "2024-03-05": 20.8,
+                "2024-03-06": 21.0,
+                "2024-03-07": 21.3,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 100.8,
+                "2024-03-05": 101.2,
+                "2024-03-06": 101.7,
+                "2024-03-07": 102.0,
+            },
+        },
+    )
+    monkeypatch.setattr("src.execution.daily_pipeline.build_candidate_pool", lambda trade_date: (_ for _ in ()).throw(AssertionError("live pipeline should not run during frozen replay")))
+
+    source_path = tmp_path / "baseline_long_window_daily_events.jsonl"
+    trade_dates = ["20240301", "20240304", "20240305", "20240306", "20240307"]
+    plans = [
+        ExecutionPlan(
+            date=trade_date,
+            buy_orders=[PositionPlan(ticker="AAPL" if index % 2 == 0 else "MSFT", shares=100, amount=1000.0 + index * 100.0, score_final=0.8 - index * 0.02, execution_ratio=1.0)],
+            portfolio_snapshot={"cash": 100000.0 - index * 500.0, "positions": {}},
+            risk_metrics={"counts": {"watchlist_count": 1, "candidate_count": 8 - index}},
+        )
+        for index, trade_date in enumerate(trade_dates)
+    ]
+    source_path.write_text(
+        "\n".join(
+            json.dumps({"event": "paper_trading_day", "trade_date": trade_date, "current_plan": plan.model_dump()}, ensure_ascii=False)
+            for trade_date, plan in zip(trade_dates, plans, strict=True)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-07",
+        output_dir=tmp_path / "paper_trading_replay_long_window",
+        tickers=["AAPL", "MSFT"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=source_path,
+    )
+
+    expected_artifact_dates = ["2024-03-01", "2024-03-04", "2024-03-05", "2024-03-06", "2024-03-07"]
+    for trade_date in expected_artifact_dates:
+        day_dir = artifacts.selection_artifact_root / trade_date
+        assert (day_dir / "selection_snapshot.json").exists()
+        assert (day_dir / "selection_review.md").exists()
+        assert (day_dir / "research_feedback.jsonl").exists()
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert [line["trade_date"] for line in lines] == trade_dates
+    assert all(line["current_plan"]["selection_artifacts"]["write_status"] == "success" for line in lines)
+    assert [line["current_plan"]["selection_artifacts"]["snapshot_path"].split("/")[-2] for line in lines] == expected_artifact_dates
+
+    timing_lines = [json.loads(line) for line in artifacts.timing_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    replay_day_timings = [line for line in timing_lines if line.get("event") == "pipeline_day_timing"]
+    assert [line["trade_date"] for line in replay_day_timings] == trade_dates
+    assert all(line["current_plan"]["selection_artifacts"]["write_status"] == "success" for line in replay_day_timings)
+    assert all(line["execution_plan_provenance"] == [] for line in replay_day_timings)
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["plan_generation"] == {
+        "mode": "frozen_current_plan_replay",
+        "frozen_plan_source": str(source_path.resolve()),
+    }
+    assert summary["daily_event_stats"]["day_count"] == 5
+    assert summary["research_feedback_summary"]["feedback_file_count"] == 5
+    assert summary["research_feedback_summary"]["trade_date_count"] == 5
+    assert sorted(summary["research_feedback_summary"]["by_trade_date"].keys()) == expected_artifact_dates
+    assert summary["execution_plan_provenance"] == {"observation_count": 0, "observations": []}

@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.backend.database.connection import Base
 from app.backend.services.replay_artifact_service import ReplayArtifactService
 
 
@@ -14,6 +18,15 @@ def _write_json(path: Path, payload: object) -> None:
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows), encoding="utf-8")
+
+
+def _build_service_with_db(tmp_path: Path) -> ReplayArtifactService:
+    engine = create_engine(f"sqlite:///{tmp_path / 'replay-feedback-test.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    test_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    service = ReplayArtifactService(session_factory=test_session)
+    service._reports_root = tmp_path
+    return service
 
 
 def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None:
@@ -108,8 +121,7 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
         },
     )
 
-    service = ReplayArtifactService()
-    service._reports_root = tmp_path
+    service = _build_service_with_db(tmp_path)
 
     detail = service.get_replay("demo_report")
 
@@ -214,8 +226,7 @@ def test_get_selection_artifact_day_returns_snapshot_and_review(tmp_path: Path) 
         encoding="utf-8",
     )
 
-    service = ReplayArtifactService()
-    service._reports_root = tmp_path
+    service = _build_service_with_db(tmp_path)
 
     detail = service.get_selection_artifact_day("demo_report", "2026-03-11")
 
@@ -259,8 +270,7 @@ def test_append_selection_artifact_feedback_updates_summary(tmp_path: Path) -> N
     (day_dir / "selection_review.md").write_text("review body", encoding="utf-8")
     (day_dir / "research_feedback.jsonl").write_text("", encoding="utf-8")
 
-    service = ReplayArtifactService()
-    service._reports_root = tmp_path
+    service = _build_service_with_db(tmp_path)
 
     result = service.append_selection_artifact_feedback(
         report_name="demo_report",
@@ -285,3 +295,241 @@ def test_append_selection_artifact_feedback_updates_summary(tmp_path: Path) -> N
 
     session_summary_payload = json.loads((report_dir / "session_summary.json").read_text(encoding="utf-8"))
     assert session_summary_payload["research_feedback_summary"]["overall"]["feedback_count"] == 1
+
+    activity = service.get_feedback_activity(report_name="demo_report")
+    assert activity["record_count"] == 1
+    assert activity["recent_records"][0]["symbol"] == "300724"
+    assert activity["review_status_counts"] == {"final": 1}
+    assert activity["report_counts"] == {"demo_report": 1}
+    assert activity["workflow_status_counts"] == {"final": 1}
+    assert activity["workflow_queue"]["final"][0]["symbol"] == "300724"
+
+
+def test_append_selection_artifact_feedback_batch_updates_summary(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    artifact_root = report_dir / "selection_artifacts"
+    day_dir = artifact_root / "2026-03-11"
+
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "artifacts": {
+                "selection_artifact_root": str(artifact_root),
+                "research_feedback_summary": str(artifact_root / "research_feedback_summary.json"),
+            },
+        },
+    )
+    _write_json(
+        day_dir / "selection_snapshot.json",
+        {
+            "artifact_version": "v1",
+            "run_id": "demo_run",
+            "trade_date": "2026-03-11",
+            "selected": [{"symbol": "300724"}],
+            "rejected": [{"symbol": "002916"}],
+        },
+    )
+    (day_dir / "selection_review.md").write_text("review body", encoding="utf-8")
+    (day_dir / "research_feedback.jsonl").write_text("", encoding="utf-8")
+
+    service = _build_service_with_db(tmp_path)
+
+    result = service.append_selection_artifact_feedback_batch(
+        report_name="demo_report",
+        trade_date="2026-03-11",
+        reviewer="researcher_a",
+        symbols=["300724", "002916", "300724"],
+        primary_tag="threshold_false_negative",
+        research_verdict="needs_weekly_review",
+        tags=["thesis_clear"],
+        review_status="draft",
+        confidence=0.55,
+        notes="weekly batch triage",
+    )
+
+    assert result["appended_count"] == 2
+    assert [record["symbol"] for record in result["records"]] == ["300724", "002916"]
+    assert result["records"][0]["review_scope"] == "watchlist"
+    assert result["records"][1]["review_scope"] == "near_miss"
+    assert result["feedback_record_count"] == 2
+    assert result["feedback_summary"]["feedback_count"] == 2
+    assert result["directory_summary"]["overall"]["feedback_count"] == 2
+
+    activity = service.get_feedback_activity(report_name="demo_report")
+    assert activity["record_count"] == 2
+    assert activity["review_status_counts"] == {"draft": 2}
+    assert activity["tag_counts"] == {"threshold_false_negative": 2, "thesis_clear": 2}
+    assert activity["workflow_status_counts"] == {"draft": 2}
+    assert [record["symbol"] for record in activity["workflow_queue"]["draft"]] == ["300724", "002916"]
+
+
+def test_list_workflow_queue_and_update_assignee(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    artifact_root = report_dir / "selection_artifacts"
+    day_dir = artifact_root / "2026-03-11"
+
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "artifacts": {
+                "selection_artifact_root": str(artifact_root),
+                "research_feedback_summary": str(artifact_root / "research_feedback_summary.json"),
+            },
+        },
+    )
+    _write_json(
+        day_dir / "selection_snapshot.json",
+        {
+            "artifact_version": "v1",
+            "run_id": "demo_run",
+            "trade_date": "2026-03-11",
+            "selected": [{"symbol": "300724"}],
+            "rejected": [{"symbol": "002916"}],
+        },
+    )
+    (day_dir / "selection_review.md").write_text("review body", encoding="utf-8")
+    (day_dir / "research_feedback.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "feedback_version": "v1",
+                        "artifact_version": "v1",
+                        "label_version": "v1",
+                        "run_id": "demo_run",
+                        "trade_date": "2026-03-11",
+                        "symbol": "300724",
+                        "review_scope": "watchlist",
+                        "reviewer": "einstein",
+                        "review_status": "draft",
+                        "primary_tag": "high_quality_selection",
+                        "tags": ["high_quality_selection"],
+                        "confidence": 0.82,
+                        "research_verdict": "selected_for_good_reason",
+                        "notes": "needs owner",
+                        "created_at": "2026-03-25T10:00:00+08:00",
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "feedback_version": "v1",
+                        "artifact_version": "v1",
+                        "label_version": "v1",
+                        "run_id": "demo_run",
+                        "trade_date": "2026-03-11",
+                        "symbol": "002916",
+                        "review_scope": "near_miss",
+                        "reviewer": "curie",
+                        "review_status": "final",
+                        "primary_tag": "threshold_false_negative",
+                        "tags": ["threshold_false_negative"],
+                        "confidence": 0.61,
+                        "research_verdict": "escalate_to_weekly_review",
+                        "notes": "ready for adjudication",
+                        "created_at": "2026-03-25T11:00:00+08:00",
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    queue = service.list_workflow_queue()
+    assert queue["item_count"] == 2
+    assert queue["workflow_status_counts"] == {"unassigned": 1, "ready_for_adjudication": 1}
+    assert queue["assignee_counts"] == {"__unassigned__": 2}
+
+    updated = service.update_workflow_item(
+        report_name="demo_report",
+        trade_date="2026-03-11",
+        symbol="300724",
+        review_scope="watchlist",
+        assignee="einstein",
+    )
+    assert updated["assignee"] == "einstein"
+    assert updated["workflow_status"] == "assigned"
+
+    my_queue = service.list_workflow_queue(assignee="einstein")
+    assert my_queue["item_count"] == 1
+    assert my_queue["items"][0]["symbol"] == "300724"
+
+
+def test_get_selection_artifact_day_syncs_existing_feedback_to_database(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    day_dir = report_dir / "selection_artifacts" / "2026-03-11"
+
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "artifacts": {
+                "selection_artifact_root": str(report_dir / "selection_artifacts"),
+            }
+        },
+    )
+    _write_json(
+        day_dir / "selection_snapshot.json",
+        {
+            "trade_date": "2026-03-11",
+            "selected": [{"symbol": "300724"}],
+            "rejected": [{"symbol": "002916"}],
+        },
+    )
+    (day_dir / "selection_review.md").write_text("review body", encoding="utf-8")
+    _write_jsonl(
+        day_dir / "research_feedback.jsonl",
+        [
+            {
+                "feedback_version": "v1",
+                "artifact_version": "v1",
+                "label_version": "v1",
+                "run_id": "demo_run",
+                "trade_date": "2026-03-11",
+                "symbol": "002916",
+                "review_scope": "near_miss",
+                "reviewer": "researcher_b",
+                "review_status": "draft",
+                "primary_tag": "threshold_false_negative",
+                "tags": ["threshold_false_negative"],
+                "confidence": 0.61,
+                "research_verdict": "near_miss_review",
+                "notes": "older",
+                "created_at": "2026-03-22T10:00:00+08:00",
+            },
+            {
+                "feedback_version": "v1",
+                "artifact_version": "v1",
+                "label_version": "v1",
+                "run_id": "demo_run",
+                "trade_date": "2026-03-11",
+                "symbol": "300724",
+                "review_scope": "watchlist",
+                "reviewer": "researcher_a",
+                "review_status": "final",
+                "primary_tag": "high_quality_selection",
+                "tags": ["high_quality_selection", "thesis_clear"],
+                "confidence": 0.82,
+                "research_verdict": "selected_for_good_reason",
+                "notes": "newer",
+                "created_at": "2026-03-23T10:00:00+08:00",
+            },
+        ],
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    detail = service.get_selection_artifact_day("demo_report", "2026-03-11")
+    assert detail["feedback_record_count"] == 2
+
+    activity = service.get_feedback_activity(report_name="demo_report")
+    assert activity["record_count"] == 2
+    assert [record["created_at"] for record in activity["recent_records"]] == [
+        "2026-03-23T10:00:00",
+        "2026-03-22T10:00:00",
+    ]
+    assert activity["review_status_counts"] == {"final": 1, "draft": 1}
+    assert activity["tag_counts"]["high_quality_selection"] == 1
+    assert activity["tag_counts"]["thesis_clear"] == 1

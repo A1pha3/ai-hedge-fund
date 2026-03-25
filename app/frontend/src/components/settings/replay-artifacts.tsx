@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BarChart3, Clock3, Database, RefreshCw, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/auth-context';
 
 import {
   replayArtifactApi,
   type ReplayArtifactDetail,
+  type ReplayFeedbackActivity,
   type ReplayFeedbackRecord,
   type ReplayCacheBenchmarkOverview,
   type ReplayLayerCAgentContribution,
@@ -13,6 +15,8 @@ import {
   type ReplayArtifactSummary,
   type ReplayReasonCount,
   type ReplayRejectedCandidate,
+  type ReplayWorkflowQueue,
+  type ReplayWorkflowQueueItem,
 } from '@/services/replay-artifact-api';
 import { ReplayArtifactsInspector } from '@/components/replay-artifacts/replay-artifacts-inspector';
 import { ReplayArtifactsReviewMarkdown } from '@/components/replay-artifacts/replay-artifacts-review-markdown';
@@ -198,9 +202,24 @@ type FeedbackFormState = {
   notes: string;
 };
 
+type BatchFeedbackFormState = {
+  selectedSymbols: string[];
+  primaryTag: string;
+  extraTags: string;
+  reviewStatus: string;
+  confidence: string;
+  researchVerdict: string;
+  notes: string;
+};
+
 type FeedbackFilterState = {
   symbol: string;
   reviewStatus: string;
+};
+
+type WorkflowQueueFilterState = {
+  assignee: 'all' | 'me' | 'unassigned';
+  workflowStatus: 'all' | 'unassigned' | 'assigned' | 'in_review' | 'ready_for_adjudication' | 'closed';
 };
 
 function promptList(items: string[] | undefined): string {
@@ -308,16 +327,23 @@ interface ReplayArtifactsSettingsProps {
 }
 
 export function ReplayArtifactsSettings({ mode = 'settings', className }: ReplayArtifactsSettingsProps) {
+  const { user } = useAuth();
   const [reports, setReports] = useState<ReplayArtifactSummary[]>([]);
   const [selectedReport, setSelectedReport] = useState<string>('');
   const [detail, setDetail] = useState<ReplayArtifactDetail | null>(null);
+  const [feedbackActivity, setFeedbackActivity] = useState<ReplayFeedbackActivity | null>(null);
+  const [workflowQueue, setWorkflowQueue] = useState<ReplayWorkflowQueue | null>(null);
   const [selectedTradeDate, setSelectedTradeDate] = useState<string>('');
   const [selectionArtifactDetail, setSelectionArtifactDetail] = useState<ReplaySelectionArtifactDay | null>(null);
   const [isListLoading, setIsListLoading] = useState(true);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isSelectionLoading, setIsSelectionLoading] = useState(false);
+  const [isActivityLoading, setIsActivityLoading] = useState(false);
+  const [isWorkflowQueueLoading, setIsWorkflowQueueLoading] = useState(false);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [workflowQueueError, setWorkflowQueueError] = useState<string | null>(null);
   const [feedbackForm, setFeedbackForm] = useState<FeedbackFormState>({
     symbol: '',
     primaryTag: '',
@@ -327,9 +353,22 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
     researchVerdict: 'selected_for_good_reason',
     notes: '',
   });
+  const [batchFeedbackForm, setBatchFeedbackForm] = useState<BatchFeedbackFormState>({
+    selectedSymbols: [],
+    primaryTag: '',
+    extraTags: '',
+    reviewStatus: 'draft',
+    confidence: '0.50',
+    researchVerdict: 'needs_weekly_review',
+    notes: '',
+  });
   const [feedbackFilter, setFeedbackFilter] = useState<FeedbackFilterState>({
     symbol: 'all',
     reviewStatus: 'all',
+  });
+  const [workflowQueueFilter, setWorkflowQueueFilter] = useState<WorkflowQueueFilterState>({
+    assignee: 'me',
+    workflowStatus: 'all',
   });
 
   useEffect(() => {
@@ -406,6 +445,84 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
       cancelled = true;
     };
   }, [selectedReport]);
+
+  useEffect(() => {
+    if (!selectedReport) {
+      setFeedbackActivity(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadFeedbackActivity() {
+      setIsActivityLoading(true);
+      setActivityError(null);
+      try {
+        const payload = await replayArtifactApi.getFeedbackActivity({
+          reportName: selectedReport,
+          limit: 8,
+        });
+        if (!cancelled) {
+          setFeedbackActivity(payload);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setFeedbackActivity(null);
+          setActivityError(loadError instanceof Error ? loadError.message : 'Failed to load replay feedback activity');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsActivityLoading(false);
+        }
+      }
+    }
+
+    void loadFeedbackActivity();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedReport]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorkflowQueue() {
+      setIsWorkflowQueueLoading(true);
+      setWorkflowQueueError(null);
+      const assigneeFilter = workflowQueueFilter.assignee === 'all'
+        ? undefined
+        : workflowQueueFilter.assignee === 'me'
+          ? user?.username
+          : '__unassigned__';
+      const workflowStatusFilter = workflowQueueFilter.workflowStatus === 'all' ? undefined : workflowQueueFilter.workflowStatus;
+      try {
+        const payload = await replayArtifactApi.getWorkflowQueue({
+          assignee: assigneeFilter,
+          workflowStatus: workflowStatusFilter,
+          limit: 12,
+        });
+        if (!cancelled) {
+          setWorkflowQueue(payload);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setWorkflowQueue(null);
+          setWorkflowQueueError(loadError instanceof Error ? loadError.message : 'Failed to load replay workflow queue');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsWorkflowQueueLoading(false);
+        }
+      }
+    }
+
+    void loadWorkflowQueue();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.username, workflowQueueFilter.assignee, workflowQueueFilter.workflowStatus]);
 
   useEffect(() => {
     if (!selectedReport || !selectedTradeDate) {
@@ -488,7 +605,90 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
         reviewStatus: allowedStatuses.includes(current.reviewStatus) ? current.reviewStatus : (allowedStatuses[0] || 'draft'),
       };
     });
+    setBatchFeedbackForm((current) => {
+      const allowedTags = feedbackOptions?.allowed_tags || [];
+      const allowedStatuses = feedbackOptions?.allowed_review_statuses || [];
+      return {
+        ...current,
+        selectedSymbols: current.selectedSymbols.filter((symbol) => symbolOptions.some((item) => item.symbol === symbol)),
+        primaryTag: allowedTags.includes(current.primaryTag) ? current.primaryTag : (allowedTags[0] || ''),
+        reviewStatus: allowedStatuses.includes(current.reviewStatus) ? current.reviewStatus : (allowedStatuses[0] || 'draft'),
+      };
+    });
   }, [selectionArtifactDetail, feedbackOptions, symbolOptions]);
+
+  async function refreshReplayArtifactContext(reportName: string, tradeDate: string) {
+    let nextActivityError: string | null = null;
+    let nextWorkflowQueueError: string | null = null;
+    const assigneeFilter = workflowQueueFilter.assignee === 'all'
+      ? undefined
+      : workflowQueueFilter.assignee === 'me'
+        ? user?.username
+        : '__unassigned__';
+    const workflowStatusFilter = workflowQueueFilter.workflowStatus === 'all' ? undefined : workflowQueueFilter.workflowStatus;
+    const [nextDetail, nextSelectionArtifactDetail, nextFeedbackActivity, nextWorkflowQueue] = await Promise.all([
+      replayArtifactApi.get(reportName),
+      replayArtifactApi.getSelectionArtifactDay(reportName, tradeDate),
+      replayArtifactApi.getFeedbackActivity({
+        reportName,
+        limit: 8,
+      }).catch((activityLoadError) => {
+        nextActivityError = activityLoadError instanceof Error ? activityLoadError.message : 'Failed to load replay feedback activity';
+        return null;
+      }),
+      replayArtifactApi.getWorkflowQueue({
+        assignee: assigneeFilter,
+        workflowStatus: workflowStatusFilter,
+        limit: 12,
+      }).catch((workflowLoadError) => {
+        nextWorkflowQueueError = workflowLoadError instanceof Error ? workflowLoadError.message : 'Failed to load replay workflow queue';
+        return null;
+      }),
+    ]);
+    setDetail(nextDetail);
+    setSelectionArtifactDetail(nextSelectionArtifactDetail);
+    setFeedbackActivity(nextFeedbackActivity);
+    setActivityError(nextActivityError);
+    setWorkflowQueue(nextWorkflowQueue);
+    setWorkflowQueueError(nextWorkflowQueueError);
+  }
+
+  async function handleWorkflowQueueAssignment(item: ReplayWorkflowQueueItem) {
+    if (!user?.username) {
+      toast.error('当前用户不可用，无法更新 workflow queue');
+      return;
+    }
+    const nextAssignee = item.assignee === user.username ? null : user.username;
+    const nextWorkflowStatus = nextAssignee ? 'assigned' : 'unassigned';
+    try {
+      await replayArtifactApi.updateWorkflowQueueItem({
+        report_name: item.report_name,
+        trade_date: item.trade_date,
+        symbol: item.symbol,
+        review_scope: item.review_scope,
+        assignee: nextAssignee,
+        workflow_status: nextWorkflowStatus,
+      });
+      const assigneeFilter = workflowQueueFilter.assignee === 'all'
+        ? undefined
+        : workflowQueueFilter.assignee === 'me'
+          ? user.username
+          : '__unassigned__';
+      const workflowStatusFilter = workflowQueueFilter.workflowStatus === 'all' ? undefined : workflowQueueFilter.workflowStatus;
+      const nextQueue = await replayArtifactApi.getWorkflowQueue({
+        assignee: assigneeFilter,
+        workflowStatus: workflowStatusFilter,
+        limit: 12,
+      });
+      setWorkflowQueue(nextQueue);
+      setWorkflowQueueError(null);
+      toast.success(nextAssignee ? 'workflow item 已归属到当前用户' : 'workflow item 已取消归属');
+    } catch (updateError) {
+      const message = updateError instanceof Error ? updateError.message : '更新 workflow queue 失败';
+      setWorkflowQueueError(message);
+      toast.error(message);
+    }
+  }
 
   async function handleFeedbackSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -516,12 +716,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
         confidence: Number(feedbackForm.confidence),
         notes: feedbackForm.notes,
       });
-      const [nextDetail, nextSelectionArtifactDetail] = await Promise.all([
-        replayArtifactApi.get(selectedReport),
-        replayArtifactApi.getSelectionArtifactDay(selectedReport, selectedTradeDate),
-      ]);
-      setDetail(nextDetail);
-      setSelectionArtifactDetail(nextSelectionArtifactDetail);
+      await refreshReplayArtifactContext(selectedReport, selectedTradeDate);
       setFeedbackForm((current) => ({
         ...current,
         extraTags: '',
@@ -530,6 +725,59 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
       toast.success('研究反馈已写入 selection artifact');
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : '提交 research feedback 失败';
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  }
+
+  function toggleBatchSymbol(symbol: string, checked: boolean) {
+    setBatchFeedbackForm((current) => {
+      if (checked) {
+        if (current.selectedSymbols.includes(symbol)) {
+          return current;
+        }
+        return { ...current, selectedSymbols: [...current.selectedSymbols, symbol] };
+      }
+      return { ...current, selectedSymbols: current.selectedSymbols.filter((item) => item !== symbol) };
+    });
+  }
+
+  async function handleBatchFeedbackSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedReport || !selectedTradeDate || batchFeedbackForm.selectedSymbols.length === 0 || !batchFeedbackForm.primaryTag || !batchFeedbackForm.researchVerdict) {
+      toast.error('批量标注缺少必填字段');
+      return;
+    }
+
+    const tags = batchFeedbackForm.extraTags
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0 && item !== batchFeedbackForm.primaryTag);
+
+    setIsSubmittingFeedback(true);
+    setError(null);
+    try {
+      const result = await replayArtifactApi.appendSelectionFeedbackBatch(selectedReport, selectedTradeDate, {
+        symbols: batchFeedbackForm.selectedSymbols,
+        primary_tag: batchFeedbackForm.primaryTag,
+        research_verdict: batchFeedbackForm.researchVerdict,
+        tags,
+        review_status: batchFeedbackForm.reviewStatus,
+        confidence: Number(batchFeedbackForm.confidence),
+        notes: batchFeedbackForm.notes,
+      });
+      await refreshReplayArtifactContext(selectedReport, selectedTradeDate);
+      setBatchFeedbackForm((current) => ({
+        ...current,
+        selectedSymbols: [],
+        extraTags: '',
+        notes: '',
+      }));
+      toast.success(`已批量写入 ${result.appended_count} 条 research feedback`);
+    } catch (submitError) {
+      const message = submitError instanceof Error ? submitError.message : '提交批量 research feedback 失败';
       setError(message);
       toast.error(message);
     } finally {
@@ -581,6 +829,87 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
 
       <div className={cn(isWorkspace ? 'grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)_340px]' : 'space-y-6')}>
         <div className="space-y-4">
+          {isWorkspace ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Cross-Report Workflow Queue</CardTitle>
+                <CardDescription>跨 report 的待复核队列，可查看我的待办或未归属样本，并直接 Assign to me / Unassign。</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+                  <label className="space-y-1 text-sm">
+                    <span className="text-muted-foreground">Queue Scope</span>
+                    <select
+                      value={workflowQueueFilter.assignee}
+                      onChange={(event) => setWorkflowQueueFilter((current) => ({ ...current, assignee: event.target.value as WorkflowQueueFilterState['assignee'] }))}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="me">my queue</option>
+                      <option value="unassigned">unassigned</option>
+                      <option value="all">all</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="text-muted-foreground">Workflow Status</span>
+                    <select
+                      value={workflowQueueFilter.workflowStatus}
+                      onChange={(event) => setWorkflowQueueFilter((current) => ({ ...current, workflowStatus: event.target.value as WorkflowQueueFilterState['workflowStatus'] }))}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="all">all</option>
+                      <option value="unassigned">unassigned</option>
+                      <option value="assigned">assigned</option>
+                      <option value="in_review">in_review</option>
+                      <option value="ready_for_adjudication">ready_for_adjudication</option>
+                      <option value="closed">closed</option>
+                    </select>
+                  </label>
+                </div>
+
+                {isWorkflowQueueLoading ? (
+                  <Skeleton className="h-32 w-full" />
+                ) : workflowQueueError ? (
+                  <p className="text-sm text-red-500">{workflowQueueError}</p>
+                ) : workflowQueue ? (
+                  <>
+                    <div className="rounded-md border border-border/60 bg-muted/10 p-3">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Queue Summary</p>
+                      <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                        {Object.entries(workflowQueue.workflow_status_counts || {}).map(([status, count]) => `${status}:${count}`).join(' | ') || '--'}
+                      </p>
+                    </div>
+                    <div className="space-y-3">
+                      {workflowQueue.items.length > 0 ? (
+                        workflowQueue.items.map((item) => (
+                          <div key={`${item.report_name}-${item.trade_date}-${item.symbol}-${item.review_scope}`} className="rounded-md border border-border/60 bg-muted/10 p-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline">{item.report_name}</Badge>
+                              <Badge variant="secondary">{item.symbol}</Badge>
+                              <Badge variant="outline">{item.workflow_status}</Badge>
+                            </div>
+                            <p className="mt-2 text-sm font-medium text-primary">{item.latest_primary_tag}</p>
+                            <p className="mt-1 text-xs leading-6 text-muted-foreground">{item.trade_date} | {item.review_scope} | latest {item.latest_review_status}</p>
+                            <p className="mt-1 text-xs leading-6 text-muted-foreground">assignee {item.assignee || '--'} | reviewer {item.latest_reviewer}</p>
+                            <p className="mt-2 text-xs leading-6 text-muted-foreground">{item.latest_notes || '--'}</p>
+                            <div className="mt-3 flex justify-end">
+                              <Button type="button" variant="outline" size="sm" onClick={() => void handleWorkflowQueueAssignment(item)}>
+                                {item.assignee === user?.username ? 'Unassign' : 'Assign to me'}
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
+                          当前过滤条件下没有 workflow queue items。
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+
           <Card className={cn(isWorkspace && 'xl:sticky xl:top-6')}>
             <CardHeader>
               <CardTitle>{isWorkspace ? 'Report Rail' : 'Report Selector'}</CardTitle>
@@ -1017,6 +1346,120 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
 
                       <div className="space-y-3 rounded-md border border-border/60 bg-muted/10 p-4">
                         <div>
+                          <p className="text-sm font-medium text-primary">Batch Label Workspace</p>
+                          <p className="text-xs text-muted-foreground">对当前 trade date 的多只 watchlist / near-miss 样本一次写入同一组标签，作为周度复盘和集中裁决的最小入口。</p>
+                        </div>
+                        <form className="space-y-4" onSubmit={handleBatchFeedbackSubmit}>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-sm text-muted-foreground">Selected Symbols</span>
+                              <Badge variant="secondary">{batchFeedbackForm.selectedSymbols.length} selected</Badge>
+                            </div>
+                            <div className="grid max-h-48 gap-2 overflow-y-auto rounded-md border border-border/60 bg-background/60 p-3 md:grid-cols-2">
+                              {symbolOptions.length > 0 ? (
+                                symbolOptions.map((item) => {
+                                  const checked = batchFeedbackForm.selectedSymbols.includes(item.symbol);
+                                  return (
+                                    <label key={`batch-${item.scope}-${item.symbol}`} className="flex items-center gap-2 rounded-md border border-border/50 px-3 py-2 text-sm">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(event) => toggleBatchSymbol(item.symbol, event.target.checked)}
+                                      />
+                                      <span>{item.label}</span>
+                                    </label>
+                                  );
+                                })
+                              ) : (
+                                <div className="text-sm text-muted-foreground">No batch label candidates available for this snapshot.</div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <label className="space-y-1 text-sm">
+                              <span className="text-muted-foreground">Batch Primary Tag</span>
+                              <select
+                                value={batchFeedbackForm.primaryTag}
+                                onChange={(event) => setBatchFeedbackForm((current) => ({ ...current, primaryTag: event.target.value }))}
+                                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                              >
+                                {(feedbackOptions?.allowed_tags || []).map((tag) => (
+                                  <option key={`batch-tag-${tag}`} value={tag}>
+                                    {tag}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="space-y-1 text-sm">
+                              <span className="text-muted-foreground">Batch Review Status</span>
+                              <select
+                                value={batchFeedbackForm.reviewStatus}
+                                onChange={(event) => setBatchFeedbackForm((current) => ({ ...current, reviewStatus: event.target.value }))}
+                                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                              >
+                                {(feedbackOptions?.allowed_review_statuses || []).map((status) => (
+                                  <option key={`batch-status-${status}`} value={status}>
+                                    {status}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <label className="space-y-1 text-sm">
+                              <span className="text-muted-foreground">Batch Additional Tags</span>
+                              <Input
+                                value={batchFeedbackForm.extraTags}
+                                onChange={(event) => setBatchFeedbackForm((current) => ({ ...current, extraTags: event.target.value }))}
+                                placeholder="thesis_clear,crowded_trade_risk"
+                              />
+                            </label>
+                            <label className="space-y-1 text-sm">
+                              <span className="text-muted-foreground">Batch Confidence</span>
+                              <Input
+                                type="number"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={batchFeedbackForm.confidence}
+                                onChange={(event) => setBatchFeedbackForm((current) => ({ ...current, confidence: event.target.value }))}
+                              />
+                            </label>
+                          </div>
+
+                          <label className="space-y-1 text-sm block">
+                            <span className="text-muted-foreground">Batch Research Verdict</span>
+                            <Input
+                              value={batchFeedbackForm.researchVerdict}
+                              onChange={(event) => setBatchFeedbackForm((current) => ({ ...current, researchVerdict: event.target.value }))}
+                              placeholder="needs_weekly_review"
+                            />
+                          </label>
+
+                          <label className="space-y-1 text-sm block">
+                            <span className="text-muted-foreground">Batch Notes</span>
+                            <textarea
+                              value={batchFeedbackForm.notes}
+                              onChange={(event) => setBatchFeedbackForm((current) => ({ ...current, notes: event.target.value }))}
+                              rows={3}
+                              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                              placeholder="记录这批样本为何需要统一推进到 final 或 weekly review。"
+                            />
+                          </label>
+
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs text-muted-foreground">review_scope 会按 symbol 所属集合自动判定为 watchlist 或 near_miss。</p>
+                            <Button type="submit" disabled={isSubmittingFeedback || batchFeedbackForm.selectedSymbols.length === 0}>
+                              {isSubmittingFeedback ? 'Submitting...' : 'Append Batch Feedback'}
+                            </Button>
+                          </div>
+                        </form>
+                      </div>
+
+                      <div className="space-y-3 rounded-md border border-border/60 bg-muted/10 p-4">
+                        <div>
                           <p className="text-sm font-medium text-primary">Append Research Feedback</p>
                           <p className="text-xs text-muted-foreground">直接把结构化 research feedback 追加到当前 trade date 的 research_feedback.jsonl，并自动刷新 summary。</p>
                         </div>
@@ -1254,7 +1697,10 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
           <ReplayArtifactsInspector
             detail={detail}
             selectionArtifactDetail={selectionArtifactDetail}
+            feedbackActivity={feedbackActivity}
             isDetailLoading={isDetailLoading}
+            isActivityLoading={isActivityLoading}
+            activityError={activityError}
           />
         ) : null}
       </div>

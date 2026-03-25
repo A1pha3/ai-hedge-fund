@@ -31,6 +31,12 @@
 
 这份手册专门解决这个问题，目标是给团队一套最小可执行的周度复盘工作流，让 Replay Artifacts 不只是日常浏览页，而是一个能持续沉淀结论的复盘系统。
 
+当前代码状态补充：Replay Artifacts 页面已经提供三个直接服务于这套流程的入口。
+
+1. Batch Label Workspace：可在当前 trade date 下对多只 watchlist / near-miss 样本一次写入同一组 feedback。
+2. Inspector 内的 Pending Draft Queue：可按最新 review_status 查看当前 report 里还停留在 `draft` 的样本。
+3. Cross-Report Workflow Queue：可切换 `my queue`、`unassigned`、`all` 查看跨 report 待办，并直接执行 `Assign to me` / `Unassign`。
+
 ---
 
 ## 2. 周度复盘和日度浏览有什么不同
@@ -120,10 +126,18 @@
 集中复盘时建议：
 
 1. 选一个多日窗口 report，或者按 trade date 逐日切换。
-2. 把这一周所有重点 `draft` 重新过一遍。
-3. 对重复出现的 blocker 和标签做归类。
-4. 把稳定结论升级成 `final`。
-5. 把仍然有争议、可能影响规则判断的样本提为 `adjudicated` 候选。
+2. 先看 Inspector 里的 Pending Draft Queue，确定这一周还没有推进的样本。
+3. 把这一周所有重点 `draft` 重新过一遍。
+4. 对重复出现的 blocker 和标签做归类。
+5. 对同类样本优先使用 Batch Label Workspace 做批量推进，避免逐条重复填写。
+6. 把稳定结论升级成 `final`。
+7. 把仍然有争议、可能影响规则判断的样本提为 `adjudicated` 候选。
+
+如果周度汇总人需要先认领工作，再集中推进，建议先看 Cross-Report Workflow Queue：
+
+1. 先切到 `unassigned`，把本周准备处理的样本认领到自己名下。
+2. 再切回 `my queue`，按 latest_review_status 和 primary_tag 连续处理。
+3. 已不再由自己继续推进的样本直接 `Unassign`，避免队列失真。
 
 ### 4.3 周会后：只保留少量 `adjudicated`
 

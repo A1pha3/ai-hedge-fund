@@ -1,10 +1,29 @@
-import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { listMock, getMock, getSelectionArtifactDayMock } = vi.hoisted(() => ({
+const { listMock, getMock, getSelectionArtifactDayMock, appendSelectionFeedbackMock, appendSelectionFeedbackBatchMock, getFeedbackActivityMock, getWorkflowQueueMock, updateWorkflowQueueItemMock } = vi.hoisted(() => ({
   listMock: vi.fn(),
   getMock: vi.fn(),
   getSelectionArtifactDayMock: vi.fn(),
+  appendSelectionFeedbackMock: vi.fn(),
+  appendSelectionFeedbackBatchMock: vi.fn(),
+  getFeedbackActivityMock: vi.fn(),
+  getWorkflowQueueMock: vi.fn(),
+  updateWorkflowQueueItemMock: vi.fn(),
+}));
+
+vi.mock('@/contexts/auth-context', () => ({
+  useAuth: () => ({
+    user: {
+      id: 1,
+      username: 'einstein',
+      email: null,
+      role: 'admin',
+      created_at: null,
+      updated_at: null,
+    },
+  }),
 }));
 
 vi.mock('sonner', () => ({
@@ -22,13 +41,28 @@ vi.mock('@/services/replay-artifact-api', async () => {
       list: listMock,
       get: getMock,
       getSelectionArtifactDay: getSelectionArtifactDayMock,
-      appendSelectionFeedback: vi.fn(),
+      appendSelectionFeedback: appendSelectionFeedbackMock,
+      appendSelectionFeedbackBatch: appendSelectionFeedbackBatchMock,
+      getFeedbackActivity: getFeedbackActivityMock,
+      getWorkflowQueue: getWorkflowQueueMock,
+      updateWorkflowQueueItem: updateWorkflowQueueItemMock,
     },
   };
 });
 
 import { ReplayArtifactsSettings } from '@/components/settings/replay-artifacts';
 import type { ReplayArtifactDetail, ReplayArtifactSummary, ReplaySelectionArtifactDay } from '@/services/replay-artifact-api';
+
+beforeEach(() => {
+  listMock.mockReset();
+  getMock.mockReset();
+  getSelectionArtifactDayMock.mockReset();
+  appendSelectionFeedbackMock.mockReset();
+  appendSelectionFeedbackBatchMock.mockReset();
+  getFeedbackActivityMock.mockReset();
+  getWorkflowQueueMock.mockReset();
+  updateWorkflowQueueItemMock.mockReset();
+});
 
 const reports: ReplayArtifactSummary[] = [
   {
@@ -196,6 +230,45 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     listMock.mockResolvedValue(reports);
     getMock.mockResolvedValue(detail);
     getSelectionArtifactDayMock.mockResolvedValue(dayDetail);
+    getFeedbackActivityMock.mockResolvedValue({
+      report_name: 'paper_trading_window_recent',
+      reviewer: null,
+      limit: 8,
+      record_count: 0,
+      recent_records: [],
+      review_status_counts: {},
+      tag_counts: {},
+      reviewer_counts: {},
+      report_counts: {},
+    });
+    getWorkflowQueueMock.mockResolvedValue({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 1,
+      items: [
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+          latest_feedback_created_at: '2026-03-23T10:00:00+08:00',
+          latest_reviewer: 'einstein',
+          latest_review_status: 'draft',
+          latest_primary_tag: 'high_quality_selection',
+          latest_tags: ['high_quality_selection'],
+          latest_research_verdict: 'selected_for_good_reason',
+          latest_notes: 'needs owner',
+          assignee: null,
+          workflow_status: 'unassigned',
+        },
+      ],
+      workflow_status_counts: { unassigned: 1 },
+      assignee_counts: { __unassigned__: 1 },
+      report_counts: { paper_trading_window_recent: 1 },
+    });
 
     render(<ReplayArtifactsSettings mode="workspace" />);
 
@@ -207,7 +280,653 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
       expect(getSelectionArtifactDayMock).toHaveBeenCalledWith('paper_trading_window_recent', '2026-03-23');
     });
 
+    await waitFor(() => {
+      expect(getFeedbackActivityMock).toHaveBeenCalledWith({ reportName: 'paper_trading_window_recent', limit: 8 });
+    });
+    await waitFor(() => {
+      expect(getWorkflowQueueMock).toHaveBeenCalledWith({ assignee: 'einstein', workflowStatus: undefined, limit: 12 });
+    });
+
     expect(screen.getAllByText('paper_trading_window_recent').length).toBeGreaterThan(0);
     expect(screen.getByText('1 trade dates')).toBeInTheDocument();
+  });
+
+  it('submits feedback, refreshes the artifact detail, and renders records in reverse chronological order', async () => {
+    const user = userEvent.setup();
+    const detailAfterAppend: ReplayArtifactDetail = {
+      ...detail,
+      selection_artifact_overview: {
+        ...detail.selection_artifact_overview,
+        feedback_summary: {
+          overall: {
+            feedback_count: 2,
+            final_feedback_count: 1,
+          },
+          feedback_file_count: 1,
+          trade_date_count: 1,
+        },
+      },
+    };
+    const initialDayDetail: ReplaySelectionArtifactDay = {
+      ...dayDetail,
+      snapshot: {
+        ...dayDetail.snapshot,
+        selected: [
+          {
+            symbol: '300724',
+            name: '捷佳伟创',
+            decision: 'watchlist',
+            score_b: 0.71,
+            score_c: 0.63,
+            score_final: 0.68,
+            rank_in_watchlist: 1,
+            layer_b_summary: {
+              top_factors: [{ name: 'fast_score', value: 0.71 }],
+            },
+            research_prompts: {
+              why_selected: ['fast score high'],
+              what_to_check: ['confirmation strength'],
+            },
+          },
+        ],
+      },
+      feedback_options: {
+        allowed_tags: ['high_quality_selection', 'thesis_clear'],
+        allowed_review_statuses: ['draft', 'final'],
+      },
+    };
+    const refreshedDayDetail: ReplaySelectionArtifactDay = {
+      ...initialDayDetail,
+      feedback_record_count: 2,
+      feedback_records: [
+        {
+          feedback_version: 'v1',
+          artifact_version: 'v1',
+          label_version: 'v1',
+          run_id: 'run-1',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          reviewer: 'einstein',
+          review_status: 'draft',
+          primary_tag: 'thesis_clear',
+          tags: ['thesis_clear'],
+          confidence: 0.6,
+          research_verdict: 'needs_more_confirmation',
+          notes: 'older record',
+          created_at: '2026-03-23T10:00:00+08:00',
+        },
+        {
+          feedback_version: 'v1',
+          artifact_version: 'v1',
+          label_version: 'v1',
+          run_id: 'run-1',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          reviewer: 'einstein',
+          review_status: 'final',
+          primary_tag: 'high_quality_selection',
+          tags: ['high_quality_selection', 'thesis_clear'],
+          confidence: 0.91,
+          research_verdict: 'selected_for_good_reason',
+          notes: 'newer record',
+          created_at: '2026-03-23T11:00:00+08:00',
+        },
+      ],
+      feedback_summary: {
+        label_version: 'v1',
+        feedback_count: 2,
+        final_feedback_count: 1,
+        symbols: ['300724'],
+        reviewers: ['einstein'],
+        primary_tag_counts: {
+          high_quality_selection: 1,
+          thesis_clear: 1,
+        },
+        tag_counts: {
+          high_quality_selection: 1,
+          thesis_clear: 2,
+        },
+        review_status_counts: {
+          draft: 1,
+          final: 1,
+        },
+        verdict_counts: {
+          needs_more_confirmation: 1,
+          selected_for_good_reason: 1,
+        },
+        latest_created_at: '2026-03-23T11:00:00+08:00',
+      },
+    };
+
+    listMock.mockResolvedValue(reports);
+    getMock.mockResolvedValueOnce(detail).mockResolvedValueOnce(detailAfterAppend);
+    getSelectionArtifactDayMock.mockResolvedValueOnce(initialDayDetail).mockResolvedValueOnce(refreshedDayDetail);
+    getFeedbackActivityMock.mockResolvedValueOnce({
+      report_name: 'paper_trading_window_recent',
+      reviewer: null,
+      limit: 8,
+      record_count: 1,
+      recent_records: [
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          reviewer: 'einstein',
+          review_status: 'draft',
+          primary_tag: 'thesis_clear',
+          tags: ['thesis_clear'],
+          confidence: 0.6,
+          research_verdict: 'needs_more_confirmation',
+          notes: 'older record',
+          created_at: '2026-03-23T10:00:00+08:00',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+        },
+      ],
+      review_status_counts: { draft: 1 },
+      tag_counts: { thesis_clear: 1 },
+      reviewer_counts: { einstein: 1 },
+      report_counts: { paper_trading_window_recent: 1 },
+    }).mockResolvedValueOnce({
+      report_name: 'paper_trading_window_recent',
+      reviewer: null,
+      limit: 8,
+      record_count: 2,
+      recent_records: [
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          reviewer: 'einstein',
+          review_status: 'final',
+          primary_tag: 'high_quality_selection',
+          tags: ['high_quality_selection', 'thesis_clear'],
+          confidence: 0.91,
+          research_verdict: 'selected_for_good_reason',
+          notes: 'newer record',
+          created_at: '2026-03-23T11:00:00+08:00',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+        },
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          reviewer: 'einstein',
+          review_status: 'draft',
+          primary_tag: 'thesis_clear',
+          tags: ['thesis_clear'],
+          confidence: 0.6,
+          research_verdict: 'needs_more_confirmation',
+          notes: 'older record',
+          created_at: '2026-03-23T10:00:00+08:00',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+        },
+      ],
+      review_status_counts: { draft: 1, final: 1 },
+      tag_counts: { thesis_clear: 2, high_quality_selection: 1 },
+      reviewer_counts: { einstein: 2 },
+      report_counts: { paper_trading_window_recent: 2 },
+    });
+    getWorkflowQueueMock.mockResolvedValueOnce({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 0,
+      items: [],
+      workflow_status_counts: {},
+      assignee_counts: {},
+      report_counts: {},
+    }).mockResolvedValueOnce({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 1,
+      items: [
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+          latest_feedback_created_at: '2026-03-23T11:00:00+08:00',
+          latest_reviewer: 'einstein',
+          latest_review_status: 'draft',
+          latest_primary_tag: 'high_quality_selection',
+          latest_tags: ['high_quality_selection'],
+          latest_research_verdict: 'selected_for_good_reason',
+          latest_notes: 'newer record',
+          assignee: null,
+          workflow_status: 'unassigned',
+        },
+      ],
+      workflow_status_counts: { unassigned: 1 },
+      assignee_counts: { __unassigned__: 1 },
+      report_counts: { paper_trading_window_recent: 1 },
+    });
+    appendSelectionFeedbackMock.mockResolvedValue({
+      record: refreshedDayDetail.feedback_records[1],
+      feedback_record_count: 2,
+      feedback_summary: refreshedDayDetail.feedback_summary,
+      directory_summary: {},
+    });
+
+    render(<ReplayArtifactsSettings mode="workspace" />);
+
+    await waitFor(() => {
+      expect(getSelectionArtifactDayMock).toHaveBeenCalledWith('paper_trading_window_recent', '2026-03-23');
+    });
+    await screen.findByText('Append Research Feedback');
+
+    await user.selectOptions(screen.getByLabelText('Primary Tag'), 'high_quality_selection');
+    await user.type(screen.getByLabelText('Additional Tags'), 'thesis_clear');
+    await user.selectOptions(screen.getAllByLabelText('Review Status')[0], 'final');
+    await user.clear(screen.getByLabelText('Research Verdict'));
+    await user.type(screen.getByLabelText('Research Verdict'), 'selected_for_good_reason');
+    await user.clear(screen.getByLabelText('Confidence'));
+    await user.type(screen.getByLabelText('Confidence'), '0.91');
+    await user.type(screen.getByLabelText('Notes'), 'newer record');
+    await user.click(screen.getByRole('button', { name: 'Append Feedback' }));
+
+    await waitFor(() => {
+      expect(appendSelectionFeedbackMock).toHaveBeenCalledWith('paper_trading_window_recent', '2026-03-23', {
+        symbol: '300724',
+        primary_tag: 'high_quality_selection',
+        research_verdict: 'selected_for_good_reason',
+        tags: ['thesis_clear'],
+        review_status: 'final',
+        review_scope: 'watchlist',
+        confidence: 0.91,
+        notes: 'newer record',
+      });
+    });
+
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledTimes(2);
+      expect(getSelectionArtifactDayMock).toHaveBeenCalledTimes(2);
+      expect(getFeedbackActivityMock).toHaveBeenCalledTimes(2);
+      expect(getWorkflowQueueMock).toHaveBeenCalledTimes(2);
+    });
+
+    const feedbackTable = screen.getAllByRole('table').at(-1);
+    expect(feedbackTable).toBeDefined();
+    const createdAtCells = within(feedbackTable as HTMLElement).getAllByText(/2026-03-23T1[01]:00:00\+08:00/);
+    expect(createdAtCells).toHaveLength(2);
+    expect(createdAtCells[0].textContent).toBe('2026-03-23T11:00:00+08:00');
+    expect(createdAtCells[1].textContent).toBe('2026-03-23T10:00:00+08:00');
+    expect(screen.getByText('2 records')).toBeInTheDocument();
+    expect(screen.getByText('2 recent records')).toBeInTheDocument();
+  });
+
+  it('submits batch feedback for multiple symbols and refreshes the activity panel', async () => {
+    const user = userEvent.setup();
+    const detailAfterBatchAppend: ReplayArtifactDetail = {
+      ...detail,
+      selection_artifact_overview: {
+        ...detail.selection_artifact_overview,
+        feedback_summary: {
+          overall: {
+            feedback_count: 2,
+            final_feedback_count: 2,
+          },
+          feedback_file_count: 1,
+          trade_date_count: 1,
+        },
+      },
+    };
+    const batchInitialDayDetail: ReplaySelectionArtifactDay = {
+      ...dayDetail,
+      snapshot: {
+        ...dayDetail.snapshot,
+        selected: [
+          {
+            symbol: '300724',
+            name: '捷佳伟创',
+            decision: 'watchlist',
+            score_b: 0.71,
+            score_c: 0.63,
+            score_final: 0.68,
+            rank_in_watchlist: 1,
+          },
+        ],
+        rejected: [
+          {
+            symbol: '002916',
+            name: '深南电路',
+            rejection_stage: 'layer_c',
+            score_b: 0.65,
+            score_c: 0.44,
+            score_final: 0.49,
+            rejection_reason_codes: ['analyst_divergence_high'],
+            rejection_reason_text: 'divergence high',
+          },
+        ],
+      },
+      feedback_options: {
+        allowed_tags: ['threshold_false_negative', 'thesis_clear'],
+        allowed_review_statuses: ['draft', 'final', 'adjudicated'],
+      },
+    };
+    const batchRefreshedDayDetail: ReplaySelectionArtifactDay = {
+      ...batchInitialDayDetail,
+      feedback_record_count: 2,
+      feedback_records: [
+        {
+          feedback_version: 'v1',
+          artifact_version: 'v1',
+          label_version: 'v1',
+          run_id: 'run-1',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          reviewer: 'einstein',
+          review_status: 'final',
+          primary_tag: 'threshold_false_negative',
+          tags: ['threshold_false_negative', 'thesis_clear'],
+          confidence: 0.77,
+          research_verdict: 'needs_weekly_review',
+          notes: 'weekly batch triage',
+          created_at: '2026-03-23T12:00:00+08:00',
+        },
+        {
+          feedback_version: 'v1',
+          artifact_version: 'v1',
+          label_version: 'v1',
+          run_id: 'run-1',
+          trade_date: '2026-03-23',
+          symbol: '002916',
+          review_scope: 'near_miss',
+          reviewer: 'einstein',
+          review_status: 'final',
+          primary_tag: 'threshold_false_negative',
+          tags: ['threshold_false_negative', 'thesis_clear'],
+          confidence: 0.77,
+          research_verdict: 'needs_weekly_review',
+          notes: 'weekly batch triage',
+          created_at: '2026-03-23T12:00:00+08:00',
+        },
+      ],
+      feedback_summary: {
+        label_version: 'v1',
+        feedback_count: 2,
+        final_feedback_count: 2,
+        symbols: ['300724', '002916'],
+        reviewers: ['einstein'],
+        primary_tag_counts: {
+          threshold_false_negative: 2,
+        },
+        tag_counts: {
+          threshold_false_negative: 2,
+          thesis_clear: 2,
+        },
+        review_status_counts: {
+          final: 2,
+        },
+        verdict_counts: {
+          needs_weekly_review: 2,
+        },
+        latest_created_at: '2026-03-23T12:00:00+08:00',
+      },
+    };
+
+    listMock.mockResolvedValue(reports);
+    getMock.mockResolvedValueOnce(detail).mockResolvedValueOnce(detailAfterBatchAppend);
+    getSelectionArtifactDayMock.mockResolvedValueOnce(batchInitialDayDetail).mockResolvedValueOnce(batchRefreshedDayDetail);
+    getFeedbackActivityMock.mockResolvedValueOnce({
+      report_name: 'paper_trading_window_recent',
+      reviewer: null,
+      limit: 8,
+      record_count: 0,
+      recent_records: [],
+      review_status_counts: {},
+      tag_counts: {},
+      reviewer_counts: {},
+      report_counts: {},
+    }).mockResolvedValueOnce({
+      report_name: 'paper_trading_window_recent',
+      reviewer: null,
+      limit: 8,
+      record_count: 2,
+      recent_records: batchRefreshedDayDetail.feedback_records.map((record) => ({
+        report_name: 'paper_trading_window_recent',
+        trade_date: record.trade_date,
+        symbol: record.symbol,
+        review_scope: record.review_scope,
+        reviewer: record.reviewer,
+        review_status: record.review_status,
+        primary_tag: record.primary_tag,
+        tags: record.tags,
+        confidence: record.confidence,
+        research_verdict: record.research_verdict,
+        notes: record.notes,
+        created_at: record.created_at,
+        feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+      })),
+      review_status_counts: { final: 2 },
+      tag_counts: { threshold_false_negative: 2, thesis_clear: 2 },
+      reviewer_counts: { einstein: 2 },
+      report_counts: { paper_trading_window_recent: 2 },
+    });
+    getWorkflowQueueMock.mockResolvedValueOnce({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 0,
+      items: [],
+      workflow_status_counts: {},
+      assignee_counts: {},
+      report_counts: {},
+    }).mockResolvedValueOnce({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 2,
+      items: [
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+          latest_feedback_created_at: '2026-03-23T12:00:00+08:00',
+          latest_reviewer: 'einstein',
+          latest_review_status: 'final',
+          latest_primary_tag: 'threshold_false_negative',
+          latest_tags: ['threshold_false_negative', 'thesis_clear'],
+          latest_research_verdict: 'needs_weekly_review',
+          latest_notes: 'weekly batch triage',
+          assignee: null,
+          workflow_status: 'ready_for_adjudication',
+        },
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '002916',
+          review_scope: 'near_miss',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+          latest_feedback_created_at: '2026-03-23T12:00:00+08:00',
+          latest_reviewer: 'einstein',
+          latest_review_status: 'final',
+          latest_primary_tag: 'threshold_false_negative',
+          latest_tags: ['threshold_false_negative', 'thesis_clear'],
+          latest_research_verdict: 'needs_weekly_review',
+          latest_notes: 'weekly batch triage',
+          assignee: null,
+          workflow_status: 'ready_for_adjudication',
+        },
+      ],
+      workflow_status_counts: { ready_for_adjudication: 2 },
+      assignee_counts: { __unassigned__: 2 },
+      report_counts: { paper_trading_window_recent: 2 },
+    });
+    appendSelectionFeedbackBatchMock.mockResolvedValue({
+      records: batchRefreshedDayDetail.feedback_records,
+      appended_count: 2,
+      feedback_record_count: 2,
+      feedback_summary: batchRefreshedDayDetail.feedback_summary,
+      directory_summary: {},
+      feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+    });
+
+    render(<ReplayArtifactsSettings mode="workspace" />);
+
+    await waitFor(() => {
+      expect(getSelectionArtifactDayMock).toHaveBeenCalledWith('paper_trading_window_recent', '2026-03-23');
+    });
+    await screen.findByText('Batch Label Workspace');
+
+    await user.click(screen.getByLabelText('[watchlist] 300724'));
+    await user.click(screen.getByLabelText('[near_miss] 002916'));
+    expect(screen.getByText((_, element) => element?.textContent === '2 selected')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Batch Primary Tag'), 'threshold_false_negative');
+    await user.type(screen.getByLabelText('Batch Additional Tags'), 'thesis_clear');
+    await user.selectOptions(screen.getByLabelText('Batch Review Status'), 'final');
+    await user.clear(screen.getByLabelText('Batch Research Verdict'));
+    await user.type(screen.getByLabelText('Batch Research Verdict'), 'needs_weekly_review');
+    await user.clear(screen.getByLabelText('Batch Confidence'));
+    await user.type(screen.getByLabelText('Batch Confidence'), '0.77');
+    await user.type(screen.getByLabelText('Batch Notes'), 'weekly batch triage');
+    await user.click(screen.getByRole('button', { name: 'Append Batch Feedback' }));
+
+    await waitFor(() => {
+      expect(appendSelectionFeedbackBatchMock).toHaveBeenCalledWith('paper_trading_window_recent', '2026-03-23', {
+        symbols: ['300724', '002916'],
+        primary_tag: 'threshold_false_negative',
+        research_verdict: 'needs_weekly_review',
+        tags: ['thesis_clear'],
+        review_status: 'final',
+        confidence: 0.77,
+        notes: 'weekly batch triage',
+      });
+    });
+
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledTimes(2);
+      expect(getSelectionArtifactDayMock).toHaveBeenCalledTimes(2);
+      expect(getFeedbackActivityMock).toHaveBeenCalledTimes(2);
+      expect(getWorkflowQueueMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.getByText('2 recent records')).toBeInTheDocument();
+    expect(screen.getByText('status final:2')).toBeInTheDocument();
+  });
+
+  it('assigns an unowned workflow queue item to the current user', async () => {
+    const user = userEvent.setup();
+    listMock.mockResolvedValue(reports);
+    getMock.mockResolvedValue(detail);
+    getSelectionArtifactDayMock.mockResolvedValue(dayDetail);
+    getFeedbackActivityMock.mockResolvedValue({
+      report_name: 'paper_trading_window_recent',
+      reviewer: null,
+      limit: 8,
+      record_count: 0,
+      recent_records: [],
+      review_status_counts: {},
+      tag_counts: {},
+      reviewer_counts: {},
+      report_counts: {},
+    });
+    getWorkflowQueueMock.mockResolvedValueOnce({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 1,
+      items: [
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+          latest_feedback_created_at: '2026-03-23T10:00:00+08:00',
+          latest_reviewer: 'einstein',
+          latest_review_status: 'draft',
+          latest_primary_tag: 'high_quality_selection',
+          latest_tags: ['high_quality_selection'],
+          latest_research_verdict: 'selected_for_good_reason',
+          latest_notes: 'needs owner',
+          assignee: null,
+          workflow_status: 'unassigned',
+        },
+      ],
+      workflow_status_counts: { unassigned: 1 },
+      assignee_counts: { __unassigned__: 1 },
+      report_counts: { paper_trading_window_recent: 1 },
+    }).mockResolvedValueOnce({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 1,
+      items: [
+        {
+          report_name: 'paper_trading_window_recent',
+          trade_date: '2026-03-23',
+          symbol: '300724',
+          review_scope: 'watchlist',
+          feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+          latest_feedback_created_at: '2026-03-23T10:00:00+08:00',
+          latest_reviewer: 'einstein',
+          latest_review_status: 'draft',
+          latest_primary_tag: 'high_quality_selection',
+          latest_tags: ['high_quality_selection'],
+          latest_research_verdict: 'selected_for_good_reason',
+          latest_notes: 'needs owner',
+          assignee: 'einstein',
+          workflow_status: 'assigned',
+        },
+      ],
+      workflow_status_counts: { assigned: 1 },
+      assignee_counts: { einstein: 1 },
+      report_counts: { paper_trading_window_recent: 1 },
+    });
+    updateWorkflowQueueItemMock.mockResolvedValue({
+      report_name: 'paper_trading_window_recent',
+      trade_date: '2026-03-23',
+      symbol: '300724',
+      review_scope: 'watchlist',
+      feedback_path: '/tmp/replay/selection_artifacts/2026-03-23/research_feedback.jsonl',
+      latest_feedback_created_at: '2026-03-23T10:00:00+08:00',
+      latest_reviewer: 'einstein',
+      latest_review_status: 'draft',
+      latest_primary_tag: 'high_quality_selection',
+      latest_tags: ['high_quality_selection'],
+      latest_research_verdict: 'selected_for_good_reason',
+      latest_notes: 'needs owner',
+      assignee: 'einstein',
+      workflow_status: 'assigned',
+    });
+
+    render(<ReplayArtifactsSettings mode="workspace" />);
+
+    await screen.findByText('Cross-Report Workflow Queue');
+    await user.click(screen.getByRole('button', { name: 'Assign to me' }));
+
+    await waitFor(() => {
+      expect(updateWorkflowQueueItemMock).toHaveBeenCalledWith({
+        report_name: 'paper_trading_window_recent',
+        trade_date: '2026-03-23',
+        symbol: '300724',
+        review_scope: 'watchlist',
+        assignee: 'einstein',
+        workflow_status: 'assigned',
+      });
+    });
+
+    await waitFor(() => {
+      expect(getWorkflowQueueMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.getByText('assigned:1')).toBeInTheDocument();
+    expect(screen.getByText('assignee einstein | reviewer einstein')).toBeInTheDocument();
   });
 });

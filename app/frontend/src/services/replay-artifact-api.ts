@@ -261,6 +261,94 @@ export interface ReplayFeedbackAppendResult {
   feedback_path: string;
 }
 
+export interface ReplayFeedbackBatchAppendRequest {
+  symbols: string[];
+  primary_tag: string;
+  research_verdict: string;
+  tags?: string[];
+  review_status?: string;
+  confidence?: number;
+  notes?: string;
+  created_at?: string | null;
+}
+
+export interface ReplayFeedbackBatchAppendResult {
+  records: ReplayFeedbackRecord[];
+  appended_count: number;
+  feedback_record_count: number;
+  feedback_summary: ReplayFeedbackSummary;
+  directory_summary: Record<string, unknown>;
+  feedback_path: string;
+}
+
+export interface ReplayFeedbackActivityRecord {
+  report_name: string;
+  trade_date: string;
+  symbol: string;
+  review_scope: string;
+  reviewer: string;
+  review_status: string;
+  primary_tag: string;
+  tags: string[];
+  confidence: number;
+  research_verdict: string;
+  notes: string;
+  created_at: string;
+  feedback_path: string;
+}
+
+export interface ReplayFeedbackActivity {
+  report_name: string | null;
+  reviewer: string | null;
+  limit: number;
+  record_count: number;
+  recent_records: ReplayFeedbackActivityRecord[];
+  review_status_counts: Record<string, number>;
+  tag_counts: Record<string, number>;
+  reviewer_counts: Record<string, number>;
+  report_counts: Record<string, number>;
+  workflow_status_counts?: Record<string, number>;
+  workflow_queue?: Record<string, ReplayFeedbackActivityRecord[]>;
+}
+
+export interface ReplayWorkflowQueueItem {
+  report_name: string;
+  trade_date: string;
+  symbol: string;
+  review_scope: string;
+  feedback_path: string;
+  latest_feedback_created_at: string;
+  latest_reviewer: string;
+  latest_review_status: string;
+  latest_primary_tag: string;
+  latest_tags: string[];
+  latest_research_verdict: string;
+  latest_notes: string;
+  assignee: string | null;
+  workflow_status: string;
+}
+
+export interface ReplayWorkflowQueue {
+  assignee: string | null;
+  workflow_status: string | null;
+  report_name: string | null;
+  limit: number;
+  item_count: number;
+  items: ReplayWorkflowQueueItem[];
+  workflow_status_counts: Record<string, number>;
+  assignee_counts: Record<string, number>;
+  report_counts: Record<string, number>;
+}
+
+export interface ReplayWorkflowQueueUpdateRequest {
+  report_name: string;
+  trade_date: string;
+  symbol: string;
+  review_scope: string;
+  assignee?: string | null;
+  workflow_status?: string | null;
+}
+
 class ReplayArtifactApiService {
   private readonly baseUrl = `${API_BASE_URL}/replay-artifacts`;
 
@@ -303,6 +391,93 @@ class ReplayArtifactApiService {
     }
     const payload = await response.json();
     return payload.feedback as ReplayFeedbackAppendResult;
+  }
+
+  async appendSelectionFeedbackBatch(reportName: string, tradeDate: string, request: ReplayFeedbackBatchAppendRequest): Promise<ReplayFeedbackBatchAppendResult> {
+    const response = await authFetch(`${this.baseUrl}/${encodeURIComponent(reportName)}/selection-artifacts/${encodeURIComponent(tradeDate)}/feedback/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Failed to append batch research feedback' }));
+      throw new Error(error.detail || 'Failed to append batch research feedback');
+    }
+    const payload = await response.json();
+    return payload.feedback as ReplayFeedbackBatchAppendResult;
+  }
+
+  async getFeedbackActivity(params: {
+    reportName?: string;
+    reviewer?: string;
+    limit?: number;
+  } = {}): Promise<ReplayFeedbackActivity> {
+    const searchParams = new URLSearchParams();
+    if (params.reportName) {
+      searchParams.set('report_name', params.reportName);
+    }
+    if (params.reviewer) {
+      searchParams.set('reviewer', params.reviewer);
+    }
+    if (typeof params.limit === 'number') {
+      searchParams.set('limit', String(params.limit));
+    }
+    const query = searchParams.toString();
+    const response = await authFetch(`${this.baseUrl}/feedback-activity${query ? `?${query}` : ''}`);
+    if (!response.ok) {
+      throw new Error('Failed to load replay feedback activity');
+    }
+    const payload = await response.json();
+    return payload.activity as ReplayFeedbackActivity;
+  }
+
+  async getWorkflowQueue(params: {
+    assignee?: string;
+    workflowStatus?: string;
+    reportName?: string;
+    limit?: number;
+  } = {}): Promise<ReplayWorkflowQueue> {
+    const searchParams = new URLSearchParams();
+    if (params.assignee) {
+      searchParams.set('assignee', params.assignee);
+    }
+    if (params.workflowStatus) {
+      searchParams.set('workflow_status', params.workflowStatus);
+    }
+    if (params.reportName) {
+      searchParams.set('report_name', params.reportName);
+    }
+    if (typeof params.limit === 'number') {
+      searchParams.set('limit', String(params.limit));
+    }
+    const query = searchParams.toString();
+    const response = await authFetch(`${this.baseUrl}/workflow-queue${query ? `?${query}` : ''}`);
+    if (!response.ok) {
+      throw new Error('Failed to load replay workflow queue');
+    }
+    const payload = await response.json();
+    return payload.queue as ReplayWorkflowQueue;
+  }
+
+  async updateWorkflowQueueItem(request: ReplayWorkflowQueueUpdateRequest): Promise<ReplayWorkflowQueueItem> {
+    const response = await authFetch(`${this.baseUrl}/workflow-queue/item`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        report_name: request.report_name,
+        trade_date: request.trade_date,
+        symbol: request.symbol,
+        review_scope: request.review_scope,
+        assignee: request.assignee,
+        workflow_status: request.workflow_status,
+      }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Failed to update replay workflow item' }));
+      throw new Error(error.detail || 'Failed to update replay workflow item');
+    }
+    const payload = await response.json();
+    return payload.item as ReplayWorkflowQueueItem;
   }
 }
 

@@ -1,7 +1,13 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { ReplayArtifactDetail, ReplaySelectionArtifactDay, ReplayCacheBenchmarkOverview, ReplayReasonCount } from '@/services/replay-artifact-api';
+import type {
+  ReplayArtifactDetail,
+  ReplaySelectionArtifactDay,
+  ReplayCacheBenchmarkOverview,
+  ReplayReasonCount,
+  ReplayFeedbackActivity,
+} from '@/services/replay-artifact-api';
 
 function formatOptionalText(value: string | null | undefined): string {
   if (!value) {
@@ -81,13 +87,19 @@ function PathPreviewCard({
 interface ReplayArtifactsInspectorProps {
   detail: ReplayArtifactDetail | null;
   selectionArtifactDetail: ReplaySelectionArtifactDay | null;
+  feedbackActivity: ReplayFeedbackActivity | null;
   isDetailLoading: boolean;
+  isActivityLoading: boolean;
+  activityError?: string | null;
 }
 
 export function ReplayArtifactsInspector({
   detail,
   selectionArtifactDetail,
+  feedbackActivity,
   isDetailLoading,
+  isActivityLoading,
+  activityError,
 }: ReplayArtifactsInspectorProps) {
   if (isDetailLoading || !detail) {
     return (
@@ -144,6 +156,98 @@ export function ReplayArtifactsInspector({
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Feedback Activity</CardTitle>
+          <CardDescription>按当前 report 聚合最近 feedback，用于快速判断 backlog 是否还停留在 draft、主要标签集中在哪些语义，以及最近是谁在复核。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {isActivityLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-28 w-full" />
+            </div>
+          ) : activityError ? (
+            <p className="text-sm text-red-500">{activityError}</p>
+          ) : feedbackActivity ? (
+            <>
+              <div className="grid gap-3">
+                <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Activity Coverage</p>
+                  <p className="mt-2 text-sm font-semibold text-primary">{feedbackActivity.record_count} recent records</p>
+                  <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                    status {Object.entries(feedbackActivity.review_status_counts || {}).map(([status, count]) => `${status}:${count}`).join(' | ') || '--'}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Top Tags</p>
+                  <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                    {Object.entries(feedbackActivity.tag_counts || {}).slice(0, 4).map(([tag, count]) => `${tag}:${count}`).join(' | ') || '--'}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Recent Reviewers</p>
+                  <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                    {Object.entries(feedbackActivity.reviewer_counts || {}).map(([reviewer, count]) => `${reviewer}:${count}`).join(' | ') || '--'}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Workflow Queue</p>
+                  <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                    {Object.entries(feedbackActivity.workflow_status_counts || {}).map(([status, count]) => `${status}:${count}`).join(' | ') || '--'}
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending Draft Queue</p>
+                {(feedbackActivity.workflow_queue?.draft || []).length > 0 ? (
+                  feedbackActivity.workflow_queue?.draft?.slice(0, 5).map((record) => (
+                    <div key={`draft-${record.created_at}-${record.symbol}-${record.primary_tag}`} className="rounded-md border border-border/60 bg-background/60 px-3 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">{record.trade_date}</Badge>
+                        <Badge variant="secondary">{record.symbol}</Badge>
+                        <Badge variant="outline">{record.review_scope}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm font-medium text-primary">{record.primary_tag}</p>
+                      <p className="mt-1 text-xs leading-6 text-muted-foreground">{record.reviewer} | {record.created_at}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-xs text-muted-foreground">
+                    当前 report 没有待推进的 draft queue。
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Latest Records</p>
+                {feedbackActivity.recent_records.length > 0 ? (
+                  feedbackActivity.recent_records.slice(0, 5).map((record) => (
+                    <div key={`${record.created_at}-${record.symbol}-${record.primary_tag}`} className="rounded-md border border-border/60 bg-background/60 px-3 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">{record.trade_date}</Badge>
+                        <Badge variant="secondary">{record.symbol}</Badge>
+                        <Badge variant="outline">{record.review_status}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm font-medium text-primary">{record.primary_tag}</p>
+                      <p className="mt-1 text-xs leading-6 text-muted-foreground">{record.reviewer} | {record.research_verdict} | {record.created_at}</p>
+                      <p className="mt-2 text-xs leading-6 text-muted-foreground">{record.notes || '--'}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-xs text-muted-foreground">
+                    当前 report 还没有可展示的 feedback activity。
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-xs text-muted-foreground">
+              当前 report 还没有可展示的 feedback activity。
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
