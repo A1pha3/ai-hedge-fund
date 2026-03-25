@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { PanelBottom, PanelLeft, PanelRight, Settings, UserCircle } from 'lucide-react';
+import { Database, PanelBottom, PanelLeft, PanelRight, Settings, UserCircle } from 'lucide-react';
 
 interface TopBarProps {
   isLeftCollapsed: boolean;
@@ -9,6 +9,7 @@ interface TopBarProps {
   onToggleLeft: () => void;
   onToggleRight: () => void;
   onToggleBottom: () => void;
+  onReplayArtifactsClick: () => void;
   onSettingsClick: () => void;
   onUserClick?: () => void;
   username?: string;
@@ -21,6 +22,7 @@ export function TopBar({
   onToggleLeft,
   onToggleRight,
   onToggleBottom,
+  onReplayArtifactsClick,
   onSettingsClick,
   onUserClick,
   username,
@@ -74,6 +76,18 @@ export function TopBar({
 
       {/* Divider */}
       <div className="w-px h-5 bg-ramp-grey-700 mx-1" />
+
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onReplayArtifactsClick}
+        className="h-8 px-2 gap-1.5 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
+        aria-label="Open replay artifacts"
+        title="Open Replay Artifacts"
+      >
+        <Database size={16} />
+        <span className="text-xs font-medium">Replay</span>
+      </Button>
 
       {/* Settings */}
       <Button

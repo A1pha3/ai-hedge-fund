@@ -1,8 +1,11 @@
+import { ReplayArtifactsEntryCard } from '@/components/replay-artifacts/replay-artifacts-entry-card';
+import { useTabsContext } from '@/contexts/tabs-context';
 import { cn } from '@/lib/utils';
 import { CubeIcon } from '@radix-ui/react-icons';
 import { Database, Key, Palette } from 'lucide-react';
 import { useState } from 'react';
-import { ApiKeysSettings, Models, ReplayArtifactsSettings } from './';
+import { TabService } from '@/services/tab-service';
+import { ApiKeysSettings, Models } from './';
 import { ThemeSettings } from './appearance';
 
 interface SettingsProps {
@@ -18,6 +21,7 @@ interface SettingsNavItem {
 
 export function Settings({ className }: SettingsProps) {
   const [selectedSection, setSelectedSection] = useState('api');
+  const { openTab } = useTabsContext();
 
   const navigationItems: SettingsNavItem[] = [
     {
@@ -49,7 +53,7 @@ export function Settings({ className }: SettingsProps) {
   const renderContent = () => {
     switch (selectedSection) {
       case 'artifacts':
-        return <ReplayArtifactsSettings />;
+        return <ReplayArtifactsEntryCard onOpen={() => openTab(TabService.createReplayArtifactsTab())} />;
       case 'models':
         return <Models />;
       case 'theme':

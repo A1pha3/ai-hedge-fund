@@ -44,6 +44,11 @@ function LayoutContent() {
     openTab(tabData);
   };
 
+  const handleReplayArtifactsClick = () => {
+    const tabData = TabService.createReplayArtifactsTab();
+    openTab(tabData);
+  };
+
   // Add keyboard shortcuts for toggling sidebars and fit view
   useLayoutKeyboardShortcuts(
     () => setIsRightCollapsed(!isRightCollapsed), // Cmd+I for right sidebar
@@ -94,6 +99,7 @@ function LayoutContent() {
         onToggleLeft={() => setIsLeftCollapsed(!isLeftCollapsed)}
         onToggleRight={() => setIsRightCollapsed(!isRightCollapsed)}
         onToggleBottom={toggleBottomPanel}
+        onReplayArtifactsClick={handleReplayArtifactsClick}
         onSettingsClick={handleSettingsClick}
         onUserClick={() => setShowUserSettings(true)}
         username={user?.username}

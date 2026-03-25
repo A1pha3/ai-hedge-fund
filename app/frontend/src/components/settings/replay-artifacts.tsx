@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BarChart3, Clock3, Database, RefreshCw, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -14,12 +14,15 @@ import {
   type ReplayReasonCount,
   type ReplayRejectedCandidate,
 } from '@/services/replay-artifact-api';
+import { ReplayArtifactsInspector } from '@/components/replay-artifacts/replay-artifacts-inspector';
+import { ReplayArtifactsReviewMarkdown } from '@/components/replay-artifacts/replay-artifacts-review-markdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined) {
@@ -57,6 +60,35 @@ function formatOptionalText(value: string | null | undefined): string {
     return '--';
   }
   return value;
+}
+
+function formatCompactDateToken(value: string): string {
+  if (!/^\d{8}$/.test(value)) {
+    return value;
+  }
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+}
+
+function formatCompactReportLabel(reportDir: string): string {
+  const segments = reportDir
+    .split('_')
+    .filter(Boolean)
+    .map((segment) => formatCompactDateToken(segment));
+
+  if (segments.length <= 5) {
+    return segments.join(' ');
+  }
+
+  return `${segments.slice(0, 5).join(' ')} ...`;
+}
+
+function formatPathLeaf(value: string | null | undefined): string {
+  if (!value) {
+    return '--';
+  }
+  const normalized = value.replace(/\\/g, '/');
+  const segments = normalized.split('/').filter(Boolean);
+  return segments.at(-1) || value;
 }
 
 function formatCacheBenchmarkValue(overview: ReplayCacheBenchmarkOverview | undefined): string {
@@ -247,7 +279,35 @@ function KpiCard({
   );
 }
 
-export function ReplayArtifactsSettings() {
+function PathPreviewCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
+  const displayValue = formatOptionalText(value);
+  const leafValue = formatPathLeaf(value);
+
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-primary">{label}</p>
+      <p className="mt-2 break-all text-sm font-semibold leading-5 text-foreground" title={leafValue}>
+        {leafValue}
+      </p>
+      <p className="mt-2 break-all font-mono text-[11px] leading-5 text-muted-foreground" title={displayValue}>
+        {displayValue}
+      </p>
+    </div>
+  );
+}
+
+interface ReplayArtifactsSettingsProps {
+  mode?: 'settings' | 'workspace';
+  className?: string;
+}
+
+export function ReplayArtifactsSettings({ mode = 'settings', className }: ReplayArtifactsSettingsProps) {
   const [reports, setReports] = useState<ReplayArtifactSummary[]>([]);
   const [selectedReport, setSelectedReport] = useState<string>('');
   const [detail, setDetail] = useState<ReplayArtifactDetail | null>(null);
@@ -388,21 +448,25 @@ export function ReplayArtifactsSettings() {
     trade_date_count?: number;
   } | null;
   const selectionSnapshot = selectionArtifactDetail?.snapshot;
-  const selectedCandidates = selectionSnapshot?.selected || [];
-  const rejectedCandidates = selectionSnapshot?.rejected || [];
+  const selectedCandidates = useMemo(() => selectionSnapshot?.selected || [], [selectionSnapshot]);
+  const rejectedCandidates = useMemo(() => selectionSnapshot?.rejected || [], [selectionSnapshot]);
   const universeSummary = selectionSnapshot?.universe_summary || {};
   const feedbackRecords = selectionArtifactDetail?.feedback_records || [];
   const sortedFeedbackRecords = sortFeedbackRecords(feedbackRecords);
   const feedbackOptions = selectionArtifactDetail?.feedback_options;
-  const symbolOptions = [
-    ...selectedCandidates.map((candidate) => ({ symbol: candidate.symbol, scope: 'watchlist', label: `[watchlist] ${candidate.symbol}` })),
-    ...rejectedCandidates.map((candidate) => ({ symbol: candidate.symbol, scope: 'near_miss', label: `[near_miss] ${candidate.symbol}` })),
-  ];
+  const symbolOptions = useMemo(
+    () => [
+      ...selectedCandidates.map((candidate) => ({ symbol: candidate.symbol, scope: 'watchlist', label: `[watchlist] ${candidate.symbol}` })),
+      ...rejectedCandidates.map((candidate) => ({ symbol: candidate.symbol, scope: 'near_miss', label: `[near_miss] ${candidate.symbol}` })),
+    ],
+    [rejectedCandidates, selectedCandidates],
+  );
   const filteredFeedbackRecords = sortedFeedbackRecords.filter((record) => {
     const symbolMatched = feedbackFilter.symbol === 'all' || record.symbol === feedbackFilter.symbol;
     const statusMatched = feedbackFilter.reviewStatus === 'all' || record.review_status === feedbackFilter.reviewStatus;
     return symbolMatched && statusMatched;
   });
+  const isWorkspace = mode === 'workspace';
   const layerBFilter = getFunnelFilter(selectionSnapshot, 'layer_b');
   const watchlistFilter = getFunnelFilter(selectionSnapshot, 'watchlist');
   const buyOrdersFilter = getFunnelFilter(selectionSnapshot, 'buy_orders');
@@ -474,12 +538,12 @@ export function ReplayArtifactsSettings() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className={cn('space-y-6', className)}>
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-primary">Replay Artifacts</h2>
-          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-            浏览 long-window replay 的基础绩效、关键 funnel 指标、按 ticker 执行摘要，以及按交易日的 selection review，避免直接翻原始 JSONL/Markdown。
+          <p className={cn('mt-2 text-sm text-muted-foreground', isWorkspace ? 'max-w-4xl' : 'max-w-3xl')}>
+            浏览 long-window replay 的基础绩效、关键 funnel 指标、按 ticker 执行摘要，以及按交易日的 selection review。一级工作台模式会把报告列表、主分析区和 inspector 拆开，避免继续挤在 settings 的单列内容区中。
           </p>
         </div>
         <Button variant="outline" onClick={() => window.location.reload()}>
@@ -488,170 +552,239 @@ export function ReplayArtifactsSettings() {
         </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Report Selector</CardTitle>
-          <CardDescription>当前接口直接扫描 data/reports 下可识别的 replay summary。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {isListLoading ? (
-            <Skeleton className="h-10 w-full" />
-          ) : (
-            <>
-              <select
-                value={selectedReport}
-                onChange={(event) => setSelectedReport(event.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
-              >
-                {reports.map((report) => (
-                  <option key={report.report_dir} value={report.report_dir}>
-                    {report.report_dir}
-                  </option>
-                ))}
-              </select>
+      {isWorkspace && !isDetailLoading && detail ? (
+        <Card className="border-border/60 bg-muted/10">
+          <CardContent className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Selected Window</p>
+              <p className="mt-2 text-sm font-semibold text-primary">{detail.window.start_date} .. {detail.window.end_date}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{detail.run_header.plan_generation_mode || 'unknown mode'}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Model Route</p>
+              <p className="mt-2 break-all text-sm font-semibold text-primary">{detail.run_header.model_provider || 'unknown provider'} / {detail.run_header.model_name || 'unknown model'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">report {detail.report_dir}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Selection Coverage</p>
+              <p className="mt-2 text-sm font-semibold text-primary">{detail.selection_artifact_overview.trade_date_count} trade dates</p>
+              <p className="mt-1 text-xs text-muted-foreground">feedback {feedbackSummary?.overall?.feedback_count || 0} / cache {formatCacheBenchmarkValue(detail.cache_benchmark_overview)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Runtime Funnel</p>
+              <p className="mt-2 text-sm font-semibold text-primary">L-B {formatNumber(detail.deployment_funnel_runtime.avg_layer_b_count, 2)} | WL {formatNumber(detail.deployment_funnel_runtime.avg_watchlist_count, 2)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">buy {formatNumber(detail.deployment_funnel_runtime.avg_buy_order_count, 2)} | day {formatNumber(detail.deployment_funnel_runtime.avg_total_day_seconds, 2)}s</p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {reports.map((report) => (
-                  <button
-                    key={report.report_dir}
-                    type="button"
-                    onClick={() => setSelectedReport(report.report_dir)}
-                    className={`rounded-md border px-3 py-3 text-left transition-colors ${selectedReport === report.report_dir ? 'border-primary bg-primary/5' : 'border-border/60 bg-muted/10 hover:bg-muted/20'}`}
+      <div className={cn(isWorkspace ? 'grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)_340px]' : 'space-y-6')}>
+        <div className="space-y-4">
+          <Card className={cn(isWorkspace && 'xl:sticky xl:top-6')}>
+            <CardHeader>
+              <CardTitle>{isWorkspace ? 'Report Rail' : 'Report Selector'}</CardTitle>
+              <CardDescription>
+                当前接口直接扫描 data/reports 下可识别的 replay summary。{isWorkspace ? '左栏用于快速筛选和切换 replay 报告。' : ''}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {isListLoading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : (
+                <>
+                  <select
+                    value={selectedReport}
+                    onChange={(event) => setSelectedReport(event.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-primary">{report.report_dir}</p>
-                      <Badge variant={selectedReport === report.report_dir ? 'secondary' : 'outline'}>
-                        {formatCacheBenchmarkValue(report.cache_benchmark_overview)}
-                      </Badge>
-                    </div>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {formatOptionalText(report.window.start_date)} .. {formatOptionalText(report.window.end_date)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {formatOptionalText(report.run_header.model_provider)} / {formatOptionalText(report.run_header.model_name)}
-                    </p>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {formatCacheBenchmarkDescription(report.cache_benchmark_overview)}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-          {error ? <p className="text-sm text-red-500">{error}</p> : null}
-        </CardContent>
-      </Card>
+                    {reports.map((report) => (
+                      <option key={report.report_dir} value={report.report_dir}>
+                        {formatCompactReportLabel(report.report_dir)}
+                      </option>
+                    ))}
+                  </select>
 
-      {isDetailLoading || !detail ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <Skeleton className="h-36" />
-          <Skeleton className="h-36" />
-          <Skeleton className="h-36" />
-          <Skeleton className="h-36" />
-        </div>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{detail.window.start_date} .. {detail.window.end_date}</Badge>
-            <Badge variant="secondary">{detail.run_header.plan_generation_mode || 'unknown mode'}</Badge>
-            <Badge variant="outline">{detail.run_header.model_provider || 'unknown provider'} / {detail.run_header.model_name || 'unknown model'}</Badge>
-          </div>
+                  <div className={cn('grid gap-3', isWorkspace ? 'grid-cols-1' : 'md:grid-cols-2 xl:grid-cols-3')}>
+                    {reports.map((report) => (
+                      <button
+                        key={report.report_dir}
+                        type="button"
+                        onClick={() => setSelectedReport(report.report_dir)}
+                        className={`min-w-0 overflow-hidden rounded-md border px-3 py-3 text-left transition-colors ${selectedReport === report.report_dir ? 'border-primary bg-primary/5' : 'border-border/60 bg-muted/10 hover:bg-muted/20'}`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold leading-5 text-primary">
+                              {formatCompactReportLabel(report.report_dir)}
+                            </p>
+                            <p className="mt-1 break-all font-mono text-[11px] leading-5 text-muted-foreground" title={report.report_dir}>
+                              {report.report_dir}
+                            </p>
+                          </div>
+                          <Badge variant={selectedReport === report.report_dir ? 'secondary' : 'outline'} className="shrink-0 whitespace-nowrap">
+                            {formatCacheBenchmarkValue(report.cache_benchmark_overview)}
+                          </Badge>
+                        </div>
+                        <p className="mt-3 text-xs text-muted-foreground">
+                          {formatOptionalText(report.window.start_date)} .. {formatOptionalText(report.window.end_date)}
+                        </p>
+                        <p className="mt-1 break-all text-xs leading-5 text-muted-foreground" title={`${formatOptionalText(report.run_header.model_provider)} / ${formatOptionalText(report.run_header.model_name)}`}>
+                          {formatOptionalText(report.run_header.model_provider)} / {formatOptionalText(report.run_header.model_name)}
+                        </p>
+                        <p className="mt-2 break-all text-xs leading-5 text-muted-foreground">
+                          {formatCacheBenchmarkDescription(report.cache_benchmark_overview)}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {error ? <p className="text-sm text-red-500">{error}</p> : null}
+            </CardContent>
+          </Card>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <KpiCard
-              title="Return"
-              value={formatPercent(detail.headline_kpi.total_return_pct)}
-              description={`Final Value ${formatNumber(detail.headline_kpi.final_value)}`}
-              icon={BarChart3}
-            />
-            <KpiCard
-              title="Trade Days / Orders"
-              value={`${detail.headline_kpi.executed_trade_days ?? '--'} / ${detail.headline_kpi.total_executed_orders ?? '--'}`}
-              description={`Sharpe ${formatNumber(detail.headline_kpi.sharpe_ratio, 3)}`}
-              icon={Database}
-            />
-            <KpiCard
-              title="Avg Invested"
-              value={formatRatioPercent(detail.deployment_funnel_runtime.avg_invested_ratio)}
-              description={`Peak ${formatRatioPercent(detail.deployment_funnel_runtime.peak_invested_ratio)}`}
-              icon={Wallet}
-            />
-            <KpiCard
-              title="Avg Day Sec"
-              value={formatNumber(detail.deployment_funnel_runtime.avg_total_day_seconds, 2)}
-              description={`Post Market ${formatNumber(detail.deployment_funnel_runtime.avg_post_market_seconds, 2)}s`}
-              icon={Clock3}
-            />
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <KpiCard
-              title="Selection Days"
-              value={`${detail.selection_artifact_overview.trade_date_count}`}
-              description={detail.selection_artifact_overview.available ? 'Selection artifact 覆盖交易日数' : '当前 replay 未发现 selection artifacts'}
-              icon={Database}
-            />
-            <KpiCard
-              title="Write Status"
-              value={Object.entries(detail.selection_artifact_overview.write_status_counts || {})
-                .map(([status, count]) => `${status}:${count}`)
-                .join(' | ') || '--'}
-              description="来自 daily_events/current_plan.selection_artifacts.write_status"
-              icon={RefreshCw}
-            />
-            <KpiCard
-              title="Selection Blockers"
-              value={formatBlockers(detail.selection_artifact_overview.blocker_counts)}
-              description="按 selection snapshot 汇总的执行阻断原因"
-              icon={BarChart3}
-            />
-            <KpiCard
-              title="Feedback Summary"
-              value={feedbackSummary?.overall?.feedback_count?.toString() || '0'}
-              description={`Final ${feedbackSummary?.overall?.final_feedback_count || 0} / Files ${feedbackSummary?.feedback_file_count || 0}`}
-              icon={Wallet}
-            />
-            <KpiCard
-              title="Cache Benchmark"
-              value={formatCacheBenchmarkValue(detail.cache_benchmark_overview)}
-              description={formatCacheBenchmarkDescription(detail.cache_benchmark_overview)}
-              icon={RefreshCw}
-            />
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          {isWorkspace && !isDetailLoading && detail ? (
             <Card>
               <CardHeader>
-                <CardTitle>Ticker Execution Digest</CardTitle>
-                <CardDescription>按 ticker 聚合的成交次数、已实现盈亏和持仓质量信号。</CardDescription>
+                <CardTitle>Workspace Focus</CardTitle>
+                <CardDescription>当前报告的快速上下文，方便在切换时做第一轮判断。</CardDescription>
               </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Ticker</TableHead>
-                      <TableHead>Buy / Sell</TableHead>
-                      <TableHead>Final</TableHead>
-                      <TableHead>Realized</TableHead>
-                      <TableHead>Max Float</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detail.ticker_execution_digest.map((ticker) => (
-                      <TableRow key={ticker.ticker}>
-                        <TableCell className="font-medium">{ticker.ticker}</TableCell>
-                        <TableCell>{ticker.buy_count} / {ticker.sell_count}</TableCell>
-                        <TableCell>{ticker.final_long}</TableCell>
-                        <TableCell>{formatNumber(ticker.realized_pnl)}</TableCell>
-                        <TableCell>{formatPercent(ticker.max_unrealized_pnl_pct * 100)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <CardContent className="space-y-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Return</span>
+                  <span className="font-medium text-primary">{formatPercent(detail.headline_kpi.total_return_pct)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Executed Days</span>
+                  <span>{detail.headline_kpi.executed_trade_days ?? '--'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Feedback Files</span>
+                  <span>{feedbackSummary?.feedback_file_count || 0}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Selected Trade Date</span>
+                  <span>{selectedTradeDate || '--'}</span>
+                </div>
               </CardContent>
             </Card>
+          ) : null}
+        </div>
 
-            <div className="space-y-4">
+        <div className="space-y-6">
+          {isDetailLoading || !detail ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <Skeleton className="h-36" />
+              <Skeleton className="h-36" />
+              <Skeleton className="h-36" />
+              <Skeleton className="h-36" />
+            </div>
+          ) : (
+            <>
+              {!isWorkspace ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">{detail.window.start_date} .. {detail.window.end_date}</Badge>
+                  <Badge variant="secondary">{detail.run_header.plan_generation_mode || 'unknown mode'}</Badge>
+                  <Badge variant="outline" className="max-w-full whitespace-normal break-all text-left leading-5">
+                    {detail.run_header.model_provider || 'unknown provider'} / {detail.run_header.model_name || 'unknown model'}
+                  </Badge>
+                </div>
+              ) : null}
+
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <KpiCard
+                  title="Return"
+                  value={formatPercent(detail.headline_kpi.total_return_pct)}
+                  description={`Final Value ${formatNumber(detail.headline_kpi.final_value)}`}
+                  icon={BarChart3}
+                />
+                <KpiCard
+                  title="Trade Days / Orders"
+                  value={`${detail.headline_kpi.executed_trade_days ?? '--'} / ${detail.headline_kpi.total_executed_orders ?? '--'}`}
+                  description={`Sharpe ${formatNumber(detail.headline_kpi.sharpe_ratio, 3)}`}
+                  icon={Database}
+                />
+                <KpiCard
+                  title="Avg Invested"
+                  value={formatRatioPercent(detail.deployment_funnel_runtime.avg_invested_ratio)}
+                  description={`Peak ${formatRatioPercent(detail.deployment_funnel_runtime.peak_invested_ratio)}`}
+                  icon={Wallet}
+                />
+                <KpiCard
+                  title="Avg Day Sec"
+                  value={formatNumber(detail.deployment_funnel_runtime.avg_total_day_seconds, 2)}
+                  description={`Post Market ${formatNumber(detail.deployment_funnel_runtime.avg_post_market_seconds, 2)}s`}
+                  icon={Clock3}
+                />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <KpiCard
+                  title="Selection Days"
+                  value={`${detail.selection_artifact_overview.trade_date_count}`}
+                  description={detail.selection_artifact_overview.available ? 'Selection artifact 覆盖交易日数' : '当前 replay 未发现 selection artifacts'}
+                  icon={Database}
+                />
+                <KpiCard
+                  title="Write Status"
+                  value={Object.entries(detail.selection_artifact_overview.write_status_counts || {})
+                    .map(([status, count]) => `${status}:${count}`)
+                    .join(' | ') || '--'}
+                  description="来自 daily_events/current_plan.selection_artifacts.write_status"
+                  icon={RefreshCw}
+                />
+                <KpiCard
+                  title="Selection Blockers"
+                  value={formatBlockers(detail.selection_artifact_overview.blocker_counts)}
+                  description="按 selection snapshot 汇总的执行阻断原因"
+                  icon={BarChart3}
+                />
+                <KpiCard
+                  title="Feedback Summary"
+                  value={feedbackSummary?.overall?.feedback_count?.toString() || '0'}
+                  description={`Final ${feedbackSummary?.overall?.final_feedback_count || 0} / Files ${feedbackSummary?.feedback_file_count || 0}`}
+                  icon={Wallet}
+                />
+                <KpiCard
+                  title="Cache Benchmark"
+                  value={formatCacheBenchmarkValue(detail.cache_benchmark_overview)}
+                  description={formatCacheBenchmarkDescription(detail.cache_benchmark_overview)}
+                  icon={RefreshCw}
+                />
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Ticker Execution Digest</CardTitle>
+                  <CardDescription>按 ticker 聚合的成交次数、已实现盈亏和持仓质量信号。</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Ticker</TableHead>
+                        <TableHead>Buy / Sell</TableHead>
+                        <TableHead>Final</TableHead>
+                        <TableHead>Realized</TableHead>
+                        <TableHead>Max Float</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {detail.ticker_execution_digest.map((ticker) => (
+                        <TableRow key={ticker.ticker}>
+                          <TableCell className="font-medium">{ticker.ticker}</TableCell>
+                          <TableCell>{ticker.buy_count} / {ticker.sell_count}</TableCell>
+                          <TableCell>{ticker.final_long}</TableCell>
+                          <TableCell>{formatNumber(ticker.realized_pnl)}</TableCell>
+                          <TableCell>{formatPercent(ticker.max_unrealized_pnl_pct * 100)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
               <Card>
                 <CardHeader>
                   <CardTitle>Selection Artifact Review</CardTitle>
@@ -687,11 +820,6 @@ export function ReplayArtifactsSettings() {
                           </Badge>
                         ))}
                       </div>
-                      <div className="space-y-2 text-xs text-muted-foreground">
-                        <p className="break-all">snapshot: {selectionArtifactDetail.paths.snapshot_path}</p>
-                        <p className="break-all">review: {selectionArtifactDetail.paths.review_path}</p>
-                        <p className="break-all">feedback: {selectionArtifactDetail.paths.feedback_path}</p>
-                      </div>
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-3">
                           <p className="text-xs uppercase tracking-wide text-muted-foreground">Watchlist</p>
@@ -707,7 +835,7 @@ export function ReplayArtifactsSettings() {
                         </div>
                         <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-3">
                           <p className="text-xs uppercase tracking-wide text-muted-foreground">Decision Time</p>
-                          <p className="mt-1 text-sm font-semibold break-all">{formatOptionalText(selectionSnapshot?.decision_timestamp)}</p>
+                          <p className="mt-1 break-all text-sm font-semibold leading-5">{formatOptionalText(selectionSnapshot?.decision_timestamp)}</p>
                         </div>
                       </div>
 
@@ -1063,9 +1191,7 @@ export function ReplayArtifactsSettings() {
                         </Table>
                       </div>
 
-                      <pre className="max-h-[480px] overflow-auto rounded-md border border-border/60 bg-muted/20 p-3 text-xs leading-6 whitespace-pre-wrap">
-                        {selectionArtifactDetail.review_markdown}
-                      </pre>
+                      <ReplayArtifactsReviewMarkdown markdown={selectionArtifactDetail.review_markdown} />
                     </>
                   ) : (
                     <p className="text-sm text-muted-foreground">选择一个 trade date 以查看 selection review。</p>
@@ -1073,59 +1199,65 @@ export function ReplayArtifactsSettings() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Funnel Snapshot</CardTitle>
-                  <CardDescription>来自 replay 摘要接口的关键漏斗计数与 blocker。</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Avg Layer B</span>
-                    <span>{formatNumber(detail.deployment_funnel_runtime.avg_layer_b_count, 2)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Avg Watchlist</span>
-                    <span>{formatNumber(detail.deployment_funnel_runtime.avg_watchlist_count, 2)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Avg Buy Orders</span>
-                    <span>{formatNumber(detail.deployment_funnel_runtime.avg_buy_order_count, 2)}</span>
-                  </div>
-                  <div className="space-y-1 pt-2">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Buy blockers</p>
-                    <p>{formatBlockers(detail.deployment_funnel_runtime.top_buy_blockers)}</p>
-                  </div>
-                  <div className="space-y-1 pt-2">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Watch blockers</p>
-                    <p>{formatBlockers(detail.deployment_funnel_runtime.top_watchlist_blockers)}</p>
-                  </div>
-                </CardContent>
-              </Card>
+              {!isWorkspace ? (
+                <>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Funnel Snapshot</CardTitle>
+                      <CardDescription>来自 replay 摘要接口的关键漏斗计数与 blocker。</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Avg Layer B</span>
+                        <span>{formatNumber(detail.deployment_funnel_runtime.avg_layer_b_count, 2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Avg Watchlist</span>
+                        <span>{formatNumber(detail.deployment_funnel_runtime.avg_watchlist_count, 2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Avg Buy Orders</span>
+                        <span>{formatNumber(detail.deployment_funnel_runtime.avg_buy_order_count, 2)}</span>
+                      </div>
+                      <div className="space-y-1 pt-2">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Buy blockers</p>
+                        <p>{formatBlockers(detail.deployment_funnel_runtime.top_buy_blockers)}</p>
+                      </div>
+                      <div className="space-y-1 pt-2">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Watch blockers</p>
+                        <p>{formatBlockers(detail.deployment_funnel_runtime.top_watchlist_blockers)}</p>
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Artifacts</CardTitle>
-                  <CardDescription>当前摘要对应的底层产物路径与 selection artifact 根目录。</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm text-muted-foreground">
-                  {Object.entries(detail.artifacts).map(([key, value]) => (
-                    <div key={key} className="rounded-md border border-border/60 bg-muted/20 px-3 py-2">
-                      <p className="font-medium text-primary">{key}</p>
-                      <p className="break-all">{value}</p>
-                    </div>
-                  ))}
-                  {detail.selection_artifact_overview.artifact_root ? (
-                    <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2">
-                      <p className="font-medium text-primary">selection_artifact_root</p>
-                      <p className="break-all">{detail.selection_artifact_overview.artifact_root}</p>
-                    </div>
-                  ) : null}
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </>
-      )}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Artifacts</CardTitle>
+                      <CardDescription>当前摘要对应的底层产物路径与 selection artifact 根目录。</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm text-muted-foreground">
+                      {Object.entries(detail.artifacts).map(([key, value]) => (
+                        <PathPreviewCard key={key} label={key} value={String(value)} />
+                      ))}
+                      {detail.selection_artifact_overview.artifact_root ? (
+                        <PathPreviewCard label="selection_artifact_root" value={detail.selection_artifact_overview.artifact_root} />
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                </>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        {isWorkspace ? (
+          <ReplayArtifactsInspector
+            detail={detail}
+            selectionArtifactDetail={selectionArtifactDetail}
+            isDetailLoading={isDetailLoading}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
