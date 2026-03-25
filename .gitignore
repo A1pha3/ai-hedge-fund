@@ -13,6 +13,7 @@ data/reports/gate_experiment_w1_20260202_20260313_20260323/
 data/reports/fresh_rerun_*/
 data/reports/frozen_exec_probe_*/
 data/reports/execution_probe_*/
+data/reports/paper_trading_probe_*_cache_benchmark_*/
 
 # Python
 __pycache__/

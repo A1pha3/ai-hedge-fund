@@ -192,6 +192,7 @@ class ReplayArtifactService:
                 **runtime,
             },
             "artifacts": session_summary.get("artifacts") or {},
+            "cache_benchmark_overview": self._derive_cache_benchmark_overview(session_summary),
             "selection_artifact_overview": self._derive_selection_artifact_overview(report_dir, session_summary, daily_events),
         }
 
@@ -332,6 +333,38 @@ class ReplayArtifactService:
         return {
             "avg_total_day_seconds": self._safe_average(total_day_seconds),
             "avg_post_market_seconds": self._safe_average(post_market_seconds),
+        }
+
+    def _derive_cache_benchmark_overview(self, session_summary: dict[str, Any]) -> dict[str, Any]:
+        artifacts = session_summary.get("artifacts") or {}
+        benchmark_payload = session_summary.get("data_cache_benchmark") or {}
+        benchmark_status = session_summary.get("data_cache_benchmark_status") or {}
+        benchmark_summary = benchmark_payload.get("summary") if isinstance(benchmark_payload, dict) else {}
+        if not isinstance(benchmark_summary, dict):
+            benchmark_summary = {}
+
+        return {
+            "requested": bool(benchmark_status.get("requested") or benchmark_payload.get("requested") or False),
+            "executed": bool(benchmark_status.get("executed") or benchmark_payload.get("executed") or False),
+            "write_status": benchmark_status.get("write_status") or benchmark_payload.get("write_status"),
+            "reason": benchmark_status.get("reason") or benchmark_payload.get("reason"),
+            "ticker": benchmark_payload.get("ticker"),
+            "trade_date": benchmark_payload.get("trade_date"),
+            "reuse_confirmed": benchmark_summary.get("reuse_confirmed"),
+            "disk_hit_gain": benchmark_summary.get("disk_hit_gain"),
+            "miss_reduction": benchmark_summary.get("miss_reduction"),
+            "set_reduction": benchmark_summary.get("set_reduction"),
+            "first_hit_rate": benchmark_summary.get("first_hit_rate"),
+            "second_hit_rate": benchmark_summary.get("second_hit_rate"),
+            "artifacts": {
+                key: value
+                for key, value in {
+                    "data_cache_benchmark_json": artifacts.get("data_cache_benchmark_json"),
+                    "data_cache_benchmark_markdown": artifacts.get("data_cache_benchmark_markdown"),
+                    "data_cache_benchmark_appended_report": artifacts.get("data_cache_benchmark_appended_report"),
+                }.items()
+                if value
+            },
         }
 
     def _derive_selection_artifact_overview(

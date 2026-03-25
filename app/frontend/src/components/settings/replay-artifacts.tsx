@@ -6,6 +6,7 @@ import {
   replayArtifactApi,
   type ReplayArtifactDetail,
   type ReplayFeedbackRecord,
+  type ReplayCacheBenchmarkOverview,
   type ReplayLayerCAgentContribution,
   type ReplaySelectionArtifactDay,
   type ReplaySelectedCandidate,
@@ -56,6 +57,25 @@ function formatOptionalText(value: string | null | undefined): string {
     return '--';
   }
   return value;
+}
+
+function formatCacheBenchmarkValue(overview: ReplayCacheBenchmarkOverview | undefined): string {
+  if (!overview?.requested) {
+    return 'not requested';
+  }
+  return overview.write_status || '--';
+}
+
+function formatCacheBenchmarkDescription(overview: ReplayCacheBenchmarkOverview | undefined): string {
+  if (!overview?.requested) {
+    return '当前 replay 未请求 post-session cache benchmark';
+  }
+  if (overview.write_status === 'success') {
+    const reuse = overview.reuse_confirmed ? 'reuse confirmed' : 'reuse not confirmed';
+    const diskGain = overview.disk_hit_gain ?? 0;
+    return `${reuse} | disk +${diskGain}`;
+  }
+  return overview.reason || 'benchmark 未生成';
 }
 
 function formatBooleanFlag(value: boolean | null | undefined): string {
@@ -477,17 +497,46 @@ export function ReplayArtifactsSettings() {
           {isListLoading ? (
             <Skeleton className="h-10 w-full" />
           ) : (
-            <select
-              value={selectedReport}
-              onChange={(event) => setSelectedReport(event.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
-            >
-              {reports.map((report) => (
-                <option key={report.report_dir} value={report.report_dir}>
-                  {report.report_dir}
-                </option>
-              ))}
-            </select>
+            <>
+              <select
+                value={selectedReport}
+                onChange={(event) => setSelectedReport(event.target.value)}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+              >
+                {reports.map((report) => (
+                  <option key={report.report_dir} value={report.report_dir}>
+                    {report.report_dir}
+                  </option>
+                ))}
+              </select>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {reports.map((report) => (
+                  <button
+                    key={report.report_dir}
+                    type="button"
+                    onClick={() => setSelectedReport(report.report_dir)}
+                    className={`rounded-md border px-3 py-3 text-left transition-colors ${selectedReport === report.report_dir ? 'border-primary bg-primary/5' : 'border-border/60 bg-muted/10 hover:bg-muted/20'}`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-primary">{report.report_dir}</p>
+                      <Badge variant={selectedReport === report.report_dir ? 'secondary' : 'outline'}>
+                        {formatCacheBenchmarkValue(report.cache_benchmark_overview)}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {formatOptionalText(report.window.start_date)} .. {formatOptionalText(report.window.end_date)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatOptionalText(report.run_header.model_provider)} / {formatOptionalText(report.run_header.model_name)}
+                    </p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {formatCacheBenchmarkDescription(report.cache_benchmark_overview)}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </>
           )}
           {error ? <p className="text-sm text-red-500">{error}</p> : null}
         </CardContent>
@@ -535,7 +584,7 @@ export function ReplayArtifactsSettings() {
             />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             <KpiCard
               title="Selection Days"
               value={`${detail.selection_artifact_overview.trade_date_count}`}
@@ -561,6 +610,12 @@ export function ReplayArtifactsSettings() {
               value={feedbackSummary?.overall?.feedback_count?.toString() || '0'}
               description={`Final ${feedbackSummary?.overall?.final_feedback_count || 0} / Files ${feedbackSummary?.feedback_file_count || 0}`}
               icon={Wallet}
+            />
+            <KpiCard
+              title="Cache Benchmark"
+              value={formatCacheBenchmarkValue(detail.cache_benchmark_overview)}
+              description={formatCacheBenchmarkDescription(detail.cache_benchmark_overview)}
+              icon={RefreshCw}
             />
           </div>
 

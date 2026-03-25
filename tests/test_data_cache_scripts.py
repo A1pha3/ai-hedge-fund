@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts import benchmark_data_cache_reuse, manage_data_cache, validate_data_cache_reuse
+from src.data import cache_benchmark
 from src.data import enhanced_cache as enhanced_cache_module
 from src.data.enhanced_cache import DiskCache, EnhancedCache, clear_cache, diff_cache_stats, get_cache_runtime_info
 
@@ -248,7 +249,7 @@ def test_validate_data_cache_reuse_main_writes_payload(tmp_path, monkeypatch: py
 
 
 def test_benchmark_data_cache_reuse_builds_validation_command():
-    command = benchmark_data_cache_reuse._build_validation_command(
+    command = cache_benchmark.build_validation_command(
         python_executable="/tmp/python",
         repo_root=Path("/repo"),
         trade_date="20260324",
@@ -275,7 +276,7 @@ def test_benchmark_data_cache_reuse_summarizes_cold_and_warm_runs():
         "result_shapes": {"stock_basic_rows": 3, "daily_basic_rows": 2, "limit_list_rows": 1, "suspend_list_rows": 0},
     }
 
-    payload = benchmark_data_cache_reuse._summarize_benchmark(
+    payload = cache_benchmark.summarize_cache_reuse_benchmark(
         first_run=first_run,
         second_run=second_run,
         trade_date="20260324",
@@ -304,20 +305,78 @@ def test_benchmark_data_cache_reuse_summarizes_cold_and_warm_runs():
     }
 
 
+def test_benchmark_data_cache_reuse_renders_markdown_summary():
+    payload = {
+        "trade_date": "20260324",
+        "ticker": "300724",
+        "clear_first": True,
+        "summary": {
+            "first_total_rows": 6,
+            "second_total_rows": 6,
+            "first_disk_hits": 0,
+            "second_disk_hits": 6,
+            "disk_hit_gain": 6,
+            "first_misses": 6,
+            "second_misses": 0,
+            "miss_reduction": 6,
+            "first_sets": 6,
+            "second_sets": 0,
+            "set_reduction": 6,
+            "first_hit_rate": 0.0,
+            "second_hit_rate": 1.0,
+            "reuse_confirmed": True,
+        },
+    }
+
+    markdown = cache_benchmark.render_cache_benchmark_markdown(payload)
+
+    assert "# Data Cache Benchmark - 20260324 - 300724" in markdown
+    assert "- clear_first: yes" in markdown
+    assert "- reuse_confirmed: confirmed" in markdown
+    assert "- disk_hit_gain: 6" in markdown
+    assert "- miss_reduction: 6" in markdown
+    assert markdown.endswith("\n")
+
+
+def test_benchmark_data_cache_reuse_appends_markdown_summary(tmp_path: Path):
+    report_path = tmp_path / "window_review.md"
+    report_path.write_text("# Existing Review\n", encoding="utf-8")
+
+    cache_benchmark.append_cache_benchmark_markdown(str(report_path), "# Data Cache Benchmark - 20260324 - 300724\n")
+
+    updated = report_path.read_text(encoding="utf-8")
+    assert updated.startswith("# Existing Review\n")
+    assert "# Data Cache Benchmark - 20260324 - 300724\n" in updated
+
+
 def test_benchmark_data_cache_reuse_main_runs_twice_and_writes_output(tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
     output_path = tmp_path / "benchmark.json"
+    markdown_path = tmp_path / "benchmark.md"
+    report_path = tmp_path / "window_review.md"
     completed_runs = iter(
         [
             SimpleNamespace(returncode=0, stdout=json.dumps({"session_stats": {"disk_hits": 0, "misses": 6, "sets": 6, "hit_rate": 0.0}, "result_shapes": {"stock_basic_rows": 3, "daily_basic_rows": 2, "limit_list_rows": 1, "suspend_list_rows": 0}}), stderr=""),
             SimpleNamespace(returncode=0, stdout=json.dumps({"session_stats": {"disk_hits": 6, "misses": 0, "sets": 0, "hit_rate": 1.0}, "result_shapes": {"stock_basic_rows": 3, "daily_basic_rows": 2, "limit_list_rows": 1, "suspend_list_rows": 0}}), stderr=""),
         ]
     )
-    clear_calls: list[str] = []
-    subprocess_commands: list[list[str]] = []
+    benchmark_calls: list[dict] = []
 
-    def _fake_run(command, cwd, env, capture_output, text, check):
-        subprocess_commands.append(command)
-        return next(completed_runs)
+    def _fake_run_cache_reuse_benchmark(**kwargs):
+        benchmark_calls.append(kwargs)
+        first_run = json.loads(next(completed_runs).stdout)
+        second_run = json.loads(next(completed_runs).stdout)
+        payload = cache_benchmark.summarize_cache_reuse_benchmark(
+            first_run=first_run,
+            second_run=second_run,
+            trade_date=kwargs["trade_date"],
+            ticker=kwargs["ticker"],
+            clear_first=kwargs["clear_first"],
+        )
+        Path(kwargs["output_path"]).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        markdown = cache_benchmark.render_cache_benchmark_markdown(payload)
+        Path(kwargs["markdown_output_path"]).write_text(markdown, encoding="utf-8")
+        cache_benchmark.append_cache_benchmark_markdown(kwargs["append_markdown_to"], markdown)
+        return payload
 
     monkeypatch.setattr(
         "sys.argv",
@@ -330,16 +389,23 @@ def test_benchmark_data_cache_reuse_main_runs_twice_and_writes_output(tmp_path, 
             "--clear-first",
             "--output",
             str(output_path),
+            "--markdown-output",
+            str(markdown_path),
+            "--append-markdown-to",
+            str(report_path),
         ],
     )
-    monkeypatch.setattr("scripts.benchmark_data_cache_reuse.clear_cache", lambda: clear_calls.append("cleared"))
-    monkeypatch.setattr("scripts.benchmark_data_cache_reuse.subprocess.run", _fake_run)
+    monkeypatch.setattr("scripts.benchmark_data_cache_reuse.run_cache_reuse_benchmark", _fake_run_cache_reuse_benchmark)
 
     benchmark_data_cache_reuse.main()
 
     payload = json.loads(capsys.readouterr().out)
     assert payload == json.loads(output_path.read_text(encoding="utf-8"))
-    assert clear_calls == ["cleared"]
-    assert len(subprocess_commands) == 2
+    assert markdown_path.read_text(encoding="utf-8").startswith("# Data Cache Benchmark - 20260324 - 300724")
+    assert report_path.read_text(encoding="utf-8").startswith("# Data Cache Benchmark - 20260324 - 300724")
+    assert len(benchmark_calls) == 1
+    assert benchmark_calls[0]["clear_first"] is True
+    assert benchmark_calls[0]["trade_date"] == "20260324"
+    assert benchmark_calls[0]["ticker"] == "300724"
     assert payload["summary"]["reuse_confirmed"] is True
     assert payload["summary"]["disk_hit_gain"] == 6

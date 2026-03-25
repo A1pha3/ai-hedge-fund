@@ -53,6 +53,22 @@ export interface ReplayTickerDigest {
   entry_score: number | null;
 }
 
+export interface ReplayCacheBenchmarkOverview {
+  requested: boolean;
+  executed: boolean;
+  write_status: string | null;
+  reason: string | null;
+  ticker: string | null;
+  trade_date: string | null;
+  reuse_confirmed: boolean | null;
+  disk_hit_gain: number | null;
+  miss_reduction: number | null;
+  set_reduction: number | null;
+  first_hit_rate: number | null;
+  second_hit_rate: number | null;
+  artifacts: Record<string, string>;
+}
+
 export interface ReplayArtifactSummary {
   report_dir: string;
   window: ReplayWindow;
@@ -60,6 +76,7 @@ export interface ReplayArtifactSummary {
   headline_kpi: ReplayHeadlineKpi;
   deployment_funnel_runtime: ReplayDeploymentFunnelRuntime;
   artifacts: Record<string, string>;
+  cache_benchmark_overview: ReplayCacheBenchmarkOverview;
 }
 
 export interface ReplaySelectionArtifactOverview {

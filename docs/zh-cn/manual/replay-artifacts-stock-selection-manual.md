@@ -136,6 +136,12 @@ Replay Artifacts 页面就是为了解决这个分层解释问题。
 11. Feedback Records 表
 12. selection_review.md 预览区
 
+当前页面还会额外显示 report 级的 `Data Cache Benchmark` 信息，用来回答另一个经常被忽略但很实际的问题：
+
+1. 这次窗口复盘使用的数据缓存是否真的被复用。
+2. post-session cache benchmark 是成功、跳过还是失败。
+3. 如果失败，是 benchmark 子流程本身失败，还是主 session 有问题。
+
 你可以把它理解成：
 
 1. 报告级区域负责回答“这次运行大体发生了什么”。
@@ -175,6 +181,32 @@ Replay Artifacts 页面就是为了解决这个分层解释问题。
 4. trade_date_count 是否足够。
 5. blocker_counts 是否非空。
 6. feedback_summary 是否已有人工记录。
+7. cache benchmark 当前是 `success`、`failed`、`skipped` 还是 `not requested`。
+
+当前页面中，Report Selector 不再只是一个下拉框，还会直接展示一组 report 摘要卡。
+
+每张卡会直接显示：
+
+1. report 名称。
+2. 时间窗口。
+3. 模型提供商与模型名。
+4. cache benchmark 状态。
+5. 一句简短说明，例如 `reuse confirmed | disk +6` 或失败原因。
+
+这意味着你在进入 detail 之前，就可以先按“缓存证据是否完整”来筛选值得优先复盘的报告。
+
+如果你想直接看一个已经确认带 `success` cache benchmark 的真实样本，可以优先打开：
+
+1. `paper_trading_probe_20260205_cache_benchmark_20260325`
+
+这个 report 对应 2026-03-25 的一次真实 frozen replay 验收，当前已确认：
+
+1. `cache_benchmark_overview.write_status=success`
+2. `reuse_confirmed=true`
+3. `disk_hit_gain=6`
+4. `first_hit_rate=0.0 -> second_hit_rate=1.0`
+
+它适合作为“Replay Artifacts 页面里如何读 cache benchmark 卡片”的最小示例，而不是策略收益样本。
 
 ### 6.4 建议的选择策略
 
@@ -258,9 +290,29 @@ Replay Artifacts 页面就是为了解决这个分层解释问题。
 5. `run_header.model_provider`
 6. `run_header.model_name`
 7. `selection_artifact_overview.trade_date_count`
-8. `selection_artifact_overview.available_trade_dates`
-9. `selection_artifact_overview.blocker_counts`
-10. `selection_artifact_overview.feedback_summary`
+8. `cache_benchmark_overview.write_status`
+9. `cache_benchmark_overview.reason`
+10. `selection_artifact_overview.available_trade_dates`
+11. `selection_artifact_overview.blocker_counts`
+12. `selection_artifact_overview.feedback_summary`
+
+如果当前 report 是最近新增、并且运行时开启了 `--cache-benchmark`，那么页面上还会看到一张 `Data Cache Benchmark` 卡片。
+
+这张卡片的用途不是判断策略效果，而是判断“这次窗口复盘的数据准备链路是否健康”。
+
+你应该这样理解它：
+
+1. `success`：post-session benchmark 已执行并产出结果，可以继续看 `reuse_confirmed`、hit rate 变化和 disk_hit_gain。
+2. `skipped`：主 session 成功，但当前没有可用 ticker 做 benchmark，对复盘结论本身没有破坏性影响。
+3. `failed`：主 session 仍然成功，但 benchmark 子流程失败，需要单独排查验证脚本或运行环境。
+
+也就是说，`Data Cache Benchmark` 更像“复盘基础设施体检卡”，而不是“策略收益指标卡”。
+
+例如在 `paper_trading_probe_20260205_cache_benchmark_20260325` 这份报告里，你应该读到的不是“300724 值不值得买”，而是：
+
+1. 这次 report 的 post-session benchmark 已成功执行。
+2. 同一组验证请求在第二次运行时全部转成了磁盘命中。
+3. 这份 report 的数据准备链路足够健康，适合作为后续 UI 展示和复盘说明的基准样本。
 
 这些字段决定了你后续看页面时，应该用什么问题框架来解读内容。
 

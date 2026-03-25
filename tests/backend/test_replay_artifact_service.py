@@ -35,6 +35,26 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
             "model_name": "MiniMax-M2.7",
             "artifacts": {
                 "selection_artifact_root": str(artifact_root),
+                "data_cache_benchmark_json": str(report_dir / "data_cache_benchmark.json"),
+                "data_cache_benchmark_markdown": str(report_dir / "data_cache_benchmark.md"),
+            },
+            "data_cache_benchmark_status": {
+                "requested": True,
+                "executed": True,
+                "write_status": "success",
+                "reason": None,
+            },
+            "data_cache_benchmark": {
+                "trade_date": "20260311",
+                "ticker": "300724",
+                "summary": {
+                    "reuse_confirmed": True,
+                    "disk_hit_gain": 6,
+                    "miss_reduction": 6,
+                    "set_reduction": 6,
+                    "first_hit_rate": 0.0,
+                    "second_hit_rate": 1.0,
+                },
             },
             "final_portfolio_snapshot": {"positions": {}, "realized_gains": {}},
         },
@@ -94,12 +114,31 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
     detail = service.get_replay("demo_report")
 
     overview = detail["selection_artifact_overview"]
+    cache_overview = detail["cache_benchmark_overview"]
     assert overview["available"] is True
     assert overview["trade_date_count"] == 1
     assert overview["available_trade_dates"] == ["2026-03-11"]
     assert overview["write_status_counts"] == {"success": 1}
     assert overview["blocker_counts"] == [{"reason": "blocked_by_reentry_score_confirmation", "count": 1}]
     assert overview["feedback_summary"]["feedback_file_count"] == 1
+    assert cache_overview == {
+        "requested": True,
+        "executed": True,
+        "write_status": "success",
+        "reason": None,
+        "ticker": "300724",
+        "trade_date": "20260311",
+        "reuse_confirmed": True,
+        "disk_hit_gain": 6,
+        "miss_reduction": 6,
+        "set_reduction": 6,
+        "first_hit_rate": 0.0,
+        "second_hit_rate": 1.0,
+        "artifacts": {
+            "data_cache_benchmark_json": str(report_dir / "data_cache_benchmark.json"),
+            "data_cache_benchmark_markdown": str(report_dir / "data_cache_benchmark.md"),
+        },
+    }
 
 
 def test_get_selection_artifact_day_returns_snapshot_and_review(tmp_path: Path) -> None:

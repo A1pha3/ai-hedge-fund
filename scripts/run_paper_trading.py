@@ -23,6 +23,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-provider", default=None, help="Model provider override; omitted means use the primary route detected from .env")
     parser.add_argument("--output-dir", default=None, help="Directory for daily events, timing logs, and session summary")
     parser.add_argument("--frozen-plan-source", default=None, help="Path to a historical daily_events.jsonl file whose current_plan records will be replayed")
+    parser.add_argument("--cache-benchmark", action="store_true", help="Run a post-session cache benchmark and write benchmark artifacts into the output directory")
+    parser.add_argument("--cache-benchmark-ticker", default=None, help="Ticker used for the post-session cache benchmark; defaults to the first tracked ticker")
+    parser.add_argument("--cache-benchmark-clear-first", action="store_true", help="Clear the local cache before running the post-session benchmark; use with caution")
     return parser.parse_args()
 
 
@@ -40,12 +43,17 @@ def main() -> None:
         model_name=resolved_model_name,
         model_provider=resolved_model_provider,
         frozen_plan_source=args.frozen_plan_source,
+        cache_benchmark=args.cache_benchmark,
+        cache_benchmark_ticker=args.cache_benchmark_ticker,
+        cache_benchmark_clear_first=args.cache_benchmark_clear_first,
     )
     print(f"paper_trading_model_route={resolved_model_provider}:{resolved_model_name}")
     print(f"paper_trading_output_dir={artifacts.output_dir}")
     print(f"paper_trading_daily_events={artifacts.daily_events_path}")
     print(f"paper_trading_timing_log={artifacts.timing_log_path}")
     print(f"paper_trading_summary={artifacts.summary_path}")
+    if args.cache_benchmark:
+        print(f"paper_trading_cache_benchmark=enabled")
     if args.frozen_plan_source:
         print(f"paper_trading_frozen_plan_source={Path(args.frozen_plan_source).resolve()}")
 

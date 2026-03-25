@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
+import sys
 from typing import Callable, Sequence
 
 from src.backtesting.engine import BacktestEngine
 from src.backtesting.types import PerformanceMetrics
+from src.data.cache_benchmark import run_cache_reuse_benchmark
 from src.data.enhanced_cache import diff_cache_stats, get_cache_runtime_info, snapshot_cache_stats
 from src.execution.daily_pipeline import DailyPipeline
 from src.llm.defaults import get_default_model_config
@@ -214,6 +216,9 @@ def run_paper_trading_session(
     agent: Callable = run_hedge_fund,
     pipeline: DailyPipeline | None = None,
     frozen_plan_source: str | Path | None = None,
+    cache_benchmark: bool = False,
+    cache_benchmark_ticker: str | None = None,
+    cache_benchmark_clear_first: bool = False,
 ) -> PaperTradingArtifacts:
     resolved_model_name, resolved_model_provider = (model_name, model_provider) if model_name and model_provider else get_default_model_config()
 
@@ -272,6 +277,70 @@ def run_paper_trading_session(
     data_cache_summary = get_cache_runtime_info()
     data_cache_summary["session_stats"] = diff_cache_stats(cache_stats_before_run, data_cache_summary.get("stats", {}))
 
+    cache_benchmark_summary = None
+    cache_benchmark_artifacts: dict[str, str] = {}
+    cache_benchmark_status = {
+        "requested": bool(cache_benchmark),
+        "executed": False,
+        "write_status": "not_requested" if not cache_benchmark else "skipped",
+        "reason": None,
+    }
+    benchmark_ticker = cache_benchmark_ticker or (tickers[0] if tickers else None)
+    if cache_benchmark and benchmark_ticker:
+        cache_benchmark_json_path = output_dir_path / "data_cache_benchmark.json"
+        cache_benchmark_markdown_path = output_dir_path / "data_cache_benchmark.md"
+        cache_benchmark_append_path = output_dir_path / "window_review.md"
+        try:
+            cache_benchmark_summary = run_cache_reuse_benchmark(
+                repo_root=Path(__file__).resolve().parents[2],
+                python_executable=sys.executable,
+                trade_date=end_date.replace("-", ""),
+                ticker=benchmark_ticker,
+                clear_first=cache_benchmark_clear_first,
+                output_path=cache_benchmark_json_path,
+                markdown_output_path=cache_benchmark_markdown_path,
+                append_markdown_to=cache_benchmark_append_path,
+            )
+            cache_benchmark_artifacts = {
+                "data_cache_benchmark_json": str(cache_benchmark_json_path),
+                "data_cache_benchmark_markdown": str(cache_benchmark_markdown_path),
+                "data_cache_benchmark_appended_report": str(cache_benchmark_append_path),
+            }
+            cache_benchmark_status = {
+                "requested": True,
+                "executed": True,
+                "write_status": "success",
+                "reason": None,
+            }
+        except Exception as error:
+            cache_benchmark_summary = {
+                "requested": True,
+                "executed": False,
+                "write_status": "failed",
+                "reason": str(error),
+                "ticker": benchmark_ticker,
+                "trade_date": end_date.replace("-", ""),
+            }
+            cache_benchmark_status = {
+                "requested": True,
+                "executed": False,
+                "write_status": "failed",
+                "reason": str(error),
+            }
+    elif cache_benchmark:
+        cache_benchmark_summary = {
+            "requested": True,
+            "executed": False,
+            "write_status": "skipped",
+            "reason": "no benchmark ticker available",
+        }
+        cache_benchmark_status = {
+            "requested": True,
+            "executed": False,
+            "write_status": "skipped",
+            "reason": "no benchmark ticker available",
+        }
+
     summary = {
         "mode": "paper_trading",
         "start_date": start_date,
@@ -292,6 +361,8 @@ def run_paper_trading_session(
         "execution_plan_provenance": execution_plan_provenance,
         "llm_observability_summary": llm_observability_summary,
         "data_cache": data_cache_summary,
+        "data_cache_benchmark": cache_benchmark_summary,
+        "data_cache_benchmark_status": cache_benchmark_status,
         "research_feedback_summary": research_feedback_summary,
         "daily_event_stats": {
             "day_count": recorder.day_count,
@@ -305,6 +376,7 @@ def run_paper_trading_session(
             "selection_artifact_root": str(selection_artifact_root),
             "research_feedback_summary": str(feedback_summary_path),
             "data_cache_path": data_cache_summary.get("disk_path"),
+            **cache_benchmark_artifacts,
             **llm_metrics_artifacts,
         },
     }

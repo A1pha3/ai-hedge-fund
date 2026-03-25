@@ -2,7 +2,7 @@
 
 ## 0. 当前落地状态
 
-本文档已经不再只是实施提案。截至 2026-03-23，第一批代码骨架及其最小上层消费界面已落地，因此本文档需要同时承担两种职责：
+本文档已经不再只是实施提案。截至 2026-03-25，第一批代码骨架及其最小上层消费界面已落地，因此本文档需要同时承担两种职责：
 
 1. 记录目标设计。
 2. 记录当前已完成状态，避免文档与代码脱节。
@@ -23,6 +23,8 @@
 - 已补充 watchlist 未承接 buy_order 时的执行阻塞原因透传，selection_snapshot.json 与 selection_review.md 现可展示 buy_order_blocker、reentry_review_until 等执行层约束信息。
 - 已扩展现有 replay artifacts 后端/前端浏览面：后端可返回 selection_artifact_overview、按 trade_date 读取 selection snapshot/review，并支持以当前登录用户身份追加 research feedback；前端 Replay Artifacts 页面已可直接切换交易日查看 selection_review.md，结构化展示 selected/rejected、top_factors、Layer C analyst 共识、research prompts 与 execution blocker，并直接提交和筛选 research feedback，而无需手动翻 data/reports 目录或调用 CLI。
 - 前端 Replay Artifacts 页面已进一步补齐 funnel_diagnostics 结构化 drilldown，可直接查看 layer_b、watchlist、buy_orders 三段过滤摘要、reason_counts 与代表性 ticker；feedback records 现按 created_at 倒序展示，并显式显示创建时间，便于研究员按时间线回看人工判断。
+- Replay Artifacts 报告级摘要现已额外聚合并展示 `data_cache_benchmark` / `data_cache_benchmark_status`，页面可直接看到 post-session cache benchmark 的 success、failed、skipped 状态，以及 reuse_confirmed、disk_hit_gain、hit rate 变化和失败原因，无需手工打开 session_summary.json。
+- 2026-03-25 已完成一次带 `--cache-benchmark` 的真实 frozen replay paper trading 验收：`data/reports/paper_trading_probe_20260205_cache_benchmark_20260325` 成功生成 `data_cache_benchmark.json`、`data_cache_benchmark.md` 与追加摘要后的 `window_review.md`，并确认 `reuse_confirmed=true`、`disk_hit_gain=6`、`first_hit_rate=0.0`、`second_hit_rate=1.0`，说明 report 级 cache benchmark 不只是 UI 字段可见，而是已经有真实运行样本支撑。
 - Replay artifact 日级后端接口现已直接按 created_at 倒序返回 feedback_records，避免排序语义只存在于前端；localhost 环境下已完成一次真实登录、replay 列表、report/day detail、feedback append 与回读顺序校验的接口级冒烟验证。
 - 已新增操作手册 [docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md](docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md)，面向已登录用户详细说明如何使用 Replay Artifacts 页面完成选股复核、执行阻塞分析、near-miss 排查与 research feedback 回写。
 - 已补充配套文档 [docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md](docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md) 与 [docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md](docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md)，分别面向“快速上手”和“真实 blocker 样本判读”两类场景，降低从登录成功到形成稳定复核习惯之间的学习门槛。
@@ -146,6 +148,15 @@
 4. `300724` 在 2026-03-20 生成 buy_order，并在 2026-03-23 通过 daily_events.jsonl 中的 `executed_trades.300724=100` 得到实际执行确认，同时 2026-03-23 当天新的 post-market plan 又因 `position_blocked_score` 未继续生成新的 buy_order。
 5. 这次窗口补强了一个此前只在代码层推断、未在真实样本中明确写下的结论：当前 paper trading pipeline 的执行时序是“T 日 post-market 生成计划，T+1 交易日执行 pending plan”，而 event 持久化中的实际成交字段名为 `executed_trades`，不是 `executed_orders`。
 6. 该次验收产出了专门的窗口复盘文档 data/reports/paper_trading_window_20260316_20260323_live_m2_7_20260323/window_review_20260316_20260323.md，可作为后续 live pipeline 复盘样板。
+
+2026-03-25 还完成了一次“report 级 cache benchmark 真实样本”验收，验证方式为 1 天 frozen replay paper trading 并启用 post-session benchmark：
+
+1. frozen_plan_source：data/reports/logic_stop_threshold_scan_m0_20/daily_events.jsonl。
+2. output_dir：data/reports/paper_trading_probe_20260205_cache_benchmark_20260325。
+3. 成功生成 session_summary.json、daily_events.jsonl、pipeline_timings.jsonl、selection_artifacts/ 以及 `data_cache_benchmark.json`、`data_cache_benchmark.md`、追加摘要后的 `window_review.md`。
+4. session_summary.json 中的 `data_cache_benchmark_status.write_status=success`，且 artifacts 已回填 benchmark JSON、Markdown 和 appended report 路径。
+5. benchmark 汇总确认 `reuse_confirmed=true`、`disk_hit_gain=6`、`miss_reduction=6`、`set_reduction=6`、`first_hit_rate=0.0`、`second_hit_rate=1.0`。
+6. 该次样本进一步证明：Replay Artifacts 页面中展示的 cache benchmark 指标已经有真实 report 支撑，而不是仅靠 mock、单测或静态 session_summary 字段推断。
 
 后续章节中，凡是“建议”“推荐”与“已实现”不一致时，以“已实现”说明为准，并在后续迭代中继续向目标态收敛。
 

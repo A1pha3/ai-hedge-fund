@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import sys
 
 import pandas as pd
 
@@ -275,6 +277,223 @@ def test_run_paper_trading_session_collects_engine_created_pipeline_provenance(t
                 },
             }
         ],
+    }
+
+
+def test_run_paper_trading_session_writes_cache_benchmark_artifacts(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "test-session-cache-benchmark",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+
+    benchmark_calls: list[dict] = []
+
+    def fake_run_cache_reuse_benchmark(**kwargs):
+        benchmark_calls.append(kwargs)
+        output_path = Path(kwargs["output_path"])
+        markdown_path = Path(kwargs["markdown_output_path"])
+        report_path = Path(kwargs["append_markdown_to"])
+        payload = {
+            "trade_date": kwargs["trade_date"],
+            "ticker": kwargs["ticker"],
+            "clear_first": kwargs["clear_first"],
+            "summary": {"reuse_confirmed": True, "disk_hit_gain": 6},
+        }
+        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        markdown_path.write_text("# Data Cache Benchmark\n", encoding="utf-8")
+        report_path.write_text("# Window Review\n\n# Data Cache Benchmark\n", encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr("src.paper_trading.runtime.run_cache_reuse_benchmark", fake_run_cache_reuse_benchmark)
+
+    plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}},
+    )
+    pipeline = StubPipeline(
+        post_market_plans=[plan],
+        intraday_responses=[(plan.buy_orders, [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        output_dir=tmp_path / "paper_trading_cache_benchmark",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        pipeline=pipeline,
+        cache_benchmark=True,
+        cache_benchmark_clear_first=True,
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert len(benchmark_calls) == 1
+    assert benchmark_calls[0]["repo_root"].name == "ai-hedge-fund-fork"
+    assert benchmark_calls[0]["python_executable"] == sys.executable
+    assert benchmark_calls[0]["trade_date"] == "20240304"
+    assert benchmark_calls[0]["ticker"] == "AAPL"
+    assert benchmark_calls[0]["clear_first"] is True
+    assert summary["data_cache_benchmark"]["summary"]["reuse_confirmed"] is True
+    assert summary["data_cache_benchmark_status"] == {
+        "requested": True,
+        "executed": True,
+        "write_status": "success",
+        "reason": None,
+    }
+    assert summary["artifacts"]["data_cache_benchmark_json"].endswith("data_cache_benchmark.json")
+    assert summary["artifacts"]["data_cache_benchmark_markdown"].endswith("data_cache_benchmark.md")
+    assert summary["artifacts"]["data_cache_benchmark_appended_report"].endswith("window_review.md")
+
+
+def test_run_paper_trading_session_does_not_fail_when_cache_benchmark_errors(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "test-session-cache-benchmark-failed",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+
+    monkeypatch.setattr("src.paper_trading.runtime.run_cache_reuse_benchmark", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("benchmark failed")))
+
+    plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}},
+    )
+    pipeline = StubPipeline(
+        post_market_plans=[plan],
+        intraday_responses=[(plan.buy_orders, [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        output_dir=tmp_path / "paper_trading_cache_benchmark_failed",
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        pipeline=pipeline,
+        cache_benchmark=True,
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert artifacts.summary_path.exists()
+    assert summary["data_cache_benchmark"] == {
+        "requested": True,
+        "executed": False,
+        "write_status": "failed",
+        "reason": "benchmark failed",
+        "ticker": "AAPL",
+        "trade_date": "20240304",
+    }
+    assert summary["data_cache_benchmark_status"] == {
+        "requested": True,
+        "executed": False,
+        "write_status": "failed",
+        "reason": "benchmark failed",
+    }
+    assert "data_cache_benchmark_json" not in summary["artifacts"]
+
+
+def test_run_paper_trading_session_skips_cache_benchmark_without_available_ticker(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "test-session-cache-benchmark-skipped",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
+    _patch_market_data(
+        monkeypatch,
+        {
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+
+    benchmark_calls: list[dict] = []
+    monkeypatch.setattr("src.paper_trading.runtime.run_cache_reuse_benchmark", lambda **kwargs: benchmark_calls.append(kwargs))
+
+    pipeline = StubPipeline(
+        post_market_plans=[ExecutionPlan(date="20240301", portfolio_snapshot={"cash": 100000.0, "positions": {}}, risk_metrics={"counts": {"watchlist_count": 0}})],
+        intraday_responses=[([], [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0})],
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-04",
+        output_dir=tmp_path / "paper_trading_cache_benchmark_skipped",
+        tickers=[],
+        model_name="test-model",
+        model_provider="test-provider",
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        pipeline=pipeline,
+        cache_benchmark=True,
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert benchmark_calls == []
+    assert summary["data_cache_benchmark"] == {
+        "requested": True,
+        "executed": False,
+        "write_status": "skipped",
+        "reason": "no benchmark ticker available",
+    }
+    assert summary["data_cache_benchmark_status"] == {
+        "requested": True,
+        "executed": False,
+        "write_status": "skipped",
+        "reason": "no benchmark ticker available",
     }
 
 

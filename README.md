@@ -285,7 +285,9 @@ source .env && \
   --trade-date 20260305 \
   --ticker 300724 \
   --clear-first \
-  --output data/reports/data_cache_benchmark_20260305.json
+  --output data/reports/data_cache_benchmark_20260305.json \
+  --markdown-output data/reports/data_cache_benchmark_20260305.md \
+  --append-markdown-to data/reports/window_review_20260305.md
 ```
 
 Interpretation guidelines:
@@ -294,8 +296,39 @@ Interpretation guidelines:
 - Re-running the exact same command should shift the session toward `disk_hits` with few or no new `misses`.
 - `manage_data_cache.py stats` now also reports `disk_entry_count` and `disk_file_size_bytes`, which is useful when you want to confirm the local cache is actually growing across experiments.
 - `session_summary.json` for paper-trading runs now also records `data_cache`, `data_cache.session_stats`, and `artifacts.data_cache_path` for later inspection.
-- `benchmark_data_cache_reuse.py` wraps the first and second runs into one JSON summary so you can compare cold-start vs warm-cache behavior without manual diffing.
+- `scripts/run_paper_trading.py` also supports `--cache-benchmark`, so a paper-trading run can automatically emit `data_cache_benchmark.json`, `data_cache_benchmark.md`, and an appended `window_review.md` in the same output directory.
+- `benchmark_data_cache_reuse.py` wraps the first and second runs into one JSON summary, can emit a standalone Markdown snippet, and can append that snippet directly into an existing experiment note.
 - For a Chinese quickstart focused on cache inspection and reuse validation, see `docs/zh-cn/manual/data-cache-reuse-manual.md`.
+
+Run a paper-trading session and automatically attach a post-run cache benchmark:
+
+```bash
+source .env && \
+.venv/bin/python scripts/run_paper_trading.py \
+  --start-date 2026-02-02 \
+  --end-date 2026-03-13 \
+  --tickers 300724 \
+  --cache-benchmark
+```
+
+If you want the benchmark to force a cold-start comparison first:
+
+```bash
+source .env && \
+.venv/bin/python scripts/run_paper_trading.py \
+  --start-date 2026-02-02 \
+  --end-date 2026-03-13 \
+  --tickers 300724 \
+  --cache-benchmark \
+  --cache-benchmark-clear-first
+```
+
+That paper-trading output directory will now contain:
+
+- `session_summary.json` with `data_cache_benchmark`
+- `data_cache_benchmark.json`
+- `data_cache_benchmark.md`
+- `window_review.md` with the benchmark summary appended
 
 If you are running under unstable quota conditions, increase concurrency gradually. In practice, moving from `2` to `3` is usually a safer step than jumping directly to `4` or higher.
 
