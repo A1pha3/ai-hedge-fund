@@ -202,6 +202,108 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     assert summary["artifacts"]["llm_metrics_jsonl"] == str(metrics_jsonl_path)
 
 
+def test_run_paper_trading_session_resets_stale_artifacts_for_fresh_run(tmp_path, monkeypatch):
+    metrics_summary_path = tmp_path / "llm_metrics.summary.json"
+    metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        lambda: {
+            "session_id": "test-session-reset-output",
+            "summary_path": str(metrics_summary_path),
+            "jsonl_path": str(metrics_jsonl_path),
+        },
+    )
+
+    _patch_market_data(
+        monkeypatch,
+        {
+            "AAPL": {
+                "2024-03-01": 10.0,
+                "2024-03-04": 11.0,
+            },
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+    monkeypatch.setattr("src.execution.daily_pipeline.build_candidate_pool", lambda trade_date: (_ for _ in ()).throw(AssertionError("live pipeline should not run during frozen replay")))
+
+    first_source_path = tmp_path / "first_daily_events.jsonl"
+    first_source_path.write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": "20240301",
+                "current_plan": ExecutionPlan(
+                    date="20240301",
+                    buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+                    portfolio_snapshot={"cash": 100000.0, "positions": {}},
+                    risk_metrics={"counts": {"watchlist_count": 1}},
+                ).model_dump(),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    output_dir = tmp_path / "paper_trading_reused_output"
+    run_paper_trading_session(
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        output_dir=output_dir,
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=first_source_path,
+    )
+
+    second_source_path = tmp_path / "second_daily_events.jsonl"
+    second_source_path.write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": "20240304",
+                "current_plan": ExecutionPlan(
+                    date="20240304",
+                    buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1100.0, score_final=0.7, execution_ratio=1.0)],
+                    portfolio_snapshot={"cash": 99000.0, "positions": {}},
+                    risk_metrics={"counts": {"watchlist_count": 1}},
+                ).model_dump(),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = run_paper_trading_session(
+        start_date="2024-03-04",
+        end_date="2024-03-04",
+        output_dir=output_dir,
+        tickers=["AAPL"],
+        model_name="test-model",
+        model_provider="test-provider",
+        frozen_plan_source=second_source_path,
+    )
+
+    lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert [line["trade_date"] for line in lines] == ["20240304"]
+
+    timing_lines = [json.loads(line) for line in artifacts.timing_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    replay_day_timings = [line for line in timing_lines if line.get("event") == "pipeline_day_timing"]
+    assert [line["trade_date"] for line in replay_day_timings] == ["20240304"]
+
+    artifact_dates = sorted(path.name for path in artifacts.selection_artifact_root.iterdir() if path.is_dir())
+    assert artifact_dates == ["2024-03-04"]
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["daily_event_stats"]["day_count"] == 1
+    assert summary["research_feedback_summary"]["trade_date_count"] == 1
+    assert sorted(summary["research_feedback_summary"]["by_trade_date"].keys()) == ["2024-03-04"]
+
+
 def test_run_paper_trading_session_collects_engine_created_pipeline_provenance(tmp_path, monkeypatch):
     metrics_summary_path = tmp_path / "llm_metrics.summary.json"
     metrics_jsonl_path = tmp_path / "llm_metrics.jsonl"

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
+import shutil
 import sys
 from typing import Callable, Sequence
 
@@ -194,6 +195,25 @@ class PaperTradingArtifacts:
     feedback_summary_path: Path
 
 
+def _reset_output_artifacts_for_fresh_run(
+    *,
+    checkpoint_path: Path,
+    daily_events_path: Path,
+    timing_log_path: Path,
+    selection_artifact_root: Path,
+) -> None:
+    if checkpoint_path.exists():
+        return
+
+    checkpoint_timing_log_path = checkpoint_path.with_name(f"{checkpoint_path.stem}.timings.jsonl")
+    for stale_file in (daily_events_path, timing_log_path, checkpoint_timing_log_path):
+        if stale_file.exists():
+            stale_file.unlink()
+
+    if selection_artifact_root.exists():
+        shutil.rmtree(selection_artifact_root)
+
+
 def _write_research_feedback_summary(selection_artifact_root: Path) -> tuple[dict, Path]:
     feedback_summary_path = selection_artifact_root / "research_feedback_summary.json"
     summary = summarize_research_feedback_directory(artifact_root=selection_artifact_root)
@@ -231,6 +251,13 @@ def run_paper_trading_session(
     summary_path = output_dir_path / "session_summary.json"
     checkpoint_path = output_dir_path / "session.checkpoint.json"
     selection_artifact_root = output_dir_path / "selection_artifacts"
+
+    _reset_output_artifacts_for_fresh_run(
+        checkpoint_path=checkpoint_path,
+        daily_events_path=daily_events_path,
+        timing_log_path=timing_log_path,
+        selection_artifact_root=selection_artifact_root,
+    )
 
     if frozen_plan_source_path is not None:
         if pipeline is not None:

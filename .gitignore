@@ -14,6 +14,9 @@ data/reports/fresh_rerun_*/
 data/reports/frozen_exec_probe_*/
 data/reports/execution_probe_*/
 data/reports/paper_trading_probe_*_cache_benchmark_*/
+data/reports/paper_trading_window_20230323_20260326_live_m2_7_20260326*/
+data/reports/paper_trading_window_20260323_20260326_live_m2_7_20260326*/
+data/reports/paper_trading_window_20260323_20260326_live_m2_7_20260326.run.log
 
 # Python
 __pycache__/
