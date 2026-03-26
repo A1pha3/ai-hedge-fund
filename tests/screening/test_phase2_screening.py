@@ -34,6 +34,19 @@ def _make_price_frame(periods: int = 180, trend: float = 0.3) -> pd.DataFrame:
     )
 
 
+def _make_price_frame_from_close(close_values: list[float]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "open": close_values,
+            "high": [value * 1.02 for value in close_values],
+            "low": [value * 0.98 for value in close_values],
+            "close": close_values,
+            "volume": [1_000_000 for _ in close_values],
+        },
+        index=pd.date_range("2025-01-01", periods=len(close_values), freq="D"),
+    )
+
+
 def _make_index_frame(adx_close_move: float = 0.1) -> pd.DataFrame:
     frame = _make_price_frame(periods=120, trend=adx_close_move)
     frame = frame.reset_index(drop=True)
@@ -110,9 +123,43 @@ def test_ema_period_override():
     assert "ema_10" in metrics
     assert "ema_30" in metrics
     assert "ema_60" in metrics
+    assert "long_trend_alignment" in result.sub_factors
     assert "ema_8" not in metrics
     assert "ema_21" not in metrics
     assert "ema_55" not in metrics
+
+
+def test_long_trend_alignment_enabled_by_default():
+    close_values = [
+        152.46, 151.14, 151.19, 150.84, 150.68, 147.49, 150.15, 150.08, 151.24, 151.02,
+        148.47, 148.79, 146.07, 148.89, 151.54, 148.69, 145.24, 141.79, 140.93, 144.56,
+    ]
+    prices_df = _make_price_frame_from_close([80.0] * 220 + close_values)
+
+    with patch.dict(os.environ, {}, clear=False):
+        result = score_trend_strategy(prices_df)
+
+    long_trend = result.sub_factors["long_trend_alignment"]
+    assert long_trend["direction"] == 1
+    assert long_trend["confidence"] > 0
+    assert "ema_10" in long_trend["metrics"]
+    assert "ema_200" in long_trend["metrics"]
+
+
+def test_long_trend_alignment_requires_200_bars():
+    with patch.dict(os.environ, {}, clear=False):
+        result = score_trend_strategy(_make_price_frame(periods=180, trend=12.0))
+
+    long_trend = result.sub_factors["long_trend_alignment"]
+    assert long_trend["completeness"] == 0.0
+    assert long_trend["confidence"] == 0.0
+
+
+def test_long_trend_alignment_can_be_disabled_for_analysis():
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_ENABLE_LONG_TREND_ALIGNMENT": "0"}, clear=False):
+        result = score_trend_strategy(_make_price_frame())
+
+    assert "long_trend_alignment" not in result.sub_factors
 
 
 def test_event_decay():
@@ -316,3 +363,39 @@ def test_guarded_neutral_mean_reversion_keeps_hard_cliff_candidates_active():
     assert abs(normalized["trend"] - 0.375) < 1e-12
     assert normalized["mean_reversion"] == 0.25
     assert abs(normalized["fundamental"] - 0.375) < 1e-12
+
+
+def test_partial_weight_neutral_mean_reversion_creates_intermediate_active_weight():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(1, 2)),
+        "event_sentiment": _signal(1, 60),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_half_dual_leg_033_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - (0.3 / 0.9)) < 1e-12
+    assert abs(normalized["mean_reversion"] - (0.1 / 0.9)) < 1e-12
+    assert abs(normalized["fundamental"] - (0.3 / 0.9)) < 1e-12
+    assert abs(normalized["event_sentiment"] - (0.2 / 0.9)) < 1e-12
+
+
+def test_partial_weight_neutral_mean_reversion_keeps_negative_event_candidates_unchanged():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(1, 2)),
+        "event_sentiment": _signal(-1, 60),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_half_dual_leg_033_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - 0.3) < 1e-12
+    assert abs(normalized["mean_reversion"] - 0.2) < 1e-12
+    assert abs(normalized["fundamental"] - 0.3) < 1e-12
+    assert abs(normalized["event_sentiment"] - 0.2) < 1e-12

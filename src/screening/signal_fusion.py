@@ -35,10 +35,16 @@ def _quality_first_guard_enabled() -> bool:
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _normalize_active_weights(weights: dict[str, float], signals: dict[str, StrategySignal], excluded_names: set[str] | None = None) -> dict[str, float]:
+def _normalize_active_weights(
+    weights: dict[str, float],
+    signals: dict[str, StrategySignal],
+    excluded_names: set[str] | None = None,
+    weight_overrides: dict[str, float] | None = None,
+) -> dict[str, float]:
     excluded_names = excluded_names or set()
+    weight_overrides = weight_overrides or {}
     active = {
-        name: max(weights.get(name, 0.0), 0.0)
+        name: max(weight_overrides.get(name, weights.get(name, 0.0)), 0.0)
         for name, signal in signals.items()
         if signal.completeness > 0 and name not in excluded_names
     }
@@ -143,6 +149,41 @@ def _should_exclude_neutral_mean_reversion(weights: dict[str, float], signals: d
     return baseline_score >= min_score
 
 
+def _get_neutral_mean_reversion_partial_weight(weights: dict[str, float], signals: dict[str, StrategySignal]) -> float | None:
+    mean_reversion_signal = signals.get("mean_reversion")
+    if not mean_reversion_signal or mean_reversion_signal.completeness <= 0 or mean_reversion_signal.direction != 0:
+        return None
+
+    mode = _get_neutral_mean_reversion_mode()
+    partial_modes = {
+        "partial_mr_half_dual_leg_033_no_hard_cliff": {
+            "min_score": 0.33,
+            "multiplier": 0.5,
+        },
+    }
+    config = partial_modes.get(mode)
+    if config is None:
+        return None
+
+    trend_signal = signals.get("trend", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
+    fundamental_signal = signals.get("fundamental", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
+    event_signal = signals.get("event_sentiment", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
+
+    if trend_signal.direction <= 0 or fundamental_signal.direction <= 0:
+        return None
+    if event_signal.direction < 0:
+        return None
+    if _is_hard_cliff_profitability(signals):
+        return None
+
+    baseline_weights = _normalize_active_weights(weights, signals)
+    baseline_score = _compute_raw_score(baseline_weights, signals)
+    if baseline_score < float(config["min_score"]):
+        return None
+
+    return max(weights.get("mean_reversion", 0.0), 0.0) * float(config["multiplier"])
+
+
 def _is_active_for_normalization(name: str, signal: StrategySignal) -> bool:
     if signal.completeness <= 0:
         return False
@@ -153,9 +194,14 @@ def _is_active_for_normalization(name: str, signal: StrategySignal) -> bool:
 
 def _normalize_for_available_signals(weights: dict[str, float], signals: dict[str, StrategySignal]) -> dict[str, float]:
     excluded_names: set[str] = set()
+    weight_overrides: dict[str, float] = {}
     if _should_exclude_neutral_mean_reversion(weights, signals):
         excluded_names.add("mean_reversion")
-    return _normalize_active_weights(weights, signals, excluded_names)
+    else:
+        partial_weight = _get_neutral_mean_reversion_partial_weight(weights, signals)
+        if partial_weight is not None:
+            weight_overrides["mean_reversion"] = partial_weight
+    return _normalize_active_weights(weights, signals, excluded_names, weight_overrides)
 
 
 def _signal_contribution(weight: float, signal: StrategySignal) -> float:

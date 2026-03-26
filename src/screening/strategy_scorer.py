@@ -57,6 +57,14 @@ TREND_SUBFACTOR_WEIGHTS = {
     "volatility": 0.20,
 }
 
+TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND = {
+    "ema_alignment": 0.26,
+    "adx_strength": 0.21,
+    "momentum": 0.21,
+    "volatility": 0.17,
+    "long_trend_alignment": 0.15,
+}
+
 MEAN_REVERSION_SUBFACTOR_WEIGHTS = {
     "zscore_bbands": 0.35,
     "rsi_extreme": 0.20,
@@ -110,6 +118,12 @@ def _get_env_mode(name: str, default: str) -> str:
         return default
     value = raw_value.strip().lower()
     return value or default
+
+
+def _get_trend_subfactor_weights() -> dict[str, float]:
+    if _get_env_flag("LAYER_B_ANALYSIS_ENABLE_LONG_TREND_ALIGNMENT", default=True):
+        return TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND
+    return TREND_SUBFACTOR_WEIGHTS
 
 
 def _safe_date(date_str: str) -> Optional[datetime]:
@@ -203,9 +217,9 @@ def _load_price_frame(ticker: str, trade_date: str, lookback_days: int = 400) ->
     return prices_to_df(prices)
 
 
-def _score_ema_alignment(prices_df: pd.DataFrame) -> SubFactor:
+def _score_ema_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
     if prices_df.empty or len(prices_df) < 60:
-        return _make_sub_factor("ema_alignment", 0, 0.0, TREND_SUBFACTOR_WEIGHTS["ema_alignment"], completeness=0.0)
+        return _make_sub_factor("ema_alignment", 0, 0.0, weight, completeness=0.0)
 
     ema_10 = calculate_ema(prices_df, 10)
     ema_30 = calculate_ema(prices_df, 30)
@@ -229,7 +243,7 @@ def _score_ema_alignment(prices_df: pd.DataFrame) -> SubFactor:
         "ema_alignment",
         direction,
         confidence,
-        TREND_SUBFACTOR_WEIGHTS["ema_alignment"],
+        weight,
         metrics={
             "ema_10": float(ema_10.iloc[-1]),
             "ema_30": float(ema_30.iloc[-1]),
@@ -238,9 +252,42 @@ def _score_ema_alignment(prices_df: pd.DataFrame) -> SubFactor:
     )
 
 
-def _score_adx_strength(prices_df: pd.DataFrame) -> SubFactor:
+def _score_long_trend_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
+    if prices_df.empty or len(prices_df) < 200:
+        return _make_sub_factor("long_trend_alignment", 0, 0.0, weight, completeness=0.0)
+
+    ema_10 = calculate_ema(prices_df, 10)
+    ema_200 = calculate_ema(prices_df, 200)
+    close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
+
+    if ema_10.iloc[-1] > ema_200.iloc[-1]:
+        direction = 1
+    elif ema_10.iloc[-1] < ema_200.iloc[-1]:
+        direction = -1
+    else:
+        direction = 0
+
+    if close > 0:
+        spread = abs((ema_10.iloc[-1] - ema_200.iloc[-1]) / close)
+        confidence = _clip(spread * 400, 0.0, 100.0)
+    else:
+        confidence = 0.0
+
+    return _make_sub_factor(
+        "long_trend_alignment",
+        direction,
+        confidence,
+        weight,
+        metrics={
+            "ema_10": float(ema_10.iloc[-1]),
+            "ema_200": float(ema_200.iloc[-1]),
+        },
+    )
+
+
+def _score_adx_strength(prices_df: pd.DataFrame, weight: float) -> SubFactor:
     if prices_df.empty or len(prices_df) < 30:
-        return _make_sub_factor("adx_strength", 0, 0.0, TREND_SUBFACTOR_WEIGHTS["adx_strength"], completeness=0.0)
+        return _make_sub_factor("adx_strength", 0, 0.0, weight, completeness=0.0)
 
     adx_df = calculate_adx(prices_df.copy(), 20)
     adx = float(adx_df["adx"].iloc[-1]) if pd.notna(adx_df["adx"].iloc[-1]) else 0.0
@@ -256,23 +303,24 @@ def _score_adx_strength(prices_df: pd.DataFrame) -> SubFactor:
         "adx_strength",
         direction,
         adx,
-        TREND_SUBFACTOR_WEIGHTS["adx_strength"],
+        weight,
         metrics={"adx": adx, "+di": plus_di, "-di": minus_di},
     )
 
 
 def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
+    trend_weights = _get_trend_subfactor_weights()
     momentum_signal = calculate_momentum_signals(prices_df) if len(prices_df) >= 126 else None
     volatility_signal = calculate_volatility_signals(prices_df) if len(prices_df) >= 126 else None
 
     sub_factors = [
-        _score_ema_alignment(prices_df),
-        _score_adx_strength(prices_df),
+        _score_ema_alignment(prices_df, trend_weights["ema_alignment"]),
+        _score_adx_strength(prices_df, trend_weights["adx_strength"]),
         _make_sub_factor(
             "momentum",
             _signal_to_direction(momentum_signal["signal"]) if momentum_signal else 0,
             (momentum_signal["confidence"] * 100.0) if momentum_signal else 0.0,
-            TREND_SUBFACTOR_WEIGHTS["momentum"],
+            trend_weights["momentum"],
             completeness=1.0 if momentum_signal else 0.0,
             metrics=(momentum_signal["metrics"] if momentum_signal else {}),
         ),
@@ -280,11 +328,13 @@ def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
             "volatility",
             _signal_to_direction(volatility_signal["signal"]) if volatility_signal else 0,
             (volatility_signal["confidence"] * 100.0) if volatility_signal else 0.0,
-            TREND_SUBFACTOR_WEIGHTS["volatility"],
+            trend_weights["volatility"],
             completeness=1.0 if volatility_signal else 0.0,
             metrics=(volatility_signal["metrics"] if volatility_signal else {}),
         ),
     ]
+    if "long_trend_alignment" in trend_weights:
+        sub_factors.append(_score_long_trend_alignment(prices_df, trend_weights["long_trend_alignment"]))
     return aggregate_sub_factors(sub_factors)
 
 

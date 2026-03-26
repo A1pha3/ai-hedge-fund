@@ -17,6 +17,12 @@ from src.screening.strategy_scorer import score_batch
 
 VARIANTS = {
     "baseline": {},
+    "long_trend_alignment_disabled": {
+        "LAYER_B_ANALYSIS_ENABLE_LONG_TREND_ALIGNMENT": "0",
+    },
+    "profitability_neutral": {
+        "LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "neutral",
+    },
     "profitability_only": {
         "LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "inactive",
     },
@@ -34,6 +40,9 @@ VARIANTS = {
     },
     "neutral_mean_reversion_guarded_032_no_hard_cliff": {
         "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "guarded_dual_leg_032_no_hard_cliff",
+    },
+    "neutral_mean_reversion_partial_half_dual_leg_033_no_hard_cliff": {
+        "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_half_dual_leg_033_no_hard_cliff",
     },
     "combined": {
         "LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "inactive",

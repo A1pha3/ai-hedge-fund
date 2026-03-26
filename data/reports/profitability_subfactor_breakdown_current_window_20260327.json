@@ -1,0 +1,50 @@
+{
+  "trade_dates": [
+    "20260323",
+    "20260324",
+    "20260325",
+    "20260326"
+  ],
+  "thresholds": {
+    "return_on_equity": 0.15,
+    "net_margin": 0.2,
+    "operating_margin": 0.15
+  },
+  "blocked_with_profitability_scored": 287,
+  "fund_nonpositive_with_profitability_scored": 180,
+  "positive_count_0_blocked": 164,
+  "positive_count_0_fund_nonpositive": 149,
+  "metric_fail_blocked": {
+    "net_margin": 246,
+    "return_on_equity": 210,
+    "operating_margin": 191
+  },
+  "metric_fail_fund_nonpositive": {
+    "net_margin": 176,
+    "return_on_equity": 171,
+    "operating_margin": 154
+  },
+  "metric_fail_positive_count_0": {
+    "return_on_equity": 164,
+    "net_margin": 164,
+    "operating_margin": 164
+  },
+  "fail_combo_blocked": {
+    "net_margin+operating_margin+return_on_equity": 164,
+    "net_margin+return_on_equity": 38,
+    "none": 33,
+    "net_margin+operating_margin": 27,
+    "net_margin": 17,
+    "return_on_equity": 8
+  },
+  "fail_combo_fund_nonpositive": {
+    "net_margin+operating_margin+return_on_equity": 149,
+    "net_margin+return_on_equity": 22,
+    "net_margin+operating_margin": 5,
+    "none": 4
+  },
+  "fail_combo_positive_count_0": {
+    "net_margin+operating_margin+return_on_equity": 164
+  },
+  "near_threshold_fail_combo": {}
+}
