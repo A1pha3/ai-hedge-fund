@@ -10,6 +10,12 @@
 
 不要把它当成“自动告诉你今天立即买什么”的页面。它更像研究复核页。
 
+如果你已经会进页面，但想要一张更短、更像值班卡片的版本，直接看 [Replay Artifacts 值班速查卡](./replay-artifacts-duty-cheatsheet.md)。
+
+如果你是第一次接手这套工作流，不确定应该先看哪几份文档、学到什么程度才算真正上手，先看 [Replay Artifacts 新人培训讲义](./replay-artifacts-newcomer-training-guide.md)。
+
+如果你已经完成第一轮培训，想确认自己是不是已经达到“可独立使用”的最低线，再看 [Replay Artifacts 新人上手验收评分表](./replay-artifacts-onboarding-readiness-scorecard.md)。
+
 ---
 
 ## 2. 最短操作路径
@@ -118,6 +124,8 @@
 
 ## 5. 最常见误区
 
+如果你发现页面上的 `watchlist`、`buy_orders`、`block_reason`、`primary_tag`、`review_status`、`ready_for_adjudication` 这类术语看起来都像“懂一点又没完全懂”，不要继续靠猜。直接看 [Replay Artifacts 分析报告术语解析手册](./replay-artifacts-report-terminology-guide.md)。
+
 1. `selected` 不等于建议立刻买入。
 2. 没进 `buy_orders` 不等于选股失败。
 3. 只看分数，不看 blocker 和共识，很容易误判。
@@ -128,6 +136,8 @@
 ## 6. 如果你要继续深入
 
 1. 完整操作与原理说明： [Replay Artifacts 选股复核页面使用手册](./replay-artifacts-stock-selection-manual.md)
-2. 标签怎么打得一致： [Replay Artifacts 研究反馈标签规范手册](./replay-artifacts-feedback-labeling-handbook.md)
-3. 团队怎么做周度复盘： [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
-4. 真实案例拆解： [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)
+2. 一页值班卡片： [Replay Artifacts 值班速查卡](./replay-artifacts-duty-cheatsheet.md)
+3. 新人培训与带教路径： [Replay Artifacts 新人培训讲义](./replay-artifacts-newcomer-training-guide.md)
+4. 标签怎么打得一致： [Replay Artifacts 研究反馈标签规范手册](./replay-artifacts-feedback-labeling-handbook.md)
+5. 团队怎么做周度复盘： [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
+6. 真实案例拆解： [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)

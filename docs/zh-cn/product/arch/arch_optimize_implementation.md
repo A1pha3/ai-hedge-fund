@@ -2,7 +2,7 @@
 
 ## 0. 当前落地状态
 
-本文档已经不再只是实施提案。截至 2026-03-25，第一批代码骨架及其最小上层消费界面已落地，因此本文档需要同时承担两种职责：
+本文档已经不再只是实施提案。截至 2026-03-26，第一批代码骨架、最小上层消费界面以及首轮试用验收记录已落地，因此本文档需要同时承担两种职责：
 
 1. 记录目标设计。
 2. 记录当前已完成状态，避免文档与代码脱节。
@@ -91,11 +91,18 @@ P3：历史解释精度补强
 1. 以当前版本作为试用基线，不再主动追加新功能。
 2. 组织一段有限窗口的真实使用，重点观察 report 浏览、feedback 写入、batch label、queue ownership 与周度复盘是否顺畅。
 3. 把试用期间出现的问题分成两类：
-  1. 阻断当前使用的缺陷，回到主线修复。
-  2. 不阻断当前使用但影响团队效率的治理问题，纳入第二阶段 Backlog。
+   1. 阻断当前使用的缺陷，回到主线修复。
+   2. 不阻断当前使用但影响团队效率的治理问题，纳入第二阶段 Backlog。
 4. 只有当试用证据表明 SLA、升级流、通知、权限或更复杂协作机制已经成为主矛盾时，再启动第二阶段治理开发。
 
 简化结论：截至当前版本，Replay Artifacts 更适合进入“试用验收 + 收集证据”阶段，而不是继续无边界扩展实现范围。
+
+2026-03-26 补充状态：当前试用窗口已经不是停留在纸面计划。
+
+1. 已建立 2026-03-26 至 2026-04-02 的专用试用窗口启动记录、问题台账、总结草稿与首日执行清单。
+2. 已完成第一次真实后端/API 试用，验证 near-miss 阅读、selected 样本 feedback 写入、recent activity 回读，以及 Cross-Report Workflow Queue 的认领与取消认领。
+3. 已补充前端侧证据：本地登录页可真实加载，且 Replay Artifacts 相关前端测试通过 2 个文件、5 个测试。
+4. 同日已补齐已登录态前端真实点击流证据：真实登录后 `hedge_fund_token` 已成功落盘，并可通过顶部 `Replay` 入口打开 Replay Artifacts 工作台，看到 `Cross-Report Workflow Queue`、`Report Rail` 与主观察 report；当前最小试用证据链已经闭合。
 
 ### 0.2 已完成事项（详细清单）
 
@@ -125,16 +132,22 @@ P3：历史解释精度补强
 - 2026-03-26 已继续补齐跨 report 的 workflow ownership：后端新增持久化 workflow item 表与跨 report 查询/更新接口，前端 Replay Artifacts workspace 已新增 Cross-Report Workflow Queue，可按 my queue / unassigned / all 查看待办，并直接执行 Assign to me / Unassign。
 - 已新增操作手册 [docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md](docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md)，面向已登录用户详细说明如何使用 Replay Artifacts 页面完成选股复核、执行阻塞分析、near-miss 排查与 research feedback 回写。
 - 已补充配套文档 [docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md](docs/zh-cn/manual/replay-artifacts-stock-selection-quickstart.md) 与 [docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md](docs/zh-cn/manual/replay-artifacts-case-study-20260311-300724.md)，分别面向“快速上手”和“真实 blocker 样本判读”两类场景，降低从登录成功到形成稳定复核习惯之间的学习门槛。
+- 已补充 [docs/zh-cn/manual/replay-artifacts-newcomer-training-guide.md](docs/zh-cn/manual/replay-artifacts-newcomer-training-guide.md)，把 quickstart、值班卡、术语手册、长手册、试用计划串成一条新人可执行的培训与带教路径，降低“文档很多但不知道先看什么、学到什么程度才算上手”的接入摩擦。
+- 已补充 [docs/zh-cn/manual/replay-artifacts-onboarding-readiness-scorecard.md](docs/zh-cn/manual/replay-artifacts-onboarding-readiness-scorecard.md)，把新人培训后的“是否已经可独立使用”收敛成统一评分维度、最低通过线与验收模板，避免带教过程只凭主观印象判断是否可以进入常规试用。
+- 已补充术语解析文档 [docs/zh-cn/manual/replay-artifacts-report-terminology-guide.md](docs/zh-cn/manual/replay-artifacts-report-terminology-guide.md)，系统解释 Replay Artifacts 分析报告中的 report、selection、funnel、execution、feedback、workflow 与 cache benchmark 等核心术语，降低研究员把执行阻塞误判为选股失败、把流程状态误判为投资结论的风险。
 - 已补充标签治理配套文档 [docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md](docs/zh-cn/manual/replay-artifacts-feedback-labeling-handbook.md)，统一说明 primary_tag、tags、review_status 与 research_verdict 的职责边界，以及 6 个受控标签在 selected、near-miss 和 execution blocker 场景中的使用口径，降低多人写 feedback 时的语义漂移风险。
 - 已补充周度复盘工作流文档 [docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md](docs/zh-cn/manual/replay-artifacts-weekly-review-workflow.md)，将日常 `draft`、稳定 `final` 与争议样本 `adjudicated` 串成一套最小团队复盘节奏，便于将页面浏览、标签治理与后续系统优化 backlog 直接衔接。
 - 已补充试用验收手册 [docs/zh-cn/manual/replay-artifacts-trial-acceptance-plan.md](docs/zh-cn/manual/replay-artifacts-trial-acceptance-plan.md)，用于在暂停新增开发后按统一窗口验证 report 浏览、feedback 写入、batch label、queue ownership 与周度复盘是否已足够支撑真实使用。
+- 2026-03-26 已将试用验收从模板推进到窗口级实操：新增 [docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402.md](docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402.md)、[docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402-issue-log.md](docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402-issue-log.md)、[docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402-summary.md](docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402-summary.md) 与 [docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402-day1-checklist.md](docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402-day1-checklist.md)，使试用窗口具备独立的证据沉淀载体。
+- 同日已进一步补齐试用证据沉淀层：新增 [docs/zh-cn/manual/replay-artifacts-trial-observation-sheet.md](docs/zh-cn/manual/replay-artifacts-trial-observation-sheet.md) 与 [docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402-observations.md](docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402-observations.md)，使试用流程不只记录问题和总结，也能结构化沉淀“链路通过但仍有语义摩擦”的真实使用观察。
 - 已补充 [docs/zh-cn/manual/research-conclusion-to-optimization-backlog-handbook.md](docs/zh-cn/manual/research-conclusion-to-optimization-backlog-handbook.md)，把周度复盘中形成的研究结论进一步标准化映射到 Layer B、Layer C、Execution、Threshold、Explainability 五类优化动作，降低“能复盘但不会落任务”的交付断层。
 - 已完成一次真实 live pipeline 纸面交易窗口验收：2026-03-16 至 2026-03-23 使用 MiniMax-M2.7 运行后成功生成 selection_artifacts、daily_events.jsonl、pipeline_timings.jsonl 与 session_summary.json，并形成窗口复盘文档 data/reports/paper_trading_window_20260316_20260323_live_m2_7_20260323/window_review_20260316_20260323.md；该窗口确认当前 artifact 机制在真实 live pipeline 下也能稳定解释“前置筛选无候选”“Layer C 否决 near-miss”与“T 日生成计划、T+1 执行”的实际执行链路。
+- 2026-03-26 已完成一轮试用窗口内的真实使用证据回填：本地后端/API 已验证 2026-03-17 的 near-miss `002916`、2026-03-20 的 selected `300724` feedback 写入，以及 2026-03-23 的 execution blocker 与 workflow item 认领/取消认领；同日还确认本地 Vite 登录页可达，补充 Replay Artifacts 相关前端测试通过 5/5，完成一次真实 batch feedback 写入，验证 `2026-02-24 / 300724, 000960` 可同步进入 activity 与 workflow queue，并完成一次真实 `draft -> final` 推进，验证 `2026-03-20 / 300724` 可进入 `ready_for_adjudication`；随后又补齐真实浏览器登录与顶部 `Replay` 入口点击流，确认认证态前端可直接进入 Replay Artifacts 工作台。
 
 ### 0.3 未完成事项（治理项）
 
 - research_feedback.jsonl 已具备最小读取、聚合、标签治理、CLI 操作、session 级 summary 接入、replay viewer 内最小可写 UI、对应前端自动化回归，以及 SQLite-backed ledger、recent activity 查询接口、report 级 activity 面板、批量标注工作台、基于最新状态的 workflow queue 与跨 report 的指派/归属入口；当前剩余缺口主要收敛为 SLA 级别的人工作流编排与真实生产条件下的流程验收。
-- 轻量级 backtesting / paper trading 运行级集成测试已补齐，更长窗口 frozen replay 验证已完成一次，且现已补充对应的 W1 级别 frozen replay 自动化集成测试；真实 live pipeline 的最小运行级窗口验收也已完成一次，且其最小自动化集成测试亦已补齐，但更高层人工工作流集成仍未完成。
+- 轻量级 backtesting / paper trading 运行级集成测试已补齐，更长窗口 frozen replay 验证已完成一次，且现已补充对应的 W1 级别 frozen replay 自动化集成测试；真实 live pipeline 的最小运行级窗口验收也已完成一次，且其最小自动化集成测试亦已补齐，但更高层人工工作流集成仍未完成。当前已补上首轮试用窗口内的真实后端/API 使用证据、真实 batch feedback 样本证据、真实 `draft -> final` 推进证据，以及前端页面加载、定向前端回归和已登录态点击流证据；剩余未完成项已收敛为团队级 SLA、升级路径与更长期的真实生产协作治理。
 - 历史 frozen replay 源的 Layer B 解释已补齐回退兼容，但回退摘要只能基于 plan.logic_scores 与 strategy_weights 或 adjusted_weights 近似重建，精度仍低于新源中的原生 strategy_signals。
 
 建议理解方式：以上未完成项默认全部归入“第二阶段治理 Backlog”，除非后续有新的使用证据证明这些项已经成为当前主矛盾，否则不建议再把它们并回本轮主线。
@@ -312,6 +325,17 @@ P3：历史解释精度补强
 4. session_summary.json 中的 `data_cache_benchmark_status.write_status=success`，且 artifacts 已回填 benchmark JSON、Markdown 和 appended report 路径。
 5. benchmark 汇总确认 `reuse_confirmed=true`、`disk_hit_gain=6`、`miss_reduction=6`、`set_reduction=6`、`first_hit_rate=0.0`、`second_hit_rate=1.0`。
 6. 该次样本进一步证明：Replay Artifacts 页面中展示的 cache benchmark 指标已经有真实 report 支撑，而不是仅靠 mock、单测或静态 session_summary 字段推断。
+
+2026-03-26 还完成了一次“试用窗口内的首轮真实使用”验收，验证方式为本地后端/API 实测加前端可达性与定向回归补证：
+
+1. 试用窗口文档：docs/zh-cn/manual/replay-artifacts-trial-window-20260326-20260402.md。
+2. 已在本地启动 FastAPI，并以真实管理员用户 einstein 完成 `/auth/me`、`/replay-artifacts/`、report detail、day detail、feedback append、feedback activity 与 workflow queue 的调用验证。
+3. 2026-03-17 的 near-miss `002916` 已确认可读，2026-03-20 的 `300724` 已成功写入 `draft` feedback 并在 activity 中回读，2026-03-23 的 `300724` 已确认 `position_blocked_score` blocker 可读且支持 `Assign to me` / `Unassign`。
+4. 已实际启动本地 Vite 前端服务，并确认 `http://127.0.0.1:5173/` 可渲染登录页，首屏可见 `AI Hedge Fund`、`QUANTITATIVE INTELLIGENCE PLATFORM`、用户名、密码、登录与创建新账户等元素。
+5. 已运行 Replay Artifacts 相关前端测试 `app/frontend/src/components/settings/replay-artifacts.test.tsx` 与 `app/frontend/src/components/replay-artifacts/replay-artifacts-inspector.test.tsx`，结果为 2 个测试文件、5 个测试全部通过。
+6. 同日还完成了一次真实 batch feedback 写入：针对 `paper_trading_probe_20260224_20260225_selection_artifact_validation_20260322 / 2026-02-24` 的两个 near-miss 样本 `300724` 与 `000960`，批量接口返回 `appended_count=2`，且 recent activity 与 workflow queue 均立即出现对应条目。
+7. 同日还完成了一次真实 `draft -> final` 推进：主观察 report 中的 `2026-03-20 / 300724` 在追加 `final` feedback 后，workflow item 由 `unassigned` 自动切换为 `ready_for_adjudication`，report 级 workflow_status_counts 也从 `draft=2` 变为 `final=1, draft=1`。
+8. 这次窗口内验收说明：当前系统已经具备首轮前后端两侧、batch 能力、最小周度复盘闭环以及已登录态前端点击流的真实试用证据；后续工作已转为继续积累常规使用样本，并观察是否出现需要纳入第二阶段治理 Backlog 的真实摩擦。
 
 后续章节中，凡是“建议”“推荐”与“已实现”不一致时，以“已实现”说明为准，并在后续迭代中继续向目标态收敛。
 

@@ -1,0 +1,72 @@
+{
+  "label_version": "v1",
+  "artifact_root": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_probe_20260224_20260225_selection_artifact_validation_20260322/selection_artifacts",
+  "feedback_file_count": 2,
+  "trade_date_count": 2,
+  "overall": {
+    "label_version": "v1",
+    "feedback_count": 2,
+    "final_feedback_count": 0,
+    "symbols": [
+      "000960",
+      "300724"
+    ],
+    "reviewers": [
+      "einstein"
+    ],
+    "primary_tag_counts": {
+      "threshold_false_negative": 2
+    },
+    "tag_counts": {
+      "threshold_false_negative": 2,
+      "thesis_clear": 2
+    },
+    "review_status_counts": {
+      "draft": 2
+    },
+    "verdict_counts": {
+      "batch_near_miss_followup": 2
+    },
+    "latest_created_at": "2026-03-26T08:40:22+08:00"
+  },
+  "by_trade_date": {
+    "2026-02-24": {
+      "label_version": "v1",
+      "feedback_count": 2,
+      "final_feedback_count": 0,
+      "symbols": [
+        "000960",
+        "300724"
+      ],
+      "reviewers": [
+        "einstein"
+      ],
+      "primary_tag_counts": {
+        "threshold_false_negative": 2
+      },
+      "tag_counts": {
+        "threshold_false_negative": 2,
+        "thesis_clear": 2
+      },
+      "review_status_counts": {
+        "draft": 2
+      },
+      "verdict_counts": {
+        "batch_near_miss_followup": 2
+      },
+      "latest_created_at": "2026-03-26T08:40:22+08:00"
+    },
+    "2026-02-25": {
+      "label_version": "v1",
+      "feedback_count": 0,
+      "final_feedback_count": 0,
+      "symbols": [],
+      "reviewers": [],
+      "primary_tag_counts": {},
+      "tag_counts": {},
+      "review_status_counts": {},
+      "verdict_counts": {},
+      "latest_created_at": null
+    }
+  }
+}

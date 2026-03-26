@@ -2,10 +2,19 @@
 
 > 配套阅读：
 >
-> 1. [Replay Artifacts 选股复核 5 分钟速查](./replay-artifacts-stock-selection-quickstart.md)
-> 2. [Replay Artifacts 选股复核页面使用手册](./replay-artifacts-stock-selection-manual.md)
-> 3. [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
-> 4. [研究结论到优化 Backlog 的转换手册](./research-conclusion-to-optimization-backlog-handbook.md)
+> 1. [Replay Artifacts 新人培训讲义](./replay-artifacts-newcomer-training-guide.md)
+> 2. [Replay Artifacts 新人上手验收评分表](./replay-artifacts-onboarding-readiness-scorecard.md)
+> 3. [Replay Artifacts 选股复核 5 分钟速查](./replay-artifacts-stock-selection-quickstart.md)
+> 4. [Replay Artifacts 选股复核页面使用手册](./replay-artifacts-stock-selection-manual.md)
+> 5. [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
+> 6. [研究结论到优化 Backlog 的转换手册](./research-conclusion-to-optimization-backlog-handbook.md)
+> 7. [Replay Artifacts 试用问题记录模板](./replay-artifacts-trial-issue-log-template.md)
+> 8. [Replay Artifacts 试用总结报告模板](./replay-artifacts-trial-summary-template.md)
+> 9. [Replay Artifacts 试用观察记录表](./replay-artifacts-trial-observation-sheet.md)
+> 10. [Replay Artifacts 试用窗口启动记录 2026-03-26 至 2026-04-02](./replay-artifacts-trial-window-20260326-20260402.md)
+> 11. [本窗口已填观察记录 2026-03-26 至 2026-04-02](./replay-artifacts-trial-window-20260326-20260402-observations.md)
+> 12. [本窗口问题台账 2026-03-26 至 2026-04-02](./replay-artifacts-trial-window-20260326-20260402-issue-log.md)
+> 13. [本窗口总结草稿 2026-03-26 至 2026-04-02](./replay-artifacts-trial-window-20260326-20260402-summary.md)
 
 ## 1. 这份计划解决什么问题
 
@@ -18,6 +27,8 @@
 3. 把试用期间的问题分成“立即修复的缺陷”和“第二阶段治理 backlog”。
 
 这份计划不讨论长期产品愿景，也不预设必须继续做 SLA、通知、权限或复杂任务系统。先用，再决定。
+
+如果当前参与试用的人还是第一次接触 Replay Artifacts，建议先用 [Replay Artifacts 新人培训讲义](./replay-artifacts-newcomer-training-guide.md) 做一次 30 分钟带教，再补一份 [Replay Artifacts 新人上手验收评分表](./replay-artifacts-onboarding-readiness-scorecard.md)，确认其已经达到最小独立使用线后，再开始执行本计划。这样可以减少把研究结论、执行结论和流程结论混写到 issue 或 summary 里的噪音。
 
 ---
 
@@ -102,6 +113,12 @@
 3. 第 2 周前半段：只修复阻断性缺陷，不主动加新功能。
 4. 第 2 周末：形成是否进入第二阶段治理开发的结论。
 
+如果需要直接开始执行，而不是从空白文档手工创建窗口记录，可直接使用：
+
+1. [Replay Artifacts 试用窗口启动记录 2026-03-26 至 2026-04-02](./replay-artifacts-trial-window-20260326-20260402.md)
+2. [本窗口问题台账 2026-03-26 至 2026-04-02](./replay-artifacts-trial-window-20260326-20260402-issue-log.md)
+3. [本窗口总结草稿 2026-03-26 至 2026-04-02](./replay-artifacts-trial-window-20260326-20260402-summary.md)
+
 ---
 
 ## 6. 日常试用清单
@@ -120,6 +137,10 @@
 1. 阻断问题：无法完成核心动作。
 2. 低效问题：虽然能完成，但步骤明显过多或信息不够清楚。
 
+如果当天没有明确问题，也建议至少留一条“顺利完成”的观察记录，使用 [Replay Artifacts 试用观察记录表](./replay-artifacts-trial-observation-sheet.md) 统一记录口径，避免窗口结束时只剩下问题、没有通过证据。
+
+如果你不想从空白开始填，当前窗口已经有一份可直接参考的样例： [本窗口已填观察记录 2026-03-26 至 2026-04-02](./replay-artifacts-trial-window-20260326-20260402-observations.md)。
+
 ---
 
 ## 7. 周度试用清单
@@ -134,6 +155,8 @@
 6. 把本周至少 1 条结论写入优化 backlog 映射。
 
 如果这一流程无法顺利完成，才说明第二阶段治理开发有真实必要。
+
+建议周度复盘时同步回看观察记录，而不是只看问题台账。这样才能区分“系统真的不好用”和“系统其实能用，只是需要更稳定的使用习惯”。
 
 ---
 
@@ -195,6 +218,12 @@
    3. 暂停推广，先修复阻断问题。
 
 如果没有这三样结果，试用就容易退化成“大家都看过，但没有形成决策”。
+
+建议执行时直接配合 [Replay Artifacts 试用问题记录模板](./replay-artifacts-trial-issue-log-template.md)，避免试用过程中不同人记录口径不一致。
+
+试用窗口结束后，建议直接使用 [Replay Artifacts 试用总结报告模板](./replay-artifacts-trial-summary-template.md) 形成统一结论，避免只留下零散问题而没有最终决策。
+
+总结报告前，建议先把 [Replay Artifacts 试用观察记录表](./replay-artifacts-trial-observation-sheet.md) 里的“成功链路”“高频摩擦”和“是否转问题台账”三列过一遍，再决定结论口径。
 
 ---
 

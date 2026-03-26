@@ -3,9 +3,10 @@
 > 配套阅读：
 >
 > 1. [Replay Artifacts 选股复核 5 分钟速查](./replay-artifacts-stock-selection-quickstart.md)
-> 2. [Replay Artifacts 选股复核页面使用手册](./replay-artifacts-stock-selection-manual.md)
-> 3. [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
-> 4. [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)
+> 2. [Replay Artifacts 分析报告术语解析手册](./replay-artifacts-report-terminology-guide.md)
+> 3. [Replay Artifacts 选股复核页面使用手册](./replay-artifacts-stock-selection-manual.md)
+> 4. [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
+> 5. [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)
 
 ## 1. 这份手册解决什么问题
 

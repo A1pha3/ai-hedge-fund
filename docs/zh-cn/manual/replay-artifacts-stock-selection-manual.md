@@ -2,11 +2,14 @@
 
 > 配套阅读：
 >
-> 1. [Replay Artifacts 选股复核 5 分钟速查](./replay-artifacts-stock-selection-quickstart.md)
-> 2. [Replay Artifacts 研究反馈标签规范手册](./replay-artifacts-feedback-labeling-handbook.md)
-> 3. [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
-> 4. [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)
-> 5. [研究结论到优化 Backlog 的转换手册](./research-conclusion-to-optimization-backlog-handbook.md)
+> 1. [Replay Artifacts 新人培训讲义](./replay-artifacts-newcomer-training-guide.md)
+> 2. [Replay Artifacts 值班速查卡](./replay-artifacts-duty-cheatsheet.md)
+> 3. [Replay Artifacts 选股复核 5 分钟速查](./replay-artifacts-stock-selection-quickstart.md)
+> 4. [Replay Artifacts 分析报告术语解析手册](./replay-artifacts-report-terminology-guide.md)
+> 5. [Replay Artifacts 研究反馈标签规范手册](./replay-artifacts-feedback-labeling-handbook.md)
+> 6. [Replay Artifacts 周度复盘工作流手册](./replay-artifacts-weekly-review-workflow.md)
+> 7. [Replay Artifacts 案例手册：2026-03-11 的 300724 为什么入选但未买入](./replay-artifacts-case-study-20260311-300724.md)
+> 8. [研究结论到优化 Backlog 的转换手册](./research-conclusion-to-optimization-backlog-handbook.md)
 
 ## 1. 文档目的
 
