@@ -1,0 +1,87 @@
+{
+  "trade_dates": [
+    "20260323",
+    "20260324",
+    "20260325",
+    "20260326"
+  ],
+  "window": {
+    "start": "20260323",
+    "end": "20260326",
+    "days": 4
+  },
+  "variants": [
+    "baseline",
+    "profitability_only",
+    "neutral_mean_reversion_guarded_033_no_hard_cliff"
+  ],
+  "thresholds": {
+    "fast_agent_score_threshold": 0.38,
+    "fast_agent_max_tickers": 12
+  },
+  "baseline_total_layer_b_passes": 1,
+  "comparisons": {
+    "profitability_only": {
+      "variant": "profitability_only",
+      "baseline_total_layer_b_passes": 1,
+      "variant_total_layer_b_passes": 1,
+      "layer_b_pass_delta": 0,
+      "added_sample_count": 0,
+      "removed_sample_count": 0,
+      "added_samples": [],
+      "removed_samples": [],
+      "added_industry_counts": {},
+      "added_tag_counts": {},
+      "daily_added_counts": {},
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 0,
+          "variant": 0
+        },
+        "20260324": {
+          "baseline": 0,
+          "variant": 0
+        },
+        "20260325": {
+          "baseline": 1,
+          "variant": 1
+        },
+        "20260326": {
+          "baseline": 0,
+          "variant": 0
+        }
+      }
+    },
+    "neutral_mean_reversion_guarded_033_no_hard_cliff": {
+      "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff",
+      "baseline_total_layer_b_passes": 1,
+      "variant_total_layer_b_passes": 1,
+      "layer_b_pass_delta": 0,
+      "added_sample_count": 0,
+      "removed_sample_count": 0,
+      "added_samples": [],
+      "removed_samples": [],
+      "added_industry_counts": {},
+      "added_tag_counts": {},
+      "daily_added_counts": {},
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 0,
+          "variant": 0
+        },
+        "20260324": {
+          "baseline": 0,
+          "variant": 0
+        },
+        "20260325": {
+          "baseline": 1,
+          "variant": 1
+        },
+        "20260326": {
+          "baseline": 0,
+          "variant": 0
+        }
+      }
+    }
+  }
+}

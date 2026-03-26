@@ -65,6 +65,34 @@ def _get_trade_dates(month_prefix: str) -> list[str]:
     return dates
 
 
+def _resolve_trade_dates(month_prefix: str | None, explicit_trade_dates: list[str] | None) -> list[str]:
+    if explicit_trade_dates:
+        missing = [trade_date for trade_date in explicit_trade_dates if not (_SNAPSHOT_DIR / f"candidate_pool_{trade_date}.json").exists()]
+        if missing:
+            raise SystemExit(f"Missing candidate pool snapshots for trade dates: {', '.join(missing)}")
+        return explicit_trade_dates
+
+    if not month_prefix:
+        raise SystemExit("Either --month-prefix or --trade-dates must be provided")
+
+    trade_dates = _get_trade_dates(month_prefix)
+    if not trade_dates:
+        raise SystemExit(f"No candidate pool snapshots found for prefix {month_prefix}")
+    return trade_dates
+
+
+def _resolve_variant_names(raw_variants: str | None) -> list[str]:
+    if not raw_variants:
+        return list(VARIANTS.keys())
+    variant_names = [item.strip() for item in raw_variants.split(",") if item.strip()]
+    unknown = [name for name in variant_names if name not in VARIANTS]
+    if unknown:
+        raise SystemExit(f"Unknown variants: {', '.join(unknown)}")
+    if "baseline" not in variant_names:
+        variant_names = ["baseline", *variant_names]
+    return variant_names
+
+
 def _profitability_metrics(record: dict) -> dict:
     profitability = (((record.get("strategy_signals") or {}).get("fundamental") or {}).get("sub_factors") or {}).get("profitability") or {}
     metrics = profitability.get("metrics") or {}
@@ -218,17 +246,20 @@ def _build_comparison(variant_name: str, baseline: dict, variant: dict) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Replay Layer B rule variants on cached candidate-pool windows.")
-    parser.add_argument("--month-prefix", default="202602", help="candidate_pool_YYYYMM*.json prefix, default: 202602")
+    parser.add_argument("--month-prefix", default="", help="candidate_pool_YYYYMM*.json prefix")
+    parser.add_argument("--trade-dates", default="", help="comma-separated trade dates like 20260323,20260324")
+    parser.add_argument("--variants", default="", help="comma-separated variant names; baseline is always included")
     parser.add_argument("--output", default="", help="optional json output path")
     args = parser.parse_args()
 
-    trade_dates = _get_trade_dates(args.month_prefix)
-    if not trade_dates:
-        raise SystemExit(f"No candidate pool snapshots found for prefix {args.month_prefix}")
+    explicit_trade_dates = [item.strip() for item in args.trade_dates.split(",") if item.strip()]
+    trade_dates = _resolve_trade_dates(args.month_prefix or None, explicit_trade_dates or None)
+    variant_names = _resolve_variant_names(args.variants or None)
 
     variant_results = {
         name: _run_variant(trade_dates, env_updates)
         for name, env_updates in VARIANTS.items()
+        if name in variant_names
     }
     baseline = variant_results["baseline"]
     comparisons = {
@@ -240,6 +271,7 @@ def main() -> None:
     payload = {
         "trade_dates": trade_dates,
         "window": {"start": trade_dates[0], "end": trade_dates[-1], "days": len(trade_dates)},
+        "variants": variant_names,
         "thresholds": {
             "fast_agent_score_threshold": FAST_AGENT_SCORE_THRESHOLD,
             "fast_agent_max_tickers": FAST_AGENT_MAX_TICKERS,

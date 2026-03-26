@@ -426,6 +426,9 @@ Q: 你目前的背景是什么？
 | [术语表](./references/terminology.md) | 金融与 AI 术语中英对照 | 所有读者 | 随内容更新 |
 | [因子聚合语义入门](./factors/01-aggregation-semantics-and-factor-traps.md) | 解释为什么 Layer B 中有些直觉调参会失效，适合新手反复学习 | 开发者、研究者 | 按需更新 |
 | [Layer B 问题 5 分钟速读版](./factors/02-layer-b-quick-read-for-non-developers.md) | 面向非开发同学的短文，快速解释为什么当前应先修局部规则语义，而不是先降总阈值 | 产品、运营、研究、业务 | 按需更新 |
+| [Layer B 策略完全讲解](./factors/03-layer-b-complete-beginner-guide.md) | 把 Layer B 的定位、四策略、聚合公式、市场状态、仲裁逻辑、实验结论和复盘读法整合成一份新手学习手册 | 开发者、研究者、产品、复盘人员 | 按需更新 |
+| [Layer B 一页速查卡](./factors/05-layer-b-one-page-cheatsheet.md) | 把 Layer B 的定义、公式、阈值、解释分级和复盘阅读顺序压缩成一页可快速查阅的工作卡 | 开发者、研究者、产品、复盘人员 | 按需更新 |
+| [Layer B 源码导读](./factors/06-layer-b-source-code-walkthrough.md) | 按函数顺序讲清 Layer B 的模型、四策略评分、市场状态调权、冲突仲裁与调试路径 | 开发者、研究者 | 按需更新 |
 | [Layer B 最小规则变更提案](./analysis/layer-b-minimal-rule-change-proposal-20260312.md) | 收敛当前主业务线的最小改动方向，说明为什么先修语义问题，再考虑总阈值 | 开发者、研究者 | 按需更新 |
 | [Layer B 最小规则变体验证](./analysis/layer-b-rule-variant-validation-20260312.md) | 记录 Layer B 变体验证、P1 收敛过程以及 600519 live replay 最小补证结果 | 开发者、研究者 | 按需更新 |
 | [Layer C P1 变更提交说明](./analysis/layer-b-p1-pr-summary-20260316.md) | 面向评审的较完整变更说明，覆盖改动范围、验证链、残余风险与评审口径 | 开发者、研究者 | 按需更新 |
