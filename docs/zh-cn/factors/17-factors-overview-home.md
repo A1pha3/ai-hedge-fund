@@ -18,6 +18,8 @@
 1. Layer B 的整体机制、聚合语义和源码读法。
 2. fundamental 及其五个子因子的拆解、阅读路径和复盘方法。
 3. Layer C 的整体机制与 B/C 融合后的研究读法。
+4. 跨层复盘和按任务使用这些文档的方法。
+5. watchlist 到 execution bridge 的执行承接读法。
 
 可以把它理解成一个从规则层、因子层到复盘层的知识目录，而不是单纯的说明文集合。
 
@@ -100,6 +102,21 @@
 2. 复盘时最关键的字段是什么。
 3. 最常见的 Layer C 误读有哪些。
 
+### 2.6 跨层与任务层：把文档真正用起来
+
+适合已经知道文档在哪里，但还需要“先看什么、后看什么”的读者。
+
+1. [Layer B / Layer C 联动复盘手册](./22-layer-b-c-joint-review-manual.md)
+2. [Factors 按任务导航](./23-factors-task-navigation.md)
+3. [Execution Bridge 专业讲解](./24-execution-bridge-professional-guide.md)
+4. [Execution Bridge 一页速查卡](./25-execution-bridge-one-page-cheatsheet.md)
+
+这一层回答的是：
+
+1. 样本到底卡在 B、C、watchlist 还是 execution。
+2. 当前是在排障、复盘、调参还是讲解时，该先看哪组材料。
+3. 已经通过研究层的票，为什么仍然没有进入 buy order。
+
 ---
 
 ## 3. 按角色给阅读入口
@@ -151,6 +168,10 @@
 8. “我只想快速判断 Layer C 为什么拦住了票”：看 [19-layer-c-one-page-cheatsheet.md](./19-layer-c-one-page-cheatsheet.md)
 9. “我想系统研究 Layer C”：看 [20-layer-c-topic-reading-path.md](./20-layer-c-topic-reading-path.md)
 10. “我对 Layer C 有一堆重复疑问”：看 [21-layer-c-faq.md](./21-layer-c-faq.md)
+11. “我不知道问题到底卡在哪一层”：看 [22-layer-b-c-joint-review-manual.md](./22-layer-b-c-joint-review-manual.md)
+12. “我只想按当前任务快速找入口”：看 [23-factors-task-navigation.md](./23-factors-task-navigation.md)
+13. “我想搞清楚为什么进了 watchlist 还是没下单”：看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
+14. “我只想快速判断 execution blocker 是什么意思”：看 [25-execution-bridge-one-page-cheatsheet.md](./25-execution-bridge-one-page-cheatsheet.md)
 
 ---
 

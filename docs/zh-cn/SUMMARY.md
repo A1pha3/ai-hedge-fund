@@ -431,6 +431,10 @@ Q: 你目前的背景是什么？
 | [Layer C 一页速查卡](./factors/19-layer-c-one-page-cheatsheet.md) | 把 Layer C 的关键字段、分数关系、冲突逻辑和 watchlist 读法压缩成一页工作卡 | 开发者、研究者、产品、复盘人员 | 按需更新 |
 | [Layer C 专题首页](./factors/20-layer-c-topic-reading-path.md) | 把 Layer C 长文、速查卡和 FAQ 组织成可执行阅读路径，说明不同场景该从哪篇切入 | 开发者、研究者、产品、复盘人员 | 按需更新 |
 | [Layer C 常见问题 FAQ](./factors/21-layer-c-faq.md) | 把 Layer C 的高频误解和重复疑问收成问答式入口，适合作为快速纠偏材料 | 开发者、研究者、产品、复盘人员 | 按需更新 |
+| [Layer B / Layer C 联动复盘手册](./factors/22-layer-b-c-joint-review-manual.md) | 专门讲样本在 Layer B、Layer C、watchlist 和 execution 之间的跨层迁移与定位方法 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Factors 按任务导航](./factors/23-factors-task-navigation.md) | 按排障、复盘、调参、讲解四类任务重组文档入口，帮助快速找到最适合当前工作的材料 | 所有读者 | 按需更新 |
+| [Execution Bridge 专业讲解](./factors/24-execution-bridge-professional-guide.md) | 系统解释 watchlist 到 buy order 的承接逻辑、执行分数档位、blocker 语义与复盘顺序 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Execution Bridge 一页速查卡](./factors/25-execution-bridge-one-page-cheatsheet.md) | 把 execution bridge 的关键字段、常见 blocker 和最小复盘顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子专业讲解](./factors/07-fundamental-factor-professional-guide.md) | 单独拆解 Layer B 中 fundamental 因子的五个子因子、阈值、聚合语义、业务角色与调试路径 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子一页速查卡](./factors/08-fundamental-factor-one-page-cheatsheet.md) | 把 fundamental 因子的角色、五个子因子、profitability cliff 和复盘阅读顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Profitability 子因子专业讲解](./factors/09-profitability-subfactor-professional-guide.md) | 单独拆解 profitability 的 hard cliff、zero_pass_mode、聚合陷阱、quality-first guard 与实验口径 | 开发者、研究者、复盘人员 | 按需更新 |
