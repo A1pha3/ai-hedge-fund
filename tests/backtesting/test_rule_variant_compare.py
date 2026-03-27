@@ -7,15 +7,15 @@ from src.backtesting.rule_variant_compare import build_rule_variants, summarize_
 
 
 def test_build_rule_variants_supports_expected_names():
-    variants = build_rule_variants(["baseline", "profitability_inactive", "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_no_hard_cliff"])
+    variants = build_rule_variants(["baseline", "profitability_inactive", "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_trend24_fund50_no_hard_cliff"])
 
     assert [variant.name for variant in variants] == [
         "baseline",
         "profitability_inactive",
-        "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_no_hard_cliff",
+        "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_trend24_fund50_no_hard_cliff",
     ]
     assert variants[1].env["LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE"] == "inactive"
-    assert variants[2].env["LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE"] == "partial_mr_quarter_dual_leg_034_event_non_negative_no_hard_cliff"
+    assert variants[2].env["LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE"] == "partial_mr_quarter_dual_leg_034_event_non_negative_trend24_fund50_no_hard_cliff"
 
 
 def test_summarize_portfolio_values_computes_total_return():

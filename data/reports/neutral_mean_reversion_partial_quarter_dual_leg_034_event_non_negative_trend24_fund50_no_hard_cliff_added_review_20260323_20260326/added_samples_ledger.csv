@@ -1,0 +1,6 @@
+trade_date,ticker,industry_sw,baseline_score_b,variant_score_b,score_delta,tags,manual_verdict,manual_notes
+20260324,600989,基础化工,0.3588,0.4092,0.0504,neutral_mean_reversion_active;trend_fundamental_dual_leg;event_sentiment_missing,,
+20260325,600938,石油石化,0.3570,0.4137,0.0567,neutral_mean_reversion_active;trend_fundamental_dual_leg;event_sentiment_missing,,
+20260325,600989,基础化工,0.3582,0.4085,0.0503,neutral_mean_reversion_active;trend_fundamental_dual_leg;event_sentiment_missing,,
+20260326,600938,石油石化,0.3559,0.4124,0.0565,neutral_mean_reversion_active;trend_fundamental_dual_leg;event_sentiment_missing,,
+20260326,600989,基础化工,0.3571,0.4072,0.0501,neutral_mean_reversion_active;trend_fundamental_dual_leg;event_sentiment_missing,,

@@ -489,3 +489,38 @@ def test_partial_weight_quarter_event_non_negative_mode_keeps_negative_event_can
     assert abs(normalized["mean_reversion"] - 0.2) < 1e-12
     assert abs(normalized["fundamental"] - 0.3) < 1e-12
     assert abs(normalized["event_sentiment"] - 0.2) < 1e-12
+
+
+def test_partial_weight_quarter_event_non_negative_confidence_floor_mode_releases_only_when_dual_leg_confidence_is_strong_enough():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 24),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(1, 2)),
+        "event_sentiment": _signal(0, 0, completeness=0.0),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_non_negative_trend24_fund50_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - (0.3 / 0.65)) < 1e-12
+    assert abs(normalized["mean_reversion"] - (0.05 / 0.65)) < 1e-12
+    assert abs(normalized["fundamental"] - (0.3 / 0.65)) < 1e-12
+    assert normalized.get("event_sentiment", 0.0) == 0.0
+
+
+def test_partial_weight_quarter_event_non_negative_confidence_floor_mode_keeps_weaker_dual_leg_candidates_unchanged():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 23.9),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(1, 2)),
+        "event_sentiment": _signal(0, 0, completeness=0.0),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_non_negative_trend24_fund50_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - 0.375) < 1e-12
+    assert normalized["mean_reversion"] == 0.25
+    assert abs(normalized["fundamental"] - 0.375) < 1e-12

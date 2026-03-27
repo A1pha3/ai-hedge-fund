@@ -57,6 +57,9 @@ VARIANTS = {
     "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_no_hard_cliff": {
         "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_non_negative_no_hard_cliff",
     },
+    "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_trend24_fund50_no_hard_cliff": {
+        "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_non_negative_trend24_fund50_no_hard_cliff",
+    },
     "combined": {
         "LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "inactive",
         "LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION": "1",
