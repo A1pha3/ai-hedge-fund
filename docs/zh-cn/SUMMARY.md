@@ -437,6 +437,7 @@ Q: 你目前的背景是什么？
 | [Execution Bridge 一页速查卡](./factors/25-execution-bridge-one-page-cheatsheet.md) | 把 execution bridge 的关键字段、常见 blocker 和最小复盘顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Layer B 调参作战手册](./factors/26-layer-b-parameter-tuning-playbook.md) | 从 why、what、how 三层系统整理 Layer B 调参原则、优先级、实验闭环、验收标准和 AI 协作模板 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
 | [Layer B 调参一页速查卡](./factors/27-layer-b-parameter-tuning-one-page-cheatsheet.md) | 把 Layer B 调参的原则、优先级、实验流程、指标和常见误区压缩成一页工作卡 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
+| [双目标选股系统架构设计文档](./product/arch/arch_dual_target_selection_system.md) | 说明如何在保留现有研究型选股主线的前提下，新增面向 T+1 次日短线交易的目标模块，并支持单目标或双目标运行 | 产品、开发者、研究者 | 按需更新 |
 | [Fundamental 因子专业讲解](./factors/07-fundamental-factor-professional-guide.md) | 单独拆解 Layer B 中 fundamental 因子的五个子因子、阈值、聚合语义、业务角色与调试路径 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子一页速查卡](./factors/08-fundamental-factor-one-page-cheatsheet.md) | 把 fundamental 因子的角色、五个子因子、profitability cliff 和复盘阅读顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Profitability 子因子专业讲解](./factors/09-profitability-subfactor-professional-guide.md) | 单独拆解 profitability 的 hard cliff、zero_pass_mode、聚合陷阱、quality-first guard 与实验口径 | 开发者、研究者、复盘人员 | 按需更新 |
