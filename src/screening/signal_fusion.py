@@ -171,6 +171,11 @@ def _get_neutral_mean_reversion_partial_weight(weights: dict[str, float], signal
             "multiplier": 0.25,
             "require_event_positive": True,
         },
+        "partial_mr_quarter_dual_leg_034_event_non_negative_no_hard_cliff": {
+            "min_score": 0.34,
+            "multiplier": 0.25,
+            "require_event_positive": False,
+        },
     }
     config = partial_modes.get(mode)
     if config is None:

@@ -1,0 +1,576 @@
+{
+  "trade_dates": [
+    "20260323",
+    "20260324",
+    "20260325",
+    "20260326"
+  ],
+  "window": {
+    "start": "20260323",
+    "end": "20260326",
+    "days": 4
+  },
+  "variants": [
+    "baseline",
+    "neutral_mean_reversion_partial_quarter_dual_leg_034_event_positive_no_hard_cliff",
+    "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_no_hard_cliff"
+  ],
+  "thresholds": {
+    "fast_agent_score_threshold": 0.38,
+    "fast_agent_max_tickers": 12
+  },
+  "baseline_total_layer_b_passes": 9,
+  "comparisons": {
+    "neutral_mean_reversion_partial_quarter_dual_leg_034_event_positive_no_hard_cliff": {
+      "variant": "neutral_mean_reversion_partial_quarter_dual_leg_034_event_positive_no_hard_cliff",
+      "baseline_total_layer_b_passes": 9,
+      "variant_total_layer_b_passes": 10,
+      "layer_b_pass_delta": 1,
+      "added_sample_count": 1,
+      "removed_sample_count": 0,
+      "added_samples": [
+        {
+          "trade_date": "20260326",
+          "ticker": "002463",
+          "industry_sw": "电子",
+          "baseline_score_b": 0.3613,
+          "variant_score_b": 0.412,
+          "score_delta": 0.0507,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 37.083,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 48.4356,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 47.2,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 31.3513,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        }
+      ],
+      "removed_samples": [],
+      "added_industry_counts": {
+        "电子": 1
+      },
+      "added_tag_counts": {
+        "neutral_mean_reversion_active": 1,
+        "trend_fundamental_dual_leg": 1
+      },
+      "daily_added_counts": {
+        "20260326": 1
+      },
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 2,
+          "variant": 2
+        },
+        "20260324": {
+          "baseline": 1,
+          "variant": 1
+        },
+        "20260325": {
+          "baseline": 3,
+          "variant": 3
+        },
+        "20260326": {
+          "baseline": 3,
+          "variant": 4
+        }
+      }
+    },
+    "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_no_hard_cliff": {
+      "variant": "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_no_hard_cliff",
+      "baseline_total_layer_b_passes": 9,
+      "variant_total_layer_b_passes": 18,
+      "layer_b_pass_delta": 9,
+      "added_sample_count": 9,
+      "removed_sample_count": 0,
+      "added_samples": [
+        {
+          "trade_date": "20260324",
+          "ticker": "300274",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3575,
+          "variant_score_b": 0.4077,
+          "score_delta": 0.0502,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 48.2673,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 45.3333,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 0.4133
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260324",
+          "ticker": "300308",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3701,
+          "variant_score_b": 0.4288,
+          "score_delta": 0.0587,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 22.1512,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 43.6632,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 58.7438,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 0.0,
+              "completeness": 0.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260324",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.345,
+          "variant_score_b": 0.3934,
+          "score_delta": 0.0484,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 39.3017,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 49.0435,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260324",
+          "ticker": "600989",
+          "industry_sw": "基础化工",
+          "baseline_score_b": 0.3588,
+          "variant_score_b": 0.4092,
+          "score_delta": 0.0504,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 41.7099,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 50.4,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 0.4133
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260325",
+          "ticker": "600938",
+          "industry_sw": "石油石化",
+          "baseline_score_b": 0.357,
+          "variant_score_b": 0.4137,
+          "score_delta": 0.0567,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 25.0499,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 44.6942,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 54.0,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 0.0,
+              "completeness": 0.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260325",
+          "ticker": "600989",
+          "industry_sw": "基础化工",
+          "baseline_score_b": 0.3582,
+          "variant_score_b": 0.4085,
+          "score_delta": 0.0503,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 41.5154,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 50.4,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 0.4133
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "002463",
+          "industry_sw": "电子",
+          "baseline_score_b": 0.3613,
+          "variant_score_b": 0.412,
+          "score_delta": 0.0507,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 37.083,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 48.4356,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 47.2,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 31.3513,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "600938",
+          "industry_sw": "石油石化",
+          "baseline_score_b": 0.3559,
+          "variant_score_b": 0.4124,
+          "score_delta": 0.0565,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 24.7431,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 44.715,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 54.0,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 0.0,
+              "completeness": 0.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "600989",
+          "industry_sw": "基础化工",
+          "baseline_score_b": 0.3571,
+          "variant_score_b": 0.4072,
+          "score_delta": 0.0501,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 41.1711,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 50.4,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 0.4133
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        }
+      ],
+      "removed_samples": [],
+      "added_industry_counts": {
+        "基础化工": 3,
+        "通信": 2,
+        "石油石化": 2,
+        "电力设备": 1,
+        "电子": 1
+      },
+      "added_tag_counts": {
+        "neutral_mean_reversion_active": 9,
+        "trend_fundamental_dual_leg": 9,
+        "event_sentiment_missing": 8
+      },
+      "daily_added_counts": {
+        "20260324": 4,
+        "20260325": 2,
+        "20260326": 3
+      },
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 2,
+          "variant": 2
+        },
+        "20260324": {
+          "baseline": 1,
+          "variant": 5
+        },
+        "20260325": {
+          "baseline": 3,
+          "variant": 5
+        },
+        "20260326": {
+          "baseline": 3,
+          "variant": 6
+        }
+      }
+    }
+  }
+}

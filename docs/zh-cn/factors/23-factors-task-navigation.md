@@ -60,16 +60,19 @@
 
 1. [因子聚合语义入门](./01-aggregation-semantics-and-factor-traps.md)
 2. [层 B 因子参数根因分析与实验矩阵](./04-%E5%B1%82B%E5%9B%A0%E5%AD%90%E5%8F%82%E6%95%B0%E6%A0%B9%E5%9B%A0%E5%88%86%E6%9E%90%E4%B8%8E%E5%AE%9E%E9%AA%8C%E7%9F%A9%E9%98%B5-20260326.md)
-3. [Fundamental 五子因子联动复盘手册](./15-fundamental-subfactor-joint-review-manual.md)
-4. [Layer C 常见问题 FAQ](./21-layer-c-faq.md)
-5. [Layer B / Layer C 联动复盘手册](./22-layer-b-c-joint-review-manual.md)
-6. 如果新增样本卡在 buy order，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
+3. [Layer B 调参作战手册](./26-layer-b-parameter-tuning-playbook.md)
+4. [Layer B 调参一页速查卡](./27-layer-b-parameter-tuning-one-page-cheatsheet.md)
+5. [Fundamental 五子因子联动复盘手册](./15-fundamental-subfactor-joint-review-manual.md)
+6. [Layer C 常见问题 FAQ](./21-layer-c-faq.md)
+7. [Layer B / Layer C 联动复盘手册](./22-layer-b-c-joint-review-manual.md)
+8. 如果新增样本卡在 buy order，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
 
 适合的问题：
 
 1. “这是不是阈值问题。”
 2. “是局部语义有问题，还是供给不足。”
 3. “放宽 Layer B 后，样本会不会只是死在 Layer C。”
+4. “研究人员和 AI 助手怎样一步一步做调参闭环。”
 
 ---
 

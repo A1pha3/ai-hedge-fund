@@ -8,6 +8,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
+
 from src.execution.daily_pipeline import FAST_AGENT_MAX_TICKERS, FAST_AGENT_SCORE_THRESHOLD
 from src.screening.candidate_pool import _SNAPSHOT_DIR, build_candidate_pool
 from src.screening.market_state import detect_market_state
@@ -49,6 +53,9 @@ VARIANTS = {
     },
     "neutral_mean_reversion_partial_quarter_dual_leg_034_event_positive_no_hard_cliff": {
         "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_positive_no_hard_cliff",
+    },
+    "neutral_mean_reversion_partial_quarter_dual_leg_034_event_non_negative_no_hard_cliff": {
+        "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_non_negative_no_hard_cliff",
     },
     "combined": {
         "LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "inactive",
