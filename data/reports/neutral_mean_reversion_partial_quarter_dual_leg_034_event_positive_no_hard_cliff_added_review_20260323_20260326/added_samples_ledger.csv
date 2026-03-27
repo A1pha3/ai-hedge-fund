@@ -1,0 +1,4 @@
+trade_date,ticker,industry_sw,baseline_score_b,variant_score_b,score_delta,tags,manual_verdict,manual_notes
+20260323,300724,电力设备,0.3522,0.4335,0.0813,neutral_mean_reversion_active;trend_fundamental_dual_leg,,
+20260324,600988,有色金属,0.3786,0.4659,0.0873,neutral_mean_reversion_active;trend_fundamental_dual_leg,,
+20260326,300724,电力设备,0.3478,0.4281,0.0803,neutral_mean_reversion_active;trend_fundamental_dual_leg,,

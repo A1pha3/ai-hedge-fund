@@ -399,3 +399,57 @@ def test_partial_weight_neutral_mean_reversion_keeps_negative_event_candidates_u
     assert abs(normalized["mean_reversion"] - 0.2) < 1e-12
     assert abs(normalized["fundamental"] - 0.3) < 1e-12
     assert abs(normalized["event_sentiment"] - 0.2) < 1e-12
+
+
+def test_partial_weight_third_mode_is_more_conservative_than_half_mode():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(1, 2)),
+        "event_sentiment": _signal(1, 60),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_third_dual_leg_034_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - (0.3 / (0.3 + (1 / 15) + 0.3 + 0.2))) < 1e-12
+    assert abs(normalized["mean_reversion"] - ((1 / 15) / (0.3 + (1 / 15) + 0.3 + 0.2))) < 1e-12
+    assert abs(normalized["fundamental"] - (0.3 / (0.3 + (1 / 15) + 0.3 + 0.2))) < 1e-12
+    assert abs(normalized["event_sentiment"] - (0.2 / (0.3 + (1 / 15) + 0.3 + 0.2))) < 1e-12
+
+
+def test_partial_weight_quarter_mode_requires_positive_event_signal():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(1, 2)),
+        "event_sentiment": _signal(0, 60),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_positive_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - 0.3) < 1e-12
+    assert abs(normalized["mean_reversion"] - 0.2) < 1e-12
+    assert abs(normalized["fundamental"] - 0.3) < 1e-12
+    assert abs(normalized["event_sentiment"] - 0.2) < 1e-12
+
+
+def test_partial_weight_quarter_mode_releases_only_with_positive_event_signal():
+    weights = {"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}
+    signals = {
+        "trend": _signal(1, 80),
+        "mean_reversion": _signal(0, 50),
+        "fundamental": _signal(1, 80, sub_factors=_profitability_sub_factor(1, 2)),
+        "event_sentiment": _signal(1, 60),
+    }
+
+    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_positive_no_hard_cliff"}, clear=False):
+        normalized = _normalize_for_available_signals(weights, signals)
+
+    assert abs(normalized["trend"] - (0.3 / 0.85)) < 1e-12
+    assert abs(normalized["mean_reversion"] - (0.05 / 0.85)) < 1e-12
+    assert abs(normalized["fundamental"] - (0.3 / 0.85)) < 1e-12
+    assert abs(normalized["event_sentiment"] - (0.2 / 0.85)) < 1e-12

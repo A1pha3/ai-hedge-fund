@@ -1,0 +1,1350 @@
+{
+  "trade_dates": [
+    "20260323",
+    "20260324",
+    "20260325",
+    "20260326"
+  ],
+  "window": {
+    "start": "20260323",
+    "end": "20260326",
+    "days": 4
+  },
+  "variants": [
+    "baseline",
+    "neutral_mean_reversion_guarded_033_no_hard_cliff",
+    "neutral_mean_reversion_partial_half_dual_leg_033_no_hard_cliff",
+    "neutral_mean_reversion_partial_third_dual_leg_034_no_hard_cliff",
+    "neutral_mean_reversion_partial_quarter_dual_leg_034_event_positive_no_hard_cliff",
+    "neutral_mean_reversion_only"
+  ],
+  "thresholds": {
+    "fast_agent_score_threshold": 0.38,
+    "fast_agent_max_tickers": 12
+  },
+  "baseline_total_layer_b_passes": 1,
+  "comparisons": {
+    "neutral_mean_reversion_only": {
+      "variant": "neutral_mean_reversion_only",
+      "baseline_total_layer_b_passes": 1,
+      "variant_total_layer_b_passes": 11,
+      "layer_b_pass_delta": 10,
+      "added_sample_count": 10,
+      "removed_sample_count": 0,
+      "added_samples": [
+        {
+          "trade_date": "20260323",
+          "ticker": "300308",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3367,
+          "variant_score_b": 0.4489,
+          "score_delta": 0.1122,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 36.8435,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 43.6361,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 52.9412,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 0.0,
+              "completeness": 0.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260323",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3168,
+          "variant_score_b": 0.396,
+          "score_delta": 0.0792,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 39.6478,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 65.9559,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 0.4133
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260323",
+          "ticker": "300724",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3522,
+          "variant_score_b": 0.4403,
+          "score_delta": 0.0881,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 43.1834,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 60.1961,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 21.0553,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260323",
+          "ticker": "688008",
+          "industry_sw": "电子",
+          "baseline_score_b": 0.2918,
+          "variant_score_b": 0.3891,
+          "score_delta": 0.0973,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 22.6742,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 55.1471,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 0.0,
+              "completeness": 0.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260324",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3158,
+          "variant_score_b": 0.3947,
+          "score_delta": 0.0789,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 39.3017,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 65.9559,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260324",
+          "ticker": "600988",
+          "industry_sw": "有色金属",
+          "baseline_score_b": 0.3786,
+          "variant_score_b": 0.4732,
+          "score_delta": 0.0946,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 40.4526,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 47.9137,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 52.9412,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 49.1892,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260325",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3797,
+          "variant_score_b": 0.4747,
+          "score_delta": 0.095,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 60.6253,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 65.9559,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260325",
+          "ticker": "600988",
+          "industry_sw": "有色金属",
+          "baseline_score_b": 0.3051,
+          "variant_score_b": 0.4069,
+          "score_delta": 0.1018,
+          "baseline_arbitration": [
+            "long_hold"
+          ],
+          "variant_arbitration": [
+            "long_hold"
+          ],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 28.429,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 47.9164,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 52.9412,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 0.0,
+              "completeness": 0.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3795,
+          "variant_score_b": 0.4743,
+          "score_delta": 0.0948,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 60.5363,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 65.9559,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "300724",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3478,
+          "variant_score_b": 0.4348,
+          "score_delta": 0.087,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 43.632,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 60.1961,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 18.1596,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        }
+      ],
+      "removed_samples": [],
+      "added_industry_counts": {
+        "通信": 5,
+        "电力设备": 2,
+        "有色金属": 2,
+        "电子": 1
+      },
+      "added_tag_counts": {
+        "neutral_mean_reversion_active": 10,
+        "trend_fundamental_dual_leg": 10,
+        "event_sentiment_missing": 7
+      },
+      "daily_added_counts": {
+        "20260323": 4,
+        "20260324": 2,
+        "20260325": 2,
+        "20260326": 2
+      },
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 0,
+          "variant": 4
+        },
+        "20260324": {
+          "baseline": 0,
+          "variant": 2
+        },
+        "20260325": {
+          "baseline": 1,
+          "variant": 3
+        },
+        "20260326": {
+          "baseline": 0,
+          "variant": 2
+        }
+      }
+    },
+    "neutral_mean_reversion_guarded_033_no_hard_cliff": {
+      "variant": "neutral_mean_reversion_guarded_033_no_hard_cliff",
+      "baseline_total_layer_b_passes": 1,
+      "variant_total_layer_b_passes": 2,
+      "layer_b_pass_delta": 1,
+      "added_sample_count": 1,
+      "removed_sample_count": 0,
+      "added_samples": [
+        {
+          "trade_date": "20260323",
+          "ticker": "300308",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3367,
+          "variant_score_b": 0.4489,
+          "score_delta": 0.1122,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 36.8435,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 43.6361,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 52.9412,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 0.0,
+              "completeness": 0.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        }
+      ],
+      "removed_samples": [],
+      "added_industry_counts": {
+        "通信": 1
+      },
+      "added_tag_counts": {
+        "neutral_mean_reversion_active": 1,
+        "trend_fundamental_dual_leg": 1,
+        "event_sentiment_missing": 1
+      },
+      "daily_added_counts": {
+        "20260323": 1
+      },
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 0,
+          "variant": 1
+        },
+        "20260324": {
+          "baseline": 0,
+          "variant": 0
+        },
+        "20260325": {
+          "baseline": 1,
+          "variant": 1
+        },
+        "20260326": {
+          "baseline": 0,
+          "variant": 0
+        }
+      }
+    },
+    "neutral_mean_reversion_partial_half_dual_leg_033_no_hard_cliff": {
+      "variant": "neutral_mean_reversion_partial_half_dual_leg_033_no_hard_cliff",
+      "baseline_total_layer_b_passes": 1,
+      "variant_total_layer_b_passes": 7,
+      "layer_b_pass_delta": 6,
+      "added_sample_count": 6,
+      "removed_sample_count": 0,
+      "added_samples": [
+        {
+          "trade_date": "20260323",
+          "ticker": "300308",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3367,
+          "variant_score_b": 0.4144,
+          "score_delta": 0.0777,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 36.8435,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 43.6361,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 52.9412,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 0.0,
+              "completeness": 0.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260323",
+          "ticker": "300724",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3522,
+          "variant_score_b": 0.4144,
+          "score_delta": 0.0622,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 43.1834,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 60.1961,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 21.0553,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260324",
+          "ticker": "600988",
+          "industry_sw": "有色金属",
+          "baseline_score_b": 0.3786,
+          "variant_score_b": 0.4454,
+          "score_delta": 0.0668,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 40.4526,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 47.9137,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 52.9412,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 49.1892,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260325",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3797,
+          "variant_score_b": 0.4468,
+          "score_delta": 0.0671,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 60.6253,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 65.9559,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3795,
+          "variant_score_b": 0.4464,
+          "score_delta": 0.0669,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 60.5363,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 65.9559,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "300724",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3478,
+          "variant_score_b": 0.4092,
+          "score_delta": 0.0614,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 43.632,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 60.1961,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 18.1596,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        }
+      ],
+      "removed_samples": [],
+      "added_industry_counts": {
+        "通信": 3,
+        "电力设备": 2,
+        "有色金属": 1
+      },
+      "added_tag_counts": {
+        "neutral_mean_reversion_active": 6,
+        "trend_fundamental_dual_leg": 6,
+        "event_sentiment_missing": 3
+      },
+      "daily_added_counts": {
+        "20260323": 2,
+        "20260324": 1,
+        "20260325": 1,
+        "20260326": 2
+      },
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 0,
+          "variant": 2
+        },
+        "20260324": {
+          "baseline": 0,
+          "variant": 1
+        },
+        "20260325": {
+          "baseline": 1,
+          "variant": 2
+        },
+        "20260326": {
+          "baseline": 0,
+          "variant": 2
+        }
+      }
+    },
+    "neutral_mean_reversion_partial_third_dual_leg_034_no_hard_cliff": {
+      "variant": "neutral_mean_reversion_partial_third_dual_leg_034_no_hard_cliff",
+      "baseline_total_layer_b_passes": 1,
+      "variant_total_layer_b_passes": 6,
+      "layer_b_pass_delta": 5,
+      "added_sample_count": 5,
+      "removed_sample_count": 0,
+      "added_samples": [
+        {
+          "trade_date": "20260323",
+          "ticker": "300724",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3522,
+          "variant_score_b": 0.4284,
+          "score_delta": 0.0762,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 43.1834,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 60.1961,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 21.0553,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260324",
+          "ticker": "600988",
+          "industry_sw": "有色金属",
+          "baseline_score_b": 0.3786,
+          "variant_score_b": 0.4604,
+          "score_delta": 0.0818,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 40.4526,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 47.9137,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 52.9412,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 49.1892,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260325",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3797,
+          "variant_score_b": 0.4619,
+          "score_delta": 0.0822,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 60.6253,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 65.9559,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "300394",
+          "industry_sw": "通信",
+          "baseline_score_b": 0.3795,
+          "variant_score_b": 0.4615,
+          "score_delta": 0.082,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg",
+            "event_sentiment_missing"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 60.5363,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 65.9559,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 0,
+              "confidence": 26.6667,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "300724",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3478,
+          "variant_score_b": 0.423,
+          "score_delta": 0.0752,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 43.632,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 60.1961,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 18.1596,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        }
+      ],
+      "removed_samples": [],
+      "added_industry_counts": {
+        "电力设备": 2,
+        "通信": 2,
+        "有色金属": 1
+      },
+      "added_tag_counts": {
+        "neutral_mean_reversion_active": 5,
+        "trend_fundamental_dual_leg": 5,
+        "event_sentiment_missing": 2
+      },
+      "daily_added_counts": {
+        "20260323": 1,
+        "20260324": 1,
+        "20260325": 1,
+        "20260326": 2
+      },
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 0,
+          "variant": 1
+        },
+        "20260324": {
+          "baseline": 0,
+          "variant": 1
+        },
+        "20260325": {
+          "baseline": 1,
+          "variant": 2
+        },
+        "20260326": {
+          "baseline": 0,
+          "variant": 2
+        }
+      }
+    },
+    "neutral_mean_reversion_partial_quarter_dual_leg_034_event_positive_no_hard_cliff": {
+      "variant": "neutral_mean_reversion_partial_quarter_dual_leg_034_event_positive_no_hard_cliff",
+      "baseline_total_layer_b_passes": 1,
+      "variant_total_layer_b_passes": 4,
+      "layer_b_pass_delta": 3,
+      "added_sample_count": 3,
+      "removed_sample_count": 0,
+      "added_samples": [
+        {
+          "trade_date": "20260323",
+          "ticker": "300724",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3522,
+          "variant_score_b": 0.4335,
+          "score_delta": 0.0813,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 43.1834,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 60.1961,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 21.0553,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260324",
+          "ticker": "600988",
+          "industry_sw": "有色金属",
+          "baseline_score_b": 0.3786,
+          "variant_score_b": 0.4659,
+          "score_delta": 0.0873,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 40.4526,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 47.9137,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 52.9412,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 49.1892,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 100.0,
+            "completeness": 1.0,
+            "positive_count": 3,
+            "available_count": 3
+          }
+        },
+        {
+          "trade_date": "20260326",
+          "ticker": "300724",
+          "industry_sw": "电力设备",
+          "baseline_score_b": 0.3478,
+          "variant_score_b": 0.4281,
+          "score_delta": 0.0803,
+          "baseline_arbitration": [],
+          "variant_arbitration": [],
+          "tags": [
+            "neutral_mean_reversion_active",
+            "trend_fundamental_dual_leg"
+          ],
+          "strategy_summary": {
+            "trend": {
+              "direction": 1,
+              "confidence": 43.632,
+              "completeness": 1.0
+            },
+            "mean_reversion": {
+              "direction": 0,
+              "confidence": 49.0,
+              "completeness": 1.0
+            },
+            "fundamental": {
+              "direction": 1,
+              "confidence": 60.1961,
+              "completeness": 1.0
+            },
+            "event_sentiment": {
+              "direction": 1,
+              "confidence": 18.1596,
+              "completeness": 1.0
+            }
+          },
+          "profitability": {
+            "direction": 1,
+            "confidence": 66.66666666666667,
+            "completeness": 1.0,
+            "positive_count": 2,
+            "available_count": 3
+          }
+        }
+      ],
+      "removed_samples": [],
+      "added_industry_counts": {
+        "电力设备": 2,
+        "有色金属": 1
+      },
+      "added_tag_counts": {
+        "neutral_mean_reversion_active": 3,
+        "trend_fundamental_dual_leg": 3
+      },
+      "daily_added_counts": {
+        "20260323": 1,
+        "20260324": 1,
+        "20260326": 1
+      },
+      "daily_layer_b_counts": {
+        "20260323": {
+          "baseline": 0,
+          "variant": 1
+        },
+        "20260324": {
+          "baseline": 0,
+          "variant": 1
+        },
+        "20260325": {
+          "baseline": 1,
+          "variant": 1
+        },
+        "20260326": {
+          "baseline": 0,
+          "variant": 1
+        }
+      }
+    }
+  }
+}

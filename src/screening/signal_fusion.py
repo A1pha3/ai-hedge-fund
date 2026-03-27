@@ -159,6 +159,17 @@ def _get_neutral_mean_reversion_partial_weight(weights: dict[str, float], signal
         "partial_mr_half_dual_leg_033_no_hard_cliff": {
             "min_score": 0.33,
             "multiplier": 0.5,
+            "require_event_positive": False,
+        },
+        "partial_mr_third_dual_leg_034_no_hard_cliff": {
+            "min_score": 0.34,
+            "multiplier": 1.0 / 3.0,
+            "require_event_positive": False,
+        },
+        "partial_mr_quarter_dual_leg_034_event_positive_no_hard_cliff": {
+            "min_score": 0.34,
+            "multiplier": 0.25,
+            "require_event_positive": True,
         },
     }
     config = partial_modes.get(mode)
@@ -172,6 +183,8 @@ def _get_neutral_mean_reversion_partial_weight(weights: dict[str, float], signal
     if trend_signal.direction <= 0 or fundamental_signal.direction <= 0:
         return None
     if event_signal.direction < 0:
+        return None
+    if config.get("require_event_positive") and event_signal.direction <= 0:
         return None
     if _is_hard_cliff_profitability(signals):
         return None

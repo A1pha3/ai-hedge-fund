@@ -27,6 +27,8 @@ DEFAULT_RULE_VARIANTS: tuple[RuleVariantConfig, ...] = (
     RuleVariantConfig(name="profitability_inactive", env={"LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "inactive"}),
     RuleVariantConfig(name="neutral_mean_reversion_guarded_033_no_hard_cliff", env={"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "guarded_dual_leg_033_no_hard_cliff"}),
     RuleVariantConfig(name="neutral_mean_reversion_partial_half_dual_leg_033_no_hard_cliff", env={"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_half_dual_leg_033_no_hard_cliff"}),
+    RuleVariantConfig(name="neutral_mean_reversion_partial_third_dual_leg_034_no_hard_cliff", env={"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_third_dual_leg_034_no_hard_cliff"}),
+    RuleVariantConfig(name="neutral_mean_reversion_partial_quarter_dual_leg_034_event_positive_no_hard_cliff", env={"LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE": "partial_mr_quarter_dual_leg_034_event_positive_no_hard_cliff"}),
 )
 
 

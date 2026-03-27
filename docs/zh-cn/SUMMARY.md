@@ -427,9 +427,21 @@ Q: 你目前的背景是什么？
 | [因子聚合语义入门](./factors/01-aggregation-semantics-and-factor-traps.md) | 解释为什么 Layer B 中有些直觉调参会失效，适合新手反复学习 | 开发者、研究者 | 按需更新 |
 | [Layer B 问题 5 分钟速读版](./factors/02-layer-b-quick-read-for-non-developers.md) | 面向非开发同学的短文，快速解释为什么当前应先修局部规则语义，而不是先降总阈值 | 产品、运营、研究、业务 | 按需更新 |
 | [Layer B 策略完全讲解](./factors/03-layer-b-complete-beginner-guide.md) | 把 Layer B 的定位、四策略、聚合公式、市场状态、仲裁逻辑、实验结论和复盘读法整合成一份新手学习手册 | 开发者、研究者、产品、复盘人员 | 按需更新 |
+| [Layer C 策略完全讲解](./factors/16-layer-c-complete-beginner-guide.md) | 把 Layer C 的多 Agent 聚合、B/C 融合、冲突逻辑、watchlist 闸门和 replay 读法整合成一份学习手册 | 开发者、研究者、产品、复盘人员 | 按需更新 |
+| [Layer C 一页速查卡](./factors/19-layer-c-one-page-cheatsheet.md) | 把 Layer C 的关键字段、分数关系、冲突逻辑和 watchlist 读法压缩成一页工作卡 | 开发者、研究者、产品、复盘人员 | 按需更新 |
+| [Layer C 专题首页](./factors/20-layer-c-topic-reading-path.md) | 把 Layer C 长文、速查卡和 FAQ 组织成可执行阅读路径，说明不同场景该从哪篇切入 | 开发者、研究者、产品、复盘人员 | 按需更新 |
+| [Layer C 常见问题 FAQ](./factors/21-layer-c-faq.md) | 把 Layer C 的高频误解和重复疑问收成问答式入口，适合作为快速纠偏材料 | 开发者、研究者、产品、复盘人员 | 按需更新 |
 | [Fundamental 因子专业讲解](./factors/07-fundamental-factor-professional-guide.md) | 单独拆解 Layer B 中 fundamental 因子的五个子因子、阈值、聚合语义、业务角色与调试路径 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子一页速查卡](./factors/08-fundamental-factor-one-page-cheatsheet.md) | 把 fundamental 因子的角色、五个子因子、profitability cliff 和复盘阅读顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Profitability 子因子专业讲解](./factors/09-profitability-subfactor-professional-guide.md) | 单独拆解 profitability 的 hard cliff、zero_pass_mode、聚合陷阱、quality-first guard 与实验口径 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Growth 子因子专业讲解](./factors/10-growth-subfactor-professional-guide.md) | 单独拆解 growth 的时序覆盖要求、分数阈值、趋势证据和与 growth_valuation 的边界 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Financial Health 子因子专业讲解](./factors/11-financial-health-subfactor-professional-guide.md) | 单独拆解 financial_health 的杠杆与流动性规则、质量红旗联动和 Layer C 衔接 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Growth Valuation 子因子专业讲解](./factors/12-growth-valuation-subfactor-professional-guide.md) | 单独拆解 growth_valuation 的成长定价匹配、零分判空规则与常见伪宽松改法 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Industry PE 子因子专业讲解](./factors/13-industry-pe-subfactor-professional-guide.md) | 单独拆解 industry_pe 的行业相对估值逻辑、数据缺口与解释边界 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Fundamental 专题首页](./factors/14-fundamental-topic-reading-path.md) | 把 07 到 13 的文档组织成可执行阅读路径，说明不同读者、问题和场景该从哪篇切入 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Fundamental 五子因子联动复盘手册](./factors/15-fundamental-subfactor-joint-review-manual.md) | 专门讲真实样本里如何区分主杀器、放大器、缺助推器和缺席项，并定位语义、供给、融合问题 | 开发者、研究者、复盘人员 | 按需更新 |
+| [Factors 目录首页](./factors/17-factors-overview-home.md) | 为整个 factors 目录提供学习地图、角色入口和按问题导航，帮助快速找到 Layer B、fundamental 与 Layer C 对应材料 | 所有读者 | 按需更新 |
+| [Fundamental 常见问题 FAQ](./factors/18-fundamental-faq.md) | 把 fundamental 的高频误判和重复疑问收成问答式入口，适合作为快速纠偏材料 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Layer B 一页速查卡](./factors/05-layer-b-one-page-cheatsheet.md) | 把 Layer B 的定义、公式、阈值、解释分级和复盘阅读顺序压缩成一页可快速查阅的工作卡 | 开发者、研究者、产品、复盘人员 | 按需更新 |
 | [Layer B 源码导读](./factors/06-layer-b-source-code-walkthrough.md) | 按函数顺序讲清 Layer B 的模型、四策略评分、市场状态调权、冲突仲裁与调试路径 | 开发者、研究者 | 按需更新 |
 | [Layer B 最小规则变更提案](./analysis/layer-b-minimal-rule-change-proposal-20260312.md) | 收敛当前主业务线的最小改动方向，说明为什么先修语义问题，再考虑总阈值 | 开发者、研究者 | 按需更新 |

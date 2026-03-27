@@ -18,6 +18,12 @@
 4. [层 B 因子参数根因分析与实验矩阵](./04-%E5%B1%82B%E5%9B%A0%E5%AD%90%E5%8F%82%E6%95%B0%E6%A0%B9%E5%9B%A0%E5%88%86%E6%9E%90%E4%B8%8E%E5%AE%9E%E9%AA%8C%E7%9F%A9%E9%98%B5-20260326.md)
 5. [Fundamental 因子一页速查卡](./08-fundamental-factor-one-page-cheatsheet.md)
 6. [Profitability 子因子专业讲解](./09-profitability-subfactor-professional-guide.md)
+7. [Growth 子因子专业讲解](./10-growth-subfactor-professional-guide.md)
+8. [Financial Health 子因子专业讲解](./11-financial-health-subfactor-professional-guide.md)
+9. [Growth Valuation 子因子专业讲解](./12-growth-valuation-subfactor-professional-guide.md)
+10. [Industry PE 子因子专业讲解](./13-industry-pe-subfactor-professional-guide.md)
+11. [Fundamental 专题首页](./14-fundamental-topic-reading-path.md)
+12. [Fundamental 五子因子联动复盘手册](./15-fundamental-subfactor-joint-review-manual.md)
 
 ---
 

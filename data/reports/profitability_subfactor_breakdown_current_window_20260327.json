@@ -46,5 +46,155 @@
   "fail_combo_positive_count_0": {
     "net_margin+operating_margin+return_on_equity": 164
   },
-  "near_threshold_fail_combo": {}
+  "near_threshold_fail_combo": {},
+  "triple_fail_industry_blocked": {
+    "通信": 30,
+    "电子": 30,
+    "电力设备": 24,
+    "机械设备": 16,
+    "计算机": 13,
+    "有色金属": 11,
+    "石油石化": 9,
+    "国防军工": 6,
+    "传媒": 5,
+    "建筑装饰": 5,
+    "公用事业": 4,
+    "农林牧渔": 2,
+    "基础化工": 2,
+    "轻工制造": 2,
+    "综合": 2,
+    "煤炭": 1,
+    "建筑材料": 1,
+    "汽车": 1
+  },
+  "triple_fail_industry_fund_nonpositive": {
+    "电子": 26,
+    "通信": 23,
+    "电力设备": 20,
+    "机械设备": 16,
+    "计算机": 13,
+    "有色金属": 11,
+    "石油石化": 9,
+    "国防军工": 6,
+    "传媒": 5,
+    "建筑装饰": 5,
+    "公用事业": 4,
+    "农林牧渔": 2,
+    "基础化工": 2,
+    "轻工制造": 2,
+    "综合": 2,
+    "煤炭": 1,
+    "建筑材料": 1,
+    "汽车": 1
+  },
+  "triple_fail_market_cap_bucket_blocked": {
+    "300b_to_1000b": 76,
+    "100b_to_300b": 48,
+    "ge_1000b": 39,
+    "lt_100b": 1
+  },
+  "triple_fail_market_cap_bucket_fund_nonpositive": {
+    "300b_to_1000b": 65,
+    "100b_to_300b": 44,
+    "ge_1000b": 39,
+    "lt_100b": 1
+  },
+  "triple_fail_examples": [
+    {
+      "trade_date": "20260323",
+      "ticker": "000988",
+      "industry_sw": "机械设备",
+      "market_cap": 1139.64,
+      "score_b": 0.1087,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "600487",
+      "industry_sw": "通信",
+      "market_cap": 1020.1,
+      "score_b": 0.09,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "002384",
+      "industry_sw": "电子",
+      "market_cap": 1927.4,
+      "score_b": -0.0556,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "300136",
+      "industry_sw": "电子",
+      "market_cap": 572.9,
+      "score_b": -0.1146,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "300418",
+      "industry_sw": "传媒",
+      "market_cap": 626.8,
+      "score_b": 0.012,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "002261",
+      "industry_sw": "计算机",
+      "market_cap": 431.87,
+      "score_b": -0.148,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "601179",
+      "industry_sw": "电力设备",
+      "market_cap": 823.73,
+      "score_b": -0.0319,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "601857",
+      "industry_sw": "石油石化",
+      "market_cap": 22584.79,
+      "score_b": -0.0762,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "600522",
+      "industry_sw": "通信",
+      "market_cap": 856.65,
+      "score_b": 0.0417,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "600118",
+      "industry_sw": "国防军工",
+      "market_cap": 919.39,
+      "score_b": -0.0166,
+      "fundamental_direction": -1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "002281",
+      "industry_sw": "通信",
+      "market_cap": 637.35,
+      "score_b": 0.1657,
+      "fundamental_direction": 1
+    },
+    {
+      "trade_date": "20260323",
+      "ticker": "301308",
+      "industry_sw": "电子",
+      "market_cap": 1283.42,
+      "score_b": -0.0483,
+      "fundamental_direction": -1
+    }
+  ]
 }
