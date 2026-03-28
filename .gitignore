@@ -17,6 +17,9 @@ data/reports/paper_trading_probe_*_cache_benchmark_*/
 data/reports/paper_trading_window_20230323_20260326_live_m2_7_20260326*/
 data/reports/paper_trading_window_20260323_20260326_live_m2_7_20260326*/
 data/reports/paper_trading_window_20260323_20260326_live_m2_7_20260326.run.log
+data/reports/paper_trading_20260326_20260326_live_m2_7_dual_target_20260328/
+data/reports/paper_trading_window_20260310_20260313_w1_frozen_replay_m2_7_dual_target_20260328/
+data/reports/paper_trading_window_20260202_20260313_w1_frozen_replay_m2_7_20260319/selection_artifacts/
 
 # Python
 __pycache__/

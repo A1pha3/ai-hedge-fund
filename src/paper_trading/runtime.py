@@ -298,6 +298,7 @@ def run_paper_trading_session(
     agent: Callable = run_hedge_fund,
     pipeline: DailyPipeline | None = None,
     frozen_plan_source: str | Path | None = None,
+    selection_target: str = "research_only",
     cache_benchmark: bool = False,
     cache_benchmark_ticker: str | None = None,
     cache_benchmark_clear_first: bool = False,
@@ -329,6 +330,13 @@ def run_paper_trading_session(
             base_model_provider=resolved_model_provider,
             frozen_post_market_plans=load_frozen_post_market_plans(frozen_plan_source_path),
             frozen_plan_source=str(frozen_plan_source_path),
+            target_mode=selection_target,
+        )
+    elif pipeline is None:
+        pipeline = DailyPipeline(
+            base_model_name=resolved_model_name,
+            base_model_provider=resolved_model_provider,
+            target_mode=selection_target,
         )
 
     cache_stats_before_run = snapshot_cache_stats()
@@ -443,6 +451,7 @@ def run_paper_trading_session(
         "plan_generation": {
             "mode": "frozen_current_plan_replay" if frozen_plan_source_path is not None else "live_pipeline",
             "frozen_plan_source": str(frozen_plan_source_path) if frozen_plan_source_path is not None else None,
+            "selection_target": selection_target,
         },
         "performance_metrics": dict(metrics),
         "portfolio_values": _serialize_portfolio_values(engine.get_portfolio_values()),

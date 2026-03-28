@@ -176,6 +176,12 @@ def _build_target_context(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
         return target_context
 
     target_context["selection_target_attached"] = True
+    candidate_source = getattr(evaluation, "candidate_source", None)
+    if candidate_source:
+        target_context["candidate_source"] = str(candidate_source)
+    candidate_reason_codes = [str(reason) for reason in list(getattr(evaluation, "candidate_reason_codes", []) or []) if str(reason or "").strip()]
+    if candidate_reason_codes:
+        target_context["candidate_reason_codes"] = candidate_reason_codes
     research_result = getattr(evaluation, "research", None)
     short_trade_result = getattr(evaluation, "short_trade", None)
     if research_result is not None:

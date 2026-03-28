@@ -179,6 +179,109 @@ def test_build_selection_targets_promotes_rejected_entry_for_short_trade_when_si
     assert summary.delta_classification_counts == {"research_reject_short_pass": 1}
 
 
+def test_build_selection_targets_adds_boundary_short_trade_candidate_outside_research_funnel() -> None:
+    selection_targets, summary = build_selection_targets(
+        trade_date="20260328",
+        watchlist=[],
+        rejected_entries=[],
+        supplemental_short_trade_entries=[
+            {
+                "ticker": "000625",
+                "score_b": 0.49,
+                "score_c": 0.0,
+                "score_final": 0.49,
+                "quality_score": 0.52,
+                "decision": "watch",
+                "reason": "near_fast_score_threshold",
+                "reasons": ["near_fast_score_threshold"],
+                "candidate_source": "layer_b_boundary",
+                "strategy_signals": {
+                    "trend": _make_signal(
+                        1,
+                        86.0,
+                        sub_factors={
+                            "momentum": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                            "adx_strength": {"direction": 1, "confidence": 83.0, "completeness": 1.0},
+                            "ema_alignment": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                            "volatility": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                            "long_trend_alignment": {"direction": 0, "confidence": 18.0, "completeness": 1.0},
+                        },
+                    ).model_dump(mode="json"),
+                    "event_sentiment": _make_signal(
+                        1,
+                        78.0,
+                        sub_factors={
+                            "event_freshness": {"direction": 1, "confidence": 92.0, "completeness": 1.0},
+                            "news_sentiment": {"direction": 1, "confidence": 68.0, "completeness": 1.0},
+                        },
+                    ).model_dump(mode="json"),
+                    "mean_reversion": _make_signal(-1, 12.0).model_dump(mode="json"),
+                },
+            }
+        ],
+        target_mode="dual_target",
+    )
+
+    assert selection_targets["000625"].research is None
+    assert selection_targets["000625"].short_trade is not None
+    assert selection_targets["000625"].short_trade.decision == "selected"
+    assert selection_targets["000625"].candidate_source == "layer_b_boundary"
+    assert summary.research_target_count == 0
+    assert summary.short_trade_target_count == 1
+    assert summary.short_trade_selected_count == 1
+
+
+def test_build_selection_targets_softens_layer_c_avoid_without_bearish_conflict() -> None:
+    selection_targets, summary = build_selection_targets(
+        trade_date="20260328",
+        watchlist=[],
+        rejected_entries=[
+            {
+                "ticker": "300888",
+                "score_b": 0.54,
+                "score_c": 0.04,
+                "score_final": 0.26,
+                "quality_score": 0.57,
+                "decision": "avoid",
+                "reason": "decision_avoid",
+                "reasons": ["decision_avoid"],
+                "strategy_signals": {
+                    "trend": _make_signal(
+                        1,
+                        84.0,
+                        sub_factors={
+                            "momentum": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                            "adx_strength": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                            "ema_alignment": {"direction": 1, "confidence": 76.0, "completeness": 1.0},
+                            "volatility": {"direction": 1, "confidence": 62.0, "completeness": 1.0},
+                            "long_trend_alignment": {"direction": 0, "confidence": 20.0, "completeness": 1.0},
+                        },
+                    ).model_dump(mode="json"),
+                    "event_sentiment": _make_signal(
+                        1,
+                        73.0,
+                        sub_factors={
+                            "event_freshness": {"direction": 1, "confidence": 87.0, "completeness": 1.0},
+                            "news_sentiment": {"direction": 1, "confidence": 64.0, "completeness": 1.0},
+                        },
+                    ).model_dump(mode="json"),
+                    "mean_reversion": _make_signal(-1, 15.0).model_dump(mode="json"),
+                },
+                "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.16, "investor": 0.07}},
+            }
+        ],
+        target_mode="dual_target",
+    )
+
+    assert selection_targets["300888"].research is not None
+    assert selection_targets["300888"].research.decision == "rejected"
+    assert selection_targets["300888"].short_trade is not None
+    assert selection_targets["300888"].short_trade.decision in {"selected", "near_miss", "rejected"}
+    assert selection_targets["300888"].short_trade.decision != "blocked"
+    assert "layer_c_bearish_conflict" not in selection_targets["300888"].short_trade.blockers
+    assert summary.short_trade_blocked_count == 0
+
+
 def test_execution_plan_defaults_dual_target_fields_for_legacy_payloads() -> None:
     plan = ExecutionPlan.model_validate({"date": "20260328"})
 

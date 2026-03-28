@@ -247,10 +247,100 @@ def test_run_post_market_emits_structured_funnel_diagnostics():
     assert diagnostics["counts"]["buy_order_count"] == 0
     assert diagnostics["filters"]["layer_b"]["reason_counts"] == {"below_fast_score_threshold": 1}
     assert diagnostics["filters"]["watchlist"]["reason_counts"] == {"decision_avoid": 1}
+    assert diagnostics["filters"]["short_trade_candidates"]["candidate_count"] == 0
     assert diagnostics["filters"]["watchlist"]["tickers"][0]["agent_contribution_summary"]["negative_agent_count"] == 2
     assert diagnostics["filters"]["watchlist"]["selected_entries"][0]["agent_contribution_summary"]["positive_agent_count"] == 2
     assert diagnostics["filters"]["buy_orders"]["reason_counts"] == {"no_available_cash": 1}
     assert calls[0][1] == "fast"
+
+
+def test_run_post_market_adds_boundary_short_trade_candidates_to_selection_targets():
+    calls = []
+
+    def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
+        calls.append((tuple(tickers), model))
+        payload = {ticker: {"signal": "bullish", "confidence": 80, "reasoning": "buy"} for ticker in tickers}
+        return {
+            "aswath_damodaran_agent": payload,
+            "ben_graham_agent": payload,
+        }
+
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI", target_mode="dual_target")
+
+    original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    try:
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
+            CandidateStock(ticker="000001", name="甲", industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403"),
+            CandidateStock(ticker="000004", name="丁", industry_sw="银行", avg_volume_20d=9000, market_cap=90, listing_date="19910403"),
+            CandidateStock(ticker="000005", name="戊", industry_sw="银行", avg_volume_20d=8000, market_cap=80, listing_date="19910403"),
+        ]
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {
+                "trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}),
+                "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}),
+                "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}),
+                "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={}),
+            }
+            for candidate in candidates
+        }
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
+            _fused("000001", 0.60),
+            FusedScore(
+                ticker="000004",
+                score_b=0.35,
+                strategy_signals={
+                    "trend": StrategySignal(
+                        direction=1,
+                        confidence=86,
+                        completeness=1.0,
+                        sub_factors={
+                            "momentum": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                            "adx_strength": {"direction": 1, "confidence": 83.0, "completeness": 1.0},
+                            "ema_alignment": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                            "volatility": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                            "long_trend_alignment": {"direction": 0, "confidence": 18.0, "completeness": 1.0},
+                        },
+                    ),
+                    "mean_reversion": StrategySignal(direction=-1, confidence=12, completeness=1.0, sub_factors={}),
+                    "fundamental": StrategySignal(direction=1, confidence=70, completeness=1.0, sub_factors={}),
+                    "event_sentiment": StrategySignal(
+                        direction=1,
+                        confidence=78,
+                        completeness=1.0,
+                        sub_factors={
+                            "event_freshness": {"direction": 1, "confidence": 92.0, "completeness": 1.0},
+                            "news_sentiment": {"direction": 1, "confidence": 68.0, "completeness": 1.0},
+                        },
+                    ),
+                },
+                arbitration_applied=[],
+                market_state=MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}),
+                weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+                decision="watch",
+            ),
+            _fused("000005", 0.20),
+        ]
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+
+    diagnostics = plan.risk_metrics["funnel_diagnostics"]
+    assert diagnostics["filters"]["short_trade_candidates"]["candidate_count"] == 1
+    assert diagnostics["filters"]["short_trade_candidates"]["selected_tickers"] == ["000004"]
+    assert "000004" in plan.selection_targets
+    assert plan.selection_targets["000004"].research is None
+    assert plan.selection_targets["000004"].candidate_source == "layer_b_boundary"
+    assert plan.selection_targets["000004"].short_trade is not None
+    assert plan.selection_targets["000004"].short_trade.decision in {"selected", "near_miss"}
+    assert calls[0][0] == ("000001",)
 
 
 def test_watchlist_threshold_020_admits_edge_case_between_020_and_025():

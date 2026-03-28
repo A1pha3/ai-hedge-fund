@@ -236,6 +236,7 @@ def test_file_selection_artifact_writer_renders_target_decisions_for_selected_an
     assert "research_reject_short_pass=1" in review_text
     assert '"target_decisions": {' in snapshot_text
     assert '"delta_classification": "research_reject_short_pass"' in snapshot_text
+    assert '"candidate_source": "watchlist_filter_diagnostics"' in snapshot_text
     assert '"selected_symbols": [' in snapshot_text
     assert '"dominant_delta_reasons": [' in snapshot_text
 

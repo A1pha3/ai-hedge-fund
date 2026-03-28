@@ -27,6 +27,18 @@ def _classify_delta(evaluation: DualTargetEvaluation) -> str | None:
     return None
 
 
+def _resolve_candidate_source(*, item: LayerCResult | None = None, entry: dict[str, Any] | None = None, default: str) -> tuple[str, list[str]]:
+    if item is not None:
+        return default, []
+    entry = dict(entry or {})
+    source = str(entry.get("candidate_source") or entry.get("source") or default)
+    reason_codes = [str(reason) for reason in list(entry.get("candidate_reason_codes", entry.get("reasons", [])) or []) if str(reason or "").strip()]
+    primary_reason = str(entry.get("reason") or "").strip()
+    if primary_reason and primary_reason not in reason_codes:
+        reason_codes.insert(0, primary_reason)
+    return source, reason_codes
+
+
 def summarize_selection_targets(*, selection_targets: dict[str, DualTargetEvaluation], target_mode: TargetMode) -> DualTargetSummary:
     summary = DualTargetSummary(target_mode=target_mode, selection_target_count=len(selection_targets))
     for evaluation in selection_targets.values():
@@ -56,6 +68,7 @@ def summarize_selection_targets(*, selection_targets: dict[str, DualTargetEvalua
 
 
 def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint: int, included_in_buy_orders: bool, target_mode: TargetMode) -> DualTargetEvaluation:
+    candidate_source, candidate_reason_codes = _resolve_candidate_source(item=item, default="layer_c_watchlist")
     research_result = evaluate_research_selected_target(
         trade_date=trade_date,
         item=item,
@@ -77,6 +90,8 @@ def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint
         trade_date=trade_date,
         research=research_result,
         short_trade=short_trade_result,
+        candidate_source=candidate_source,
+        candidate_reason_codes=candidate_reason_codes,
     )
     evaluation.delta_classification = _classify_delta(evaluation)
     if evaluation.delta_classification == "research_pass_short_reject":
@@ -89,6 +104,7 @@ def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint
 
 def _build_rejected_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int, target_mode: TargetMode) -> DualTargetEvaluation:
     ticker = str(entry.get("ticker") or "")
+    candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=entry, default="watchlist_filter_diagnostics")
     research_result = evaluate_research_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint)
     short_trade_result = evaluate_short_trade_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint) if target_mode != "research_only" else None
     evaluation = DualTargetEvaluation(
@@ -96,6 +112,8 @@ def _build_rejected_evaluation(*, trade_date: str, entry: dict[str, Any], rank_h
         trade_date=trade_date,
         research=research_result,
         short_trade=short_trade_result,
+        candidate_source=candidate_source,
+        candidate_reason_codes=candidate_reason_codes,
     )
     evaluation.delta_classification = _classify_delta(evaluation)
     if evaluation.delta_classification == "research_reject_short_pass":
@@ -105,11 +123,31 @@ def _build_rejected_evaluation(*, trade_date: str, entry: dict[str, Any], rank_h
     return evaluation
 
 
+def _build_short_trade_only_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int) -> DualTargetEvaluation:
+    ticker = str(entry.get("ticker") or "")
+    candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=entry, default="layer_b_boundary")
+    short_trade_result = evaluate_short_trade_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint)
+    evaluation = DualTargetEvaluation(
+        ticker=ticker,
+        trade_date=trade_date,
+        research=None,
+        short_trade=short_trade_result,
+        candidate_source=candidate_source,
+        candidate_reason_codes=candidate_reason_codes,
+    )
+    if short_trade_result.decision == "selected":
+        evaluation.delta_summary = ["short trade target promoted a boundary candidate outside the research funnel"]
+    elif short_trade_result.decision == "near_miss":
+        evaluation.delta_summary = ["short trade target retained a boundary candidate for follow-up despite no research target"]
+    return evaluation
+
+
 def build_selection_targets(
     *,
     trade_date: str,
     watchlist: list[LayerCResult],
     rejected_entries: list[dict[str, Any]] | None = None,
+    supplemental_short_trade_entries: list[dict[str, Any]] | None = None,
     buy_order_tickers: set[str] | None = None,
     target_mode: TargetMode = "research_only",
 ) -> tuple[dict[str, DualTargetEvaluation], DualTargetSummary]:
@@ -135,5 +173,16 @@ def build_selection_targets(
             rank_hint=rank_hint,
             target_mode=target_mode,
         )
+
+    if target_mode != "research_only":
+        for rank_hint, entry in enumerate(sorted(list(supplemental_short_trade_entries or []), key=lambda current: float(current.get("score_final", current.get("score_b", 0.0)) or 0.0), reverse=True), start=1):
+            ticker = str(entry.get("ticker") or "")
+            if not ticker or ticker in selection_targets:
+                continue
+            selection_targets[ticker] = _build_short_trade_only_evaluation(
+                trade_date=trade_date,
+                entry=entry,
+                rank_hint=rank_hint,
+            )
 
     return selection_targets, summarize_selection_targets(selection_targets=selection_targets, target_mode=target_mode)

@@ -14,6 +14,7 @@ STALE_PENALTY_BLOCK_THRESHOLD = 0.72
 OVERHEAD_PENALTY_BLOCK_THRESHOLD = 0.68
 EXTENSION_PENALTY_BLOCK_THRESHOLD = 0.74
 STRONG_BEARISH_CONFLICTS = {"b_positive_c_strong_bearish", "b_strong_buy_c_negative"}
+LAYER_C_AVOID_PENALTY = 0.12
 
 
 def _normalize_score(value: float) -> float:
@@ -96,7 +97,10 @@ def _build_target_input_from_entry(*, trade_date: str, entry: dict[str, Any]) ->
         bc_conflict=entry.get("bc_conflict"),
         strategy_signals=dict(entry.get("strategy_signals") or {}),
         agent_contribution_summary=dict(entry.get("agent_contribution_summary") or {}),
-        replay_context={"source": "watchlist_filter_diagnostics", "reason": str(entry.get("reason") or "")},
+        replay_context={
+            "source": str(entry.get("candidate_source") or "watchlist_filter_diagnostics"),
+            "reason": str(entry.get("reason") or ""),
+        },
     )
 
 
@@ -142,6 +146,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     sector_resonance = clamp_unit_interval((0.45 * analyst_alignment) + (0.20 * investor_alignment) + (0.20 * score_c_strength) + (0.15 * event_signal_strength))
     catalyst_freshness = clamp_unit_interval((0.65 * event_freshness_strength) + (0.35 * news_sentiment_strength))
     layer_c_alignment = clamp_unit_interval((0.55 * score_c_strength) + (0.25 * analyst_alignment) + (0.20 * clamp_unit_interval(1.0 if input_data.layer_c_decision != "avoid" else 0.0)))
+    layer_c_avoid_penalty = LAYER_C_AVOID_PENALTY if input_data.layer_c_decision == "avoid" else 0.0
 
     stale_trend_repair_penalty = clamp_unit_interval((0.45 * mean_reversion_strength) + (0.35 * long_trend_strength) + (0.20 * max(0.0, long_trend_strength - breakout_freshness)))
     overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in STRONG_BEARISH_CONFLICTS else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
@@ -158,6 +163,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         - (0.12 * stale_trend_repair_penalty)
         - (0.10 * overhead_supply_penalty)
         - (0.08 * extension_without_room_penalty)
+        - layer_c_avoid_penalty
     )
 
     positive_tags: list[str] = []
@@ -175,7 +181,9 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         gate_status["data"] = "fail"
     if event_signal is None or float(event_signal.completeness) <= 0:
         negative_tags.append("event_signal_incomplete")
-    if input_data.bc_conflict in STRONG_BEARISH_CONFLICTS or input_data.layer_c_decision == "avoid":
+    if input_data.layer_c_decision == "avoid":
+        negative_tags.append("layer_c_avoid_signal")
+    if input_data.bc_conflict in STRONG_BEARISH_CONFLICTS:
         blockers.append("layer_c_bearish_conflict")
         gate_status["structural"] = "fail"
     if _signal_signed_strength(trend_signal) <= 0.0:
@@ -220,6 +228,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 _summarize_positive_factor("breakout_freshness", breakout_freshness),
                 _summarize_positive_factor("trend_acceleration", trend_acceleration),
                 _summarize_positive_factor("catalyst_freshness", catalyst_freshness),
+                _summarize_penalty("layer_c_avoid_penalty", layer_c_avoid_penalty),
                 _summarize_penalty("stale_trend_repair_penalty", stale_trend_repair_penalty),
                 _summarize_penalty("overhead_supply_penalty", overhead_supply_penalty),
                 _summarize_penalty("extension_without_room_penalty", extension_without_room_penalty),
@@ -258,6 +267,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "sector_resonance": round(sector_resonance, 4),
             "catalyst_freshness": round(catalyst_freshness, 4),
             "layer_c_alignment": round(layer_c_alignment, 4),
+            "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
             "stale_trend_repair_penalty": round(stale_trend_repair_penalty, 4),
             "overhead_supply_penalty": round(overhead_supply_penalty, 4),
             "extension_without_room_penalty": round(extension_without_room_penalty, 4),
@@ -267,6 +277,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "trade_date": input_data.trade_date,
             "layer_c_decision": input_data.layer_c_decision,
             "bc_conflict": input_data.bc_conflict,
+            "candidate_source": str(input_data.replay_context.get("source") or ""),
             "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {}).keys()),
             "replay_context": dict(input_data.replay_context or {}),
         },

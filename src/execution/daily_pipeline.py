@@ -58,6 +58,8 @@ FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
 WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.20)
 EXIT_REENTRY_CONFIRM_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_CONFIRM_SCORE_MIN", STANDARD_EXECUTION_SCORE)
+SHORT_TRADE_BOUNDARY_SCORE_BUFFER = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_SCORE_BUFFER", 0.08)
+SHORT_TRADE_BOUNDARY_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_MAX_TICKERS", 6)
 
 
 def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
@@ -204,6 +206,52 @@ def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], wat
     summary["selected_tickers"] = [item.ticker for item in watchlist]
     summary["selected_entries"] = selected_entries
     return summary
+
+
+def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list) -> dict:
+    selected_tickers = {item.ticker for item in high_pool}
+    minimum_score_b = FAST_AGENT_SCORE_THRESHOLD - SHORT_TRADE_BOUNDARY_SCORE_BUFFER
+    entries: list[dict] = []
+    reason_counts: dict[str, int] = {}
+    candidates = sorted(
+        [item for item in fused if item.ticker not in selected_tickers and item.score_b >= minimum_score_b],
+        key=lambda current: current.score_b,
+        reverse=True,
+    )[:SHORT_TRADE_BOUNDARY_MAX_TICKERS]
+
+    for rank, item in enumerate(candidates, start=1):
+        reason = "high_pool_truncated_by_max_size" if item.score_b >= FAST_AGENT_SCORE_THRESHOLD else "near_fast_score_threshold"
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        entries.append(
+            {
+                "ticker": item.ticker,
+                "score_b": round(float(item.score_b), 4),
+                "score_c": 0.0,
+                "score_final": round(float(item.score_b), 4),
+                "quality_score": 0.5,
+                "decision": str(item.decision or "neutral"),
+                "reason": reason,
+                "reasons": [reason],
+                "candidate_source": "layer_b_boundary",
+                "candidate_reason_codes": [reason],
+                "strategy_signals": {
+                    name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
+                    for name, signal in dict(item.strategy_signals or {}).items()
+                },
+                "agent_contribution_summary": {},
+                "rank": rank,
+            }
+        )
+
+    return {
+        "candidate_count": len(entries),
+        "reason_counts": reason_counts,
+        "selected_tickers": [entry["ticker"] for entry in entries],
+        "score_buffer": round(SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
+        "minimum_score_b": round(minimum_score_b, 4),
+        "max_candidates": SHORT_TRADE_BOUNDARY_MAX_TICKERS,
+        "tickers": entries,
+    }
 
 
 def _extract_sell_order_value(order, field_name: str, default=None):
@@ -594,6 +642,7 @@ class DailyPipeline:
         watchlist = [item for item in layer_c_results if item.score_final >= WATCHLIST_SCORE_THRESHOLD and item.decision != "avoid"]
         layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(fused, high_pool)
         watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(layer_c_results, watchlist)
+        short_trade_candidate_diagnostics = _build_short_trade_candidate_diagnostics(fused, high_pool)
 
         candidate_by_ticker = {candidate.ticker: candidate for candidate in candidates}
         price_map = build_watchlist_price_map(trade_date, [item.ticker for item in watchlist])
@@ -635,6 +684,7 @@ class DailyPipeline:
             "filters": {
                 "layer_b": layer_b_filter_diagnostics,
                 "watchlist": watchlist_filter_diagnostics,
+                "short_trade_candidates": short_trade_candidate_diagnostics,
                 "buy_orders": buy_order_filter_diagnostics,
             },
             "sell_orders": sell_order_diagnostics,
@@ -658,6 +708,7 @@ class DailyPipeline:
             trade_date=trade_date,
             watchlist=watchlist,
             rejected_entries=list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
+            supplemental_short_trade_entries=list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
             buy_order_tickers={order.ticker for order in buy_orders},
             target_mode=self.target_mode,
         )

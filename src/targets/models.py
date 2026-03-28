@@ -50,6 +50,8 @@ class DualTargetEvaluation(BaseModel):
     trade_date: str
     research: TargetEvaluationResult | None = None
     short_trade: TargetEvaluationResult | None = None
+    candidate_source: str | None = None
+    candidate_reason_codes: list[str] = Field(default_factory=list)
     delta_classification: str | None = None
     delta_summary: list[str] = Field(default_factory=list)
 
