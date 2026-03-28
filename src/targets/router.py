@@ -5,7 +5,7 @@ from typing import Any
 from src.execution.models import LayerCResult
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
 from src.targets.research_target import evaluate_research_rejected_target, evaluate_research_selected_target
-from src.targets.short_trade_target import evaluate_short_trade_skeleton
+from src.targets.short_trade_target import evaluate_short_trade_rejected_target, evaluate_short_trade_selected_target
 
 
 def _classify_delta(evaluation: DualTargetEvaluation) -> str | None:
@@ -44,6 +44,8 @@ def summarize_selection_targets(*, selection_targets: dict[str, DualTargetEvalua
                 summary.short_trade_selected_count += 1
             elif evaluation.short_trade.decision == "near_miss":
                 summary.short_trade_near_miss_count += 1
+            elif evaluation.short_trade.decision == "blocked":
+                summary.short_trade_blocked_count += 1
             else:
                 summary.short_trade_rejected_count += 1
         if evaluation.research is None and evaluation.short_trade is None:
@@ -60,7 +62,16 @@ def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint
         rank_hint=rank_hint,
         included_in_buy_orders=included_in_buy_orders,
     )
-    short_trade_result = evaluate_short_trade_skeleton(trade_date=trade_date, ticker=item.ticker) if target_mode != "research_only" else None
+    short_trade_result = (
+        evaluate_short_trade_selected_target(
+            trade_date=trade_date,
+            item=item,
+            rank_hint=rank_hint,
+            included_in_buy_orders=included_in_buy_orders,
+        )
+        if target_mode != "research_only"
+        else None
+    )
     evaluation = DualTargetEvaluation(
         ticker=item.ticker,
         trade_date=trade_date,
@@ -69,14 +80,17 @@ def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint
     )
     evaluation.delta_classification = _classify_delta(evaluation)
     if evaluation.delta_classification == "research_pass_short_reject":
-        evaluation.delta_summary = ["research target selected while short trade target remains blocked by skeleton rules"]
+        short_trade_decision = getattr(short_trade_result, "decision", "rejected") if short_trade_result is not None else "rejected"
+        evaluation.delta_summary = [f"research target selected while short trade target stays {short_trade_decision}"]
+    elif evaluation.delta_classification == "both_pass_but_rank_diverge":
+        evaluation.delta_summary = ["research target and short trade target both passed but rank hints diverged"]
     return evaluation
 
 
 def _build_rejected_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int, target_mode: TargetMode) -> DualTargetEvaluation:
     ticker = str(entry.get("ticker") or "")
     research_result = evaluate_research_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint)
-    short_trade_result = evaluate_short_trade_skeleton(trade_date=trade_date, ticker=ticker) if target_mode != "research_only" else None
+    short_trade_result = evaluate_short_trade_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint) if target_mode != "research_only" else None
     evaluation = DualTargetEvaluation(
         ticker=ticker,
         trade_date=trade_date,
@@ -84,8 +98,10 @@ def _build_rejected_evaluation(*, trade_date: str, entry: dict[str, Any], rank_h
         short_trade=short_trade_result,
     )
     evaluation.delta_classification = _classify_delta(evaluation)
-    if evaluation.delta_classification == "both_reject_but_reason_diverge":
-        evaluation.delta_summary = ["research target rejected by current pipeline filters while short trade target is still skeleton-only"]
+    if evaluation.delta_classification == "research_reject_short_pass":
+        evaluation.delta_summary = ["short trade target promoted a setup that research pipeline kept as near-miss"]
+    elif evaluation.delta_classification == "both_reject_but_reason_diverge":
+        evaluation.delta_summary = ["research target rejected by current pipeline filters while short trade target failed its own structural gates"]
     return evaluation
 
 

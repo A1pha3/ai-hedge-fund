@@ -100,6 +100,48 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
         day_dir / "selection_snapshot.json",
         {
             "trade_date": "2026-03-11",
+            "target_mode": "dual_target",
+            "target_summary": {
+                "target_mode": "dual_target",
+                "selection_target_count": 2,
+                "research_target_count": 2,
+                "short_trade_target_count": 2,
+                "research_selected_count": 1,
+                "research_near_miss_count": 1,
+                "research_rejected_count": 0,
+                "short_trade_selected_count": 1,
+                "short_trade_near_miss_count": 0,
+                "short_trade_blocked_count": 1,
+                "short_trade_rejected_count": 0,
+                "shell_target_count": 0,
+                "delta_classification_counts": {"research_reject_short_pass": 1},
+            },
+            "research_view": {
+                "selected_symbols": ["300724"],
+                "near_miss_symbols": ["002916"],
+                "rejected_symbols": [],
+                "blocker_counts": {"analyst_divergence_high": 1},
+            },
+            "short_trade_view": {
+                "selected_symbols": ["002916"],
+                "near_miss_symbols": [],
+                "rejected_symbols": [],
+                "blocked_symbols": ["300724"],
+                "blocker_counts": {"missing_trend_signal": 1},
+            },
+            "dual_target_delta": {
+                "delta_counts": {"research_reject_short_pass": 1},
+                "representative_cases": [
+                    {
+                        "ticker": "002916",
+                        "delta_classification": "research_reject_short_pass",
+                        "research_decision": "near_miss",
+                        "short_trade_decision": "selected",
+                        "delta_summary": ["short trade target promoted a setup that research pipeline kept as near-miss"],
+                    }
+                ],
+                "dominant_delta_reasons": ["short trade target promoted a setup that research pipeline kept as near-miss"],
+            },
             "selected": [
                 {
                     "symbol": "300724",
@@ -169,6 +211,48 @@ def test_get_selection_artifact_day_returns_snapshot_and_review(tmp_path: Path) 
         day_dir / "selection_snapshot.json",
         {
             "trade_date": "2026-03-11",
+            "target_mode": "dual_target",
+            "target_summary": {
+                "target_mode": "dual_target",
+                "selection_target_count": 2,
+                "research_target_count": 2,
+                "short_trade_target_count": 2,
+                "research_selected_count": 1,
+                "research_near_miss_count": 1,
+                "research_rejected_count": 0,
+                "short_trade_selected_count": 1,
+                "short_trade_near_miss_count": 0,
+                "short_trade_blocked_count": 1,
+                "short_trade_rejected_count": 0,
+                "shell_target_count": 0,
+                "delta_classification_counts": {"research_reject_short_pass": 1},
+            },
+            "research_view": {
+                "selected_symbols": ["300724"],
+                "near_miss_symbols": ["002916"],
+                "rejected_symbols": [],
+                "blocker_counts": {"analyst_divergence_high": 1},
+            },
+            "short_trade_view": {
+                "selected_symbols": ["002916"],
+                "near_miss_symbols": [],
+                "rejected_symbols": [],
+                "blocked_symbols": ["300724"],
+                "blocker_counts": {"missing_trend_signal": 1},
+            },
+            "dual_target_delta": {
+                "delta_counts": {"research_reject_short_pass": 1},
+                "representative_cases": [
+                    {
+                        "ticker": "002916",
+                        "delta_classification": "research_reject_short_pass",
+                        "research_decision": "near_miss",
+                        "short_trade_decision": "selected",
+                        "delta_summary": ["short trade target promoted a setup that research pipeline kept as near-miss"],
+                    }
+                ],
+                "dominant_delta_reasons": ["short trade target promoted a setup that research pipeline kept as near-miss"],
+            },
             "selected": [
                 {
                     "symbol": "300724",
@@ -237,6 +321,11 @@ def test_get_selection_artifact_day_returns_snapshot_and_review(tmp_path: Path) 
     assert detail["feedback_summary"]["feedback_count"] == 2
     assert detail["feedback_options"]["allowed_review_statuses"] == ["draft", "final", "adjudicated"]
     assert detail["blocker_counts"] == [{"reason": "blocked_by_reentry_score_confirmation", "count": 1}]
+    assert detail["snapshot"]["target_mode"] == "dual_target"
+    assert detail["snapshot"]["target_summary"]["short_trade_blocked_count"] == 1
+    assert detail["snapshot"]["research_view"]["selected_symbols"] == ["300724"]
+    assert detail["snapshot"]["short_trade_view"]["blocked_symbols"] == ["300724"]
+    assert detail["snapshot"]["dual_target_delta"]["delta_counts"] == {"research_reject_short_pass": 1}
     assert [record["created_at"] for record in detail["feedback_records"]] == [
         "2026-03-23T10:00:00+08:00",
         "2026-03-22T10:00:00+08:00",

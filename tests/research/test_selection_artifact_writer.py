@@ -3,11 +3,20 @@ from pathlib import Path
 import pytest
 
 from src.execution.models import ExecutionPlan, LayerCResult
-from src.screening.models import MarketState
+from src.screening.models import MarketState, StrategySignal
 from src.portfolio.models import ExitSignal, PositionPlan
 from src.research.artifacts import FileSelectionArtifactWriter
 from src.targets.models import DualTargetEvaluation, DualTargetSummary
 from src.targets.router import build_selection_targets
+
+
+def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
+    return StrategySignal(
+        direction=direction,
+        confidence=confidence,
+        completeness=completeness,
+        sub_factors=sub_factors or {},
+    )
 
 
 def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
@@ -70,7 +79,13 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     assert '"target_mode": "research_only"' in snapshot_text
     assert '"selection_targets": {' in snapshot_text
     assert '"shell_target_count": 1' in snapshot_text
+    assert '"research_view": {' in snapshot_text
+    assert '"short_trade_view": {' in snapshot_text
+    assert '"dual_target_delta": {' in snapshot_text
     assert "## 双目标空壳状态" in review_text
+    assert "## Research Target Summary" in review_text
+    assert "## Short Trade Target Summary" in review_text
+    assert "## Target Delta Highlights" in review_text
     assert "selection_target_count: 1" in review_text
 
 
@@ -83,6 +98,29 @@ def test_file_selection_artifact_writer_renders_target_decisions_for_selected_an
         score_final=0.69,
         quality_score=0.65,
         decision="watch",
+        strategy_signals={
+            "trend": _make_signal(
+                1,
+                84.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 86.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 74.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 66.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                },
+            ),
+            "event_sentiment": _make_signal(
+                1,
+                76.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 65.0, "completeness": 1.0},
+                },
+            ),
+            "mean_reversion": _make_signal(-1, 18.0),
+        },
+        agent_contribution_summary={"cohort_contributions": {"analyst": 0.22, "investor": 0.11}},
     )
     selection_targets, dual_target_summary = build_selection_targets(
         trade_date="20260322",
@@ -93,8 +131,33 @@ def test_file_selection_artifact_writer_renders_target_decisions_for_selected_an
                 "score_b": 0.61,
                 "score_c": 0.20,
                 "score_final": 0.39,
+                "quality_score": 0.57,
+                "decision": "watch",
                 "reason": "score_final_below_watchlist_threshold",
                 "reasons": ["score_final_below_watchlist_threshold"],
+                "strategy_signals": {
+                    "trend": _make_signal(
+                        1,
+                        79.0,
+                        sub_factors={
+                            "momentum": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                            "adx_strength": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                            "ema_alignment": {"direction": 1, "confidence": 69.0, "completeness": 1.0},
+                            "volatility": {"direction": 1, "confidence": 63.0, "completeness": 1.0},
+                            "long_trend_alignment": {"direction": 0, "confidence": 22.0, "completeness": 1.0},
+                        },
+                    ).model_dump(mode="json"),
+                    "event_sentiment": _make_signal(
+                        1,
+                        71.0,
+                        sub_factors={
+                            "event_freshness": {"direction": 1, "confidence": 86.0, "completeness": 1.0},
+                            "news_sentiment": {"direction": 1, "confidence": 60.0, "completeness": 1.0},
+                        },
+                    ).model_dump(mode="json"),
+                    "mean_reversion": _make_signal(-1, 15.0).model_dump(mode="json"),
+                },
+                "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.18, "investor": 0.08}},
             }
         ],
         buy_order_tickers={"000001"},
@@ -120,8 +183,33 @@ def test_file_selection_artifact_writer_renders_target_decisions_for_selected_an
                                 "score_b": 0.61,
                                 "score_c": 0.20,
                                 "score_final": 0.39,
+                                "quality_score": 0.57,
+                                "decision": "watch",
                                 "reason": "score_final_below_watchlist_threshold",
                                 "reasons": ["score_final_below_watchlist_threshold"],
+                                "strategy_signals": {
+                                    "trend": _make_signal(
+                                        1,
+                                        79.0,
+                                        sub_factors={
+                                            "momentum": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                                            "adx_strength": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                                            "ema_alignment": {"direction": 1, "confidence": 69.0, "completeness": 1.0},
+                                            "volatility": {"direction": 1, "confidence": 63.0, "completeness": 1.0},
+                                            "long_trend_alignment": {"direction": 0, "confidence": 22.0, "completeness": 1.0},
+                                        },
+                                    ).model_dump(mode="json"),
+                                    "event_sentiment": _make_signal(
+                                        1,
+                                        71.0,
+                                        sub_factors={
+                                            "event_freshness": {"direction": 1, "confidence": 86.0, "completeness": 1.0},
+                                            "news_sentiment": {"direction": 1, "confidence": 60.0, "completeness": 1.0},
+                                        },
+                                    ).model_dump(mode="json"),
+                                    "mean_reversion": _make_signal(-1, 15.0).model_dump(mode="json"),
+                                },
+                                "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.18, "investor": 0.08}},
                             }
                         ]
                     }
@@ -141,9 +229,15 @@ def test_file_selection_artifact_writer_renders_target_decisions_for_selected_an
     review_text = (tmp_path / "2026-03-22" / "selection_review.md").read_text(encoding="utf-8")
     snapshot_text = (tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8")
     assert "research_target: selected" in review_text
-    assert "short_trade_target: rejected" in review_text
+    assert "short_trade_target: selected" in review_text
+    assert "selected_symbols: 000001" in review_text
+    assert "near_miss_symbols: 300750" in review_text
+    assert "delta_counts:" in review_text
+    assert "research_reject_short_pass=1" in review_text
     assert '"target_decisions": {' in snapshot_text
-    assert '"delta_classification": "research_pass_short_reject"' in snapshot_text
+    assert '"delta_classification": "research_reject_short_pass"' in snapshot_text
+    assert '"selected_symbols": [' in snapshot_text
+    assert '"dominant_delta_reasons": [' in snapshot_text
 
 
 def test_file_selection_artifact_writer_builds_fallback_layer_b_factors_for_legacy_replay(tmp_path):

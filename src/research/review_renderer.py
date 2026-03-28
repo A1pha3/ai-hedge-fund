@@ -100,6 +100,9 @@ def _render_target_summary(snapshot: SelectionSnapshot) -> list[str]:
         f"- research_selected_count: {summary.get('research_selected_count', 0)}",
         f"- research_near_miss_count: {summary.get('research_near_miss_count', 0)}",
         f"- research_rejected_count: {summary.get('research_rejected_count', 0)}",
+        f"- short_trade_selected_count: {summary.get('short_trade_selected_count', 0)}",
+        f"- short_trade_near_miss_count: {summary.get('short_trade_near_miss_count', 0)}",
+        f"- short_trade_blocked_count: {summary.get('short_trade_blocked_count', 0)}",
         f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count', 0)}",
         f"- shell_target_count: {summary.get('shell_target_count', 0)}",
     ]
@@ -107,6 +110,67 @@ def _render_target_summary(snapshot: SelectionSnapshot) -> list[str]:
         lines.append(f"- attached_target_tickers: {', '.join(sorted(snapshot.selection_targets.keys()))}")
     else:
         lines.append("- attached_target_tickers: none")
+    lines.append("")
+    return lines
+
+
+def _render_symbol_list(label: str, values: list[str]) -> str:
+    return f"- {label}: {', '.join(values)}" if values else f"- {label}: none"
+
+
+def _render_counter_map(label: str, values: dict[str, int]) -> str:
+    if not values:
+        return f"- {label}: none"
+    parts = [f"{key}={value}" for key, value in sorted(values.items())]
+    return f"- {label}: {', '.join(parts)}"
+
+
+def _render_research_target_summary(snapshot: SelectionSnapshot) -> list[str]:
+    view = snapshot.research_view
+    return [
+        "## Research Target Summary",
+        "",
+        _render_symbol_list("selected_symbols", list(view.selected_symbols or [])),
+        _render_symbol_list("near_miss_symbols", list(view.near_miss_symbols or [])),
+        _render_symbol_list("rejected_symbols", list(view.rejected_symbols or [])),
+        _render_counter_map("blocker_counts", dict(view.blocker_counts or {})),
+        "",
+    ]
+
+
+def _render_short_trade_target_summary(snapshot: SelectionSnapshot) -> list[str]:
+    view = snapshot.short_trade_view
+    return [
+        "## Short Trade Target Summary",
+        "",
+        _render_symbol_list("selected_symbols", list(view.selected_symbols or [])),
+        _render_symbol_list("near_miss_symbols", list(view.near_miss_symbols or [])),
+        _render_symbol_list("rejected_symbols", list(view.rejected_symbols or [])),
+        _render_symbol_list("blocked_symbols", list(view.blocked_symbols or [])),
+        _render_counter_map("blocker_counts", dict(view.blocker_counts or {})),
+        "",
+    ]
+
+
+def _render_target_delta_highlights(snapshot: SelectionSnapshot) -> list[str]:
+    delta = snapshot.dual_target_delta
+    lines = [
+        "## Target Delta Highlights",
+        "",
+        _render_counter_map("delta_counts", dict(delta.delta_counts or {})),
+        _render_symbol_list("dominant_delta_reasons", list(delta.dominant_delta_reasons or [])),
+    ]
+    representative_cases = list(delta.representative_cases or [])
+    if representative_cases:
+        lines.append("- representative_cases:")
+        for case in representative_cases[:5]:
+            ticker = str(case.get("ticker") or "")
+            delta_classification = str(case.get("delta_classification") or "none")
+            research_decision = str(case.get("research_decision") or "none")
+            short_trade_decision = str(case.get("short_trade_decision") or "none")
+            lines.append(f"  - {ticker}: {delta_classification} (research={research_decision}, short_trade={short_trade_decision})")
+    else:
+        lines.append("- representative_cases: none")
     lines.append("")
     return lines
 
@@ -127,6 +191,9 @@ def render_selection_review(snapshot: SelectionSnapshot) -> str:
         "",
     ]
     lines.extend(_render_target_summary(snapshot))
+    lines.extend(_render_research_target_summary(snapshot))
+    lines.extend(_render_short_trade_target_summary(snapshot))
+    lines.extend(_render_target_delta_highlights(snapshot))
     lines.extend(_render_selected_section(snapshot))
     lines.extend(_render_rejected_section(snapshot))
     lines.extend(

@@ -179,6 +179,7 @@ def _build_dual_target_session_summary(daily_events_path: Path) -> dict:
         "research_rejected_count": 0,
         "short_trade_selected_count": 0,
         "short_trade_near_miss_count": 0,
+        "short_trade_blocked_count": 0,
         "short_trade_rejected_count": 0,
         "shell_target_count": 0,
         "target_mode_counts": {},
@@ -219,6 +220,7 @@ def _build_dual_target_session_summary(daily_events_path: Path) -> dict:
         summary["research_rejected_count"] += int(target_summary.get("research_rejected_count") or 0)
         summary["short_trade_selected_count"] += int(target_summary.get("short_trade_selected_count") or 0)
         summary["short_trade_near_miss_count"] += int(target_summary.get("short_trade_near_miss_count") or 0)
+        summary["short_trade_blocked_count"] += int(target_summary.get("short_trade_blocked_count") or 0)
         summary["short_trade_rejected_count"] += int(target_summary.get("short_trade_rejected_count") or 0)
         summary["shell_target_count"] += int(target_summary.get("shell_target_count") or 0)
         for key, value in dict(target_summary.get("delta_classification_counts") or {}).items():

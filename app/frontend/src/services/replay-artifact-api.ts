@@ -108,6 +108,78 @@ export interface ReplaySelectionExecutionBridge {
   trigger_reason?: string;
 }
 
+export interface ReplayTargetEvaluationResult {
+  target_type: 'research' | 'short_trade';
+  decision: 'selected' | 'near_miss' | 'rejected' | 'blocked' | null;
+  score_target: number;
+  confidence: number;
+  rank_hint?: number | null;
+  positive_tags?: string[];
+  negative_tags?: string[];
+  blockers?: string[];
+  top_reasons?: string[];
+  rejection_reasons?: string[];
+  gate_status?: Record<string, string>;
+  expected_holding_window?: string | null;
+  preferred_entry_mode?: string | null;
+  metrics_payload?: Record<string, unknown>;
+  explainability_payload?: Record<string, unknown>;
+}
+
+export interface ReplayDualTargetEvaluation {
+  ticker: string;
+  trade_date: string;
+  research?: ReplayTargetEvaluationResult | null;
+  short_trade?: ReplayTargetEvaluationResult | null;
+  delta_classification?: string | null;
+  delta_summary?: string[];
+}
+
+export interface ReplayDualTargetSummary {
+  target_mode: 'research_only' | 'short_trade_only' | 'dual_target';
+  selection_target_count: number;
+  research_target_count: number;
+  short_trade_target_count: number;
+  research_selected_count: number;
+  research_near_miss_count: number;
+  research_rejected_count: number;
+  short_trade_selected_count: number;
+  short_trade_near_miss_count: number;
+  short_trade_blocked_count?: number;
+  short_trade_rejected_count: number;
+  shell_target_count: number;
+  delta_classification_counts?: Record<string, number>;
+}
+
+export interface ReplayResearchTargetView {
+  selected_symbols: string[];
+  near_miss_symbols: string[];
+  rejected_symbols: string[];
+  blocker_counts: Record<string, number>;
+}
+
+export interface ReplayShortTradeTargetView {
+  selected_symbols: string[];
+  near_miss_symbols: string[];
+  rejected_symbols: string[];
+  blocked_symbols: string[];
+  blocker_counts: Record<string, number>;
+}
+
+export interface ReplayDualTargetRepresentativeCase {
+  ticker: string;
+  delta_classification?: string | null;
+  research_decision?: string | null;
+  short_trade_decision?: string | null;
+  delta_summary?: string[];
+}
+
+export interface ReplayDualTargetDeltaView {
+  delta_counts: Record<string, number>;
+  representative_cases: ReplayDualTargetRepresentativeCase[];
+  dominant_delta_reasons: string[];
+}
+
 export interface ReplayLayerCAgentContribution {
   agent_id: string;
   contribution: number;
@@ -151,6 +223,8 @@ export interface ReplaySelectedCandidate {
     why_selected?: string[];
     what_to_check?: string[];
   };
+  target_context?: Record<string, unknown>;
+  target_decisions?: Record<string, ReplayTargetEvaluationResult>;
 }
 
 export interface ReplayRejectedCandidate {
@@ -162,6 +236,8 @@ export interface ReplayRejectedCandidate {
   score_final: number;
   rejection_reason_codes: string[];
   rejection_reason_text: string;
+  target_context?: Record<string, unknown>;
+  target_decisions?: Record<string, ReplayTargetEvaluationResult>;
 }
 
 export interface ReplaySelectionSnapshot {
@@ -172,10 +248,16 @@ export interface ReplaySelectionSnapshot {
   market: string;
   decision_timestamp: string;
   data_available_until: string;
+  target_mode?: 'research_only' | 'short_trade_only' | 'dual_target';
   pipeline_config_snapshot: Record<string, unknown>;
   universe_summary: Record<string, number | string | boolean | null>;
   selected: ReplaySelectedCandidate[];
   rejected: ReplayRejectedCandidate[];
+  selection_targets?: Record<string, ReplayDualTargetEvaluation>;
+  target_summary?: ReplayDualTargetSummary;
+  research_view?: ReplayResearchTargetView;
+  short_trade_view?: ReplayShortTradeTargetView;
+  dual_target_delta?: ReplayDualTargetDeltaView;
   buy_orders: Record<string, unknown>[];
   sell_orders: Record<string, unknown>[];
   funnel_diagnostics: Record<string, unknown>;

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from src.execution.daily_pipeline import FAST_AGENT_MAX_TICKERS, FAST_AGENT_SCORE_THRESHOLD, PRECISE_AGENT_MAX_TICKERS, WATCHLIST_SCORE_THRESHOLD
-from src.research.models import RejectedCandidate, SelectedCandidate, SelectionArtifactWriteResult, SelectionSnapshot
+from src.research.models import DualTargetDeltaView, RejectedCandidate, ResearchTargetView, SelectedCandidate, SelectionArtifactWriteResult, SelectionSnapshot, ShortTradeTargetView
 from src.research.review_renderer import render_selection_review
 
 if TYPE_CHECKING:
@@ -200,6 +200,95 @@ def _build_target_decisions(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
     return decisions
 
 
+def _increment_counter(counter: dict[str, int], key: str) -> None:
+    normalized_key = str(key or "unknown")
+    counter[normalized_key] = int(counter.get(normalized_key) or 0) + 1
+
+
+def _build_research_target_view(plan: ExecutionPlan) -> ResearchTargetView:
+    view = ResearchTargetView()
+    for ticker, evaluation in dict(plan.selection_targets or {}).items():
+        research_result = getattr(evaluation, "research", None)
+        if research_result is None:
+            continue
+        decision = str(research_result.decision or "")
+        if decision == "selected":
+            view.selected_symbols.append(str(ticker))
+        elif decision == "near_miss":
+            view.near_miss_symbols.append(str(ticker))
+        else:
+            view.rejected_symbols.append(str(ticker))
+        for blocker in list(getattr(research_result, "blockers", []) or []):
+            _increment_counter(view.blocker_counts, blocker)
+
+    view.selected_symbols.sort()
+    view.near_miss_symbols.sort()
+    view.rejected_symbols.sort()
+    return view
+
+
+def _build_short_trade_target_view(plan: ExecutionPlan) -> ShortTradeTargetView:
+    view = ShortTradeTargetView()
+    for ticker, evaluation in dict(plan.selection_targets or {}).items():
+        short_trade_result = getattr(evaluation, "short_trade", None)
+        if short_trade_result is None:
+            continue
+        decision = str(short_trade_result.decision or "")
+        blockers = list(getattr(short_trade_result, "blockers", []) or [])
+        if decision == "selected":
+            view.selected_symbols.append(str(ticker))
+        elif decision == "near_miss":
+            view.near_miss_symbols.append(str(ticker))
+        elif decision == "blocked":
+            view.blocked_symbols.append(str(ticker))
+        else:
+            view.rejected_symbols.append(str(ticker))
+        for blocker in blockers:
+            _increment_counter(view.blocker_counts, blocker)
+
+    view.selected_symbols.sort()
+    view.near_miss_symbols.sort()
+    view.rejected_symbols.sort()
+    view.blocked_symbols.sort()
+    return view
+
+
+def _build_dual_target_delta(plan: ExecutionPlan) -> DualTargetDeltaView:
+    delta_counts: dict[str, int] = {}
+    dominant_delta_reasons: dict[str, int] = {}
+    representative_cases: list[dict[str, Any]] = []
+
+    for ticker, evaluation in dict(plan.selection_targets or {}).items():
+        delta_classification = str(getattr(evaluation, "delta_classification", "") or "")
+        if delta_classification:
+            _increment_counter(delta_counts, delta_classification)
+        for reason in list(getattr(evaluation, "delta_summary", []) or []):
+            _increment_counter(dominant_delta_reasons, reason)
+        if len(representative_cases) >= 5:
+            continue
+        if not delta_classification and not getattr(evaluation, "delta_summary", []):
+            continue
+        representative_cases.append(
+            {
+                "ticker": str(ticker),
+                "delta_classification": delta_classification or None,
+                "research_decision": getattr(getattr(evaluation, "research", None), "decision", None),
+                "short_trade_decision": getattr(getattr(evaluation, "short_trade", None), "decision", None),
+                "delta_summary": list(getattr(evaluation, "delta_summary", []) or []),
+            }
+        )
+
+    dominant_delta_reason_list = [
+        reason
+        for reason, _ in sorted(dominant_delta_reasons.items(), key=lambda item: (-item[1], item[0]))[:3]
+    ]
+    return DualTargetDeltaView(
+        delta_counts=delta_counts,
+        representative_cases=representative_cases,
+        dominant_delta_reasons=dominant_delta_reason_list,
+    )
+
+
 def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
     buy_order_by_ticker = {order.ticker: order for order in plan.buy_orders}
     nav = _portfolio_nav(plan.portfolio_snapshot)
@@ -322,6 +411,9 @@ def build_selection_snapshot(
         rejected=_build_rejected_candidates(plan),
         selection_targets=dict(plan.selection_targets or {}),
         target_summary=plan.dual_target_summary,
+        research_view=_build_research_target_view(plan),
+        short_trade_view=_build_short_trade_target_view(plan),
+        dual_target_delta=_build_dual_target_delta(plan),
         buy_orders=[order.model_dump(mode="json") for order in plan.buy_orders],
         sell_orders=[order.model_dump(mode="json") for order in plan.sell_orders],
         funnel_diagnostics=funnel_diagnostics,

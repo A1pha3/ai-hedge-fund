@@ -9,12 +9,14 @@ import {
   type ReplayFeedbackActivity,
   type ReplayFeedbackRecord,
   type ReplayCacheBenchmarkOverview,
+  type ReplayDualTargetRepresentativeCase,
   type ReplayLayerCAgentContribution,
   type ReplaySelectionArtifactDay,
   type ReplaySelectedCandidate,
   type ReplayArtifactSummary,
   type ReplayReasonCount,
   type ReplayRejectedCandidate,
+  type ReplayTargetEvaluationResult,
   type ReplayWorkflowQueue,
   type ReplayWorkflowQueueItem,
 } from '@/services/replay-artifact-api';
@@ -190,6 +192,51 @@ function candidateAgentList(agents: ReplayLayerCAgentContribution[] | undefined)
     .slice(0, 3)
     .map(formatAgentContribution)
     .join(' | ');
+}
+
+function formatStringList(items: string[] | undefined, emptyLabel = '--'): string {
+  if (!items || items.length === 0) {
+    return emptyLabel;
+  }
+  return items.join(' | ');
+}
+
+function formatCounterMap(values: Record<string, number> | undefined, emptyLabel = '--'): string {
+  if (!values) {
+    return emptyLabel;
+  }
+  const entries = Object.entries(values);
+  if (entries.length === 0) {
+    return emptyLabel;
+  }
+  return entries
+    .map(([key, value]) => `${key}:${value}`)
+    .join(' | ');
+}
+
+function formatTargetDecision(decision: ReplayTargetEvaluationResult | null | undefined): string {
+  if (!decision) {
+    return '--';
+  }
+  const blockers = decision.blockers || [];
+  const blockerText = blockers.length > 0 ? ` | blockers ${blockers.slice(0, 2).join(', ')}` : '';
+  return `${decision.decision || 'unknown'} | score ${formatNumber(decision.score_target, 3)}${blockerText}`;
+}
+
+function selectedCandidateTargetDecision(candidate: ReplaySelectedCandidate, targetName: 'research' | 'short_trade'): string {
+  return formatTargetDecision(candidate.target_decisions?.[targetName]);
+}
+
+function rejectedCandidateTargetDecision(candidate: ReplayRejectedCandidate, targetName: 'research' | 'short_trade'): string {
+  return formatTargetDecision(candidate.target_decisions?.[targetName]);
+}
+
+function formatRepresentativeCase(caseItem: ReplayDualTargetRepresentativeCase): string {
+  const delta = caseItem.delta_classification || 'none';
+  const researchDecision = caseItem.research_decision || 'none';
+  const shortTradeDecision = caseItem.short_trade_decision || 'none';
+  const summary = caseItem.delta_summary && caseItem.delta_summary.length > 0 ? ` | ${caseItem.delta_summary[0]}` : '';
+  return `${caseItem.ticker} | ${delta} | research ${researchDecision} | short ${shortTradeDecision}${summary}`;
 }
 
 type FeedbackFormState = {
@@ -587,6 +634,10 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   const layerBFilter = getFunnelFilter(selectionSnapshot, 'layer_b');
   const watchlistFilter = getFunnelFilter(selectionSnapshot, 'watchlist');
   const buyOrdersFilter = getFunnelFilter(selectionSnapshot, 'buy_orders');
+  const targetSummary = selectionSnapshot?.target_summary;
+  const researchTargetView = selectionSnapshot?.research_view;
+  const shortTradeTargetView = selectionSnapshot?.short_trade_view;
+  const dualTargetDelta = selectionSnapshot?.dual_target_delta;
 
   useEffect(() => {
     if (!selectionArtifactDetail) {
@@ -1170,6 +1221,69 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
 
                       <div className="space-y-3">
                         <div>
+                          <p className="text-sm font-medium text-primary">Dual Target Snapshot</p>
+                          <p className="text-xs text-muted-foreground">直接消费 selection_snapshot 中的 target_summary、research_view、short_trade_view 与 dual_target_delta，不再依赖阅读 markdown 才知道双目标差异。</p>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Mode</p>
+                            <p className="mt-2 text-sm font-semibold text-primary">{formatOptionalText(selectionSnapshot?.target_mode)}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">selection targets {String(targetSummary?.selection_target_count ?? '--')}</p>
+                          </div>
+                          <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Research View</p>
+                            <p className="mt-2 text-sm font-semibold text-primary">selected {String(targetSummary?.research_selected_count ?? 0)} | near {String(targetSummary?.research_near_miss_count ?? 0)}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">rejected {String(targetSummary?.research_rejected_count ?? 0)}</p>
+                          </div>
+                          <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Short Trade View</p>
+                            <p className="mt-2 text-sm font-semibold text-primary">selected {String(targetSummary?.short_trade_selected_count ?? 0)} | near {String(targetSummary?.short_trade_near_miss_count ?? 0)}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">blocked {String(targetSummary?.short_trade_blocked_count ?? 0)} | rejected {String(targetSummary?.short_trade_rejected_count ?? 0)}</p>
+                          </div>
+                          <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Delta Counts</p>
+                            <p className="mt-2 text-sm leading-6 text-primary">{formatCounterMap(targetSummary?.delta_classification_counts || dualTargetDelta?.delta_counts)}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">shell {String(targetSummary?.shell_target_count ?? 0)}</p>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 xl:grid-cols-3">
+                          <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-2">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Research Target View</p>
+                            <p className="text-sm">selected: {formatStringList(researchTargetView?.selected_symbols)}</p>
+                            <p className="text-sm">near_miss: {formatStringList(researchTargetView?.near_miss_symbols)}</p>
+                            <p className="text-sm">rejected: {formatStringList(researchTargetView?.rejected_symbols)}</p>
+                            <p className="text-xs text-muted-foreground">blockers {formatCounterMap(researchTargetView?.blocker_counts)}</p>
+                          </div>
+                          <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-2">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Short Trade View</p>
+                            <p className="text-sm">selected: {formatStringList(shortTradeTargetView?.selected_symbols)}</p>
+                            <p className="text-sm">near_miss: {formatStringList(shortTradeTargetView?.near_miss_symbols)}</p>
+                            <p className="text-sm">blocked: {formatStringList(shortTradeTargetView?.blocked_symbols)}</p>
+                            <p className="text-sm">rejected: {formatStringList(shortTradeTargetView?.rejected_symbols)}</p>
+                            <p className="text-xs text-muted-foreground">blockers {formatCounterMap(shortTradeTargetView?.blocker_counts)}</p>
+                          </div>
+                          <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-2">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Delta Highlights</p>
+                            <p className="text-sm">dominant reasons: {formatStringList(dualTargetDelta?.dominant_delta_reasons)}</p>
+                            <p className="text-xs text-muted-foreground">representative cases</p>
+                            <div className="space-y-2">
+                              {(dualTargetDelta?.representative_cases || []).length > 0 ? (
+                                (dualTargetDelta?.representative_cases || []).slice(0, 5).map((caseItem) => (
+                                  <div key={`${caseItem.ticker}-${caseItem.delta_classification || 'none'}`} className="rounded-md border border-border/50 bg-background/60 px-3 py-2 text-xs leading-6 text-muted-foreground">
+                                    {formatRepresentativeCase(caseItem)}
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="rounded-md border border-border/50 bg-background/60 px-3 py-2 text-xs text-muted-foreground">No representative delta cases.</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div>
                           <p className="text-sm font-medium text-primary">Selected Candidates</p>
                           <p className="text-xs text-muted-foreground">从 snapshot 直接读取 watchlist 级对象，方便并排对照 execution bridge 和 Layer B 因子。</p>
                         </div>
@@ -1178,6 +1292,8 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                             <TableRow>
                               <TableHead>Symbol</TableHead>
                               <TableHead>Final</TableHead>
+                              <TableHead>Research Target</TableHead>
+                              <TableHead>Short Trade Target</TableHead>
                               <TableHead>Layer C</TableHead>
                               <TableHead>Buy Order</TableHead>
                               <TableHead>Blocker</TableHead>
@@ -1190,6 +1306,8 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                                 <TableRow key={`${candidate.symbol}-${candidate.rank_in_watchlist}`}>
                                   <TableCell className="font-medium">{candidate.symbol}</TableCell>
                                   <TableCell>{formatNumber(candidate.score_final, 4)}</TableCell>
+                                  <TableCell>{selectedCandidateTargetDecision(candidate, 'research')}</TableCell>
+                                  <TableCell>{selectedCandidateTargetDecision(candidate, 'short_trade')}</TableCell>
                                   <TableCell>{candidateConsensusSummary(candidate)}</TableCell>
                                   <TableCell>{formatBooleanFlag(candidate.execution_bridge?.included_in_buy_orders)}</TableCell>
                                   <TableCell>{selectedCandidateBlocker(candidate)}</TableCell>
@@ -1198,7 +1316,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                               ))
                             ) : (
                               <TableRow>
-                                <TableCell colSpan={6} className="text-muted-foreground">No selected candidates in this snapshot.</TableCell>
+                                <TableCell colSpan={8} className="text-muted-foreground">No selected candidates in this snapshot.</TableCell>
                               </TableRow>
                             )}
                           </TableBody>
@@ -1295,6 +1413,8 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                               <TableHead>Symbol</TableHead>
                               <TableHead>Stage</TableHead>
                               <TableHead>Final</TableHead>
+                              <TableHead>Research Target</TableHead>
+                              <TableHead>Short Trade Target</TableHead>
                               <TableHead>Reasons</TableHead>
                             </TableRow>
                           </TableHeader>
@@ -1305,12 +1425,14 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                                   <TableCell className="font-medium">{candidate.symbol}</TableCell>
                                   <TableCell>{candidate.rejection_stage}</TableCell>
                                   <TableCell>{formatNumber(candidate.score_final, 4)}</TableCell>
+                                  <TableCell>{rejectedCandidateTargetDecision(candidate, 'research')}</TableCell>
+                                  <TableCell>{rejectedCandidateTargetDecision(candidate, 'short_trade')}</TableCell>
                                   <TableCell>{rejectedCandidateReasons(candidate)}</TableCell>
                                 </TableRow>
                               ))
                             ) : (
                               <TableRow>
-                                <TableCell colSpan={4} className="text-muted-foreground">No near-miss rejected candidates recorded.</TableCell>
+                                <TableCell colSpan={6} className="text-muted-foreground">No near-miss rejected candidates recorded.</TableCell>
                               </TableRow>
                             )}
                           </TableBody>

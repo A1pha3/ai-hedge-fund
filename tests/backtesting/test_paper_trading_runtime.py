@@ -184,6 +184,7 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         "research_rejected_count": 0,
         "short_trade_selected_count": 0,
         "short_trade_near_miss_count": 0,
+        "short_trade_blocked_count": 0,
         "short_trade_rejected_count": 0,
         "shell_target_count": 1,
         "target_mode_counts": {"research_only": 3},

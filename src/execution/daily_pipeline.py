@@ -186,8 +186,13 @@ def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], wat
             "score_b": round(item.score_b, 4),
             "score_c": round(item.score_c, 4),
             "score_final": round(item.score_final, 4),
+            "quality_score": round(item.quality_score, 4),
             "decision": item.decision,
             "bc_conflict": item.bc_conflict,
+            "strategy_signals": {
+                name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
+                for name, signal in dict(item.strategy_signals or {}).items()
+            },
             "agent_contribution_summary": item.agent_contribution_summary,
         }
         if item.ticker in selected_tickers:

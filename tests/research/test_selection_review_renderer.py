@@ -33,7 +33,7 @@ def test_render_selection_review_contains_key_sections():
                 },
                 target_decisions={
                     "research": TargetEvaluationResult(target_type="research", decision="selected", score_target=0.72),
-                    "short_trade": TargetEvaluationResult(target_type="short_trade", decision="rejected", score_target=0.0, blockers=["short_trade_target_rules_not_implemented"]),
+                    "short_trade": TargetEvaluationResult(target_type="short_trade", decision="blocked", score_target=0.31, blockers=["missing_trend_signal"]),
                 },
             )
         ],
@@ -48,7 +48,33 @@ def test_render_selection_review_contains_key_sections():
             )
         ],
         selection_targets={"000001": DualTargetEvaluation(ticker="000001", trade_date="2026-03-22")},
-        target_summary=DualTargetSummary(target_mode="research_only", selection_target_count=1, shell_target_count=1),
+        target_summary=DualTargetSummary(target_mode="research_only", selection_target_count=1, research_selected_count=1, shell_target_count=1),
+        research_view={
+            "selected_symbols": ["000001"],
+            "near_miss_symbols": ["300750"],
+            "rejected_symbols": [],
+            "blocker_counts": {"analyst_divergence_high": 1},
+        },
+        short_trade_view={
+            "selected_symbols": [],
+            "near_miss_symbols": [],
+            "rejected_symbols": [],
+            "blocked_symbols": ["000001"],
+            "blocker_counts": {"missing_trend_signal": 1},
+        },
+        dual_target_delta={
+            "delta_counts": {"research_pass_short_reject": 1},
+            "representative_cases": [
+                {
+                    "ticker": "000001",
+                    "delta_classification": "research_pass_short_reject",
+                    "research_decision": "selected",
+                    "short_trade_decision": "blocked",
+                    "delta_summary": ["research target selected while short trade target stays blocked"],
+                }
+            ],
+            "dominant_delta_reasons": ["research target selected while short trade target stays blocked"],
+        },
     )
 
     markdown = render_selection_review(snapshot)
@@ -61,9 +87,16 @@ def test_render_selection_review_contains_key_sections():
     assert "Layer B 因子摘要" in markdown
     assert "trend: weight=0.3000" in markdown
     assert "## 双目标空壳状态" in markdown
+    assert "## Research Target Summary" in markdown
+    assert "selected_symbols: 000001" in markdown
+    assert "near_miss_symbols: 300750" in markdown
+    assert "## Short Trade Target Summary" in markdown
+    assert "blocked_symbols: 000001" in markdown
+    assert "## Target Delta Highlights" in markdown
+    assert "delta_counts: research_pass_short_reject=1" in markdown
     assert "target_mode: research_only" in markdown
     assert "attached_target_tickers: 000001" in markdown
     assert "research_target: selected (score=0.7200)" in markdown
-    assert "short_trade_target: rejected (score=0.0000, blockers=short_trade_target_rules_not_implemented)" in markdown
+    assert "short_trade_target: blocked (score=0.3100, blockers=missing_trend_signal)" in markdown
     assert "## 接近入选但落选" in markdown
     assert "300750" in markdown

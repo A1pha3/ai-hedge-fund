@@ -291,6 +291,155 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     expect(screen.getByText('1 trade dates')).toBeInTheDocument();
   });
 
+  it('renders dual-target snapshot sections and candidate target decisions', async () => {
+    const dualTargetDetail: ReplaySelectionArtifactDay = {
+      ...dayDetail,
+      snapshot: {
+        ...dayDetail.snapshot,
+        target_mode: 'dual_target',
+        target_summary: {
+          target_mode: 'dual_target',
+          selection_target_count: 2,
+          research_target_count: 2,
+          short_trade_target_count: 2,
+          research_selected_count: 1,
+          research_near_miss_count: 1,
+          research_rejected_count: 0,
+          short_trade_selected_count: 1,
+          short_trade_near_miss_count: 0,
+          short_trade_blocked_count: 1,
+          short_trade_rejected_count: 0,
+          shell_target_count: 0,
+          delta_classification_counts: { research_reject_short_pass: 1 },
+        },
+        research_view: {
+          selected_symbols: ['300724'],
+          near_miss_symbols: ['002916'],
+          rejected_symbols: [],
+          blocker_counts: { analyst_divergence_high: 1 },
+        },
+        short_trade_view: {
+          selected_symbols: ['002916'],
+          near_miss_symbols: [],
+          rejected_symbols: [],
+          blocked_symbols: ['300724'],
+          blocker_counts: { missing_trend_signal: 1 },
+        },
+        dual_target_delta: {
+          delta_counts: { research_reject_short_pass: 1 },
+          representative_cases: [
+            {
+              ticker: '002916',
+              delta_classification: 'research_reject_short_pass',
+              research_decision: 'near_miss',
+              short_trade_decision: 'selected',
+              delta_summary: ['short trade target promoted a setup that research pipeline kept as near-miss'],
+            },
+          ],
+          dominant_delta_reasons: ['short trade target promoted a setup that research pipeline kept as near-miss'],
+        },
+        selected: [
+          {
+            symbol: '300724',
+            name: '捷佳伟创',
+            decision: 'watchlist',
+            score_b: 0.71,
+            score_c: 0.63,
+            score_final: 0.68,
+            rank_in_watchlist: 1,
+            layer_b_summary: {
+              top_factors: [{ name: 'fast_score', value: 0.71 }],
+            },
+            execution_bridge: {
+              included_in_buy_orders: false,
+              block_reason: 'blocked_by_reentry_score_confirmation',
+            },
+            target_decisions: {
+              research: {
+                target_type: 'research',
+                decision: 'selected',
+                score_target: 0.68,
+                confidence: 0.68,
+              },
+              short_trade: {
+                target_type: 'short_trade',
+                decision: 'blocked',
+                score_target: 0.31,
+                confidence: 0.44,
+                blockers: ['missing_trend_signal'],
+              },
+            },
+          },
+        ],
+        rejected: [
+          {
+            symbol: '002916',
+            name: '深南电路',
+            rejection_stage: 'watchlist',
+            score_b: 0.65,
+            score_c: 0.44,
+            score_final: 0.49,
+            rejection_reason_codes: ['analyst_divergence_high'],
+            rejection_reason_text: 'divergence high',
+            target_decisions: {
+              research: {
+                target_type: 'research',
+                decision: 'near_miss',
+                score_target: 0.49,
+                confidence: 0.61,
+              },
+              short_trade: {
+                target_type: 'short_trade',
+                decision: 'selected',
+                score_target: 0.62,
+                confidence: 0.66,
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    listMock.mockResolvedValue(reports);
+    getMock.mockResolvedValue(detail);
+    getSelectionArtifactDayMock.mockResolvedValue(dualTargetDetail);
+    getFeedbackActivityMock.mockResolvedValue({
+      report_name: 'paper_trading_window_recent',
+      reviewer: null,
+      limit: 8,
+      record_count: 0,
+      recent_records: [],
+      review_status_counts: {},
+      tag_counts: {},
+      reviewer_counts: {},
+      report_counts: {},
+    });
+    getWorkflowQueueMock.mockResolvedValue({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 0,
+      items: [],
+      workflow_status_counts: {},
+      assignee_counts: {},
+      report_counts: {},
+    });
+
+    render(<ReplayArtifactsSettings mode="workspace" />);
+
+    await screen.findByText('Dual Target Snapshot');
+    expect(screen.getByText('selected 1 | near 1')).toBeInTheDocument();
+    expect(screen.getByText('blocked 1 | rejected 0')).toBeInTheDocument();
+    expect(screen.getByText('selected: 300724')).toBeInTheDocument();
+    expect(screen.getByText('blocked: 300724')).toBeInTheDocument();
+    expect(screen.getByText(/002916 \| research_reject_short_pass \| research near_miss \| short selected/)).toBeInTheDocument();
+    expect(screen.getByText('selected | score 0.680')).toBeInTheDocument();
+    expect(screen.getByText('blocked | score 0.310 | blockers missing_trend_signal')).toBeInTheDocument();
+    expect(screen.getByText('near_miss | score 0.490')).toBeInTheDocument();
+    expect(screen.getByText('selected | score 0.620')).toBeInTheDocument();
+  });
+
   it('submits feedback, refreshes the artifact detail, and renders records in reverse chronological order', async () => {
     const user = userEvent.setup();
     const detailAfterAppend: ReplayArtifactDetail = {

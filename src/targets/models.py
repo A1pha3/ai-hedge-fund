@@ -18,8 +18,10 @@ class TargetEvaluationInput(BaseModel):
     score_b: float = 0.0
     score_c: float = 0.0
     score_final: float = 0.0
+    quality_score: float = 0.5
     layer_c_decision: str = ""
     bc_conflict: str | None = None
+    strategy_signals: dict[str, Any] = Field(default_factory=dict)
     agent_contribution_summary: dict[str, Any] = Field(default_factory=dict)
     execution_constraints: dict[str, Any] = Field(default_factory=dict)
     replay_context: dict[str, Any] = Field(default_factory=dict)
@@ -62,6 +64,7 @@ class DualTargetSummary(BaseModel):
     research_rejected_count: int = 0
     short_trade_selected_count: int = 0
     short_trade_near_miss_count: int = 0
+    short_trade_blocked_count: int = 0
     short_trade_rejected_count: int = 0
     shell_target_count: int = 0
     delta_classification_counts: dict[str, int] = Field(default_factory=dict)

@@ -53,6 +53,27 @@ class RejectedCandidate(BaseModel):
     target_decisions: dict[str, TargetEvaluationResult] = Field(default_factory=dict)
 
 
+class ResearchTargetView(BaseModel):
+    selected_symbols: list[str] = Field(default_factory=list)
+    near_miss_symbols: list[str] = Field(default_factory=list)
+    rejected_symbols: list[str] = Field(default_factory=list)
+    blocker_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class ShortTradeTargetView(BaseModel):
+    selected_symbols: list[str] = Field(default_factory=list)
+    near_miss_symbols: list[str] = Field(default_factory=list)
+    rejected_symbols: list[str] = Field(default_factory=list)
+    blocked_symbols: list[str] = Field(default_factory=list)
+    blocker_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class DualTargetDeltaView(BaseModel):
+    delta_counts: dict[str, int] = Field(default_factory=dict)
+    representative_cases: list[dict[str, Any]] = Field(default_factory=list)
+    dominant_delta_reasons: list[str] = Field(default_factory=list)
+
+
 class SelectionSnapshot(BaseModel):
     artifact_version: str = "v1"
     run_id: str
@@ -68,6 +89,9 @@ class SelectionSnapshot(BaseModel):
     rejected: list[RejectedCandidate] = Field(default_factory=list)
     selection_targets: dict[str, DualTargetEvaluation] = Field(default_factory=dict)
     target_summary: DualTargetSummary = Field(default_factory=DualTargetSummary)
+    research_view: ResearchTargetView = Field(default_factory=ResearchTargetView)
+    short_trade_view: ShortTradeTargetView = Field(default_factory=ShortTradeTargetView)
+    dual_target_delta: DualTargetDeltaView = Field(default_factory=DualTargetDeltaView)
     buy_orders: list[dict[str, Any]] = Field(default_factory=list)
     sell_orders: list[dict[str, Any]] = Field(default_factory=list)
     funnel_diagnostics: dict[str, Any] = Field(default_factory=dict)
