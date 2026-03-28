@@ -791,8 +791,10 @@ class ReplayArtifactService:
                 "available": False,
                 "trade_date_count": 0,
                 "available_trade_dates": [],
+                "trade_date_target_index": [],
                 "write_status_counts": {},
                 "blocker_counts": [],
+                "dual_target_overview": None,
                 "feedback_summary": None,
             }
 
@@ -805,12 +807,14 @@ class ReplayArtifactService:
 
         trade_dates: list[str] = []
         blocker_counts: Counter[str] = Counter()
+        snapshots_by_trade_date: list[tuple[str, dict[str, Any]]] = []
         for day_dir in sorted(path for path in artifact_root.iterdir() if path.is_dir()):
             snapshot_path = day_dir / "selection_snapshot.json"
             if not snapshot_path.exists():
                 continue
             trade_dates.append(day_dir.name)
             snapshot = self._read_json(snapshot_path)
+            snapshots_by_trade_date.append((day_dir.name, snapshot))
             for candidate in snapshot.get("selected") or []:
                 if not isinstance(candidate, dict):
                     continue
@@ -827,9 +831,120 @@ class ReplayArtifactService:
             "artifact_root": str(artifact_root),
             "trade_date_count": len(trade_dates),
             "available_trade_dates": trade_dates,
+            "trade_date_target_index": self._derive_trade_date_target_index(snapshots_by_trade_date),
             "write_status_counts": dict(write_status_counts),
             "blocker_counts": self._counter_to_list(blocker_counts),
+            "dual_target_overview": self._derive_dual_target_overview(snapshots_by_trade_date),
             "feedback_summary": feedback_summary,
+        }
+
+    def _derive_trade_date_target_index(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+        index_rows: list[dict[str, Any]] = []
+        for trade_date, snapshot in snapshots_by_trade_date:
+            target_summary = snapshot.get("target_summary") or {}
+            dual_target_delta = snapshot.get("dual_target_delta") or {}
+            target_mode = snapshot.get("target_mode") or target_summary.get("target_mode")
+            delta_counts = dict(target_summary.get("delta_classification_counts") or {})
+            for delta_name, delta_count in (dual_target_delta.get("delta_counts") or {}).items():
+                delta_counts[str(delta_name)] = int(delta_counts.get(str(delta_name), 0)) + int(delta_count)
+
+            index_rows.append(
+                {
+                    "trade_date": trade_date,
+                    "target_mode": target_mode,
+                    "delta_classification_counts": delta_counts,
+                    "research_selected_count": int(target_summary.get("research_selected_count") or 0),
+                    "research_near_miss_count": int(target_summary.get("research_near_miss_count") or 0),
+                    "short_trade_selected_count": int(target_summary.get("short_trade_selected_count") or 0),
+                    "short_trade_blocked_count": int(target_summary.get("short_trade_blocked_count") or 0),
+                }
+            )
+        return index_rows
+
+    def _derive_dual_target_overview(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
+        target_mode_counts: Counter[str] = Counter()
+        delta_classification_counts: Counter[str] = Counter()
+        dominant_delta_reason_counts: Counter[str] = Counter()
+        aggregated_counts: Counter[str] = Counter()
+        representative_cases: list[dict[str, Any]] = []
+        dual_target_trade_date_count = 0
+        seen_any_target_metadata = False
+
+        for trade_date, snapshot in snapshots_by_trade_date:
+            target_summary = snapshot.get("target_summary") or {}
+            dual_target_delta = snapshot.get("dual_target_delta") or {}
+            target_mode = snapshot.get("target_mode") or target_summary.get("target_mode")
+
+            if target_mode:
+                normalized_target_mode = str(target_mode)
+                target_mode_counts[normalized_target_mode] += 1
+                seen_any_target_metadata = True
+                if normalized_target_mode == "dual_target":
+                    dual_target_trade_date_count += 1
+
+            if isinstance(target_summary, dict) and target_summary:
+                seen_any_target_metadata = True
+                for field_name in [
+                    "selection_target_count",
+                    "research_target_count",
+                    "short_trade_target_count",
+                    "research_selected_count",
+                    "research_near_miss_count",
+                    "research_rejected_count",
+                    "short_trade_selected_count",
+                    "short_trade_near_miss_count",
+                    "short_trade_blocked_count",
+                    "short_trade_rejected_count",
+                    "shell_target_count",
+                ]:
+                    field_value = target_summary.get(field_name)
+                    if field_value is not None:
+                        aggregated_counts[field_name] += int(field_value)
+
+                for delta_name, delta_count in (target_summary.get("delta_classification_counts") or {}).items():
+                    delta_classification_counts[str(delta_name)] += int(delta_count)
+
+            if isinstance(dual_target_delta, dict) and dual_target_delta:
+                seen_any_target_metadata = True
+                for delta_name, delta_count in (dual_target_delta.get("delta_counts") or {}).items():
+                    delta_classification_counts[str(delta_name)] += int(delta_count)
+                for reason in dual_target_delta.get("dominant_delta_reasons") or []:
+                    dominant_delta_reason_counts[str(reason)] += 1
+                for case_item in dual_target_delta.get("representative_cases") or []:
+                    if not isinstance(case_item, dict):
+                        continue
+                    representative_cases.append(
+                        {
+                            "trade_date": trade_date,
+                            "ticker": case_item.get("ticker"),
+                            "delta_classification": case_item.get("delta_classification"),
+                            "research_decision": case_item.get("research_decision"),
+                            "short_trade_decision": case_item.get("short_trade_decision"),
+                            "delta_summary": case_item.get("delta_summary") or [],
+                        }
+                    )
+
+        if not seen_any_target_metadata:
+            return None
+
+        return {
+            "target_mode_counts": dict(target_mode_counts),
+            "dual_target_trade_date_count": dual_target_trade_date_count,
+            "selection_target_count": aggregated_counts["selection_target_count"],
+            "research_target_count": aggregated_counts["research_target_count"],
+            "short_trade_target_count": aggregated_counts["short_trade_target_count"],
+            "research_selected_count": aggregated_counts["research_selected_count"],
+            "research_near_miss_count": aggregated_counts["research_near_miss_count"],
+            "research_rejected_count": aggregated_counts["research_rejected_count"],
+            "short_trade_selected_count": aggregated_counts["short_trade_selected_count"],
+            "short_trade_near_miss_count": aggregated_counts["short_trade_near_miss_count"],
+            "short_trade_blocked_count": aggregated_counts["short_trade_blocked_count"],
+            "short_trade_rejected_count": aggregated_counts["short_trade_rejected_count"],
+            "shell_target_count": aggregated_counts["shell_target_count"],
+            "delta_classification_counts": dict(delta_classification_counts),
+            "dominant_delta_reasons": [reason for reason, _count in dominant_delta_reason_counts.most_common(5)],
+            "dominant_delta_reason_counts": dict(dominant_delta_reason_counts),
+            "representative_cases": representative_cases[:5],
         }
 
     def _get_report_dir(self, report_name: str) -> Path:

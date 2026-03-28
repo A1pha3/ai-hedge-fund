@@ -172,8 +172,47 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
     assert overview["available"] is True
     assert overview["trade_date_count"] == 1
     assert overview["available_trade_dates"] == ["2026-03-11"]
+    assert overview["trade_date_target_index"] == [
+        {
+            "trade_date": "2026-03-11",
+            "target_mode": "dual_target",
+            "delta_classification_counts": {"research_reject_short_pass": 2},
+            "research_selected_count": 1,
+            "research_near_miss_count": 1,
+            "short_trade_selected_count": 1,
+            "short_trade_blocked_count": 1,
+        }
+    ]
     assert overview["write_status_counts"] == {"success": 1}
     assert overview["blocker_counts"] == [{"reason": "blocked_by_reentry_score_confirmation", "count": 1}]
+    assert overview["dual_target_overview"] == {
+        "target_mode_counts": {"dual_target": 1},
+        "dual_target_trade_date_count": 1,
+        "selection_target_count": 2,
+        "research_target_count": 2,
+        "short_trade_target_count": 2,
+        "research_selected_count": 1,
+        "research_near_miss_count": 1,
+        "research_rejected_count": 0,
+        "short_trade_selected_count": 1,
+        "short_trade_near_miss_count": 0,
+        "short_trade_blocked_count": 1,
+        "short_trade_rejected_count": 0,
+        "shell_target_count": 0,
+        "delta_classification_counts": {"research_reject_short_pass": 2},
+        "dominant_delta_reasons": ["short trade target promoted a setup that research pipeline kept as near-miss"],
+        "dominant_delta_reason_counts": {"short trade target promoted a setup that research pipeline kept as near-miss": 1},
+        "representative_cases": [
+            {
+                "trade_date": "2026-03-11",
+                "ticker": "002916",
+                "delta_classification": "research_reject_short_pass",
+                "research_decision": "near_miss",
+                "short_trade_decision": "selected",
+                "delta_summary": ["short trade target promoted a setup that research pipeline kept as near-miss"],
+            }
+        ],
+    }
     assert overview["feedback_summary"]["feedback_file_count"] == 1
     assert cache_overview == {
         "requested": True,

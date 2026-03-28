@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ReplayArtifactsInspector } from '@/components/replay-artifacts/replay-artifacts-inspector';
 import type { ReplayArtifactDetail, ReplaySelectionArtifactDay, ReplayFeedbackActivity } from '@/services/replay-artifact-api';
@@ -63,6 +64,34 @@ const detail: ReplayArtifactDetail = {
     available_trade_dates: ['2026-03-23'],
     write_status_counts: { success: 6 },
     blocker_counts: [{ reason: 'position_blocked_score', count: 1 }],
+    dual_target_overview: {
+      target_mode_counts: { dual_target: 4, research_only: 2 },
+      dual_target_trade_date_count: 4,
+      selection_target_count: 12,
+      research_target_count: 12,
+      short_trade_target_count: 12,
+      research_selected_count: 4,
+      research_near_miss_count: 3,
+      research_rejected_count: 5,
+      short_trade_selected_count: 3,
+      short_trade_near_miss_count: 2,
+      short_trade_blocked_count: 4,
+      short_trade_rejected_count: 3,
+      shell_target_count: 0,
+      delta_classification_counts: { research_reject_short_pass: 2 },
+      dominant_delta_reasons: ['short trade target promoted a setup that research pipeline kept as near-miss'],
+      dominant_delta_reason_counts: { 'short trade target promoted a setup that research pipeline kept as near-miss': 1 },
+      representative_cases: [
+        {
+          trade_date: '2026-03-20',
+          ticker: '002916',
+          delta_classification: 'research_reject_short_pass',
+          research_decision: 'near_miss',
+          short_trade_decision: 'selected',
+          delta_summary: ['short trade target promoted a setup that research pipeline kept as near-miss'],
+        },
+      ],
+    },
     feedback_summary: null,
   },
 };
@@ -202,6 +231,13 @@ describe('ReplayArtifactsInspector', () => {
         detail={detail}
         selectionArtifactDetail={selectionArtifactDetail}
         feedbackActivity={feedbackActivity}
+        focusedSymbol="002916"
+        selectedTradeDate="2026-03-23"
+        tradeDateFilterCoverageText="1 / 6 trade dates"
+        visibleFeedbackActivityCount={1}
+        visibleWorkflowQueueCount={1}
+        totalWorkflowQueueCount={2}
+        onOpenContext={() => {}}
         isDetailLoading={false}
         isActivityLoading={false}
       />,
@@ -214,13 +250,55 @@ describe('ReplayArtifactsInspector', () => {
     expect(screen.getByText('draft:1 | final:1')).toBeInTheDocument();
     expect(screen.getByText('Pending Draft Queue')).toBeInTheDocument();
     expect(screen.getByText('near miss sample')).toBeInTheDocument();
-    expect(screen.getByText('high_quality_selection')).toBeInTheDocument();
-    expect(screen.getByText('clear thesis')).toBeInTheDocument();
+    expect(screen.queryByText('high_quality_selection')).not.toBeInTheDocument();
+    expect(screen.queryByText('clear thesis')).not.toBeInTheDocument();
     expect(screen.getByText('reuse confirmed | disk +6')).toBeInTheDocument();
+    expect(screen.getByText('Dual Target Overview')).toBeInTheDocument();
+    expect(screen.getByText('4 dual-target days')).toBeInTheDocument();
+    expect(screen.getByText('modes dual_target:4 | research_only:2')).toBeInTheDocument();
+    expect(screen.getByText('Workspace Focus')).toBeInTheDocument();
+    expect(screen.getByText('trade date 2026-03-23 | symbol 002916')).toBeInTheDocument();
+    expect(screen.getByText('trade date filter 1 / 6 trade dates')).toBeInTheDocument();
+    expect(screen.getByText('activity 1/2 | queue 1/2')).toBeInTheDocument();
+    expect(screen.getByText('Dual Target Inspector')).toBeInTheDocument();
+    expect(screen.getByText('2026-03-20 002916:research_reject_short_pass | short trade target promoted a setup that research pipeline kept as near-miss')).toBeInTheDocument();
     expect(screen.getByText('selection_snapshot.json')).toBeInTheDocument();
     expect(screen.getByText('selection_review.md')).toBeInTheDocument();
     expect(screen.getByText('research_feedback.jsonl')).toBeInTheDocument();
     expect(screen.getByText('position_blocked_score x1')).toBeInTheDocument();
     expect(screen.getByText('below_fast_score_threshold x3')).toBeInTheDocument();
+  });
+
+  it('filters activity sections by focused symbol and opens context from inspector cards', async () => {
+    const user = userEvent.setup();
+    const onOpenContext = vi.fn();
+
+    render(
+      <ReplayArtifactsInspector
+        detail={detail}
+        selectionArtifactDetail={selectionArtifactDetail}
+        feedbackActivity={feedbackActivity}
+        focusedSymbol="002916"
+        selectedTradeDate="2026-03-23"
+        tradeDateFilterCoverageText="1 / 6 trade dates"
+        visibleFeedbackActivityCount={1}
+        visibleWorkflowQueueCount={1}
+        totalWorkflowQueueCount={2}
+        onOpenContext={onOpenContext}
+        isDetailLoading={false}
+        isActivityLoading={false}
+      />,
+    );
+
+    expect(screen.getByText('near miss sample')).toBeInTheDocument();
+    expect(screen.queryByText('clear thesis')).not.toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', { name: 'Open Context' })[0]);
+
+    expect(onOpenContext).toHaveBeenCalledWith({
+      reportName: 'paper_trading_window_demo',
+      tradeDate: '2026-03-20',
+      symbol: '002916',
+    });
   });
 });

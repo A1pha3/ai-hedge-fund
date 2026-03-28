@@ -77,6 +77,7 @@ export interface ReplayArtifactSummary {
   deployment_funnel_runtime: ReplayDeploymentFunnelRuntime;
   artifacts: Record<string, string>;
   cache_benchmark_overview: ReplayCacheBenchmarkOverview;
+  selection_artifact_overview: ReplaySelectionArtifactOverview;
 }
 
 export interface ReplaySelectionArtifactOverview {
@@ -84,9 +85,41 @@ export interface ReplaySelectionArtifactOverview {
   artifact_root?: string;
   trade_date_count: number;
   available_trade_dates: string[];
+  trade_date_target_index?: ReplaySelectionArtifactTradeDateTargetSummary[];
   write_status_counts: Record<string, number>;
   blocker_counts: ReplayReasonCount[];
+  dual_target_overview?: ReplaySelectionArtifactDualTargetOverview | null;
   feedback_summary: Record<string, unknown> | null;
+}
+
+export interface ReplaySelectionArtifactTradeDateTargetSummary {
+  trade_date: string;
+  target_mode?: string | null;
+  delta_classification_counts: Record<string, number>;
+  research_selected_count: number;
+  research_near_miss_count: number;
+  short_trade_selected_count: number;
+  short_trade_blocked_count: number;
+}
+
+export interface ReplaySelectionArtifactDualTargetOverview {
+  target_mode_counts: Record<string, number>;
+  dual_target_trade_date_count: number;
+  selection_target_count: number;
+  research_target_count: number;
+  short_trade_target_count: number;
+  research_selected_count: number;
+  research_near_miss_count: number;
+  research_rejected_count: number;
+  short_trade_selected_count: number;
+  short_trade_near_miss_count: number;
+  short_trade_blocked_count: number;
+  short_trade_rejected_count: number;
+  shell_target_count: number;
+  delta_classification_counts: Record<string, number>;
+  dominant_delta_reasons: string[];
+  dominant_delta_reason_counts: Record<string, number>;
+  representative_cases: ReplayDualTargetRepresentativeCase[];
 }
 
 export interface ReplaySelectionTopFactor {
@@ -167,6 +200,7 @@ export interface ReplayShortTradeTargetView {
 }
 
 export interface ReplayDualTargetRepresentativeCase {
+  trade_date?: string;
   ticker: string;
   delta_classification?: string | null;
   research_decision?: string | null;

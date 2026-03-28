@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type {
@@ -7,6 +8,7 @@ import type {
   ReplayCacheBenchmarkOverview,
   ReplayReasonCount,
   ReplayFeedbackActivity,
+  ReplaySelectionArtifactDualTargetOverview,
 } from '@/services/replay-artifact-api';
 
 function formatOptionalText(value: string | null | undefined): string {
@@ -61,6 +63,45 @@ function formatCacheBenchmarkDescription(overview: ReplayCacheBenchmarkOverview 
   return overview.reason || 'benchmark 未生成';
 }
 
+function formatCounterMap(values: Record<string, number> | undefined): string {
+  if (!values) {
+    return '--';
+  }
+  const entries = Object.entries(values);
+  if (entries.length === 0) {
+    return '--';
+  }
+  return entries.map(([key, count]) => `${key}:${count}`).join(' | ');
+}
+
+function formatStringList(items: string[] | undefined): string {
+  if (!items || items.length === 0) {
+    return '--';
+  }
+  return items.join(' | ');
+}
+
+function formatDualTargetOverviewCounts(overview: ReplaySelectionArtifactDualTargetOverview | null | undefined): string {
+  if (!overview) {
+    return '--';
+  }
+  return `R ${overview.research_selected_count}/${overview.research_near_miss_count}/${overview.research_rejected_count} | S ${overview.short_trade_selected_count}/${overview.short_trade_near_miss_count}/${overview.short_trade_blocked_count}/${overview.short_trade_rejected_count}`;
+}
+
+function formatRepresentativeCases(overview: ReplaySelectionArtifactDualTargetOverview | null | undefined): string {
+  if (!overview?.representative_cases || overview.representative_cases.length === 0) {
+    return '--';
+  }
+  return overview.representative_cases
+    .slice(0, 3)
+    .map((caseItem) => {
+      const summary = caseItem.delta_summary?.[0] ? ` | ${caseItem.delta_summary[0]}` : '';
+      const tradeDate = caseItem.trade_date ? `${caseItem.trade_date} ` : '';
+      return `${tradeDate}${caseItem.ticker}:${caseItem.delta_classification || 'none'}${summary}`;
+    })
+    .join(' | ');
+}
+
 function PathPreviewCard({
   label,
   value,
@@ -88,6 +129,13 @@ interface ReplayArtifactsInspectorProps {
   detail: ReplayArtifactDetail | null;
   selectionArtifactDetail: ReplaySelectionArtifactDay | null;
   feedbackActivity: ReplayFeedbackActivity | null;
+  focusedSymbol: string;
+  selectedTradeDate: string;
+  tradeDateFilterCoverageText: string;
+  visibleFeedbackActivityCount: number;
+  visibleWorkflowQueueCount: number;
+  totalWorkflowQueueCount: number;
+  onOpenContext?: (params: { reportName: string; tradeDate: string; symbol: string }) => void;
   isDetailLoading: boolean;
   isActivityLoading: boolean;
   activityError?: string | null;
@@ -97,6 +145,13 @@ export function ReplayArtifactsInspector({
   detail,
   selectionArtifactDetail,
   feedbackActivity,
+  focusedSymbol,
+  selectedTradeDate,
+  tradeDateFilterCoverageText,
+  visibleFeedbackActivityCount,
+  visibleWorkflowQueueCount,
+  totalWorkflowQueueCount,
+  onOpenContext,
   isDetailLoading,
   isActivityLoading,
   activityError,
@@ -110,6 +165,14 @@ export function ReplayArtifactsInspector({
       </div>
     );
   }
+
+  const dualTargetOverview = detail.selection_artifact_overview.dual_target_overview;
+  const visibleDraftQueue = focusedSymbol === 'all'
+    ? (feedbackActivity?.workflow_queue?.draft || [])
+    : (feedbackActivity?.workflow_queue?.draft || []).filter((record) => record.symbol === focusedSymbol);
+  const visibleRecentRecords = focusedSymbol === 'all'
+    ? (feedbackActivity?.recent_records || [])
+    : (feedbackActivity?.recent_records || []).filter((record) => record.symbol === focusedSymbol);
 
   return (
     <div className="space-y-4">
@@ -125,6 +188,12 @@ export function ReplayArtifactsInspector({
           </div>
           <div className="grid gap-3">
             <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Workspace Focus</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">trade date {selectedTradeDate || '--'} | symbol {focusedSymbol === 'all' ? '--' : focusedSymbol}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">trade date filter {tradeDateFilterCoverageText}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">activity {visibleFeedbackActivityCount}/{feedbackActivity?.recent_records.length || 0} | queue {visibleWorkflowQueueCount}/{totalWorkflowQueueCount}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Cache Benchmark</p>
               <p className="mt-2 text-sm font-semibold text-primary">{formatCacheBenchmarkValue(detail.cache_benchmark_overview)}</p>
               <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatCacheBenchmarkDescription(detail.cache_benchmark_overview)}</p>
@@ -134,6 +203,13 @@ export function ReplayArtifactsInspector({
               <p className="mt-2 text-xs leading-6 text-muted-foreground">
                 {Object.entries(detail.selection_artifact_overview.write_status_counts || {}).map(([status, count]) => `${status}:${count}`).join(' | ') || '--'}
               </p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Dual Target Overview</p>
+              <p className="mt-2 text-sm font-semibold text-primary">{dualTargetOverview ? `${dualTargetOverview.dual_target_trade_date_count} dual-target days` : '--'}</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">modes {formatCounterMap(dualTargetOverview?.target_mode_counts)}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">counts {formatDualTargetOverviewCounts(dualTargetOverview)}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">delta {formatCounterMap(dualTargetOverview?.delta_classification_counts)}</p>
             </div>
           </div>
         </CardContent>
@@ -201,8 +277,8 @@ export function ReplayArtifactsInspector({
               </div>
               <div className="space-y-2">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending Draft Queue</p>
-                {(feedbackActivity.workflow_queue?.draft || []).length > 0 ? (
-                  feedbackActivity.workflow_queue?.draft?.slice(0, 5).map((record) => (
+                {visibleDraftQueue.length > 0 ? (
+                  visibleDraftQueue.slice(0, 5).map((record) => (
                     <div key={`draft-${record.created_at}-${record.symbol}-${record.primary_tag}`} className="rounded-md border border-border/60 bg-background/60 px-3 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="outline">{record.trade_date}</Badge>
@@ -211,18 +287,34 @@ export function ReplayArtifactsInspector({
                       </div>
                       <p className="mt-2 text-sm font-medium text-primary">{record.primary_tag}</p>
                       <p className="mt-1 text-xs leading-6 text-muted-foreground">{record.reviewer} | {record.created_at}</p>
+                      {onOpenContext ? (
+                        <div className="mt-3 flex justify-end">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onOpenContext({
+                              reportName: record.report_name,
+                              tradeDate: record.trade_date,
+                              symbol: record.symbol,
+                            })}
+                          >
+                            Open Context
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 ) : (
                   <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-xs text-muted-foreground">
-                    当前 report 没有待推进的 draft queue。
+                    {focusedSymbol === 'all' ? '当前 report 没有待推进的 draft queue。' : '当前 focus symbol 在 draft queue 中没有匹配记录。'}
                   </div>
                 )}
               </div>
               <div className="space-y-2">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Latest Records</p>
-                {feedbackActivity.recent_records.length > 0 ? (
-                  feedbackActivity.recent_records.slice(0, 5).map((record) => (
+                {visibleRecentRecords.length > 0 ? (
+                  visibleRecentRecords.slice(0, 5).map((record) => (
                     <div key={`${record.created_at}-${record.symbol}-${record.primary_tag}`} className="rounded-md border border-border/60 bg-background/60 px-3 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="outline">{record.trade_date}</Badge>
@@ -232,11 +324,27 @@ export function ReplayArtifactsInspector({
                       <p className="mt-2 text-sm font-medium text-primary">{record.primary_tag}</p>
                       <p className="mt-1 text-xs leading-6 text-muted-foreground">{record.reviewer} | {record.research_verdict} | {record.created_at}</p>
                       <p className="mt-2 text-xs leading-6 text-muted-foreground">{record.notes || '--'}</p>
+                      {onOpenContext ? (
+                        <div className="mt-3 flex justify-end">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onOpenContext({
+                              reportName: record.report_name,
+                              tradeDate: record.trade_date,
+                              symbol: record.symbol,
+                            })}
+                          >
+                            Open Context
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 ) : (
                   <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-xs text-muted-foreground">
-                    当前 report 还没有可展示的 feedback activity。
+                    {focusedSymbol === 'all' ? '当前 report 还没有可展示的 feedback activity。' : '当前 focus symbol 没有匹配的 recent activity。'}
                   </div>
                 )}
               </div>
@@ -248,6 +356,33 @@ export function ReplayArtifactsInspector({
           )}
         </CardContent>
       </Card>
+
+      {dualTargetOverview ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Dual Target Inspector</CardTitle>
+            <CardDescription>报告级双目标聚合，让研究员在点进具体 trade date 之前先看到 target mode 分布、delta 聚类和代表性案例。</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Modes</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatCounterMap(dualTargetOverview.target_mode_counts)}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Aggregated Decisions</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatDualTargetOverviewCounts(dualTargetOverview)}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Dominant Delta Reasons</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatStringList(dualTargetOverview.dominant_delta_reasons)}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Representative Cases</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatRepresentativeCases(dualTargetOverview)}</p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

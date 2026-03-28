@@ -16,6 +16,7 @@ import {
   type ReplayArtifactSummary,
   type ReplayReasonCount,
   type ReplayRejectedCandidate,
+  type ReplaySelectionArtifactDualTargetOverview,
   type ReplayTargetEvaluationResult,
   type ReplayWorkflowQueue,
   type ReplayWorkflowQueueItem,
@@ -214,6 +215,17 @@ function formatCounterMap(values: Record<string, number> | undefined, emptyLabel
     .join(' | ');
 }
 
+function formatDualTargetOverviewCounts(overview: ReplaySelectionArtifactDualTargetOverview | null | undefined): string {
+  if (!overview) {
+    return '--';
+  }
+  return `R ${overview.research_selected_count}/${overview.research_near_miss_count}/${overview.research_rejected_count} | S ${overview.short_trade_selected_count}/${overview.short_trade_near_miss_count}/${overview.short_trade_blocked_count}/${overview.short_trade_rejected_count}`;
+}
+
+function formatDualTargetOverviewModes(overview: ReplaySelectionArtifactDualTargetOverview | null | undefined): string {
+  return formatCounterMap(overview?.target_mode_counts);
+}
+
 function formatTargetDecision(decision: ReplayTargetEvaluationResult | null | undefined): string {
   if (!decision) {
     return '--';
@@ -237,6 +249,13 @@ function formatRepresentativeCase(caseItem: ReplayDualTargetRepresentativeCase):
   const shortTradeDecision = caseItem.short_trade_decision || 'none';
   const summary = caseItem.delta_summary && caseItem.delta_summary.length > 0 ? ` | ${caseItem.delta_summary[0]}` : '';
   return `${caseItem.ticker} | ${delta} | research ${researchDecision} | short ${shortTradeDecision}${summary}`;
+}
+
+function countMapFromItems(items: string[]): Record<string, number> {
+  return items.reduce<Record<string, number>>((counts, item) => {
+    counts[item] = (counts[item] || 0) + 1;
+    return counts;
+  }, {});
 }
 
 type FeedbackFormState = {
@@ -268,6 +287,18 @@ type WorkflowQueueFilterState = {
   assignee: 'all' | 'me' | 'unassigned';
   workflowStatus: 'all' | 'unassigned' | 'assigned' | 'in_review' | 'ready_for_adjudication' | 'closed';
 };
+
+type ReportRailDualTargetFilterState = {
+  targetMode: 'all' | 'dual_target' | 'research_only' | 'short_trade_only';
+  deltaClass: string;
+};
+
+type TradeDateDualTargetFilterState = {
+  targetMode: 'all' | 'dual_target' | 'research_only' | 'short_trade_only';
+  deltaClass: string;
+};
+
+type ReportRailSortMode = 'window_end_desc' | 'dual_target_days_desc' | 'delta_case_count_desc';
 
 function promptList(items: string[] | undefined): string {
   if (!items || items.length === 0) {
@@ -413,10 +444,22 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
     symbol: 'all',
     reviewStatus: 'all',
   });
+  const [reportRailDualTargetFilter, setReportRailDualTargetFilter] = useState<ReportRailDualTargetFilterState>({
+    targetMode: 'all',
+    deltaClass: 'all',
+  });
+  const [tradeDateDualTargetFilter, setTradeDateDualTargetFilter] = useState<TradeDateDualTargetFilterState>({
+    targetMode: 'all',
+    deltaClass: 'all',
+  });
+  const [reportRailSortMode, setReportRailSortMode] = useState<ReportRailSortMode>('window_end_desc');
+  const [focusedSymbol, setFocusedSymbol] = useState<string>('all');
   const [workflowQueueFilter, setWorkflowQueueFilter] = useState<WorkflowQueueFilterState>({
     assignee: 'me',
     workflowStatus: 'all',
   });
+  const [queueCurrentReportOnly, setQueueCurrentReportOnly] = useState(false);
+  const [queueFocusedSymbolOnly, setQueueFocusedSymbolOnly] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -638,6 +681,148 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   const researchTargetView = selectionSnapshot?.research_view;
   const shortTradeTargetView = selectionSnapshot?.short_trade_view;
   const dualTargetDelta = selectionSnapshot?.dual_target_delta;
+  const reportDualTargetOverview = detail?.selection_artifact_overview?.dual_target_overview;
+  const reportTargetModeOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    reports.forEach((report) => {
+      Object.keys(report.selection_artifact_overview?.dual_target_overview?.target_mode_counts || {}).forEach((targetMode) => optionSet.add(targetMode));
+    });
+    return Array.from(optionSet).sort();
+  }, [reports]);
+  const reportDeltaClassOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    reports.forEach((report) => {
+      Object.keys(report.selection_artifact_overview?.dual_target_overview?.delta_classification_counts || {}).forEach((deltaClass) => optionSet.add(deltaClass));
+    });
+    return Array.from(optionSet).sort();
+  }, [reports]);
+  const filteredReports = useMemo(() => {
+    const matchingReports = reports.filter((report) => {
+      const dualTargetOverview = report.selection_artifact_overview?.dual_target_overview;
+      const targetModeMatched = reportRailDualTargetFilter.targetMode === 'all'
+        || Boolean(dualTargetOverview?.target_mode_counts?.[reportRailDualTargetFilter.targetMode]);
+      const deltaClassMatched = reportRailDualTargetFilter.deltaClass === 'all'
+        || Boolean(dualTargetOverview?.delta_classification_counts?.[reportRailDualTargetFilter.deltaClass]);
+      return targetModeMatched && deltaClassMatched;
+    });
+    return [...matchingReports].sort((left, right) => {
+      if (reportRailSortMode === 'dual_target_days_desc') {
+        return (right.selection_artifact_overview.dual_target_overview?.dual_target_trade_date_count || 0)
+          - (left.selection_artifact_overview.dual_target_overview?.dual_target_trade_date_count || 0);
+      }
+      if (reportRailSortMode === 'delta_case_count_desc') {
+        const leftDeltaCount = Object.values(left.selection_artifact_overview.dual_target_overview?.delta_classification_counts || {}).reduce((sum, value) => sum + value, 0);
+        const rightDeltaCount = Object.values(right.selection_artifact_overview.dual_target_overview?.delta_classification_counts || {}).reduce((sum, value) => sum + value, 0);
+        return rightDeltaCount - leftDeltaCount;
+      }
+      return String(right.window.end_date || '').localeCompare(String(left.window.end_date || ''));
+    });
+  }, [reportRailDualTargetFilter.deltaClass, reportRailDualTargetFilter.targetMode, reportRailSortMode, reports]);
+  const tradeDateTargetIndex = detail?.selection_artifact_overview?.trade_date_target_index || [];
+  const tradeDateTargetModeOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    tradeDateTargetIndex.forEach((item) => {
+      if (item.target_mode) {
+        optionSet.add(item.target_mode);
+      }
+    });
+    return Array.from(optionSet).sort();
+  }, [tradeDateTargetIndex]);
+  const tradeDateTargetModeCounts = useMemo(
+    () => countMapFromItems(tradeDateTargetIndex.map((item) => item.target_mode).filter((item): item is string => Boolean(item))),
+    [tradeDateTargetIndex],
+  );
+  const tradeDateDeltaClassOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    tradeDateTargetIndex.forEach((item) => {
+      Object.keys(item.delta_classification_counts || {}).forEach((deltaClass) => optionSet.add(deltaClass));
+    });
+    return Array.from(optionSet).sort();
+  }, [tradeDateTargetIndex]);
+  const tradeDateDeltaClassCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    tradeDateTargetIndex.forEach((item) => {
+      Object.keys(item.delta_classification_counts || {}).forEach((deltaClass) => {
+        counts[deltaClass] = (counts[deltaClass] || 0) + 1;
+      });
+    });
+    return counts;
+  }, [tradeDateTargetIndex]);
+  const filteredTradeDateTargetIndex = useMemo(() => {
+    return tradeDateTargetIndex.filter((item) => {
+      const targetModeMatched = tradeDateDualTargetFilter.targetMode === 'all' || item.target_mode === tradeDateDualTargetFilter.targetMode;
+      const deltaClassMatched = tradeDateDualTargetFilter.deltaClass === 'all' || Boolean(item.delta_classification_counts?.[tradeDateDualTargetFilter.deltaClass]);
+      return targetModeMatched && deltaClassMatched;
+    });
+  }, [tradeDateDualTargetFilter.deltaClass, tradeDateDualTargetFilter.targetMode, tradeDateTargetIndex]);
+  const hasActiveTradeDateFilter = tradeDateDualTargetFilter.targetMode !== 'all' || tradeDateDualTargetFilter.deltaClass !== 'all';
+  const filteredAvailableTradeDates = useMemo(() => {
+    if (hasActiveTradeDateFilter) {
+      return filteredTradeDateTargetIndex.map((item) => item.trade_date);
+    }
+    if (filteredTradeDateTargetIndex.length > 0) {
+      return filteredTradeDateTargetIndex.map((item) => item.trade_date);
+    }
+    return detail?.selection_artifact_overview?.available_trade_dates || [];
+  }, [detail?.selection_artifact_overview?.available_trade_dates, filteredTradeDateTargetIndex, hasActiveTradeDateFilter]);
+  const tradeDateFilterCoverageText = useMemo(() => {
+    const total = detail?.selection_artifact_overview?.available_trade_dates?.length || 0;
+    return `${filteredAvailableTradeDates.length} / ${total} trade dates`;
+  }, [detail?.selection_artifact_overview?.available_trade_dates, filteredAvailableTradeDates.length]);
+  const focusSymbolOptions = useMemo(
+    () => [
+      ...selectedCandidates.map((candidate) => candidate.symbol),
+      ...rejectedCandidates.map((candidate) => candidate.symbol),
+    ].filter((symbol, index, items) => items.indexOf(symbol) === index),
+    [rejectedCandidates, selectedCandidates],
+  );
+  const filteredSelectedCandidates = useMemo(
+    () => selectedCandidates.filter((candidate) => focusedSymbol === 'all' || candidate.symbol === focusedSymbol),
+    [focusedSymbol, selectedCandidates],
+  );
+  const filteredRejectedCandidates = useMemo(
+    () => rejectedCandidates.filter((candidate) => focusedSymbol === 'all' || candidate.symbol === focusedSymbol),
+    [focusedSymbol, rejectedCandidates],
+  );
+  const visibleFeedbackActivityRecords = useMemo(() => {
+    const records = feedbackActivity?.recent_records || [];
+    if (focusedSymbol === 'all') {
+      return records;
+    }
+    return records.filter((record) => record.symbol === focusedSymbol);
+  }, [feedbackActivity?.recent_records, focusedSymbol]);
+  const visibleWorkflowQueueItems = useMemo(() => {
+    const items = workflowQueue?.items || [];
+    return items
+      .filter((item) => {
+        if (queueCurrentReportOnly && item.report_name !== selectedReport) {
+          return false;
+        }
+        if (queueFocusedSymbolOnly && focusedSymbol !== 'all' && item.symbol !== focusedSymbol) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) => {
+      const leftScore = (left.report_name === selectedReport ? 2 : 0)
+        + (left.trade_date === selectedTradeDate ? 2 : 0)
+        + (focusedSymbol !== 'all' && left.symbol === focusedSymbol ? 4 : 0);
+      const rightScore = (right.report_name === selectedReport ? 2 : 0)
+        + (right.trade_date === selectedTradeDate ? 2 : 0)
+        + (focusedSymbol !== 'all' && right.symbol === focusedSymbol ? 4 : 0);
+      return rightScore - leftScore;
+    });
+  }, [focusedSymbol, queueCurrentReportOnly, queueFocusedSymbolOnly, selectedReport, selectedTradeDate, workflowQueue?.items]);
+  const workflowFocusMatchCount = useMemo(() => {
+    if (focusedSymbol === 'all') {
+      return visibleWorkflowQueueItems.length;
+    }
+    return visibleWorkflowQueueItems.filter((item) => item.symbol === focusedSymbol).length;
+  }, [focusedSymbol, visibleWorkflowQueueItems]);
+  const tradeDateIndexRows = useMemo(() => {
+    const rows = hasActiveTradeDateFilter ? filteredTradeDateTargetIndex : tradeDateTargetIndex;
+    return [...rows].sort((left, right) => right.trade_date.localeCompare(left.trade_date));
+  }, [filteredTradeDateTargetIndex, hasActiveTradeDateFilter, tradeDateTargetIndex]);
 
   useEffect(() => {
     if (!selectionArtifactDetail) {
@@ -667,6 +852,59 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
       };
     });
   }, [selectionArtifactDetail, feedbackOptions, symbolOptions]);
+
+  useEffect(() => {
+    if (focusedSymbol === 'all') {
+      return;
+    }
+    if (!focusSymbolOptions.includes(focusedSymbol)) {
+      setFocusedSymbol('all');
+    }
+  }, [focusSymbolOptions, focusedSymbol]);
+
+  useEffect(() => {
+    if (filteredReports.length === 0) {
+      return;
+    }
+    if (!filteredReports.some((report) => report.report_dir === selectedReport)) {
+      setSelectedReport(filteredReports[0].report_dir);
+    }
+  }, [filteredReports, selectedReport]);
+
+  useEffect(() => {
+    if (filteredAvailableTradeDates.length === 0) {
+      return;
+    }
+    if (!filteredAvailableTradeDates.includes(selectedTradeDate)) {
+      setSelectedTradeDate(filteredAvailableTradeDates.at(-1) || '');
+    }
+  }, [filteredAvailableTradeDates, selectedTradeDate]);
+
+  useEffect(() => {
+    if (focusedSymbol === 'all') {
+      setFeedbackFilter((current) => (current.symbol === 'all' ? current : { ...current, symbol: 'all' }));
+      return;
+    }
+
+    setFeedbackFilter((current) => (current.symbol === focusedSymbol ? current : { ...current, symbol: focusedSymbol }));
+    if (symbolOptions.some((item) => item.symbol === focusedSymbol)) {
+      setFeedbackForm((current) => ({ ...current, symbol: focusedSymbol }));
+      setBatchFeedbackForm((current) => ({
+        ...current,
+        selectedSymbols: current.selectedSymbols.includes(focusedSymbol) ? current.selectedSymbols : [focusedSymbol],
+      }));
+    }
+  }, [focusedSymbol, symbolOptions]);
+
+  function jumpToRepresentativeCase(caseItem: ReplayDualTargetRepresentativeCase) {
+    if (caseItem.trade_date) {
+      setSelectedTradeDate(caseItem.trade_date);
+    }
+    if (caseItem.ticker) {
+      setFocusedSymbol(caseItem.ticker);
+      setFeedbackFilter((current) => ({ ...current, symbol: caseItem.ticker }));
+    }
+  }
 
   async function refreshReplayArtifactContext(reportName: string, tradeDate: string) {
     let nextActivityError: string | null = null;
@@ -739,6 +977,20 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
       setWorkflowQueueError(message);
       toast.error(message);
     }
+  }
+
+  function openWorkflowQueueItemContext(item: ReplayWorkflowQueueItem) {
+    setSelectedReport(item.report_name);
+    setSelectedTradeDate(item.trade_date);
+    setFocusedSymbol(item.symbol);
+    setFeedbackFilter((current) => ({ ...current, symbol: item.symbol }));
+  }
+
+  function openReplayContext(params: { reportName: string; tradeDate: string; symbol: string }) {
+    setSelectedReport(params.reportName);
+    setSelectedTradeDate(params.tradeDate);
+    setFocusedSymbol(params.symbol);
+    setFeedbackFilter((current) => ({ ...current, symbol: params.symbol }));
   }
 
   async function handleFeedbackSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -916,6 +1168,14 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                     </select>
                   </label>
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant={queueCurrentReportOnly ? 'default' : 'outline'} size="sm" onClick={() => setQueueCurrentReportOnly((current) => !current)}>
+                    current report only
+                  </Button>
+                  <Button type="button" variant={queueFocusedSymbolOnly ? 'default' : 'outline'} size="sm" onClick={() => setQueueFocusedSymbolOnly((current) => !current)} disabled={focusedSymbol === 'all'}>
+                    focus symbol only
+                  </Button>
+                </div>
 
                 {isWorkflowQueueLoading ? (
                   <Skeleton className="h-32 w-full" />
@@ -928,10 +1188,11 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                       <p className="mt-2 text-xs leading-6 text-muted-foreground">
                         {Object.entries(workflowQueue.workflow_status_counts || {}).map(([status, count]) => `${status}:${count}`).join(' | ') || '--'}
                       </p>
+                      <p className="mt-1 text-xs leading-6 text-muted-foreground">visible {visibleWorkflowQueueItems.length} / {workflowQueue.items.length}</p>
                     </div>
                     <div className="space-y-3">
-                      {workflowQueue.items.length > 0 ? (
-                        workflowQueue.items.map((item) => (
+                      {visibleWorkflowQueueItems.length > 0 ? (
+                        visibleWorkflowQueueItems.map((item) => (
                           <div key={`${item.report_name}-${item.trade_date}-${item.symbol}-${item.review_scope}`} className="rounded-md border border-border/60 bg-muted/10 p-3">
                             <div className="flex flex-wrap items-center gap-2">
                               <Badge variant="outline">{item.report_name}</Badge>
@@ -942,7 +1203,10 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                             <p className="mt-1 text-xs leading-6 text-muted-foreground">{item.trade_date} | {item.review_scope} | latest {item.latest_review_status}</p>
                             <p className="mt-1 text-xs leading-6 text-muted-foreground">assignee {item.assignee || '--'} | reviewer {item.latest_reviewer}</p>
                             <p className="mt-2 text-xs leading-6 text-muted-foreground">{item.latest_notes || '--'}</p>
-                            <div className="mt-3 flex justify-end">
+                            <div className="mt-3 flex justify-end gap-2">
+                              <Button type="button" variant="secondary" size="sm" onClick={() => openWorkflowQueueItemContext(item)}>
+                                Open Context
+                              </Button>
                               <Button type="button" variant="outline" size="sm" onClick={() => void handleWorkflowQueueAssignment(item)}>
                                 {item.assignee === user?.username ? 'Unassign' : 'Assign to me'}
                               </Button>
@@ -978,15 +1242,60 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                     onChange={(event) => setSelectedReport(event.target.value)}
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                   >
-                    {reports.map((report) => (
+                    {filteredReports.map((report) => (
                       <option key={report.report_dir} value={report.report_dir}>
                         {formatCompactReportLabel(report.report_dir)}
                       </option>
                     ))}
                   </select>
 
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Report Target Mode Filter</span>
+                      <select
+                        value={reportRailDualTargetFilter.targetMode}
+                        onChange={(event) => setReportRailDualTargetFilter((current) => ({ ...current, targetMode: event.target.value as ReportRailDualTargetFilterState['targetMode'] }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {reportTargetModeOptions.map((targetMode) => (
+                          <option key={`target-mode-${targetMode}`} value={targetMode}>
+                            {targetMode}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Report Delta Filter</span>
+                      <select
+                        value={reportRailDualTargetFilter.deltaClass}
+                        onChange={(event) => setReportRailDualTargetFilter((current) => ({ ...current, deltaClass: event.target.value }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {reportDeltaClassOptions.map((deltaClass) => (
+                          <option key={`delta-class-${deltaClass}`} value={deltaClass}>
+                            {deltaClass}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Report Sort</span>
+                      <select
+                        value={reportRailSortMode}
+                        onChange={(event) => setReportRailSortMode(event.target.value as ReportRailSortMode)}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="window_end_desc">latest window end</option>
+                        <option value="dual_target_days_desc">dual target days</option>
+                        <option value="delta_case_count_desc">delta count</option>
+                      </select>
+                    </label>
+                  </div>
+
                   <div className={cn('grid gap-3', isWorkspace ? 'grid-cols-1' : 'md:grid-cols-2 xl:grid-cols-3')}>
-                    {reports.map((report) => (
+                    {filteredReports.map((report) => (
                       <button
                         key={report.report_dir}
                         type="button"
@@ -1015,9 +1324,20 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                         <p className="mt-2 break-all text-xs leading-5 text-muted-foreground">
                           {formatCacheBenchmarkDescription(report.cache_benchmark_overview)}
                         </p>
+                        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                          target modes {formatDualTargetOverviewModes(report.selection_artifact_overview.dual_target_overview)}
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          dual target {formatDualTargetOverviewCounts(report.selection_artifact_overview.dual_target_overview)}
+                        </p>
                       </button>
                     ))}
                   </div>
+                  {filteredReports.length === 0 ? (
+                    <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
+                      当前筛选条件下没有匹配的 replay 报告。
+                    </div>
+                  ) : null}
                 </>
               )}
               {error ? <p className="text-sm text-red-500">{error}</p> : null}
@@ -1046,6 +1366,30 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-muted-foreground">Selected Trade Date</span>
                   <span>{selectedTradeDate || '--'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Focused Symbol</span>
+                  <span>{focusedSymbol === 'all' ? '--' : focusedSymbol}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Dual Target Days</span>
+                  <span>{reportDualTargetOverview?.dual_target_trade_date_count ?? '--'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Trade Date Filter</span>
+                  <span>{tradeDateFilterCoverageText}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Focus Activity</span>
+                  <span>{visibleFeedbackActivityRecords.length} / {feedbackActivity?.recent_records.length || 0}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Focus Queue</span>
+                  <span>{workflowFocusMatchCount} / {workflowQueue?.items.length || 0}</span>
+                </div>
+                <div className="space-y-1 pt-1">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Modes</p>
+                  <p className="text-xs leading-6 text-muted-foreground">{formatDualTargetOverviewModes(reportDualTargetOverview)}</p>
                 </div>
               </CardContent>
             </Card>
@@ -1099,7 +1443,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
                 <KpiCard
                   title="Selection Days"
                   value={`${detail.selection_artifact_overview.trade_date_count}`}
@@ -1118,6 +1462,12 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                   title="Selection Blockers"
                   value={formatBlockers(detail.selection_artifact_overview.blocker_counts)}
                   description="按 selection snapshot 汇总的执行阻断原因"
+                  icon={BarChart3}
+                />
+                <KpiCard
+                  title="Dual Target"
+                  value={reportDualTargetOverview ? `${reportDualTargetOverview.dual_target_trade_date_count} days` : '--'}
+                  description={reportDualTargetOverview ? `modes ${formatDualTargetOverviewModes(reportDualTargetOverview)}` : '当前 report 还没有 report-level dual target 聚合'}
                   icon={BarChart3}
                 />
                 <KpiCard
@@ -1171,21 +1521,150 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                   <CardDescription>按交易日查看选股评审快照，直接暴露 watchlist 到 buy_order 的阻断原因。</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {detail.selection_artifact_overview.available_trade_dates.length > 0 ? (
-                    <select
-                      value={selectedTradeDate}
-                      onChange={(event) => setSelectedTradeDate(event.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
-                    >
-                      {detail.selection_artifact_overview.available_trade_dates.map((tradeDate) => (
-                        <option key={tradeDate} value={tradeDate}>
-                          {tradeDate}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">当前 replay 没有可浏览的 selection artifact trade dates。</p>
-                  )}
+                  {reportDualTargetOverview ? (
+                    <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-2">
+                      <div>
+                        <p className="text-sm font-medium text-primary">Report-Level Dual Target Overview</p>
+                        <p className="text-xs text-muted-foreground">先看整段 replay 的 target mode 分布和 delta 聚类，再决定要不要钻到某个 trade date。</p>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Modes</p>
+                          <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatDualTargetOverviewModes(reportDualTargetOverview)}</p>
+                        </div>
+                        <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Aggregated Decisions</p>
+                          <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatDualTargetOverviewCounts(reportDualTargetOverview)}</p>
+                        </div>
+                        <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Delta Counts</p>
+                          <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatCounterMap(reportDualTargetOverview.delta_classification_counts)}</p>
+                        </div>
+                        <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Representative Cases</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {reportDualTargetOverview.representative_cases.length > 0 ? (
+                              reportDualTargetOverview.representative_cases.map((caseItem) => (
+                                <Button
+                                  key={`report-case-${caseItem.trade_date || 'none'}-${caseItem.ticker}-${caseItem.delta_classification || 'none'}`}
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-auto whitespace-normal px-3 py-2 text-left text-xs leading-5"
+                                  onClick={() => jumpToRepresentativeCase(caseItem)}
+                                >
+                                  {caseItem.trade_date ? `${caseItem.trade_date} ` : ''}{formatRepresentativeCase(caseItem)}
+                                </Button>
+                              ))
+                            ) : (
+                              <p className="text-xs leading-6 text-muted-foreground">--</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {tradeDateIndexRows.length > 0 ? (
+                    <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-2">
+                      <div>
+                        <p className="text-sm font-medium text-primary">Trade Date Target Index</p>
+                        <p className="text-xs text-muted-foreground">按 trade date 快速查看 target mode、delta 分布与主要计数，并可一键跳转。</p>
+                      </div>
+                      <div className="grid gap-2">
+                        {tradeDateIndexRows.slice(0, 8).map((item) => (
+                          <button
+                            key={`trade-date-index-${item.trade_date}`}
+                            type="button"
+                            onClick={() => setSelectedTradeDate(item.trade_date)}
+                            className={`rounded-md border px-3 py-3 text-left transition-colors ${selectedTradeDate === item.trade_date ? 'border-primary bg-primary/5' : 'border-border/60 bg-background/60 hover:bg-muted/20'}`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-sm font-medium text-primary">{item.trade_date}</span>
+                              <Badge variant="outline">{item.target_mode || 'unknown'}</Badge>
+                            </div>
+                            <p className="mt-2 text-xs leading-6 text-muted-foreground">delta {formatCounterMap(item.delta_classification_counts)}</p>
+                            <p className="mt-1 text-xs leading-6 text-muted-foreground">research {item.research_selected_count}/{item.research_near_miss_count} | short {item.short_trade_selected_count}/{item.short_trade_blocked_count}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 md:items-end">
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Trade Date Target Mode Filter</span>
+                      <select
+                        value={tradeDateDualTargetFilter.targetMode}
+                        onChange={(event) => setTradeDateDualTargetFilter((current) => ({ ...current, targetMode: event.target.value as TradeDateDualTargetFilterState['targetMode'] }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {tradeDateTargetModeOptions.map((targetMode) => (
+                          <option key={`trade-date-target-mode-${targetMode}`} value={targetMode}>
+                            {targetMode} ({tradeDateTargetModeCounts[targetMode] || 0})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Trade Date Delta Filter</span>
+                      <select
+                        value={tradeDateDualTargetFilter.deltaClass}
+                        onChange={(event) => setTradeDateDualTargetFilter((current) => ({ ...current, deltaClass: event.target.value }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {tradeDateDeltaClassOptions.map((deltaClass) => (
+                          <option key={`trade-date-delta-class-${deltaClass}`} value={deltaClass}>
+                            {deltaClass} ({tradeDateDeltaClassCounts[deltaClass] || 0})
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-muted-foreground">{tradeDateFilterCoverageText}</p>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Trade Date</span>
+                      {filteredAvailableTradeDates.length > 0 ? (
+                        <select
+                          value={selectedTradeDate}
+                          onChange={(event) => setSelectedTradeDate(event.target.value)}
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                        >
+                          {filteredAvailableTradeDates.map((tradeDate) => (
+                            <option key={tradeDate} value={tradeDate}>
+                              {tradeDate}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">当前 replay 没有可浏览的 selection artifact trade dates。</p>
+                      )}
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Focus Symbol</span>
+                      <select
+                        value={focusedSymbol}
+                        onChange={(event) => setFocusedSymbol(event.target.value)}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {focusSymbolOptions.map((symbol) => (
+                          <option key={`focus-symbol-${symbol}`} value={symbol}>
+                            {symbol}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Button type="button" variant="outline" onClick={() => setFocusedSymbol('all')} disabled={focusedSymbol === 'all'}>
+                      Clear Focus
+                    </Button>
+                  </div>
+                  {filteredAvailableTradeDates.length === 0 ? (
+                    <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
+                      当前 trade date 筛选条件下没有匹配的 selection artifact 日期。
+                    </div>
+                  ) : null}
 
                   {isSelectionLoading ? (
                     <Skeleton className="h-48 w-full" />
@@ -1194,6 +1673,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                       <div className="flex flex-wrap gap-2">
                         <Badge variant="outline">{selectionArtifactDetail.trade_date}</Badge>
                         <Badge variant="secondary">feedback {selectionArtifactDetail.feedback_record_count}</Badge>
+                        {focusedSymbol !== 'all' ? <Badge variant="secondary">focus {focusedSymbol}</Badge> : null}
                         {selectionArtifactDetail.blocker_counts.map((item) => (
                           <Badge key={`${item.reason}-${item.count}`} variant="outline">
                             {item.reason} x{item.count}
@@ -1270,9 +1750,16 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                             <div className="space-y-2">
                               {(dualTargetDelta?.representative_cases || []).length > 0 ? (
                                 (dualTargetDelta?.representative_cases || []).slice(0, 5).map((caseItem) => (
-                                  <div key={`${caseItem.ticker}-${caseItem.delta_classification || 'none'}`} className="rounded-md border border-border/50 bg-background/60 px-3 py-2 text-xs leading-6 text-muted-foreground">
+                                  <Button
+                                    key={`${caseItem.ticker}-${caseItem.delta_classification || 'none'}`}
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-auto w-full justify-start whitespace-normal px-3 py-2 text-left text-xs leading-6 text-muted-foreground"
+                                    onClick={() => jumpToRepresentativeCase({ ...caseItem, trade_date: selectionArtifactDetail.trade_date })}
+                                  >
                                     {formatRepresentativeCase(caseItem)}
-                                  </div>
+                                  </Button>
                                 ))
                               ) : (
                                 <div className="rounded-md border border-border/50 bg-background/60 px-3 py-2 text-xs text-muted-foreground">No representative delta cases.</div>
@@ -1301,10 +1788,10 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {selectedCandidates.length > 0 ? (
-                              selectedCandidates.map((candidate) => (
+                            {filteredSelectedCandidates.length > 0 ? (
+                              filteredSelectedCandidates.map((candidate) => (
                                 <TableRow key={`${candidate.symbol}-${candidate.rank_in_watchlist}`}>
-                                  <TableCell className="font-medium">{candidate.symbol}</TableCell>
+                                  <TableCell className={cn('font-medium', focusedSymbol === candidate.symbol && 'text-primary')}>{candidate.symbol}</TableCell>
                                   <TableCell>{formatNumber(candidate.score_final, 4)}</TableCell>
                                   <TableCell>{selectedCandidateTargetDecision(candidate, 'research')}</TableCell>
                                   <TableCell>{selectedCandidateTargetDecision(candidate, 'short_trade')}</TableCell>
@@ -1316,7 +1803,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                               ))
                             ) : (
                               <TableRow>
-                                <TableCell colSpan={8} className="text-muted-foreground">No selected candidates in this snapshot.</TableCell>
+                                <TableCell colSpan={8} className="text-muted-foreground">No selected candidates match the current focus.</TableCell>
                               </TableRow>
                             )}
                           </TableBody>
@@ -1329,8 +1816,8 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                           <p className="text-xs text-muted-foreground">展示 selected candidates 的 analyst 共识、cohort 贡献，以及 top positive/negative agents。</p>
                         </div>
                         <div className="space-y-3">
-                          {selectedCandidates.length > 0 ? (
-                            selectedCandidates.map((candidate) => (
+                          {filteredSelectedCandidates.length > 0 ? (
+                            filteredSelectedCandidates.map((candidate) => (
                               <div key={`layer-c-${candidate.symbol}-${candidate.rank_in_watchlist}`} className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-3">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <div>
@@ -1363,7 +1850,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                             ))
                           ) : (
                             <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
-                              No Layer C candidate details available for this snapshot.
+                              No Layer C candidate details match the current focus.
                             </div>
                           )}
                         </div>
@@ -1375,8 +1862,8 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                           <p className="text-xs text-muted-foreground">直接展示 snapshot 中的 why_selected 和 what_to_check，方便研究员在填 feedback 时对照原始提示。</p>
                         </div>
                         <div className="space-y-3">
-                          {selectedCandidates.length > 0 ? (
-                            selectedCandidates.map((candidate) => (
+                          {filteredSelectedCandidates.length > 0 ? (
+                            filteredSelectedCandidates.map((candidate) => (
                               <div key={`prompt-${candidate.symbol}-${candidate.rank_in_watchlist}`} className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-3">
                                 <div className="flex items-center justify-between gap-2">
                                   <p className="text-sm font-medium text-primary">{candidate.symbol}</p>
@@ -1396,7 +1883,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                             ))
                           ) : (
                             <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
-                              No research prompts available for this snapshot.
+                              No research prompts match the current focus.
                             </div>
                           )}
                         </div>
@@ -1419,10 +1906,10 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {rejectedCandidates.length > 0 ? (
-                              rejectedCandidates.map((candidate) => (
+                            {filteredRejectedCandidates.length > 0 ? (
+                              filteredRejectedCandidates.map((candidate) => (
                                 <TableRow key={`${candidate.symbol}-${candidate.rejection_stage}`}>
-                                  <TableCell className="font-medium">{candidate.symbol}</TableCell>
+                                  <TableCell className={cn('font-medium', focusedSymbol === candidate.symbol && 'text-primary')}>{candidate.symbol}</TableCell>
                                   <TableCell>{candidate.rejection_stage}</TableCell>
                                   <TableCell>{formatNumber(candidate.score_final, 4)}</TableCell>
                                   <TableCell>{rejectedCandidateTargetDecision(candidate, 'research')}</TableCell>
@@ -1432,7 +1919,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                               ))
                             ) : (
                               <TableRow>
-                                <TableCell colSpan={6} className="text-muted-foreground">No near-miss rejected candidates recorded.</TableCell>
+                                <TableCell colSpan={6} className="text-muted-foreground">No near-miss rejected candidates match the current focus.</TableCell>
                               </TableRow>
                             )}
                           </TableBody>
@@ -1820,6 +2307,13 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
             detail={detail}
             selectionArtifactDetail={selectionArtifactDetail}
             feedbackActivity={feedbackActivity}
+            focusedSymbol={focusedSymbol}
+            selectedTradeDate={selectedTradeDate}
+            tradeDateFilterCoverageText={tradeDateFilterCoverageText}
+            visibleFeedbackActivityCount={visibleFeedbackActivityRecords.length}
+            visibleWorkflowQueueCount={workflowFocusMatchCount}
+            totalWorkflowQueueCount={workflowQueue?.items.length || 0}
+            onOpenContext={openReplayContext}
             isDetailLoading={isDetailLoading}
             isActivityLoading={isActivityLoading}
             activityError={activityError}
