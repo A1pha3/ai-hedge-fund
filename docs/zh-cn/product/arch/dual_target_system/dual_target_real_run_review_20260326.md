@@ -312,11 +312,42 @@
 4. `short_trade_selected_count = 0`
 5. `short_trade_blocked_count = 6`
 
+随后又补了一个 blocker 分布分析脚本，对该 replay 目录逐日统计 short trade 决策、blocker、负标签、候选来源与信号可用性：
+
+1. 分析脚本：[scripts/analyze_short_trade_blockers.py](scripts/analyze_short_trade_blockers.py)
+2. 分析产物：`data/reports/paper_trading_window_20260310_20260313_w1_frozen_replay_m2_7_dual_target_20260328/short_trade_blocker_analysis.json`
+3. Markdown 摘要：`data/reports/paper_trading_window_20260310_20260313_w1_frozen_replay_m2_7_dual_target_20260328/short_trade_blocker_analysis.md`
+
+分布结果：
+
+1. `missing_trend_signal = 6`
+2. `trend_not_constructive = 6`
+3. `layer_c_bearish_conflict = 4`
+4. `event_signal_incomplete = 6`
+5. `score_target.max = 0.0787`
+6. `available_strategy_signals = []` 在 6/6 个 short trade 样本中出现
+
+这组结果把问题进一步收窄了：当前 4 日 frozen replay 样本里的 short trade 全 blocked，并不主要说明阈值还不够低，而是说明 replay 输入本身缺少 short trade 所需的 `trend` 与 `event_sentiment` 信号。
+
+根因链路已经确认：
+
+1. [src/paper_trading/frozen_replay.py](src/paper_trading/frozen_replay.py) 只是把历史 `daily_events.jsonl` 中的 `current_plan` 原样反序列化成 [src/execution/models.py](src/execution/models.py)
+2. short trade 评分器在 [src/targets/short_trade_target.py](src/targets/short_trade_target.py) 只从 `item.strategy_signals` 读取 `trend`、`event_sentiment`、`mean_reversion`
+3. 本次 frozen plan source 中保留下来的 `current_plan.watchlist` 主要包含 Layer C agent 信号与 legacy plan 字段，并没有这些 strategy signals
+
+因此，这个 replay 样本当前更适合用来验证：
+
+1. dual-target 链路是否打通
+2. 候选入口与 blocker observability 是否正常
+3. frozen current_plan 的数据契约是否足以支持 short trade
+
+它暂时不适合直接作为 short trade 阈值标定基线。
+
 结论：
 
 1. 双目标链路、artifact、candidate source 可观测性都已经打通
-2. 当前 4 日样本里，入口扩展和 `avoid` 软阻断还不足以把 short trade 从全 blocked 拉出来
-3. 下一轮最值得做的不是继续补链路，而是对这个 frozen 样本做 blocker 分布拆解，再校准 `SELECT_THRESHOLD`、`NEAR_MISS_THRESHOLD` 与惩罚项权重
+2. 当前 4 日样本里，short trade 全 blocked 的首要原因是 frozen replay 输入缺少 strategy signals，而不是单纯 gate 或阈值过强
+3. 下一轮最值得做的不是直接继续调 `SELECT_THRESHOLD`、`NEAR_MISS_THRESHOLD`，而是先区分“链路验证样本”和“可用于 short trade 标定的样本”
 
 ## 7. 本次结论
 
@@ -324,11 +355,11 @@
 
 1. 真实 2026-03-26 数据可以成功跑出 dual_target 结果
 2. 长期研究与次日买入两个目标都已经真实写入 artifacts
-3. 当前 short trade 空集的主要问题不是“没跑起来”，而是“入口太窄 + gate 太硬 + 阈值偏高”
+3. 当前 short trade 空集至少分成两类问题：真实 live 结果暴露的是“入口太窄 + gate 偏硬”，而 frozen current_plan replay 额外暴露了“历史 plan 数据契约缺少 short trade 所需 strategy signals”
 
 因此，当前系统状态应定义为：
 
 1. 双目标运行链路已打通
 2. research 目标可用
 3. short trade 目标可运行但尚未达到稳定产出阶段
-4. 下一步应进入受控调参和入口解耦阶段，而不是继续堆更多展示层功能
+4. 下一步应先补齐可用于 short trade 标定的 replay 输入契约，再进入受控调参和入口解耦阶段

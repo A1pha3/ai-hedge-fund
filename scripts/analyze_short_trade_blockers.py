@@ -47,6 +47,7 @@ def _build_example(
     ticker: str,
     candidate_source: str,
     candidate_reason_codes: list[str],
+    available_strategy_signals: list[str],
     short_trade: dict[str, Any],
     delta_classification: str | None,
 ) -> dict[str, Any]:
@@ -56,6 +57,7 @@ def _build_example(
         "ticker": ticker,
         "candidate_source": candidate_source,
         "candidate_reason_codes": candidate_reason_codes,
+        "available_strategy_signals": available_strategy_signals,
         "decision": short_trade.get("decision"),
         "score_target": round(_safe_float(short_trade.get("score_target")), 4),
         "gap_to_select": round(SELECT_THRESHOLD - _safe_float(short_trade.get("score_target")), 4),
@@ -90,6 +92,8 @@ def render_short_trade_blocker_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- negative_tag_counts: {analysis['negative_tag_counts']}")
     lines.append(f"- candidate_source_counts: {analysis['candidate_source_counts']}")
     lines.append(f"- candidate_reason_code_counts: {analysis['candidate_reason_code_counts']}")
+    lines.append(f"- signal_availability: {analysis['signal_availability']}")
+    lines.append(f"- available_strategy_signal_counts: {analysis['available_strategy_signal_counts']}")
     lines.append("")
     lines.append("## Score Distribution")
     lines.append(f"- all_scores: {analysis['score_distribution']['all']}")
@@ -123,6 +127,8 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
     negative_tag_counts: Counter[str] = Counter()
     candidate_source_counts: Counter[str] = Counter()
     candidate_reason_code_counts: Counter[str] = Counter()
+    available_strategy_signal_counts: Counter[str] = Counter()
+    signal_availability_counts: Counter[str] = Counter()
     delta_classification_counts: Counter[str] = Counter()
     gate_status_counts: dict[str, Counter[str]] = defaultdict(Counter)
     score_distribution_by_decision: dict[str, list[float]] = defaultdict(list)
@@ -145,11 +151,20 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
             candidate_source = str((evaluation or {}).get("candidate_source") or "unknown")
             candidate_reason_codes = [str(reason) for reason in list((evaluation or {}).get("candidate_reason_codes") or []) if str(reason or "").strip()]
             delta_classification = (evaluation or {}).get("delta_classification")
+            explainability_payload = dict(short_trade.get("explainability_payload") or {})
+            available_strategy_signals = [
+                str(signal_name)
+                for signal_name in list(explainability_payload.get("available_strategy_signals") or [])
+                if str(signal_name or "").strip()
+            ]
 
             short_trade_decision_counts[decision] += 1
             day_counts[decision] += 1
             candidate_source_counts[candidate_source] += 1
             candidate_reason_code_counts.update(candidate_reason_codes)
+            available_strategy_signal_counts.update(available_strategy_signals)
+            signal_availability_counts["missing_all"] += 1 if not available_strategy_signals else 0
+            signal_availability_counts["has_any"] += 1 if available_strategy_signals else 0
             score_distribution_by_decision[decision].append(score_target)
             score_distribution_by_decision["all"].append(score_target)
 
@@ -168,6 +183,7 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
                 ticker=str(ticker),
                 candidate_source=candidate_source,
                 candidate_reason_codes=candidate_reason_codes,
+                available_strategy_signals=available_strategy_signals,
                 short_trade=short_trade,
                 delta_classification=str(delta_classification) if delta_classification else None,
             )
@@ -202,6 +218,8 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
         "negative_tag_counts": dict(negative_tag_counts.most_common()),
         "candidate_source_counts": dict(candidate_source_counts.most_common()),
         "candidate_reason_code_counts": dict(candidate_reason_code_counts.most_common()),
+        "signal_availability": dict(signal_availability_counts.most_common()),
+        "available_strategy_signal_counts": dict(available_strategy_signal_counts.most_common()),
         "delta_classification_counts": dict(delta_classification_counts.most_common()),
         "gate_status_counts": {gate_name: dict(counter.most_common()) for gate_name, counter in gate_status_counts.items()},
         "score_distribution": {
