@@ -1,5 +1,22 @@
 # 选股优先的系统优化架构设计
 
+> 文档状态：主线架构总文
+> 最近补充导航时间：2026-03-28 09:59:08 CST
+> 相关专题：如果你当前关注的是“研究目标 + 次日短线目标”的双目标系统演进，请优先阅读 [dual_target_system/README.md](./dual_target_system/README.md)。
+
+## 0. 专题导航
+
+本文档是当前选股优先主线架构的总文档，负责解释为什么系统先按“选股能力”和“执行能力”分阶段优化。
+
+如果你的目标已经从“先建立可归因的选股优化闭环”推进到“在保留研究型选股主线的同时，新增面向 T+1 次日短线交易的目标模块”，应切换到下面这组专题文档：
+
+1. [双目标系统专题目录](./dual_target_system/README.md)
+2. [双目标选股与交易目标系统架构设计文档](./dual_target_system/arch_dual_target_selection_system.md)
+3. [次日短线目标指标与验证方案](./dual_target_system/short_trade_target_metrics_and_validation.md)
+4. [次日短线目标首版规则集规格](./dual_target_system/short_trade_target_rule_spec.md)
+5. [双目标系统数据结构与 Artifact Schema 规格](./dual_target_system/dual_target_data_contract_and_artifact_schema.md)
+6. [双目标系统实施与代码改造计划](./dual_target_system/dual_target_implementation_plan.md)
+
 ## 1. 文档目的
 
 本文档定义当前量化系统下一阶段的核心优化方向：

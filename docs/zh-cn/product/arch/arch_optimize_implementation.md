@@ -1,6 +1,27 @@
 # 选股优先优化方案实施设计文档
 
-## 0. 当前落地状态
+> 文档状态：选股优先主线的实施与收口记录
+> 最近补充导航时间：2026-03-28 09:59:08 CST
+> 相关专题：双目标系统的后续设计与分阶段改造方案已单独沉淀到 [dual_target_system/README.md](./dual_target_system/README.md)。
+
+## 0. 专题导航
+
+本文档记录的是“选股优先优化方案”主线的实施落地、Replay Artifacts 工作台建设与试用验收收口状态。
+
+如果你现在要继续推进的是以下问题：
+
+1. 如何在保留现有研究型选股主线的同时新增 short trade target。
+2. 如何定义双目标的字段级协议、artifact 承接与 replay 扩展结构。
+3. 如何按阶段改造代码而不是继续在本实施文档里追加新分支。
+
+那么应改为从双目标专题目录进入，而不是继续把这份文档当作总入口：
+
+1. [双目标系统专题目录](./dual_target_system/README.md)
+2. [双目标选股与交易目标系统架构设计文档](./dual_target_system/arch_dual_target_selection_system.md)
+3. [双目标系统数据结构与 Artifact Schema 规格](./dual_target_system/dual_target_data_contract_and_artifact_schema.md)
+4. [双目标系统实施与代码改造计划](./dual_target_system/dual_target_implementation_plan.md)
+
+## 1. 当前落地状态
 
 本文档已经不再只是实施提案。截至 2026-03-26，第一批代码骨架、最小上层消费界面以及首轮试用验收记录已落地，因此本文档需要同时承担两种职责：
 
@@ -9,9 +30,9 @@
 
 为避免继续把“主线迁移”和“后续增强”混在一起，当前收口状态先明确分成三层：
 
-### 0.1 收口状态总览
+### 1.1 收口状态总览
 
-#### 0.1.1 主线任务：已完成
+#### 1.1.1 主线任务：已完成
 
 这里的主线特指：把 Replay Artifacts 从零散的 artifact/CLI 能力，推进到一个可直接使用的研究工作台。
 
@@ -24,7 +45,7 @@
 
 试用验收执行入口见 [docs/zh-cn/manual/replay-artifacts-trial-acceptance-plan.md](docs/zh-cn/manual/replay-artifacts-trial-acceptance-plan.md)。
 
-#### 0.1.2 增强项：已完成首轮可用版本
+#### 1.1.2 增强项：已完成首轮可用版本
 
 下列能力已经超出“迁移成功”本身，但现已具备首轮可用版本：
 
@@ -38,7 +59,7 @@
 
 这些增强项说明当前系统已经不只是“迁移完成”，而是已经具备了最小可持续使用的研究工作台形态。
 
-#### 0.1.3 治理项：明确留待后续
+#### 1.1.3 治理项：明确留待后续
 
 以下内容不再视为“本轮主线是否完成”的判断条件，而是后续是否继续投入的治理项：
 
@@ -48,7 +69,7 @@
 
 后续如果确实需要继续投入，应优先把这些项目视为第二阶段治理工程，而不是继续混入“工作台迁移是否成功”的判断。
 
-#### 0.1.4 第二阶段治理 Backlog：待按需启动
+#### 1.1.4 第二阶段治理 Backlog：待按需启动
 
 如果后续确认需要继续推进，建议按下面顺序恢复，而不是再次从“是否还要继续做工作台”开始发散。
 
@@ -76,7 +97,7 @@ P3：历史解释精度补强
 1. 继续提高历史 frozen replay 源在缺失 strategy_signals 时的 Layer B 解释精度。
 2. 如果无法获得更高保真原始信号，则应明确区分“兼容解释”和“原始证据”，避免研究员误判其可信度。
 
-#### 0.1.5 当前建议动作：暂停新增开发，转入试用验收
+#### 1.1.5 当前建议动作：暂停新增开发，转入试用验收
 
 基于当前已实现状态，本文档建议当前阶段不要继续把 Replay Artifacts 当作“主线开发中”项目推进，而是先转入试用验收。
 
@@ -104,7 +125,7 @@ P3：历史解释精度补强
 3. 已补充前端侧证据：本地登录页可真实加载，且 Replay Artifacts 相关前端测试通过 2 个文件、5 个测试。
 4. 同日已补齐已登录态前端真实点击流证据：真实登录后 `hedge_fund_token` 已成功落盘，并可通过顶部 `Replay` 入口打开 Replay Artifacts 工作台，看到 `Cross-Report Workflow Queue`、`Report Rail` 与主观察 report；当前最小试用证据链已经闭合。
 
-### 0.2 已完成事项（详细清单）
+### 1.2 已完成事项（详细清单）
 
 - 已新增 research artifact 模块：src/research/models.py、src/research/artifacts.py、src/research/review_renderer.py、src/research/feedback.py。
 - 已在 src/backtesting/engine.py 中接入 selection_artifact_writer 注入点。
@@ -144,7 +165,7 @@ P3：历史解释精度补强
 - 已完成一次真实 live pipeline 纸面交易窗口验收：2026-03-16 至 2026-03-23 使用 MiniMax-M2.7 运行后成功生成 selection_artifacts、daily_events.jsonl、pipeline_timings.jsonl 与 session_summary.json，并形成窗口复盘文档 data/reports/paper_trading_window_20260316_20260323_live_m2_7_20260323/window_review_20260316_20260323.md；该窗口确认当前 artifact 机制在真实 live pipeline 下也能稳定解释“前置筛选无候选”“Layer C 否决 near-miss”与“T 日生成计划、T+1 执行”的实际执行链路。
 - 2026-03-26 已完成一轮试用窗口内的真实使用证据回填：本地后端/API 已验证 2026-03-17 的 near-miss `002916`、2026-03-20 的 selected `300724` feedback 写入，以及 2026-03-23 的 execution blocker 与 workflow item 认领/取消认领；同日还确认本地 Vite 登录页可达，补充 Replay Artifacts 相关前端测试通过 5/5，完成一次真实 batch feedback 写入，验证 `2026-02-24 / 300724, 000960` 可同步进入 activity 与 workflow queue，并完成一次真实 `draft -> final` 推进，验证 `2026-03-20 / 300724` 可进入 `ready_for_adjudication`；随后又补齐真实浏览器登录与顶部 `Replay` 入口点击流，确认认证态前端可直接进入 Replay Artifacts 工作台。
 
-### 0.3 未完成事项（治理项）
+### 1.3 未完成事项（治理项）
 
 - research_feedback.jsonl 已具备最小读取、聚合、标签治理、CLI 操作、session 级 summary 接入、replay viewer 内最小可写 UI、对应前端自动化回归，以及 SQLite-backed ledger、recent activity 查询接口、report 级 activity 面板、批量标注工作台、基于最新状态的 workflow queue 与跨 report 的指派/归属入口；当前剩余缺口主要收敛为 SLA 级别的人工作流编排与真实生产条件下的流程验收。
 - 轻量级 backtesting / paper trading 运行级集成测试已补齐，更长窗口 frozen replay 验证已完成一次，且现已补充对应的 W1 级别 frozen replay 自动化集成测试；真实 live pipeline 的最小运行级窗口验收也已完成一次，且其最小自动化集成测试亦已补齐，但更高层人工工作流集成仍未完成。当前已补上首轮试用窗口内的真实后端/API 使用证据、真实 batch feedback 样本证据、真实 `draft -> final` 推进证据，以及前端页面加载、定向前端回归和已登录态点击流证据；剩余未完成项已收敛为团队级 SLA、升级路径与更长期的真实生产协作治理。
@@ -152,7 +173,7 @@ P3：历史解释精度补强
 
 建议理解方式：以上未完成项默认全部归入“第二阶段治理 Backlog”，除非后续有新的使用证据证明这些项已经成为当前主矛盾，否则不建议再把它们并回本轮主线。
 
-### 0.4 已完成验收记录
+### 1.4 已完成验收记录
 
 2026-03-22 已完成一次最小真实落盘验收，验证方式为 2 天 frozen replay paper trading：
 

@@ -1,5 +1,11 @@
 # 次日短线目标指标与验证方案
 
+> 文档元信息
+>
+> - 首次创建日期：2026-03-28
+> - 最近更新时间：2026-03-28 09:45:53 CST
+> - 当前目录：docs/zh-cn/product/arch/dual_target_system/
+
 ## 0. 文档定位
 
 本文档是 [arch_dual_target_selection_system.md](./arch_dual_target_selection_system.md) 的配套规格文档，专门回答一个问题：
