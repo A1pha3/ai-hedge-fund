@@ -1,345 +1,511 @@
-# 双目标选股系统架构设计文档
+# 双目标选股与交易目标系统架构设计文档
 
-## 1. 文档目标
+## 0. 文档定位与边界
 
-本文档回答一个明确的新需求：
+本文档是双目标系统的第一版系统规格草案，不是营销文案，也不是收益承诺书。
 
-在保留现有“研究型选股系统”的前提下，在同一套系统架构内新增一个“次日短线交易目标模块”，让系统既能输出：
+配套文档：
 
-1. 面向中期研究和趋势跟踪的研究型候选结果。
-2. 面向 T 日收盘后选股、T+1 日买入的短线交易候选结果。
+1. [次日短线目标指标与验证方案](./short_trade_target_metrics_and_validation.md)
+2. [次日短线目标首版规则集规格](./short_trade_target_rule_spec.md)
+3. [双目标系统数据结构与 Artifact Schema 规格](./dual_target_data_contract_and_artifact_schema.md)
+4. [双目标系统实施与代码改造计划](./dual_target_implementation_plan.md)
 
-本文档的目标不是立即修改代码，而是先把需求、边界、架构方案、模块职责、数据模型、运行模式、产物形态和实施顺序定义清楚，供后续多轮评审使用。
+本文档解决的问题是：
 
-本文档默认遵循以下原则：
+1. 如何在保留现有研究型选股主线的前提下，为系统增加一个面向 T+1 次日短线交易的目标模块。
+2. 如何让同一套系统同时支持研究型目标与短线交易目标，而不是分裂成两套孤立系统。
+3. 如何把双目标系统设计成可解释、可回测、可冻结、可复盘、可治理的工程体系。
 
-1. 不推翻现有系统，不重新造一个独立系统。
-2. 在当前 Layer A / Layer B / Layer C / Execution / Replay Artifacts 架构上演进。
-3. 明确区分“研究型目标”和“次日交易目标”，避免继续把两类目标混在一个评分口径里。
-4. 保持一次运行可双产出，也允许按目标类型单独运行。
-5. 第一阶段优先做架构与接口设计，后续再分阶段落地实现。
+本文档不做以下承诺：
+
+1. 不承诺一个月超过 200% 的收益。
+2. 不把极端收益目标作为架构验收标准。
+3. 不把单窗口高收益视为系统级成功。
+
+原因很简单：顶级交易系统的核心不是“承诺高收益”，而是“在真实约束下持续产生可验证的正期望，并避免在样本外快速失效”。
+
+因此，本文档采用如下立场：
+
+1. 可以把“月度高收益”视为探索型上限目标。
+2. 不能把它作为系统设计的硬目标函数。
+3. 系统设计必须优先服务于稳健性、可解释性、样本外可迁移性和风险控制。
 
 ---
 
-## 2. 背景与问题定义
+## 1. 背景重定义
 
-### 2.1 当前系统的真实定位
+### 1.1 当前系统已经具备什么
 
-当前系统已经具备完整的日度决策链路：
+当前系统已经具备完整的选股到执行链路：
 
 1. Layer A 候选池构建
-2. Layer B 四策略评分与融合
+2. Layer B 策略评分与融合
 3. Layer C 多智能体聚合
-4. Watchlist 生成
-5. Buy order / sell order 生成
+4. watchlist 生成
+5. buy order / sell order 生成
 6. Replay Artifacts 落盘与复盘
 
-这套系统在当前阶段更偏向以下目标：
+现有主线更偏向研究型与趋势型目标，其优势在于：
 
-1. 研究价值较高的候选识别
-2. 中期趋势和结构性机会跟踪
-3. 候选质量解释与复盘
-4. T+1 执行桥接与风控
+1. 能形成结构完整的候选解释
+2. 能沉淀 Layer B / Layer C / execution 的分层证据
+3. 能通过 Replay Artifacts 支持复盘和反馈治理
 
-也就是说，它并不天然等价于“今天收盘后选出明天最可能快速上涨、且涨幅空间大的股票”。
+### 1.2 当前系统不擅长什么
 
-### 2.2 新需求的本质
+当前系统不天然等价于“专门寻找明天最值得买、次日最有爆发力的股票”。
 
-本轮新增的是一个新的优化目标，而不是小幅参数微调：
+因为研究型目标与次日交易目标存在天然差异：
 
-> 希望系统在 T 日收盘后，能够专门输出一组更偏向“趋势启动、趋势加速、突破扩张、次日胜率高、赔率高”的短线交易候选。
+1. 研究型更关注结构是否成立、逻辑是否扎实、是否值得持续跟踪。
+2. 次日交易型更关注启动新鲜度、次日胜率、次日赔率、可执行性和拥挤风险。
 
-这个目标与原有研究型目标存在明显差异：
+同一只股票可以是优秀的研究对象，但不是优秀的次日交易对象。
 
-1. 研究型目标关注“结构是否成立、是否值得跟踪、是否具备中期质量”。
-2. 次日交易目标关注“明天买入后是否大概率上涨、是否有较大短期弹性、是否处在启动或加速阶段”。
+### 1.3 本轮需求的真正含义
 
-这两类目标会共享很多底层信息，但并不应该共享同一个最终目标函数。
+本轮需求不是“再调一点阈值”，而是“增加一个新的目标函数”。
 
-### 2.3 当前痛点
+也就是说，当前不是：
 
-如果继续只用一套 Layer B / Layer C 结果同时服务这两类目标，会出现以下问题：
+1. 调一个更激进的 Layer B 规则
+2. 用同一条分数曲线同时服务研究与短线
 
-1. 研究型优质票不一定是次日交易优质票。
-2. 旧趋势修复票、回调震荡票可能通过研究型筛选，但 T+1 交易表现较差。
-3. 参数优化时无法分辨“研究型表现变好”还是“短线交易表现变好”。
-4. Replay Artifacts 中当前的复盘语义仍主要围绕 watchlist / execution bridge，而不是“短线启动边”。
+而应该是：
 
-因此，需要从系统结构上明确支持“双目标”。
-
----
-
-## 3. 核心设计原则
-
-### 3.1 一个系统，两个目标，不是两个孤岛系统
-
-系统不应拆成两套完全独立的代码和工作流，而应采用：
-
-1. 共享上游数据、共享候选池、共享基础评分和共享基础 artifacts。
-2. 在目标层新增“目标模块”和“目标专属 gate / score / output”。
-
-也就是说，应该是：
-
-1. 一个基础选股平台。
-2. 两个目标视图：研究型视图、次日交易视图。
-
-### 3.2 目标解耦优先于评分混合
-
-研究型与次日交易型可以共享基础特征，但不应该直接共享一个最终分数。
-
-推荐原则：
-
-1. 共享基础事实层
-2. 分开目标评分层
-3. 分开目标 gate 层
-4. 分开目标输出层
-
-避免继续出现：
-
-1. 一个高分在研究上合理，但在交易上无用。
-2. 一个参数优化改善了研究池，却恶化了次日胜率。
-
-### 3.3 输出双轨，但运行链路尽量单轨复用
-
-运行层应该支持三种模式：
-
-1. 仅研究型目标
-2. 仅次日交易目标
-3. 双目标同时运行
-
-但底层应尽量复用同一条日度 pipeline，避免维护两套独立主链路。
-
-### 3.4 可复盘、可对照、可冻结
-
-双目标架构必须天然支持：
-
-1. 对比同一 trade_date 下两个目标的结果差异
-2. 对比同一股票为何进入研究池但未进入短线池
-3. 对比同一股票为何进入短线池但未进入研究池
-4. 对两个目标分别做后验收益和赔率分析
-
-这意味着 Replay Artifacts 和日度事件流都需要增加“目标维度”。
+1. 保留现有研究目标
+2. 新增短线交易目标
+3. 让同一套系统对同一批候选生成两套不同的目标判断
 
 ---
 
-## 4. 目标定义
+## 2. 设计原则
 
-### 4.1 目标 A：研究型选股目标
+### 2.1 一个系统，两个目标模块
 
-研究型目标保持现有主语义：
+推荐方案不是重做一套短线系统，而是：
 
-1. 寻找结构较完整、基本面与技术面相互支撑、值得跟踪或配置的候选。
-2. 允许包含趋势修复、中期改善、边界样本与待人工复核样本。
-3. 更关注解释完整性和后续研究价值。
+1. 共用候选池、共用基础事实、共用运行框架
+2. 在目标层增加 Research Target 与 Short Trade Target 两个模块
+3. 在输出层生成两套结果与两套解释
 
-研究型目标适合回答：
+### 2.2 目标解耦优先于分数混合
 
-1. 哪些票值得继续研究？
-2. 哪些票值得进入 watchlist？
-3. 哪些票是长期趋势或中期结构机会？
+研究型分数与短线交易分数不能混成一个最终分数，否则会再次出现优化归因污染。
 
-### 4.2 目标 B：次日短线交易目标
-
-次日交易目标新增定义如下：
-
-1. 在 T 日收盘后，从当日候选中筛出更偏向“趋势启动、趋势加速、突破确认、强主线扩张、次日高胜率高赔率”的股票。
-2. 目标不是“中期看起来不错”，而是“明日买入后大概率快速获利，且涨幅空间较大”。
-3. 对旧趋势修复、回调震荡、上方抛压大、催化不新鲜的票更严格。
-
-次日交易目标适合回答：
-
-1. 明天最值得优先买的股票是谁？
-2. 哪些股票更像启动前夜或加速前夜？
-3. 哪些股票更可能提供高胜率与高赔率的短期机会？
-
-### 4.3 两个目标的共性与差异
-
-共性：
-
-1. 都依赖同一 trade_date 的候选池和策略事实。
-2. 都依赖 trend / fundamental / mean_reversion / event_sentiment 等基础信号。
-3. 都可使用 Layer C 的多智能体分析。
-
-差异：
-
-1. 研究型更看结构完整、解释一致性、长期质量。
-2. 短线型更看启动新鲜度、扩张概率、次日动能、板块与催化同步性。
-3. 研究型可容忍修复票；短线型应明显惩罚修复票。
-
----
-
-## 5. 总体架构方案
-
-### 5.1 推荐方案：共享基础层 + 目标模块层 + 双输出层
-
-推荐采用三层结构：
+必须拆分：
 
 1. 基础事实层
-2. 目标模块层
-3. 输出与执行层
+2. 目标评分层
+3. 目标 gate 层
+4. 目标输出层
+5. 目标后验评估层
 
-#### 5.1.1 基础事实层
+### 2.3 顶级系统优先追求稳健性而不是口号式收益
 
-基础事实层负责统一生成不带目标偏见的原始事实，包括：
+如果目标是接近业界顶级系统水平，架构应优先满足：
 
-1. Layer A candidate pool
-2. Layer B strategy signals
-3. Layer B fused score 基础值
-4. Layer C agent outputs 与 contribution summary
-5. 市场状态、行业强度、事件新鲜度等通用特征
+1. 数据约束真实
+2. 回测口径严格
+3. 执行假设保守
+4. 指标定义可审计
+5. 参数治理可冻结
+6. 样本外验证可重复
 
-该层的职责是“生成事实”，而不是“决定最终属于哪个目标”。
+### 2.4 保持现有主链路兼容
 
-#### 5.1.2 目标模块层
+双目标系统的第一原则是增量演进，不破坏现有研究型主链路。
 
-目标模块层是本次新增的核心。建议新增两个目标模块：
+第一阶段应做到：
 
-1. Research Target Module
-2. T1 Short Trade Target Module
-
-每个目标模块负责：
-
-1. 目标专属评分
-2. 目标专属 gate
-3. 目标专属 rejection reason
-4. 目标专属 explainability 标签
-
-#### 5.1.3 输出与执行层
-
-输出层负责产出两个结果：
-
-1. research_watchlist / research_candidates
-2. short_trade_watchlist / short_trade_candidates
-
-执行层则根据运行模式决定：
-
-1. 只对研究型目标继续生成原有 watchlist / buy_orders
-2. 只对短线目标生成单独的 short_trade_plan
-3. 双目标并行生成两套结果和 artifacts
+1. research_only 运行模式完全兼容现有逻辑
+2. short_trade_only 和 dual_target 作为新增能力接入
+3. Replay Artifacts 在第一阶段至少能透传目标维度，而不是强制一次重构全部 UI
 
 ---
 
-## 6. 模块级设计
+## 3. 目标函数与验收标准
 
-### 6.1 基础层保留不动的部分
+### 3.1 研究型目标函数
 
-以下模块应尽量保持为通用基础层，不在第一阶段做破坏性重构：
+研究型目标不是追求次日涨幅最大化，而是追求：
+
+1. 候选结构质量高
+2. 多源证据一致性高
+3. 中期跟踪价值高
+4. 进入 watchlist 后具备较好的后续研究命中率
+
+建议研究型目标的首版验收指标包括：
+
+1. watchlist 后 10 日和 20 日超额收益分布
+2. Layer C 与后验走势的一致性
+3. near-miss 与 selected 的区分度
+4. 人工复核通过率
+
+### 3.2 短线交易目标函数
+
+短线交易目标不是“主观感觉明天会涨”，而是最大化次日交易正期望。
+
+建议显式定义为：
+
+1. 优先优化 T+1 胜率
+2. 同时优化 T+1 盈亏比
+3. 在流动性、滑点、涨跌停与 T+1 制度约束下最大化风险调整后收益
+
+建议短线目标首版核心指标：
+
+1. T+1 close-to-close 胜率
+2. T+1 open-to-high 赔率
+3. T+1 open-to-close 赔率
+4. T+3 持有窗口收益分布
+5. hit rate、payoff ratio、expectancy
+6. max drawdown、turnover、capacity stress
+
+### 3.3 为什么不能把“月收益 200%”当验收标准
+
+月收益 200% 可能是某些短窗口中的结果，但它不适合做系统架构的验收标准，因为：
+
+1. 它极易被样本选择偏差和杠杆假设污染。
+2. 它不能区分真实 alpha 与执行/容量幻觉。
+3. 它鼓励系统在回测中走向过拟合和极端风险承担。
+
+更合理的做法是：
+
+1. 把 200% 月收益视为压力测试或上限观察项
+2. 把首版验收标准建立在稳定性、可迁移性和回撤控制之上
+
+---
+
+## 4. 先验硬约束矩阵
+
+短线目标模块必须继承并强化现有执行约束，不能旁路真实市场约束。
+
+首版必须显式纳入以下硬约束：
+
+1. T+1 交易制度
+2. 涨跌停无法成交风险
+3. 滑点与手续费
+4. 流动性下限
+5. 停牌与复牌异常
+6. 单票仓位上限
+7. 单行业暴露上限
+8. 日内新开仓数量上限
+
+建议把约束分成三类：
+
+1. pre-trade gate
+2. entry confirmation gate
+3. portfolio risk gate
+
+其中：
+
+1. pre-trade gate 决定“是否有资格进入短线池”
+2. entry confirmation gate 决定“明天是否执行买入”
+3. portfolio risk gate 决定“即使信号通过，是否允许分配资金”
+
+---
+
+## 5. 双目标系统总体架构
+
+### 5.1 总体结构
+
+推荐采用五层结构：
+
+1. 数据与事实层
+2. 基础筛选与融合层
+3. 目标模块层
+4. 输出与执行层
+5. 评估与治理层
+
+### 5.2 数据与事实层
+
+该层只负责生成与目标无关的基础事实，不负责最终决策。
+
+基础事实包括：
+
+1. Layer A candidate pool
+2. Layer B strategy_signals
+3. score_b 与相关解释字段
+4. Layer C agent_signals、score_c、score_final、bc_conflict
+5. 市场状态
+6. 行业强弱
+7. 事件新鲜度
+8. 波动、流动性、量价结构
+
+### 5.3 目标模块层
+
+目标模块层是本轮新增核心，至少包含：
+
+1. Research Target Module
+2. Short Trade Target Module
+3. Target Router
+4. Target Explainability Layer
+
+每个目标模块必须独立输出：
+
+1. target_score
+2. target_decision
+3. confidence
+4. positive_tags
+5. negative_tags
+6. blockers
+7. top_reasons
+
+### 5.4 输出与执行层
+
+输出层负责形成：
+
+1. research_candidates
+2. research_watchlist
+3. short_trade_candidates
+4. short_trade_watchlist
+5. short_trade_entry_plan
+6. dual_target_comparison
+
+执行层则根据运行模式决定是否继续推进到订单级结果。
+
+### 5.5 评估与治理层
+
+评估与治理层必须成为主架构的一部分，而不是事后补脚本。
+
+该层应负责：
+
+1. 回测与 frozen replay
+2. 日度对照报告
+3. 目标级反馈写入
+4. 参数冻结与版本追踪
+5. 样本外评估与漂移检测
+
+---
+
+## 6. 与现有代码结构的映射
+
+### 6.1 可直接复用的基础模块
+
+现有以下模块应保留为共享基础层：
 
 1. [src/screening/candidate_pool.py](src/screening/candidate_pool.py)
 2. [src/screening/strategy_scorer.py](src/screening/strategy_scorer.py)
 3. [src/screening/signal_fusion.py](src/screening/signal_fusion.py)
 4. [src/execution/layer_c_aggregator.py](src/execution/layer_c_aggregator.py)
 5. [src/execution/daily_pipeline.py](src/execution/daily_pipeline.py)
+6. [src/execution/models.py](src/execution/models.py)
 
-但它们会新增“为目标模块服务的可复用事实字段”。
+### 6.2 建议新增的目标模块目录
 
-### 6.2 新增目标模块包
-
-建议新增一个专门的目标模块目录，例如：
-
-1. src/targets/
-2. 或 src/objectives/
-
-推荐结构：
+建议新增：
 
 1. src/targets/models.py
 2. src/targets/research_target.py
 3. src/targets/short_trade_target.py
 4. src/targets/router.py
 5. src/targets/explainability.py
+6. src/targets/profiles.py
 
-职责建议如下：
+其中：
 
-#### src/targets/models.py
+1. models.py 定义目标层数据契约
+2. research_target.py 包装现有研究主语义
+3. short_trade_target.py 承载短线打分与 gate
+4. router.py 根据运行模式组织输出
+5. explainability.py 统一输出标签与 blocker
+6. profiles.py 管理短线模式的不同参数档位
 
-定义目标层的统一数据模型，例如：
+### 6.3 运行模式
 
-1. SelectionTargetType
-2. TargetEvaluationInput
-3. TargetEvaluationResult
-4. DualTargetSelectionResult
-
-#### src/targets/research_target.py
-
-负责研究型目标的评分与 gate。
-
-#### src/targets/short_trade_target.py
-
-负责次日短线目标的评分与 gate。
-
-#### src/targets/router.py
-
-负责根据运行模式：
-
-1. 只执行 research
-2. 只执行 short_trade
-3. 同时执行 dual_target
-
-#### src/targets/explainability.py
-
-负责统一生成目标级 explainability 标签和 rejection reason。
-
----
-
-## 7. 双目标运行模式设计
-
-### 7.1 运行模式枚举
-
-建议定义统一运行模式：
+建议统一支持三种模式：
 
 1. research_only
 2. short_trade_only
 3. dual_target
 
-默认建议：
-
-1. 现有主线先保持 research_only 兼容模式
-2. 新实验和新 report 默认支持 dual_target
-
-### 7.2 一次运行的执行顺序
-
-推荐顺序：
-
-1. 构建 candidate pool
-2. 计算策略 signals 与基础 Layer B 融合
-3. 运行 Layer C 基础分析
-4. 构造 TargetEvaluationInput
-5. 分别交给 research target 与 short trade target
-6. 产出双轨结果
-7. 根据模式决定生成哪些 artifacts 与哪些 execution plan
-
-### 7.3 CLI / runtime 参数设计
-
-建议在现有 CLI 和 runtime 层增加以下参数：
+推荐 CLI 参数：
 
 1. --selection-target research_only|short_trade_only|dual_target
-2. --enable-short-trade-target
-3. --short-trade-profile profile_name
-
-这样可以做到：
-
-1. 同一条主命令兼容旧逻辑
-2. 新逻辑通过显式参数启用
+2. --short-trade-profile default|aggressive|conservative
+3. --emit-dual-target-artifacts
 
 ---
 
-## 8. 短线目标模块的因子与 gate 设计方向
+## 7. 数据契约设计
 
-### 8.1 短线目标不等于“更激进的 Layer B”
+### 7.1 目标输入模型
 
-短线目标模块不应只是简单把 Layer B 阈值调高或调低，而应引入一组新的目标语义：
+建议新增 TargetEvaluationInput，用于把基础层与目标层隔离开。
 
-1. 趋势启动新鲜度
-2. 趋势加速度
-3. 突破确认程度
-4. 量价扩张质量
-5. 板块与主线同步性
-6. 事件或催化新鲜度
-7. 旧趋势修复惩罚
+建议字段：
 
-### 8.2 短线目标建议新增的正向标签
+```text
+TargetEvaluationInput
+- trade_date
+- ticker
+- market_state
+- layer_a_metadata
+- strategy_signals
+- score_b
+- layer_c_result
+- liquidity_features
+- volatility_features
+- event_features
+- sector_features
+- execution_constraints
+- replay_context
+```
 
-建议短线目标模块显式识别如下正向标签：
+这样做的目的有两个：
+
+1. 防止目标模块直接耦合底层实现细节
+2. 为 frozen replay 和批量评估提供稳定输入契约
+
+### 7.2 目标输出模型
+
+建议输出统一模型：
+
+```text
+TargetEvaluationResult
+- target_type
+- score_target
+- decision_target
+- confidence
+- positive_tags
+- negative_tags
+- blockers
+- top_reasons
+- expected_holding_window
+- preferred_entry_mode
+- artifact_payload
+```
+
+### 7.3 在现有 ExecutionPlan 中的承接方式
+
+当前 [src/execution/models.py](src/execution/models.py) 中的 ExecutionPlan 已经承载 watchlist 与 selection_artifacts。
+
+首版建议不直接推翻 schema，而是采用渐进接入：
+
+1. 先在 selection_artifacts 中增加 selection_targets 区块
+2. 再增加 research_watchlist 和 short_trade_watchlist
+3. 最后再决定是否为 short_trade_entry_plan 单独升格为顶层字段
+
+### 7.4 日志与 artifacts 透传
+
+建议在以下产物中增加 target 维度：
+
+1. daily_events.jsonl
+2. pipeline_timings.jsonl
+3. session_summary.json
+4. selection_snapshot.json
+5. selection_review.md
+
+建议至少透传：
+
+1. research_candidate_count
+2. short_trade_candidate_count
+3. research_selected_count
+4. short_trade_selected_count
+5. delta_selected_count
+
+---
+
+## 8. 双目标决策生命周期
+
+建议把一次完整运行拆成九个阶段：
+
+1. universe ingest
+2. Layer A candidate screening
+3. Layer B strategy scoring
+4. Layer C analyst aggregation
+5. target input materialization
+6. research target evaluation
+7. short trade target evaluation
+8. dual comparison materialization
+9. execution / replay / feedback writeback
+
+这样可以让双目标系统具备三个重要性质：
+
+1. 单目标模式与双目标模式共享前五个阶段
+2. 目标层完全可冻结和复盘
+3. 工作台可以直接展示阶段间差异
+
+---
+
+## 9. 短线交易目标算法框架
+
+### 9.1 设计原则
+
+短线交易目标不应理解为“把 Layer B 调得更激进”，而应理解为“建立一个专门针对 T+1 机会捕捉的目标函数”。
+
+首版应坚持：
+
+1. 规则型
+2. 可解释型
+3. 可冻结型
+4. 可回测型
+
+### 9.2 建议的短线目标因子簇
+
+建议围绕六类正向因子和三类负向因子建立首版模型。
+
+正向因子簇：
+
+1. breakout_freshness
+2. trend_acceleration
+3. volume_expansion_quality
+4. close_strength
+5. sector_resonance
+6. catalyst_freshness
+
+负向因子簇：
+
+1. stale_trend_repair_penalty
+2. overhead_supply_penalty
+3. extension_without_room_penalty
+
+### 9.3 建议的首版打分框架
+
+首版短线目标分数建议采用显式可解释公式，而不是立即引入黑箱模型。
+
+示意公式：
+
+```text
+score_short =
+  0.22 * breakout_freshness
+  + 0.18 * trend_acceleration
+  + 0.16 * volume_expansion_quality
+  + 0.14 * close_strength
+  + 0.12 * sector_resonance
+  + 0.08 * catalyst_freshness
+  + 0.10 * layer_c_alignment
+  - 0.12 * stale_trend_repair_penalty
+  - 0.10 * overhead_supply_penalty
+  - 0.08 * extension_without_room_penalty
+```
+
+说明：
+
+1. 这是研究起点，不是冻结参数。
+2. 各因子需先标准化到统一量纲。
+3. Layer C alignment 只作为加分项，不应让短线目标完全依赖 LLM。
+
+### 9.4 首版 gate 设计
+
+建议把 gate 与 score 分开。
+
+硬 gate：
+
+1. 流动性不达标直接拒绝
+2. 涨停难成交风险过高直接拒绝
+3. 当日已经大幅延伸且空间不足直接拒绝
+4. 事件过旧、筹码过重、上方抛压过大直接拒绝
+
+软 gate：
+
+1. score_short 达到阈值才入短线池
+2. 风险评分通过才允许进入 entry plan
+
+### 9.5 推荐标签体系
+
+建议新增以下正向标签：
 
 1. fresh_breakout_setup
 2. trend_acceleration_active
@@ -349,9 +515,7 @@
 6. fresh_event_catalyst
 7. breakout_room_large
 
-### 8.3 短线目标建议新增的负向标签
-
-建议显式识别如下负向标签：
+建议新增以下负向标签：
 
 1. post_run_pullback_chop
 2. stale_trend_repair
@@ -361,222 +525,280 @@
 6. weak_next_day_edge
 7. late_stage_extension_without_room
 
-### 8.4 Research 与 Short Trade 的边界
+---
 
-同一只票可能：
+## 10. 研究型目标算法框架
 
-1. research target = pass
-2. short trade target = reject
+研究型目标不需要重写，应被重新包装成一个显式目标模块。
 
-这是允许且必要的。
+建议研究型目标继续保持以下优先级：
 
-系统应显式支持这种结果，而不是试图强行统一。
+1. 结构完整性
+2. 基本面与技术面的相互支撑
+3. Layer B / Layer C 一致性
+4. 可解释性与后续研究价值
+
+研究型目标与短线目标的边界必须允许以下情况出现：
+
+1. research = pass, short_trade = reject
+2. research = reject, short_trade = pass
+
+第二种情况虽然在首版中应较少出现，但架构必须允许它存在，因为短线爆发票未必具备强研究属性。
 
 ---
 
-## 9. 数据模型与产物设计
+## 11. 目标冲突与仲裁规则
 
-### 9.1 建议新增目标层结果模型
+### 11.1 同一股票跨目标结果冲突是正常现象
 
-建议新增统一模型，例如：
+双目标系统不追求把冲突抹平，而追求把冲突解释清楚。
 
-```text
-TargetEvaluationResult
-- target_type
-- score_target
-- decision_target
-- top_reasons
-- rejection_reasons
-- tags_positive
-- tags_negative
-- confidence
-```
+### 11.2 建议的冲突分类
 
-### 9.2 建议在 ExecutionPlan 中增加目标结果字段
+建议把跨目标差异至少分为四类：
 
-当前 [src/execution/models.py](src/execution/models.py) 中的 ExecutionPlan 已经承载了 Layer B / Layer C / watchlist / selection_artifacts。
+1. research_pass_short_reject
+2. research_reject_short_pass
+3. both_pass_but_rank_diverge
+4. both_reject_but_reason_diverge
 
-建议后续增加：
+### 11.3 Delta View 的核心用途
 
-1. selection_targets
-2. research_watchlist
-3. short_trade_watchlist
-4. short_trade_plan
+Delta View 不是 UI 点缀，而是架构必需能力，用于回答：
 
-但第一阶段不要求立刻改 ExecutionPlan 的最终 schema，可以先从 artifacts 层试运行。
-
-### 9.3 建议在 selection artifacts 中增加双目标视图
-
-现有 selection_snapshot / selection_review 体系建议后续扩展为：
-
-1. research 视图
-2. short trade 视图
-3. dual comparison 视图
-
-例如：
-
-1. 为什么该票进入研究池但未进入短线池
-2. 为什么该票进入短线池但未进入研究池
-3. 两个目标各自的 top factors 和 blockers
-
-### 9.4 建议在 daily_events / session_summary 中透传目标维度
-
-建议后续在：
-
-1. daily_events.jsonl
-2. pipeline_timings.jsonl
-3. session_summary.json
-
-增加目标级 counts 和 artifact links，例如：
-
-1. research_candidate_count
-2. short_trade_candidate_count
-3. research_watchlist_count
-4. short_trade_watchlist_count
+1. 哪些票是研究优质但交易不优质
+2. 哪些票是交易优质但研究一般
+3. 差异来自启动新鲜度、拥挤度、事件新鲜度、还是 Layer C 冲突
 
 ---
 
-## 10. Replay Artifacts 与复盘工作台如何演进
+## 12. Replay Artifacts 与工作台演进
 
-### 10.1 工作台不应只展示单一选股结果
+### 12.1 工作台必须从单结果复盘升级为双目标复盘
 
-现有 Replay Artifacts 工作台已经具备很好的复盘基础，但默认只有单一结果链路。
-
-双目标架构下，工作台后续应支持：
-
-1. 切换 research target / short trade target / dual comparison
-2. 查看每个目标的 selected / rejected / near-miss
-3. 查看跨目标差异解释
-
-### 10.2 建议新增的工作台视角
-
-建议后续新增三个视角：
+后续工作台至少应支持三个视角：
 
 1. Research View
 2. Short Trade View
 3. Delta View
 
-Delta View 重点回答：
+### 12.2 反馈模型也必须增加目标维度
 
-1. 哪些票被研究池接受但被短线池拒绝
-2. 哪些票被短线池接受但被研究池拒绝
-3. 为什么不同
-
-### 10.3 反馈体系也应增加目标维度
-
-当前 research_feedback.jsonl 主要围绕 selected / near-miss / execution blocker。
-
-后续建议增加：
+建议 feedback 体系增加：
 
 1. target_type
 2. target_verdict
-3. next_day_outcome_review
+3. realized_outcome_window
+4. outcome_label
+5. reviewer_confidence
 
-这样研究员可以明确反馈：
+这样才能把“研究判断”和“交易判断”分开记录。
 
-1. 研究上我认为它是好票
-2. 但短线交易上我认为它不是明日好票
+### 12.3 与现有工作台设计的一致性
+
+这一方向与 [arch_replay_artifacts_workspace_redesign.md](./arch_replay_artifacts_workspace_redesign.md) 的主线一致，即：
+
+1. 工作台承载研究与复盘，而不是只展示静态产物
+2. 页面布局应服务于多视图对照，而不是单列表阅读
 
 ---
 
-## 11. 实施阶段建议
+## 13. 验证与评估框架
 
-### 11.1 Phase 0：需求冻结与指标定义
+### 13.1 顶级系统必须先解决验证纪律
 
-目标：先把“短线目标到底追求什么”写清楚。
+如果没有严格验证纪律，任何“高收益”都不可信。
 
-需要冻结的内容：
+双目标系统至少应采用五类验证：
 
-1. 次日胜率定义
-2. 次日赔率定义
-3. 次日空间定义
-4. 评价窗口是 T+1 收盘、T+1 最高价，还是 T+1~T+3
-5. 短线目标的首版 success metric
+1. 单日 frozen replay
+2. 连续窗口回放
+3. walk-forward validation
+4. regime-sliced validation
+5. execution-realistic backtest
 
-### 11.2 Phase 1：目标模块最小骨架
+### 13.2 建议的评估窗口
 
-目标：不改现有主逻辑语义，先把目标模块接口接起来。
+研究型目标：
+
+1. T+5
+2. T+10
+3. T+20
+
+短线交易目标：
+
+1. T+1 open-to-close
+2. T+1 open-to-high
+3. T+1 close-to-close
+4. T+3 持有收益分布
+
+### 13.3 必须纳入的风险与真实性检查
+
+至少必须检查：
+
+1. 滑点敏感性
+2. 涨停买不到、跌停卖不出的极端情形
+3. 低流动性样本剔除前后结果变化
+4. 参数小扰动后的稳定性
+5. 不同市场状态下的胜率漂移
+
+### 13.4 防过拟合机制
+
+建议把防过拟合机制写入系统治理，而不是靠自觉：
+
+1. 每次参数变更必须标注版本与假设
+2. 先在 in-sample 调参，再在 out-of-sample 验证
+3. 未经新窗口验证的参数不得进入默认档
+4. 月度仅允许有限次数阈值更新
+5. 指标改善如果只在单一窗口成立，不得升级为默认策略
+
+---
+
+## 14. 资金管理与组合层设计
+
+如果目标是向更高水平的交易系统靠拢，选股模块之外必须预留组合层接口。
+
+短线目标至少需要输出给组合层以下信息：
+
+1. conviction
+2. liquidity_bucket
+3. expected_holding_window
+4. gap_risk_level
+5. crowding_risk_level
+
+组合层后续可据此做：
+
+1. 仓位分级
+2. 行业集中度控制
+3. 新开仓上限控制
+4. 风险事件降仓
+5. 高相关票互斥控制
+
+没有这一层，所谓高收益系统很容易退化成“高集中高回撤系统”。
+
+---
+
+## 15. 实施阶段建议
+
+### 15.1 Phase 0：定义冻结
+
+先冻结以下定义：
+
+1. research target success metrics
+2. short trade target success metrics
+3. 各评估窗口定义
+4. 真实执行口径
+5. 参数变更与版本管理口径
+
+### 15.2 Phase 1：目标层骨架接入
 
 最小产物：
 
-1. target models
-2. target router
-3. research target wrapper
-4. short trade target skeleton
-5. dual-target artifact 占位结构
+1. TargetEvaluationInput
+2. TargetEvaluationResult
+3. Target Router
+4. Research Target Wrapper
+5. Short Trade Target Skeleton
 
-### 11.3 Phase 2：短线目标最小因子集
+### 15.3 Phase 2：短线目标最小规则集
 
-目标：引入最小可用的短线目标规则，不一开始上太多复杂特征。
-
-建议首批因子：
+建议首批只实现：
 
 1. breakout freshness
-2. volume expansion
-3. close near high
-4. old-run pullback penalty
-5. event freshness
+2. volume expansion quality
+3. close strength
+4. sector resonance
+5. stale trend repair penalty
 
-### 11.4 Phase 3：双目标 artifacts 与 replay 接入
+### 15.4 Phase 3：双目标 artifacts 接入
 
-目标：让工作台可以真实看双目标结果，而不是只在日志里看。
+让 daily_events、session_summary、selection_artifacts 能写出双目标结果。
 
-### 11.5 Phase 4：双目标后验评估框架
+### 15.5 Phase 4：工作台双视图接入
 
-目标：新增专门脚本和报告，评估：
+增加 Research View、Short Trade View、Delta View。
 
-1. research target 的中期质量
-2. short trade target 的 T+1 胜率和赔率
+### 15.6 Phase 5：后验评估与默认档治理
 
----
-
-## 12. 风险与反模式
-
-### 12.1 反模式：用一个分数同时代表两个目标
-
-这会再次把研究价值和交易价值混起来，不建议。
-
-### 12.2 反模式：为了短线目标破坏研究目标主链路
-
-短线目标应是新增模块，不应直接把研究型主链路改成“全都只追启动板”。
-
-### 12.3 反模式：一开始就做太复杂的模型
-
-建议先从规则型和可解释型 short trade target 开始，再决定是否引入更复杂模型。
-
-### 12.4 反模式：没有后验指标就开始调参
-
-如果没有 T+1 胜率、赔率、空间指标，短线目标最终会再次退化成主观调参。
+让短线目标从“实验档”升级到“默认档”前，必须通过多窗口验证与人工复核。
 
 ---
 
-## 13. 本文档的评审问题
+## 16. 反模式与失败模式
 
-本轮评审建议重点围绕以下问题：
+### 16.1 用一个最终分数同时代表两个目标
 
-1. “研究型目标”和“次日交易目标”的边界是否定义清楚？
-2. “一个系统、两个目标模块”的路线是否比“重做一个短线系统”更符合当前项目？
-3. 目标模块放在 src/targets/ 是否合理？
-4. 是否接受“一次运行双产出，也可单独运行某个目标”的运行模式？
-5. Replay Artifacts 是否应在第二阶段就开始承载双目标视图？
-6. 短线目标第一阶段是否应坚持规则型、可解释型实现，而不是立即模型化？
-7. 研究型产出是否仍然保留原有 watchlist / buy_order 主链路兼容？
+这是最需要避免的反模式。
+
+### 16.2 为了短线收益幻觉破坏研究主线
+
+短线目标应增量接入，不能把整个系统强行改成追涨板系统。
+
+### 16.3 没有执行 realism 的回测
+
+如果不纳入 T+1、涨跌停、滑点、流动性，短线策略几乎一定会被回测高估。
+
+### 16.4 只用单窗口优胜样本做结论
+
+这会把噪声误认为边际改进。
+
+### 16.5 过早引入复杂模型
+
+在没有建立干净验证框架之前，不建议直接上复杂机器学习模型或端到端黑箱模型。
 
 ---
 
-## 14. 当前建议结论
+## 17. 本轮评审清单
 
-基于现有系统形态，最优路径不是重做一个系统，而是：
+建议下一轮评审重点确认以下问题：
+
+1. 是否认可“月收益 200% 不能作为架构验收标准”的边界？
+2. 是否认可双目标拆分为研究型目标与次日交易目标？
+3. 是否认可短线目标首版坚持规则型、可解释型、可冻结型？
+4. 是否认可先在 artifacts 层承接，而不是第一阶段直接大改 ExecutionPlan？
+5. 是否认可 Replay Artifacts 后续增加 Delta View 作为核心能力？
+6. 是否认可短线目标的首版重点是次日正期望，而不是单纯追求胜率？
+7. 是否认可默认策略升级必须经过多窗口样本外验证？
+
+---
+
+## 18. alpha-loop 十轮迭代记录
+
+本轮文档按 alpha-loop 思路完成了 10 轮收敛，记录如下：
+
+1. 第 1 轮：重定义问题，把需求从“调参数”升级为“增加目标函数”。
+2. 第 2 轮：加入硬边界，明确不以月收益 200% 作为架构验收标准。
+3. 第 3 轮：补充目标函数与验收指标，区分 research 与 short trade。
+4. 第 4 轮：补先验硬约束矩阵，避免短线系统旁路真实执行约束。
+5. 第 5 轮：将总体架构从三层扩展为五层，加入评估与治理层。
+6. 第 6 轮：补齐与现有代码结构的映射，避免设计脱离当前仓库。
+7. 第 7 轮：新增目标输入输出数据契约，支撑 frozen replay 与 artifacts。
+8. 第 8 轮：把短线目标从抽象描述细化为可解释的因子簇、打分和 gate 框架。
+9. 第 9 轮：加入验证纪律、防过拟合机制、组合层接口和失败模式。
+10. 第 10 轮：整理为评审版结构，补充评审清单与实施阶段顺序。
+11. 后续补充：拆出指标验证文档与规则规格文档，降低总纲与实施细节耦合。
+12. 后续补充：新增数据结构与 artifact schema 规格，推进到字段级冻结层。
+13. 后续补充：新增实施与代码改造计划，明确真实代码落点、阶段顺序与回归要求。
+
+---
+
+## 19. 当前建议结论
+
+当前最优路径不是重做一个短线交易系统，而是：
 
 1. 保留现有研究型系统主线。
-2. 在同一条 pipeline 之上增加目标模块层。
-3. 新增一个 short trade target module，专门服务 T+1 短线目标。
-4. 让系统支持 research_only / short_trade_only / dual_target 三种模式。
-5. 后续再逐步把 Replay Artifacts、反馈与评估体系升级为双目标复盘平台。
+2. 在共享事实层之上增加目标模块层。
+3. 新增一个专门面向 T+1 次日交易的 Short Trade Target Module。
+4. 让系统支持 research_only、short_trade_only、dual_target 三种运行模式。
+5. 先建立目标级 artifacts 与评估体系，再决定默认档升级。
 
-这条路线的优点是：
+如果后续目标是接近更高水平的交易系统，真正需要优先做好的不是“喊出更激进的收益目标”，而是：
 
-1. 不破坏现有工程资产。
-2. 能准确承接当前 Replay Artifacts 和 selection artifacts 能力。
-3. 便于逐步验证短线目标，而不是一次性大改。
-4. 允许研究型与短线型系统长期并存，并在同一运行框架中逐步演进。
+1. 目标函数清晰
+2. 验证口径严格
+3. 执行假设真实
+4. 风险约束前置
+5. 参数治理可冻结
+6. 研究与交易两个目标长期并存且相互可对照
+
+这才是这套系统走向更高水平的正确起点。
