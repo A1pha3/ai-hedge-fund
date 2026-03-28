@@ -166,6 +166,40 @@ def _build_execution_bridge(plan: ExecutionPlan, item: LayerCResult, nav: float,
     return execution_bridge
 
 
+def _build_target_context(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
+    target_context = {
+        "target_mode": str(getattr(plan, "target_mode", "research_only") or "research_only"),
+        "selection_target_attached": False,
+    }
+    evaluation = dict(getattr(plan, "selection_targets", {}) or {}).get(ticker)
+    if evaluation is None:
+        return target_context
+
+    target_context["selection_target_attached"] = True
+    research_result = getattr(evaluation, "research", None)
+    short_trade_result = getattr(evaluation, "short_trade", None)
+    if research_result is not None:
+        target_context["research_decision"] = str(research_result.decision or "")
+    if short_trade_result is not None:
+        target_context["short_trade_decision"] = str(short_trade_result.decision or "")
+    delta_classification = getattr(evaluation, "delta_classification", None)
+    if delta_classification:
+        target_context["delta_classification"] = str(delta_classification)
+    return target_context
+
+
+def _build_target_decisions(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
+    evaluation = dict(getattr(plan, "selection_targets", {}) or {}).get(ticker)
+    if evaluation is None:
+        return {}
+    decisions: dict[str, Any] = {}
+    if getattr(evaluation, "research", None) is not None:
+        decisions["research"] = evaluation.research
+    if getattr(evaluation, "short_trade", None) is not None:
+        decisions["short_trade"] = evaluation.short_trade
+    return decisions
+
+
 def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
     buy_order_by_ticker = {order.ticker: order for order in plan.buy_orders}
     nav = _portfolio_nav(plan.portfolio_snapshot)
@@ -197,6 +231,8 @@ def _build_selected_candidates(plan: ExecutionPlan) -> list[SelectedCandidate]:
                 },
                 execution_bridge=execution_bridge,
                 research_prompts=research_prompts,
+                target_context=_build_target_context(plan, item.ticker),
+                target_decisions=_build_target_decisions(plan, item.ticker),
             )
         )
     return selected
@@ -218,6 +254,11 @@ def _build_rejected_candidates(plan: ExecutionPlan, max_candidates: int = 5) -> 
                 score_final=round(float(entry.get("score_final", 0.0) or 0.0), 4),
                 rejection_reason_codes=[str(reason) for reason in reasons],
                 rejection_reason_text=str(entry.get("reason") or ", ".join(reasons)),
+                target_context={
+                    "target_mode": str(getattr(plan, "target_mode", "research_only") or "research_only"),
+                    **_build_target_context(plan, str(entry.get("ticker") or "")),
+                },
+                target_decisions=_build_target_decisions(plan, str(entry.get("ticker") or "")),
             )
         )
     return rejected
@@ -267,6 +308,7 @@ def build_selection_snapshot(
         market=market,
         decision_timestamp=f"{formatted_trade_date}T15:05:00+08:00",
         data_available_until=f"{formatted_trade_date}T15:00:00+08:00",
+        target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
         pipeline_config_snapshot=_build_pipeline_config_snapshot(pipeline, selected_analysts),
         universe_summary={
             "input_symbol_count": int(counts.get("layer_a_count", plan.layer_a_count) or 0),
@@ -278,6 +320,8 @@ def build_selection_snapshot(
         },
         selected=_build_selected_candidates(plan),
         rejected=_build_rejected_candidates(plan),
+        selection_targets=dict(plan.selection_targets or {}),
+        target_summary=plan.dual_target_summary,
         buy_orders=[order.model_dump(mode="json") for order in plan.buy_orders],
         sell_orders=[order.model_dump(mode="json") for order in plan.sell_orders],
         funnel_diagnostics=funnel_diagnostics,

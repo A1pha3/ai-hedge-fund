@@ -167,6 +167,66 @@ def _build_execution_plan_provenance_summary(pipeline: DailyPipeline | None) -> 
     }
 
 
+def _build_dual_target_session_summary(daily_events_path: Path) -> dict:
+    summary = {
+        "day_count": 0,
+        "days_with_selection_targets": 0,
+        "selection_target_count": 0,
+        "research_target_count": 0,
+        "short_trade_target_count": 0,
+        "research_selected_count": 0,
+        "research_near_miss_count": 0,
+        "research_rejected_count": 0,
+        "short_trade_selected_count": 0,
+        "short_trade_near_miss_count": 0,
+        "short_trade_rejected_count": 0,
+        "shell_target_count": 0,
+        "target_mode_counts": {},
+        "delta_classification_counts": {},
+    }
+    if not daily_events_path.exists():
+        return summary
+
+    try:
+        lines = [line for line in daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError as error:
+        summary["read_error"] = str(error)
+        return summary
+
+    for line in lines:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("event") != "paper_trading_day":
+            continue
+
+        summary["day_count"] += 1
+        current_plan = dict(payload.get("current_plan") or {})
+        target_mode = str(current_plan.get("target_mode") or "research_only")
+        summary["target_mode_counts"][target_mode] = int(summary["target_mode_counts"].get(target_mode) or 0) + 1
+
+        selection_targets = dict(current_plan.get("selection_targets") or {})
+        if selection_targets:
+            summary["days_with_selection_targets"] += 1
+        summary["selection_target_count"] += len(selection_targets)
+
+        target_summary = dict(current_plan.get("dual_target_summary") or {})
+        summary["research_target_count"] += int(target_summary.get("research_target_count") or 0)
+        summary["short_trade_target_count"] += int(target_summary.get("short_trade_target_count") or 0)
+        summary["research_selected_count"] += int(target_summary.get("research_selected_count") or 0)
+        summary["research_near_miss_count"] += int(target_summary.get("research_near_miss_count") or 0)
+        summary["research_rejected_count"] += int(target_summary.get("research_rejected_count") or 0)
+        summary["short_trade_selected_count"] += int(target_summary.get("short_trade_selected_count") or 0)
+        summary["short_trade_near_miss_count"] += int(target_summary.get("short_trade_near_miss_count") or 0)
+        summary["short_trade_rejected_count"] += int(target_summary.get("short_trade_rejected_count") or 0)
+        summary["shell_target_count"] += int(target_summary.get("shell_target_count") or 0)
+        for key, value in dict(target_summary.get("delta_classification_counts") or {}).items():
+            summary["delta_classification_counts"][str(key)] = int(summary["delta_classification_counts"].get(str(key)) or 0) + int(value or 0)
+
+    return summary
+
+
 class JsonlPaperTradingRecorder:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -301,6 +361,7 @@ def run_paper_trading_session(
     llm_route_provenance, llm_metrics_artifacts = _build_llm_route_provenance()
     llm_observability_summary = _build_llm_observability_summary(Path(llm_metrics_artifacts["llm_metrics_jsonl"]))
     execution_plan_provenance = _build_execution_plan_provenance_summary(getattr(engine, "_pipeline", None))
+    dual_target_summary = _build_dual_target_session_summary(daily_events_path)
     data_cache_summary = get_cache_runtime_info()
     data_cache_summary["session_stats"] = diff_cache_stats(cache_stats_before_run, data_cache_summary.get("stats", {}))
 
@@ -386,6 +447,7 @@ def run_paper_trading_session(
         "final_portfolio_snapshot": engine.get_portfolio_snapshot(),
         "llm_route_provenance": llm_route_provenance,
         "execution_plan_provenance": execution_plan_provenance,
+        "dual_target_summary": dual_target_summary,
         "llm_observability_summary": llm_observability_summary,
         "data_cache": data_cache_summary,
         "data_cache_benchmark": cache_benchmark_summary,

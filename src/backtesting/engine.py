@@ -665,6 +665,9 @@ class BacktestEngine:
                     "counts": dict((pending_plan.risk_metrics or {}).get("counts", {})) if pending_plan is not None else {},
                     "timing_seconds": dict((pending_plan.risk_metrics or {}).get("timing_seconds", {})) if pending_plan is not None else {},
                     "funnel_diagnostics": dict((pending_plan.risk_metrics or {}).get("funnel_diagnostics", {})) if pending_plan is not None else {},
+                    "target_mode": str(getattr(pending_plan, "target_mode", "research_only") or "research_only") if pending_plan is not None else "research_only",
+                    "selection_target_count": len(dict(getattr(pending_plan, "selection_targets", {}) or {})) if pending_plan is not None else 0,
+                    "dual_target_summary": pending_plan.dual_target_summary.model_dump(mode="json") if pending_plan is not None else {},
                     "selection_artifacts": dict(getattr(pending_plan, "selection_artifacts", {}) or {}) if pending_plan is not None else {},
                 },
                 "previous_plan": {

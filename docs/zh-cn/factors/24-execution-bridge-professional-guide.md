@@ -16,6 +16,7 @@
 3. [Layer B / Layer C 联动复盘手册](./22-layer-b-c-joint-review-manual.md)
 4. [Execution Score Floor 复盘 2026-03-24](../analysis/execution-score-floor-review-20260324.md)
 5. [Replay Artifacts 选股复核操作手册](../manual/replay-artifacts-stock-selection-manual.md)
+6. [Paper Trading T 日到 T+1 时序专题](./28-paper-trading-tday-t1-timing-guide.md)
 
 ---
 
@@ -331,3 +332,5 @@ Execution Bridge 对 `score_final` 的直观分层可以近似理解为：
 ## 13. 一句话总结
 
 Execution Bridge 的核心价值，是把“研究通过”与“执行承接”拆开。复盘时，只有先确认 blocker 是分数门槛、组合约束还是再入场时序，才知道后续该改 Layer B / C、execution floor，还是根本不该动参数。
+
+如果你要继续分清“今天执行的是昨天的计划，还是今天刚生成的新计划”，继续看 [28-paper-trading-tday-t1-timing-guide.md](./28-paper-trading-tday-t1-timing-guide.md)。

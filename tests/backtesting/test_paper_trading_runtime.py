@@ -10,6 +10,7 @@ from src.execution.models import ExecutionPlan
 from src.execution.models import LayerCResult
 from src.paper_trading.runtime import run_paper_trading_session
 from src.portfolio.models import PositionPlan
+from src.targets.models import DualTargetEvaluation, DualTargetSummary
 
 
 class StubPipeline:
@@ -89,6 +90,9 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
         portfolio_snapshot={"cash": 100000.0, "positions": {}},
         risk_metrics={"counts": {"watchlist_count": 1}},
+        selection_targets={"AAPL": DualTargetEvaluation(ticker="AAPL", trade_date="20240301")},
+        target_mode="research_only",
+        dual_target_summary=DualTargetSummary(target_mode="research_only", selection_target_count=1, shell_target_count=1),
     )
     pipeline = StubPipeline(
         post_market_plans=[plan, ExecutionPlan(date="20240304", portfolio_snapshot={})],
@@ -129,6 +133,8 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     assert lines[0]["event"] == "paper_trading_day"
     assert "current_plan" in lines[0]
     assert lines[0]["current_plan"]["selection_artifacts"]["write_status"] == "success"
+    assert lines[0]["current_plan"]["target_mode"] == "research_only"
+    assert lines[0]["current_plan"]["dual_target_summary"]["selection_target_count"] == 1
     assert lines[0]["execution_plan_provenance"] == [
         {
             "trade_date": "20240301",
@@ -146,6 +152,8 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     day_timing = next(line for line in timing_lines if line.get("event") == "pipeline_day_timing" and line.get("trade_date") == "20240301")
     assert day_timing["execution_plan_provenance"] == lines[0]["execution_plan_provenance"]
     assert day_timing["current_plan"]["selection_artifacts"]["write_status"] == "success"
+    assert day_timing["current_plan"]["target_mode"] == "research_only"
+    assert day_timing["current_plan"]["selection_target_count"] == 1
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["mode"] == "paper_trading"
@@ -164,6 +172,22 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
                 },
             }
         ],
+    }
+    assert summary["dual_target_summary"] == {
+        "day_count": 3,
+        "days_with_selection_targets": 1,
+        "selection_target_count": 1,
+        "research_target_count": 0,
+        "short_trade_target_count": 0,
+        "research_selected_count": 0,
+        "research_near_miss_count": 0,
+        "research_rejected_count": 0,
+        "short_trade_selected_count": 0,
+        "short_trade_near_miss_count": 0,
+        "short_trade_rejected_count": 0,
+        "shell_target_count": 1,
+        "target_mode_counts": {"research_only": 3},
+        "delta_classification_counts": {},
     }
     assert summary["llm_route_provenance"] == {
         "session_id": "test-session",

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from src.portfolio.models import ExitSignal, PositionPlan
 from src.screening.models import MarketState, StrategySignal
+from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
 
 
 class LayerCResult(BaseModel):
@@ -52,4 +53,7 @@ class ExecutionPlan(BaseModel):
     layer_b_count: int = 0
     layer_c_count: int = 0
     watchlist: list[LayerCResult] = Field(default_factory=list)
+    selection_targets: dict[str, DualTargetEvaluation] = Field(default_factory=dict)
+    target_mode: TargetMode = "research_only"
+    dual_target_summary: DualTargetSummary = Field(default_factory=DualTargetSummary)
     selection_artifacts: dict = Field(default_factory=dict)

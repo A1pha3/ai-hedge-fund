@@ -20,6 +20,7 @@
 3. Layer C 的整体机制与 B/C 融合后的研究读法。
 4. 跨层复盘和按任务使用这些文档的方法。
 5. watchlist 到 execution bridge 的执行承接读法。
+6. paper trading 里 T 日计划到 T+1 执行的时序口径。
 
 可以把它理解成一个从规则层、因子层到复盘层的知识目录，而不是单纯的说明文集合。
 
@@ -110,14 +111,14 @@
 2. [Factors 按任务导航](./23-factors-task-navigation.md)
 3. [Execution Bridge 专业讲解](./24-execution-bridge-professional-guide.md)
 4. [Execution Bridge 一页速查卡](./25-execution-bridge-one-page-cheatsheet.md)
+5. [Paper Trading T 日到 T+1 时序专题](./28-paper-trading-tday-t1-timing-guide.md)
 
 这一层回答的是：
 
 1. 样本到底卡在 B、C、watchlist 还是 execution。
 2. 当前是在排障、复盘、调参还是讲解时，该先看哪组材料。
 3. 已经通过研究层的票，为什么仍然没有进入 buy order。
-4. 如果准备系统调参，应该按什么方法逐步收敛而不是直接试数字。
-5. 如果只想在讨论时快速查调参原则，应该看哪张工作卡。
+4. daily_events 里的 `prepared_plan`、`current_plan` 和 `executed_trades` 到底分别表示哪一天。
 
 ---
 
@@ -163,19 +164,18 @@
 1. “为什么 Layer B 调参常和直觉不一样”：看 [01-aggregation-semantics-and-factor-traps.md](./01-aggregation-semantics-and-factor-traps.md)
 2. “我想从头看懂 Layer B”：看 [03-layer-b-complete-beginner-guide.md](./03-layer-b-complete-beginner-guide.md)
 3. “我想从头看懂 Layer C”：看 [16-layer-c-complete-beginner-guide.md](./16-layer-c-complete-beginner-guide.md)
-4. “我想系统做 Layer B 调参”：看 [26-layer-b-parameter-tuning-playbook.md](./26-layer-b-parameter-tuning-playbook.md)
-5. “我只想快速看 Layer B 调参原则”：看 [27-layer-b-parameter-tuning-one-page-cheatsheet.md](./27-layer-b-parameter-tuning-one-page-cheatsheet.md)
-6. “我只想快速判断 fundamental 是不是主拖累”：看 [08-fundamental-factor-one-page-cheatsheet.md](./08-fundamental-factor-one-page-cheatsheet.md)
-7. “我想系统研究 fundamental”：看 [14-fundamental-topic-reading-path.md](./14-fundamental-topic-reading-path.md)
-8. “我在真实 report 里不知道先查谁”：看 [15-fundamental-subfactor-joint-review-manual.md](./15-fundamental-subfactor-joint-review-manual.md)
-9. “我对 fundamental 有一堆重复疑问”：看 [18-fundamental-faq.md](./18-fundamental-faq.md)
-10. “我只想快速判断 Layer C 为什么拦住了票”：看 [19-layer-c-one-page-cheatsheet.md](./19-layer-c-one-page-cheatsheet.md)
-11. “我想系统研究 Layer C”：看 [20-layer-c-topic-reading-path.md](./20-layer-c-topic-reading-path.md)
-12. “我对 Layer C 有一堆重复疑问”：看 [21-layer-c-faq.md](./21-layer-c-faq.md)
-13. “我不知道问题到底卡在哪一层”：看 [22-layer-b-c-joint-review-manual.md](./22-layer-b-c-joint-review-manual.md)
-14. “我只想按当前任务快速找入口”：看 [23-factors-task-navigation.md](./23-factors-task-navigation.md)
-15. “我想搞清楚为什么进了 watchlist 还是没下单”：看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
-16. “我只想快速判断 execution blocker 是什么意思”：看 [25-execution-bridge-one-page-cheatsheet.md](./25-execution-bridge-one-page-cheatsheet.md)
+4. “我只想快速判断 fundamental 是不是主拖累”：看 [08-fundamental-factor-one-page-cheatsheet.md](./08-fundamental-factor-one-page-cheatsheet.md)
+5. “我想系统研究 fundamental”：看 [14-fundamental-topic-reading-path.md](./14-fundamental-topic-reading-path.md)
+6. “我在真实 report 里不知道先查谁”：看 [15-fundamental-subfactor-joint-review-manual.md](./15-fundamental-subfactor-joint-review-manual.md)
+7. “我对 fundamental 有一堆重复疑问”：看 [18-fundamental-faq.md](./18-fundamental-faq.md)
+8. “我只想快速判断 Layer C 为什么拦住了票”：看 [19-layer-c-one-page-cheatsheet.md](./19-layer-c-one-page-cheatsheet.md)
+9. “我想系统研究 Layer C”：看 [20-layer-c-topic-reading-path.md](./20-layer-c-topic-reading-path.md)
+10. “我对 Layer C 有一堆重复疑问”：看 [21-layer-c-faq.md](./21-layer-c-faq.md)
+11. “我不知道问题到底卡在哪一层”：看 [22-layer-b-c-joint-review-manual.md](./22-layer-b-c-joint-review-manual.md)
+12. “我只想按当前任务快速找入口”：看 [23-factors-task-navigation.md](./23-factors-task-navigation.md)
+13. “我想搞清楚为什么进了 watchlist 还是没下单”：看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
+14. “我只想快速判断 execution blocker 是什么意思”：看 [25-execution-bridge-one-page-cheatsheet.md](./25-execution-bridge-one-page-cheatsheet.md)
+15. “我想搞清楚 T 日生成计划、T+1 执行到底怎么落盘”：看 [28-paper-trading-tday-t1-timing-guide.md](./28-paper-trading-tday-t1-timing-guide.md)
 
 ---
 

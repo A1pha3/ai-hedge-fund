@@ -14,6 +14,18 @@ def _format_layer_b_factor(factor: dict) -> str:
     return name
 
 
+def _format_target_decision(candidate, target_name: str) -> str | None:
+    decision = (candidate.target_decisions or {}).get(target_name)
+    if decision is None:
+        return None
+    summary = str(decision.decision or "unknown")
+    score_target = float(getattr(decision, "score_target", 0.0) or 0.0)
+    blockers = list(getattr(decision, "blockers", []) or [])
+    if blockers:
+        return f"{summary} (score={score_target:.4f}, blockers={', '.join(blockers[:2])})"
+    return f"{summary} (score={score_target:.4f})"
+
+
 def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
     lines = ["## 今日入选股票", ""]
     if not snapshot.selected:
@@ -25,6 +37,12 @@ def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
         lines.append(f"### {index}. {candidate.symbol} {candidate.name}".rstrip())
         lines.append(f"- final_score: {candidate.score_final:.4f}")
         lines.append(f"- buy_order: {'yes' if candidate.execution_bridge.get('included_in_buy_orders') else 'no'}")
+        research_target_summary = _format_target_decision(candidate, "research")
+        if research_target_summary:
+            lines.append(f"- research_target: {research_target_summary}")
+        short_trade_target_summary = _format_target_decision(candidate, "short_trade")
+        if short_trade_target_summary:
+            lines.append(f"- short_trade_target: {short_trade_target_summary}")
         if candidate.execution_bridge.get("block_reason"):
             blocker = str(candidate.execution_bridge.get("block_reason"))
             constraint_binding = candidate.execution_bridge.get("constraint_binding")
@@ -58,9 +76,38 @@ def _render_rejected_section(snapshot: SelectionSnapshot) -> list[str]:
     for index, candidate in enumerate(snapshot.rejected, start=1):
         lines.append(f"### {index}. {candidate.symbol} {candidate.name}".rstrip())
         lines.append(f"- rejection_stage: {candidate.rejection_stage}")
+        research_target_summary = _format_target_decision(candidate, "research")
+        if research_target_summary:
+            lines.append(f"- research_target: {research_target_summary}")
+        short_trade_target_summary = _format_target_decision(candidate, "short_trade")
+        if short_trade_target_summary:
+            lines.append(f"- short_trade_target: {short_trade_target_summary}")
         reason_text = candidate.rejection_reason_text or ", ".join(candidate.rejection_reason_codes)
         lines.append(f"- 原因: {reason_text}")
         lines.append("")
+    return lines
+
+
+def _render_target_summary(snapshot: SelectionSnapshot) -> list[str]:
+    summary = snapshot.target_summary.model_dump(mode="json") if hasattr(snapshot.target_summary, "model_dump") else dict(snapshot.target_summary or {})
+    lines = [
+        "## 双目标空壳状态",
+        "",
+        f"- target_mode: {snapshot.target_mode}",
+        f"- selection_target_count: {summary.get('selection_target_count', 0)}",
+        f"- research_target_count: {summary.get('research_target_count', 0)}",
+        f"- short_trade_target_count: {summary.get('short_trade_target_count', 0)}",
+        f"- research_selected_count: {summary.get('research_selected_count', 0)}",
+        f"- research_near_miss_count: {summary.get('research_near_miss_count', 0)}",
+        f"- research_rejected_count: {summary.get('research_rejected_count', 0)}",
+        f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count', 0)}",
+        f"- shell_target_count: {summary.get('shell_target_count', 0)}",
+    ]
+    if snapshot.selection_targets:
+        lines.append(f"- attached_target_tickers: {', '.join(sorted(snapshot.selection_targets.keys()))}")
+    else:
+        lines.append("- attached_target_tickers: none")
+    lines.append("")
     return lines
 
 
@@ -79,6 +126,7 @@ def render_selection_review(snapshot: SelectionSnapshot) -> str:
         f"- buy_order_count: {counts.get('buy_order_count', 0)}",
         "",
     ]
+    lines.extend(_render_target_summary(snapshot))
     lines.extend(_render_selected_section(snapshot))
     lines.extend(_render_rejected_section(snapshot))
     lines.extend(

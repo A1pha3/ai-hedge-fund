@@ -6,6 +6,8 @@ from src.execution.models import ExecutionPlan, LayerCResult
 from src.screening.models import MarketState
 from src.portfolio.models import ExitSignal, PositionPlan
 from src.research.artifacts import FileSelectionArtifactWriter
+from src.targets.models import DualTargetEvaluation, DualTargetSummary
+from src.targets.router import build_selection_targets
 
 
 def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
@@ -48,6 +50,11 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
                 decision="watch",
             )
         ],
+        selection_targets={
+            "000001": DualTargetEvaluation(ticker="000001", trade_date="20260322"),
+        },
+        target_mode="research_only",
+        dual_target_summary=DualTargetSummary(target_mode="research_only", selection_target_count=1, shell_target_count=1),
         buy_orders=[PositionPlan(ticker="000001", shares=100, amount=12000.0, score_final=0.69, quality_score=0.65)],
         sell_orders=[ExitSignal(ticker="600000", level="trim", trigger_reason="take_profit")],
     )
@@ -58,6 +65,85 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     assert (tmp_path / "2026-03-22" / "selection_snapshot.json").exists()
     assert (tmp_path / "2026-03-22" / "selection_review.md").exists()
     assert (tmp_path / "2026-03-22" / "research_feedback.jsonl").exists()
+    snapshot_text = (tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8")
+    review_text = (tmp_path / "2026-03-22" / "selection_review.md").read_text(encoding="utf-8")
+    assert '"target_mode": "research_only"' in snapshot_text
+    assert '"selection_targets": {' in snapshot_text
+    assert '"shell_target_count": 1' in snapshot_text
+    assert "## 双目标空壳状态" in review_text
+    assert "selection_target_count: 1" in review_text
+
+
+def test_file_selection_artifact_writer_renders_target_decisions_for_selected_and_rejected(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_target_decisions")
+    watch_item = LayerCResult(
+        ticker="000001",
+        score_b=0.71,
+        score_c=0.66,
+        score_final=0.69,
+        quality_score=0.65,
+        decision="watch",
+    )
+    selection_targets, dual_target_summary = build_selection_targets(
+        trade_date="20260322",
+        watchlist=[watch_item],
+        rejected_entries=[
+            {
+                "ticker": "300750",
+                "score_b": 0.61,
+                "score_c": 0.20,
+                "score_final": 0.39,
+                "reason": "score_final_below_watchlist_threshold",
+                "reasons": ["score_final_below_watchlist_threshold"],
+            }
+        ],
+        buy_order_tickers={"000001"},
+        target_mode="dual_target",
+    )
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {
+                "layer_a_count": 50,
+                "layer_b_count": 8,
+                "watchlist_count": 1,
+                "buy_order_count": 1,
+                "sell_order_count": 0,
+            },
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {
+                        "tickers": [
+                            {
+                                "ticker": "300750",
+                                "score_b": 0.61,
+                                "score_c": 0.20,
+                                "score_final": 0.39,
+                                "reason": "score_final_below_watchlist_threshold",
+                                "reasons": ["score_final_below_watchlist_threshold"],
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+        watchlist=[watch_item],
+        selection_targets=selection_targets,
+        target_mode="dual_target",
+        dual_target_summary=dual_target_summary,
+        buy_orders=[PositionPlan(ticker="000001", shares=100, amount=12000.0, score_final=0.69, quality_score=0.65)],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    review_text = (tmp_path / "2026-03-22" / "selection_review.md").read_text(encoding="utf-8")
+    snapshot_text = (tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8")
+    assert "research_target: selected" in review_text
+    assert "short_trade_target: rejected" in review_text
+    assert '"target_decisions": {' in snapshot_text
+    assert '"delta_classification": "research_pass_short_reject"' in snapshot_text
 
 
 def test_file_selection_artifact_writer_builds_fallback_layer_b_factors_for_legacy_replay(tmp_path):

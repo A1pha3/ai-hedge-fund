@@ -23,6 +23,8 @@ from src.screening.models import CandidateStock
 from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
+from src.targets.models import DualTargetSummary, TargetMode
+from src.targets.router import build_selection_targets, summarize_selection_targets
 from src.llm.defaults import get_default_model_config
 from src.tools.tushare_api import get_daily_basic_batch
 
@@ -311,6 +313,28 @@ def build_watchlist_price_map(trade_date: str, tickers: list[str]) -> dict[str, 
     return price_map
 
 
+def _ensure_plan_target_shells(plan: ExecutionPlan, target_mode: TargetMode) -> ExecutionPlan:
+    selection_targets = dict(plan.selection_targets or {})
+    summary = plan.dual_target_summary if isinstance(plan.dual_target_summary, DualTargetSummary) else DualTargetSummary.model_validate(plan.dual_target_summary or {})
+    rejected_entries = list((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("watchlist", {}).get("tickers", []) or [])
+    buy_order_tickers = {order.ticker for order in list(plan.buy_orders or [])}
+    if not selection_targets and (plan.watchlist or rejected_entries):
+        selection_targets, summary = build_selection_targets(
+            trade_date=plan.date,
+            watchlist=plan.watchlist,
+            rejected_entries=rejected_entries,
+            buy_order_tickers=buy_order_tickers,
+            target_mode=target_mode,
+        )
+    else:
+        summary = summarize_selection_targets(selection_targets=selection_targets, target_mode=target_mode)
+
+    plan.selection_targets = selection_targets
+    plan.target_mode = target_mode
+    plan.dual_target_summary = summary
+    return plan
+
+
 def build_buy_orders_with_diagnostics(
     watchlist: list[LayerCResult],
     portfolio_snapshot: dict,
@@ -416,6 +440,7 @@ class DailyPipeline:
     base_model_provider: str = field(default_factory=lambda: get_default_model_config()[1])
     frozen_post_market_plans: dict[str, ExecutionPlan] | None = None
     frozen_plan_source: str | None = None
+    target_mode: TargetMode = "research_only"
     execution_plan_provenance_log: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -425,7 +450,7 @@ class DailyPipeline:
         self._exit_checker_accepts_logic_scores = len(signature(self.exit_checker).parameters) >= 3
         if self.frozen_post_market_plans is not None:
             self.frozen_post_market_plans = {
-                str(trade_date): ExecutionPlan.model_validate(plan)
+                str(trade_date): _ensure_plan_target_shells(ExecutionPlan.model_validate(plan), self.target_mode)
                 for trade_date, plan in self.frozen_post_market_plans.items()
             }
 
@@ -468,6 +493,7 @@ class DailyPipeline:
 
     def _apply_frozen_buy_order_filters(self, frozen_plan: ExecutionPlan, trade_date: str, blocked_buy_tickers: dict[str, dict]) -> ExecutionPlan:
         plan = frozen_plan.model_copy(deep=True)
+        plan = _ensure_plan_target_shells(plan, self.target_mode)
         if not blocked_buy_tickers or not plan.buy_orders:
             return plan
 
@@ -623,6 +649,13 @@ class DailyPipeline:
             "sell_check": round(sell_check_seconds, 3),
             "total_post_market": round(perf_counter() - total_started_at, 3),
         }
+        selection_targets, dual_target_summary = build_selection_targets(
+            trade_date=trade_date,
+            watchlist=watchlist,
+            rejected_entries=list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
+            buy_order_tickers={order.ticker for order in buy_orders},
+            target_mode=self.target_mode,
+        )
         return generate_execution_plan(
             trade_date=trade_date,
             market_state=market_state,
@@ -640,6 +673,9 @@ class DailyPipeline:
             layer_a_count=len(candidates),
             layer_b_count=len(high_pool),
             layer_c_count=len(layer_c_results),
+            selection_targets=selection_targets,
+            target_mode=self.target_mode,
+            dual_target_summary=dual_target_summary,
         )
 
     def run_pre_market(

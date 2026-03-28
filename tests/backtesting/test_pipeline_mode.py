@@ -353,9 +353,11 @@ def test_pipeline_mode_records_selection_artifacts_in_event_and_timing_logs(tmp_
     timing_lines = [json.loads(line) for line in timing_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     day_timing = next(line for line in timing_lines if line.get("event") == "pipeline_day_timing")
     assert day_timing["current_plan"]["selection_artifacts"]["write_status"] == "success"
+    assert day_timing["current_plan"]["target_mode"] == "research_only"
 
     assert event_payloads
     assert event_payloads[0]["current_plan"]["selection_artifacts"]["write_status"] == "success"
+    assert event_payloads[0]["current_plan"]["target_mode"] == "research_only"
     assert (tmp_path / "selection_artifacts" / "2024-03-01" / "selection_snapshot.json").exists()
     assert len(pipeline.post_market_calls) == 1
     assert pipeline.post_market_calls[0][0] == "20240301"

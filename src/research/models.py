@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+
 
 RESEARCH_FEEDBACK_LABEL_VERSION = "v1"
 RESEARCH_FEEDBACK_ALLOWED_TAGS = (
@@ -34,6 +36,8 @@ class SelectedCandidate(BaseModel):
     layer_c_summary: dict[str, Any] = Field(default_factory=dict)
     execution_bridge: dict[str, Any] = Field(default_factory=dict)
     research_prompts: dict[str, list[str]] = Field(default_factory=dict)
+    target_context: dict[str, Any] = Field(default_factory=dict)
+    target_decisions: dict[str, TargetEvaluationResult] = Field(default_factory=dict)
 
 
 class RejectedCandidate(BaseModel):
@@ -45,6 +49,8 @@ class RejectedCandidate(BaseModel):
     score_final: float = 0.0
     rejection_reason_codes: list[str] = Field(default_factory=list)
     rejection_reason_text: str = ""
+    target_context: dict[str, Any] = Field(default_factory=dict)
+    target_decisions: dict[str, TargetEvaluationResult] = Field(default_factory=dict)
 
 
 class SelectionSnapshot(BaseModel):
@@ -55,10 +61,13 @@ class SelectionSnapshot(BaseModel):
     market: str = "CN"
     decision_timestamp: str
     data_available_until: str
+    target_mode: str = "research_only"
     pipeline_config_snapshot: dict[str, Any] = Field(default_factory=dict)
     universe_summary: dict[str, Any] = Field(default_factory=dict)
     selected: list[SelectedCandidate] = Field(default_factory=list)
     rejected: list[RejectedCandidate] = Field(default_factory=list)
+    selection_targets: dict[str, DualTargetEvaluation] = Field(default_factory=dict)
+    target_summary: DualTargetSummary = Field(default_factory=DualTargetSummary)
     buy_orders: list[dict[str, Any]] = Field(default_factory=list)
     sell_orders: list[dict[str, Any]] = Field(default_factory=list)
     funnel_diagnostics: dict[str, Any] = Field(default_factory=dict)

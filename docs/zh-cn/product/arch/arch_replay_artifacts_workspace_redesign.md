@@ -1,5 +1,20 @@
 # Replay Artifacts 一级工作台改造设计与执行计划
 
+> 文档状态：Replay Artifacts 一级工作台改造记录
+> 最近补充导航时间：2026-03-28 10:06:25 CST
+> 相关专题：如果你当前关注的是双目标系统后续如何消费 artifact 和 workspace 结果，请从 [dual_target_system/README.md](./dual_target_system/README.md) 进入，而不是只停留在本前端工作台文档。
+
+## 专题导航
+
+本文档聚焦的是 Replay Artifacts 从 Settings 子页面升级为一级工作台的前端/交互/工作流设计，不负责定义双目标系统本身的目标模型、ExecutionPlan 扩展或 artifact 字段协议。
+
+如果你现在继续推进的是“双目标系统如何接入 artifact、review、summary 和后续 workspace 消费”，建议同时参考以下文档：
+
+1. [双目标系统专题目录](./dual_target_system/README.md)
+2. [双目标系统数据结构与 Artifact Schema 规格](./dual_target_system/dual_target_data_contract_and_artifact_schema.md)
+3. [双目标系统实施与代码改造计划](./dual_target_system/dual_target_implementation_plan.md)
+4. [选股优先优化方案实施设计文档](./arch_optimize_implementation.md)
+
 ## 0. 当前落地状态
 
 截至 2026-03-25，本文档描述的第一阶段主线改造已经完成，文档不再只是“待实施设计”，同时也是本轮前端结构升级的落地记录。
@@ -460,10 +475,10 @@ Top Bar 建议新增 Replay Artifacts 一级入口，形式可选：
 
 1. app/frontend/src/services/tab-service.ts
 2. app/frontend/src/contexts/tabs-context.tsx
-2. app/frontend/src/components/Layout.tsx
-3. app/frontend/src/components/layout/top-bar.tsx
-4. app/frontend/src/components/settings/settings.tsx
-5. app/frontend/src/components/settings/replay-artifacts.tsx
+3. app/frontend/src/components/Layout.tsx
+4. app/frontend/src/components/layout/top-bar.tsx
+5. app/frontend/src/components/settings/settings.tsx
+6. app/frontend/src/components/settings/replay-artifacts.tsx
 
 ### 9.2 建议新增文件
 

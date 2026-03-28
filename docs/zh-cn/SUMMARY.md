@@ -435,14 +435,7 @@ Q: 你目前的背景是什么？
 | [Factors 按任务导航](./factors/23-factors-task-navigation.md) | 按排障、复盘、调参、讲解四类任务重组文档入口，帮助快速找到最适合当前工作的材料 | 所有读者 | 按需更新 |
 | [Execution Bridge 专业讲解](./factors/24-execution-bridge-professional-guide.md) | 系统解释 watchlist 到 buy order 的承接逻辑、执行分数档位、blocker 语义与复盘顺序 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Execution Bridge 一页速查卡](./factors/25-execution-bridge-one-page-cheatsheet.md) | 把 execution bridge 的关键字段、常见 blocker 和最小复盘顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
-| [Layer B 调参作战手册](./factors/26-layer-b-parameter-tuning-playbook.md) | 从 why、what、how 三层系统整理 Layer B 调参原则、优先级、实验闭环、验收标准和 AI 协作模板 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
-| [Layer B 调参一页速查卡](./factors/27-layer-b-parameter-tuning-one-page-cheatsheet.md) | 把 Layer B 调参的原则、优先级、实验流程、指标和常见误区压缩成一页工作卡 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
-| [双目标系统专题目录](./product/arch/dual_target_system/README.md) | 汇总本轮双目标系统架构改造的专题文档入口，便于集中查找、评审和后续维护 | 产品、开发者、研究者 | 按需更新 |
-| [双目标选股系统架构设计文档](./product/arch/dual_target_system/arch_dual_target_selection_system.md) | 说明如何在保留现有研究型选股主线的前提下，新增面向 T+1 次日短线交易的目标模块，并支持单目标或双目标运行 | 产品、开发者、研究者 | 按需更新 |
-| [次日短线目标指标与验证方案](./product/arch/dual_target_system/short_trade_target_metrics_and_validation.md) | 定义短线目标的 success metrics、执行真实性约束、验证窗口、regime 切片和默认档升级门槛，避免回测幻觉和主观调参 | 产品、开发者、研究者 | 按需更新 |
-| [次日短线目标首版规则集规格](./product/arch/dual_target_system/short_trade_target_rule_spec.md) | 把 short trade target 首版规则拆成输入事实、因子集、归一化、gate 顺序、explainability 和测试建议，便于后续实现与评审 | 产品、开发者、研究者 | 按需更新 |
-| [双目标系统数据结构与 Artifact Schema 规格](./product/arch/dual_target_system/dual_target_data_contract_and_artifact_schema.md) | 冻结双目标系统的目标层输入输出、ExecutionPlan 承接方式、selection_artifacts 扩展结构，以及 replay、summary、feedback 的字段级协议 | 产品、开发者、研究者 | 按需更新 |
-| [双目标系统实施与代码改造计划](./product/arch/dual_target_system/dual_target_implementation_plan.md) | 把双目标系统的实际施工顺序收敛为阶段化改造计划，明确代码落点、每阶段产物、回归要求和风险控制策略 | 产品、开发者、研究者 | 按需更新 |
+| [Paper Trading T 日到 T+1 时序专题](./factors/28-paper-trading-tday-t1-timing-guide.md) | 专门解释 T 日 post-market 计划生成、pending plan 沿用、prepared_plan、current_plan 与 executed_trades 的真实落盘口径 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子专业讲解](./factors/07-fundamental-factor-professional-guide.md) | 单独拆解 Layer B 中 fundamental 因子的五个子因子、阈值、聚合语义、业务角色与调试路径 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子一页速查卡](./factors/08-fundamental-factor-one-page-cheatsheet.md) | 把 fundamental 因子的角色、五个子因子、profitability cliff 和复盘阅读顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Profitability 子因子专业讲解](./factors/09-profitability-subfactor-professional-guide.md) | 单独拆解 profitability 的 hard cliff、zero_pass_mode、聚合陷阱、quality-first guard 与实验口径 | 开发者、研究者、复盘人员 | 按需更新 |
