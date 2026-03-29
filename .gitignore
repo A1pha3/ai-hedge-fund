@@ -21,8 +21,25 @@ data/reports/paper_trading_20260326_20260326_live_m2_7_dual_target_20260328/
 data/reports/paper_trading_*_dual_target_replay_input_validation_*/
 data/reports/paper_trading_*_boundary_builder_validation_*/
 data/reports/paper_trading_*_short_trade_boundary_prefilter_*/
+data/reports/paper_trading_*_catalyst_floor_zero_validation_*/
 data/reports/paper_trading_window_20260310_20260313_w1_frozen_replay_m2_7_dual_target_20260328/
 data/reports/paper_trading_window_20260202_20260313_w1_frozen_replay_m2_7_20260319/selection_artifacts/
+data/reports/pre_layer_short_trade_outcomes_*.json
+data/reports/pre_layer_short_trade_outcomes_*.md
+data/reports/short_trade_blocker_analysis_*.json
+data/reports/short_trade_blocker_analysis_*.md
+data/reports/short_trade_boundary_coverage_variants_*.json
+data/reports/short_trade_boundary_coverage_variants_*.md
+data/reports/short_trade_boundary_expansion_cases_*.json
+data/reports/short_trade_boundary_expansion_cases_*.md
+data/reports/short_trade_boundary_filtered_candidates_*.json
+data/reports/short_trade_boundary_filtered_candidates_*.md
+data/reports/short_trade_boundary_score_failures_*.json
+data/reports/short_trade_boundary_score_failures_*.md
+data/reports/short_trade_boundary_score_failures_frontier_*.json
+data/reports/short_trade_boundary_score_failures_frontier_*.md
+data/reports/short_trade_boundary_targeted_coverage_variants_*.json
+data/reports/short_trade_boundary_targeted_coverage_variants_*.md
 
 # Python
 __pycache__/

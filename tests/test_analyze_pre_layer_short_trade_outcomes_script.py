@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import json
+
+import pandas as pd
+
+from scripts.analyze_pre_layer_short_trade_outcomes import analyze_pre_layer_short_trade_outcomes
+
+
+def test_analyze_pre_layer_short_trade_outcomes_summarizes_next_day_returns(tmp_path, monkeypatch):
+    report_dir = tmp_path / "report"
+    day1 = report_dir / "selection_artifacts" / "2026-03-25"
+    day2 = report_dir / "selection_artifacts" / "2026-03-26"
+    day1.mkdir(parents=True)
+    day2.mkdir(parents=True)
+
+    (day1 / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-25",
+                "supplemental_short_trade_entries": [
+                    {
+                        "ticker": "300724",
+                        "candidate_source": "short_trade_boundary",
+                        "short_trade_boundary_metrics": {
+                            "candidate_score": 0.31,
+                            "breakout_freshness": 0.42,
+                            "trend_acceleration": 0.51,
+                            "volume_expansion_quality": 0.22,
+                            "catalyst_freshness": 0.19,
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (day2 / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-26",
+                "supplemental_short_trade_entries": [
+                    {
+                        "ticker": "300111",
+                        "candidate_source": "short_trade_boundary",
+                        "short_trade_boundary_metrics": {
+                            "candidate_score": 0.26,
+                            "breakout_freshness": 0.25,
+                            "trend_acceleration": 0.24,
+                            "volume_expansion_quality": 0.15,
+                            "catalyst_freshness": 0.12,
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str):
+        if ticker == "300724":
+            return pd.DataFrame(
+                [
+                    {"date": "2026-03-25", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "volume": 1000},
+                    {"date": "2026-03-26", "open": 10.1, "high": 10.6, "low": 10.0, "close": 10.3, "volume": 1200},
+                ]
+            ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+        if ticker == "300111":
+            return pd.DataFrame(
+                [
+                    {"date": "2026-03-26", "open": 8.0, "high": 8.1, "low": 7.8, "close": 8.0, "volume": 900},
+                    {"date": "2026-03-27", "open": 7.9, "high": 8.0, "low": 7.5, "close": 7.7, "volume": 950},
+                ]
+            ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+        raise AssertionError(f"Unexpected ticker: {ticker}")
+
+    monkeypatch.setattr("scripts.analyze_pre_layer_short_trade_outcomes.get_price_data", fake_get_price_data)
+
+    analysis = analyze_pre_layer_short_trade_outcomes(report_dir, candidate_sources={"short_trade_boundary"}, next_high_hit_threshold=0.02)
+
+    assert analysis["candidate_count"] == 2
+    assert analysis["data_status_counts"] == {"ok": 2}
+    assert analysis["candidate_source_counts"] == {"short_trade_boundary": 2}
+    assert analysis["next_high_hit_rate_at_threshold"] == 0.5
+    assert analysis["next_close_positive_rate"] == 0.5
+    assert analysis["source_breakdown"]["short_trade_boundary"]["count"] == 2
+    assert analysis["top_cases"][0]["ticker"] == "300724"
+
+
+def test_analyze_pre_layer_short_trade_outcomes_tracks_missing_price_data(tmp_path, monkeypatch):
+    report_dir = tmp_path / "report"
+    day1 = report_dir / "selection_artifacts" / "2026-03-25"
+    day1.mkdir(parents=True)
+    (day1 / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-25",
+                "supplemental_short_trade_entries": [
+                    {
+                        "ticker": "300724",
+                        "candidate_source": "layer_b_boundary",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("scripts.analyze_pre_layer_short_trade_outcomes.get_price_data", lambda *args, **kwargs: pd.DataFrame())
+
+    analysis = analyze_pre_layer_short_trade_outcomes(report_dir, candidate_sources={"layer_b_boundary"})
+
+    assert analysis["candidate_count"] == 1
+    assert analysis["data_status_counts"] == {"missing_price_frame": 1}
+    assert analysis["next_high_hit_rate_at_threshold"] is None
+    assert analysis["next_close_positive_rate"] is None
