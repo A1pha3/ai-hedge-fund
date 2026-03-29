@@ -3,12 +3,17 @@
 > 文档元信息
 >
 > - 首次创建日期：2026-03-28
-> - 最近更新时间：2026-03-28 09:45:53 CST
+> - 最近更新时间：2026-03-29 22:10:00 CST
 > - 当前目录：docs/zh-cn/product/arch/dual_target_system/
+> 当前状态
+>
+> - 状态：已从施工前计划升级为“实施计划 + 落地状态对照”文档
+> - 核心判断：Phase 1-6 主链路已基本落地，但文档此前未同步回写，且仍存在少量后续整理项
+> - 本次更新范围：修正错误链接、修正过期结论、重写测试矩阵、补充 Explainability 与 profile 抽象缺口审查
 
 ## 0. 文档定位
 
-本文档是双目标文档包的施工图版本，承接以下文档：
+本文档最初是双目标文档包的施工图版本；截至本次更新，它同时承担“施工顺序记录 + 当前落地状态对照”的作用，承接以下文档：
 
 1. [双目标选股与交易目标系统架构设计文档](./arch_dual_target_selection_system.md)
 2. [次日短线目标指标与验证方案](./short_trade_target_metrics_and_validation.md)
@@ -22,7 +27,11 @@
 3. 哪些改动必须增量兼容
 4. 每一阶段的验证和回归要求是什么
 
-本文档的用途不是替代代码实现，而是防止在真正开始改代码时重新发散。
+本文档的用途不是替代代码实现，而是：
+
+1. 记录双目标系统的原始施工顺序
+2. 对照当前代码说明哪些阶段已经落地
+3. 把剩余缺口收敛为有限优化项，避免后续继续基于过期认知发散
 
 ---
 
@@ -152,18 +161,25 @@
 3. 增加 `target_mode`
 4. 增加 `dual_target_summary`
 
-### 2.4 新增目标模块目录
+### 2.4 目标模块目录现状
 
-建议新增：
+当前已存在：
 
 1. `src/targets/models.py`
 2. `src/targets/research_target.py`
 3. `src/targets/short_trade_target.py`
 4. `src/targets/router.py`
 5. `src/targets/explainability.py`
-6. `src/targets/profiles.py`
 
-这是双目标代码主施工区。
+当前未独立落地：
+
+1. `src/targets/profiles.py`
+
+说明：
+
+1. 双目标主施工区已经形成
+2. short trade 首版规则已经在 `short_trade_target.py` 中实现
+3. profile 抽象尚未拆成独立模块，这是当前最明确的结构整理缺口之一
 
 ---
 
@@ -172,6 +188,8 @@
 建议严格分为 6 个阶段。
 
 ### Phase 1：模型冻结与空壳接线
+
+状态：已完成
 
 目标：
 
@@ -198,7 +216,15 @@
 2. 新字段为空时不影响现有逻辑
 3. 现有测试无回归
 
+当前落地说明：
+
+1. `src/targets/models.py` 已定义 `TargetEvaluationInput`、`TargetEvaluationResult`、`DualTargetEvaluation`、`DualTargetSummary`
+2. `src/execution/models.py` 已为 `ExecutionPlan` 增加 `selection_targets`、`target_mode`、`dual_target_summary`
+3. 新增字段均带默认值，旧 payload 可兼容反序列化
+
 ### Phase 2：artifact 透传
+
+状态：已完成
 
 目标：
 
@@ -224,7 +250,16 @@
 2. 旧 report 读取不受影响
 3. live pipeline / frozen replay 都能写出新增字段
 
+当前落地说明：
+
+1. `SelectionSnapshot` 已承接 `selection_targets`、`target_summary`、`research_view`、`short_trade_view`、`dual_target_delta`
+2. `FileSelectionArtifactWriter.write_for_plan()` 已将双目标字段写入 snapshot / review / replay input
+3. `src/paper_trading/runtime.py` 已把 `dual_target_summary` 聚合进 `session_summary.json`
+4. `daily_events.jsonl` 与 `pipeline_timings.jsonl` 已透传 `current_plan.target_mode` 与 `current_plan.dual_target_summary`
+
 ### Phase 3：review renderer 扩展
+
+状态：已完成
 
 目标：
 
@@ -245,7 +280,16 @@
 1. 没有双目标字段时，旧 review 样式仍可正常渲染
 2. 有双目标字段时，review 内容清晰且不膨胀
 
+当前落地说明：
+
+1. `src/research/review_renderer.py` 已渲染 Research Target Summary
+2. 已渲染 Short Trade Target Summary
+3. 已渲染 Target Delta Highlights
+4. 现有渲染测试已覆盖双目标摘要与兼容场景
+
 ### Phase 4：research target wrapper 与 short trade skeleton
+
+状态：已完成，但 short trade 已超过 skeleton 阶段
 
 目标：
 
@@ -272,7 +316,15 @@
 2. short trade skeleton 可以输出占位结果
 3. dual_target 能稳定写出 artifacts
 
+当前落地说明：
+
+1. `src/targets/router.py` 已通过 `build_selection_targets()` 在 `research_only` / `short_trade_only` / `dual_target` 三种模式下组装目标结果
+2. `src/execution/daily_pipeline.py` 已在 live pipeline 和 frozen plan shell 两条路径挂接目标路由
+3. 当前 short trade 实现已经不是纯占位 skeleton，而是具备真实分数、gate、blockers、tags 的首版规则实现
+
 ### Phase 5：short trade 首版规则接入
+
+状态：已基本完成，剩余 profile 模块化与参数治理未完成
 
 目标：
 
@@ -296,7 +348,16 @@
 2. selected / rejected / blocked 行为可解释
 3. 单测与 replay 验证通过
 
+当前落地说明：
+
+1. `src/targets/short_trade_target.py` 已实现首版分数、gate、blockers、tags、`metrics_payload`、`explainability_payload`
+2. 目标行为已经进入 replay 校准与 diagnostics 阶段
+3. 尚未独立实现 `src/targets/profiles.py`
+4. `default / conservative / aggressive` 仍主要停留在文档规格与后续参数治理层面，不应再表述为当前已完成的代码交付物
+
 ### Phase 6：工作台消费与试运行
+
+状态：已形成试运行基线
 
 目标：
 
@@ -320,41 +381,83 @@
 2. feedback 能携带 target context
 3. UI 不破坏现有研究工作流
 
+当前落地说明：
+
+1. 后端 Replay Artifact Service 已生成 `trade_date_target_index` 与 `dual_target_overview`
+2. 前端 Replay Artifacts 工作台已支持 report 级与 trade-date 级 dual-target 过滤和详情展示
+3. feedback workflow 已带上 `review_scope`，并能沿用现有研究反馈主线
+4. 当前更准确的表述应为“进入试运行与增量优化阶段”，而不是“尚待开始接 UI 消费”
+
 ---
 
-## 4. 每阶段测试要求
+## 4. 测试矩阵（已覆盖 / 待补强）
 
 ### 4.1 Phase 1-2
 
-必须增加：
+已覆盖：
 
 1. targets models 单元测试
 2. selection_snapshot schema 扩展测试
 3. session_summary / daily_events 双目标字段挂接测试
 
+对应测试：
+
+1. `tests/targets/test_target_models.py`
+2. `tests/research/test_selection_artifact_writer.py`
+3. `tests/backtesting/test_paper_trading_runtime.py`
+
 ### 4.2 Phase 3
 
-必须增加：
+已覆盖：
 
 1. review renderer 双目标渲染测试
 2. 旧 snapshot 向后兼容渲染测试
 
+对应测试：
+
+1. `tests/research/test_selection_review_renderer.py`
+
 ### 4.3 Phase 4-5
 
-必须增加：
+已覆盖：
 
 1. research wrapper 一致性测试
 2. short trade gate 顺序测试
 3. explainability tags / blockers 输出测试
 4. dual_target mode 运行测试
 
+对应测试：
+
+1. `tests/targets/test_target_models.py`
+2. `tests/execution/test_phase4_execution.py`
+3. `tests/test_replay_selection_target_calibration_script.py`
+
+待补强：
+
+1. profile 抽象不存在时的参数治理测试
+2. Explainability payload 的端到端消费测试
+3. 规则参数切换与 CLI / workspace 接口联动测试
+
 ### 4.4 Phase 6
 
-必须增加：
+已覆盖：
 
 1. replay artifact backend 路由测试
 2. 前端 dual-target 视图测试
 3. 必要的 smoke / workflow 回归
+
+对应测试：
+
+1. `tests/backend/test_replay_artifact_service.py`
+2. `tests/backend/test_replay_artifact_routes.py`
+3. `app/frontend/src/components/replay-artifacts/replay-artifacts-inspector.test.tsx`
+4. `app/frontend/src/components/settings/replay-artifacts.test.tsx`
+
+待补强：
+
+1. Explainability 明细视图测试
+2. profile 参数在工作台中的展示与切换测试
+3. 更贴近真实报表样本的试运行 smoke 回归
 
 ---
 
@@ -381,7 +484,7 @@
 
 ## 6. 与 arch_optimize_implementation 的关系
 
-这份文档与 [arch_optimize_implementation.md](./arch_optimize_implementation.md) 的关系是：
+这份文档与 [arch_optimize_implementation.md](../arch_optimize_implementation.md) 的关系是：
 
 1. `arch_optimize_implementation.md` 记录的是 research artifact 主线已经落地的实施经验
 2. 本文档是在那个落地基线上，规划双目标系统的下一阶段施工顺序
@@ -394,42 +497,82 @@
 
 ---
 
-## 7. 第一阶段开工建议
+## 7. 当前实现状态与最近应做事项
 
-如果明天开始真正改代码，建议只做下面这一小步：
+截至本次更新，最初建议的“第一阶段开工小步”已经完成：
 
-1. 新增 `src/targets/models.py`
-2. 增量扩展 `ExecutionPlan`
-3. 增量扩展 `SelectionSnapshot`
-4. 让 artifact writer 先能写出空壳 `selection_targets`
+1. `src/targets/models.py` 已存在
+2. `ExecutionPlan` 已完成增量扩展
+3. `SelectionSnapshot` 已完成增量扩展
+4. artifact writer 已能稳定写出 `selection_targets`
 
-不要一上来就做：
+因此，当前不再建议把精力投入到重复搭建基础接线，而应优先做下面三类工作：
 
-1. 复杂 short trade 规则
-2. 前端大改
-3. entry plan 改造
-
-因为那会让排错与归因同时失控。
-
----
+1. 把文档体系从“施工前叙事”修正为“状态化实施记录”
+2. 把 profile 抽象与参数治理从规则实现中拆分出来
+3. 把 Explainability 从数据契约层推进到真实工作台消费层
 
 ## 8. 当前建议结论
 
 双目标系统现在已经具备：
 
-1. 架构总纲
-2. 指标验证口径
-3. 规则规格
-4. 数据结构协议
+1. 模型与 schema
+2. artifacts / review / session summary 主链路
+3. target router 与三种 target mode
+4. short trade 首版规则
+5. Replay Artifacts 前后端消费基线
 
-下一步正确动作不是继续抽象讨论，而是按这份文档的 6 个阶段开始增量施工。
+当前最合理的动作不再是重新按 6 个阶段从头施工，而是进入“试运行 + 结构整理 + 可解释性补强”阶段：
 
-最合理的起点是：
+1. 先修正文档与测试矩阵，防止后续继续基于过期认知讨论
+2. 再收敛 profile 抽象、参数治理与 CLI / workspace 对齐
+3. 再补 Explainability 工作台消费与真实报表反馈闭环
 
-1. 先接模型与 schema
-2. 再接 artifacts
-3. 再接 renderer
-4. 再接目标路由
-5. 最后才接首版 short trade 规则和前端视图
+这条路线更符合当前仓库的真实状态，也能避免重复做已经完成的基础工作。
 
-这条路线风险最低，也最符合当前仓库已经形成的 research artifact 主线。
+## 9. 第二轮审查：Explainability 与 profile 抽象缺口
+
+### 9.1 Explainability 当前状态
+
+已落地：
+
+1. `TargetEvaluationResult` 已包含 `metrics_payload` 与 `explainability_payload`
+2. `src/targets/short_trade_target.py` 已输出 short trade 分数构成、penalty、thresholds 等解释字段
+3. 前端 API 类型已保留 `expected_holding_window`、`preferred_entry_mode`、`metrics_payload`、`explainability_payload`
+
+未完全落地：
+
+1. Replay Artifacts 工作台当前主要消费 summary / delta / representative cases
+2. Explainability payload 还没有形成稳定的明细视图与交互入口
+3. 缺少“研究员如何使用 explainability 进行反馈标注”的工作流说明
+
+结论：
+
+1. Explainability 已到“数据契约与后端输出就绪”阶段
+2. 尚未达到“完整产品能力”阶段
+3. 后续应把它视为工作台增强项，而不是继续归类为 Phase 5 基础实现
+
+### 9.2 profile 抽象当前状态
+
+已落地：
+
+1. 文档规格中已定义 `default / conservative / aggressive` 的概念
+2. 当前 replay 校准与 diagnostics 已在做参数探索
+
+未落地：
+
+1. `src/targets/profiles.py` 当前不存在
+2. 参数档位尚未收敛为独立、可切换、可测试的 profile 配置层
+3. `--short-trade-profile` 这一类面向运行入口的稳定接口尚未在当前实现中形成清晰主线
+
+结论：
+
+1. profile 抽象是当前最明确的结构整理缺口
+2. 它不影响“short trade 首版规则已存在”这一事实
+3. 但它会影响后续参数治理、可回放性和规则切换的一致性
+
+### 9.3 建议的后续优先级
+
+1. 先完成文档与测试矩阵校正
+2. 再抽离 profile 配置层
+3. 最后把 Explainability 做成工作台可消费的明细体验

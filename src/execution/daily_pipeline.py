@@ -24,6 +24,7 @@ from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetSummary, TargetMode
+from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets, summarize_selection_targets
 from src.llm.defaults import get_default_model_config
 from src.tools.tushare_api import get_daily_basic_batch
@@ -366,26 +367,64 @@ def build_watchlist_price_map(trade_date: str, tickers: list[str]) -> dict[str, 
     return price_map
 
 
-def _ensure_plan_target_shells(plan: ExecutionPlan, target_mode: TargetMode) -> ExecutionPlan:
+def _serialize_short_trade_target_profile(profile) -> dict[str, object]:
+    return {
+        "select_threshold": float(profile.select_threshold),
+        "near_miss_threshold": float(profile.near_miss_threshold),
+        "stale_penalty_block_threshold": float(profile.stale_penalty_block_threshold),
+        "overhead_penalty_block_threshold": float(profile.overhead_penalty_block_threshold),
+        "extension_penalty_block_threshold": float(profile.extension_penalty_block_threshold),
+        "layer_c_avoid_penalty": float(profile.layer_c_avoid_penalty),
+        "stale_score_penalty_weight": float(profile.stale_score_penalty_weight),
+        "overhead_score_penalty_weight": float(profile.overhead_score_penalty_weight),
+        "extension_score_penalty_weight": float(profile.extension_score_penalty_weight),
+        "strong_bearish_conflicts": sorted(str(item) for item in profile.strong_bearish_conflicts),
+    }
+
+
+def _attach_short_trade_target_profile(
+    plan: ExecutionPlan,
+    *,
+    profile_name: str,
+    profile_overrides: dict[str, object] | None,
+) -> ExecutionPlan:
+    profile = build_short_trade_target_profile(profile_name, profile_overrides)
+    plan.short_trade_target_profile_name = profile.name
+    plan.short_trade_target_profile_config = _serialize_short_trade_target_profile(profile)
+    return plan
+
+
+def _ensure_plan_target_shells(
+    plan: ExecutionPlan,
+    target_mode: TargetMode,
+    *,
+    short_trade_target_profile_name: str = "default",
+    short_trade_target_profile_overrides: dict[str, object] | None = None,
+) -> ExecutionPlan:
     selection_targets = dict(plan.selection_targets or {})
     summary = plan.dual_target_summary if isinstance(plan.dual_target_summary, DualTargetSummary) else DualTargetSummary.model_validate(plan.dual_target_summary or {})
     rejected_entries = list((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("watchlist", {}).get("tickers", []) or [])
     buy_order_tickers = {order.ticker for order in list(plan.buy_orders or [])}
     if not selection_targets and (plan.watchlist or rejected_entries):
-        selection_targets, summary = build_selection_targets(
-            trade_date=plan.date,
-            watchlist=plan.watchlist,
-            rejected_entries=rejected_entries,
-            buy_order_tickers=buy_order_tickers,
-            target_mode=target_mode,
-        )
+        with use_short_trade_target_profile(profile_name=short_trade_target_profile_name, overrides=short_trade_target_profile_overrides):
+            selection_targets, summary = build_selection_targets(
+                trade_date=plan.date,
+                watchlist=plan.watchlist,
+                rejected_entries=rejected_entries,
+                buy_order_tickers=buy_order_tickers,
+                target_mode=target_mode,
+            )
     else:
         summary = summarize_selection_targets(selection_targets=selection_targets, target_mode=target_mode)
 
     plan.selection_targets = selection_targets
     plan.target_mode = target_mode
     plan.dual_target_summary = summary
-    return plan
+    return _attach_short_trade_target_profile(
+        plan,
+        profile_name=short_trade_target_profile_name,
+        profile_overrides=short_trade_target_profile_overrides,
+    )
 
 
 def build_buy_orders_with_diagnostics(
@@ -494,6 +533,8 @@ class DailyPipeline:
     frozen_post_market_plans: dict[str, ExecutionPlan] | None = None
     frozen_plan_source: str | None = None
     target_mode: TargetMode = "research_only"
+    short_trade_target_profile_name: str = "default"
+    short_trade_target_profile_overrides: dict[str, object] = field(default_factory=dict)
     execution_plan_provenance_log: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -501,9 +542,20 @@ class DailyPipeline:
             self.agent_runner = self._run_agents_with_base_model
         self._skip_precise_stage = _should_skip_precise_stage(self.base_model_name, self.base_model_provider)
         self._exit_checker_accepts_logic_scores = len(signature(self.exit_checker).parameters) >= 3
+        self.short_trade_target_profile_name = str(self.short_trade_target_profile_name or "default")
+        self.short_trade_target_profile_overrides = dict(self.short_trade_target_profile_overrides or {})
+        self._short_trade_target_profile = build_short_trade_target_profile(
+            self.short_trade_target_profile_name,
+            self.short_trade_target_profile_overrides,
+        )
         if self.frozen_post_market_plans is not None:
             self.frozen_post_market_plans = {
-                str(trade_date): _ensure_plan_target_shells(ExecutionPlan.model_validate(plan), self.target_mode)
+                str(trade_date): _ensure_plan_target_shells(
+                    ExecutionPlan.model_validate(plan),
+                    self.target_mode,
+                    short_trade_target_profile_name=self.short_trade_target_profile_name,
+                    short_trade_target_profile_overrides=self.short_trade_target_profile_overrides,
+                )
                 for trade_date, plan in self.frozen_post_market_plans.items()
             }
 
@@ -546,7 +598,12 @@ class DailyPipeline:
 
     def _apply_frozen_buy_order_filters(self, frozen_plan: ExecutionPlan, trade_date: str, blocked_buy_tickers: dict[str, dict]) -> ExecutionPlan:
         plan = frozen_plan.model_copy(deep=True)
-        plan = _ensure_plan_target_shells(plan, self.target_mode)
+        plan = _ensure_plan_target_shells(
+            plan,
+            self.target_mode,
+            short_trade_target_profile_name=self.short_trade_target_profile_name,
+            short_trade_target_profile_overrides=self.short_trade_target_profile_overrides,
+        )
         if not blocked_buy_tickers or not plan.buy_orders:
             return plan
 
@@ -704,14 +761,15 @@ class DailyPipeline:
             "sell_check": round(sell_check_seconds, 3),
             "total_post_market": round(perf_counter() - total_started_at, 3),
         }
-        selection_targets, dual_target_summary = build_selection_targets(
-            trade_date=trade_date,
-            watchlist=watchlist,
-            rejected_entries=list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
-            supplemental_short_trade_entries=list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
-            buy_order_tickers={order.ticker for order in buy_orders},
-            target_mode=self.target_mode,
-        )
+        with use_short_trade_target_profile(profile_name=self.short_trade_target_profile_name, overrides=self.short_trade_target_profile_overrides):
+            selection_targets, dual_target_summary = build_selection_targets(
+                trade_date=trade_date,
+                watchlist=watchlist,
+                rejected_entries=list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
+                supplemental_short_trade_entries=list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
+                buy_order_tickers={order.ticker for order in buy_orders},
+                target_mode=self.target_mode,
+            )
         return generate_execution_plan(
             trade_date=trade_date,
             market_state=market_state,
@@ -732,6 +790,8 @@ class DailyPipeline:
             selection_targets=selection_targets,
             target_mode=self.target_mode,
             dual_target_summary=dual_target_summary,
+            short_trade_target_profile_name=self._short_trade_target_profile.name,
+            short_trade_target_profile_config=_serialize_short_trade_target_profile(self._short_trade_target_profile),
         )
 
     def run_pre_market(

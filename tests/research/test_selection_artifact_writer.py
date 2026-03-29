@@ -79,6 +79,8 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     replay_input_text = (tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8")
     review_text = (tmp_path / "2026-03-22" / "selection_review.md").read_text(encoding="utf-8")
     assert '"target_mode": "research_only"' in snapshot_text
+    assert '"short_trade_target_profile": {' in snapshot_text
+    assert '"name": "default"' in snapshot_text
     assert '"selection_targets": {' in snapshot_text
     assert '"shell_target_count": 1' in snapshot_text
     assert '"research_view": {' in snapshot_text
@@ -248,6 +250,31 @@ def test_file_selection_artifact_writer_renders_target_decisions_for_selected_an
     assert '"supplemental_short_trade_entries": [' in replay_input_text
     assert '"strategy_signals": {' in replay_input_text
     assert '"event_sentiment": {' in replay_input_text
+
+
+def test_file_selection_artifact_writer_persists_short_trade_profile_metadata(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_profile")
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        short_trade_target_profile_name="aggressive",
+        short_trade_target_profile_config={
+            "select_threshold": 0.54,
+            "near_miss_threshold": 0.42,
+            "strong_bearish_conflicts": ["b_positive_c_strong_bearish"],
+        },
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    snapshot_text = (tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8")
+    replay_input_text = (tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8")
+    assert '"short_trade_target_profile": {' in snapshot_text
+    assert '"name": "aggressive"' in snapshot_text
+    assert '"select_threshold": 0.54' in snapshot_text
+    assert '"short_trade_target_profile": {' in replay_input_text
+    assert '"name": "aggressive"' in replay_input_text
 
 
 def test_file_selection_artifact_writer_builds_fallback_layer_b_factors_for_legacy_replay(tmp_path):

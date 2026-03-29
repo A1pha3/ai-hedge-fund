@@ -6,18 +6,7 @@ from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
 from src.targets.explainability import clamp_unit_interval, derive_confidence, trim_reasons
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
-
-
-SELECT_THRESHOLD = 0.58
-NEAR_MISS_THRESHOLD = 0.46
-STALE_PENALTY_BLOCK_THRESHOLD = 0.72
-OVERHEAD_PENALTY_BLOCK_THRESHOLD = 0.68
-EXTENSION_PENALTY_BLOCK_THRESHOLD = 0.74
-STRONG_BEARISH_CONFLICTS = {"b_positive_c_strong_bearish", "b_strong_buy_c_negative"}
-LAYER_C_AVOID_PENALTY = 0.12
-STALE_SCORE_PENALTY_WEIGHT = 0.12
-OVERHEAD_SCORE_PENALTY_WEIGHT = 0.10
-EXTENSION_SCORE_PENALTY_WEIGHT = 0.08
+from src.targets.profiles import get_active_short_trade_target_profile, get_short_trade_target_profile, use_short_trade_target_profile
 
 
 def _normalize_score(value: float) -> float:
@@ -120,6 +109,7 @@ def _summarize_penalty(name: str, value: float) -> str | None:
 
 
 def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint: int | None = None) -> TargetEvaluationResult:
+    profile = get_active_short_trade_target_profile()
     trend_signal = _load_signal(input_data.strategy_signals.get("trend"))
     event_signal = _load_signal(input_data.strategy_signals.get("event_sentiment"))
     mean_reversion_signal = _load_signal(input_data.strategy_signals.get("mean_reversion"))
@@ -149,10 +139,10 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     sector_resonance = clamp_unit_interval((0.45 * analyst_alignment) + (0.20 * investor_alignment) + (0.20 * score_c_strength) + (0.15 * event_signal_strength))
     catalyst_freshness = clamp_unit_interval((0.65 * event_freshness_strength) + (0.35 * news_sentiment_strength))
     layer_c_alignment = clamp_unit_interval((0.55 * score_c_strength) + (0.25 * analyst_alignment) + (0.20 * clamp_unit_interval(1.0 if input_data.layer_c_decision != "avoid" else 0.0)))
-    layer_c_avoid_penalty = LAYER_C_AVOID_PENALTY if input_data.layer_c_decision == "avoid" else 0.0
+    layer_c_avoid_penalty = profile.layer_c_avoid_penalty if input_data.layer_c_decision == "avoid" else 0.0
 
     stale_trend_repair_penalty = clamp_unit_interval((0.45 * mean_reversion_strength) + (0.35 * long_trend_strength) + (0.20 * max(0.0, long_trend_strength - breakout_freshness)))
-    overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in STRONG_BEARISH_CONFLICTS else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
+    overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.strong_bearish_conflicts else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
     extension_without_room_penalty = clamp_unit_interval((0.45 * long_trend_strength) + (0.35 * max(0.0, volatility_strength - catalyst_freshness)) + (0.20 * clamp_unit_interval((score_final_strength - 0.72) / 0.28)))
 
     weighted_positive_contributions = {
@@ -165,9 +155,9 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         "layer_c_alignment": round(0.10 * layer_c_alignment, 4),
     }
     weighted_negative_contributions = {
-        "stale_trend_repair_penalty": round(STALE_SCORE_PENALTY_WEIGHT * stale_trend_repair_penalty, 4),
-        "overhead_supply_penalty": round(OVERHEAD_SCORE_PENALTY_WEIGHT * overhead_supply_penalty, 4),
-        "extension_without_room_penalty": round(EXTENSION_SCORE_PENALTY_WEIGHT * extension_without_room_penalty, 4),
+        "stale_trend_repair_penalty": round(profile.stale_score_penalty_weight * stale_trend_repair_penalty, 4),
+        "overhead_supply_penalty": round(profile.overhead_score_penalty_weight * overhead_supply_penalty, 4),
+        "extension_without_room_penalty": round(profile.extension_score_penalty_weight * extension_without_room_penalty, 4),
         "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
     }
     total_positive_contribution = round(sum(weighted_positive_contributions.values()), 4)
@@ -181,9 +171,9 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         + (0.12 * sector_resonance)
         + (0.08 * catalyst_freshness)
         + (0.10 * layer_c_alignment)
-        - (STALE_SCORE_PENALTY_WEIGHT * stale_trend_repair_penalty)
-        - (OVERHEAD_SCORE_PENALTY_WEIGHT * overhead_supply_penalty)
-        - (EXTENSION_SCORE_PENALTY_WEIGHT * extension_without_room_penalty)
+        - (profile.stale_score_penalty_weight * stale_trend_repair_penalty)
+        - (profile.overhead_score_penalty_weight * overhead_supply_penalty)
+        - (profile.extension_score_penalty_weight * extension_without_room_penalty)
         - layer_c_avoid_penalty
     )
 
@@ -204,19 +194,19 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         negative_tags.append("event_signal_incomplete")
     if input_data.layer_c_decision == "avoid":
         negative_tags.append("layer_c_avoid_signal")
-    if input_data.bc_conflict in STRONG_BEARISH_CONFLICTS:
+    if input_data.bc_conflict in profile.strong_bearish_conflicts:
         blockers.append("layer_c_bearish_conflict")
         gate_status["structural"] = "fail"
     if _signal_signed_strength(trend_signal) <= 0.0:
         blockers.append("trend_not_constructive")
         gate_status["structural"] = "fail"
-    if stale_trend_repair_penalty >= STALE_PENALTY_BLOCK_THRESHOLD:
+    if stale_trend_repair_penalty >= profile.stale_penalty_block_threshold:
         blockers.append("stale_trend_repair_penalty")
         gate_status["structural"] = "fail"
-    if overhead_supply_penalty >= OVERHEAD_PENALTY_BLOCK_THRESHOLD:
+    if overhead_supply_penalty >= profile.overhead_penalty_block_threshold:
         blockers.append("overhead_supply_penalty")
         gate_status["structural"] = "fail"
-    if extension_without_room_penalty >= EXTENSION_PENALTY_BLOCK_THRESHOLD:
+    if extension_without_room_penalty >= profile.extension_penalty_block_threshold:
         blockers.append("extension_without_room_penalty")
         gate_status["structural"] = "fail"
 
@@ -233,10 +223,10 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
 
     if blockers:
         decision = "blocked" if gate_status["data"] == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers else "rejected"
-    elif score_target >= SELECT_THRESHOLD and breakout_freshness >= 0.35 and trend_acceleration >= 0.38:
+    elif score_target >= profile.select_threshold and breakout_freshness >= 0.35 and trend_acceleration >= 0.38:
         decision = "selected"
         gate_status["score"] = "pass"
-    elif score_target >= NEAR_MISS_THRESHOLD:
+    elif score_target >= profile.near_miss_threshold:
         decision = "near_miss"
         gate_status["score"] = "near_miss"
     else:
@@ -313,18 +303,21 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "total_positive_contribution": total_positive_contribution,
             "total_negative_contribution": total_negative_contribution,
             "thresholds": {
-                "select_threshold": round(float(SELECT_THRESHOLD), 4),
-                "near_miss_threshold": round(float(NEAR_MISS_THRESHOLD), 4),
-                "stale_penalty_block_threshold": round(float(STALE_PENALTY_BLOCK_THRESHOLD), 4),
-                "overhead_penalty_block_threshold": round(float(OVERHEAD_PENALTY_BLOCK_THRESHOLD), 4),
-                "extension_penalty_block_threshold": round(float(EXTENSION_PENALTY_BLOCK_THRESHOLD), 4),
-                "stale_score_penalty_weight": round(float(STALE_SCORE_PENALTY_WEIGHT), 4),
-                "overhead_score_penalty_weight": round(float(OVERHEAD_SCORE_PENALTY_WEIGHT), 4),
-                "extension_score_penalty_weight": round(float(EXTENSION_SCORE_PENALTY_WEIGHT), 4),
+                "profile_name": profile.name,
+                "select_threshold": round(float(profile.select_threshold), 4),
+                "near_miss_threshold": round(float(profile.near_miss_threshold), 4),
+                "stale_penalty_block_threshold": round(float(profile.stale_penalty_block_threshold), 4),
+                "overhead_penalty_block_threshold": round(float(profile.overhead_penalty_block_threshold), 4),
+                "extension_penalty_block_threshold": round(float(profile.extension_penalty_block_threshold), 4),
+                "layer_c_avoid_penalty": round(float(profile.layer_c_avoid_penalty), 4),
+                "stale_score_penalty_weight": round(float(profile.stale_score_penalty_weight), 4),
+                "overhead_score_penalty_weight": round(float(profile.overhead_score_penalty_weight), 4),
+                "extension_score_penalty_weight": round(float(profile.extension_score_penalty_weight), 4),
             },
         },
         explainability_payload={
             "source": str(input_data.replay_context.get("source") or "short_trade_target_rules_v1"),
+            "target_profile": profile.name,
             "trade_date": input_data.trade_date,
             "layer_c_decision": input_data.layer_c_decision,
             "bc_conflict": input_data.bc_conflict,
@@ -335,12 +328,42 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     )
 
 
-def evaluate_short_trade_selected_target(*, trade_date: str, item: LayerCResult, rank_hint: int | None = None, included_in_buy_orders: bool = False) -> TargetEvaluationResult:
+def evaluate_short_trade_selected_target(
+    *,
+    trade_date: str,
+    item: LayerCResult,
+    rank_hint: int | None = None,
+    included_in_buy_orders: bool = False,
+    profile_name: str | None = None,
+    profile_overrides: dict[str, Any] | None = None,
+) -> TargetEvaluationResult:
+    if profile_name is not None or profile_overrides:
+        with use_short_trade_target_profile(profile_name=profile_name or "default", overrides=profile_overrides):
+            return evaluate_short_trade_selected_target(
+                trade_date=trade_date,
+                item=item,
+                rank_hint=rank_hint,
+                included_in_buy_orders=included_in_buy_orders,
+            )
     return _evaluate_short_trade_target(
         _build_target_input_from_item(trade_date=trade_date, item=item, included_in_buy_orders=included_in_buy_orders),
         rank_hint=rank_hint,
     )
 
 
-def evaluate_short_trade_rejected_target(*, trade_date: str, entry: dict[str, Any], rank_hint: int | None = None) -> TargetEvaluationResult:
+def evaluate_short_trade_rejected_target(
+    *,
+    trade_date: str,
+    entry: dict[str, Any],
+    rank_hint: int | None = None,
+    profile_name: str | None = None,
+    profile_overrides: dict[str, Any] | None = None,
+) -> TargetEvaluationResult:
+    if profile_name is not None or profile_overrides:
+        with use_short_trade_target_profile(profile_name=profile_name or "default", overrides=profile_overrides):
+            return evaluate_short_trade_rejected_target(
+                trade_date=trade_date,
+                entry=entry,
+                rank_hint=rank_hint,
+            )
     return _evaluate_short_trade_target(_build_target_input_from_entry(trade_date=trade_date, entry=entry), rank_hint=rank_hint)

@@ -112,6 +112,14 @@ STRUCTURAL_VARIANTS: dict[str, dict[str, Any]] = {
 }
 
 
+def _default_short_trade_target_profile():
+    return short_trade_target_module.get_short_trade_target_profile("default")
+
+
+def _active_short_trade_target_profile():
+    return short_trade_target_module.get_active_short_trade_target_profile()
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -390,49 +398,29 @@ def _override_short_trade_thresholds(
     overhead_score_penalty_weight: float | None = None,
     extension_score_penalty_weight: float | None = None,
 ) -> Iterator[None]:
-    previous_select = short_trade_target_module.SELECT_THRESHOLD
-    previous_near_miss = short_trade_target_module.NEAR_MISS_THRESHOLD
-    previous_stale = short_trade_target_module.STALE_PENALTY_BLOCK_THRESHOLD
-    previous_overhead = short_trade_target_module.OVERHEAD_PENALTY_BLOCK_THRESHOLD
-    previous_extension = short_trade_target_module.EXTENSION_PENALTY_BLOCK_THRESHOLD
-    previous_avoid_penalty = short_trade_target_module.LAYER_C_AVOID_PENALTY
-    previous_conflicts = set(short_trade_target_module.STRONG_BEARISH_CONFLICTS)
-    previous_stale_score_weight = short_trade_target_module.STALE_SCORE_PENALTY_WEIGHT
-    previous_overhead_score_weight = short_trade_target_module.OVERHEAD_SCORE_PENALTY_WEIGHT
-    previous_extension_score_weight = short_trade_target_module.EXTENSION_SCORE_PENALTY_WEIGHT
-    try:
-        if select_threshold is not None:
-            short_trade_target_module.SELECT_THRESHOLD = float(select_threshold)
-        if near_miss_threshold is not None:
-            short_trade_target_module.NEAR_MISS_THRESHOLD = float(near_miss_threshold)
-        if stale_penalty_block_threshold is not None:
-            short_trade_target_module.STALE_PENALTY_BLOCK_THRESHOLD = float(stale_penalty_block_threshold)
-        if overhead_penalty_block_threshold is not None:
-            short_trade_target_module.OVERHEAD_PENALTY_BLOCK_THRESHOLD = float(overhead_penalty_block_threshold)
-        if extension_penalty_block_threshold is not None:
-            short_trade_target_module.EXTENSION_PENALTY_BLOCK_THRESHOLD = float(extension_penalty_block_threshold)
-        if layer_c_avoid_penalty is not None:
-            short_trade_target_module.LAYER_C_AVOID_PENALTY = float(layer_c_avoid_penalty)
-        if strong_bearish_conflicts is not None:
-            short_trade_target_module.STRONG_BEARISH_CONFLICTS = {str(value) for value in strong_bearish_conflicts}
-        if stale_score_penalty_weight is not None:
-            short_trade_target_module.STALE_SCORE_PENALTY_WEIGHT = float(stale_score_penalty_weight)
-        if overhead_score_penalty_weight is not None:
-            short_trade_target_module.OVERHEAD_SCORE_PENALTY_WEIGHT = float(overhead_score_penalty_weight)
-        if extension_score_penalty_weight is not None:
-            short_trade_target_module.EXTENSION_SCORE_PENALTY_WEIGHT = float(extension_score_penalty_weight)
+    overrides: dict[str, Any] = {}
+    if select_threshold is not None:
+        overrides["select_threshold"] = float(select_threshold)
+    if near_miss_threshold is not None:
+        overrides["near_miss_threshold"] = float(near_miss_threshold)
+    if stale_penalty_block_threshold is not None:
+        overrides["stale_penalty_block_threshold"] = float(stale_penalty_block_threshold)
+    if overhead_penalty_block_threshold is not None:
+        overrides["overhead_penalty_block_threshold"] = float(overhead_penalty_block_threshold)
+    if extension_penalty_block_threshold is not None:
+        overrides["extension_penalty_block_threshold"] = float(extension_penalty_block_threshold)
+    if layer_c_avoid_penalty is not None:
+        overrides["layer_c_avoid_penalty"] = float(layer_c_avoid_penalty)
+    if strong_bearish_conflicts is not None:
+        overrides["strong_bearish_conflicts"] = [str(value) for value in strong_bearish_conflicts]
+    if stale_score_penalty_weight is not None:
+        overrides["stale_score_penalty_weight"] = float(stale_score_penalty_weight)
+    if overhead_score_penalty_weight is not None:
+        overrides["overhead_score_penalty_weight"] = float(overhead_score_penalty_weight)
+    if extension_score_penalty_weight is not None:
+        overrides["extension_score_penalty_weight"] = float(extension_score_penalty_weight)
+    with short_trade_target_module.use_short_trade_target_profile(overrides=overrides):
         yield
-    finally:
-        short_trade_target_module.SELECT_THRESHOLD = previous_select
-        short_trade_target_module.NEAR_MISS_THRESHOLD = previous_near_miss
-        short_trade_target_module.STALE_PENALTY_BLOCK_THRESHOLD = previous_stale
-        short_trade_target_module.OVERHEAD_PENALTY_BLOCK_THRESHOLD = previous_overhead
-        short_trade_target_module.EXTENSION_PENALTY_BLOCK_THRESHOLD = previous_extension
-        short_trade_target_module.LAYER_C_AVOID_PENALTY = previous_avoid_penalty
-        short_trade_target_module.STRONG_BEARISH_CONFLICTS = previous_conflicts
-        short_trade_target_module.STALE_SCORE_PENALTY_WEIGHT = previous_stale_score_weight
-        short_trade_target_module.OVERHEAD_SCORE_PENALTY_WEIGHT = previous_overhead_score_weight
-        short_trade_target_module.EXTENSION_SCORE_PENALTY_WEIGHT = previous_extension_score_weight
 
 
 def _coerce_watchlist_entries(entries: list[dict[str, Any]]) -> list[LayerCResult]:
@@ -521,10 +509,10 @@ def _build_score_diagnostic_row(
         "filtered_candidate_entry_metric_gate_status": {} if filtered_entry is None else dict(filtered_entry.get("metric_gate_status") or {}),
         "replayed_gap_to_near_miss": None
         if replayed_snapshot.get("score_target") is None
-        else round(float(short_trade_target_module.NEAR_MISS_THRESHOLD) - float(replayed_snapshot.get("score_target")), 4),
+        else round(float(_active_short_trade_target_profile().near_miss_threshold) - float(replayed_snapshot.get("score_target")), 4),
         "replayed_gap_to_selected": None
         if replayed_snapshot.get("score_target") is None
-        else round(float(short_trade_target_module.SELECT_THRESHOLD) - float(replayed_snapshot.get("score_target")), 4),
+        else round(float(_active_short_trade_target_profile().select_threshold) - float(replayed_snapshot.get("score_target")), 4),
         "stored_blockers": list(stored_snapshot.get("blockers") or []),
         "replayed_blockers": list(replayed_snapshot.get("blockers") or []),
         "stored_rejection_reasons": list(stored_snapshot.get("rejection_reasons") or []),
@@ -732,8 +720,8 @@ def analyze_selection_target_replay_inputs(
                                 "replayed_decision": replayed_decision,
                                 "stored_score_target": stored_snapshot.get("score_target"),
                                 "replayed_score_target": replayed_score_target,
-                                "replayed_gap_to_near_miss": None if replayed_score_target is None else round(float(near_miss_threshold if near_miss_threshold is not None else short_trade_target_module.NEAR_MISS_THRESHOLD) - float(replayed_score_target), 4),
-                                "replayed_gap_to_selected": None if replayed_score_target is None else round(float(select_threshold if select_threshold is not None else short_trade_target_module.SELECT_THRESHOLD) - float(replayed_score_target), 4),
+                                "replayed_gap_to_near_miss": None if replayed_score_target is None else round(float(near_miss_threshold if near_miss_threshold is not None else _active_short_trade_target_profile().near_miss_threshold) - float(replayed_score_target), 4),
+                                "replayed_gap_to_selected": None if replayed_score_target is None else round(float(select_threshold if select_threshold is not None else _active_short_trade_target_profile().select_threshold) - float(replayed_score_target), 4),
                                 "stored_blockers": list(stored_snapshot.get("blockers") or []),
                                 "replayed_blockers": list(replayed_snapshot.get("blockers") or []),
                                 "stored_rejection_reasons": list(stored_snapshot.get("rejection_reasons") or []),
@@ -787,8 +775,8 @@ def analyze_selection_target_replay_inputs(
         "trade_date_count": len(per_day),
         "structural_variant": structural_variant,
         "structural_overrides": effective_structural_overrides,
-        "select_threshold": float(select_threshold) if select_threshold is not None else float(short_trade_target_module.SELECT_THRESHOLD),
-        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(short_trade_target_module.NEAR_MISS_THRESHOLD),
+        "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
+        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
         "stored_short_trade_decision_counts": dict(stored_decision_counts.most_common()),
         "replayed_short_trade_decision_counts": dict(replayed_decision_counts.most_common()),
         "decision_transition_counts": dict(transition_counts.most_common()),
@@ -815,8 +803,8 @@ def analyze_selection_target_threshold_grid(
     select_thresholds: list[float],
     near_miss_thresholds: list[float],
 ) -> dict[str, Any]:
-    select_values = select_thresholds or [float(short_trade_target_module.SELECT_THRESHOLD)]
-    near_miss_values = near_miss_thresholds or [float(short_trade_target_module.NEAR_MISS_THRESHOLD)]
+    select_values = select_thresholds or [float(_default_short_trade_target_profile().select_threshold)]
+    near_miss_values = near_miss_thresholds or [float(_default_short_trade_target_profile().near_miss_threshold)]
     rows: list[dict[str, Any]] = []
 
     for select_threshold in select_values:
@@ -877,8 +865,8 @@ def analyze_selection_target_structural_variants(
 
     first_unblocked_row = next((row for row in rows if row["released_from_blocked"]), None)
     return {
-        "select_threshold": float(select_threshold) if select_threshold is not None else float(short_trade_target_module.SELECT_THRESHOLD),
-        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(short_trade_target_module.NEAR_MISS_THRESHOLD),
+        "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
+        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
         "structural_variants": variant_names,
         "variant_row_count": len(rows),
         "rows": rows,
@@ -894,8 +882,8 @@ def analyze_selection_target_combination_grid(
     near_miss_thresholds: list[float],
 ) -> dict[str, Any]:
     variant_names = structural_variants or ["baseline"]
-    select_values = select_thresholds or [float(short_trade_target_module.SELECT_THRESHOLD)]
-    near_miss_values = near_miss_thresholds or [float(short_trade_target_module.NEAR_MISS_THRESHOLD)]
+    select_values = select_thresholds or [float(_default_short_trade_target_profile().select_threshold)]
+    near_miss_values = near_miss_thresholds or [float(_default_short_trade_target_profile().near_miss_threshold)]
     rows: list[dict[str, Any]] = []
 
     for variant_name in variant_names:
@@ -1066,8 +1054,8 @@ def analyze_selection_target_candidate_entry_metric_grid(
         "volume_expansion_quality_max_grid": [round(float(value), 4) for value in volume_values if value is not None],
         "close_strength_max_grid": [round(float(value), 4) for value in close_values if value is not None],
         "catalyst_freshness_max_grid": [round(float(value), 4) for value in catalyst_values if value is not None],
-        "select_threshold": float(select_threshold) if select_threshold is not None else float(short_trade_target_module.SELECT_THRESHOLD),
-        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(short_trade_target_module.NEAR_MISS_THRESHOLD),
+        "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
+        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
         "focus_tickers": focus_ticker_set,
         "preserve_tickers": preserve_ticker_set,
         "grid_row_count": len(rows),
@@ -1091,9 +1079,9 @@ def analyze_selection_target_penalty_grid(
     focus_tickers: list[str] | None = None,
 ) -> dict[str, Any]:
     variant_names = base_structural_variants or ["baseline"]
-    avoid_values = avoid_penalty_values or [float(short_trade_target_module.LAYER_C_AVOID_PENALTY)]
-    stale_values = stale_score_penalty_weight_values or [float(short_trade_target_module.STALE_SCORE_PENALTY_WEIGHT)]
-    extension_values = extension_score_penalty_weight_values or [float(short_trade_target_module.EXTENSION_SCORE_PENALTY_WEIGHT)]
+    avoid_values = avoid_penalty_values or [float(_default_short_trade_target_profile().layer_c_avoid_penalty)]
+    stale_values = stale_score_penalty_weight_values or [float(_default_short_trade_target_profile().stale_score_penalty_weight)]
+    extension_values = extension_score_penalty_weight_values or [float(_default_short_trade_target_profile().extension_score_penalty_weight)]
     rows: list[dict[str, Any]] = []
     focus_ticker_set = [ticker for ticker in (focus_tickers or []) if str(ticker).strip()]
 
@@ -1164,9 +1152,9 @@ def analyze_selection_target_penalty_grid(
                 first_focus_near_miss_rows[ticker] = min(
                     qualifying_rows,
                     key=lambda row: (
-                        float(short_trade_target_module.LAYER_C_AVOID_PENALTY) - float(row["layer_c_avoid_penalty"])
-                        + float(short_trade_target_module.STALE_SCORE_PENALTY_WEIGHT) - float(row["stale_score_penalty_weight"])
-                        + float(short_trade_target_module.EXTENSION_SCORE_PENALTY_WEIGHT) - float(row["extension_score_penalty_weight"]),
+                        float(_default_short_trade_target_profile().layer_c_avoid_penalty) - float(row["layer_c_avoid_penalty"])
+                        + float(_default_short_trade_target_profile().stale_score_penalty_weight) - float(row["stale_score_penalty_weight"])
+                        + float(_default_short_trade_target_profile().extension_score_penalty_weight) - float(row["extension_score_penalty_weight"]),
                         float("inf") if row["focus_gaps_to_near_miss"].get(ticker) is None else abs(float(row["focus_gaps_to_near_miss"][ticker])),
                     ),
                 )
@@ -1176,8 +1164,8 @@ def analyze_selection_target_penalty_grid(
         "layer_c_avoid_penalty_grid": [round(float(value), 4) for value in avoid_values],
         "stale_score_penalty_weight_grid": [round(float(value), 4) for value in stale_values],
         "extension_score_penalty_weight_grid": [round(float(value), 4) for value in extension_values],
-        "select_threshold": float(select_threshold) if select_threshold is not None else float(short_trade_target_module.SELECT_THRESHOLD),
-        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(short_trade_target_module.NEAR_MISS_THRESHOLD),
+        "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
+        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
         "focus_tickers": focus_ticker_set,
         "grid_row_count": len(rows),
         "rows": rows,
@@ -1198,19 +1186,19 @@ def analyze_selection_target_penalty_threshold_grid(
     focus_tickers: list[str] | None = None,
 ) -> dict[str, Any]:
     variant_names = base_structural_variants or ["baseline"]
-    avoid_values = avoid_penalty_values or [float(short_trade_target_module.LAYER_C_AVOID_PENALTY)]
-    stale_values = stale_score_penalty_weight_values or [float(short_trade_target_module.STALE_SCORE_PENALTY_WEIGHT)]
-    extension_values = extension_score_penalty_weight_values or [float(short_trade_target_module.EXTENSION_SCORE_PENALTY_WEIGHT)]
-    select_values = select_thresholds or [float(short_trade_target_module.SELECT_THRESHOLD)]
-    near_miss_values = near_miss_thresholds or [float(short_trade_target_module.NEAR_MISS_THRESHOLD)]
+    avoid_values = avoid_penalty_values or [float(_default_short_trade_target_profile().layer_c_avoid_penalty)]
+    stale_values = stale_score_penalty_weight_values or [float(_default_short_trade_target_profile().stale_score_penalty_weight)]
+    extension_values = extension_score_penalty_weight_values or [float(_default_short_trade_target_profile().extension_score_penalty_weight)]
+    select_values = select_thresholds or [float(_default_short_trade_target_profile().select_threshold)]
+    near_miss_values = near_miss_thresholds or [float(_default_short_trade_target_profile().near_miss_threshold)]
     focus_ticker_set = [ticker for ticker in (focus_tickers or []) if str(ticker).strip()]
     rows: list[dict[str, Any]] = []
 
-    default_avoid_penalty = float(short_trade_target_module.LAYER_C_AVOID_PENALTY)
-    default_stale_weight = float(short_trade_target_module.STALE_SCORE_PENALTY_WEIGHT)
-    default_extension_weight = float(short_trade_target_module.EXTENSION_SCORE_PENALTY_WEIGHT)
-    default_select_threshold = float(short_trade_target_module.SELECT_THRESHOLD)
-    default_near_miss_threshold = float(short_trade_target_module.NEAR_MISS_THRESHOLD)
+    default_avoid_penalty = float(_default_short_trade_target_profile().layer_c_avoid_penalty)
+    default_stale_weight = float(_default_short_trade_target_profile().stale_score_penalty_weight)
+    default_extension_weight = float(_default_short_trade_target_profile().extension_score_penalty_weight)
+    default_select_threshold = float(_default_short_trade_target_profile().select_threshold)
+    default_near_miss_threshold = float(_default_short_trade_target_profile().near_miss_threshold)
 
     for variant_name in variant_names:
         for avoid_penalty in avoid_values:

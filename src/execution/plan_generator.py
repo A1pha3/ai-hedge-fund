@@ -24,6 +24,8 @@ def generate_execution_plan(
     selection_targets: dict[str, DualTargetEvaluation] | None = None,
     target_mode: TargetMode = "research_only",
     dual_target_summary: DualTargetSummary | None = None,
+    short_trade_target_profile_name: str = "default",
+    short_trade_target_profile_config: dict | None = None,
 ) -> ExecutionPlan:
     return ExecutionPlan(
         date=trade_date,
@@ -42,4 +44,6 @@ def generate_execution_plan(
         selection_targets=selection_targets or {},
         target_mode=target_mode,
         dual_target_summary=dual_target_summary or DualTargetSummary(target_mode=target_mode),
+        short_trade_target_profile_name=str(short_trade_target_profile_name or "default"),
+        short_trade_target_profile_config=dict(short_trade_target_profile_config or {}),
     )

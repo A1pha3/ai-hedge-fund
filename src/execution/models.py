@@ -1,6 +1,6 @@
 """执行层数据模型 — Layer C 聚合结果 + 执行计划"""
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -56,4 +56,6 @@ class ExecutionPlan(BaseModel):
     selection_targets: dict[str, DualTargetEvaluation] = Field(default_factory=dict)
     target_mode: TargetMode = "research_only"
     dual_target_summary: DualTargetSummary = Field(default_factory=DualTargetSummary)
+    short_trade_target_profile_name: str = "default"
+    short_trade_target_profile_config: dict[str, Any] = Field(default_factory=dict)
     selection_artifacts: dict = Field(default_factory=dict)

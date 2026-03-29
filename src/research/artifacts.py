@@ -359,7 +359,7 @@ def _build_rejected_candidates(plan: ExecutionPlan, max_candidates: int = 5) -> 
     return rejected
 
 
-def _build_pipeline_config_snapshot(pipeline: DailyPipeline | None, selected_analysts: list[str] | None) -> dict[str, Any]:
+def _build_pipeline_config_snapshot(plan: ExecutionPlan, pipeline: DailyPipeline | None, selected_analysts: list[str] | None) -> dict[str, Any]:
     return {
         "code_version": os.getenv("GIT_SHA", ""),
         "execution_version": "daily_pipeline",
@@ -372,6 +372,10 @@ def _build_pipeline_config_snapshot(pipeline: DailyPipeline | None, selected_ana
             "score_final_min": WATCHLIST_SCORE_THRESHOLD,
             "max_fast_pool_size": FAST_AGENT_MAX_TICKERS,
             "max_precise_pool_size": PRECISE_AGENT_MAX_TICKERS,
+        },
+        "short_trade_target_profile": {
+            "name": str(getattr(plan, "short_trade_target_profile_name", "default") or "default"),
+            "config": dict(getattr(plan, "short_trade_target_profile_config", {}) or {}),
         },
         "environment": {
             "market_region": "CN",
@@ -430,7 +434,7 @@ def build_selection_target_replay_input(
         trade_date=formatted_trade_date,
         market=market,
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
-        pipeline_config_snapshot=_build_pipeline_config_snapshot(pipeline, selected_analysts),
+        pipeline_config_snapshot=_build_pipeline_config_snapshot(plan, pipeline, selected_analysts),
         source_summary={
             "watchlist_count": len(watchlist_entries),
             "rejected_entry_count": len(rejected_entries),
@@ -469,7 +473,7 @@ def build_selection_snapshot(
         decision_timestamp=f"{formatted_trade_date}T15:05:00+08:00",
         data_available_until=f"{formatted_trade_date}T15:00:00+08:00",
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
-        pipeline_config_snapshot=_build_pipeline_config_snapshot(pipeline, selected_analysts),
+        pipeline_config_snapshot=_build_pipeline_config_snapshot(plan, pipeline, selected_analysts),
         universe_summary={
             "input_symbol_count": int(counts.get("layer_a_count", plan.layer_a_count) or 0),
             "candidate_count": int(counts.get("layer_a_count", plan.layer_a_count) or 0),

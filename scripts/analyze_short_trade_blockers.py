@@ -76,6 +76,78 @@ def _build_example(
     }
 
 
+def _classify_failure_mechanism(*, decision: str, candidate_source: str, blockers: list[str], gate_status: dict[str, Any]) -> str:
+    normalized_blockers = {str(blocker) for blocker in blockers if str(blocker or "").strip()}
+    normalized_gate_status = {str(key): str(value) for key, value in gate_status.items()}
+
+    if decision == "selected":
+        return "selected"
+    if decision == "near_miss":
+        return "near_miss"
+    if normalized_gate_status.get("data") == "fail":
+        return "blocked_data_gate"
+    if "layer_c_bearish_conflict" in normalized_blockers:
+        return "blocked_structural_bearish_conflict"
+    if "trend_not_constructive" in normalized_blockers:
+        return "blocked_trend_not_constructive"
+    if decision == "blocked":
+        return f"blocked_{candidate_source}"
+    if decision == "rejected":
+        return f"rejected_{candidate_source}_score_fail"
+    return f"other_{decision}"
+
+
+def _build_recommended_focus_areas(*, failure_mechanism_counts: Counter[str], candidate_source_breakdown: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    recommendations: list[dict[str, Any]] = []
+
+    layer_b_rejected = int(failure_mechanism_counts.get("rejected_layer_b_boundary_score_fail", 0))
+    watchlist_rejected = int(failure_mechanism_counts.get("rejected_watchlist_filter_diagnostics_score_fail", 0))
+    structural_blocked = int(failure_mechanism_counts.get("blocked_structural_bearish_conflict", 0))
+
+    if layer_b_rejected:
+        recommendations.append(
+            {
+                "priority": 1,
+                "focus_area": "layer_b_boundary_score_construction",
+                "why": f"{layer_b_rejected} 个样本停在 layer_b_boundary 且直接因 score fail 被拒绝，是当前窗口里最大的失败簇。",
+                "evidence": {
+                    "failure_mechanism": "rejected_layer_b_boundary_score_fail",
+                    "count": layer_b_rejected,
+                    "candidate_source_breakdown": candidate_source_breakdown.get("layer_b_boundary", {}),
+                },
+            }
+        )
+
+    if structural_blocked:
+        recommendations.append(
+            {
+                "priority": len(recommendations) + 1,
+                "focus_area": "layer_c_bearish_conflict_review",
+                "why": f"{structural_blocked} 个样本被 layer_c_bearish_conflict 直接阻断，其中包含接近 near-miss 的高分 blocked 样本。",
+                "evidence": {
+                    "failure_mechanism": "blocked_structural_bearish_conflict",
+                    "count": structural_blocked,
+                },
+            }
+        )
+
+    if watchlist_rejected:
+        recommendations.append(
+            {
+                "priority": len(recommendations) + 1,
+                "focus_area": "watchlist_candidate_entry_semantics",
+                "why": f"{watchlist_rejected} 个样本来自 watchlist_filter_diagnostics 边界入口但最终只停在 score fail，应优先收紧或重定义这类候选入口语义。",
+                "evidence": {
+                    "failure_mechanism": "rejected_watchlist_filter_diagnostics_score_fail",
+                    "count": watchlist_rejected,
+                    "candidate_source_breakdown": candidate_source_breakdown.get("watchlist_filter_diagnostics", {}),
+                },
+            }
+        )
+
+    return recommendations
+
+
 def render_short_trade_blocker_markdown(analysis: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append("# Short Trade Blocker Analysis")
@@ -92,8 +164,19 @@ def render_short_trade_blocker_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- negative_tag_counts: {analysis['negative_tag_counts']}")
     lines.append(f"- candidate_source_counts: {analysis['candidate_source_counts']}")
     lines.append(f"- candidate_reason_code_counts: {analysis['candidate_reason_code_counts']}")
+    lines.append(f"- failure_mechanism_counts: {analysis['failure_mechanism_counts']}")
     lines.append(f"- signal_availability: {analysis['signal_availability']}")
     lines.append(f"- available_strategy_signal_counts: {analysis['available_strategy_signal_counts']}")
+    lines.append("")
+    lines.append("## Candidate Source Breakdown")
+    for candidate_source, breakdown in analysis["candidate_source_breakdown"].items():
+        lines.append(
+            f"- {candidate_source}: total={breakdown['count']}, decisions={breakdown['decision_counts']}, blockers={breakdown['blocker_counts']}, reasons={breakdown['candidate_reason_code_counts']}, score_mean={breakdown['score_distribution']['mean']}"
+        )
+    lines.append("")
+    lines.append("## Recommended Focus Areas")
+    for row in analysis["recommended_focus_areas"]:
+        lines.append(f"- P{row['priority']}: {row['focus_area']} -> {row['why']}")
     lines.append("")
     lines.append("## Score Distribution")
     lines.append(f"- all_scores: {analysis['score_distribution']['all']}")
@@ -127,11 +210,19 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
     negative_tag_counts: Counter[str] = Counter()
     candidate_source_counts: Counter[str] = Counter()
     candidate_reason_code_counts: Counter[str] = Counter()
+    failure_mechanism_counts: Counter[str] = Counter()
     available_strategy_signal_counts: Counter[str] = Counter()
     signal_availability_counts: Counter[str] = Counter()
     delta_classification_counts: Counter[str] = Counter()
     gate_status_counts: dict[str, Counter[str]] = defaultdict(Counter)
     score_distribution_by_decision: dict[str, list[float]] = defaultdict(list)
+    candidate_source_breakdown: dict[str, dict[str, Any]] = defaultdict(lambda: {
+        "count": 0,
+        "decision_counts": Counter(),
+        "blocker_counts": Counter(),
+        "candidate_reason_code_counts": Counter(),
+        "scores": [],
+    })
     top_blocked_examples: list[dict[str, Any]] = []
     top_near_threshold_examples: list[dict[str, Any]] = []
     day_breakdown: list[dict[str, Any]] = []
@@ -162,17 +253,31 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
             day_counts[decision] += 1
             candidate_source_counts[candidate_source] += 1
             candidate_reason_code_counts.update(candidate_reason_codes)
+            failure_mechanism = _classify_failure_mechanism(
+                decision=decision,
+                candidate_source=candidate_source,
+                blockers=list(short_trade.get("blockers") or []),
+                gate_status=dict(short_trade.get("gate_status") or {}),
+            )
+            failure_mechanism_counts[failure_mechanism] += 1
             available_strategy_signal_counts.update(available_strategy_signals)
             signal_availability_counts["missing_all"] += 1 if not available_strategy_signals else 0
             signal_availability_counts["has_any"] += 1 if available_strategy_signals else 0
             score_distribution_by_decision[decision].append(score_target)
             score_distribution_by_decision["all"].append(score_target)
 
+            source_row = candidate_source_breakdown[candidate_source]
+            source_row["count"] += 1
+            source_row["decision_counts"][decision] += 1
+            source_row["candidate_reason_code_counts"].update(candidate_reason_codes)
+            source_row["scores"].append(score_target)
+
             if delta_classification:
                 delta_classification_counts[str(delta_classification)] += 1
 
             for blocker in list(short_trade.get("blockers") or []):
                 blocker_counts[str(blocker)] += 1
+                source_row["blocker_counts"][str(blocker)] += 1
             for tag in list(short_trade.get("negative_tags") or []):
                 negative_tag_counts[str(tag)] += 1
             for gate_name, gate_value in dict(short_trade.get("gate_status") or {}).items():
@@ -206,6 +311,22 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
     top_blocked_examples.sort(key=lambda item: (item["score_target"], item["trade_date"], item["ticker"]), reverse=True)
     top_near_threshold_examples.sort(key=lambda item: (item["score_target"], item["trade_date"], item["ticker"]), reverse=True)
 
+    normalized_candidate_source_breakdown = {
+        candidate_source: {
+            "count": int(row["count"]),
+            "decision_counts": dict(row["decision_counts"].most_common()),
+            "blocker_counts": dict(row["blocker_counts"].most_common()),
+            "candidate_reason_code_counts": dict(row["candidate_reason_code_counts"].most_common()),
+            "score_distribution": _summarize_scores(list(row["scores"])),
+        }
+        for candidate_source, row in sorted(candidate_source_breakdown.items(), key=lambda item: item[0])
+    }
+
+    recommended_focus_areas = _build_recommended_focus_areas(
+        failure_mechanism_counts=failure_mechanism_counts,
+        candidate_source_breakdown=normalized_candidate_source_breakdown,
+    )
+
     analysis = {
         "report_dir": str(report_path),
         "selection_artifact_root": str(selection_root),
@@ -218,10 +339,13 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
         "negative_tag_counts": dict(negative_tag_counts.most_common()),
         "candidate_source_counts": dict(candidate_source_counts.most_common()),
         "candidate_reason_code_counts": dict(candidate_reason_code_counts.most_common()),
+        "failure_mechanism_counts": dict(failure_mechanism_counts.most_common()),
+        "candidate_source_breakdown": normalized_candidate_source_breakdown,
         "signal_availability": dict(signal_availability_counts.most_common()),
         "available_strategy_signal_counts": dict(available_strategy_signal_counts.most_common()),
         "delta_classification_counts": dict(delta_classification_counts.most_common()),
         "gate_status_counts": {gate_name: dict(counter.most_common()) for gate_name, counter in gate_status_counts.items()},
+        "recommended_focus_areas": recommended_focus_areas,
         "score_distribution": {
             "all": _summarize_scores(score_distribution_by_decision["all"]),
             "blocked": _summarize_scores(score_distribution_by_decision["blocked"]),

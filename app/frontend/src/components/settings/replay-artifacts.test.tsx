@@ -456,6 +456,17 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
                 decision: 'selected',
                 score_target: 0.68,
                 confidence: 0.68,
+                expected_holding_window: 'swing_research_window',
+                preferred_entry_mode: 'watchlist_pullback',
+                metrics_payload: {
+                  score_b: 0.71,
+                  score_c: 0.63,
+                  score_final: 0.68,
+                  quality_score: 0.66,
+                },
+                explainability_payload: {
+                  source: 'research_target_rules_v1',
+                },
               },
               short_trade: {
                 target_type: 'short_trade',
@@ -463,6 +474,19 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
                 score_target: 0.31,
                 confidence: 0.44,
                 blockers: ['missing_trend_signal'],
+                expected_holding_window: 't1_short_trade',
+                preferred_entry_mode: 'next_day_breakout_confirmation',
+                top_reasons: ['breakout_freshness=0.41'],
+                metrics_payload: {
+                  breakout_freshness: 0.41,
+                  trend_acceleration: 0.29,
+                  volume_expansion_quality: 0.32,
+                  catalyst_freshness: 0.21,
+                },
+                explainability_payload: {
+                  source: 'watchlist_filter_diagnostics',
+                  target_profile: 'default',
+                },
               },
             },
           },
@@ -483,12 +507,26 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
                 decision: 'near_miss',
                 score_target: 0.49,
                 confidence: 0.61,
+                top_reasons: ['score_target close to watchlist threshold'],
               },
               short_trade: {
                 target_type: 'short_trade',
                 decision: 'selected',
                 score_target: 0.62,
                 confidence: 0.66,
+                expected_holding_window: 't1_short_trade',
+                preferred_entry_mode: 'next_day_breakout_confirmation',
+                top_reasons: ['trend_acceleration=0.66', 'catalyst_freshness=0.59'],
+                metrics_payload: {
+                  breakout_freshness: 0.64,
+                  trend_acceleration: 0.66,
+                  volume_expansion_quality: 0.58,
+                  catalyst_freshness: 0.59,
+                },
+                explainability_payload: {
+                  source: 'watchlist_filter_diagnostics',
+                  target_profile: 'aggressive',
+                },
               },
             },
           },
@@ -567,6 +605,11 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     expect(screen.getByText('blocked | score 0.310 | blockers missing_trend_signal')).toBeInTheDocument();
     expect(screen.getByText('near_miss | score 0.490')).toBeInTheDocument();
     expect(screen.getByText('selected | score 0.620')).toBeInTheDocument();
+    expect(screen.getByText('Target Explainability')).toBeInTheDocument();
+    expect(screen.getByText('profile default | source watchlist_filter_diagnostics')).toBeInTheDocument();
+    expect(screen.getAllByText('holding t1_short_trade | entry next_day_breakout_confirmation').length).toBeGreaterThan(0);
+    expect(screen.getByText('metrics breakout_freshness:0.410 | trend_acceleration:0.290 | volume_expansion_quality:0.320 | catalyst_freshness:0.210')).toBeInTheDocument();
+    expect(screen.getByText('profile aggressive | source watchlist_filter_diagnostics')).toBeInTheDocument();
   });
 
   it('filters report rail by dual-target metadata and jumps from representative case to focused symbol', async () => {
@@ -875,6 +918,14 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
         ...dayDetail.snapshot,
         target_mode: 'dual_target',
         trade_date: '2026-03-23',
+        pipeline_config_snapshot: {
+          short_trade_target_profile: {
+            name: 'aggressive',
+            config: {
+              select_threshold: 0.54,
+            },
+          },
+        },
         selected: [
           {
             symbol: '300724',
@@ -894,6 +945,9 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
                 decision: 'selected',
                 score_target: 0.68,
                 confidence: 0.68,
+                explainability_payload: {
+                  source: 'watchlist',
+                },
               },
             },
           },
@@ -920,6 +974,10 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
                 decision: 'selected',
                 score_target: 0.62,
                 confidence: 0.66,
+                explainability_payload: {
+                  target_profile: 'aggressive',
+                  source: 'layer_b_boundary',
+                },
               },
             },
           },
@@ -1014,6 +1072,19 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     await waitFor(() => {
       expect(getSelectionArtifactDayMock).toHaveBeenLastCalledWith('paper_trading_window_recent', '2026-03-23');
     });
+
+    expect(screen.getByText('Short Trade Profile')).toBeInTheDocument();
+    expect(screen.getAllByText('aggressive').length).toBeGreaterThan(0);
+
+    await user.selectOptions(screen.getByLabelText('Explainability Profile Filter'), 'aggressive');
+    await user.selectOptions(screen.getByLabelText('Explainability Source Filter'), 'layer_b_boundary');
+    await user.selectOptions(screen.getByLabelText('Explainability Decision Filter'), 'selected');
+
+    expect(screen.getByText('profile aggressive')).toBeInTheDocument();
+    expect(screen.getByText('source layer_b_boundary')).toBeInTheDocument();
+    expect(screen.getByText('decision selected')).toBeInTheDocument();
+    expect(screen.getByText('No selected candidates match the current focus.')).toBeInTheDocument();
+    expect(screen.getAllByText('002916').length).toBeGreaterThan(0);
 
     await user.selectOptions(screen.getByLabelText('Focus Symbol'), '002916');
     await user.click(screen.getByRole('button', { name: 'current report only' }));

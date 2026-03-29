@@ -235,6 +235,112 @@ function formatTargetDecision(decision: ReplayTargetEvaluationResult | null | un
   return `${decision.decision || 'unknown'} | score ${formatNumber(decision.score_target, 3)}${blockerText}`;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function formatMetricValue(value: unknown): string {
+  if (typeof value === 'number') {
+    return value.toFixed(3);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return value;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'yes' : 'no';
+  }
+  return '--';
+}
+
+function formatReasonList(decision: ReplayTargetEvaluationResult | null | undefined): string {
+  if (!decision) {
+    return '--';
+  }
+  const reasonGroups = [decision.top_reasons || [], decision.rejection_reasons || [], decision.blockers || []];
+  const flattened = reasonGroups.flat().filter(Boolean);
+  if (flattened.length === 0) {
+    return '--';
+  }
+  return flattened.slice(0, 4).join(' | ');
+}
+
+function formatTargetMetricHighlights(decision: ReplayTargetEvaluationResult | null | undefined): string {
+  if (!decision) {
+    return '--';
+  }
+  const metrics = asRecord(decision.metrics_payload);
+  if (!metrics) {
+    return '--';
+  }
+  const keys = decision.target_type === 'short_trade'
+    ? ['breakout_freshness', 'trend_acceleration', 'volume_expansion_quality', 'catalyst_freshness', 'layer_c_alignment', 'stale_trend_repair_penalty', 'overhead_supply_penalty']
+    : ['score_b', 'score_c', 'score_final', 'quality_score'];
+  const highlights = keys
+    .filter((key) => metrics[key] !== undefined)
+    .slice(0, 4)
+    .map((key) => `${key}:${formatMetricValue(metrics[key])}`);
+  return highlights.length > 0 ? highlights.join(' | ') : '--';
+}
+
+function formatTargetProfile(decision: ReplayTargetEvaluationResult | null | undefined): string {
+  const explainability = asRecord(decision?.explainability_payload);
+  const profile = explainability?.target_profile;
+  return typeof profile === 'string' && profile.trim() ? profile : '--';
+}
+
+function formatTargetSource(decision: ReplayTargetEvaluationResult | null | undefined): string {
+  const explainability = asRecord(decision?.explainability_payload);
+  const source = explainability?.source;
+  return typeof source === 'string' && source.trim() ? source : '--';
+}
+
+function normalizeExplainabilityValue(value: string): string {
+  const normalized = value.trim();
+  return normalized && normalized !== '--' ? normalized : '__missing__';
+}
+
+function describeExplainabilityValue(value: string): string {
+  return value === '__missing__' ? 'missing' : value;
+}
+
+function candidateTargetDecisionList(candidate: ReplaySelectedCandidate | ReplayRejectedCandidate): ReplayTargetEvaluationResult[] {
+  return Object.values(candidate.target_decisions || {}).filter((decision): decision is ReplayTargetEvaluationResult => Boolean(decision));
+}
+
+function candidateMatchesExplainabilityFilters(
+  candidate: ReplaySelectedCandidate | ReplayRejectedCandidate,
+  filters: ExplainabilityFilterState,
+): boolean {
+  const hasActiveFilter = filters.profile !== 'all' || filters.source !== 'all' || filters.decision !== 'all';
+  const decisions = candidateTargetDecisionList(candidate);
+  if (decisions.length === 0) {
+    return !hasActiveFilter;
+  }
+  return decisions.some((decision) => {
+    const profileMatched = filters.profile === 'all' || normalizeExplainabilityValue(formatTargetProfile(decision)) === filters.profile;
+    const sourceMatched = filters.source === 'all' || normalizeExplainabilityValue(formatTargetSource(decision)) === filters.source;
+    const decisionMatched = filters.decision === 'all' || normalizeExplainabilityValue(decision.decision || '--') === filters.decision;
+    return profileMatched && sourceMatched && decisionMatched;
+  });
+}
+
+function getPipelineProfileName(snapshot: ReplaySelectionArtifactDay['snapshot'] | undefined): string {
+  const pipelineConfig = asRecord(snapshot?.pipeline_config_snapshot);
+  const shortTradeProfile = asRecord(pipelineConfig?.short_trade_target_profile);
+  const name = shortTradeProfile?.name;
+  return typeof name === 'string' && name.trim() ? name : '--';
+}
+
+function getPipelineProfileSelectThreshold(snapshot: ReplaySelectionArtifactDay['snapshot'] | undefined): string {
+  const pipelineConfig = asRecord(snapshot?.pipeline_config_snapshot);
+  const shortTradeProfile = asRecord(pipelineConfig?.short_trade_target_profile);
+  const config = asRecord(shortTradeProfile?.config);
+  return formatMetricValue(config?.select_threshold);
+}
+
 function selectedCandidateTargetDecision(candidate: ReplaySelectedCandidate, targetName: 'research' | 'short_trade'): string {
   return formatTargetDecision(candidate.target_decisions?.[targetName]);
 }
@@ -296,6 +402,12 @@ type ReportRailDualTargetFilterState = {
 type TradeDateDualTargetFilterState = {
   targetMode: 'all' | 'dual_target' | 'research_only' | 'short_trade_only';
   deltaClass: string;
+};
+
+type ExplainabilityFilterState = {
+  profile: string;
+  source: string;
+  decision: string;
 };
 
 type ReportRailSortMode = 'window_end_desc' | 'dual_target_days_desc' | 'delta_case_count_desc';
@@ -451,6 +563,11 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   const [tradeDateDualTargetFilter, setTradeDateDualTargetFilter] = useState<TradeDateDualTargetFilterState>({
     targetMode: 'all',
     deltaClass: 'all',
+  });
+  const [explainabilityFilter, setExplainabilityFilter] = useState<ExplainabilityFilterState>({
+    profile: 'all',
+    source: 'all',
+    decision: 'all',
   });
   const [reportRailSortMode, setReportRailSortMode] = useState<ReportRailSortMode>('window_end_desc');
   const [focusedSymbol, setFocusedSymbol] = useState<string>('all');
@@ -776,13 +893,40 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
     ].filter((symbol, index, items) => items.indexOf(symbol) === index),
     [rejectedCandidates, selectedCandidates],
   );
+  const explainabilityProfileOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    [...selectedCandidates, ...rejectedCandidates].forEach((candidate) => {
+      candidateTargetDecisionList(candidate).forEach((decision) => {
+        optionSet.add(normalizeExplainabilityValue(formatTargetProfile(decision)));
+      });
+    });
+    return Array.from(optionSet).sort();
+  }, [rejectedCandidates, selectedCandidates]);
+  const explainabilitySourceOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    [...selectedCandidates, ...rejectedCandidates].forEach((candidate) => {
+      candidateTargetDecisionList(candidate).forEach((decision) => {
+        optionSet.add(normalizeExplainabilityValue(formatTargetSource(decision)));
+      });
+    });
+    return Array.from(optionSet).sort();
+  }, [rejectedCandidates, selectedCandidates]);
+  const explainabilityDecisionOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    [...selectedCandidates, ...rejectedCandidates].forEach((candidate) => {
+      candidateTargetDecisionList(candidate).forEach((decision) => {
+        optionSet.add(normalizeExplainabilityValue(decision.decision || '--'));
+      });
+    });
+    return Array.from(optionSet).sort();
+  }, [rejectedCandidates, selectedCandidates]);
   const filteredSelectedCandidates = useMemo(
-    () => selectedCandidates.filter((candidate) => focusedSymbol === 'all' || candidate.symbol === focusedSymbol),
-    [focusedSymbol, selectedCandidates],
+    () => selectedCandidates.filter((candidate) => (focusedSymbol === 'all' || candidate.symbol === focusedSymbol) && candidateMatchesExplainabilityFilters(candidate, explainabilityFilter)),
+    [explainabilityFilter, focusedSymbol, selectedCandidates],
   );
   const filteredRejectedCandidates = useMemo(
-    () => rejectedCandidates.filter((candidate) => focusedSymbol === 'all' || candidate.symbol === focusedSymbol),
-    [focusedSymbol, rejectedCandidates],
+    () => rejectedCandidates.filter((candidate) => (focusedSymbol === 'all' || candidate.symbol === focusedSymbol) && candidateMatchesExplainabilityFilters(candidate, explainabilityFilter)),
+    [explainabilityFilter, focusedSymbol, rejectedCandidates],
   );
   const visibleFeedbackActivityRecords = useMemo(() => {
     const records = feedbackActivity?.recent_records || [];
@@ -861,6 +1005,17 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
       setFocusedSymbol('all');
     }
   }, [focusSymbolOptions, focusedSymbol]);
+
+  useEffect(() => {
+    if (!selectionArtifactDetail) {
+      return;
+    }
+    setExplainabilityFilter((current) => ({
+      profile: current.profile === 'all' || explainabilityProfileOptions.includes(current.profile) ? current.profile : 'all',
+      source: current.source === 'all' || explainabilitySourceOptions.includes(current.source) ? current.source : 'all',
+      decision: current.decision === 'all' || explainabilityDecisionOptions.includes(current.decision) ? current.decision : 'all',
+    }));
+  }, [explainabilityDecisionOptions, explainabilityProfileOptions, explainabilitySourceOptions, selectionArtifactDetail]);
 
   useEffect(() => {
     if (filteredReports.length === 0) {
@@ -1591,7 +1746,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                     </div>
                   ) : null}
 
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 md:items-end">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5 md:items-end">
                     <label className="space-y-1 text-sm">
                       <span className="text-muted-foreground">Trade Date Target Mode Filter</span>
                       <select
@@ -1656,6 +1811,51 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                         ))}
                       </select>
                     </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Explainability Profile Filter</span>
+                      <select
+                        value={explainabilityFilter.profile}
+                        onChange={(event) => setExplainabilityFilter((current) => ({ ...current, profile: event.target.value }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {explainabilityProfileOptions.map((profile) => (
+                          <option key={`explainability-profile-${profile}`} value={profile}>
+                            {describeExplainabilityValue(profile)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Explainability Source Filter</span>
+                      <select
+                        value={explainabilityFilter.source}
+                        onChange={(event) => setExplainabilityFilter((current) => ({ ...current, source: event.target.value }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {explainabilitySourceOptions.map((source) => (
+                          <option key={`explainability-source-${source}`} value={source}>
+                            {describeExplainabilityValue(source)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Explainability Decision Filter</span>
+                      <select
+                        value={explainabilityFilter.decision}
+                        onChange={(event) => setExplainabilityFilter((current) => ({ ...current, decision: event.target.value }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {explainabilityDecisionOptions.map((decision) => (
+                          <option key={`explainability-decision-${decision}`} value={decision}>
+                            {describeExplainabilityValue(decision)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <Button type="button" variant="outline" onClick={() => setFocusedSymbol('all')} disabled={focusedSymbol === 'all'}>
                       Clear Focus
                     </Button>
@@ -1674,6 +1874,9 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                         <Badge variant="outline">{selectionArtifactDetail.trade_date}</Badge>
                         <Badge variant="secondary">feedback {selectionArtifactDetail.feedback_record_count}</Badge>
                         {focusedSymbol !== 'all' ? <Badge variant="secondary">focus {focusedSymbol}</Badge> : null}
+                        {explainabilityFilter.profile !== 'all' ? <Badge variant="secondary">profile {describeExplainabilityValue(explainabilityFilter.profile)}</Badge> : null}
+                        {explainabilityFilter.source !== 'all' ? <Badge variant="secondary">source {describeExplainabilityValue(explainabilityFilter.source)}</Badge> : null}
+                        {explainabilityFilter.decision !== 'all' ? <Badge variant="secondary">decision {describeExplainabilityValue(explainabilityFilter.decision)}</Badge> : null}
                         {selectionArtifactDetail.blocker_counts.map((item) => (
                           <Badge key={`${item.reason}-${item.count}`} variant="outline">
                             {item.reason} x{item.count}
@@ -1704,11 +1907,16 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                           <p className="text-sm font-medium text-primary">Dual Target Snapshot</p>
                           <p className="text-xs text-muted-foreground">直接消费 selection_snapshot 中的 target_summary、research_view、short_trade_view 与 dual_target_delta，不再依赖阅读 markdown 才知道双目标差异。</p>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                           <div className="rounded-md border border-border/60 bg-muted/10 p-4">
                             <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Mode</p>
                             <p className="mt-2 text-sm font-semibold text-primary">{formatOptionalText(selectionSnapshot?.target_mode)}</p>
                             <p className="mt-1 text-xs text-muted-foreground">selection targets {String(targetSummary?.selection_target_count ?? '--')}</p>
+                          </div>
+                          <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Short Trade Profile</p>
+                            <p className="mt-2 text-sm font-semibold text-primary">{getPipelineProfileName(selectionSnapshot)}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">select {getPipelineProfileSelectThreshold(selectionSnapshot)}</p>
                           </div>
                           <div className="rounded-md border border-border/60 bg-muted/10 p-4">
                             <p className="text-xs uppercase tracking-wide text-muted-foreground">Research View</p>
@@ -1884,6 +2092,51 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                           ) : (
                             <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
                               No research prompts match the current focus.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-medium text-primary">Target Explainability</p>
+                          <p className="text-xs text-muted-foreground">把 target_decisions 里的 decision、reasons、profile、entry mode 和 metrics 摊平到 symbol 级工作台，减少在 snapshot JSON 和 markdown 之间来回跳转。</p>
+                        </div>
+                        <div className="space-y-3">
+                          {[...filteredSelectedCandidates, ...filteredRejectedCandidates].length > 0 ? (
+                            [...filteredSelectedCandidates, ...filteredRejectedCandidates].map((candidate) => {
+                              const researchDecision = candidate.target_decisions?.research;
+                              const shortTradeDecision = candidate.target_decisions?.short_trade;
+                              return (
+                                <div key={`target-explainability-${candidate.symbol}-${'rejection_stage' in candidate ? candidate.rejection_stage : candidate.rank_in_watchlist}`} className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                      <p className="text-sm font-medium text-primary">{candidate.symbol}</p>
+                                      <p className="text-xs text-muted-foreground">{'rejection_stage' in candidate ? `${candidate.rejection_stage} | final ${formatNumber(candidate.score_final, 4)}` : `watchlist rank ${candidate.rank_in_watchlist} | final ${formatNumber(candidate.score_final, 4)}`}</p>
+                                    </div>
+                                    <Badge variant="outline">{'rejection_stage' in candidate ? 'rejected/near-miss' : 'selected/watchlist'}</Badge>
+                                  </div>
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    {[{ label: 'Research Target', decision: researchDecision }, { label: 'Short Trade Target', decision: shortTradeDecision }].map((item) => (
+                                      <div key={`${candidate.symbol}-${item.label}`} className="rounded-md border border-border/60 bg-background/70 px-3 py-3 space-y-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <p className="text-xs uppercase tracking-wide text-muted-foreground">{item.label}</p>
+                                          <Badge variant="secondary">{item.decision?.decision || '--'}</Badge>
+                                        </div>
+                                        <p className="text-sm font-medium text-primary">score {item.decision ? formatNumber(item.decision.score_target, 3) : '--'} | confidence {item.decision ? formatNumber(item.decision.confidence, 3) : '--'}</p>
+                                        <p className="text-xs leading-6 text-muted-foreground">profile {formatTargetProfile(item.decision)} | source {formatTargetSource(item.decision)}</p>
+                                        <p className="text-xs leading-6 text-muted-foreground">holding {formatOptionalText(item.decision?.expected_holding_window)} | entry {formatOptionalText(item.decision?.preferred_entry_mode)}</p>
+                                        <p className="text-xs leading-6 text-muted-foreground">reasons {formatReasonList(item.decision)}</p>
+                                        <p className="text-xs leading-6 text-muted-foreground">metrics {formatTargetMetricHighlights(item.decision)}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
+                              No target explainability records match the current focus.
                             </div>
                           )}
                         </div>

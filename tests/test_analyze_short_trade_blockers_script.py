@@ -94,9 +94,17 @@ def test_analyze_short_trade_blockers_aggregates_decisions_and_sources(tmp_path)
         "watchlist_filter_diagnostics": 1,
         "layer_c_watchlist": 1,
     }
+    assert analysis["failure_mechanism_counts"] == {
+        "selected": 1,
+        "blocked_structural_bearish_conflict": 1,
+        "rejected_layer_c_watchlist_score_fail": 1,
+    }
+    assert analysis["candidate_source_breakdown"]["watchlist_filter_diagnostics"]["decision_counts"] == {"blocked": 1}
+    assert analysis["candidate_source_breakdown"]["watchlist_filter_diagnostics"]["blocker_counts"] == {"layer_c_bearish_conflict": 1}
     assert analysis["blocker_counts"] == {"layer_c_bearish_conflict": 1}
     assert analysis["negative_tag_counts"] == {"layer_c_avoid_signal": 1, "event_signal_incomplete": 1}
     assert analysis["signal_availability"] == {"has_any": 2, "missing_all": 1}
     assert analysis["available_strategy_signal_counts"] == {"trend": 2, "event_sentiment": 1}
     assert analysis["top_blocked_examples"][0]["available_strategy_signals"] == []
     assert analysis["top_blocked_examples"][0]["ticker"] == "000002"
+    assert analysis["recommended_focus_areas"][0]["focus_area"] == "layer_c_bearish_conflict_review"

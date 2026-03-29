@@ -554,10 +554,47 @@
 2. 当前这批 W1 高保真 replay 输入里，虽然有 27 个 entry 命中了 candidate entry 的入口预条件，但没有任何一个通过 short-trade data gate，因此网格扫描不会进入弱 breakout / 弱 volume / 弱 catalyst 的真实比较，更不会产生新的过滤命中
 3. 所以这批 W1 结果当前更适合用来界定规则适用边界，而不是拿来反证 `300502` 型 candidate entry 收紧方向本身
 
+为避免继续受旧 artifact 代际边界影响，当前又补了两件事：
+
+1. `scripts/replay_selection_target_calibration.py` 已扩展为可直接读取 `selection_target_replay_input.json`、`selection_snapshot.json`、report 目录与 `selection_artifacts/` 目录，并新增 `selection_snapshot` 输入回归测试，保证在缺少专用 replay input 的历史窗口里仍能把高保真 snapshot 转成 replay payload
+2. 随后对新鲜 dual-target 运行目录 `data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329/` 中已落盘的 `2026-03-23` 与 `2026-03-24` snapshot 继续复用 `volume_expansion_quality <= 0.0` 的 volume-only replay，专门检查这条 `2026-03-26` 单日最小 separating row 是否具有跨日稳定性
+
+这两天给出的结果，已经足以把当前结论从“找到规则”收紧为“找到单日边界样本”：
+
+1. `2026-03-23` 的高保真 replay 中，`300502` 与 `300394` 虽然都可重放，但 focus diagnostics 显示两者都处在 `layer_b_boundary` 路径；其中 `300502` 的 `volume_expansion_quality=0.25`，`300394=0.0`，所以 `volume_expansion_quality <= 0.0` 不会过滤 `300502`
+2. `2026-03-24` 的高保真 replay 更进一步：当天汇总已经是 `rejected=7`、`blocked=0`，`300502` 与 `300394` 仍都落在 `layer_b_boundary` 且 eligibility 为空，volume-only 规则连可作用的 candidate-entry 样本都没有
+3. 因而，`volume_expansion_quality <= 0.0` 当前应被解释为 `2026-03-26` 那个 candidate-entry 分支上的最小 separating row，而不是已经证明可以跨日复用的稳定入口规则
+
 这一步把下一轮优化方向进一步收紧为：
 
 1. `300724` 仍属于阈值路径，可继续作为 near-miss / selected 的边界标定样本
 2. `300394`、`300502` 已经不适合作为“阈值共调”对象，而应转入 score construction、penalty 结构和 candidate entry 的重新设计
+
+随后又在同一个高保真 4 日窗口上补做了一轮更高层的失败机制扫描，目的是判断“主线到底该先投哪里”，而不是继续盯单个样本：
+
+1. 新产物：`short_trade_blocker_analysis_current_window.json` / `.md`
+2. `scripts/analyze_short_trade_blockers.py` 现已增强为输出 `failure_mechanism_counts`、`candidate_source_breakdown` 与 `recommended_focus_areas`
+3. 当前窗口共有 32 个 short-trade 样本，其中 23 个直接表现为 `rejected_layer_b_boundary_score_fail`，全部来自 `layer_b_boundary + near_fast_score_threshold`，均值分数只有 `0.1323`
+4. 同一窗口还有 5 个样本被 `layer_c_bearish_conflict` 直接阻断，其中包含接近 near-miss 的 `300724` 和既有 penalty 主导样本 `300394`
+5. 相比之下，`watchlist_filter_diagnostics` 路径在当前窗口只占 4 个样本，且全部已经被 `layer_c_bearish_conflict` 先行阻断；这意味着继续深挖 `300502` 的单样本 candidate-entry 外推，已经不是当前窗口最有杠杆的主线
+
+因此，基于当前窗口级证据，主线优先级应调整为：
+
+1. 先复盘 `layer_b_boundary` 的 score construction / threshold 设计，因为这是当前最大失败簇
+2. 再审 `layer_c_bearish_conflict` 的结构性阻断边界，尤其是 `300724` 这类接近 near-miss 的高分 blocked 样本
+3. `300502` 路线暂时保留为局部 case study，而不再作为当前最优先的主线优化入口
+
+围绕这两个主线优先级，当前又各补了一份专用分析，目的是把“应该改哪里”从方向判断推进到具体机制：
+
+1. `layer_b_boundary_failure_analysis_current_window.json` / `.md` 显示，这 23 个 `layer_b_boundary` score-fail 样本并不是简单“阈值差一点”：它们的 `score_b` 均值已有 `0.3428`，但 short-trade `score_target` 均值只有 `0.1323`，距 near-miss 的均值 gap 仍达 `0.3277`
+2. 同一分析还显示其 strongest positive metrics 只有 `close_strength=0.0841`、`trend_acceleration=0.0568`、`layer_c_alignment=0.0475`，而 `catalyst_freshness=0.0006`、`volume_expansion_quality=0.0062`、`breakout_freshness=0.0134` 接近整体塌陷；这说明真正需要审的是 `layer_b_boundary` 候选为何会在进入 short-trade 评分前就缺乏 breakout / catalyst / volume 质量，而不是先放宽 short-trade 线
+3. `structural_conflict_blocker_review_current_window.json` / `.md` 则把 `layer_c_bearish_conflict` 的窗口级 blocked 簇进一步缩小为“先看高分 blocked 样本”：`300724` 的 `score_target=0.3785`，距 near-miss 只差 `0.0815`，明显比 `300394` / `300502` 这类低分 blocked 更值得优先审查
+4. 同时，这个 blocked 簇的平均 penalty 暴露集中在 `overhead_supply_penalty=0.4682`、`stale_trend_repair_penalty=0.4606`、`extension_without_room_penalty=0.4497`；因此下一轮 structural 审查不应只问“要不要保留 bearish conflict hard block”，还应检查它是否与这些 penalty 在高分样本上发生了重复惩罚
+
+换句话说，当前主线已经进一步收敛为：
+
+1. 先把 `layer_b_boundary` 当作一个候选质量问题来审，而不是阈值问题
+2. 再把 `layer_c_bearish_conflict` 当作一个 hard block 与高 penalty 叠加问题来审，优先从 `300724` 入手
 
 因此，这个 replay 样本当前更适合用来验证：
 

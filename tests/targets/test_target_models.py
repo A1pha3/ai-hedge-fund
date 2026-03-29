@@ -1,6 +1,8 @@
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.screening.models import StrategySignal
+from src.targets import get_short_trade_target_profile
 from src.targets.router import build_selection_targets
+from src.targets.short_trade_target import evaluate_short_trade_rejected_target
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -289,3 +291,59 @@ def test_execution_plan_defaults_dual_target_fields_for_legacy_payloads() -> Non
     assert plan.selection_targets == {}
     assert plan.dual_target_summary.target_mode == "research_only"
     assert plan.dual_target_summary.selection_target_count == 0
+
+
+def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
+    default_profile = get_short_trade_target_profile("default")
+    conservative_profile = get_short_trade_target_profile("conservative")
+    aggressive_profile = get_short_trade_target_profile("aggressive")
+
+    assert conservative_profile.select_threshold > default_profile.select_threshold > aggressive_profile.select_threshold
+    assert conservative_profile.layer_c_avoid_penalty > default_profile.layer_c_avoid_penalty > aggressive_profile.layer_c_avoid_penalty
+    assert conservative_profile.stale_score_penalty_weight > default_profile.stale_score_penalty_weight > aggressive_profile.stale_score_penalty_weight
+
+
+def test_short_trade_target_reports_profile_metadata_and_override_thresholds() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry={
+            "ticker": "300750",
+            "score_b": 0.48,
+            "score_c": 0.08,
+            "score_final": 0.29,
+            "quality_score": 0.59,
+            "decision": "watch",
+            "reason": "score_final_below_watchlist_threshold",
+            "reasons": ["score_final_below_watchlist_threshold"],
+            "strategy_signals": {
+                "trend": _make_signal(
+                    1,
+                    80.0,
+                    sub_factors={
+                        "momentum": {"direction": 1, "confidence": 82.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 74.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                        "volatility": {"direction": 1, "confidence": 64.0, "completeness": 1.0},
+                        "long_trend_alignment": {"direction": 0, "confidence": 25.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "event_sentiment": _make_signal(
+                    1,
+                    72.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 1, "confidence": 61.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "mean_reversion": _make_signal(-1, 18.0).model_dump(mode="json"),
+            },
+            "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.18, "investor": 0.09}},
+        },
+        profile_name="aggressive",
+        profile_overrides={"select_threshold": 0.57, "near_miss_threshold": 0.41},
+    )
+
+    assert result.metrics_payload["thresholds"]["profile_name"] == "aggressive"
+    assert result.metrics_payload["thresholds"]["select_threshold"] == 0.57
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.41
+    assert result.explainability_payload["target_profile"] == "aggressive"
