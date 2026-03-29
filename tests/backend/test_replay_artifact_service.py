@@ -33,6 +33,26 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
     report_dir = tmp_path / "demo_report"
     artifact_root = report_dir / "selection_artifacts"
     day_dir = artifact_root / "2026-03-11"
+    brief_json_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    brief_markdown_path = report_dir / "btst_next_day_trade_brief_latest.md"
+    card_json_path = report_dir / "btst_premarket_execution_card_latest.json"
+    card_markdown_path = report_dir / "btst_premarket_execution_card_latest.md"
+
+    _write_json(
+        brief_json_path,
+        {
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+            "selection_target": "short_trade_only",
+            "primary_entry": {"ticker": "300724"},
+            "selected_entries": [{"ticker": "300724"}],
+            "near_miss_entries": [{"ticker": "002916"}],
+            "excluded_research_entries": [{"ticker": "300502"}],
+        },
+    )
+    card_json_path.write_text("{}", encoding="utf-8")
+    brief_markdown_path.write_text("# brief\n", encoding="utf-8")
+    card_markdown_path.write_text("# card\n", encoding="utf-8")
 
     _write_json(
         report_dir / "session_summary.json",
@@ -50,6 +70,18 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
                 "selection_artifact_root": str(artifact_root),
                 "data_cache_benchmark_json": str(report_dir / "data_cache_benchmark.json"),
                 "data_cache_benchmark_markdown": str(report_dir / "data_cache_benchmark.md"),
+                "btst_next_day_trade_brief_json": str(brief_json_path),
+                "btst_next_day_trade_brief_markdown": str(brief_markdown_path),
+                "btst_premarket_execution_card_json": str(card_json_path),
+                "btst_premarket_execution_card_markdown": str(card_markdown_path),
+            },
+            "btst_followup": {
+                "trade_date": "2026-03-11",
+                "next_trade_date": "2026-03-12",
+                "brief_json": str(brief_json_path),
+                "brief_markdown": str(brief_markdown_path),
+                "execution_card_json": str(card_json_path),
+                "execution_card_markdown": str(card_markdown_path),
             },
             "data_cache_benchmark_status": {
                 "requested": True,
@@ -229,6 +261,24 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
         ],
     }
     assert overview["feedback_summary"]["feedback_file_count"] == 1
+    assert overview["btst_followup_overview"] == {
+        "available": True,
+        "trade_date": "2026-03-11",
+        "next_trade_date": "2026-03-12",
+        "selection_target": "short_trade_only",
+        "primary_entry_ticker": "300724",
+        "watchlist_tickers": ["002916"],
+        "excluded_research_tickers": ["300502"],
+        "selected_count": 1,
+        "watchlist_count": 1,
+        "excluded_research_count": 1,
+        "artifacts": {
+            "brief_json": str(brief_json_path),
+            "brief_markdown": str(brief_markdown_path),
+            "execution_card_json": str(card_json_path),
+            "execution_card_markdown": str(card_markdown_path),
+        },
+    }
     assert cache_overview == {
         "requested": True,
         "executed": True,

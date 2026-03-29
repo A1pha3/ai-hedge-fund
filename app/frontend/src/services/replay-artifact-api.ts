@@ -91,6 +91,21 @@ export interface ReplaySelectionArtifactOverview {
   short_trade_profile_overview?: ReplaySelectionArtifactShortTradeProfileOverview | null;
   dual_target_overview?: ReplaySelectionArtifactDualTargetOverview | null;
   feedback_summary: Record<string, unknown> | null;
+  btst_followup_overview?: ReplayBtstFollowupOverview | null;
+}
+
+export interface ReplayBtstFollowupOverview {
+  available: boolean;
+  trade_date: string | null;
+  next_trade_date: string | null;
+  selection_target: string | null;
+  primary_entry_ticker: string | null;
+  watchlist_tickers: string[];
+  excluded_research_tickers: string[];
+  selected_count: number;
+  watchlist_count: number;
+  excluded_research_count: number;
+  artifacts: Record<string, string>;
 }
 
 export interface ReplaySelectionArtifactTradeDateTargetSummary {

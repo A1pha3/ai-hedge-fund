@@ -167,6 +167,7 @@ export function ReplayArtifactsInspector({
   }
 
   const dualTargetOverview = detail.selection_artifact_overview.dual_target_overview;
+  const btstFollowupOverview = detail.selection_artifact_overview.btst_followup_overview;
   const visibleDraftQueue = focusedSymbol === 'all'
     ? (feedbackActivity?.workflow_queue?.draft || [])
     : (feedbackActivity?.workflow_queue?.draft || []).filter((record) => record.symbol === focusedSymbol);
@@ -210,6 +211,16 @@ export function ReplayArtifactsInspector({
               <p className="mt-2 text-xs leading-6 text-muted-foreground">modes {formatCounterMap(dualTargetOverview?.target_mode_counts)}</p>
               <p className="mt-1 text-xs leading-6 text-muted-foreground">counts {formatDualTargetOverviewCounts(dualTargetOverview)}</p>
               <p className="mt-1 text-xs leading-6 text-muted-foreground">delta {formatCounterMap(dualTargetOverview?.delta_classification_counts)}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">BTST Follow-Up</p>
+              <p className="mt-2 text-sm font-semibold text-primary">{btstFollowupOverview?.primary_entry_ticker || '--'}</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                {btstFollowupOverview ? `T ${btstFollowupOverview.trade_date || '--'} -> T+1 ${btstFollowupOverview.next_trade_date || '--'}` : '当前 report 还没有 BTST follow-up 产物'}
+              </p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                {btstFollowupOverview ? `watch ${btstFollowupOverview.watchlist_tickers.join(', ') || '--'} | excluded ${btstFollowupOverview.excluded_research_tickers.join(', ') || '--'}` : '--'}
+              </p>
             </div>
           </div>
         </CardContent>
@@ -380,6 +391,33 @@ export function ReplayArtifactsInspector({
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Representative Cases</p>
               <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatRepresentativeCases(dualTargetOverview)}</p>
             </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {btstFollowupOverview ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>BTST Follow-Up</CardTitle>
+            <CardDescription>报告级次日简报与盘前执行卡摘要，便于在进入 trade date 细节前快速确认主票、观察票和明确非交易票。</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Primary Entry</p>
+              <p className="mt-2 text-sm font-semibold text-primary">{btstFollowupOverview.primary_entry_ticker || '--'}</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">selection_target {btstFollowupOverview.selection_target || '--'}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Watchlist</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{btstFollowupOverview.watchlist_tickers.join(', ') || '--'}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Explicit Non-Trades</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{btstFollowupOverview.excluded_research_tickers.join(', ') || '--'}</p>
+            </div>
+            {Object.entries(btstFollowupOverview.artifacts || {}).map(([key, value]) => (
+              <PathPreviewCard key={key} label={key} value={String(value)} />
+            ))}
           </CardContent>
         </Card>
       ) : null}

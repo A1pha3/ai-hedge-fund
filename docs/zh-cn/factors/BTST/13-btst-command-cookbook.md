@@ -412,6 +412,34 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 2. 哪些票只允许 watch-only。
 3. 哪些 research-only 股票必须明确写进 non-trade 区域。
 
+### 7.5 为历史 report 回填 latest brief 与执行卡
+
+适用场景：
+
+1. 你已经有旧的 report 目录，但它是在自动落盘逻辑上线前生成的。
+2. 你希望把历史 report 也补齐 `latest` 版 brief 和 execution card，并把路径回写进 `session_summary.json`。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/backfill_btst_followup_artifacts.py \
+  data/reports/<report_dir>
+```
+
+如果要从报告根目录批量扫描：
+
+```bash
+./.venv/bin/python scripts/backfill_btst_followup_artifacts.py \
+  data/reports \
+  --report-name-contains paper_trading_window_
+```
+
+优先回答：
+
+1. 历史 report 是否已经补齐 `btst_next_day_trade_brief_latest.{json,md}`。
+2. 历史 report 是否已经补齐 `btst_premarket_execution_card_latest.{json,md}`。
+3. `session_summary.json` 的 `btst_followup` 与 `artifacts` 区域是否已经能稳定引用这些路径。
+
 ---
 
 ## 8. 两套推荐命令顺序

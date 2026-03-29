@@ -5,12 +5,25 @@ from datetime import datetime
 from pathlib import Path
 
 from scripts.model_selection import resolve_model_selection
+from src.paper_trading.btst_reporting import (
+    generate_and_register_btst_followup_artifacts,
+)
 from src.paper_trading.runtime import run_paper_trading_session
 
 
 def _default_output_dir(start_date: str, end_date: str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path("data/reports") / f"paper_trading_{start_date}_{end_date}_{timestamp}"
+
+
+def generate_btst_followup_artifacts(report_dir: Path, trade_date: str, next_trade_date: str | None = None) -> dict[str, str] | None:
+    result = generate_and_register_btst_followup_artifacts(report_dir=report_dir, trade_date=trade_date, next_trade_date=next_trade_date)
+    return {
+        "brief_json": result["brief_json"],
+        "brief_markdown": result["brief_markdown"],
+        "card_json": result["execution_card_json"],
+        "card_markdown": result["execution_card_markdown"],
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,6 +73,12 @@ def main() -> None:
     print(f"paper_trading_timing_log={artifacts.timing_log_path}")
     print(f"paper_trading_summary={artifacts.summary_path}")
     print(f"paper_trading_selection_target={args.selection_target}")
+    if args.selection_target != "research_only":
+        followup_artifacts = generate_btst_followup_artifacts(output_dir, args.end_date)
+        print(f"paper_trading_btst_brief_json={followup_artifacts['brief_json']}")
+        print(f"paper_trading_btst_brief_markdown={followup_artifacts['brief_markdown']}")
+        print(f"paper_trading_btst_execution_card_json={followup_artifacts['card_json']}")
+        print(f"paper_trading_btst_execution_card_markdown={followup_artifacts['card_markdown']}")
     if args.cache_benchmark:
         print(f"paper_trading_cache_benchmark=enabled")
     if args.frozen_plan_source:

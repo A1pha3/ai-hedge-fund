@@ -815,6 +815,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   const dualTargetDelta = selectionSnapshot?.dual_target_delta;
   const reportDualTargetOverview = detail?.selection_artifact_overview?.dual_target_overview;
   const reportShortTradeProfileOverview = detail?.selection_artifact_overview?.short_trade_profile_overview;
+  const btstFollowupOverview = detail?.selection_artifact_overview?.btst_followup_overview;
   const reportTargetModeOptions = useMemo(() => {
     const optionSet = new Set<string>();
     reports.forEach((report) => {
@@ -1690,7 +1691,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
                 <KpiCard
                   title="Selection Days"
                   value={`${detail.selection_artifact_overview.trade_date_count}`}
@@ -1728,6 +1729,12 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                   value={formatCacheBenchmarkValue(detail.cache_benchmark_overview)}
                   description={formatCacheBenchmarkDescription(detail.cache_benchmark_overview)}
                   icon={RefreshCw}
+                />
+                <KpiCard
+                  title="BTST Follow-Up"
+                  value={btstFollowupOverview?.primary_entry_ticker || '--'}
+                  description={btstFollowupOverview ? `watch ${btstFollowupOverview.watchlist_count} / excluded ${btstFollowupOverview.excluded_research_count}` : '当前 report 还没有 BTST follow-up 产物'}
+                  icon={BarChart3}
                 />
               </div>
 

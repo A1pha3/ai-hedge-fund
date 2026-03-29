@@ -50,6 +50,15 @@ data/reports/short_trade_release_priority_scoreboard_*
 data/reports/short_trade_ticker_role_history_*
 data/reports/targeted_short_trade_boundary_release_*
 data/reports/targeted_short_trade_near_miss_release_*
+data/reports/btst_next_day_trade_brief_*.json
+data/reports/btst_next_day_trade_brief_*.md
+data/reports/btst_premarket_execution_card_*.json
+data/reports/btst_premarket_execution_card_*.md
+data/reports/paper_trading_*_short_trade_only_*/
+data/reports/**/btst_next_day_trade_brief_latest.json
+data/reports/**/btst_next_day_trade_brief_latest.md
+data/reports/**/btst_premarket_execution_card_latest.json
+data/reports/**/btst_premarket_execution_card_latest.md
 
 # Python
 __pycache__/

@@ -93,6 +93,22 @@ const detail: ReplayArtifactDetail = {
       ],
     },
     feedback_summary: null,
+    btst_followup_overview: {
+      available: true,
+      trade_date: '2026-03-23',
+      next_trade_date: '2026-03-24',
+      selection_target: 'short_trade_only',
+      primary_entry_ticker: '300757',
+      watchlist_tickers: ['601869'],
+      excluded_research_tickers: ['002001', '300724'],
+      selected_count: 1,
+      watchlist_count: 1,
+      excluded_research_count: 2,
+      artifacts: {
+        brief_json: '/tmp/reports/paper_trading_window_demo/btst_next_day_trade_brief_latest.json',
+        execution_card_markdown: '/tmp/reports/paper_trading_window_demo/btst_premarket_execution_card_latest.md',
+      },
+    },
   },
 };
 
@@ -261,10 +277,14 @@ describe('ReplayArtifactsInspector', () => {
     expect(screen.getByText('trade date filter 1 / 6 trade dates')).toBeInTheDocument();
     expect(screen.getByText('activity 1/2 | queue 1/2')).toBeInTheDocument();
     expect(screen.getByText('Dual Target Inspector')).toBeInTheDocument();
+    expect(screen.getAllByText('BTST Follow-Up').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('300757').length).toBeGreaterThan(0);
+    expect(screen.getByText('watch 601869 | excluded 002001, 300724')).toBeInTheDocument();
     expect(screen.getByText('2026-03-20 002916:research_reject_short_pass | short trade target promoted a setup that research pipeline kept as near-miss')).toBeInTheDocument();
     expect(screen.getByText('selection_snapshot.json')).toBeInTheDocument();
     expect(screen.getByText('selection_review.md')).toBeInTheDocument();
     expect(screen.getByText('research_feedback.jsonl')).toBeInTheDocument();
+    expect(screen.getByText('btst_next_day_trade_brief_latest.json')).toBeInTheDocument();
     expect(screen.getByText('position_blocked_score x1')).toBeInTheDocument();
     expect(screen.getByText('below_fast_score_threshold x3')).toBeInTheDocument();
   });

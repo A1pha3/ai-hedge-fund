@@ -224,6 +224,7 @@ const reports: ReplayArtifactSummary[] = [
       short_trade_profile_overview: null,
       dual_target_overview: null,
       feedback_summary: null,
+      btst_followup_overview: null,
     },
   },
 ];
@@ -285,6 +286,19 @@ const detail: ReplayArtifactDetail = {
       ],
     },
     feedback_summary: null,
+    btst_followup_overview: {
+      available: true,
+      trade_date: '2026-03-23',
+      next_trade_date: '2026-03-24',
+      selection_target: 'short_trade_only',
+      primary_entry_ticker: '300757',
+      watchlist_tickers: ['601869'],
+      excluded_research_tickers: ['002001'],
+      selected_count: 1,
+      watchlist_count: 1,
+      excluded_research_count: 1,
+      artifacts: {},
+    },
   },
 };
 
@@ -399,6 +413,8 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
 
     expect(screen.getAllByText('paper_trading_window_recent').length).toBeGreaterThan(0);
     expect(screen.getByText('1 trade dates')).toBeInTheDocument();
+    expect(screen.getAllByText('BTST Follow-Up').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('300757').length).toBeGreaterThan(0);
   });
 
   it('renders dual-target snapshot sections and candidate target decisions', async () => {

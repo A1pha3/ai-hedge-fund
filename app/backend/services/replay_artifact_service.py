@@ -779,6 +779,54 @@ class ReplayArtifactService:
             },
         }
 
+    def _derive_btst_followup_overview(self, session_summary: dict[str, Any]) -> dict[str, Any] | None:
+        followup = session_summary.get("btst_followup") or {}
+        artifacts = session_summary.get("artifacts") or {}
+        brief_json_path_value = followup.get("brief_json") or artifacts.get("btst_next_day_trade_brief_json")
+        brief_markdown_path_value = followup.get("brief_markdown") or artifacts.get("btst_next_day_trade_brief_markdown")
+        card_json_path_value = followup.get("execution_card_json") or artifacts.get("btst_premarket_execution_card_json")
+        card_markdown_path_value = followup.get("execution_card_markdown") or artifacts.get("btst_premarket_execution_card_markdown")
+
+        if not any([brief_json_path_value, brief_markdown_path_value, card_json_path_value, card_markdown_path_value]):
+            return None
+
+        brief_payload: dict[str, Any] = {}
+        if brief_json_path_value:
+            brief_json_path = Path(str(brief_json_path_value))
+            if brief_json_path.exists():
+                try:
+                    brief_payload = self._read_json(brief_json_path)
+                except (OSError, json.JSONDecodeError, FileNotFoundError):
+                    brief_payload = {}
+
+        selected_entries = [item for item in (brief_payload.get("selected_entries") or []) if isinstance(item, dict)]
+        near_miss_entries = [item for item in (brief_payload.get("near_miss_entries") or []) if isinstance(item, dict)]
+        excluded_entries = [item for item in (brief_payload.get("excluded_research_entries") or []) if isinstance(item, dict)]
+        primary_entry = brief_payload.get("primary_entry") or (selected_entries[0] if selected_entries else None)
+
+        return {
+            "available": True,
+            "trade_date": followup.get("trade_date") or brief_payload.get("trade_date"),
+            "next_trade_date": followup.get("next_trade_date") or brief_payload.get("next_trade_date"),
+            "selection_target": brief_payload.get("selection_target") or (session_summary.get("plan_generation") or {}).get("selection_target"),
+            "primary_entry_ticker": primary_entry.get("ticker") if isinstance(primary_entry, dict) else None,
+            "watchlist_tickers": [str(item.get("ticker")) for item in near_miss_entries if item.get("ticker")],
+            "excluded_research_tickers": [str(item.get("ticker")) for item in excluded_entries if item.get("ticker")],
+            "selected_count": len(selected_entries),
+            "watchlist_count": len(near_miss_entries),
+            "excluded_research_count": len(excluded_entries),
+            "artifacts": {
+                key: value
+                for key, value in {
+                    "brief_json": brief_json_path_value,
+                    "brief_markdown": brief_markdown_path_value,
+                    "execution_card_json": card_json_path_value,
+                    "execution_card_markdown": card_markdown_path_value,
+                }.items()
+                if value
+            },
+        }
+
     def _derive_selection_artifact_overview(
         self,
         report_dir: Path,
@@ -797,6 +845,7 @@ class ReplayArtifactService:
                 "short_trade_profile_overview": None,
                 "dual_target_overview": None,
                 "feedback_summary": None,
+                "btst_followup_overview": self._derive_btst_followup_overview(session_summary),
             }
 
         write_status_counts: Counter[str] = Counter()
@@ -838,6 +887,7 @@ class ReplayArtifactService:
             "short_trade_profile_overview": self._derive_short_trade_profile_overview(snapshots_by_trade_date),
             "dual_target_overview": self._derive_dual_target_overview(snapshots_by_trade_date),
             "feedback_summary": feedback_summary,
+            "btst_followup_overview": self._derive_btst_followup_overview(session_summary),
         }
 
     def _derive_trade_date_target_index(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
