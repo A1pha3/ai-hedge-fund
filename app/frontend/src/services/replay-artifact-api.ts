@@ -88,6 +88,7 @@ export interface ReplaySelectionArtifactOverview {
   trade_date_target_index?: ReplaySelectionArtifactTradeDateTargetSummary[];
   write_status_counts: Record<string, number>;
   blocker_counts: ReplayReasonCount[];
+  short_trade_profile_overview?: ReplaySelectionArtifactShortTradeProfileOverview | null;
   dual_target_overview?: ReplaySelectionArtifactDualTargetOverview | null;
   feedback_summary: Record<string, unknown> | null;
 }
@@ -95,11 +96,19 @@ export interface ReplaySelectionArtifactOverview {
 export interface ReplaySelectionArtifactTradeDateTargetSummary {
   trade_date: string;
   target_mode?: string | null;
+  short_trade_profile_name?: string | null;
   delta_classification_counts: Record<string, number>;
   research_selected_count: number;
   research_near_miss_count: number;
   short_trade_selected_count: number;
   short_trade_blocked_count: number;
+}
+
+export interface ReplaySelectionArtifactShortTradeProfileOverview {
+  profile_name_counts: Record<string, number>;
+  latest_profile_name: string | null;
+  latest_profile_trade_date: string | null;
+  latest_profile_config: Record<string, unknown>;
 }
 
 export interface ReplaySelectionArtifactDualTargetOverview {

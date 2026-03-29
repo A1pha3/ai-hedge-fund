@@ -1,0 +1,119 @@
+{
+  "report_dir": "/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329",
+  "targets": [
+    "2026-03-25:300724"
+  ],
+  "profile_overrides": {
+    "hard_block_bearish_conflicts": [],
+    "overhead_conflict_penalty_conflicts": [],
+    "near_miss_threshold": 0.42
+  },
+  "total_case_count": 32,
+  "matched_target_case_count": 1,
+  "changed_case_count": 1,
+  "before_decision_counts": {
+    "rejected": 27,
+    "blocked": 5
+  },
+  "after_decision_counts": {
+    "rejected": 27,
+    "blocked": 4,
+    "near_miss": 1
+  },
+  "decision_transition_counts": {
+    "rejected->rejected": 27,
+    "blocked->blocked": 4,
+    "blocked->near_miss": 1
+  },
+  "changed_cases": [
+    {
+      "trade_date": "2026-03-25",
+      "ticker": "300724",
+      "candidate_source": "layer_c_watchlist",
+      "source_bucket": "watchlist",
+      "is_target_case": true,
+      "before_decision": "blocked",
+      "after_decision": "near_miss",
+      "before_score_target": 0.37845526762751325,
+      "after_score_target": 0.4235,
+      "before_blockers": [
+        "layer_c_bearish_conflict"
+      ],
+      "after_blockers": [],
+      "after_top_reasons": [
+        "trend_acceleration=0.72",
+        "extension_without_room_penalty=0.48",
+        "score_short=0.42"
+      ]
+    }
+  ],
+  "target_changed_cases": [
+    {
+      "trade_date": "2026-03-25",
+      "ticker": "300724",
+      "candidate_source": "layer_c_watchlist",
+      "source_bucket": "watchlist",
+      "is_target_case": true,
+      "before_decision": "blocked",
+      "after_decision": "near_miss",
+      "before_score_target": 0.37845526762751325,
+      "after_score_target": 0.4235,
+      "before_blockers": [
+        "layer_c_bearish_conflict"
+      ],
+      "after_blockers": [],
+      "after_top_reasons": [
+        "trend_acceleration=0.72",
+        "extension_without_room_penalty=0.48",
+        "score_short=0.42"
+      ]
+    }
+  ],
+  "non_target_changed_cases": [],
+  "by_trade_date": [
+    {
+      "trade_date": "2026-03-23",
+      "before_decision_counts": {
+        "rejected": 6,
+        "blocked": 1
+      },
+      "after_decision_counts": {
+        "rejected": 6,
+        "blocked": 1
+      }
+    },
+    {
+      "trade_date": "2026-03-24",
+      "before_decision_counts": {
+        "rejected": 7
+      },
+      "after_decision_counts": {
+        "rejected": 7
+      }
+    },
+    {
+      "trade_date": "2026-03-25",
+      "before_decision_counts": {
+        "rejected": 7,
+        "blocked": 2
+      },
+      "after_decision_counts": {
+        "rejected": 7,
+        "near_miss": 1,
+        "blocked": 1
+      }
+    },
+    {
+      "trade_date": "2026-03-26",
+      "before_decision_counts": {
+        "rejected": 7,
+        "blocked": 2
+      },
+      "after_decision_counts": {
+        "rejected": 7,
+        "blocked": 2
+      }
+    }
+  ],
+  "recommendation": "当前 case-based 定向释放只改变目标样本。2026-03-25 / 300724 从 blocked -> near_miss，未污染其它 31 个样本，可作为 300724-only 受控实验入口。"
+}

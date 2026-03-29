@@ -121,6 +121,7 @@ const reports: ReplayArtifactSummary[] = [
         {
           trade_date: '2026-03-23',
           target_mode: 'dual_target',
+          short_trade_profile_name: 'default',
           delta_classification_counts: { research_reject_short_pass: 1 },
           research_selected_count: 1,
           research_near_miss_count: 1,
@@ -130,6 +131,12 @@ const reports: ReplayArtifactSummary[] = [
       ],
       write_status_counts: { success: 1 },
       blocker_counts: [],
+      short_trade_profile_overview: {
+        profile_name_counts: { default: 1 },
+        latest_profile_name: 'default',
+        latest_profile_trade_date: '2026-03-23',
+        latest_profile_config: { select_threshold: 0.58 },
+      },
       dual_target_overview: {
         target_mode_counts: { dual_target: 1 },
         dual_target_trade_date_count: 1,
@@ -214,6 +221,7 @@ const reports: ReplayArtifactSummary[] = [
       available_trade_dates: [],
       write_status_counts: {},
       blocker_counts: [],
+      short_trade_profile_overview: null,
       dual_target_overview: null,
       feedback_summary: null,
     },
@@ -242,6 +250,12 @@ const detail: ReplayArtifactDetail = {
     ],
     write_status_counts: { success: 1 },
     blocker_counts: [],
+    short_trade_profile_overview: {
+      profile_name_counts: { default: 1 },
+      latest_profile_name: 'default',
+      latest_profile_trade_date: '2026-03-23',
+      latest_profile_config: { select_threshold: 0.58 },
+    },
     dual_target_overview: {
       target_mode_counts: { dual_target: 1 },
       dual_target_trade_date_count: 1,
@@ -614,6 +628,69 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
 
   it('filters report rail by dual-target metadata and jumps from representative case to focused symbol', async () => {
     const user = userEvent.setup();
+    const profileFilterReports: ReplayArtifactSummary[] = [
+      reports[0],
+      {
+        ...reports[1],
+        report_dir: 'paper_trading_window_conservative',
+        selection_artifact_overview: {
+          available: true,
+          artifact_root: '/tmp/replay/conservative/selection_artifacts',
+          trade_date_count: 2,
+          available_trade_dates: ['2026-03-10', '2026-03-11'],
+          trade_date_target_index: [
+            {
+              trade_date: '2026-03-10',
+              target_mode: 'dual_target',
+              short_trade_profile_name: 'conservative',
+              delta_classification_counts: { research_reject_short_pass: 1 },
+              research_selected_count: 1,
+              research_near_miss_count: 0,
+              short_trade_selected_count: 1,
+              short_trade_blocked_count: 0,
+            },
+            {
+              trade_date: '2026-03-11',
+              target_mode: 'dual_target',
+              short_trade_profile_name: 'conservative',
+              delta_classification_counts: { research_reject_short_pass: 1 },
+              research_selected_count: 1,
+              research_near_miss_count: 0,
+              short_trade_selected_count: 1,
+              short_trade_blocked_count: 1,
+            },
+          ],
+          write_status_counts: { success: 2 },
+          blocker_counts: [],
+          short_trade_profile_overview: {
+            profile_name_counts: { conservative: 2 },
+            latest_profile_name: 'conservative',
+            latest_profile_trade_date: '2026-03-11',
+            latest_profile_config: { select_threshold: 0.62 },
+          },
+          dual_target_overview: {
+            target_mode_counts: { dual_target: 2 },
+            dual_target_trade_date_count: 2,
+            selection_target_count: 4,
+            research_target_count: 4,
+            short_trade_target_count: 4,
+            research_selected_count: 2,
+            research_near_miss_count: 0,
+            research_rejected_count: 0,
+            short_trade_selected_count: 2,
+            short_trade_near_miss_count: 0,
+            short_trade_blocked_count: 1,
+            short_trade_rejected_count: 0,
+            shell_target_count: 0,
+            delta_classification_counts: { research_reject_short_pass: 2 },
+            dominant_delta_reasons: ['conservative short profile window'],
+            dominant_delta_reason_counts: { 'conservative short profile window': 2 },
+            representative_cases: [],
+          },
+          feedback_summary: null,
+        },
+      },
+    ];
     const dualTargetDetail: ReplaySelectionArtifactDay = {
       ...dayDetail,
       snapshot: {
@@ -708,7 +785,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
       },
     };
 
-    listMock.mockResolvedValue(reports);
+    listMock.mockResolvedValue(profileFilterReports);
     getMock.mockResolvedValue(detail);
     getSelectionArtifactDayMock.mockResolvedValue(dualTargetDetail);
     getFeedbackActivityMock.mockResolvedValue({
@@ -738,10 +815,15 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
 
     await screen.findByText('Report-Level Dual Target Overview');
 
+  await user.selectOptions(screen.getByLabelText('Report Short Profile Filter'), 'default');
+
+  expect(screen.queryByText('paper_trading_window_conservative')).not.toBeInTheDocument();
+  expect(screen.getAllByText('paper_trading_window_recent').length).toBeGreaterThan(0);
+
     await user.selectOptions(screen.getByLabelText('Report Target Mode Filter'), 'dual_target');
     await user.selectOptions(screen.getByLabelText('Report Delta Filter'), 'research_reject_short_pass');
 
-    expect(screen.queryByText('paper_trading_window_older')).not.toBeInTheDocument();
+  expect(screen.queryByText('paper_trading_window_conservative')).not.toBeInTheDocument();
     expect(screen.getAllByText('paper_trading_window_recent').length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole('button', { name: /2026-03-23 002916 \| research_reject_short_pass \| research near_miss \| short selected/i }));
@@ -766,6 +848,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
             {
               trade_date: '2026-03-22',
               target_mode: 'research_only',
+              short_trade_profile_name: 'default',
               delta_classification_counts: {},
               research_selected_count: 1,
               research_near_miss_count: 0,
@@ -775,6 +858,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
             {
               trade_date: '2026-03-23',
               target_mode: 'dual_target',
+              short_trade_profile_name: 'aggressive',
               delta_classification_counts: { research_reject_short_pass: 1 },
               research_selected_count: 1,
               research_near_miss_count: 1,
@@ -786,6 +870,12 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
             ...(reports[0].selection_artifact_overview.dual_target_overview as NonNullable<ReplayArtifactSummary['selection_artifact_overview']['dual_target_overview']>),
             dual_target_trade_date_count: 1,
             delta_classification_counts: { research_reject_short_pass: 1 },
+          },
+          short_trade_profile_overview: {
+            profile_name_counts: { default: 1, aggressive: 1 },
+            latest_profile_name: 'aggressive',
+            latest_profile_trade_date: '2026-03-23',
+            latest_profile_config: { select_threshold: 0.54 },
           },
         },
       },
@@ -802,6 +892,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
             {
               trade_date: '2026-03-06',
               target_mode: 'dual_target',
+              short_trade_profile_name: 'conservative',
               delta_classification_counts: { research_reject_short_pass: 2 },
               research_selected_count: 1,
               research_near_miss_count: 1,
@@ -811,6 +902,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
             {
               trade_date: '2026-03-07',
               target_mode: 'dual_target',
+              short_trade_profile_name: 'conservative',
               delta_classification_counts: { research_reject_short_pass: 1 },
               research_selected_count: 1,
               research_near_miss_count: 0,
@@ -820,6 +912,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
             {
               trade_date: '2026-03-08',
               target_mode: 'dual_target',
+              short_trade_profile_name: 'conservative',
               delta_classification_counts: { research_reject_short_pass: 1 },
               research_selected_count: 1,
               research_near_miss_count: 0,
@@ -848,6 +941,12 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
             dominant_delta_reason_counts: { 'higher dual target density': 2 },
             representative_cases: [],
           },
+          short_trade_profile_overview: {
+            profile_name_counts: { conservative: 3 },
+            latest_profile_name: 'conservative',
+            latest_profile_trade_date: '2026-03-08',
+            latest_profile_config: { select_threshold: 0.62 },
+          },
           feedback_summary: null,
         },
       },
@@ -863,6 +962,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
           {
             trade_date: '2026-03-22',
             target_mode: 'research_only',
+            short_trade_profile_name: 'default',
             delta_classification_counts: {},
             research_selected_count: 1,
             research_near_miss_count: 0,
@@ -872,6 +972,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
           {
             trade_date: '2026-03-23',
             target_mode: 'dual_target',
+            short_trade_profile_name: 'aggressive',
             delta_classification_counts: { research_reject_short_pass: 1 },
             research_selected_count: 1,
             research_near_miss_count: 1,
@@ -1059,6 +1160,17 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     const recentButton = screen.getByRole('button', { name: /paper_trading_window_recent/i });
     expect(highDualTargetButton.compareDocumentPosition(recentButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
+    await user.selectOptions(screen.getByLabelText('Trade Date Short Profile Filter'), 'aggressive');
+
+    await waitFor(() => {
+      expect(getSelectionArtifactDayMock).toHaveBeenLastCalledWith('paper_trading_window_recent', '2026-03-23');
+    });
+    expect(screen.getAllByText('1 / 2 trade dates').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('profile aggressive').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /2026-03-22 research_only/i })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Trade Date Short Profile Filter'), 'all');
+
     await user.selectOptions(screen.getByLabelText('Trade Date Target Mode Filter'), 'research_only');
 
     await waitFor(() => {
@@ -1073,6 +1185,10 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
       expect(getSelectionArtifactDayMock).toHaveBeenLastCalledWith('paper_trading_window_recent', '2026-03-23');
     });
 
+    expect(screen.getAllByText(/short profile/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/default:1 \| aggressive:1 \| latest aggressive/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('profile aggressive').length).toBeGreaterThan(0);
+
     expect(screen.getByText('Short Trade Profile')).toBeInTheDocument();
     expect(screen.getAllByText('aggressive').length).toBeGreaterThan(0);
 
@@ -1080,7 +1196,7 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     await user.selectOptions(screen.getByLabelText('Explainability Source Filter'), 'layer_b_boundary');
     await user.selectOptions(screen.getByLabelText('Explainability Decision Filter'), 'selected');
 
-    expect(screen.getByText('profile aggressive')).toBeInTheDocument();
+    expect(screen.getAllByText('profile aggressive').length).toBeGreaterThan(0);
     expect(screen.getByText('source layer_b_boundary')).toBeInTheDocument();
     expect(screen.getByText('decision selected')).toBeInTheDocument();
     expect(screen.getByText('No selected candidates match the current focus.')).toBeInTheDocument();

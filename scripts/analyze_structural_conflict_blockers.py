@@ -12,8 +12,17 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _iter_selection_snapshots(selection_root: Path):
+def _parse_trade_dates(raw: str | None) -> set[str]:
+    if raw is None or not str(raw).strip():
+        return set()
+    return {token.strip() for token in str(raw).split(",") if token.strip()}
+
+
+def _iter_selection_snapshots(selection_root: Path, *, trade_dates: set[str] | None = None):
+    active_trade_dates = {str(value) for value in (trade_dates or set()) if str(value).strip()}
     for day_dir in sorted(path for path in selection_root.iterdir() if path.is_dir()):
+        if active_trade_dates and day_dir.name not in active_trade_dates:
+            continue
         snapshot_path = day_dir / "selection_snapshot.json"
         if snapshot_path.exists():
             yield _load_json(snapshot_path)
@@ -75,9 +84,10 @@ def render_structural_conflict_markdown(analysis: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def analyze_structural_conflict_blockers(report_dir: str | Path) -> dict[str, Any]:
+def analyze_structural_conflict_blockers(report_dir: str | Path, *, trade_dates: set[str] | None = None) -> dict[str, Any]:
     report_path = Path(report_dir).expanduser().resolve()
     selection_root = report_path / "selection_artifacts"
+    active_trade_dates = {str(value) for value in (trade_dates or set()) if str(value).strip()}
 
     candidate_source_counts: Counter[str] = Counter()
     delta_classification_counts: Counter[str] = Counter()
@@ -89,7 +99,7 @@ def analyze_structural_conflict_blockers(report_dir: str | Path) -> dict[str, An
     top_examples: list[dict[str, Any]] = []
     day_buckets: dict[str, dict[str, list[float] | int]] = defaultdict(lambda: {"scores": [], "gaps": [], "count": 0})
 
-    for snapshot in _iter_selection_snapshots(selection_root):
+    for snapshot in _iter_selection_snapshots(selection_root, trade_dates=active_trade_dates):
         trade_date = str(snapshot.get("trade_date") or "")
         selection_targets = dict(snapshot.get("selection_targets") or {})
         for ticker, evaluation in selection_targets.items():
@@ -200,6 +210,7 @@ def analyze_structural_conflict_blockers(report_dir: str | Path) -> dict[str, An
     return {
         "report_dir": str(report_path),
         "trade_day_count": len(day_breakdown),
+        "trade_dates_filter": sorted(active_trade_dates),
         "blocked_count": len(score_targets),
         "candidate_source_counts": dict(candidate_source_counts.most_common()),
         "delta_classification_counts": dict(delta_classification_counts.most_common()),
@@ -217,11 +228,12 @@ def analyze_structural_conflict_blockers(report_dir: str | Path) -> dict[str, An
 def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze layer_c_bearish_conflict blocked cluster for a dual-target report directory.")
     parser.add_argument("--report-dir", required=True, help="Paper trading report directory containing selection_artifacts")
+    parser.add_argument("--trade-dates", default="", help="Optional comma-separated trade_date filter, e.g. 2026-03-25,2026-03-26")
     parser.add_argument("--output-json", default="", help="Optional output JSON path")
     parser.add_argument("--output-md", default="", help="Optional output Markdown path")
     args = parser.parse_args()
 
-    analysis = analyze_structural_conflict_blockers(args.report_dir)
+    analysis = analyze_structural_conflict_blockers(args.report_dir, trade_dates=_parse_trade_dates(args.trade_dates))
     if args.output_json:
         output_json = Path(args.output_json).expanduser().resolve()
         output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

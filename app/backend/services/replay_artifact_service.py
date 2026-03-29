@@ -794,6 +794,7 @@ class ReplayArtifactService:
                 "trade_date_target_index": [],
                 "write_status_counts": {},
                 "blocker_counts": [],
+                "short_trade_profile_overview": None,
                 "dual_target_overview": None,
                 "feedback_summary": None,
             }
@@ -834,6 +835,7 @@ class ReplayArtifactService:
             "trade_date_target_index": self._derive_trade_date_target_index(snapshots_by_trade_date),
             "write_status_counts": dict(write_status_counts),
             "blocker_counts": self._counter_to_list(blocker_counts),
+            "short_trade_profile_overview": self._derive_short_trade_profile_overview(snapshots_by_trade_date),
             "dual_target_overview": self._derive_dual_target_overview(snapshots_by_trade_date),
             "feedback_summary": feedback_summary,
         }
@@ -852,6 +854,7 @@ class ReplayArtifactService:
                 {
                     "trade_date": trade_date,
                     "target_mode": target_mode,
+                    "short_trade_profile_name": self._extract_short_trade_profile_name(snapshot),
                     "delta_classification_counts": delta_counts,
                     "research_selected_count": int(target_summary.get("research_selected_count") or 0),
                     "research_near_miss_count": int(target_summary.get("research_near_miss_count") or 0),
@@ -860,6 +863,46 @@ class ReplayArtifactService:
                 }
             )
         return index_rows
+
+    def _extract_short_trade_profile_payload(self, snapshot: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+        pipeline_config = snapshot.get("pipeline_config_snapshot") or {}
+        if not isinstance(pipeline_config, dict):
+            return None, {}
+        short_trade_profile = pipeline_config.get("short_trade_target_profile") or {}
+        if not isinstance(short_trade_profile, dict):
+            return None, {}
+        profile_name = short_trade_profile.get("name")
+        config = short_trade_profile.get("config") or {}
+        return (str(profile_name) if profile_name else None), dict(config) if isinstance(config, dict) else {}
+
+    def _extract_short_trade_profile_name(self, snapshot: dict[str, Any]) -> str | None:
+        profile_name, _config = self._extract_short_trade_profile_payload(snapshot)
+        return profile_name
+
+    def _derive_short_trade_profile_overview(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
+        profile_name_counts: Counter[str] = Counter()
+        latest_profile_name: str | None = None
+        latest_profile_config: dict[str, Any] | None = None
+        latest_profile_trade_date: str | None = None
+
+        for trade_date, snapshot in snapshots_by_trade_date:
+            profile_name, profile_config = self._extract_short_trade_profile_payload(snapshot)
+            if not profile_name:
+                continue
+            profile_name_counts[profile_name] += 1
+            latest_profile_name = profile_name
+            latest_profile_config = profile_config
+            latest_profile_trade_date = trade_date
+
+        if not profile_name_counts:
+            return None
+
+        return {
+            "profile_name_counts": dict(profile_name_counts),
+            "latest_profile_name": latest_profile_name,
+            "latest_profile_trade_date": latest_profile_trade_date,
+            "latest_profile_config": latest_profile_config or {},
+        }
 
     def _derive_dual_target_overview(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
         target_mode_counts: Counter[str] = Counter()

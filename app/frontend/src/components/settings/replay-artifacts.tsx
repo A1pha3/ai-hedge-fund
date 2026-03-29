@@ -226,6 +226,17 @@ function formatDualTargetOverviewModes(overview: ReplaySelectionArtifactDualTarg
   return formatCounterMap(overview?.target_mode_counts);
 }
 
+function formatShortTradeProfileOverview(
+  overview: ReplayArtifactSummary['selection_artifact_overview']['short_trade_profile_overview'] | null | undefined,
+): string {
+  if (!overview) {
+    return '--';
+  }
+  const counts = formatCounterMap(overview.profile_name_counts);
+  const latestName = formatOptionalText(overview.latest_profile_name);
+  return `${counts} | latest ${latestName}`;
+}
+
 function formatTargetDecision(decision: ReplayTargetEvaluationResult | null | undefined): string {
   if (!decision) {
     return '--';
@@ -397,11 +408,13 @@ type WorkflowQueueFilterState = {
 type ReportRailDualTargetFilterState = {
   targetMode: 'all' | 'dual_target' | 'research_only' | 'short_trade_only';
   deltaClass: string;
+  shortTradeProfile: string;
 };
 
 type TradeDateDualTargetFilterState = {
   targetMode: 'all' | 'dual_target' | 'research_only' | 'short_trade_only';
   deltaClass: string;
+  shortTradeProfile: string;
 };
 
 type ExplainabilityFilterState = {
@@ -559,10 +572,12 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   const [reportRailDualTargetFilter, setReportRailDualTargetFilter] = useState<ReportRailDualTargetFilterState>({
     targetMode: 'all',
     deltaClass: 'all',
+    shortTradeProfile: 'all',
   });
   const [tradeDateDualTargetFilter, setTradeDateDualTargetFilter] = useState<TradeDateDualTargetFilterState>({
     targetMode: 'all',
     deltaClass: 'all',
+    shortTradeProfile: 'all',
   });
   const [explainabilityFilter, setExplainabilityFilter] = useState<ExplainabilityFilterState>({
     profile: 'all',
@@ -799,6 +814,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   const shortTradeTargetView = selectionSnapshot?.short_trade_view;
   const dualTargetDelta = selectionSnapshot?.dual_target_delta;
   const reportDualTargetOverview = detail?.selection_artifact_overview?.dual_target_overview;
+  const reportShortTradeProfileOverview = detail?.selection_artifact_overview?.short_trade_profile_overview;
   const reportTargetModeOptions = useMemo(() => {
     const optionSet = new Set<string>();
     reports.forEach((report) => {
@@ -813,14 +829,24 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
     });
     return Array.from(optionSet).sort();
   }, [reports]);
+  const reportShortTradeProfileOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    reports.forEach((report) => {
+      Object.keys(report.selection_artifact_overview?.short_trade_profile_overview?.profile_name_counts || {}).forEach((profileName) => optionSet.add(profileName));
+    });
+    return Array.from(optionSet).sort();
+  }, [reports]);
   const filteredReports = useMemo(() => {
     const matchingReports = reports.filter((report) => {
       const dualTargetOverview = report.selection_artifact_overview?.dual_target_overview;
+      const shortTradeProfileOverview = report.selection_artifact_overview?.short_trade_profile_overview;
       const targetModeMatched = reportRailDualTargetFilter.targetMode === 'all'
         || Boolean(dualTargetOverview?.target_mode_counts?.[reportRailDualTargetFilter.targetMode]);
       const deltaClassMatched = reportRailDualTargetFilter.deltaClass === 'all'
         || Boolean(dualTargetOverview?.delta_classification_counts?.[reportRailDualTargetFilter.deltaClass]);
-      return targetModeMatched && deltaClassMatched;
+      const shortTradeProfileMatched = reportRailDualTargetFilter.shortTradeProfile === 'all'
+        || Boolean(shortTradeProfileOverview?.profile_name_counts?.[reportRailDualTargetFilter.shortTradeProfile]);
+      return targetModeMatched && deltaClassMatched && shortTradeProfileMatched;
     });
     return [...matchingReports].sort((left, right) => {
       if (reportRailSortMode === 'dual_target_days_desc') {
@@ -834,7 +860,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
       }
       return String(right.window.end_date || '').localeCompare(String(left.window.end_date || ''));
     });
-  }, [reportRailDualTargetFilter.deltaClass, reportRailDualTargetFilter.targetMode, reportRailSortMode, reports]);
+  }, [reportRailDualTargetFilter.deltaClass, reportRailDualTargetFilter.shortTradeProfile, reportRailDualTargetFilter.targetMode, reportRailSortMode, reports]);
   const tradeDateTargetIndex = detail?.selection_artifact_overview?.trade_date_target_index || [];
   const tradeDateTargetModeOptions = useMemo(() => {
     const optionSet = new Set<string>();
@@ -865,14 +891,24 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
     });
     return counts;
   }, [tradeDateTargetIndex]);
+  const tradeDateShortTradeProfileOptions = useMemo(() => {
+    const optionSet = new Set<string>();
+    tradeDateTargetIndex.forEach((item) => {
+      if (item.short_trade_profile_name) {
+        optionSet.add(item.short_trade_profile_name);
+      }
+    });
+    return Array.from(optionSet).sort();
+  }, [tradeDateTargetIndex]);
   const filteredTradeDateTargetIndex = useMemo(() => {
     return tradeDateTargetIndex.filter((item) => {
       const targetModeMatched = tradeDateDualTargetFilter.targetMode === 'all' || item.target_mode === tradeDateDualTargetFilter.targetMode;
       const deltaClassMatched = tradeDateDualTargetFilter.deltaClass === 'all' || Boolean(item.delta_classification_counts?.[tradeDateDualTargetFilter.deltaClass]);
-      return targetModeMatched && deltaClassMatched;
+      const shortTradeProfileMatched = tradeDateDualTargetFilter.shortTradeProfile === 'all' || item.short_trade_profile_name === tradeDateDualTargetFilter.shortTradeProfile;
+      return targetModeMatched && deltaClassMatched && shortTradeProfileMatched;
     });
-  }, [tradeDateDualTargetFilter.deltaClass, tradeDateDualTargetFilter.targetMode, tradeDateTargetIndex]);
-  const hasActiveTradeDateFilter = tradeDateDualTargetFilter.targetMode !== 'all' || tradeDateDualTargetFilter.deltaClass !== 'all';
+  }, [tradeDateDualTargetFilter.deltaClass, tradeDateDualTargetFilter.shortTradeProfile, tradeDateDualTargetFilter.targetMode, tradeDateTargetIndex]);
+  const hasActiveTradeDateFilter = tradeDateDualTargetFilter.targetMode !== 'all' || tradeDateDualTargetFilter.deltaClass !== 'all' || tradeDateDualTargetFilter.shortTradeProfile !== 'all';
   const filteredAvailableTradeDates = useMemo(() => {
     if (hasActiveTradeDateFilter) {
       return filteredTradeDateTargetIndex.map((item) => item.trade_date);
@@ -996,6 +1032,36 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
       };
     });
   }, [selectionArtifactDetail, feedbackOptions, symbolOptions]);
+
+  useEffect(() => {
+    setReportRailDualTargetFilter((current) => {
+      const nextShortTradeProfile = current.shortTradeProfile === 'all' || reportShortTradeProfileOptions.includes(current.shortTradeProfile)
+        ? current.shortTradeProfile
+        : 'all';
+      if (nextShortTradeProfile === current.shortTradeProfile) {
+        return current;
+      }
+      return {
+        ...current,
+        shortTradeProfile: nextShortTradeProfile,
+      };
+    });
+  }, [reportShortTradeProfileOptions]);
+
+  useEffect(() => {
+    setTradeDateDualTargetFilter((current) => {
+      const nextShortTradeProfile = current.shortTradeProfile === 'all' || tradeDateShortTradeProfileOptions.includes(current.shortTradeProfile)
+        ? current.shortTradeProfile
+        : 'all';
+      if (nextShortTradeProfile === current.shortTradeProfile) {
+        return current;
+      }
+      return {
+        ...current,
+        shortTradeProfile: nextShortTradeProfile,
+      };
+    });
+  }, [tradeDateShortTradeProfileOptions]);
 
   useEffect(() => {
     if (focusedSymbol === 'all') {
@@ -1436,6 +1502,21 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                       </select>
                     </label>
                     <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Report Short Profile Filter</span>
+                      <select
+                        value={reportRailDualTargetFilter.shortTradeProfile}
+                        onChange={(event) => setReportRailDualTargetFilter((current) => ({ ...current, shortTradeProfile: event.target.value }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {reportShortTradeProfileOptions.map((profileName) => (
+                          <option key={`report-profile-${profileName}`} value={profileName}>
+                            {profileName}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
                       <span className="text-muted-foreground">Report Sort</span>
                       <select
                         value={reportRailSortMode}
@@ -1478,6 +1559,9 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                         </p>
                         <p className="mt-2 break-all text-xs leading-5 text-muted-foreground">
                           {formatCacheBenchmarkDescription(report.cache_benchmark_overview)}
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                          short profile {formatShortTradeProfileOverview(report.selection_artifact_overview.short_trade_profile_overview)}
                         </p>
                         <p className="mt-2 text-xs leading-5 text-muted-foreground">
                           target modes {formatDualTargetOverviewModes(report.selection_artifact_overview.dual_target_overview)}
@@ -1531,6 +1615,10 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                   <span>{reportDualTargetOverview?.dual_target_trade_date_count ?? '--'}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Short Profile</span>
+                  <span>{reportShortTradeProfileOverview?.latest_profile_name || '--'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
                   <span className="text-muted-foreground">Trade Date Filter</span>
                   <span>{tradeDateFilterCoverageText}</span>
                 </div>
@@ -1545,6 +1633,10 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                 <div className="space-y-1 pt-1">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Modes</p>
                   <p className="text-xs leading-6 text-muted-foreground">{formatDualTargetOverviewModes(reportDualTargetOverview)}</p>
+                </div>
+                <div className="space-y-1 pt-1">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Short Trade Profiles</p>
+                  <p className="text-xs leading-6 text-muted-foreground">{formatShortTradeProfileOverview(reportShortTradeProfileOverview)}</p>
                 </div>
               </CardContent>
             </Card>
@@ -1738,6 +1830,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                               <span className="text-sm font-medium text-primary">{item.trade_date}</span>
                               <Badge variant="outline">{item.target_mode || 'unknown'}</Badge>
                             </div>
+                            <p className="mt-1 text-xs leading-6 text-muted-foreground">profile {formatOptionalText(item.short_trade_profile_name)}</p>
                             <p className="mt-2 text-xs leading-6 text-muted-foreground">delta {formatCounterMap(item.delta_classification_counts)}</p>
                             <p className="mt-1 text-xs leading-6 text-muted-foreground">research {item.research_selected_count}/{item.research_near_miss_count} | short {item.short_trade_selected_count}/{item.short_trade_blocked_count}</p>
                           </button>
@@ -1777,6 +1870,21 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                         ))}
                       </select>
                       <p className="text-xs text-muted-foreground">{tradeDateFilterCoverageText}</p>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">Trade Date Short Profile Filter</span>
+                      <select
+                        value={tradeDateDualTargetFilter.shortTradeProfile}
+                        onChange={(event) => setTradeDateDualTargetFilter((current) => ({ ...current, shortTradeProfile: event.target.value }))}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="all">all</option>
+                        {tradeDateShortTradeProfileOptions.map((profileName) => (
+                          <option key={`trade-date-profile-${profileName}`} value={profileName}>
+                            {profileName}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                     <label className="space-y-1 text-sm">
                       <span className="text-muted-foreground">Trade Date</span>

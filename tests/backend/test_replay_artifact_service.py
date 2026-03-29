@@ -101,6 +101,14 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
         {
             "trade_date": "2026-03-11",
             "target_mode": "dual_target",
+            "pipeline_config_snapshot": {
+                "short_trade_target_profile": {
+                    "name": "aggressive",
+                    "config": {
+                        "select_threshold": 0.54,
+                    },
+                }
+            },
             "target_summary": {
                 "target_mode": "dual_target",
                 "selection_target_count": 2,
@@ -176,6 +184,7 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
         {
             "trade_date": "2026-03-11",
             "target_mode": "dual_target",
+            "short_trade_profile_name": "aggressive",
             "delta_classification_counts": {"research_reject_short_pass": 2},
             "research_selected_count": 1,
             "research_near_miss_count": 1,
@@ -185,6 +194,12 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
     ]
     assert overview["write_status_counts"] == {"success": 1}
     assert overview["blocker_counts"] == [{"reason": "blocked_by_reentry_score_confirmation", "count": 1}]
+    assert overview["short_trade_profile_overview"] == {
+        "profile_name_counts": {"aggressive": 1},
+        "latest_profile_name": "aggressive",
+        "latest_profile_trade_date": "2026-03-11",
+        "latest_profile_config": {"select_threshold": 0.54},
+    }
     assert overview["dual_target_overview"] == {
         "target_mode_counts": {"dual_target": 1},
         "dual_target_trade_date_count": 1,

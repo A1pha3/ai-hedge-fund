@@ -76,3 +76,61 @@ def test_analyze_structural_conflict_blockers_summarizes_blocked_cluster(tmp_pat
     assert analysis["delta_classification_counts"] == {"research_pass_short_reject": 1, "both_reject_but_reason_diverge": 1}
     assert analysis["top_examples"][0]["ticker"] == "300724"
     assert analysis["recommended_focus_areas"][0]["focus_area"] == "review_bearish_conflict_hard_block_for_high_score_cases"
+
+
+def test_analyze_structural_conflict_blockers_can_filter_trade_dates(tmp_path):
+    report_dir = tmp_path / "report"
+    selection_root = report_dir / "selection_artifacts"
+    (selection_root / "2026-03-10").mkdir(parents=True)
+    (selection_root / "2026-03-11").mkdir(parents=True)
+
+    (selection_root / "2026-03-10" / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-10",
+                "selection_targets": {
+                    "300724": {
+                        "candidate_source": "layer_c_watchlist",
+                        "short_trade": {
+                            "decision": "blocked",
+                            "score_target": 0.37,
+                            "blockers": ["layer_c_bearish_conflict"],
+                            "metrics_payload": {},
+                        },
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (selection_root / "2026-03-11" / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-11",
+                "selection_targets": {
+                    "300394": {
+                        "candidate_source": "watchlist_filter_diagnostics",
+                        "short_trade": {
+                            "decision": "blocked",
+                            "score_target": 0.17,
+                            "blockers": ["layer_c_bearish_conflict"],
+                            "metrics_payload": {},
+                        },
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_structural_conflict_blockers(report_dir, trade_dates={"2026-03-11"})
+
+    assert analysis["trade_dates_filter"] == ["2026-03-11"]
+    assert analysis["trade_day_count"] == 1
+    assert analysis["blocked_count"] == 1
+    assert analysis["candidate_source_counts"] == {"watchlist_filter_diagnostics": 1}
+
