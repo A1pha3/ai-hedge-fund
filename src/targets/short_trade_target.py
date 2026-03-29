@@ -15,6 +15,9 @@ OVERHEAD_PENALTY_BLOCK_THRESHOLD = 0.68
 EXTENSION_PENALTY_BLOCK_THRESHOLD = 0.74
 STRONG_BEARISH_CONFLICTS = {"b_positive_c_strong_bearish", "b_strong_buy_c_negative"}
 LAYER_C_AVOID_PENALTY = 0.12
+STALE_SCORE_PENALTY_WEIGHT = 0.12
+OVERHEAD_SCORE_PENALTY_WEIGHT = 0.10
+EXTENSION_SCORE_PENALTY_WEIGHT = 0.08
 
 
 def _normalize_score(value: float) -> float:
@@ -152,6 +155,24 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in STRONG_BEARISH_CONFLICTS else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
     extension_without_room_penalty = clamp_unit_interval((0.45 * long_trend_strength) + (0.35 * max(0.0, volatility_strength - catalyst_freshness)) + (0.20 * clamp_unit_interval((score_final_strength - 0.72) / 0.28)))
 
+    weighted_positive_contributions = {
+        "breakout_freshness": round(0.22 * breakout_freshness, 4),
+        "trend_acceleration": round(0.18 * trend_acceleration, 4),
+        "volume_expansion_quality": round(0.16 * volume_expansion_quality, 4),
+        "close_strength": round(0.14 * close_strength, 4),
+        "sector_resonance": round(0.12 * sector_resonance, 4),
+        "catalyst_freshness": round(0.08 * catalyst_freshness, 4),
+        "layer_c_alignment": round(0.10 * layer_c_alignment, 4),
+    }
+    weighted_negative_contributions = {
+        "stale_trend_repair_penalty": round(STALE_SCORE_PENALTY_WEIGHT * stale_trend_repair_penalty, 4),
+        "overhead_supply_penalty": round(OVERHEAD_SCORE_PENALTY_WEIGHT * overhead_supply_penalty, 4),
+        "extension_without_room_penalty": round(EXTENSION_SCORE_PENALTY_WEIGHT * extension_without_room_penalty, 4),
+        "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
+    }
+    total_positive_contribution = round(sum(weighted_positive_contributions.values()), 4)
+    total_negative_contribution = round(sum(weighted_negative_contributions.values()), 4)
+
     score_target = clamp_unit_interval(
         (0.22 * breakout_freshness)
         + (0.18 * trend_acceleration)
@@ -160,9 +181,9 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         + (0.12 * sector_resonance)
         + (0.08 * catalyst_freshness)
         + (0.10 * layer_c_alignment)
-        - (0.12 * stale_trend_repair_penalty)
-        - (0.10 * overhead_supply_penalty)
-        - (0.08 * extension_without_room_penalty)
+        - (STALE_SCORE_PENALTY_WEIGHT * stale_trend_repair_penalty)
+        - (OVERHEAD_SCORE_PENALTY_WEIGHT * overhead_supply_penalty)
+        - (EXTENSION_SCORE_PENALTY_WEIGHT * extension_without_room_penalty)
         - layer_c_avoid_penalty
     )
 
@@ -260,6 +281,22 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "score_c": round(float(input_data.score_c), 4),
             "score_final": round(float(input_data.score_final), 4),
             "quality_score": round(float(input_data.quality_score), 4),
+            "score_b_strength": round(score_b_strength, 4),
+            "score_c_strength": round(score_c_strength, 4),
+            "score_final_strength": round(score_final_strength, 4),
+            "momentum_strength": round(momentum_strength, 4),
+            "adx_strength": round(adx_strength, 4),
+            "ema_strength": round(ema_strength, 4),
+            "volatility_strength": round(volatility_strength, 4),
+            "long_trend_strength": round(long_trend_strength, 4),
+            "event_freshness_strength": round(event_freshness_strength, 4),
+            "news_sentiment_strength": round(news_sentiment_strength, 4),
+            "event_signal_strength": round(event_signal_strength, 4),
+            "mean_reversion_strength": round(mean_reversion_strength, 4),
+            "analyst_alignment": round(analyst_alignment, 4),
+            "investor_alignment": round(investor_alignment, 4),
+            "analyst_penalty": round(analyst_penalty, 4),
+            "investor_penalty": round(investor_penalty, 4),
             "breakout_freshness": round(breakout_freshness, 4),
             "trend_acceleration": round(trend_acceleration, 4),
             "volume_expansion_quality": round(volume_expansion_quality, 4),
@@ -271,6 +308,20 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "stale_trend_repair_penalty": round(stale_trend_repair_penalty, 4),
             "overhead_supply_penalty": round(overhead_supply_penalty, 4),
             "extension_without_room_penalty": round(extension_without_room_penalty, 4),
+            "weighted_positive_contributions": weighted_positive_contributions,
+            "weighted_negative_contributions": weighted_negative_contributions,
+            "total_positive_contribution": total_positive_contribution,
+            "total_negative_contribution": total_negative_contribution,
+            "thresholds": {
+                "select_threshold": round(float(SELECT_THRESHOLD), 4),
+                "near_miss_threshold": round(float(NEAR_MISS_THRESHOLD), 4),
+                "stale_penalty_block_threshold": round(float(STALE_PENALTY_BLOCK_THRESHOLD), 4),
+                "overhead_penalty_block_threshold": round(float(OVERHEAD_PENALTY_BLOCK_THRESHOLD), 4),
+                "extension_penalty_block_threshold": round(float(EXTENSION_PENALTY_BLOCK_THRESHOLD), 4),
+                "stale_score_penalty_weight": round(float(STALE_SCORE_PENALTY_WEIGHT), 4),
+                "overhead_score_penalty_weight": round(float(OVERHEAD_SCORE_PENALTY_WEIGHT), 4),
+                "extension_score_penalty_weight": round(float(EXTENSION_SCORE_PENALTY_WEIGHT), 4),
+            },
         },
         explainability_payload={
             "source": str(input_data.replay_context.get("source") or "short_trade_target_rules_v1"),

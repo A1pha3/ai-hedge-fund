@@ -74,7 +74,9 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     assert (tmp_path / "2026-03-22" / "selection_snapshot.json").exists()
     assert (tmp_path / "2026-03-22" / "selection_review.md").exists()
     assert (tmp_path / "2026-03-22" / "research_feedback.jsonl").exists()
+    assert (tmp_path / "2026-03-22" / "selection_target_replay_input.json").exists()
     snapshot_text = (tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8")
+    replay_input_text = (tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8")
     review_text = (tmp_path / "2026-03-22" / "selection_review.md").read_text(encoding="utf-8")
     assert '"target_mode": "research_only"' in snapshot_text
     assert '"selection_targets": {' in snapshot_text
@@ -82,6 +84,9 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     assert '"research_view": {' in snapshot_text
     assert '"short_trade_view": {' in snapshot_text
     assert '"dual_target_delta": {' in snapshot_text
+    assert '"replay_input_written": true' in snapshot_text
+    assert '"watchlist": [' in replay_input_text
+    assert '"buy_order_tickers": [' in replay_input_text
     assert "## 双目标空壳状态" in review_text
     assert "## Research Target Summary" in review_text
     assert "## Short Trade Target Summary" in review_text
@@ -228,6 +233,7 @@ def test_file_selection_artifact_writer_renders_target_decisions_for_selected_an
     assert result.write_status == "success"
     review_text = (tmp_path / "2026-03-22" / "selection_review.md").read_text(encoding="utf-8")
     snapshot_text = (tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8")
+    replay_input_text = (tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8")
     assert "research_target: selected" in review_text
     assert "short_trade_target: selected" in review_text
     assert "selected_symbols: 000001" in review_text
@@ -239,6 +245,9 @@ def test_file_selection_artifact_writer_renders_target_decisions_for_selected_an
     assert '"candidate_source": "watchlist_filter_diagnostics"' in snapshot_text
     assert '"selected_symbols": [' in snapshot_text
     assert '"dominant_delta_reasons": [' in snapshot_text
+    assert '"supplemental_short_trade_entries": [' in replay_input_text
+    assert '"strategy_signals": {' in replay_input_text
+    assert '"event_sentiment": {' in replay_input_text
 
 
 def test_file_selection_artifact_writer_builds_fallback_layer_b_factors_for_legacy_replay(tmp_path):
@@ -318,6 +327,7 @@ def test_file_selection_artifact_writer_returns_partial_success_when_snapshot_wr
     assert result.snapshot_path is None
     assert result.review_path is not None
     assert result.feedback_path is not None
+    assert result.replay_input_path is not None
     assert "snapshot write failed" in str(result.error_message)
 
 
@@ -349,6 +359,7 @@ def test_file_selection_artifact_writer_returns_failed_when_directory_creation_f
     assert result.snapshot_path is None
     assert result.review_path is None
     assert result.feedback_path is None
+    assert result.replay_input_path is None
     assert "mkdir failed" in str(result.error_message)
 
 

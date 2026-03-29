@@ -335,6 +335,230 @@
 2. short trade 评分器在 [src/targets/short_trade_target.py](src/targets/short_trade_target.py) 只从 `item.strategy_signals` 读取 `trend`、`event_sentiment`、`mean_reversion`
 3. 本次 frozen plan source 中保留下来的 `current_plan.watchlist` 主要包含 Layer C agent 信号与 legacy plan 字段，并没有这些 strategy signals
 
+为了解掉这个约束，当前代码已新增伴随 `selection_artifacts` 同步落盘的高保真 replay input：
+
+1. 文件名：`selection_target_replay_input.json`
+2. 写出位置：每个 `selection_artifacts/<trade_date>/` 目录下
+3. 写出来源：[src/research/artifacts.py](src/research/artifacts.py)
+4. 内容用途：保留 `watchlist`、`rejected_entries`、`supplemental_short_trade_entries`、`buy_order_tickers` 以及完整 `strategy_signals`，用于后续做 short trade 规则校准或重建 `selection_targets`
+
+这意味着后续不必继续依赖历史 `current_plan` 的字段完整性，新的 live / replay 运行结果会天然附带一份更适合 short trade 标定的 replay 输入。
+
+围绕这份新 artifact，当前还新增了 replay 校准脚本 [scripts/replay_selection_target_calibration.py](scripts/replay_selection_target_calibration.py)，用于把 `selection_target_replay_input.json` 直接重放回 [src/targets/router.py](src/targets/router.py) 的 `build_selection_targets(...)`，并检查 stored short trade decision 与 replayed short trade decision 是否一致。
+
+基于 2026-03-26 的新 live dual-target 样本 `data/reports/paper_trading_20260326_20260326_live_m2_7_dual_target_replay_input_validation_20260328` 已完成首轮真实校准基线验证：
+
+1. `selection_target_replay_input.json` 已真实写出
+2. 基线 replay 结果 `decision_mismatch_count = 0`
+3. stored short trade 决策与 replayed short trade 决策完全一致：`rejected=7`、`blocked=2`
+4. `signal_availability = {"has_any": 7}`，说明这个样本已不再受“strategy_signals 全缺失”的历史 replay 契约问题影响
+
+这一步的意义不是说明当前 short trade 已经足够好，而是说明后续阈值/规则实验终于可以建立在可信的高保真输入上，而不是继续混用缺信号的旧 `current_plan` 回放样本。
+
+在这个高保真样本上，当前还进一步跑了一轮阈值网格扫描：
+
+1. 产物：`selection_target_threshold_grid.json` 与 `selection_target_threshold_grid.md`
+2. 扫描区间：`select_threshold = [0.58, 0.52, 0.46, 0.40, 0.36]`，`near_miss_threshold = [0.46, 0.40, 0.36, 0.30, 0.24]`
+3. 第一组能让 short trade 出现 near-miss 的组合是 `select=0.58, near_miss=0.36`
+4. 第一组能让 short trade 出现 selected 的组合是 `select=0.36, near_miss=0.36`
+5. 两组组合里被最先推动出来的 ticker 都是 `300724`
+
+这说明至少在 2026-03-26 这个样本上，阈值调节的第一受益者是边界研究样本 `300724`，而不是当前那两个已进入 structural fail 的 blocked 候选。
+
+同一份 fresh 高保真样本的 blocker 分析也已经补齐：
+
+1. `short_trade_target_count = 9`
+2. `short_trade_decision_counts = {rejected: 7, blocked: 2}`
+3. `blocker_counts = {layer_c_bearish_conflict: 2}`
+4. `signal_availability = {has_any: 9, missing_all: 0}`
+5. `gate_status_counts.structural = {pass: 7, fail: 2}`
+
+对应的两个 blocked ticker 分别是 `300394` 与 `300502`，二者都不是因为缺 signal 或阈值稍高而失败，而是因为：
+
+1. `bc_conflict = b_positive_c_strong_bearish`
+2. `layer_c_decision = avoid`
+3. `overhead_supply_penalty` 与 `stale_trend_repair_penalty` 偏高
+
+因此下一轮 short trade 优化的优先级已经清楚分层：
+
+1. 如果目标是先让系统出现更多可复核 short trade 样本，应先围绕 `300724` 这类边界 research ticker 做温和阈值实验
+2. 如果目标是解除 `300394`、`300502` 这类 blocked 样本，则需要进入结构性 gate 设计，而不是继续只调阈值
+
+围绕第二条路径，当前还补了一轮 structural variant 实验，直接基于高保真 replay input 重放 short trade 规则，而不是去改 live 默认值盲试：
+
+1. 产物：`selection_target_structural_variants.json` 与 `selection_target_structural_variants.md`
+2. 变体集合：`baseline`、`no_bearish_conflict_block`、`half_avoid_penalty`、`relaxed_penalty_thresholds`、`no_bearish_conflict_half_avoid`、`no_bearish_conflict_relaxed_penalties`
+3. 当前基线阈值保持不变：`select_threshold=0.58`、`near_miss_threshold=0.46`
+
+结果很明确：
+
+1. `half_avoid_penalty` 没有释放任何 blocked 样本
+2. `relaxed_penalty_thresholds` 也没有释放任何 blocked 样本
+3. 只有关闭 `b_positive_c_strong_bearish` hard block 的变体会产生变化
+4. 但这种变化只是把 `300394`、`300502` 从 `blocked` 降为 `rejected`，并没有把它们推到 `near_miss` 或 `selected`
+
+这意味着：
+
+1. `layer_c_bearish_conflict` 的 hard block 确实是 blocked 状态的直接来源
+2. 但它不是这两个样本的唯一问题，因为一旦移除 hard block，它们仍然因为 score_target 太低而停留在 `rejected`
+3. 所以下一轮如果要继续做结构性优化，应优先考虑“把 bearish conflict 从 hard block 改成 penalty 后，是否还需要同步提高 score construction 或下调 threshold”，而不是只改一个开关
+
+围绕第 3 条，当前又补了一轮 structural + threshold 联合扫描，直接把“结构放宽”和“阈值联动”放进同一个 replay 工作台里验证：
+
+1. 产物：`selection_target_combination_grid.json` 与 `selection_target_combination_grid.md`
+2. 变体集合：`baseline`、`no_bearish_conflict_block`、`no_bearish_conflict_half_avoid`、`no_bearish_conflict_relaxed_penalties`
+3. 阈值网格：`select_threshold = [0.58, 0.52, 0.46, 0.40, 0.36]`，`near_miss_threshold = [0.46, 0.40, 0.36]`
+
+结果比上一轮更明确：
+
+1. 第一组释放 blocked 样本的组合仍然只是 `no_bearish_conflict_block @ select=0.58, near_miss=0.46`
+2. 在整个联合网格内，`first_row_blocked_to_near_miss = None`，`first_row_blocked_to_selected = None`
+3. 即使把 hard block 移除并把阈值放宽到 `select=0.36, near_miss=0.36`，被推进到 `near_miss/selected` 的依旧只有 `300724`
+4. `300394`、`300502` 在所有联合组合里都只是 `blocked -> rejected`，没有进一步进入 `near_miss`
+
+为了避免“只看到 rejected，不知道离阈值还有多远”，当前还补了一份定点诊断：
+
+1. 产物：`selection_target_no_bearish_conflict_diagnostics.json` 与 `selection_target_no_bearish_conflict_diagnostics.md`
+2. `300394` 在移除 hard block 后的 `replayed_score_target = 0.2133`，距离当前 `near_miss_threshold = 0.46` 仍差 `0.2467`
+3. `300502` 在移除 hard block 后的 `replayed_score_target = 0.0`，距离当前 `near_miss_threshold = 0.46` 仍差 `0.46`
+4. 二者的 `replayed_rejection_reasons` 都已经从 `layer_c_bearish_conflict` 切换成 `score_short_below_threshold`
+5. `300394` 的主导问题转为 `stale_trend_repair_penalty=0.47` 与 `extension_without_room_penalty=0.45`，`300502` 则几乎是全量 score construction 失效，`score_short=0.00`
+
+为了把“score_short_below_threshold”继续拆开，当前还补了一份 ticker 级 score construction 诊断：
+
+1. 产物：`selection_target_score_diagnostics_300394_300502.json` 与 `selection_target_score_diagnostics_300394_300502.md`
+2. `300394` 的 replay 后正贡献并不低：`trend_acceleration=0.1325`、`close_strength=0.1319`、`breakout_freshness=0.088`，总正贡献 `0.4281`
+3. 但它被 `layer_c_avoid_penalty=0.12`、`stale_trend_repair_penalty=0.0564`、`extension_without_room_penalty=0.036` 持续压低，因此最终 `replayed_score_target` 只剩 `0.2133`
+4. `300502` 的问题更深：总正贡献只有 `0.1919`，低于总负贡献 `0.2254`，其中 `breakout_freshness=0.0`、`volume_expansion_quality=0.0`、`catalyst_freshness=0.0`
+5. 这说明 `300502` 不是一个“只差去掉 hard block 或降低 penalty”的边界样本，而是连 short trade 所需的 breakout 语义都没有被打出来
+
+因此，当前对两个 blocked 样本的改造建议已经可以进一步分流：
+
+1. `300394` 可以继续测试“削弱 avoid penalty / stale_trend_repair_penalty / extension_without_room_penalty”这一类 score construction 调整
+2. `300502` 更应该回到 candidate entry 与短线 breakout 语义本身，检查它为什么会进入 short trade replay 候选但几乎没有正向 breakout 贡献
+
+围绕第 1 条，当前还补了一轮真实 penalty weight 结构变体验证：
+
+1. 产物：`selection_target_penalty_weight_variants.json` 与 `selection_target_penalty_weight_variants.md`
+2. 对比变体：`no_bearish_conflict_block` vs `no_bearish_conflict_softer_penalty_weights`
+3. `no_bearish_conflict_softer_penalty_weights` 同时把 `layer_c_avoid_penalty` 从 `0.12` 降到 `0.06`，并把 `stale/overhead/extension` 的 score 权重从 `0.12/0.10/0.08` 降到 `0.06/0.05/0.04`
+
+结果很关键：
+
+1. 两个样本都仍然没有进入 `near_miss`，所以这不是“一调权重就解决”的问题
+2. 但 `300394` 的 `replayed_score_target` 从 `0.2133` 明显抬升到 `0.3207`
+3. 它的总负贡献从 `0.2148` 降到 `0.1074`，而总正贡献保持 `0.4281` 不变，说明 penalty 权重确实是它的主矛盾之一
+4. `300502` 只从 `0.0` 抬升到 `0.0792`，总负贡献从 `0.2254` 降到 `0.1127`，但总正贡献仍只有 `0.1919`
+5. 这说明即便把 penalty 明显放松，`300502` 依然缺少足够的 breakout / volume / catalyst 正向结构
+
+所以，下一轮优先级可以进一步收紧为：
+
+1. `300394` 值得继续沿着 penalty weight 和 score construction 做第二轮实验，例如只对 avoid penalty 与 stale/extension 分开扫描，观察是否能把它推到 near-miss
+2. `300502` 暂时不值得继续做 penalty 微调，应优先回到 candidate entry 和 short-trade 语义校准
+
+围绕这两个方向，当前又补了一轮更细的真实拆分实验与 candidate entry 定点诊断：
+
+1. 产物：`selection_target_penalty_split_variants.json`、`selection_target_penalty_split_variants.md`、`selection_target_candidate_entry_focus.json`、`selection_target_candidate_entry_focus.md`
+2. `300394` 与 `300502` 的 focused diagnostics 已直接暴露 `candidate_source` 与 `candidate_reason_codes`，两者都不是来自 `layer_c_watchlist`，而是来自 `watchlist_filter_diagnostics`，原因码均为 `decision_avoid` 与 `score_final_below_watchlist_threshold`
+3. 这说明 `300502` 的问题已经不只是“为什么移除 hard block 后仍没有分数”，还包括“为什么一个 Layer C avoid 且 score_final 不达 watchlist 线的样本会继续进入 short-trade replay 候选”
+
+拆分 penalty 实验的结果也已经足够清楚：
+
+1. `300394` 在 `no_bearish_conflict_block` 下的基线分数是 `0.2133`
+2. 只降低 `layer_c_avoid_penalty` 到 `0.06` 后，`300394` 升到 `0.2733`，gap_to_near_miss 收窄到 `0.1867`，是单项收益最大的调节杆
+3. 只降低 `stale_score_penalty_weight` 到 `0.06` 后，`300394` 升到 `0.2415`，只降低 `extension_score_penalty_weight` 到 `0.04` 后，升到 `0.2313`
+4. 组合变体 `no_bearish_conflict_lower_avoid_plus_stale` 可把 `300394` 推到 `0.3015`，`no_bearish_conflict_penalty_triplet_relief` 可到 `0.3195`，与更激进的 `no_bearish_conflict_softer_penalty_weights=0.3207` 基本同量级
+5. `300502` 在同一组拆分实验下只从 `0.0` 抬到 `0.0265`、`0.0595`、`0.0775` 这一级别，始终远低于 `near_miss=0.46`
+
+因此，当前最稳妥的工程结论可以进一步收紧为：
+
+1. `300394` 的 penalty 重构顺序应优先看 `layer_c_avoid_penalty`，其次 `stale_trend_repair_penalty`，最后 `extension_without_room_penalty`
+2. `300502` 不应继续当作 penalty 调参样本，而应优先审查 `watchlist_filter_diagnostics -> short trade replay candidate` 这条入口是否过宽，尤其是 `decision_avoid` + `score_final_below_watchlist_threshold` 这一类边界样本是否应继续进入 short-trade 评估
+
+围绕第 1 条，当前又补了一轮系统化 penalty frontier 与最小 rescue 搜索：
+
+1. 新产物：`selection_target_penalty_frontier_grid_300394_300502.json` / `.md`、`selection_target_extreme_penalty_combination_grid.json` / `.md`、`selection_target_penalty_threshold_frontier_300394_300502.json` / `.md`
+2. penalty frontier 先证明：在 `no_bearish_conflict_block` 下，即便把 `layer_c_avoid_penalty` 压到 `0.02`、`stale_score_penalty_weight` 压到 `0.02`、`extension_score_penalty_weight` 压到 `0.00`，`300394` 的最高 `replayed_score_target` 也只有 `0.3963`，距离 `near_miss=0.46` 仍差 `0.0637`
+3. 同一最强 penalty relief 下，`300502` 最高也只有 `0.1575`，距离 near-miss 仍差 `0.3025`
+4. 这说明 `300394` 虽然确定是 penalty 主导样本，但“只放松 penalty”仍不足以把它自然推进 near-miss；`300502` 更不可能走这条路径
+5. 继续叠加 threshold 联动后，`300394` 的最早 `blocked -> near_miss` 发生在 `layer_c_avoid_penalty=0.02`、`stale_score_penalty_weight=0.02`、`extension_score_penalty_weight=0.08`、`near_miss_threshold=0.36`、`select_threshold` 保持 `0.58` 的组合，总 adjustment_cost=`0.30`
+6. `300394` 的最早 `blocked -> selected` 则需要 `layer_c_avoid_penalty=0.02`、`stale_score_penalty_weight=0.02`、`extension_score_penalty_weight=0.02`、`select_threshold=0.38`、`near_miss_threshold=0.38`，总 adjustment_cost=`0.54`
+7. `300502` 在同一 penalty+threshold 搜索空间里没有任何 near-miss/selected rescue row
+
+所以，这一轮之后，围绕 `300394/300502` 的分工可以进一步明确成：
+
+1. `300394` 已经不是“再多给几个 penalty 变体看看”的问题，而是需要 penalty relief 与 threshold 联动，或者直接回到 score construction 级重构
+2. `300502` 依旧不值得沿 penalty/threshold 路线投入，应继续留在 candidate entry / breakout 语义路径
+
+围绕第 2 条，当前又补了一轮真实 candidate entry 过滤实验：
+
+1. 产物：`selection_target_candidate_entry_filter_variants.json` 与 `selection_target_candidate_entry_filter_variants.md`
+2. 该 replay 变体会直接排除 `watchlist_filter_diagnostics` 中同时满足 `decision_avoid` 与 `score_final_below_watchlist_threshold` 的 entry
+3. 在真实 `2026-03-26` 样本上，这条规则确实命中了 `300394` 与 `300502`，把它们从 replay 结果中直接移除，表现为 `blocked -> none`
+4. 过滤后汇总从 `rejected=7, blocked=2` 变成 `rejected=7, none=2`；即便叠加 `no_bearish_conflict`，结果也仍然是这两个 ticker 被直接消除，而不是进入新的 score 竞争
+
+这一步带来的结论很明确：
+
+1. candidate entry 收紧方向本身是有效的，至少已经证明 `300502` 这类样本不需要继续靠 penalty 微调来“修救”
+2. 但当前规则粒度过粗，因为它会把 `300394` 一起过滤掉
+3. 所以下一轮入口规则不应直接采用“排除所有 avoid + 低分边界样本”，而应继续叠加 breakout / volume / catalyst 等正向结构条件，只过滤像 `300502` 这样几乎没有 short-trade 正向结构的 entry，尽量保留 `300394` 这类仍值得做 penalty/score construction 研究的样本
+
+围绕第 3 条，当前已经补完一轮选择性弱结构过滤验证：
+
+1. 产物：`selection_target_candidate_entry_selective_filter_variants.json` 与 `selection_target_candidate_entry_selective_filter_variants.md`
+2. 新规则仍以 `watchlist_filter_diagnostics + decision_avoid + score_final_below_watchlist_threshold` 为入口，但额外要求 `breakout_freshness <= 0.05`、`volume_expansion_quality <= 0.05`、`catalyst_freshness <= 0.05`
+3. 真实 `2026-03-26` 样本中，这条规则只命中 `300502`，不会再误伤 `300394`
+4. baseline 下汇总从 `rejected=7, blocked=2` 变成 `rejected=7, blocked=1, none=1`；`300394` 仍保持 `blocked`，`300502` 变成 `none`
+5. 叠加 `no_bearish_conflict_block` 后，`300394` 仍会按既有结论进入 `rejected` 并保留 `replayed_score_target=0.2133`，`300502` 则被直接剔除，不再参与后续 score 竞争
+
+这一步把 candidate entry 方向从“只证明需要收紧”推进到了“已经拿到一个能区分 `300394` 与 `300502` 的原型规则”：
+
+1. `300502` 可以开始从 replay-only 原型收紧规则继续外推，优先围绕弱 breakout / 弱 volume / 弱 catalyst 结构去定义更稳健的入口约束
+2. `300394` 则应继续留在 penalty / score construction 路径里，避免因为入口规则过粗而提前丢失一个仍有研究价值的样本
+
+围绕这条 replay-only 原型，当前又补了一轮 W1 长窗口方法学校验：
+
+1. 产物：`data/reports/paper_trading_window_20260202_20260313_w1_frozen_replay_m2_7_dual_target_replay_input_validation_20260329/selection_target_candidate_entry_metric_grid_w1.json` 与 `selection_target_candidate_entry_metric_grid_w1.md`
+2. 新增能力会对 `breakout_freshness_max`、`volume_expansion_quality_max`、`catalyst_freshness_max` 做 54 行网格扫描，验证弱结构 candidate entry 过滤是否能在更长窗口里稳定命中
+3. 首轮 W1 实验先暴露了一个方法学问题：部分 frozen replay entry 缺少原生 `strategy_signals`，导致弱结构指标退化为零，从而把 27 个 blocked entry 误判成“弱结构可过滤”
+4. 随后已补上保护逻辑，要求只有在 short-trade `gate_status.data == pass` 时，metric-based candidate entry 过滤才允许生效；对应回归测试也已补齐
+5. 保护生效后重新跑完整个 W1 网格，54 行结果全部回到 `filtered={}`、`mismatches=0`、`replayed={'blocked': 50}`，`first_row_filtering_any=None`
+
+围绕 `300502` 的 candidate-entry 路线，当前又补了一轮更贴近“breakout semantic 本身”的正向结构 frontier：
+
+1. 新产物：`selection_target_candidate_entry_semantic_frontier_300502.json` / `.md` 与更细网格版 `selection_target_candidate_entry_semantic_frontier_300502_refined.json` / `.md`
+2. `scripts/replay_selection_target_calibration.py` 现已支持在 candidate-entry metric grid 中额外扫描 `trend_acceleration_max` 与 `close_strength_max`，并通过 `focus_tickers` / `preserve_tickers` 直接汇总“过滤 focus ticker 且不误伤 preserve ticker”的最小行
+3. 真实 `2026-03-26` 样本上，精细网格给出的最小 preserving row 是 `trend_acceleration <= 0.34` 且 `close_strength <= 0.69`
+4. 这条规则会把 `300502` 直接过滤掉，表现为 `blocked -> none`，同时 `300394` 继续保留在 replay 里，不会被误伤
+5. 对应的 filtered metrics 也进一步坐实了分流原因：`300502` 的 `trend_acceleration=0.3374`、`close_strength=0.6883`，而 `300394` 仍有 `trend_acceleration=0.7362`、`close_strength=0.942`
+
+所以，到这一步，`300502` 的 candidate-entry 语义已经不再只停留在“弱 breakout / 弱 volume / 弱 catalyst”这一层，而是被进一步压实成：
+
+1. 它既缺少 breakout / volume / catalyst 正向结构
+2. 同时连短线趋势确认和收盘强度也停留在明显偏弱的位置
+3. 这使得下一轮入口语义设计可以优先围绕 `trend_acceleration + close_strength` 与既有 weak-structure 指标做组合，而不需要再把 `300502` 拉回 penalty/threshold 路线
+4. 在 subset frontier 中，最小 preserving row 甚至进一步收缩为单指标：`volume_expansion_quality <= 0.0` 就足以过滤 `300502` 且保留 `300394`
+
+基于这一步，当前又补齐了 `300502` 的 candidate-entry subset frontier：
+
+1. 新产物：`selection_target_candidate_entry_subset_frontier_300502.json` / `.md`
+2. `scripts/replay_selection_target_calibration.py` 现已支持在 candidate-entry metric grid CLI 中使用 `none` 省略单个维度，直接搜索最小子集规则
+3. 真实 `2026-03-26` 样本显示，真正的最小 preserving row 不是 5 维组合，也不是 `trend_acceleration + close_strength` 联动，而是单独要求 `volume_expansion_quality <= 0.0`
+4. 这条规则会把 `300502` 过滤掉，表现为 `blocked -> none`，同时 `300394` 继续保留在 replay 里，不会被误伤
+5. 这说明 `300502` 与 `300394` 当前最核心的 candidate-entry 分离面，首先落在“volume expansion quality 是否完全缺失”这一层；`trend_acceleration` 与 `close_strength` 更适合作为后续稳健化时再叠加的辅助条件
+6. 增强后的 eligibility 统计还直接显示：整个窗口里共有 27 个 entry 命中了 `watchlist_filter_diagnostics + decision_avoid + score_final_below_watchlist_threshold` 这组入口预条件，但 27 个全部停在 `metric_data_fail_count`，没有任何一个进入弱结构阈值比较
+
+这轮长窗口结果的正确解读不是“candidate entry 收紧方向失效”，而是：
+
+1. 缺信号的 frozen replay 源不应再被误读成弱结构证据，这个方法学陷阱已经被修补掉
+2. 当前这批 W1 高保真 replay 输入里，虽然有 27 个 entry 命中了 candidate entry 的入口预条件，但没有任何一个通过 short-trade data gate，因此网格扫描不会进入弱 breakout / 弱 volume / 弱 catalyst 的真实比较，更不会产生新的过滤命中
+3. 所以这批 W1 结果当前更适合用来界定规则适用边界，而不是拿来反证 `300502` 型 candidate entry 收紧方向本身
+
+这一步把下一轮优化方向进一步收紧为：
+
+1. `300724` 仍属于阈值路径，可继续作为 near-miss / selected 的边界标定样本
+2. `300394`、`300502` 已经不适合作为“阈值共调”对象，而应转入 score construction、penalty 结构和 candidate entry 的重新设计
+
 因此，这个 replay 样本当前更适合用来验证：
 
 1. dual-target 链路是否打通

@@ -98,6 +98,23 @@ class SelectionSnapshot(BaseModel):
     artifact_status: dict[str, Any] = Field(default_factory=dict)
 
 
+class SelectionTargetReplayInput(BaseModel):
+    artifact_version: str = "v1"
+    run_id: str
+    experiment_id: str | None = None
+    trade_date: str
+    market: str = "CN"
+    target_mode: str = "research_only"
+    pipeline_config_snapshot: dict[str, Any] = Field(default_factory=dict)
+    source_summary: dict[str, Any] = Field(default_factory=dict)
+    watchlist: list[dict[str, Any]] = Field(default_factory=list)
+    rejected_entries: list[dict[str, Any]] = Field(default_factory=list)
+    supplemental_short_trade_entries: list[dict[str, Any]] = Field(default_factory=list)
+    buy_order_tickers: list[str] = Field(default_factory=list)
+    selection_targets: dict[str, DualTargetEvaluation] = Field(default_factory=dict)
+    target_summary: DualTargetSummary = Field(default_factory=DualTargetSummary)
+
+
 class ResearchFeedbackRecord(BaseModel):
     feedback_version: str = "v1"
     artifact_version: str = "v1"
@@ -182,5 +199,6 @@ class SelectionArtifactWriteResult(BaseModel):
     snapshot_path: str | None = None
     review_path: str | None = None
     feedback_path: str | None = None
+    replay_input_path: str | None = None
     write_status: str = "success"
     error_message: str | None = None

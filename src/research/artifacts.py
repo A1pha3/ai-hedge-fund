@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from src.execution.daily_pipeline import FAST_AGENT_MAX_TICKERS, FAST_AGENT_SCORE_THRESHOLD, PRECISE_AGENT_MAX_TICKERS, WATCHLIST_SCORE_THRESHOLD
-from src.research.models import DualTargetDeltaView, RejectedCandidate, ResearchTargetView, SelectedCandidate, SelectionArtifactWriteResult, SelectionSnapshot, ShortTradeTargetView
+from src.research.models import DualTargetDeltaView, RejectedCandidate, ResearchTargetView, SelectedCandidate, SelectionArtifactWriteResult, SelectionSnapshot, SelectionTargetReplayInput, ShortTradeTargetView
 from src.research.review_renderer import render_selection_review
 
 if TYPE_CHECKING:
@@ -381,6 +381,71 @@ def _build_pipeline_config_snapshot(pipeline: DailyPipeline | None, selected_ana
     }
 
 
+def _serialize_strategy_signals(strategy_signals: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        str(name): signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
+        for name, signal in dict(strategy_signals or {}).items()
+    }
+
+
+def _serialize_layer_c_result_for_replay(item: LayerCResult, *, candidate_source: str) -> dict[str, Any]:
+    return {
+        "ticker": item.ticker,
+        "score_b": round(float(item.score_b), 4),
+        "score_c": round(float(item.score_c), 4),
+        "score_final": round(float(item.score_final), 4),
+        "quality_score": round(float(item.quality_score), 4),
+        "decision": str(item.decision or "neutral"),
+        "bc_conflict": item.bc_conflict,
+        "candidate_source": candidate_source,
+        "strategy_signals": _serialize_strategy_signals(item.strategy_signals),
+        "agent_contribution_summary": dict(item.agent_contribution_summary or {}),
+    }
+
+
+def build_selection_target_replay_input(
+    *,
+    plan: ExecutionPlan,
+    trade_date: str,
+    run_id: str,
+    pipeline: DailyPipeline | None,
+    selected_analysts: list[str] | None,
+    experiment_id: str | None = None,
+    market: str = "CN",
+    artifact_version: str = "v1",
+) -> SelectionTargetReplayInput:
+    formatted_trade_date = _format_trade_date(trade_date)
+    funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
+    filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    rejected_entries = list(dict(filters.get("watchlist", {}) or {}).get("tickers", []) or [])
+    supplemental_short_trade_entries = list(dict(filters.get("short_trade_candidates", {}) or {}).get("tickers", []) or [])
+    watchlist_entries = [
+        _serialize_layer_c_result_for_replay(item, candidate_source="layer_c_watchlist")
+        for item in sorted(plan.watchlist, key=lambda current: current.score_final, reverse=True)
+    ]
+    return SelectionTargetReplayInput(
+        artifact_version=artifact_version,
+        run_id=run_id,
+        experiment_id=experiment_id,
+        trade_date=formatted_trade_date,
+        market=market,
+        target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
+        pipeline_config_snapshot=_build_pipeline_config_snapshot(pipeline, selected_analysts),
+        source_summary={
+            "watchlist_count": len(watchlist_entries),
+            "rejected_entry_count": len(rejected_entries),
+            "supplemental_short_trade_entry_count": len(supplemental_short_trade_entries),
+            "buy_order_ticker_count": len(plan.buy_orders),
+        },
+        watchlist=watchlist_entries,
+        rejected_entries=rejected_entries,
+        supplemental_short_trade_entries=supplemental_short_trade_entries,
+        buy_order_tickers=sorted({str(order.ticker) for order in plan.buy_orders}),
+        selection_targets=dict(plan.selection_targets or {}),
+        target_summary=plan.dual_target_summary,
+    )
+
+
 def build_selection_snapshot(
     *,
     plan: ExecutionPlan,
@@ -464,19 +529,32 @@ class FileSelectionArtifactWriter:
             market=self._market,
             artifact_version=self._artifact_version,
         )
+        replay_input = build_selection_target_replay_input(
+            plan=plan,
+            trade_date=trade_date,
+            run_id=self._run_id,
+            pipeline=pipeline,
+            selected_analysts=selected_analysts,
+            experiment_id=self._experiment_id,
+            market=self._market,
+            artifact_version=self._artifact_version,
+        )
         day_dir = self._artifact_root / snapshot.trade_date
         snapshot_path = day_dir / "selection_snapshot.json"
         review_path = day_dir / "selection_review.md"
         feedback_path = day_dir / "research_feedback.jsonl"
+        replay_input_path = day_dir / "selection_target_replay_input.json"
         try:
             day_dir.mkdir(parents=True, exist_ok=True)
             review_path.write_text(render_selection_review(snapshot), encoding="utf-8")
             feedback_path.touch(exist_ok=True)
+            replay_input_path.write_text(json.dumps(replay_input.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
             finalized_snapshot = snapshot.model_copy(
                 update={
                     "artifact_status": {
                         "snapshot_written": True,
                         "review_written": True,
+                        "replay_input_written": True,
                     }
                 }
             )
@@ -486,6 +564,7 @@ class FileSelectionArtifactWriter:
                 snapshot_path=str(snapshot_path),
                 review_path=str(review_path),
                 feedback_path=str(feedback_path),
+                replay_input_path=str(replay_input_path),
                 write_status="success",
             )
         except OSError as error:
@@ -494,6 +573,7 @@ class FileSelectionArtifactWriter:
                 snapshot_path=str(snapshot_path) if snapshot_path.exists() else None,
                 review_path=str(review_path) if review_path.exists() else None,
                 feedback_path=str(feedback_path) if feedback_path.exists() else None,
-                write_status="partial_success" if any(path.exists() for path in (snapshot_path, review_path, feedback_path)) else "failed",
+                replay_input_path=str(replay_input_path) if replay_input_path.exists() else None,
+                write_status="partial_success" if any(path.exists() for path in (snapshot_path, review_path, feedback_path, replay_input_path)) else "failed",
                 error_message=str(error),
             )
