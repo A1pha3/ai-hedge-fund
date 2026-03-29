@@ -26,6 +26,7 @@ from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetSummary, TargetMode
 from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets, summarize_selection_targets
+from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry, evaluate_short_trade_rejected_target
 from src.llm.defaults import get_default_model_config
 from src.tools.tushare_api import get_daily_basic_batch
 
@@ -61,13 +62,22 @@ WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRES
 EXIT_REENTRY_CONFIRM_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_CONFIRM_SCORE_MIN", STANDARD_EXECUTION_SCORE)
 SHORT_TRADE_BOUNDARY_SCORE_BUFFER = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_SCORE_BUFFER", 0.08)
 SHORT_TRADE_BOUNDARY_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_MAX_TICKERS", 6)
+SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN", 0.24)
+SHORT_TRADE_BOUNDARY_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_BREAKOUT_MIN", 0.18)
+SHORT_TRADE_BOUNDARY_TREND_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_TREND_MIN", 0.22)
+SHORT_TRADE_BOUNDARY_VOLUME_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_VOLUME_MIN", 0.15)
+SHORT_TRADE_BOUNDARY_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN", 0.12)
 
 
 def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
     """Resolves fast/precise pipeline model settings without silently switching providers."""
-    default_model_name, default_model_provider = get_default_model_config()
-    provider_name = str(base_model_provider or default_model_provider)
-    model_name = str(base_model_name or default_model_name)
+    provider_name = str(base_model_provider or "")
+    model_name = str(base_model_name or "")
+
+    if not provider_name or not model_name:
+        default_model_name, default_model_provider = get_default_model_config()
+        provider_name = provider_name or str(default_model_provider)
+        model_name = model_name or str(default_model_name)
 
     if provider_name == "OpenAI" and model_name in {"gpt-4.1", "gpt-4.1-mini"}:
         return ("gpt-4.1-mini" if model_tier == "fast" else "gpt-4.1"), provider_name
@@ -209,47 +219,109 @@ def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], wat
     return summary
 
 
-def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list) -> dict:
+def _build_short_trade_boundary_entry(*, item, reason: str, rank: int) -> dict:
+    return {
+        "ticker": item.ticker,
+        "score_b": round(float(item.score_b), 4),
+        "score_c": 0.0,
+        "score_final": round(float(item.score_b), 4),
+        "quality_score": 0.5,
+        "decision": str(item.decision or "neutral"),
+        "reason": reason,
+        "reasons": [reason, "short_trade_prequalified"],
+        "candidate_source": "short_trade_boundary",
+        "upstream_candidate_source": "layer_b_boundary",
+        "candidate_reason_codes": [reason, "short_trade_prequalified"],
+        "strategy_signals": {
+            name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
+            for name, signal in dict(item.strategy_signals or {}).items()
+        },
+        "agent_contribution_summary": {},
+        "rank": rank,
+    }
+
+
+def _compute_short_trade_boundary_candidate_score(snapshot: dict) -> float:
+    return round(
+        (0.30 * float(snapshot.get("breakout_freshness", 0.0) or 0.0))
+        + (0.25 * float(snapshot.get("trend_acceleration", 0.0) or 0.0))
+        + (0.20 * float(snapshot.get("volume_expansion_quality", 0.0) or 0.0))
+        + (0.15 * float(snapshot.get("catalyst_freshness", 0.0) or 0.0))
+        + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0)),
+        4,
+    )
+
+
+def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
+    snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
+    gate_status = dict(snapshot.get("gate_status") or {})
+    blockers = {str(blocker) for blocker in list(snapshot.get("blockers") or []) if str(blocker or "").strip()}
+    metrics_payload = {
+        "breakout_freshness": round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4),
+        "trend_acceleration": round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4),
+        "volume_expansion_quality": round(float(snapshot.get("volume_expansion_quality", 0.0) or 0.0), 4),
+        "catalyst_freshness": round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4),
+        "close_strength": round(float(snapshot.get("close_strength", 0.0) or 0.0), 4),
+        "candidate_score": _compute_short_trade_boundary_candidate_score(snapshot),
+    }
+
+    if str(gate_status.get("data") or "") != "pass":
+        return False, "metric_data_fail", metrics_payload
+    if str(gate_status.get("structural") or "") == "fail" or blockers:
+        return False, "structural_prefilter_fail", metrics_payload
+    if float(metrics_payload.get("breakout_freshness", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_BREAKOUT_MIN:
+        return False, "breakout_freshness_below_short_trade_boundary_floor", metrics_payload
+    if float(metrics_payload.get("trend_acceleration", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_TREND_MIN:
+        return False, "trend_acceleration_below_short_trade_boundary_floor", metrics_payload
+    if float(metrics_payload.get("volume_expansion_quality", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_VOLUME_MIN:
+        return False, "volume_expansion_below_short_trade_boundary_floor", metrics_payload
+    if float(metrics_payload.get("catalyst_freshness", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_CATALYST_MIN:
+        return False, "catalyst_freshness_below_short_trade_boundary_floor", metrics_payload
+    if float(metrics_payload.get("candidate_score", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN:
+        return False, "candidate_score_below_short_trade_boundary_floor", metrics_payload
+    return True, "short_trade_prequalified", metrics_payload
+
+
+def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade_date: str) -> dict:
     selected_tickers = {item.ticker for item in high_pool}
-    minimum_score_b = FAST_AGENT_SCORE_THRESHOLD - SHORT_TRADE_BOUNDARY_SCORE_BUFFER
     entries: list[dict] = []
     reason_counts: dict[str, int] = {}
-    candidates = sorted(
-        [item for item in fused if item.ticker not in selected_tickers and item.score_b >= minimum_score_b],
-        key=lambda current: current.score_b,
-        reverse=True,
-    )[:SHORT_TRADE_BOUNDARY_MAX_TICKERS]
+    filtered_reason_counts: dict[str, int] = {}
+    ranked_candidates: list[tuple[float, float, dict]] = []
+    upstream_candidates = sorted([item for item in fused if item.ticker not in selected_tickers], key=lambda current: current.score_b, reverse=True)
 
-    for rank, item in enumerate(candidates, start=1):
-        reason = "high_pool_truncated_by_max_size" if item.score_b >= FAST_AGENT_SCORE_THRESHOLD else "near_fast_score_threshold"
+    for item in upstream_candidates:
+        reason = "short_trade_candidate_score_ranked"
+        candidate_entry = _build_short_trade_boundary_entry(item=item, reason=reason, rank=0)
+        qualified, filter_reason, metrics_payload = _qualifies_short_trade_boundary_candidate(trade_date=trade_date, entry=candidate_entry)
+        if not qualified:
+            filtered_reason_counts[filter_reason] = filtered_reason_counts.get(filter_reason, 0) + 1
+            continue
+
+        ranked_candidates.append((float(metrics_payload.get("candidate_score", 0.0) or 0.0), float(item.score_b), {**candidate_entry, "short_trade_boundary_metrics": metrics_payload}))
+
+    ranked_candidates.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
+    for rank, (_, _, entry) in enumerate(ranked_candidates[:SHORT_TRADE_BOUNDARY_MAX_TICKERS], start=1):
+        entry["rank"] = rank
+        reason = str(entry.get("reason") or "short_trade_candidate_score_ranked")
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
-        entries.append(
-            {
-                "ticker": item.ticker,
-                "score_b": round(float(item.score_b), 4),
-                "score_c": 0.0,
-                "score_final": round(float(item.score_b), 4),
-                "quality_score": 0.5,
-                "decision": str(item.decision or "neutral"),
-                "reason": reason,
-                "reasons": [reason],
-                "candidate_source": "layer_b_boundary",
-                "candidate_reason_codes": [reason],
-                "strategy_signals": {
-                    name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-                    for name, signal in dict(item.strategy_signals or {}).items()
-                },
-                "agent_contribution_summary": {},
-                "rank": rank,
-            }
-        )
+        entries.append(entry)
 
     return {
+        "upstream_candidate_count": len(upstream_candidates),
         "candidate_count": len(entries),
         "reason_counts": reason_counts,
+        "filtered_reason_counts": filtered_reason_counts,
+        "prefilter_thresholds": {
+            "candidate_score_min": round(SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN, 4),
+            "breakout_freshness_min": round(SHORT_TRADE_BOUNDARY_BREAKOUT_MIN, 4),
+            "trend_acceleration_min": round(SHORT_TRADE_BOUNDARY_TREND_MIN, 4),
+            "volume_expansion_quality_min": round(SHORT_TRADE_BOUNDARY_VOLUME_MIN, 4),
+            "catalyst_freshness_min": round(SHORT_TRADE_BOUNDARY_CATALYST_MIN, 4),
+        },
         "selected_tickers": [entry["ticker"] for entry in entries],
         "score_buffer": round(SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
-        "minimum_score_b": round(minimum_score_b, 4),
+        "minimum_score_b": round(FAST_AGENT_SCORE_THRESHOLD - SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
         "max_candidates": SHORT_TRADE_BOUNDARY_MAX_TICKERS,
         "tickers": entries,
     }
@@ -379,6 +451,8 @@ def _serialize_short_trade_target_profile(profile) -> dict[str, object]:
         "overhead_score_penalty_weight": float(profile.overhead_score_penalty_weight),
         "extension_score_penalty_weight": float(profile.extension_score_penalty_weight),
         "strong_bearish_conflicts": sorted(str(item) for item in profile.strong_bearish_conflicts),
+        "hard_block_bearish_conflicts": sorted(str(item) for item in profile.hard_block_bearish_conflicts),
+        "overhead_conflict_penalty_conflicts": sorted(str(item) for item in profile.overhead_conflict_penalty_conflicts),
     }
 
 
@@ -528,8 +602,8 @@ def build_buy_orders_with_diagnostics(
 class DailyPipeline:
     agent_runner: AgentRunner | None = None
     exit_checker: ExitChecker = _default_exit_checker
-    base_model_name: str = field(default_factory=lambda: get_default_model_config()[0])
-    base_model_provider: str = field(default_factory=lambda: get_default_model_config()[1])
+    base_model_name: str = ""
+    base_model_provider: str = ""
     frozen_post_market_plans: dict[str, ExecutionPlan] | None = None
     frozen_plan_source: str | None = None
     target_mode: TargetMode = "research_only"
@@ -538,9 +612,17 @@ class DailyPipeline:
     execution_plan_provenance_log: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.agent_runner is None:
+        uses_default_agent_runner = self.agent_runner is None
+        if uses_default_agent_runner:
+            if not self.base_model_name or not self.base_model_provider:
+                default_model_name, default_model_provider = get_default_model_config()
+                self.base_model_name = str(self.base_model_name or default_model_name)
+                self.base_model_provider = str(self.base_model_provider or default_model_provider)
             self.agent_runner = self._run_agents_with_base_model
-        self._skip_precise_stage = _should_skip_precise_stage(self.base_model_name, self.base_model_provider)
+        if self.base_model_name and self.base_model_provider:
+            self._skip_precise_stage = _should_skip_precise_stage(self.base_model_name, self.base_model_provider)
+        else:
+            self._skip_precise_stage = not uses_default_agent_runner
         self._exit_checker_accepts_logic_scores = len(signature(self.exit_checker).parameters) >= 3
         self.short_trade_target_profile_name = str(self.short_trade_target_profile_name or "default")
         self.short_trade_target_profile_overrides = dict(self.short_trade_target_profile_overrides or {})
@@ -699,7 +781,7 @@ class DailyPipeline:
         watchlist = [item for item in layer_c_results if item.score_final >= WATCHLIST_SCORE_THRESHOLD and item.decision != "avoid"]
         layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(fused, high_pool)
         watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(layer_c_results, watchlist)
-        short_trade_candidate_diagnostics = _build_short_trade_candidate_diagnostics(fused, high_pool)
+        short_trade_candidate_diagnostics = _build_short_trade_candidate_diagnostics(fused, high_pool, trade_date)
 
         candidate_by_ticker = {candidate.ticker: candidate for candidate in candidates}
         price_map = build_watchlist_price_map(trade_date, [item.ticker for item in watchlist])

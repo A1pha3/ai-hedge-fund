@@ -125,7 +125,7 @@ def _build_rejected_evaluation(*, trade_date: str, entry: dict[str, Any], rank_h
 
 def _build_short_trade_only_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int) -> DualTargetEvaluation:
     ticker = str(entry.get("ticker") or "")
-    candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=entry, default="layer_b_boundary")
+    candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=entry, default="short_trade_boundary")
     short_trade_result = evaluate_short_trade_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint)
     evaluation = DualTargetEvaluation(
         ticker=ticker,

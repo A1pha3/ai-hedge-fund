@@ -108,3 +108,71 @@ def test_analyze_short_trade_blockers_aggregates_decisions_and_sources(tmp_path)
     assert analysis["top_blocked_examples"][0]["available_strategy_signals"] == []
     assert analysis["top_blocked_examples"][0]["ticker"] == "000002"
     assert analysis["recommended_focus_areas"][0]["focus_area"] == "layer_c_bearish_conflict_review"
+
+
+def test_analyze_short_trade_blockers_can_filter_trade_dates(tmp_path):
+    report_dir = tmp_path / "report"
+    selection_root = report_dir / "selection_artifacts"
+    (selection_root / "2026-03-10").mkdir(parents=True)
+    (selection_root / "2026-03-11").mkdir(parents=True)
+
+    (selection_root / "2026-03-10" / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-10",
+                "selection_targets": {
+                    "000001": {
+                        "candidate_source": "short_trade_boundary",
+                        "candidate_reason_codes": ["short_trade_prequalified"],
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "score_target": 0.5,
+                            "blockers": [],
+                            "negative_tags": [],
+                            "top_reasons": ["score_short=0.50"],
+                            "gate_status": {"score": "near_miss", "structural": "pass"},
+                            "metrics_payload": {"score_b": 0.45, "score_c": 0.0, "score_final": 0.45},
+                            "explainability_payload": {"available_strategy_signals": ["trend"]},
+                        },
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (selection_root / "2026-03-11" / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-11",
+                "selection_targets": {
+                    "000002": {
+                        "candidate_source": "watchlist_filter_diagnostics",
+                        "candidate_reason_codes": ["decision_avoid"],
+                        "short_trade": {
+                            "decision": "blocked",
+                            "score_target": 0.2,
+                            "blockers": ["layer_c_bearish_conflict"],
+                            "negative_tags": [],
+                            "top_reasons": ["score_short=0.20"],
+                            "gate_status": {"score": "fail", "structural": "fail"},
+                            "metrics_payload": {"score_b": 0.3, "score_c": -0.1, "score_final": 0.1},
+                            "explainability_payload": {"available_strategy_signals": ["trend"]},
+                        },
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_short_trade_blockers(report_dir, trade_dates={"2026-03-11"})
+
+    assert analysis["trade_dates_filter"] == ["2026-03-11"]
+    assert analysis["trade_day_count"] == 1
+    assert analysis["short_trade_target_count"] == 1
+    assert analysis["short_trade_decision_counts"] == {"blocked": 1}
+    assert analysis["candidate_source_counts"] == {"watchlist_filter_diagnostics": 1}

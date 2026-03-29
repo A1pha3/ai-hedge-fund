@@ -196,7 +196,7 @@ def test_build_selection_targets_adds_boundary_short_trade_candidate_outside_res
                 "decision": "watch",
                 "reason": "near_fast_score_threshold",
                 "reasons": ["near_fast_score_threshold"],
-                "candidate_source": "layer_b_boundary",
+                "candidate_source": "short_trade_boundary",
                 "strategy_signals": {
                     "trend": _make_signal(
                         1,
@@ -227,7 +227,7 @@ def test_build_selection_targets_adds_boundary_short_trade_candidate_outside_res
     assert selection_targets["000625"].research is None
     assert selection_targets["000625"].short_trade is not None
     assert selection_targets["000625"].short_trade.decision == "selected"
-    assert selection_targets["000625"].candidate_source == "layer_b_boundary"
+    assert selection_targets["000625"].candidate_source == "short_trade_boundary"
     assert summary.research_target_count == 0
     assert summary.short_trade_target_count == 1
     assert summary.short_trade_selected_count == 1
@@ -347,3 +347,53 @@ def test_short_trade_target_reports_profile_metadata_and_override_thresholds() -
     assert result.metrics_payload["thresholds"]["select_threshold"] == 0.57
     assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.41
     assert result.explainability_payload["target_profile"] == "aggressive"
+
+
+def test_short_trade_target_can_remove_conflict_hard_block_without_dropping_overhead_conflict_penalty() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry={
+            "ticker": "300724",
+            "score_b": 0.62,
+            "score_c": 0.18,
+            "score_final": 0.41,
+            "quality_score": 0.66,
+            "decision": "watch",
+            "bc_conflict": "b_positive_c_strong_bearish",
+            "reason": "watchlist_selected",
+            "reasons": ["watchlist_selected"],
+            "strategy_signals": {
+                "trend": _make_signal(
+                    1,
+                    84.0,
+                    sub_factors={
+                        "momentum": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 82.0, "completeness": 1.0},
+                        "volatility": {"direction": 1, "confidence": 76.0, "completeness": 1.0},
+                        "long_trend_alignment": {"direction": 0, "confidence": 20.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "event_sentiment": _make_signal(
+                    1,
+                    76.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 1, "confidence": 82.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "mean_reversion": _make_signal(-1, 12.0).model_dump(mode="json"),
+            },
+            "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.10, "investor": 0.04}},
+        },
+        profile_overrides={
+            "hard_block_bearish_conflicts": [],
+            "overhead_conflict_penalty_conflicts": ["b_positive_c_strong_bearish"],
+        },
+    )
+
+    assert "layer_c_bearish_conflict" not in result.blockers
+    assert result.gate_status["structural"] == "pass"
+    assert result.metrics_payload["overhead_supply_penalty"] > 0.0
+    assert result.metrics_payload["thresholds"]["hard_block_bearish_conflicts"] == []
+    assert result.metrics_payload["thresholds"]["overhead_conflict_penalty_conflicts"] == ["b_positive_c_strong_bearish"]

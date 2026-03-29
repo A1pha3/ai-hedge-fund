@@ -6,7 +6,7 @@ from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
 from src.targets.explainability import clamp_unit_interval, derive_confidence, trim_reasons
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
-from src.targets.profiles import get_active_short_trade_target_profile, get_short_trade_target_profile, use_short_trade_target_profile
+from src.targets.profiles import get_active_short_trade_target_profile, use_short_trade_target_profile
 
 
 def _normalize_score(value: float) -> float:
@@ -108,7 +108,7 @@ def _summarize_penalty(name: str, value: float) -> str | None:
     return f"{name}={value:.2f}"
 
 
-def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint: int | None = None) -> TargetEvaluationResult:
+def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dict[str, Any]:
     profile = get_active_short_trade_target_profile()
     trend_signal = _load_signal(input_data.strategy_signals.get("trend"))
     event_signal = _load_signal(input_data.strategy_signals.get("event_sentiment"))
@@ -142,7 +142,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     layer_c_avoid_penalty = profile.layer_c_avoid_penalty if input_data.layer_c_decision == "avoid" else 0.0
 
     stale_trend_repair_penalty = clamp_unit_interval((0.45 * mean_reversion_strength) + (0.35 * long_trend_strength) + (0.20 * max(0.0, long_trend_strength - breakout_freshness)))
-    overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.strong_bearish_conflicts else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
+    overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.overhead_conflict_penalty_conflicts else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
     extension_without_room_penalty = clamp_unit_interval((0.45 * long_trend_strength) + (0.35 * max(0.0, volatility_strength - catalyst_freshness)) + (0.20 * clamp_unit_interval((score_final_strength - 0.72) / 0.28)))
 
     weighted_positive_contributions = {
@@ -194,7 +194,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         negative_tags.append("event_signal_incomplete")
     if input_data.layer_c_decision == "avoid":
         negative_tags.append("layer_c_avoid_signal")
-    if input_data.bc_conflict in profile.strong_bearish_conflicts:
+    if input_data.bc_conflict in profile.hard_block_bearish_conflicts:
         blockers.append("layer_c_bearish_conflict")
         gate_status["structural"] = "fail"
     if _signal_signed_strength(trend_signal) <= 0.0:
@@ -220,6 +220,103 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         positive_tags.append("sector_alignment_support")
     if input_data.execution_constraints.get("included_in_buy_orders"):
         positive_tags.append("execution_bridge_ready")
+
+    return {
+        "profile": profile,
+        "breakout_freshness": breakout_freshness,
+        "trend_acceleration": trend_acceleration,
+        "volume_expansion_quality": volume_expansion_quality,
+        "close_strength": close_strength,
+        "sector_resonance": sector_resonance,
+        "catalyst_freshness": catalyst_freshness,
+        "layer_c_alignment": layer_c_alignment,
+        "layer_c_avoid_penalty": layer_c_avoid_penalty,
+        "stale_trend_repair_penalty": stale_trend_repair_penalty,
+        "overhead_supply_penalty": overhead_supply_penalty,
+        "extension_without_room_penalty": extension_without_room_penalty,
+        "weighted_positive_contributions": weighted_positive_contributions,
+        "weighted_negative_contributions": weighted_negative_contributions,
+        "total_positive_contribution": total_positive_contribution,
+        "total_negative_contribution": total_negative_contribution,
+        "score_target": score_target,
+        "positive_tags": positive_tags,
+        "negative_tags": negative_tags,
+        "blockers": blockers,
+        "gate_status": gate_status,
+        "score_b_strength": score_b_strength,
+        "score_c_strength": score_c_strength,
+        "score_final_strength": score_final_strength,
+        "momentum_strength": momentum_strength,
+        "adx_strength": adx_strength,
+        "ema_strength": ema_strength,
+        "volatility_strength": volatility_strength,
+        "long_trend_strength": long_trend_strength,
+        "event_freshness_strength": event_freshness_strength,
+        "news_sentiment_strength": news_sentiment_strength,
+        "event_signal_strength": event_signal_strength,
+        "mean_reversion_strength": mean_reversion_strength,
+        "analyst_alignment": analyst_alignment,
+        "investor_alignment": investor_alignment,
+        "analyst_penalty": analyst_penalty,
+        "investor_penalty": investor_penalty,
+    }
+
+
+def build_short_trade_target_snapshot_from_entry(
+    *,
+    trade_date: str,
+    entry: dict[str, Any],
+    profile_name: str | None = None,
+    profile_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if profile_name is not None or profile_overrides:
+        with use_short_trade_target_profile(profile_name=profile_name or "default", overrides=profile_overrides):
+            return build_short_trade_target_snapshot_from_entry(
+                trade_date=trade_date,
+                entry=entry,
+            )
+    return _build_short_trade_target_snapshot(_build_target_input_from_entry(trade_date=trade_date, entry=entry))
+
+
+def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint: int | None = None) -> TargetEvaluationResult:
+    snapshot = _build_short_trade_target_snapshot(input_data)
+    profile = snapshot["profile"]
+    breakout_freshness = float(snapshot["breakout_freshness"])
+    trend_acceleration = float(snapshot["trend_acceleration"])
+    catalyst_freshness = float(snapshot["catalyst_freshness"])
+    score_target = float(snapshot["score_target"])
+    layer_c_avoid_penalty = float(snapshot["layer_c_avoid_penalty"])
+    stale_trend_repair_penalty = float(snapshot["stale_trend_repair_penalty"])
+    overhead_supply_penalty = float(snapshot["overhead_supply_penalty"])
+    extension_without_room_penalty = float(snapshot["extension_without_room_penalty"])
+    weighted_positive_contributions = dict(snapshot["weighted_positive_contributions"])
+    weighted_negative_contributions = dict(snapshot["weighted_negative_contributions"])
+    total_positive_contribution = float(snapshot["total_positive_contribution"])
+    total_negative_contribution = float(snapshot["total_negative_contribution"])
+    positive_tags = list(snapshot["positive_tags"])
+    negative_tags = list(snapshot["negative_tags"])
+    blockers = list(snapshot["blockers"])
+    gate_status = dict(snapshot["gate_status"])
+    score_b_strength = float(snapshot["score_b_strength"])
+    score_c_strength = float(snapshot["score_c_strength"])
+    score_final_strength = float(snapshot["score_final_strength"])
+    momentum_strength = float(snapshot["momentum_strength"])
+    adx_strength = float(snapshot["adx_strength"])
+    ema_strength = float(snapshot["ema_strength"])
+    volatility_strength = float(snapshot["volatility_strength"])
+    long_trend_strength = float(snapshot["long_trend_strength"])
+    event_freshness_strength = float(snapshot["event_freshness_strength"])
+    news_sentiment_strength = float(snapshot["news_sentiment_strength"])
+    event_signal_strength = float(snapshot["event_signal_strength"])
+    mean_reversion_strength = float(snapshot["mean_reversion_strength"])
+    analyst_alignment = float(snapshot["analyst_alignment"])
+    investor_alignment = float(snapshot["investor_alignment"])
+    analyst_penalty = float(snapshot["analyst_penalty"])
+    investor_penalty = float(snapshot["investor_penalty"])
+    volume_expansion_quality = float(snapshot["volume_expansion_quality"])
+    close_strength = float(snapshot["close_strength"])
+    sector_resonance = float(snapshot["sector_resonance"])
+    layer_c_alignment = float(snapshot["layer_c_alignment"])
 
     if blockers:
         decision = "blocked" if gate_status["data"] == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers else "rejected"
@@ -313,6 +410,8 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "stale_score_penalty_weight": round(float(profile.stale_score_penalty_weight), 4),
                 "overhead_score_penalty_weight": round(float(profile.overhead_score_penalty_weight), 4),
                 "extension_score_penalty_weight": round(float(profile.extension_score_penalty_weight), 4),
+                "hard_block_bearish_conflicts": sorted(str(item) for item in profile.hard_block_bearish_conflicts),
+                "overhead_conflict_penalty_conflicts": sorted(str(item) for item in profile.overhead_conflict_penalty_conflicts),
             },
         },
         explainability_payload={

@@ -16,8 +16,17 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _iter_selection_snapshots(selection_root: Path):
+def _parse_trade_dates(raw: str | None) -> set[str]:
+    if raw is None or not str(raw).strip():
+        return set()
+    return {token.strip() for token in str(raw).split(",") if token.strip()}
+
+
+def _iter_selection_snapshots(selection_root: Path, *, trade_dates: set[str] | None = None):
+    active_trade_dates = {str(value) for value in (trade_dates or set()) if str(value).strip()}
     for day_dir in sorted(path for path in selection_root.iterdir() if path.is_dir()):
+        if active_trade_dates and day_dir.name not in active_trade_dates:
+            continue
         snapshot_path = day_dir / "selection_snapshot.json"
         if snapshot_path.exists():
             yield _load_json(snapshot_path)
@@ -97,10 +106,14 @@ def _classify_failure_mechanism(*, decision: str, candidate_source: str, blocker
     return f"other_{decision}"
 
 
+def _boundary_failure_cluster_count(failure_mechanism_counts: Counter[str]) -> int:
+    return int(failure_mechanism_counts.get("rejected_layer_b_boundary_score_fail", 0)) + int(failure_mechanism_counts.get("rejected_short_trade_boundary_score_fail", 0))
+
+
 def _build_recommended_focus_areas(*, failure_mechanism_counts: Counter[str], candidate_source_breakdown: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     recommendations: list[dict[str, Any]] = []
 
-    layer_b_rejected = int(failure_mechanism_counts.get("rejected_layer_b_boundary_score_fail", 0))
+    layer_b_rejected = _boundary_failure_cluster_count(failure_mechanism_counts)
     watchlist_rejected = int(failure_mechanism_counts.get("rejected_watchlist_filter_diagnostics_score_fail", 0))
     structural_blocked = int(failure_mechanism_counts.get("blocked_structural_bearish_conflict", 0))
 
@@ -108,12 +121,15 @@ def _build_recommended_focus_areas(*, failure_mechanism_counts: Counter[str], ca
         recommendations.append(
             {
                 "priority": 1,
-                "focus_area": "layer_b_boundary_score_construction",
-                "why": f"{layer_b_rejected} 个样本停在 layer_b_boundary 且直接因 score fail 被拒绝，是当前窗口里最大的失败簇。",
+                "focus_area": "short_trade_boundary_candidate_quality",
+                "why": f"{layer_b_rejected} 个样本停在 short-trade boundary family 且直接因 score fail 被拒绝，是当前窗口里最大的失败簇。",
                 "evidence": {
-                    "failure_mechanism": "rejected_layer_b_boundary_score_fail",
+                    "failure_mechanism": ["rejected_layer_b_boundary_score_fail", "rejected_short_trade_boundary_score_fail"],
                     "count": layer_b_rejected,
-                    "candidate_source_breakdown": candidate_source_breakdown.get("layer_b_boundary", {}),
+                    "candidate_source_breakdown": {
+                        "layer_b_boundary": candidate_source_breakdown.get("layer_b_boundary", {}),
+                        "short_trade_boundary": candidate_source_breakdown.get("short_trade_boundary", {}),
+                    },
                 },
             }
         )
@@ -199,11 +215,12 @@ def render_short_trade_blocker_markdown(analysis: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
+def analyze_short_trade_blockers(report_dir: str | Path, *, trade_dates: set[str] | None = None) -> dict[str, Any]:
     report_path = Path(report_dir).expanduser().resolve()
     selection_root = report_path / "selection_artifacts"
     session_summary_path = report_path / "session_summary.json"
     session_summary = _load_json(session_summary_path) if session_summary_path.exists() else {}
+    active_trade_dates = {str(value) for value in (trade_dates or set()) if str(value).strip()}
 
     short_trade_decision_counts: Counter[str] = Counter()
     blocker_counts: Counter[str] = Counter()
@@ -227,7 +244,7 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
     top_near_threshold_examples: list[dict[str, Any]] = []
     day_breakdown: list[dict[str, Any]] = []
 
-    for snapshot in _iter_selection_snapshots(selection_root):
+    for snapshot in _iter_selection_snapshots(selection_root, trade_dates=active_trade_dates):
         trade_date = str(snapshot.get("trade_date") or "")
         selection_targets = dict(snapshot.get("selection_targets") or {})
         day_counts: Counter[str] = Counter()
@@ -331,6 +348,7 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
         "report_dir": str(report_path),
         "selection_artifact_root": str(selection_root),
         "trade_day_count": len(day_breakdown),
+        "trade_dates_filter": sorted(active_trade_dates),
         "target_mode": ((session_summary.get("plan_generation") or {}).get("selection_target") or session_summary.get("target_mode") or None),
         "session_dual_target_summary": dict(session_summary.get("dual_target_summary") or {}),
         "short_trade_target_count": sum(short_trade_decision_counts.values()),
@@ -363,11 +381,12 @@ def analyze_short_trade_blockers(report_dir: str | Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze short trade blocker distribution for a dual-target report directory.")
     parser.add_argument("--report-dir", required=True, help="Paper trading report directory containing selection_artifacts")
+    parser.add_argument("--trade-dates", default="", help="Optional comma-separated trade_date filter, e.g. 2026-03-23,2026-03-24")
     parser.add_argument("--output-json", default="", help="Optional output JSON path")
     parser.add_argument("--output-md", default="", help="Optional output Markdown path")
     args = parser.parse_args()
 
-    analysis = analyze_short_trade_blockers(args.report_dir)
+    analysis = analyze_short_trade_blockers(args.report_dir, trade_dates=_parse_trade_dates(args.trade_dates))
     if args.output_json:
         output_json = Path(args.output_json).expanduser().resolve()
         output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
