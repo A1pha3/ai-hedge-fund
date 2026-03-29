@@ -1,64 +1,7 @@
-#  data
-## archive data
-data/reports/archive
+# data
+# Generated reports are local runtime artifacts, not source-of-truth.
+data/reports/
 data/snapshots
-
-# Local validation report outputs
-data/reports/paper_trading_20260311_selection_artifact_blocker_validation_20260323/
-data/reports/paper_trading_window_20260202_20260313_w1_selection_artifact_validation_20260323/
-data/reports/paper_trading_window_20260316_20260323_live_m2_7_20260323/
-data/reports/gate_experiment_smoke_20260205_20260323/
-data/reports/gate_experiment_smoke_warning_20260205_20260324/
-data/reports/gate_experiment_w1_20260202_20260313_20260323/
-data/reports/fresh_rerun_*/
-data/reports/frozen_exec_probe_*/
-data/reports/execution_probe_*/
-data/reports/paper_trading_probe_*_cache_benchmark_*/
-data/reports/paper_trading_window_20230323_20260326_live_m2_7_20260326*/
-data/reports/paper_trading_window_20260323_20260326_live_m2_7_20260326*/
-data/reports/paper_trading_window_20260323_20260326_live_m2_7_20260326.run.log
-data/reports/paper_trading_20260326_20260326_live_m2_7_dual_target_20260328/
-data/reports/paper_trading_*_dual_target_replay_input_validation_*/
-data/reports/paper_trading_*_boundary_builder_validation_*/
-data/reports/paper_trading_*_short_trade_boundary_prefilter_*/
-data/reports/paper_trading_*_catalyst_floor_zero_validation_*/
-data/reports/paper_trading_window_20260310_20260313_w1_frozen_replay_m2_7_dual_target_20260328/
-data/reports/paper_trading_window_20260202_20260313_w1_frozen_replay_m2_7_20260319/selection_artifacts/
-data/reports/pre_layer_short_trade_outcomes_*.json
-data/reports/pre_layer_short_trade_outcomes_*.md
-data/reports/short_trade_blocker_analysis_*.json
-data/reports/short_trade_blocker_analysis_*.md
-data/reports/short_trade_boundary_coverage_variants_*.json
-data/reports/short_trade_boundary_coverage_variants_*.md
-data/reports/short_trade_boundary_expansion_cases_*.json
-data/reports/short_trade_boundary_expansion_cases_*.md
-data/reports/short_trade_boundary_filtered_candidates_*.json
-data/reports/short_trade_boundary_filtered_candidates_*.md
-data/reports/short_trade_boundary_score_failures_*.json
-data/reports/short_trade_boundary_score_failures_*.md
-data/reports/short_trade_boundary_score_failures_frontier_*.json
-data/reports/short_trade_boundary_score_failures_frontier_*.md
-data/reports/short_trade_boundary_targeted_coverage_variants_*.json
-data/reports/short_trade_boundary_targeted_coverage_variants_*.md
-data/reports/case_based_short_trade_entry_*
-data/reports/case_based_short_trade_follow_through_runbook_*
-data/reports/multi_window_short_trade_*
-data/reports/recurring_frontier_*
-data/reports/short_trade_boundary_frontier_*
-data/reports/short_trade_boundary_recurring_frontier_*
-data/reports/short_trade_release_priority_scoreboard_*
-data/reports/short_trade_ticker_role_history_*
-data/reports/targeted_short_trade_boundary_release_*
-data/reports/targeted_short_trade_near_miss_release_*
-data/reports/btst_next_day_trade_brief_*.json
-data/reports/btst_next_day_trade_brief_*.md
-data/reports/btst_premarket_execution_card_*.json
-data/reports/btst_premarket_execution_card_*.md
-data/reports/paper_trading_*_short_trade_only_*/
-data/reports/**/btst_next_day_trade_brief_latest.json
-data/reports/**/btst_next_day_trade_brief_latest.md
-data/reports/**/btst_premarket_execution_card_latest.json
-data/reports/**/btst_premarket_execution_card_latest.md
 
 # Python
 __pycache__/
