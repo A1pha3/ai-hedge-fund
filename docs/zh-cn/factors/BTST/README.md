@@ -19,6 +19,11 @@
 11. [06-btst-troubleshooting-playbook.md](./06-btst-troubleshooting-playbook.md)
 12. [12-btst-five-minute-brief.md](./12-btst-five-minute-brief.md)
 13. [13-btst-command-cookbook.md](./13-btst-command-cookbook.md)
+14. [14-btst-newcomer-30-minute-guide.md](./14-btst-newcomer-30-minute-guide.md)
+15. [15-btst-onboarding-readiness-scorecard.md](./15-btst-onboarding-readiness-scorecard.md)
+16. [16-btst-trainer-handbook.md](./16-btst-trainer-handbook.md)
+17. [17-btst-sample-workbook.md](./17-btst-sample-workbook.md)
+18. [18-btst-workbook-quick-review-card.md](./18-btst-workbook-quick-review-card.md)
 
 如果你当前的任务更偏专项排障，建议搭配阅读：
 
@@ -37,6 +42,10 @@
 4. 线上排障：`03 -> 07 -> 10 -> 06`
 5. 管理层 / 业务快读：`12 -> 03`
 6. 命令执行：`13 -> 10 -> 04`
+7. 新人 30 分钟上手：`14 -> 12 -> 03 -> 01`
+8. 新人验收：`14 -> 15`
+9. 带教培训：`16 -> 14 -> 17 -> 15`
+10. 现场速评：`17 -> 18 -> 15`
 
 读完整套 BTST 文档后，你应该能回答三类问题：
 
@@ -47,3 +56,8 @@
 5. 一轮 BTST 变体什么时候只能保留为候选，什么时候才配升级默认。
 6. 如果只有 5 分钟，当前 BTST 的阶段结论和下一步优先级到底是什么。
 7. 如果要亲手跑 BTST 分析，当前最短且最稳的命令顺序是什么。
+8. 如果今天第一次接手 BTST，30 分钟内最合理的学习顺序是什么。
+9. 新人什么时候算已经能独立使用 BTST 文档做判断。
+10. 如果我要带别人学 BTST，1 小时培训该怎么排。
+11. 如果我要检验新人会不会做样本分型和动作判断，应该出什么练习题。
+12. 如果我要在培训现场 1 分钟内快速核对练习答案，应该看什么。

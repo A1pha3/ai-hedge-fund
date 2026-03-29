@@ -131,6 +131,11 @@
 11. [BTST 排障与问题定位手册](./BTST/06-btst-troubleshooting-playbook.md)
 12. [BTST 次日短线 5 分钟简报](./BTST/12-btst-five-minute-brief.md)
 13. [BTST 命令作战手册](./BTST/13-btst-command-cookbook.md)
+14. [BTST 新人 30 分钟上手路径](./BTST/14-btst-newcomer-30-minute-guide.md)
+15. [BTST 新人上手验收评分表](./BTST/15-btst-onboarding-readiness-scorecard.md)
+16. [BTST 带教手册](./BTST/16-btst-trainer-handbook.md)
+17. [BTST 样本练习册](./BTST/17-btst-sample-workbook.md)
+18. [BTST 标准答案速评卡](./BTST/18-btst-workbook-quick-review-card.md)
 
 这一层回答的是：
 
@@ -214,6 +219,11 @@
 24. “我知道问题存在，但不知道下一步该动哪里”：看 [BTST/11-btst-optimization-decision-tree.md](./BTST/11-btst-optimization-decision-tree.md)
 25. “我只想 5 分钟知道当前 BTST 到底进展到哪了”：看 [BTST/12-btst-five-minute-brief.md](./BTST/12-btst-five-minute-brief.md)
 26. “我准备直接跑脚本，但不知道命令顺序”：看 [BTST/13-btst-command-cookbook.md](./BTST/13-btst-command-cookbook.md)
+27. “我是第一次接手 BTST，不知道 30 分钟内该先看哪几篇”：看 [BTST/14-btst-newcomer-30-minute-guide.md](./BTST/14-btst-newcomer-30-minute-guide.md)
+28. “我想判断新人是否已经能独立使用 BTST 文档”：看 [BTST/15-btst-onboarding-readiness-scorecard.md](./BTST/15-btst-onboarding-readiness-scorecard.md)
+29. “我要带别人学 BTST，但不知道培训脚本怎么排”：看 [BTST/16-btst-trainer-handbook.md](./BTST/16-btst-trainer-handbook.md)
+30. “我要检查新人会不会做 BTST 样本分型和动作判断”：看 [BTST/17-btst-sample-workbook.md](./BTST/17-btst-sample-workbook.md)
+31. “我要在带教现场快速核对 BTST 练习题答案”：看 [BTST/18-btst-workbook-quick-review-card.md](./BTST/18-btst-workbook-quick-review-card.md)
 
 ---
 

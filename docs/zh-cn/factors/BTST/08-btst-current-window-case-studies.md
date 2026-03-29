@@ -209,3 +209,68 @@
 ## 9. 一句话总结
 
 当前窗口最大的价值，不是证明“某个参数更好”，而是把 BTST 的后续工作明确拆成三条互不混淆的主线：admission 默认保留 catalyst-only 扩覆盖，score frontier 继续做 `short_trade_boundary` 样本救援，structural conflict 只对 `300724` 做 case-based release，其余像 `300394`、`300502` 这样的样本继续分别回到 penalty 与 candidate-entry 语义路径。
+
+---
+
+## 10. 单日实盘例：2026-03-27 收盘后到 2026-03-30 的执行名单应该怎么读
+
+### 10.1 这次单日运行最容易读错的地方
+
+`2026-03-27` 这次真实运行不是 dual-target 总览问题，而是一个典型的“research 票和 short-trade 票同时存在，但语义完全不同”的例子。
+
+如果只看日报里的“今日入选股票”，很容易把 research 侧的 `002001`、`300724` 错读成次日短线可交易名单。
+
+但这次运行的真正 short-trade 结论是：
+
+1. 正式 `selected` 只有 `300757`。
+2. `near_miss` 只有 `601869`。
+3. `002001`、`300724` 都属于 research 侧，不属于本次 short-trade 执行名单。
+
+### 10.2 为什么 `300757` 是主入场票
+
+`300757` 这次是标准的 short-trade `selected` 样本。
+
+它的关键信号是：
+
+1. `score_target=0.5907`，刚好站上当前 `select_threshold=0.58`。
+2. `breakout_freshness=0.9350`。
+3. `trend_acceleration=0.7275`。
+4. `catalyst_freshness=0.8793`。
+5. `preferred_entry_mode=next_day_breakout_confirmation`。
+
+这类票的正确读法不是“开盘就追”，而是“周一优先等 breakout confirmation 再入场”。
+
+### 10.3 为什么 `601869` 只能做观察票
+
+`601869` 不是正式入场票，而是标准的 `near_miss`。
+
+它的强项仍然很明确：
+
+1. `breakout_freshness=0.8667`
+2. `trend_acceleration=0.7637`
+3. `catalyst_freshness=0.7456`
+
+但它的 `score_target=0.5540` 仍低于 `0.58` 的正式选中阈值，因此更适合作为盘中跟踪对象，而不是和 `300757` 同级表达。
+
+### 10.4 这类单日结果应该沉淀成什么产物
+
+这类场景不适合继续手工从 `selection_review.md` 里口头提炼，而应直接产出标准化次日执行简报。
+
+当前对应的标准产物已经落到：
+
+1. [../../../../data/reports/btst_next_day_trade_brief_20260327_for_20260330_20260329.md](../../../../data/reports/btst_next_day_trade_brief_20260327_for_20260330_20260329.md)
+2. [../../../../data/reports/btst_next_day_trade_brief_20260327_for_20260330_20260329.json](../../../../data/reports/btst_next_day_trade_brief_20260327_for_20260330_20260329.json)
+
+这份简报的价值不是新增结论，而是把下面三件事固定成同一份标准输出：
+
+1. short-trade `selected` / `near_miss`。
+2. research 侧已选中但应排除出 short-trade 名单的股票。
+3. 次日执行时应该使用的 entry mode 和关键因子解释。
+
+### 10.5 当前最值得复用的操作结论
+
+以后如果再遇到“明天开盘前要直接给执行名单”的场景，推荐顺序应该是：
+
+1. 先跑目标交易日的 short-trade report。
+2. 再用 `generate_btst_next_day_trade_brief.py` 生成标准简报。
+3. 最后只从简报里读主入场票、观察票和排除项，不再混读 research 总览。

@@ -86,7 +86,8 @@ data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_cataly
 
 1. 是否成功生成 `selection_artifacts`。
 2. `session_summary.json` 和 `daily_events.jsonl` 是否齐全。
-3. 后续 blocker 与 outcome 脚本是否能直接消费该目录。
+3. `short_trade_only` 或 `dual_target` 运行后，目录下是否自动生成 `btst_next_day_trade_brief_latest.{json,md}` 与 `btst_premarket_execution_card_latest.{json,md}`。
+4. 后续 blocker 与 outcome 脚本是否能直接消费该目录。
 
 ### 3.2 admission 变体 live validation
 
@@ -360,6 +361,56 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
   --report-dir data/reports/<report_dir> \
   --ticker 600821
 ```
+
+### 7.3 生成次日执行简报
+
+适用场景：
+
+1. 你已经跑完某个交易日的 live 或 replay report。
+2. 你要把 `selected`、`near_miss` 和 research 侧股票明确拆开，给出次日可执行清单。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/generate_btst_next_day_trade_brief.py \
+  data/reports/<report_dir> \
+  --trade-date 2026-03-27 \
+  --next-trade-date 2026-03-30 \
+  --output-dir data/reports
+```
+
+优先回答：
+
+1. 主入场票是哪只 `selected`。
+2. 哪些只是 `near_miss`，只能做盘中跟踪。
+3. 哪些 research 侧 `selected` 股票不应误当成 short-trade 执行名单。
+
+补充说明：
+
+1. 如果你直接跑 `scripts/run_paper_trading.py --selection-target short_trade_only|dual_target`，上述 brief 会自动落在 report 目录中，无需手工再跑一次。
+
+### 7.4 生成盘前执行卡
+
+适用场景：
+
+1. 你已经有了 BTST brief，想把它进一步压缩成盘前动作卡。
+2. 你需要把 `selected`、`near_miss`、research-only exclusion 明确分层，避免盘前误读。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/generate_btst_premarket_execution_card.py \
+  data/reports/<report_dir> \
+  --trade-date 2026-03-27 \
+  --next-trade-date 2026-03-30 \
+  --output-dir data/reports
+```
+
+优先回答：
+
+1. 主执行票是谁，以及它需要什么盘中确认。
+2. 哪些票只允许 watch-only。
+3. 哪些 research-only 股票必须明确写进 non-trade 区域。
 
 ---
 

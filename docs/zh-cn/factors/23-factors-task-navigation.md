@@ -99,6 +99,11 @@
 7. 如果要把“会选”和“会买”讲清楚，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
 8. 如果要把“T 日生成计划、T+1 执行”讲清楚，再看 [28-paper-trading-tday-t1-timing-guide.md](./28-paper-trading-tday-t1-timing-guide.md)
 9. 如果你只需要 5 分钟把当前 BTST 业务结论讲清楚，再看 [BTST 次日短线 5 分钟简报](./BTST/12-btst-five-minute-brief.md)
+10. 如果你要带新人在 30 分钟内接手 BTST，再看 [BTST 新人 30 分钟上手路径](./BTST/14-btst-newcomer-30-minute-guide.md)
+11. 如果你要判断新人能不能独立接 BTST 任务，再看 [BTST 新人上手验收评分表](./BTST/15-btst-onboarding-readiness-scorecard.md)
+12. 如果你要把 BTST 培训讲成一场 1 小时带教课，再看 [BTST 带教手册](./BTST/16-btst-trainer-handbook.md)
+13. 如果你要给新人出 BTST 练习题并核对答案，再看 [BTST 样本练习册](./BTST/17-btst-sample-workbook.md)
+14. 如果你要在培训现场一页内核对 BTST 标准答案，再看 [BTST 标准答案速评卡](./BTST/18-btst-workbook-quick-review-card.md)
 
 适合的问题：
 

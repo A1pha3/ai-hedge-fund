@@ -450,6 +450,11 @@ Q: 你目前的背景是什么？
 | [BTST 优化决策树](./factors/BTST/11-btst-optimization-decision-tree.md) | 把 BTST 下一步动作收敛成统一决策树，帮助快速选择 admission、score frontier 或 blocked release 路径 | 开发者、研究者、AI 助手 | 按需更新 |
 | [BTST 次日短线 5 分钟简报](./factors/BTST/12-btst-five-minute-brief.md) | 面向业务和管理层，用 5 分钟解释 BTST 当前已解决什么、主矛盾在哪以及下一步优先级 | 业务、产品、管理层、研究负责人 | 按需更新 |
 | [BTST 命令作战手册](./factors/BTST/13-btst-command-cookbook.md) | 把 BTST 最常用的运行、回放、frontier、release 与 outcome 命令整理成可执行顺序 | 开发者、研究者、AI 助手 | 按需更新 |
+| [BTST 新人 30 分钟上手路径](./factors/BTST/14-btst-newcomer-30-minute-guide.md) | 面向第一次接手 BTST 的新人，给出 30 分钟学习顺序、最小心智模型和第一轮练习 | 新人、研究者、带教者、AI 助手 | 按需更新 |
+| [BTST 新人上手验收评分表](./factors/BTST/15-btst-onboarding-readiness-scorecard.md) | 为 BTST 带教提供统一验收口径，判断新人何时达到可独立使用水平 | 新人、研究者、带教者、AI 助手 | 按需更新 |
+| [BTST 带教手册](./factors/BTST/16-btst-trainer-handbook.md) | 面向带教者提供 60 分钟培训脚本、提问顺序、常见误区与验收衔接方式 | 带教者、研究者、AI 助手 | 按需更新 |
+| [BTST 样本练习册](./factors/BTST/17-btst-sample-workbook.md) | 提供 BTST 样本分型、artifact 判读、动作选择与标准答案，用于培训和验收 | 新人、带教者、研究者、AI 助手 | 按需更新 |
+| [BTST 标准答案速评卡](./factors/BTST/18-btst-workbook-quick-review-card.md) | 将练习册压缩成一页带教速评口径，便于现场快速核对答案和追问 | 带教者、研究者、AI 助手 | 按需更新 |
 | [Fundamental 因子专业讲解](./factors/07-fundamental-factor-professional-guide.md) | 单独拆解 Layer B 中 fundamental 因子的五个子因子、阈值、聚合语义、业务角色与调试路径 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子一页速查卡](./factors/08-fundamental-factor-one-page-cheatsheet.md) | 把 fundamental 因子的角色、五个子因子、profitability cliff 和复盘阅读顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Profitability 子因子专业讲解](./factors/09-profitability-subfactor-professional-guide.md) | 单独拆解 profitability 的 hard cliff、zero_pass_mode、聚合陷阱、quality-first guard 与实验口径 | 开发者、研究者、复盘人员 | 按需更新 |
