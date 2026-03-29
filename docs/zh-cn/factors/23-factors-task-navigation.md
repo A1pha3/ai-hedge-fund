@@ -20,9 +20,10 @@
 2. [Layer B 一页速查卡](./05-layer-b-one-page-cheatsheet.md)
 3. [Layer C 一页速查卡](./19-layer-c-one-page-cheatsheet.md)
 4. [Layer B / Layer C 联动复盘手册](./22-layer-b-c-joint-review-manual.md)
-5. 如果问题明确落在 fundamental，再看 [Fundamental 五子因子联动复盘手册](./15-fundamental-subfactor-joint-review-manual.md)
-6. 如果问题明确落在 buy order 承接，再看 [Execution Bridge 一页速查卡](./25-execution-bridge-one-page-cheatsheet.md)
-7. 如果问题明确落在日级事件口径，再看 [Paper Trading T 日到 T+1 时序专题](./28-paper-trading-tday-t1-timing-guide.md)
+5. 如果问题明确落在 BTST 次日短线，再看 [BTST 排障与问题定位手册](./BTST/06-btst-troubleshooting-playbook.md)
+6. 如果问题明确落在 fundamental，再看 [Fundamental 五子因子联动复盘手册](./15-fundamental-subfactor-joint-review-manual.md)
+7. 如果问题明确落在 buy order 承接，再看 [Execution Bridge 一页速查卡](./25-execution-bridge-one-page-cheatsheet.md)
+8. 如果问题明确落在日级事件口径，再看 [Paper Trading T 日到 T+1 时序专题](./28-paper-trading-tday-t1-timing-guide.md)
 
 适合的问题：
 
@@ -43,8 +44,11 @@
 3. [Layer C 一页速查卡](./19-layer-c-one-page-cheatsheet.md)
 4. [Fundamental 五子因子联动复盘手册](./15-fundamental-subfactor-joint-review-manual.md)
 5. [Layer B / Layer C 联动复盘手册](./22-layer-b-c-joint-review-manual.md)
-6. 如果样本已经进 selected 但没买，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
-7. 如果样本跨交易日才成交，再看 [Paper Trading T 日到 T+1 时序专题](./28-paper-trading-tday-t1-timing-guide.md)
+6. 如果目标是复盘次日短线结论，再看 [BTST 一页速查卡](./BTST/03-btst-one-page-cheatsheet.md)
+7. 如果你已经锁定 BTST 样本，还看不懂因子和 penalty 的语义，再看 [BTST 指标与因子判读词典](./BTST/07-btst-factor-metric-dictionary.md)
+8. 如果你想用真实窗口样本快速对齐当前主矛盾，再看 [BTST 当前窗口案例复盘手册](./BTST/08-btst-current-window-case-studies.md)
+9. 如果样本已经进 selected 但没买，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
+10. 如果样本跨交易日才成交，再看 [Paper Trading T 日到 T+1 时序专题](./28-paper-trading-tday-t1-timing-guide.md)
 
 适合的问题：
 
@@ -65,7 +69,12 @@
 3. [Fundamental 五子因子联动复盘手册](./15-fundamental-subfactor-joint-review-manual.md)
 4. [Layer C 常见问题 FAQ](./21-layer-c-faq.md)
 5. [Layer B / Layer C 联动复盘手册](./22-layer-b-c-joint-review-manual.md)
-6. 如果新增样本卡在 buy order，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
+6. 如果当前主线是次日短线，再看 [BTST 调参与验证作战手册](./BTST/02-btst-tuning-playbook.md)
+7. 如果你做完一轮变体后要判断能否升级默认，再看 [BTST 变体验收清单与升级标准](./BTST/09-btst-variant-acceptance-checklist.md)
+8. 如果你连该先看哪个 artifact 都不确定，再看 [BTST 产物判读手册](./BTST/10-btst-artifact-reading-manual.md)
+9. 如果知道问题存在但还选不出下一步动作，再看 [BTST 优化决策树](./BTST/11-btst-optimization-decision-tree.md)
+10. 如果要把任务交给自动化代理，再看 [BTST AI 助手优化执行手册](./BTST/05-btst-ai-optimization-runbook.md)
+11. 如果新增样本卡在 buy order，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
 
 适合的问题：
 
@@ -86,8 +95,9 @@
 3. [Layer C 策略完全讲解](./16-layer-c-complete-beginner-guide.md)
 4. [Fundamental 专题首页](./14-fundamental-topic-reading-path.md)
 5. [Layer C 专题首页](./20-layer-c-topic-reading-path.md)
-6. 如果要把“会选”和“会买”讲清楚，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
-7. 如果要把“T 日生成计划、T+1 执行”讲清楚，再看 [28-paper-trading-tday-t1-timing-guide.md](./28-paper-trading-tday-t1-timing-guide.md)
+6. 如果要专门讲次日短线，再看 [BTST 次日短线策略完整指南](./BTST/01-btst-complete-guide.md)
+7. 如果要把“会选”和“会买”讲清楚，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
+8. 如果要把“T 日生成计划、T+1 执行”讲清楚，再看 [28-paper-trading-tday-t1-timing-guide.md](./28-paper-trading-tday-t1-timing-guide.md)
 
 适合的问题：
 
@@ -106,6 +116,7 @@
 3. [19-layer-c-one-page-cheatsheet.md](./19-layer-c-one-page-cheatsheet.md)
 4. [22-layer-b-c-joint-review-manual.md](./22-layer-b-c-joint-review-manual.md)
 5. [25-execution-bridge-one-page-cheatsheet.md](./25-execution-bridge-one-page-cheatsheet.md)
+6. 如果你只关心次日短线，再加读 [BTST/03-btst-one-page-cheatsheet.md](./BTST/03-btst-one-page-cheatsheet.md)
 
 这 4 篇可以覆盖：
 

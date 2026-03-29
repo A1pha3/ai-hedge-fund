@@ -436,6 +436,18 @@ Q: 你目前的背景是什么？
 | [Execution Bridge 专业讲解](./factors/24-execution-bridge-professional-guide.md) | 系统解释 watchlist 到 buy order 的承接逻辑、执行分数档位、blocker 语义与复盘顺序 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Execution Bridge 一页速查卡](./factors/25-execution-bridge-one-page-cheatsheet.md) | 把 execution bridge 的关键字段、常见 blocker 和最小复盘顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Paper Trading T 日到 T+1 时序专题](./factors/28-paper-trading-tday-t1-timing-guide.md) | 专门解释 T 日 post-market 计划生成、pending plan 沿用、prepared_plan、current_plan 与 executed_trades 的真实落盘口径 | 开发者、研究者、复盘人员 | 按需更新 |
+| [BTST 文档导航](./factors/BTST/README.md) | 为 BTST 次日短线专题提供统一入口，组织策略、速查、调参、AI 执行和排障文档 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
+| [BTST 次日短线策略完整指南](./factors/BTST/01-btst-complete-guide.md) | 系统讲清当前 BTST 的 why、what、how，包括 Layer B 供给、short trade boundary、target 评分、T+1 执行和验证闭环 | 开发者、研究者、产品、复盘人员 | 按需更新 |
+| [BTST 调参与验证作战手册](./factors/BTST/02-btst-tuning-playbook.md) | 把 BTST 优化流程整理成问题分型、参数分层、replay 与 live validation 的可执行方法 | 开发者、研究者、AI 助手 | 按需更新 |
+| [BTST 一页速查卡](./factors/BTST/03-btst-one-page-cheatsheet.md) | 把 BTST 的链路、因子、penalty、脚本和最小调参顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
+| [BTST 实验记录模板](./factors/BTST/04-btst-experiment-template.md) | 为 BTST replay、live validation 和参数试验提供统一记录模板，便于研究和交接 | 开发者、研究者、AI 助手 | 按需更新 |
+| [BTST AI 助手优化执行手册](./factors/BTST/05-btst-ai-optimization-runbook.md) | 规定 AI 助手执行 BTST 优化任务时的标准闭环、纪律和输出格式 | 开发者、研究者、AI 助手 | 按需更新 |
+| [BTST 排障与问题定位手册](./factors/BTST/06-btst-troubleshooting-playbook.md) | 把 BTST 常见症状直接映射成问题层级、优先检查对象和建议动作 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
+| [BTST 指标与因子判读词典](./factors/BTST/07-btst-factor-metric-dictionary.md) | 统一解释 BTST 的正向因子、penalty、gate 和窗口级质量指标，降低字段误读 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
+| [BTST 当前窗口案例复盘手册](./factors/BTST/08-btst-current-window-case-studies.md) | 用 2026-03-23 到 2026-03-26 的真实样本总结 BTST 当前主矛盾和 archetype | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
+| [BTST 变体验收清单与升级标准](./factors/BTST/09-btst-variant-acceptance-checklist.md) | 统一规定 BTST 变体何时回滚、何时保留候选、何时可升级默认 | 开发者、研究者、AI 助手 | 按需更新 |
+| [BTST 产物判读手册](./factors/BTST/10-btst-artifact-reading-manual.md) | 规定 BTST report、snapshot、replay input、frontier 和次日表现产物的最小阅读顺序 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
+| [BTST 优化决策树](./factors/BTST/11-btst-optimization-decision-tree.md) | 把 BTST 下一步动作收敛成统一决策树，帮助快速选择 admission、score frontier 或 blocked release 路径 | 开发者、研究者、AI 助手 | 按需更新 |
 | [Fundamental 因子专业讲解](./factors/07-fundamental-factor-professional-guide.md) | 单独拆解 Layer B 中 fundamental 因子的五个子因子、阈值、聚合语义、业务角色与调试路径 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子一页速查卡](./factors/08-fundamental-factor-one-page-cheatsheet.md) | 把 fundamental 因子的角色、五个子因子、profitability cliff 和复盘阅读顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Profitability 子因子专业讲解](./factors/09-profitability-subfactor-professional-guide.md) | 单独拆解 profitability 的 hard cliff、zero_pass_mode、聚合陷阱、quality-first guard 与实验口径 | 开发者、研究者、复盘人员 | 按需更新 |

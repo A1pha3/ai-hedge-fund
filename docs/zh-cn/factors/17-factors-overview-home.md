@@ -21,6 +21,7 @@
 4. 跨层复盘和按任务使用这些文档的方法。
 5. watchlist 到 execution bridge 的执行承接读法。
 6. paper trading 里 T 日计划到 T+1 执行的时序口径。
+7. BTST 次日短线目标的策略、调参与验证闭环。
 
 可以把它理解成一个从规则层、因子层到复盘层的知识目录，而不是单纯的说明文集合。
 
@@ -113,6 +114,28 @@
 4. [Execution Bridge 一页速查卡](./25-execution-bridge-one-page-cheatsheet.md)
 5. [Paper Trading T 日到 T+1 时序专题](./28-paper-trading-tday-t1-timing-guide.md)
 
+### 2.7 BTST 专题层：把次日短线独立成完整工作流
+
+适合专门研究次日短线目标、short trade boundary、score frontier 和窗口级验证的人。
+
+1. [BTST 文档导航](./BTST/README.md)
+2. [BTST 次日短线策略完整指南](./BTST/01-btst-complete-guide.md)
+3. [BTST 一页速查卡](./BTST/03-btst-one-page-cheatsheet.md)
+4. [BTST 指标与因子判读词典](./BTST/07-btst-factor-metric-dictionary.md)
+5. [BTST 当前窗口案例复盘手册](./BTST/08-btst-current-window-case-studies.md)
+6. [BTST 调参与验证作战手册](./BTST/02-btst-tuning-playbook.md)
+7. [BTST 变体验收清单与升级标准](./BTST/09-btst-variant-acceptance-checklist.md)
+8. [BTST 产物判读手册](./BTST/10-btst-artifact-reading-manual.md)
+9. [BTST 优化决策树](./BTST/11-btst-optimization-decision-tree.md)
+10. [BTST AI 助手优化执行手册](./BTST/05-btst-ai-optimization-runbook.md)
+11. [BTST 排障与问题定位手册](./BTST/06-btst-troubleshooting-playbook.md)
+
+这一层回答的是：
+
+1. 短线目标为什么不能继续完全共用研究型目标的入口和阈值。
+2. short trade boundary、short trade target、replay frontier 和次日结果验证之间如何闭环。
+3. 研究员和 AI 助手应如何按固定步骤优化 BTST，而不是凭感觉试参数。
+
 这一层回答的是：
 
 1. 样本到底卡在 B、C、watchlist 还是 execution。
@@ -133,6 +156,7 @@
 3. [08-fundamental-factor-one-page-cheatsheet.md](./08-fundamental-factor-one-page-cheatsheet.md)
 4. [16-layer-c-complete-beginner-guide.md](./16-layer-c-complete-beginner-guide.md)
 5. [19-layer-c-one-page-cheatsheet.md](./19-layer-c-one-page-cheatsheet.md)
+6. [BTST 一页速查卡](./BTST/03-btst-one-page-cheatsheet.md)
 
 ### 3.2 开发和研究同学
 
@@ -144,6 +168,7 @@
 4. [15-fundamental-subfactor-joint-review-manual.md](./15-fundamental-subfactor-joint-review-manual.md)
 5. [16-layer-c-complete-beginner-guide.md](./16-layer-c-complete-beginner-guide.md)
 6. [20-layer-c-topic-reading-path.md](./20-layer-c-topic-reading-path.md)
+7. [BTST 次日短线策略完整指南](./BTST/01-btst-complete-guide.md)
 
 ### 3.3 复盘人员
 
@@ -176,6 +201,15 @@
 13. “我想搞清楚为什么进了 watchlist 还是没下单”：看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
 14. “我只想快速判断 execution blocker 是什么意思”：看 [25-execution-bridge-one-page-cheatsheet.md](./25-execution-bridge-one-page-cheatsheet.md)
 15. “我想搞清楚 T 日生成计划、T+1 执行到底怎么落盘”：看 [28-paper-trading-tday-t1-timing-guide.md](./28-paper-trading-tday-t1-timing-guide.md)
+16. “我想系统看懂 BTST 次日短线”：看 [BTST/01-btst-complete-guide.md](./BTST/01-btst-complete-guide.md)
+17. “我想按步骤优化 BTST 参数”：看 [BTST/02-btst-tuning-playbook.md](./BTST/02-btst-tuning-playbook.md)
+18. “我只想快速抓 BTST 要点”：看 [BTST/03-btst-one-page-cheatsheet.md](./BTST/03-btst-one-page-cheatsheet.md)
+19. “我想把 BTST 任务交给 AI 助手”：看 [BTST/05-btst-ai-optimization-runbook.md](./BTST/05-btst-ai-optimization-runbook.md)
+20. “我看不懂 BTST 指标到底在说什么”：看 [BTST/07-btst-factor-metric-dictionary.md](./BTST/07-btst-factor-metric-dictionary.md)
+21. “我想用真实样本理解 BTST 现在的主矛盾”：看 [BTST/08-btst-current-window-case-studies.md](./BTST/08-btst-current-window-case-studies.md)
+22. “我想判断一个 BTST 变体能不能升级默认”：看 [BTST/09-btst-variant-acceptance-checklist.md](./BTST/09-btst-variant-acceptance-checklist.md)
+23. “我不知道应该先看哪个 BTST artifact”：看 [BTST/10-btst-artifact-reading-manual.md](./BTST/10-btst-artifact-reading-manual.md)
+24. “我知道问题存在，但不知道下一步该动哪里”：看 [BTST/11-btst-optimization-decision-tree.md](./BTST/11-btst-optimization-decision-tree.md)
 
 ---
 
@@ -185,7 +219,8 @@
 
 1. 先选一篇整体导读，Layer B 看 [03-layer-b-complete-beginner-guide.md](./03-layer-b-complete-beginner-guide.md)，Layer C 看 [16-layer-c-complete-beginner-guide.md](./16-layer-c-complete-beginner-guide.md)。
 2. 再选一篇速查卡，Layer B 看 [05-layer-b-one-page-cheatsheet.md](./05-layer-b-one-page-cheatsheet.md)，fundamental 看 [08-fundamental-factor-one-page-cheatsheet.md](./08-fundamental-factor-one-page-cheatsheet.md)。
-3. 真要动手排障或调参时，再跳到机制层和专题层。
+3. 如果问题明确落在次日短线，再直接跳到 [BTST 文档导航](./BTST/README.md)。
+4. 真要动手排障或调参时，再跳到机制层和专题层。
 
 ---
 
