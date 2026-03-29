@@ -120,3 +120,60 @@ def test_analyze_pre_layer_short_trade_outcomes_tracks_missing_price_data(tmp_pa
     assert analysis["data_status_counts"] == {"missing_price_frame": 1}
     assert analysis["next_high_hit_rate_at_threshold"] is None
     assert analysis["next_close_positive_rate"] is None
+
+
+def test_analyze_pre_layer_short_trade_outcomes_filters_tickers(tmp_path, monkeypatch):
+    report_dir = tmp_path / "report"
+    day1 = report_dir / "selection_artifacts" / "2026-03-26"
+    day1.mkdir(parents=True)
+    (day1 / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-03-26",
+                "supplemental_short_trade_entries": [
+                    {
+                        "ticker": "300383",
+                        "candidate_source": "short_trade_boundary",
+                        "short_trade_boundary_metrics": {
+                            "candidate_score": 0.25,
+                        },
+                    },
+                    {
+                        "ticker": "600821",
+                        "candidate_source": "short_trade_boundary",
+                        "short_trade_boundary_metrics": {
+                            "candidate_score": 0.27,
+                        },
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str):
+        if ticker != "300383":
+            raise AssertionError(f"Unexpected ticker: {ticker}")
+        return pd.DataFrame(
+            [
+                {"date": "2026-03-26", "open": 12.0, "high": 12.3, "low": 11.9, "close": 12.0, "volume": 1000},
+                {"date": "2026-03-27", "open": 12.1, "high": 12.7, "low": 12.0, "close": 12.5, "volume": 1300},
+            ]
+        ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+
+    monkeypatch.setattr("scripts.analyze_pre_layer_short_trade_outcomes.get_price_data", fake_get_price_data)
+
+    analysis = analyze_pre_layer_short_trade_outcomes(
+        report_dir,
+        candidate_sources={"short_trade_boundary"},
+        tickers={"300383"},
+        next_high_hit_threshold=0.02,
+    )
+
+    assert analysis["tickers_filter"] == ["300383"]
+    assert analysis["candidate_count"] == 1
+    assert analysis["candidate_source_counts"] == {"short_trade_boundary": 1}
+    assert analysis["rows"][0]["ticker"] == "300383"
+    assert analysis["top_cases"][0]["ticker"] == "300383"

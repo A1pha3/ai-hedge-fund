@@ -63,12 +63,12 @@
 当前证据已经足够把后续动作分层：
 
 1. admission 层先停手：不必继续找第二条 floor 放松，因为主矛盾已经不在 admission。
-2. rescue 层可受控推进：优先审查 `300383` 这类 threshold-only 贴线样本，再看是否值得把 `600821` / `002015` 这类重复 ticker 纳入小规模 stale+extension frontier。
+2. rescue 层可受控推进：如果只看 score-fail 子问题本身，仍应优先审查 `300383` 这类 threshold-only 贴线样本，再看是否值得把 `600821` / `002015` 这类重复 ticker 纳入小规模 stale+extension frontier。
 3. 不应做 cluster-wide 宽松：因为只有 1 个样本是纯 threshold-only，其余都牵涉 penalty 联动，不能被包装成“简单整体放松 near-miss 线”。
 
 ## 最终决策
 
-如果下一轮继续优先推进 Layer C 之前的短线策略，那么建议顺序应更新为：
+如果只在 score-fail frontier 这一条子问题里继续推进，那么建议顺序应更新为：
 
 1. 先做 `300383` 的 threshold-only near-miss 受控实验，验证最小成本 rescue 是否有真实价值。
 2. 再做 `600821` / `002015` 这类重复 ticker 的 stale+extension frontier 样本审查。

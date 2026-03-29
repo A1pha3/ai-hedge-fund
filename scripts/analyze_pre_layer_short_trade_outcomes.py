@@ -26,6 +26,12 @@ def _parse_candidate_sources(raw: str | None) -> set[str]:
     return {token.strip() for token in str(raw).split(",") if token.strip()}
 
 
+def _parse_tickers(raw: str | None) -> set[str]:
+    if raw is None or not str(raw).strip():
+        return set()
+    return {token.strip() for token in str(raw).split(",") if token.strip()}
+
+
 def _safe_float(value: Any, default: float | None = None) -> float | None:
     try:
         return float(value)
@@ -123,6 +129,7 @@ def render_pre_layer_short_trade_outcomes_markdown(analysis: dict[str, Any]) -> 
     lines.append("## Overview")
     lines.append(f"- report_dir: {analysis['report_dir']}")
     lines.append(f"- candidate_sources_filter: {analysis['candidate_sources_filter']}")
+    lines.append(f"- tickers_filter: {analysis['tickers_filter']}")
     lines.append(f"- candidate_count: {analysis['candidate_count']}")
     lines.append(f"- data_status_counts: {analysis['data_status_counts']}")
     lines.append(f"- candidate_source_counts: {analysis['candidate_source_counts']}")
@@ -157,10 +164,12 @@ def analyze_pre_layer_short_trade_outcomes(
     report_dir: str | Path,
     *,
     candidate_sources: set[str] | None = None,
+    tickers: set[str] | None = None,
     next_high_hit_threshold: float = 0.02,
 ) -> dict[str, Any]:
     report_path = Path(report_dir).expanduser().resolve()
     active_sources = {str(value) for value in (candidate_sources or set()) if str(value).strip()}
+    active_tickers = {str(value) for value in (tickers or set()) if str(value).strip()}
     candidate_rows: list[dict[str, Any]] = []
     price_cache: dict[tuple[str, str], pd.DataFrame] = {}
     data_status_counts: Counter[str] = Counter()
@@ -170,16 +179,19 @@ def analyze_pre_layer_short_trade_outcomes(
     for _, replay_input in _iter_replay_inputs(report_path):
         trade_date = str(replay_input.get("trade_date") or "")
         for entry in list(replay_input.get("supplemental_short_trade_entries") or []):
+            ticker = str(entry.get("ticker") or "")
+            if active_tickers and ticker not in active_tickers:
+                continue
             candidate_source = str(entry.get("candidate_source") or "unknown")
             if active_sources and candidate_source not in active_sources:
                 continue
-            outcome = _extract_next_day_outcome(str(entry.get("ticker") or ""), trade_date, price_cache)
+            outcome = _extract_next_day_outcome(ticker, trade_date, price_cache)
             data_status = str(outcome.get("data_status") or "unknown")
             data_status_counts[data_status] += 1
             candidate_source_counts[candidate_source] += 1
             row = {
                 "trade_date": trade_date,
-                "ticker": str(entry.get("ticker") or ""),
+                "ticker": ticker,
                 "candidate_source": candidate_source,
                 "candidate_score": _round_or_none(_safe_float(dict(entry.get("short_trade_boundary_metrics") or {}).get("candidate_score"))),
                 "breakout_freshness": _round_or_none(_safe_float(dict(entry.get("short_trade_boundary_metrics") or {}).get("breakout_freshness"))),
@@ -239,6 +251,7 @@ def analyze_pre_layer_short_trade_outcomes(
     return {
         "report_dir": str(report_path),
         "candidate_sources_filter": sorted(active_sources),
+        "tickers_filter": sorted(active_tickers),
         "candidate_count": len(candidate_rows),
         "data_status_counts": dict(data_status_counts.most_common()),
         "candidate_source_counts": dict(candidate_source_counts.most_common()),
@@ -259,6 +272,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze next-day outcomes for pre-Layer C short-trade candidates from selection artifacts.")
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--candidate-sources", default="", help="Optional comma-separated candidate_source filter")
+    parser.add_argument("--tickers", default="", help="Optional comma-separated ticker filter")
     parser.add_argument("--next-high-hit-threshold", type=float, default=0.02)
     parser.add_argument("--output-json", default="")
     parser.add_argument("--output-md", default="")
@@ -267,6 +281,7 @@ def main() -> None:
     analysis = analyze_pre_layer_short_trade_outcomes(
         args.report_dir,
         candidate_sources=_parse_candidate_sources(args.candidate_sources),
+        tickers=_parse_tickers(args.tickers),
         next_high_hit_threshold=float(args.next_high_hit_threshold),
     )
     if args.output_json:

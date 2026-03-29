@@ -98,6 +98,7 @@
 6. 如果要专门讲次日短线，再看 [BTST 次日短线策略完整指南](./BTST/01-btst-complete-guide.md)
 7. 如果要把“会选”和“会买”讲清楚，再看 [24-execution-bridge-professional-guide.md](./24-execution-bridge-professional-guide.md)
 8. 如果要把“T 日生成计划、T+1 执行”讲清楚，再看 [28-paper-trading-tday-t1-timing-guide.md](./28-paper-trading-tday-t1-timing-guide.md)
+9. 如果你只需要 5 分钟把当前 BTST 业务结论讲清楚，再看 [BTST 次日短线 5 分钟简报](./BTST/12-btst-five-minute-brief.md)
 
 适合的问题：
 
@@ -117,6 +118,7 @@
 4. [22-layer-b-c-joint-review-manual.md](./22-layer-b-c-joint-review-manual.md)
 5. [25-execution-bridge-one-page-cheatsheet.md](./25-execution-bridge-one-page-cheatsheet.md)
 6. 如果你只关心次日短线，再加读 [BTST/03-btst-one-page-cheatsheet.md](./BTST/03-btst-one-page-cheatsheet.md)
+7. 如果你既想快速判断又要准备开跑脚本，再加读 [BTST/13-btst-command-cookbook.md](./BTST/13-btst-command-cookbook.md)
 
 这 4 篇可以覆盖：
 

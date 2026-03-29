@@ -17,6 +17,8 @@
 9. [04-btst-experiment-template.md](./04-btst-experiment-template.md)
 10. [05-btst-ai-optimization-runbook.md](./05-btst-ai-optimization-runbook.md)
 11. [06-btst-troubleshooting-playbook.md](./06-btst-troubleshooting-playbook.md)
+12. [12-btst-five-minute-brief.md](./12-btst-five-minute-brief.md)
+13. [13-btst-command-cookbook.md](./13-btst-command-cookbook.md)
 
 如果你当前的任务更偏专项排障，建议搭配阅读：
 
@@ -33,6 +35,8 @@
 2. 研究调参：`02 -> 09 -> 10 -> 11 -> 04`
 3. AI 助手执行：`02 -> 10 -> 11 -> 05 -> 04`
 4. 线上排障：`03 -> 07 -> 10 -> 06`
+5. 管理层 / 业务快读：`12 -> 03`
+6. 命令执行：`13 -> 10 -> 04`
 
 读完整套 BTST 文档后，你应该能回答三类问题：
 
@@ -41,3 +45,5 @@
 3. 当策略供给不足、次日表现变差、或 near-miss 太多时，应该先调什么、怎么调、如何验证。
 4. 当前窗口里 `300724`、`300394`、`300502` 这类样本为什么不能用一套方法一起处理。
 5. 一轮 BTST 变体什么时候只能保留为候选，什么时候才配升级默认。
+6. 如果只有 5 分钟，当前 BTST 的阶段结论和下一步优先级到底是什么。
+7. 如果要亲手跑 BTST 分析，当前最短且最稳的命令顺序是什么。

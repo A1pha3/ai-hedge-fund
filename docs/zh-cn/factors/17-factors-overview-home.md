@@ -129,6 +129,8 @@
 9. [BTST 优化决策树](./BTST/11-btst-optimization-decision-tree.md)
 10. [BTST AI 助手优化执行手册](./BTST/05-btst-ai-optimization-runbook.md)
 11. [BTST 排障与问题定位手册](./BTST/06-btst-troubleshooting-playbook.md)
+12. [BTST 次日短线 5 分钟简报](./BTST/12-btst-five-minute-brief.md)
+13. [BTST 命令作战手册](./BTST/13-btst-command-cookbook.md)
 
 这一层回答的是：
 
@@ -210,6 +212,8 @@
 22. “我想判断一个 BTST 变体能不能升级默认”：看 [BTST/09-btst-variant-acceptance-checklist.md](./BTST/09-btst-variant-acceptance-checklist.md)
 23. “我不知道应该先看哪个 BTST artifact”：看 [BTST/10-btst-artifact-reading-manual.md](./BTST/10-btst-artifact-reading-manual.md)
 24. “我知道问题存在，但不知道下一步该动哪里”：看 [BTST/11-btst-optimization-decision-tree.md](./BTST/11-btst-optimization-decision-tree.md)
+25. “我只想 5 分钟知道当前 BTST 到底进展到哪了”：看 [BTST/12-btst-five-minute-brief.md](./BTST/12-btst-five-minute-brief.md)
+26. “我准备直接跑脚本，但不知道命令顺序”：看 [BTST/13-btst-command-cookbook.md](./BTST/13-btst-command-cookbook.md)
 
 ---
 

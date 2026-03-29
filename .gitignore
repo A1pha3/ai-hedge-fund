@@ -40,6 +40,16 @@ data/reports/short_trade_boundary_score_failures_frontier_*.json
 data/reports/short_trade_boundary_score_failures_frontier_*.md
 data/reports/short_trade_boundary_targeted_coverage_variants_*.json
 data/reports/short_trade_boundary_targeted_coverage_variants_*.md
+data/reports/case_based_short_trade_entry_*
+data/reports/case_based_short_trade_follow_through_runbook_*
+data/reports/multi_window_short_trade_*
+data/reports/recurring_frontier_*
+data/reports/short_trade_boundary_frontier_*
+data/reports/short_trade_boundary_recurring_frontier_*
+data/reports/short_trade_release_priority_scoreboard_*
+data/reports/short_trade_ticker_role_history_*
+data/reports/targeted_short_trade_boundary_release_*
+data/reports/targeted_short_trade_near_miss_release_*
 
 # Python
 __pycache__/
@@ -65,6 +75,7 @@ wheels/
 
 # Ignore files
 logs/
+session.checkpoint.timings.jsonl
 
 # Virtual Environment
 venv/

@@ -448,6 +448,8 @@ Q: 你目前的背景是什么？
 | [BTST 变体验收清单与升级标准](./factors/BTST/09-btst-variant-acceptance-checklist.md) | 统一规定 BTST 变体何时回滚、何时保留候选、何时可升级默认 | 开发者、研究者、AI 助手 | 按需更新 |
 | [BTST 产物判读手册](./factors/BTST/10-btst-artifact-reading-manual.md) | 规定 BTST report、snapshot、replay input、frontier 和次日表现产物的最小阅读顺序 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
 | [BTST 优化决策树](./factors/BTST/11-btst-optimization-decision-tree.md) | 把 BTST 下一步动作收敛成统一决策树，帮助快速选择 admission、score frontier 或 blocked release 路径 | 开发者、研究者、AI 助手 | 按需更新 |
+| [BTST 次日短线 5 分钟简报](./factors/BTST/12-btst-five-minute-brief.md) | 面向业务和管理层，用 5 分钟解释 BTST 当前已解决什么、主矛盾在哪以及下一步优先级 | 业务、产品、管理层、研究负责人 | 按需更新 |
+| [BTST 命令作战手册](./factors/BTST/13-btst-command-cookbook.md) | 把 BTST 最常用的运行、回放、frontier、release 与 outcome 命令整理成可执行顺序 | 开发者、研究者、AI 助手 | 按需更新 |
 | [Fundamental 因子专业讲解](./factors/07-fundamental-factor-professional-guide.md) | 单独拆解 Layer B 中 fundamental 因子的五个子因子、阈值、聚合语义、业务角色与调试路径 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Fundamental 因子一页速查卡](./factors/08-fundamental-factor-one-page-cheatsheet.md) | 把 fundamental 因子的角色、五个子因子、profitability cliff 和复盘阅读顺序压缩成一页工作卡 | 开发者、研究者、复盘人员 | 按需更新 |
 | [Profitability 子因子专业讲解](./factors/09-profitability-subfactor-professional-guide.md) | 单独拆解 profitability 的 hard cliff、zero_pass_mode、聚合陷阱、quality-first guard 与实验口径 | 开发者、研究者、复盘人员 | 按需更新 |
