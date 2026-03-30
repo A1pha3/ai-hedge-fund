@@ -128,6 +128,8 @@
 
 这说明旧阶段的问题不只是阈值高，而是 `breakout_freshness` 的定义或使用方式过窄；但在当前阶段，这条 admission 主线已经完成最小可用收口，因此不应再把“是否继续放 admission floor”当作最优先问题。
 
+补充一条新的反证：`data/reports/btst_profile_frontier_20260330.md` 已把同一 0323-0326 closed-cycle 窗口下的 `default`、`staged_breakout`、`aggressive`、`conservative` 放到统一 outcome 面上比较，结果四个 profile 的 `tradeable surface` 都仍然是 `0`。这说明当前问题也不适合再理解成“换个 short-trade profile 就能推起来”，而应继续把主优化面收敛在 `score construction` 与 `candidate entry` 语义上。
+
 ### 3.5 profitability 为什么值得单独提出
 
 基于 2026-03-23、24、25、26 四个交易日（对应 `paper_trading_window` 的 `trade_dates`）的 `analyze_profitability_subfactor_breakdown.py` 分析结果（`data/reports/profitability_subfactor_breakdown_current_window_20260327.json`），需要先明确证据边界：这份统计针对 `build_candidate_pool -> score_batch -> fuse_batch` 之后、落在 `FAST_AGENT_SCORE_THRESHOLD` 下方且完成了 profitability 评分的更广义 Layer B 融合低分样本，不是 BTST-only 候选统计。
@@ -360,6 +362,8 @@ Layer 4：执行确认
 1. 把 `breakout_freshness` 从单一 admission floor，改成 admission + score 两段式影响。
 2. 引入“准备突破态”和“完成突破态”分层，而不是只允许后者进入。
 3. 允许一部分 `near_miss` 级别样本进入 watch-only 池，而不是直接拒绝。
+
+其中第 2 条现在已经有了最小代码原型：`staged_breakout` profile 会把 `near_miss` 解释成“prepared_breakout”，但最新 closed-cycle frontier 结果也同时说明，仅靠这层 profile 语义仍不足以把当前窗口推出 actionable surface，因此它更适合保留为实验语义，而不是当前默认主线。
 
 ### 7.2 主线二：把 profitability 从前置硬杀改成 BTST 软约束
 

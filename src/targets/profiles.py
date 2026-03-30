@@ -11,6 +11,17 @@ class ShortTradeTargetProfile:
     name: str
     select_threshold: float = 0.58
     near_miss_threshold: float = 0.46
+    selected_breakout_freshness_min: float = 0.35
+    selected_trend_acceleration_min: float = 0.38
+    near_miss_breakout_freshness_min: float = 0.0
+    near_miss_trend_acceleration_min: float = 0.0
+    breakout_freshness_weight: float = 0.22
+    trend_acceleration_weight: float = 0.18
+    volume_expansion_quality_weight: float = 0.16
+    close_strength_weight: float = 0.14
+    sector_resonance_weight: float = 0.12
+    catalyst_freshness_weight: float = 0.08
+    layer_c_alignment_weight: float = 0.10
     stale_penalty_block_threshold: float = 0.72
     overhead_penalty_block_threshold: float = 0.68
     extension_penalty_block_threshold: float = 0.74
@@ -32,6 +43,10 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         name="conservative",
         select_threshold=0.62,
         near_miss_threshold=0.50,
+        selected_breakout_freshness_min=0.38,
+        selected_trend_acceleration_min=0.41,
+        near_miss_breakout_freshness_min=0.22,
+        near_miss_trend_acceleration_min=0.26,
         stale_penalty_block_threshold=0.68,
         overhead_penalty_block_threshold=0.64,
         extension_penalty_block_threshold=0.70,
@@ -44,6 +59,10 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         name="aggressive",
         select_threshold=0.54,
         near_miss_threshold=0.42,
+        selected_breakout_freshness_min=0.30,
+        selected_trend_acceleration_min=0.33,
+        near_miss_breakout_freshness_min=0.16,
+        near_miss_trend_acceleration_min=0.20,
         stale_penalty_block_threshold=0.78,
         overhead_penalty_block_threshold=0.74,
         extension_penalty_block_threshold=0.80,
@@ -51,6 +70,15 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         stale_score_penalty_weight=0.08,
         overhead_score_penalty_weight=0.07,
         extension_score_penalty_weight=0.05,
+    ),
+    "staged_breakout": ShortTradeTargetProfile(
+        name="staged_breakout",
+        select_threshold=0.58,
+        near_miss_threshold=0.42,
+        selected_breakout_freshness_min=0.35,
+        selected_trend_acceleration_min=0.38,
+        near_miss_breakout_freshness_min=0.18,
+        near_miss_trend_acceleration_min=0.22,
     ),
 }
 

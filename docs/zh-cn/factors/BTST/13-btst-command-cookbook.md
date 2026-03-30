@@ -459,6 +459,33 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
   --output-md data/reports/btst_micro_window_regression_20260330.md
 ```
 
+### 7.7 做 profile frontier 闭环比较
+
+适用场景：
+
+1. 你已经确认 admission baseline 不应再盲目放宽，但想验证“只调 short-trade profile 语义”能不能把窗口从 0 actionable surface 推起来。
+2. 你要把 `default`、`staged_breakout`、`aggressive`、`conservative` 放到同一个 closed-cycle BTST outcome 面上比较。
+3. 你要回答“profile-only 变体是否已经足以形成 closed-cycle actionable surface，还是仍应回到 score construction / candidate entry 主线”。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/analyze_btst_profile_frontier.py \
+  data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329 \
+  --baseline-profile default \
+  --profile staged_breakout \
+  --profile aggressive \
+  --profile conservative \
+  --output-json data/reports/btst_profile_frontier_20260330.json \
+  --output-md data/reports/btst_profile_frontier_20260330.md
+```
+
+优先回答：
+
+1. 哪个 profile 真的新增了 closed-cycle actionable surface。
+2. profile-only 变体是否通过了 baseline false negative proxy 派生出的 guardrails。
+3. 如果所有 profile 都还是 0 actionable，是否可以正式收敛到“下一步不再优先调 profile，而是回到 score frontier / candidate entry”。
+
 优先回答：
 
 1. baseline 的 `tradeable surface` 是否仍为 0，以及 `false_negative_proxy_summary` 还有多大。

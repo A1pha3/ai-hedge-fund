@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from src.execution.models import LayerCResult
+from src.targets import SHORT_TRADE_TARGET_PROFILES, get_active_short_trade_target_profile, get_short_trade_target_profile
 from src.targets.router import build_selection_targets
 from src.targets import short_trade_target as short_trade_target_module
 
@@ -113,11 +114,11 @@ STRUCTURAL_VARIANTS: dict[str, dict[str, Any]] = {
 
 
 def _default_short_trade_target_profile():
-    return short_trade_target_module.get_short_trade_target_profile("default")
+    return get_short_trade_target_profile("default")
 
 
 def _active_short_trade_target_profile():
-    return short_trade_target_module.get_active_short_trade_target_profile()
+    return get_active_short_trade_target_profile()
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -387,8 +388,16 @@ def _apply_candidate_entry_filters(entries: list[dict[str, Any]], filter_rules: 
 @contextmanager
 def _override_short_trade_thresholds(
     *,
+    profile_name: str = "default",
     select_threshold: float | None = None,
     near_miss_threshold: float | None = None,
+    breakout_freshness_weight: float | None = None,
+    trend_acceleration_weight: float | None = None,
+    volume_expansion_quality_weight: float | None = None,
+    close_strength_weight: float | None = None,
+    sector_resonance_weight: float | None = None,
+    catalyst_freshness_weight: float | None = None,
+    layer_c_alignment_weight: float | None = None,
     stale_penalty_block_threshold: float | None = None,
     overhead_penalty_block_threshold: float | None = None,
     extension_penalty_block_threshold: float | None = None,
@@ -403,6 +412,20 @@ def _override_short_trade_thresholds(
         overrides["select_threshold"] = float(select_threshold)
     if near_miss_threshold is not None:
         overrides["near_miss_threshold"] = float(near_miss_threshold)
+    if breakout_freshness_weight is not None:
+        overrides["breakout_freshness_weight"] = float(breakout_freshness_weight)
+    if trend_acceleration_weight is not None:
+        overrides["trend_acceleration_weight"] = float(trend_acceleration_weight)
+    if volume_expansion_quality_weight is not None:
+        overrides["volume_expansion_quality_weight"] = float(volume_expansion_quality_weight)
+    if close_strength_weight is not None:
+        overrides["close_strength_weight"] = float(close_strength_weight)
+    if sector_resonance_weight is not None:
+        overrides["sector_resonance_weight"] = float(sector_resonance_weight)
+    if catalyst_freshness_weight is not None:
+        overrides["catalyst_freshness_weight"] = float(catalyst_freshness_weight)
+    if layer_c_alignment_weight is not None:
+        overrides["layer_c_alignment_weight"] = float(layer_c_alignment_weight)
     if stale_penalty_block_threshold is not None:
         overrides["stale_penalty_block_threshold"] = float(stale_penalty_block_threshold)
     if overhead_penalty_block_threshold is not None:
@@ -419,7 +442,7 @@ def _override_short_trade_thresholds(
         overrides["overhead_score_penalty_weight"] = float(overhead_score_penalty_weight)
     if extension_score_penalty_weight is not None:
         overrides["extension_score_penalty_weight"] = float(extension_score_penalty_weight)
-    with short_trade_target_module.use_short_trade_target_profile(overrides=overrides):
+    with short_trade_target_module.use_short_trade_target_profile(profile_name=profile_name, overrides=overrides):
         yield
 
 
@@ -595,6 +618,7 @@ def _build_replay_summary_row(analysis: dict[str, Any], *, structural_variant: s
 def analyze_selection_target_replay_inputs(
     input_path: str | Path,
     *,
+    profile_name: str = "default",
     select_threshold: float | None = None,
     near_miss_threshold: float | None = None,
     structural_variant: str = "baseline",
@@ -623,8 +647,16 @@ def analyze_selection_target_replay_inputs(
     focus_ticker_set = {ticker for ticker in (focus_tickers or []) if str(ticker).strip()}
 
     with _override_short_trade_thresholds(
+        profile_name=profile_name,
         select_threshold=select_threshold,
         near_miss_threshold=near_miss_threshold,
+        breakout_freshness_weight=effective_structural_overrides.get("breakout_freshness_weight"),
+        trend_acceleration_weight=effective_structural_overrides.get("trend_acceleration_weight"),
+        volume_expansion_quality_weight=effective_structural_overrides.get("volume_expansion_quality_weight"),
+        close_strength_weight=effective_structural_overrides.get("close_strength_weight"),
+        sector_resonance_weight=effective_structural_overrides.get("sector_resonance_weight"),
+        catalyst_freshness_weight=effective_structural_overrides.get("catalyst_freshness_weight"),
+        layer_c_alignment_weight=effective_structural_overrides.get("layer_c_alignment_weight"),
         stale_penalty_block_threshold=effective_structural_overrides.get("stale_penalty_block_threshold"),
         overhead_penalty_block_threshold=effective_structural_overrides.get("overhead_penalty_block_threshold"),
         extension_penalty_block_threshold=effective_structural_overrides.get("extension_penalty_block_threshold"),
@@ -773,6 +805,7 @@ def analyze_selection_target_replay_inputs(
     return {
         "replay_input_count": len(replay_input_sources),
         "trade_date_count": len(per_day),
+        "profile_name": str(profile_name or "default"),
         "structural_variant": structural_variant,
         "structural_overrides": effective_structural_overrides,
         "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
@@ -800,6 +833,7 @@ def analyze_selection_target_replay_inputs(
 def analyze_selection_target_threshold_grid(
     input_path: str | Path,
     *,
+    profile_name: str = "default",
     select_thresholds: list[float],
     near_miss_thresholds: list[float],
 ) -> dict[str, Any]:
@@ -813,6 +847,7 @@ def analyze_selection_target_threshold_grid(
                 continue
             analysis = analyze_selection_target_replay_inputs(
                 input_path,
+                profile_name=profile_name,
                 select_threshold=select_threshold,
                 near_miss_threshold=near_miss_threshold,
                 structural_variant="baseline",
@@ -831,6 +866,7 @@ def analyze_selection_target_threshold_grid(
     first_selected_row = next((row for row in rows if row["replayed_short_trade_decision_counts"].get("selected", 0) > 0), None)
     first_near_miss_row = next((row for row in rows if row["replayed_short_trade_decision_counts"].get("near_miss", 0) > 0), None)
     return {
+        "profile_name": str(profile_name or "default"),
         "select_threshold_grid": [round(float(value), 4) for value in select_values],
         "near_miss_threshold_grid": [round(float(value), 4) for value in near_miss_values],
         "grid_row_count": len(rows),
@@ -843,6 +879,7 @@ def analyze_selection_target_threshold_grid(
 def analyze_selection_target_structural_variants(
     input_path: str | Path,
     *,
+    profile_name: str = "default",
     structural_variants: list[str],
     select_threshold: float | None = None,
     near_miss_threshold: float | None = None,
@@ -853,6 +890,7 @@ def analyze_selection_target_structural_variants(
     for variant_name in variant_names:
         analysis = analyze_selection_target_replay_inputs(
             input_path,
+            profile_name=profile_name,
             select_threshold=select_threshold,
             near_miss_threshold=near_miss_threshold,
             structural_variant=variant_name,
@@ -865,6 +903,7 @@ def analyze_selection_target_structural_variants(
 
     first_unblocked_row = next((row for row in rows if row["released_from_blocked"]), None)
     return {
+        "profile_name": str(profile_name or "default"),
         "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
         "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
         "structural_variants": variant_names,
@@ -877,6 +916,7 @@ def analyze_selection_target_structural_variants(
 def analyze_selection_target_combination_grid(
     input_path: str | Path,
     *,
+    profile_name: str = "default",
     structural_variants: list[str],
     select_thresholds: list[float],
     near_miss_thresholds: list[float],
@@ -893,6 +933,7 @@ def analyze_selection_target_combination_grid(
                     continue
                 analysis = analyze_selection_target_replay_inputs(
                     input_path,
+                    profile_name=profile_name,
                     select_threshold=select_threshold,
                     near_miss_threshold=near_miss_threshold,
                     structural_variant=variant_name,
@@ -914,6 +955,7 @@ def analyze_selection_target_combination_grid(
     first_blocked_near_miss_row = next((row for row in rows if row["blocked_to_near_miss"]), None)
     first_blocked_selected_row = next((row for row in rows if row["blocked_to_selected"]), None)
     return {
+        "profile_name": str(profile_name or "default"),
         "structural_variants": variant_names,
         "select_threshold_grid": [round(float(value), 4) for value in select_values],
         "near_miss_threshold_grid": [round(float(value), 4) for value in near_miss_values],
@@ -930,6 +972,7 @@ def analyze_selection_target_combination_grid(
 def analyze_selection_target_candidate_entry_metric_grid(
     input_path: str | Path,
     *,
+    profile_name: str = "default",
     breakout_freshness_max_values: list[float | None] | None,
     trend_acceleration_max_values: list[float | None] | None = None,
     volume_expansion_quality_max_values: list[float | None] | None,
@@ -959,6 +1002,7 @@ def analyze_selection_target_candidate_entry_metric_grid(
                         for catalyst_max in catalyst_values:
                             analysis = analyze_selection_target_replay_inputs(
                                 input_path,
+                                profile_name=profile_name,
                                 select_threshold=select_threshold,
                                 near_miss_threshold=near_miss_threshold,
                                 structural_variant=variant_name,
@@ -1048,6 +1092,7 @@ def analyze_selection_target_candidate_entry_metric_grid(
                     ),
                 )
     return {
+        "profile_name": str(profile_name or "default"),
         "base_structural_variants": variant_names,
         "breakout_freshness_max_grid": [round(float(value), 4) for value in breakout_values if value is not None],
         "trend_acceleration_max_grid": [round(float(value), 4) for value in trend_values if value is not None],
@@ -1070,6 +1115,7 @@ def analyze_selection_target_candidate_entry_metric_grid(
 def analyze_selection_target_penalty_grid(
     input_path: str | Path,
     *,
+    profile_name: str = "default",
     avoid_penalty_values: list[float],
     stale_score_penalty_weight_values: list[float],
     extension_score_penalty_weight_values: list[float],
@@ -1091,6 +1137,7 @@ def analyze_selection_target_penalty_grid(
                 for extension_weight in extension_values:
                     analysis = analyze_selection_target_replay_inputs(
                         input_path,
+                        profile_name=profile_name,
                         select_threshold=select_threshold,
                         near_miss_threshold=near_miss_threshold,
                         structural_variant=variant_name,
@@ -1160,6 +1207,7 @@ def analyze_selection_target_penalty_grid(
                 )
 
     return {
+        "profile_name": str(profile_name or "default"),
         "base_structural_variants": variant_names,
         "layer_c_avoid_penalty_grid": [round(float(value), 4) for value in avoid_values],
         "stale_score_penalty_weight_grid": [round(float(value), 4) for value in stale_values],
@@ -1177,6 +1225,7 @@ def analyze_selection_target_penalty_grid(
 def analyze_selection_target_penalty_threshold_grid(
     input_path: str | Path,
     *,
+    profile_name: str = "default",
     avoid_penalty_values: list[float],
     stale_score_penalty_weight_values: list[float],
     extension_score_penalty_weight_values: list[float],
@@ -1210,6 +1259,7 @@ def analyze_selection_target_penalty_threshold_grid(
                                 continue
                             analysis = analyze_selection_target_replay_inputs(
                                 input_path,
+                                profile_name=profile_name,
                                 select_threshold=select_threshold,
                                 near_miss_threshold=near_miss_threshold,
                                 structural_variant=variant_name,
@@ -1284,6 +1334,7 @@ def analyze_selection_target_penalty_threshold_grid(
             )
 
     return {
+        "profile_name": str(profile_name or "default"),
         "base_structural_variants": variant_names,
         "layer_c_avoid_penalty_grid": [round(float(value), 4) for value in avoid_values],
         "stale_score_penalty_weight_grid": [round(float(value), 4) for value in stale_values],
@@ -1300,6 +1351,7 @@ def analyze_selection_target_penalty_threshold_grid(
 
 def render_selection_target_replay_markdown(analysis: dict[str, Any]) -> str:
     lines = ["# Selection Target Replay Calibration", ""]
+    lines.append(f"- profile_name: {analysis['profile_name']}")
     lines.append(f"- replay_input_count: {analysis['replay_input_count']}")
     lines.append(f"- trade_date_count: {analysis['trade_date_count']}")
     lines.append(f"- select_threshold: {analysis['select_threshold']}")
@@ -1342,6 +1394,7 @@ def render_selection_target_replay_markdown(analysis: dict[str, Any]) -> str:
 
 def render_selection_target_threshold_grid_markdown(grid_analysis: dict[str, Any]) -> str:
     lines = ["# Selection Target Threshold Grid", ""]
+    lines.append(f"- profile_name: {grid_analysis['profile_name']}")
     lines.append(f"- select_threshold_grid: {grid_analysis['select_threshold_grid']}")
     lines.append(f"- near_miss_threshold_grid: {grid_analysis['near_miss_threshold_grid']}")
     lines.append(f"- grid_row_count: {grid_analysis['grid_row_count']}")
@@ -1358,6 +1411,7 @@ def render_selection_target_threshold_grid_markdown(grid_analysis: dict[str, Any
 
 def render_selection_target_structural_variants_markdown(variant_analysis: dict[str, Any]) -> str:
     lines = ["# Selection Target Structural Variants", ""]
+    lines.append(f"- profile_name: {variant_analysis['profile_name']}")
     lines.append(f"- select_threshold: {variant_analysis['select_threshold']}")
     lines.append(f"- near_miss_threshold: {variant_analysis['near_miss_threshold']}")
     lines.append(f"- structural_variants: {variant_analysis['structural_variants']}")
@@ -1380,6 +1434,7 @@ def render_selection_target_structural_variants_markdown(variant_analysis: dict[
 
 def render_selection_target_combination_grid_markdown(grid_analysis: dict[str, Any]) -> str:
     lines = ["# Selection Target Structural + Threshold Grid", ""]
+    lines.append(f"- profile_name: {grid_analysis['profile_name']}")
     lines.append(f"- structural_variants: {grid_analysis['structural_variants']}")
     lines.append(f"- select_threshold_grid: {grid_analysis['select_threshold_grid']}")
     lines.append(f"- near_miss_threshold_grid: {grid_analysis['near_miss_threshold_grid']}")
@@ -1398,6 +1453,7 @@ def render_selection_target_combination_grid_markdown(grid_analysis: dict[str, A
 
 def render_selection_target_candidate_entry_metric_grid_markdown(grid_analysis: dict[str, Any]) -> str:
     lines = ["# Selection Target Candidate Entry Metric Grid", ""]
+    lines.append(f"- profile_name: {grid_analysis['profile_name']}")
     lines.append(f"- base_structural_variants: {grid_analysis['base_structural_variants']}")
     lines.append(f"- breakout_freshness_max_grid: {grid_analysis['breakout_freshness_max_grid']}")
     lines.append(f"- trend_acceleration_max_grid: {grid_analysis['trend_acceleration_max_grid']}")
@@ -1430,6 +1486,7 @@ def render_selection_target_candidate_entry_metric_grid_markdown(grid_analysis: 
 
 def render_selection_target_penalty_grid_markdown(grid_analysis: dict[str, Any]) -> str:
     lines = ["# Selection Target Penalty Frontier Grid", ""]
+    lines.append(f"- profile_name: {grid_analysis['profile_name']}")
     lines.append(f"- base_structural_variants: {grid_analysis['base_structural_variants']}")
     lines.append(f"- layer_c_avoid_penalty_grid: {grid_analysis['layer_c_avoid_penalty_grid']}")
     lines.append(f"- stale_score_penalty_weight_grid: {grid_analysis['stale_score_penalty_weight_grid']}")
@@ -1451,6 +1508,7 @@ def render_selection_target_penalty_grid_markdown(grid_analysis: dict[str, Any])
 
 def render_selection_target_penalty_threshold_grid_markdown(grid_analysis: dict[str, Any]) -> str:
     lines = ["# Selection Target Penalty + Threshold Frontier Grid", ""]
+    lines.append(f"- profile_name: {grid_analysis['profile_name']}")
     lines.append(f"- base_structural_variants: {grid_analysis['base_structural_variants']}")
     lines.append(f"- layer_c_avoid_penalty_grid: {grid_analysis['layer_c_avoid_penalty_grid']}")
     lines.append(f"- stale_score_penalty_weight_grid: {grid_analysis['stale_score_penalty_weight_grid']}")
@@ -1473,6 +1531,7 @@ def render_selection_target_penalty_threshold_grid_markdown(grid_analysis: dict[
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay short-trade selection targets from selection_target_replay_input.json artifacts.")
     parser.add_argument("input_path", help="Path to a selection_target_replay_input.json file, a selection_artifacts directory, or a report directory.")
+    parser.add_argument("--profile-name", default="default", help="Short-trade target profile used during replay. Available: " + ", ".join(sorted(SHORT_TRADE_TARGET_PROFILES.keys())))
     parser.add_argument("--select-threshold", type=float, default=None, help="Override short-trade SELECT_THRESHOLD during replay.")
     parser.add_argument("--near-miss-threshold", type=float, default=None, help="Override short-trade NEAR_MISS_THRESHOLD during replay.")
     parser.add_argument("--select-threshold-grid", default=None, help="Comma-separated select-threshold grid for threshold sweep.")
@@ -1511,6 +1570,7 @@ def main() -> int:
     if (avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid) and (select_grid or near_miss_grid):
         analysis = analyze_selection_target_penalty_threshold_grid(
             args.input_path,
+            profile_name=args.profile_name,
             avoid_penalty_values=avoid_penalty_grid,
             stale_score_penalty_weight_values=stale_score_penalty_grid,
             extension_score_penalty_weight_values=extension_score_penalty_grid,
@@ -1523,6 +1583,7 @@ def main() -> int:
     elif avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid:
         analysis = analyze_selection_target_penalty_grid(
             args.input_path,
+            profile_name=args.profile_name,
             avoid_penalty_values=avoid_penalty_grid,
             stale_score_penalty_weight_values=stale_score_penalty_grid,
             extension_score_penalty_weight_values=extension_score_penalty_grid,
@@ -1535,6 +1596,7 @@ def main() -> int:
     elif breakout_max_grid or trend_max_grid or volume_max_grid or close_max_grid or catalyst_max_grid:
         analysis = analyze_selection_target_candidate_entry_metric_grid(
             args.input_path,
+            profile_name=args.profile_name,
             breakout_freshness_max_values=breakout_max_grid,
             trend_acceleration_max_values=trend_max_grid,
             volume_expansion_quality_max_values=volume_max_grid,
@@ -1550,6 +1612,7 @@ def main() -> int:
     elif structural_variants and (select_grid or near_miss_grid):
         analysis = analyze_selection_target_combination_grid(
             args.input_path,
+            profile_name=args.profile_name,
             structural_variants=structural_variants,
             select_thresholds=select_grid,
             near_miss_thresholds=near_miss_grid,
@@ -1558,6 +1621,7 @@ def main() -> int:
     elif structural_variants:
         analysis = analyze_selection_target_structural_variants(
             args.input_path,
+            profile_name=args.profile_name,
             structural_variants=structural_variants,
             select_threshold=args.select_threshold,
             near_miss_threshold=args.near_miss_threshold,
@@ -1567,6 +1631,7 @@ def main() -> int:
     elif select_grid or near_miss_grid:
         analysis = analyze_selection_target_threshold_grid(
             args.input_path,
+            profile_name=args.profile_name,
             select_thresholds=select_grid,
             near_miss_thresholds=near_miss_grid,
         )
@@ -1574,6 +1639,7 @@ def main() -> int:
     else:
         analysis = analyze_selection_target_replay_inputs(
             args.input_path,
+            profile_name=args.profile_name,
             select_threshold=args.select_threshold,
             near_miss_threshold=args.near_miss_threshold,
             structural_variant="baseline",

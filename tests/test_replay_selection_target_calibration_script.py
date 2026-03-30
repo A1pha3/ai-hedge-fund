@@ -166,6 +166,71 @@ def _write_selection_snapshot(tmp_path):
     return snapshot_path
 
 
+def _write_stage_breakout_replay_input(tmp_path):
+    watch_item = LayerCResult(
+        ticker="300620",
+        score_b=0.60,
+        score_c=0.60,
+        score_final=0.40,
+        quality_score=0.63,
+        decision="watch",
+        strategy_signals={
+            "trend": _make_signal(
+                1,
+                60.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 28.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 34.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 44.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 42.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 10.0, "completeness": 1.0},
+                },
+            ),
+            "event_sentiment": _make_signal(
+                1,
+                60.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 30.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                },
+            ),
+            "mean_reversion": _make_signal(0, 0.0),
+        },
+        agent_contribution_summary={"cohort_contributions": {"analyst": 0.40, "investor": 0.20}},
+    )
+    selection_targets, summary = build_selection_targets(
+        trade_date="20260322",
+        watchlist=[watch_item],
+        rejected_entries=[],
+        supplemental_short_trade_entries=[],
+        buy_order_tickers=set(),
+        target_mode="dual_target",
+    )
+    replay_input = {
+        "artifact_version": "v1",
+        "run_id": "test_stage_breakout_profile",
+        "trade_date": "2026-03-22",
+        "market": "CN",
+        "target_mode": "dual_target",
+        "pipeline_config_snapshot": {},
+        "source_summary": {
+            "watchlist_count": 1,
+            "rejected_entry_count": 0,
+            "supplemental_short_trade_entry_count": 0,
+            "buy_order_ticker_count": 0,
+        },
+        "watchlist": [watch_item.model_dump(mode="json")],
+        "rejected_entries": [],
+        "supplemental_short_trade_entries": [],
+        "buy_order_tickers": [],
+        "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
+        "target_summary": summary.model_dump(mode="json"),
+    }
+    replay_input_path = tmp_path / "selection_target_replay_input.json"
+    replay_input_path.write_text(json.dumps(replay_input, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay_input_path
+
+
 def test_replay_selection_target_calibration_reproduces_stored_decisions(tmp_path):
     replay_input_path = _write_replay_input(tmp_path)
 
@@ -224,6 +289,27 @@ def test_replay_selection_target_calibration_emits_focused_score_diagnostics(tmp
     assert diagnostic["replayed_total_positive_contribution"] is not None
     assert diagnostic["replayed_total_negative_contribution"] is not None
     assert diagnostic["replayed_gap_to_near_miss"] <= 0
+
+
+def test_replay_selection_target_calibration_accepts_profile_name(tmp_path):
+    replay_input_path = _write_stage_breakout_replay_input(tmp_path)
+
+    analysis = analyze_selection_target_replay_inputs(
+        replay_input_path,
+        profile_name="staged_breakout",
+        focus_tickers=["300620"],
+    )
+
+    assert analysis["profile_name"] == "staged_breakout"
+    assert analysis["decision_mismatch_count"] == 1
+    assert analysis["decision_transition_counts"] == {"rejected->near_miss": 1}
+    diagnostic = analysis["focused_score_diagnostics"][0]
+    assert diagnostic["ticker"] == "300620"
+    assert diagnostic["stored_decision"] == "rejected"
+    assert diagnostic["replayed_decision"] == "near_miss"
+    assert diagnostic["replayed_metrics_payload"]["breakout_stage"] == "prepared_breakout"
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["profile_name"] == "staged_breakout"
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["near_miss_threshold"] == 0.42
 
 
 def test_replay_selection_target_threshold_grid_finds_first_promotions(tmp_path):

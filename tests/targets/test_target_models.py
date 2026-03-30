@@ -14,6 +14,41 @@ def _make_signal(direction: int, confidence: float, completeness: float = 1.0, s
     )
 
 
+def _make_prepared_breakout_entry() -> dict:
+    return {
+        "ticker": "300620",
+        "score_b": 0.60,
+        "score_c": 0.60,
+        "score_final": 0.40,
+        "quality_score": 0.63,
+        "decision": "watch",
+        "reason": "watchlist_selected",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                60.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 28.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 34.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 44.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 42.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 10.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                60.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 30.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.40, "investor": 0.20}},
+    }
+
+
 def test_build_selection_targets_wraps_research_semantics_for_watchlist() -> None:
     watchlist = [
         LayerCResult(
@@ -347,6 +382,57 @@ def test_short_trade_target_reports_profile_metadata_and_override_thresholds() -
     assert result.metrics_payload["thresholds"]["select_threshold"] == 0.57
     assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.41
     assert result.explainability_payload["target_profile"] == "aggressive"
+
+
+def test_staged_breakout_profile_promotes_prepared_breakout_to_near_miss() -> None:
+    default_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_prepared_breakout_entry(),
+        profile_name="default",
+    )
+    staged_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_prepared_breakout_entry(),
+        profile_name="staged_breakout",
+    )
+
+    assert default_result.decision == "rejected"
+    assert default_result.rejection_reasons == ["score_short_below_threshold"]
+    assert staged_result.decision == "near_miss"
+    assert staged_result.metrics_payload["breakout_stage"] == "prepared_breakout"
+    assert staged_result.metrics_payload["selected_breakout_gate_pass"] is False
+    assert staged_result.metrics_payload["near_miss_breakout_gate_pass"] is True
+    assert staged_result.metrics_payload["thresholds"]["profile_name"] == "staged_breakout"
+    assert staged_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.42
+    assert staged_result.metrics_payload["thresholds"]["near_miss_breakout_freshness_min"] == 0.18
+    assert staged_result.metrics_payload["thresholds"]["near_miss_trend_acceleration_min"] == 0.22
+
+
+def test_short_trade_target_weight_overrides_can_raise_prepared_breakout_score() -> None:
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_prepared_breakout_entry(),
+        profile_name="default",
+    )
+    weighted_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_prepared_breakout_entry(),
+        profile_name="default",
+        profile_overrides={
+            "breakout_freshness_weight": 0.08,
+            "trend_acceleration_weight": 0.20,
+            "volume_expansion_quality_weight": 0.20,
+            "close_strength_weight": 0.06,
+            "sector_resonance_weight": 0.04,
+            "catalyst_freshness_weight": 0.20,
+            "layer_c_alignment_weight": 0.22,
+        },
+    )
+
+    assert weighted_result.score_target > baseline_result.score_target
+    assert weighted_result.decision == "near_miss"
+    assert weighted_result.metrics_payload["positive_score_weights"]["layer_c_alignment"] > baseline_result.metrics_payload["positive_score_weights"]["layer_c_alignment"]
+    assert weighted_result.metrics_payload["thresholds"]["effective_positive_score_weights"]["catalyst_freshness"] == 0.20
 
 
 def test_short_trade_target_can_remove_conflict_hard_block_without_dropping_overhead_conflict_penalty() -> None:

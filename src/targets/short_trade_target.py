@@ -108,8 +108,45 @@ def _summarize_penalty(name: str, value: float) -> str | None:
     return f"{name}={value:.2f}"
 
 
+def _classify_breakout_stage(*, breakout_freshness: float, trend_acceleration: float, profile: Any) -> tuple[str, bool, bool]:
+    selected_gate_pass = breakout_freshness >= float(profile.selected_breakout_freshness_min) and trend_acceleration >= float(profile.selected_trend_acceleration_min)
+    near_miss_gate_pass = breakout_freshness >= float(profile.near_miss_breakout_freshness_min) and trend_acceleration >= float(profile.near_miss_trend_acceleration_min)
+    if selected_gate_pass:
+        return "confirmed_breakout", True, True
+    if near_miss_gate_pass:
+        return "prepared_breakout", False, True
+    return "weak_breakout", False, False
+
+
+def _collect_breakout_gate_misses(*, breakout_freshness: float, trend_acceleration: float, breakout_min: float, trend_min: float, label: str) -> list[str]:
+    misses: list[str] = []
+    if breakout_freshness < breakout_min:
+        misses.append(f"breakout_freshness_below_{label}_floor")
+    if trend_acceleration < trend_min:
+        misses.append(f"trend_acceleration_below_{label}_floor")
+    return misses
+
+
+def _resolve_positive_score_weights(profile: Any) -> dict[str, float]:
+    configured_weights = {
+        "breakout_freshness": float(profile.breakout_freshness_weight),
+        "trend_acceleration": float(profile.trend_acceleration_weight),
+        "volume_expansion_quality": float(profile.volume_expansion_quality_weight),
+        "close_strength": float(profile.close_strength_weight),
+        "sector_resonance": float(profile.sector_resonance_weight),
+        "catalyst_freshness": float(profile.catalyst_freshness_weight),
+        "layer_c_alignment": float(profile.layer_c_alignment_weight),
+    }
+    total_weight = sum(max(0.0, value) for value in configured_weights.values())
+    if total_weight <= 0:
+        unit_weight = round(1.0 / len(configured_weights), 4)
+        return {name: unit_weight for name in configured_weights}
+    return {name: max(0.0, value) / total_weight for name, value in configured_weights.items()}
+
+
 def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dict[str, Any]:
     profile = get_active_short_trade_target_profile()
+    positive_score_weights = _resolve_positive_score_weights(profile)
     trend_signal = _load_signal(input_data.strategy_signals.get("trend"))
     event_signal = _load_signal(input_data.strategy_signals.get("event_sentiment"))
     mean_reversion_signal = _load_signal(input_data.strategy_signals.get("mean_reversion"))
@@ -146,13 +183,13 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     extension_without_room_penalty = clamp_unit_interval((0.45 * long_trend_strength) + (0.35 * max(0.0, volatility_strength - catalyst_freshness)) + (0.20 * clamp_unit_interval((score_final_strength - 0.72) / 0.28)))
 
     weighted_positive_contributions = {
-        "breakout_freshness": round(0.22 * breakout_freshness, 4),
-        "trend_acceleration": round(0.18 * trend_acceleration, 4),
-        "volume_expansion_quality": round(0.16 * volume_expansion_quality, 4),
-        "close_strength": round(0.14 * close_strength, 4),
-        "sector_resonance": round(0.12 * sector_resonance, 4),
-        "catalyst_freshness": round(0.08 * catalyst_freshness, 4),
-        "layer_c_alignment": round(0.10 * layer_c_alignment, 4),
+        "breakout_freshness": round(positive_score_weights["breakout_freshness"] * breakout_freshness, 4),
+        "trend_acceleration": round(positive_score_weights["trend_acceleration"] * trend_acceleration, 4),
+        "volume_expansion_quality": round(positive_score_weights["volume_expansion_quality"] * volume_expansion_quality, 4),
+        "close_strength": round(positive_score_weights["close_strength"] * close_strength, 4),
+        "sector_resonance": round(positive_score_weights["sector_resonance"] * sector_resonance, 4),
+        "catalyst_freshness": round(positive_score_weights["catalyst_freshness"] * catalyst_freshness, 4),
+        "layer_c_alignment": round(positive_score_weights["layer_c_alignment"] * layer_c_alignment, 4),
     }
     weighted_negative_contributions = {
         "stale_trend_repair_penalty": round(profile.stale_score_penalty_weight * stale_trend_repair_penalty, 4),
@@ -164,13 +201,13 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     total_negative_contribution = round(sum(weighted_negative_contributions.values()), 4)
 
     score_target = clamp_unit_interval(
-        (0.22 * breakout_freshness)
-        + (0.18 * trend_acceleration)
-        + (0.16 * volume_expansion_quality)
-        + (0.14 * close_strength)
-        + (0.12 * sector_resonance)
-        + (0.08 * catalyst_freshness)
-        + (0.10 * layer_c_alignment)
+        (positive_score_weights["breakout_freshness"] * breakout_freshness)
+        + (positive_score_weights["trend_acceleration"] * trend_acceleration)
+        + (positive_score_weights["volume_expansion_quality"] * volume_expansion_quality)
+        + (positive_score_weights["close_strength"] * close_strength)
+        + (positive_score_weights["sector_resonance"] * sector_resonance)
+        + (positive_score_weights["catalyst_freshness"] * catalyst_freshness)
+        + (positive_score_weights["layer_c_alignment"] * layer_c_alignment)
         - (profile.stale_score_penalty_weight * stale_trend_repair_penalty)
         - (profile.overhead_score_penalty_weight * overhead_supply_penalty)
         - (profile.extension_score_penalty_weight * extension_without_room_penalty)
@@ -234,6 +271,7 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "stale_trend_repair_penalty": stale_trend_repair_penalty,
         "overhead_supply_penalty": overhead_supply_penalty,
         "extension_without_room_penalty": extension_without_room_penalty,
+        "positive_score_weights": positive_score_weights,
         "weighted_positive_contributions": weighted_positive_contributions,
         "weighted_negative_contributions": weighted_negative_contributions,
         "total_positive_contribution": total_positive_contribution,
@@ -317,17 +355,31 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     close_strength = float(snapshot["close_strength"])
     sector_resonance = float(snapshot["sector_resonance"])
     layer_c_alignment = float(snapshot["layer_c_alignment"])
+    positive_score_weights = dict(snapshot["positive_score_weights"])
+    breakout_stage, selected_breakout_gate_pass, near_miss_breakout_gate_pass = _classify_breakout_stage(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        profile=profile,
+    )
 
     if blockers:
         decision = "blocked" if gate_status["data"] == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers else "rejected"
-    elif score_target >= profile.select_threshold and breakout_freshness >= 0.35 and trend_acceleration >= 0.38:
+    elif score_target >= profile.select_threshold and selected_breakout_gate_pass:
         decision = "selected"
         gate_status["score"] = "pass"
-    elif score_target >= profile.near_miss_threshold:
+    elif score_target >= profile.select_threshold and near_miss_breakout_gate_pass:
+        decision = "near_miss"
+        gate_status["score"] = "near_miss"
+    elif score_target >= profile.near_miss_threshold and near_miss_breakout_gate_pass:
         decision = "near_miss"
         gate_status["score"] = "near_miss"
     else:
         decision = "rejected"
+
+    if breakout_stage == "confirmed_breakout":
+        positive_tags.append("confirmed_breakout_stage")
+    elif breakout_stage == "prepared_breakout":
+        positive_tags.append("prepared_breakout_stage")
 
     top_reasons = trim_reasons(
         [
@@ -336,6 +388,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 _summarize_positive_factor("breakout_freshness", breakout_freshness),
                 _summarize_positive_factor("trend_acceleration", trend_acceleration),
                 _summarize_positive_factor("catalyst_freshness", catalyst_freshness),
+                breakout_stage,
                 _summarize_penalty("layer_c_avoid_penalty", layer_c_avoid_penalty),
                 _summarize_penalty("stale_trend_repair_penalty", stale_trend_repair_penalty),
                 _summarize_penalty("overhead_supply_penalty", overhead_supply_penalty),
@@ -346,7 +399,21 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         ]
     )
 
-    rejection_reasons = trim_reasons(blockers if blockers else ["score_short_below_threshold"] if decision == "rejected" else [])
+    rejection_reasons = trim_reasons(
+        blockers
+        if blockers
+        else _collect_breakout_gate_misses(
+            breakout_freshness=breakout_freshness,
+            trend_acceleration=trend_acceleration,
+            breakout_min=float(profile.near_miss_breakout_freshness_min),
+            trend_min=float(profile.near_miss_trend_acceleration_min),
+            label="near_miss",
+        )
+        if decision == "rejected" and score_target >= profile.near_miss_threshold and not near_miss_breakout_gate_pass
+        else ["score_short_below_threshold"]
+        if decision == "rejected"
+        else []
+    )
     confidence = derive_confidence(score_target, breakout_freshness, trend_acceleration, catalyst_freshness, float(input_data.quality_score or 0.0))
 
     return TargetEvaluationResult(
@@ -391,6 +458,10 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "sector_resonance": round(sector_resonance, 4),
             "catalyst_freshness": round(catalyst_freshness, 4),
             "layer_c_alignment": round(layer_c_alignment, 4),
+            "positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
+            "breakout_stage": breakout_stage,
+            "selected_breakout_gate_pass": selected_breakout_gate_pass,
+            "near_miss_breakout_gate_pass": near_miss_breakout_gate_pass,
             "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
             "stale_trend_repair_penalty": round(stale_trend_repair_penalty, 4),
             "overhead_supply_penalty": round(overhead_supply_penalty, 4),
@@ -403,6 +474,18 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "profile_name": profile.name,
                 "select_threshold": round(float(profile.select_threshold), 4),
                 "near_miss_threshold": round(float(profile.near_miss_threshold), 4),
+                "selected_breakout_freshness_min": round(float(profile.selected_breakout_freshness_min), 4),
+                "selected_trend_acceleration_min": round(float(profile.selected_trend_acceleration_min), 4),
+                "near_miss_breakout_freshness_min": round(float(profile.near_miss_breakout_freshness_min), 4),
+                "near_miss_trend_acceleration_min": round(float(profile.near_miss_trend_acceleration_min), 4),
+                "breakout_freshness_weight": round(float(profile.breakout_freshness_weight), 4),
+                "trend_acceleration_weight": round(float(profile.trend_acceleration_weight), 4),
+                "volume_expansion_quality_weight": round(float(profile.volume_expansion_quality_weight), 4),
+                "close_strength_weight": round(float(profile.close_strength_weight), 4),
+                "sector_resonance_weight": round(float(profile.sector_resonance_weight), 4),
+                "catalyst_freshness_weight": round(float(profile.catalyst_freshness_weight), 4),
+                "layer_c_alignment_weight": round(float(profile.layer_c_alignment_weight), 4),
+                "effective_positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
                 "stale_penalty_block_threshold": round(float(profile.stale_penalty_block_threshold), 4),
                 "overhead_penalty_block_threshold": round(float(profile.overhead_penalty_block_threshold), 4),
                 "extension_penalty_block_threshold": round(float(profile.extension_penalty_block_threshold), 4),
@@ -417,6 +500,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         explainability_payload={
             "source": str(input_data.replay_context.get("source") or "short_trade_target_rules_v1"),
             "target_profile": profile.name,
+            "breakout_stage": breakout_stage,
             "trade_date": input_data.trade_date,
             "layer_c_decision": input_data.layer_c_decision,
             "bc_conflict": input_data.bc_conflict,
