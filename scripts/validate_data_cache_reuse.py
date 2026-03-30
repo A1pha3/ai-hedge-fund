@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
+from src.project_env import load_project_dotenv
 from src.data.enhanced_cache import diff_cache_stats, get_cache_runtime_info, snapshot_cache_stats
 from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_limit_list, get_stock_details, get_suspend_list
+
+
+load_project_dotenv()
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -6,9 +6,9 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from dotenv import load_dotenv
+from src.project_env import load_project_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
+load_project_dotenv()
 
 
 def _resolve_trade_dates(raw_trade_dates: str) -> list[str]:

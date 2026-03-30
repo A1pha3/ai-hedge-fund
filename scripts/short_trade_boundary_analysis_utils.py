@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.project_env import load_project_dotenv
 from src.execution.daily_pipeline import (
     SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
     SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
@@ -18,6 +19,9 @@ from src.execution.daily_pipeline import (
 from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
 from src.tools.api import get_price_data, prices_to_df
 from src.tools.akshare_api import get_prices_robust
+
+
+load_project_dotenv()
 
 
 REPLAY_INPUT_FILENAME = "selection_target_replay_input.json"

@@ -24,6 +24,7 @@
 16. [16-btst-trainer-handbook.md](./16-btst-trainer-handbook.md)
 17. [17-btst-sample-workbook.md](./17-btst-sample-workbook.md)
 18. [18-btst-workbook-quick-review-card.md](./18-btst-workbook-quick-review-card.md)
+19. [0330 BTST 优化路线设计文](./optimize0330/README.md)
 
 如果你当前的任务更偏专项排障，建议搭配阅读：
 
@@ -46,6 +47,7 @@
 8. 新人验收：`14 -> 15`
 9. 带教培训：`16 -> 14 -> 17 -> 15`
 10. 现场速评：`17 -> 18 -> 15`
+11. 研究专项审阅：`19 -> 02 -> 09 -> 13`
 
 读完整套 BTST 文档后，你应该能回答三类问题：
 
@@ -61,3 +63,4 @@
 10. 如果我要带别人学 BTST，1 小时培训该怎么排。
 11. 如果我要检验新人会不会做样本分型和动作判断，应该出什么练习题。
 12. 如果我要在培训现场 1 分钟内快速核对练习答案，应该看什么。
+13. 如果我要把一次 BTST 讨论整理成可评审的优化路线，应该先讲哪些证据、按什么执行顺序推进。

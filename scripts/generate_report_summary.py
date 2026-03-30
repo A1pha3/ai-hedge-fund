@@ -10,12 +10,9 @@ from datetime import datetime
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _project_root)
 
-# 加载 .env 文件中的环境变量
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(_project_root, ".env"))
-except ImportError:
-    pass
+from src.project_env import load_project_dotenv
+
+load_project_dotenv()
 
 from src.tools.tushare_api import get_stock_details
 

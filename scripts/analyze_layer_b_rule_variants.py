@@ -8,9 +8,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from dotenv import load_dotenv
+from src.project_env import load_project_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
+load_project_dotenv()
 
 from src.execution.daily_pipeline import FAST_AGENT_MAX_TICKERS, FAST_AGENT_SCORE_THRESHOLD
 from src.screening.candidate_pool import _SNAPSHOT_DIR, build_candidate_pool

@@ -5,11 +5,15 @@ import csv
 import json
 from pathlib import Path
 
+from src.project_env import load_project_dotenv
 from src.execution.daily_pipeline import FAST_AGENT_MAX_TICKERS, FAST_AGENT_SCORE_THRESHOLD
 from src.screening.candidate_pool import _SNAPSHOT_DIR, build_candidate_pool
 from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
+
+
+load_project_dotenv()
 
 
 STRATEGY_ORDER = ["trend", "mean_reversion", "fundamental", "event_sentiment"]

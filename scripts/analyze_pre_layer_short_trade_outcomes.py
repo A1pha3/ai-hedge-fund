@@ -9,8 +9,12 @@ from typing import Any
 
 import pandas as pd
 
+from src.project_env import load_project_dotenv
 from src.tools.api import get_price_data, prices_to_df
 from src.tools.akshare_api import get_prices_robust
+
+
+load_project_dotenv()
 
 
 REPLAY_INPUT_FILENAME = "selection_target_replay_input.json"

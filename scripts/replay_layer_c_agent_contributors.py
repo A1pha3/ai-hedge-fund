@@ -4,16 +4,15 @@ import argparse
 import json
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 from scripts.model_selection import resolve_model_selection
+from src.project_env import load_project_dotenv
 from src.backtesting.rule_variant_compare import make_pipeline_agent_runner
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.screening.models import FusedScore
 from src.utils.analysts import ANALYST_ORDER
 
 
-load_dotenv(override=True)
+load_project_dotenv()
 
 
 def _write_payload(output_path: Path, payload: dict) -> None:

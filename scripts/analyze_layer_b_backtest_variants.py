@@ -3,14 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 from scripts.model_selection import resolve_model_selection
+from src.project_env import load_project_dotenv
 from src.backtesting.rule_variant_compare import build_rule_variants, run_rule_variant_backtests, save_rule_variant_backtests
 from src.utils.analysts import ANALYST_ORDER
 
 
-load_dotenv(override=True)
+load_project_dotenv()
 
 
 def main() -> int:

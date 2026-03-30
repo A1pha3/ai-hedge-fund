@@ -448,6 +448,7 @@ Q: 你目前的背景是什么？
 | [BTST 变体验收清单与升级标准](./factors/BTST/09-btst-variant-acceptance-checklist.md) | 统一规定 BTST 变体何时回滚、何时保留候选、何时可升级默认 | 开发者、研究者、AI 助手 | 按需更新 |
 | [BTST 产物判读手册](./factors/BTST/10-btst-artifact-reading-manual.md) | 规定 BTST report、snapshot、replay input、frontier 和次日表现产物的最小阅读顺序 | 开发者、研究者、复盘人员、AI 助手 | 按需更新 |
 | [BTST 优化决策树](./factors/BTST/11-btst-optimization-decision-tree.md) | 把 BTST 下一步动作收敛成统一决策树，帮助快速选择 admission、score frontier 或 blocked release 路径 | 开发者、研究者、AI 助手 | 按需更新 |
+| [BTST 0330 优化路线设计文](./factors/BTST/optimize0330/README.md) | 围绕 2026-03-30 的研究讨论，把 coverage 修复、执行确认分层、profitability 软化和新因子挖掘整理成一份可评审的专项路线文档 | 研究者、研究负责人、开发者、AI 助手 | 2026-03-30 |
 | [BTST 次日短线 5 分钟简报](./factors/BTST/12-btst-five-minute-brief.md) | 面向业务和管理层，用 5 分钟解释 BTST 当前已解决什么、主矛盾在哪以及下一步优先级 | 业务、产品、管理层、研究负责人 | 按需更新 |
 | [BTST 命令作战手册](./factors/BTST/13-btst-command-cookbook.md) | 把 BTST 最常用的运行、回放、frontier、release 与 outcome 命令整理成可执行顺序 | 开发者、研究者、AI 助手 | 按需更新 |
 | [BTST 新人 30 分钟上手路径](./factors/BTST/14-btst-newcomer-30-minute-guide.md) | 面向第一次接手 BTST 的新人，给出 30 分钟学习顺序、最小心智模型和第一轮练习 | 新人、研究者、带教者、AI 助手 | 按需更新 |

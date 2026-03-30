@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import os
 
-from dotenv import load_dotenv
-
+from src.project_env import load_project_dotenv
 from src.llm.defaults import resolve_model_selection as resolve_default_model_selection
 
 
-load_dotenv(override=True)
+load_project_dotenv()
 
 
 def resolve_model_selection(model_name: str | None, model_provider: str | None) -> tuple[str, str]:
