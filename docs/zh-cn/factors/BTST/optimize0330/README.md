@@ -323,6 +323,23 @@ Layer 4：执行确认
 
 这样研究团队不会只盯着“买没买”，而能同时判断“系统有没有漏好票”。
 
+### 6.4 2026-03-30 夜间已经补出的微窗口实证结果
+
+截至 2026-03-30 夜间，`2026-03-23` 到 `2026-03-26` 的 closed-cycle 微窗口回归已经被正式固化为报告：[btst_micro_window_regression_20260330.md](../../../../../data/reports/btst_micro_window_regression_20260330.md)。这份报告把 baseline、`catalyst_floor_zero` 变体和 `2026-03-27` 的 forward-only short-trade 样本放进了同一套口径里比较。
+
+它给出的结论非常关键：
+
+1. baseline 在 `2026-03-23` 到 `2026-03-26` 的 closed-cycle 样本里一共 32 行，但 `tradeable surface=0`，说明旧 baseline 在这个闭环窗口里并没有形成可执行 short-trade surface。
+2. 同一窗口下 baseline 仍有 19 个 false negative proxy，且主要来自 `layer_b_boundary`；它们的 `next_high_hit_rate@2%=0.7895`、`next_close_positive_rate=0.8421`，说明问题不是“市场没给机会”，而是系统漏掉了不少机会。
+3. `catalyst_floor_zero` 变体把 closed-cycle actionable 样本从 `0` 提升到 `6`，并给出 `next_high_hit_rate@2%=0.8333`、`next_close_positive_rate=0.8333`、`t_plus_2_close_positive_rate=0.8333`，正式通过当前窗口的 closed-cycle guardrail。
+4. `2026-03-27` 的 short-trade-only 样本虽然已经出现 2 个可研究 tradeable 行，但它们都还是 `t1_only`，因此只能算 forward 观察证据，不能直接当成默认升级依据。
+
+这意味着：在 0330 当前证据边界内，微窗口方法本身已经完成验证，下一步主线不应再回到“是否继续大范围 admission floor 扫描”，而应固定为三件事：
+
+1. 保留 `short_trade_boundary + catalyst_freshness_min=0.00` 作为当前 live admission 基线。
+2. 继续围绕 `short_trade_boundary_score_fail`、`001309/300383` 与 `300724` 的结构性治理推进 score frontier / case-based lane。
+3. 等未来新增独立窗口出现后，再用同一份微窗口回归脚本继续验证 `001309` primary lane 和 recurring shadow lane 的跨窗口稳定性。
+
 ---
 
 ## 7. 因子优化方向：下一轮最值得做的不是一锅炖，而是 4 个最小主线

@@ -66,6 +66,7 @@
 13. `300724` 的 structural freeze 现在也已补成正式 runbook：`data/reports/p8_structural_shadow_runbook_300724_20260330.json` 已把 blocked cluster 的 rescue ranking、单票 targeted release 和负的 post-release outcome 合并成统一 stop-condition，明确不得重开 cluster-wide structural 放松。
 14. 结合 [docs/zh-cn/product/arch/arch_optimize_implementation.md](docs/zh-cn/product/arch/arch_optimize_implementation.md) 的 live 收口结果，旧的 `rejected_layer_b_boundary_score_fail=23` 已不再是当前默认路径的在线主簇：dedicated short-trade builder 已把 shared `layer_b_boundary` rejection 压到 `0`，并把默认 admission 基线稳定到 `short_trade_boundary + catalyst_freshness_min=0.00`。
 15. 这也意味着当前执行清单里的 P2 不应再理解为“重新大范围扫描 admission floor”，而应优先理解为围绕 `short_trade_boundary` score frontier、`001309/300383` case-based lane 与 `300724` 结构冲突做单主题治理。
+16. 微窗口闭环回归分析器与实证结论也已补齐，见 [btst_micro_window_regression_20260330.md](../../../../../data/reports/btst_micro_window_regression_20260330.md)：`2026-03-23` 到 `2026-03-26` baseline 的 `tradeable surface=0`、`false_negative_proxy_count=19`，而 `catalyst_floor_zero` 已把 closed-cycle actionable 提升到 `6` 且通过 guardrail；因此当前方法缺口已经收口，剩余工作主要是 future window 验证与 frontier 治理，而不是继续补“怎么做微窗口回归”这件事。
 
 ### 3.2 当前最应该推进的 3 项动作
 

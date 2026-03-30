@@ -440,6 +440,37 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 2. 历史 report 是否已经补齐 `btst_premarket_execution_card_latest.{json,md}`。
 3. `session_summary.json` 的 `btst_followup` 与 `artifacts` 区域是否已经能稳定引用这些路径。
 
+### 7.6 做闭环微窗口回归对照
+
+适用场景：
+
+1. 你要把 closed-cycle baseline、已验证 admission 变体和 forward-only 样本放进同一套 BTST 框架里比较。
+2. 你要明确当前问题到底是 `tradeable surface` 为空，还是 actionable 已经出现但仍有大量 false negative。
+3. 你需要给周会或路线文提供一份统一的回归结论，而不是分别引用 blocker、brief、pre-Layer C outcome。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/analyze_btst_micro_window_regression.py \
+  --baseline-report-dir data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329 \
+  --variant-report catalyst_floor_zero=data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_catalyst_floor_zero_validation_20260329 \
+  --forward-report short_trade_20260327=data/reports/paper_trading_20260327_20260327_live_m2_7_short_trade_only_20260329 \
+  --output-json data/reports/btst_micro_window_regression_20260330.json \
+  --output-md data/reports/btst_micro_window_regression_20260330.md
+```
+
+优先回答：
+
+1. baseline 的 `tradeable surface` 是否仍为 0，以及 `false_negative_proxy_summary` 还有多大。
+2. 变体是否真的新增了 closed-cycle actionable 样本，而不只是把样本从 `rejected` 挪到 `near_miss`。
+3. 新增 actionable 的 `next_high_hit_rate@2%`、`next_close_positive_rate`、`t_plus_2_close_positive_rate` 是否过 guardrail。
+4. forward-only 样本是不是仍停留在 `t1_only`，如果是，就不得直接写成默认升级依据。
+
+补充说明：
+
+1. 这条脚本的定位不是替代 `analyze_short_trade_blockers.py` 或 `analyze_pre_layer_short_trade_outcomes.py`，而是把它们压成同一份 researcher-facing 回归摘要。
+2. 当前 2026-03-30 的实跑结果已经落在 `data/reports/btst_micro_window_regression_20260330.{json,md}`，可直接用于引用 0323-0326 closed-cycle baseline 与 `catalyst_floor_zero` 的对照结论。
+
 ---
 
 ## 8. 两套推荐命令顺序

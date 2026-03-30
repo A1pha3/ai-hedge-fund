@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
 from scripts.model_selection import resolve_model_selection
 from src.paper_trading.btst_reporting import (
     generate_and_register_btst_followup_artifacts,
@@ -23,6 +24,18 @@ def generate_btst_followup_artifacts(report_dir: Path, trade_date: str, next_tra
         "brief_markdown": result["brief_markdown"],
         "card_json": result["execution_card_json"],
         "card_markdown": result["execution_card_markdown"],
+    }
+
+
+def refresh_reports_manifest(report_dir: Path) -> dict[str, str] | None:
+    resolved_report_dir = report_dir.expanduser().resolve()
+    reports_root = resolved_report_dir.parent
+    if reports_root.name != "reports":
+        return None
+    result = generate_reports_manifest_artifacts(reports_root=reports_root)
+    return {
+        "manifest_json": result["json_path"],
+        "manifest_markdown": result["markdown_path"],
     }
 
 
@@ -79,6 +92,10 @@ def main() -> None:
         print(f"paper_trading_btst_brief_markdown={followup_artifacts['brief_markdown']}")
         print(f"paper_trading_btst_execution_card_json={followup_artifacts['card_json']}")
         print(f"paper_trading_btst_execution_card_markdown={followup_artifacts['card_markdown']}")
+        manifest_artifacts = refresh_reports_manifest(output_dir)
+        if manifest_artifacts:
+            print(f"paper_trading_report_manifest_json={manifest_artifacts['manifest_json']}")
+            print(f"paper_trading_report_manifest_markdown={manifest_artifacts['manifest_markdown']}")
     if args.cache_benchmark:
         print(f"paper_trading_cache_benchmark=enabled")
     if args.frozen_plan_source:
