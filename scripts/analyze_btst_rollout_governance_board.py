@@ -46,6 +46,8 @@ def analyze_btst_rollout_governance_board(
     primary_window_validation_runbook = _load_json(primary_window_validation_runbook_path)
     shadow_peer_scan = _load_json(shadow_peer_scan_path)
     structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
+    recurring_close_candidate = dict(recurring_shadow_runbook.get("close_candidate") or {})
+    recurring_intraday_control = dict(recurring_shadow_runbook.get("intraday_control") or {})
 
     structural_row = next(
         (row for row in list(action_board.get("board_rows") or []) if str(row.get("ticker") or "") == "300724"),
@@ -84,25 +86,31 @@ def analyze_btst_rollout_governance_board(
         {
             "ticker": "002015",
             "governance_tier": "recurring_shadow_close_candidate",
-            "status": "ready_for_shadow_lane_validation",
-            "blocker": "penalty_coupled_not_threshold_only",
-            "next_step": dict(recurring_shadow_runbook.get("close_candidate") or {}).get("next_step") or (recurring_rows[0]["next_step"] if recurring_rows else ""),
+            "status": recurring_close_candidate.get("lane_status") or "ready_for_shadow_lane_validation",
+            "blocker": "cross_window_stability_missing" if recurring_close_candidate.get("validation_verdict") != "independent_window_requirement_satisfied" else "shadow_lane_validation_ready",
+            "next_step": recurring_close_candidate.get("next_step") or (recurring_rows[0]["next_step"] if recurring_rows else ""),
             "evidence": {
                 "target_case_count": recurring_rows[0].get("target_case_count") if recurring_rows else None,
                 "next_close_positive_rate": recurring_rows[0].get("next_close_positive_rate") if recurring_rows else None,
                 "next_close_return_mean": recurring_rows[0].get("next_close_return_mean") if recurring_rows else None,
+                "distinct_window_count": recurring_close_candidate.get("distinct_window_count"),
+                "missing_window_count": recurring_close_candidate.get("missing_window_count"),
+                "transition_locality": recurring_close_candidate.get("transition_locality"),
             },
         },
         {
             "ticker": "600821",
             "governance_tier": "recurring_intraday_control",
-            "status": "ready_for_shadow_control_validation",
-            "blocker": "close_continuation_weaker_than_002015",
-            "next_step": dict(recurring_shadow_runbook.get("intraday_control") or {}).get("next_step") or (recurring_rows[1]["next_step"] if len(recurring_rows) > 1 else ""),
+            "status": recurring_intraday_control.get("lane_status") or "ready_for_shadow_control_validation",
+            "blocker": "cross_window_stability_missing" if recurring_intraday_control.get("validation_verdict") != "independent_window_requirement_satisfied" else "intraday_control_only",
+            "next_step": recurring_intraday_control.get("next_step") or (recurring_rows[1]["next_step"] if len(recurring_rows) > 1 else ""),
             "evidence": {
                 "target_case_count": recurring_rows[1].get("target_case_count") if len(recurring_rows) > 1 else None,
                 "next_high_return_mean": recurring_rows[1].get("next_high_return_mean") if len(recurring_rows) > 1 else None,
                 "next_close_positive_rate": recurring_rows[1].get("next_close_positive_rate") if len(recurring_rows) > 1 else None,
+                "distinct_window_count": recurring_intraday_control.get("distinct_window_count"),
+                "missing_window_count": recurring_intraday_control.get("missing_window_count"),
+                "transition_locality": recurring_intraday_control.get("transition_locality"),
             },
         },
         {
@@ -145,6 +153,7 @@ def analyze_btst_rollout_governance_board(
     recommendation = (
         "当前 rollout 治理应分成三条清晰车道：001309 只做 primary roll-forward；300383 只做单票 shadow；"
         "若要继续扩 shadow lane，应优先转向 002015/600821 的 recurring frontier 组合，而不是复制 300383。"
+        " 但在当前证据边界内，这条 recurring lane 同样仍缺第二个独立窗口，只能继续保留 shadow validation 准备态。"
     )
 
     return {

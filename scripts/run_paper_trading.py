@@ -24,6 +24,10 @@ def generate_btst_followup_artifacts(report_dir: Path, trade_date: str, next_tra
         "brief_markdown": result["brief_markdown"],
         "card_json": result["execution_card_json"],
         "card_markdown": result["execution_card_markdown"],
+        "opening_card_json": result["opening_watch_card_json"],
+        "opening_card_markdown": result["opening_watch_card_markdown"],
+        "priority_board_json": result["priority_board_json"],
+        "priority_board_markdown": result["priority_board_markdown"],
     }
 
 
@@ -92,6 +96,10 @@ def main() -> None:
         print(f"paper_trading_btst_brief_markdown={followup_artifacts['brief_markdown']}")
         print(f"paper_trading_btst_execution_card_json={followup_artifacts['card_json']}")
         print(f"paper_trading_btst_execution_card_markdown={followup_artifacts['card_markdown']}")
+        print(f"paper_trading_btst_opening_watch_card_json={followup_artifacts['opening_card_json']}")
+        print(f"paper_trading_btst_opening_watch_card_markdown={followup_artifacts['opening_card_markdown']}")
+        print(f"paper_trading_btst_priority_board_json={followup_artifacts['priority_board_json']}")
+        print(f"paper_trading_btst_priority_board_markdown={followup_artifacts['priority_board_markdown']}")
         manifest_artifacts = refresh_reports_manifest(output_dir)
         if manifest_artifacts:
             print(f"paper_trading_report_manifest_json={manifest_artifacts['manifest_json']}")

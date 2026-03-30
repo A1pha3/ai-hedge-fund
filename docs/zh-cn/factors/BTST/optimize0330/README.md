@@ -16,6 +16,7 @@
 6. [Paper Trading T 日到 T+1 时序专题](../../28-paper-trading-tday-t1-timing-guide.md)
 7. [Execution Bridge 专业讲解](../../24-execution-bridge-professional-guide.md)
 8. [0330 BTST 研究执行清单](./01-0330-research-execution-checklist.md)
+9. [0330 优化方向速记](./优化方向.md)
 
 ---
 
@@ -64,12 +65,12 @@
 5. `300383` 的 shadow 语义也已经进一步收紧：`data/reports/p4_shadow_entry_expansion_board_300383_20260330.json` 证明它是当前整个 frontier 里唯一的 threshold-only 低成本 release，下一档样本都需要 stale / extension penalty 联动下调；因此它可以继续保留，但不能按同一规则做批量扩散。
 6. 当 `300383` 的同规则扩样被封住后，下一条更合理的 shadow 扩展路线应切到 recurring frontier：`data/reports/p4_shadow_lane_priority_board_20260330.json` 已把 `002015` 收紧为 close-continuation shadow 候选，把 `600821` 收紧为 intraday control，而不是继续复制 `300383` 的单票 threshold-only 规则。
 7. 现在连 `001309` 还缺什么证据也已经显式化：`data/reports/p6_primary_window_gap_001309_20260330.json` 已确认它目前不是缺主实验 guardrails，而是至少还缺 1 个新增独立窗口，因此现阶段最该补的是窗口证据而不是默认升级叙事。
-8. recurring shadow lane 也不再只是排序关系：`data/reports/p6_recurring_shadow_runbook_20260330.json` 已把 `002015` 固定为 recurring shadow close 候选，把 `600821` 固定为 recurring intraday control，并明确两者不能被混写成同一条 shadow 规则。
+8. recurring shadow lane 也不再只是排序关系：`data/reports/p6_recurring_shadow_runbook_20260330.json` 已把 `002015` 固定为 recurring shadow close 候选，把 `600821` 固定为 recurring intraday control，并明确两者不能被混写成同一条 shadow 规则；同时它也把两者的当前验证状态收紧为 `distinct_window_count=1`、`await_new_close_candidate_window` 与 `await_new_intraday_control_window`，说明这条 lane 现在缺的同样是新增独立窗口，而不是额外规则。
 9. `001309` 的后续动作现在也已被收紧成复跑命令级别：`data/reports/p7_primary_window_validation_runbook_001309_20260330.json` 已逐窗口扫描当前归档报告，确认除了 `20260323_20260326` 外并不存在第二个独立 short-trade window，因此当前未完成的只剩未来窗口数据本身。
 10. `300383` 的扩样路径也不再只是“不要复制它”的口头判断：`data/reports/p7_shadow_peer_scan_300383_20260330.json` 已确认当前 peer 全部属于 penalty-coupled lane，没有第二只 threshold-only same-rule peer，所以 shadow 扩展必须改走 recurring frontier。
 11. `300724` 的 structural lane 现在也已从“结论”补成“runbook”：`data/reports/p8_structural_shadow_runbook_300724_20260330.json` 已把窗口级 blocked cluster、单票 targeted release 与负的 post-release quality 一并收口，明确这条 lane 只能保持 `structural_shadow_hold_only`，只有未来新窗口出现新的高优先级 structural case 且 close continuation 转正，才允许重开评审。
 12. 结合上游实施收口文档 [docs/zh-cn/product/arch/arch_optimize_implementation.md](docs/zh-cn/product/arch/arch_optimize_implementation.md)，0330 当前默认 live 路径还应再补一条事实：旧的 `layer_b_boundary` score-fail 簇在 dedicated short-trade builder 上已经降到 `0`，当前完整窗口 live 候选的 admission 主基线已经切换为 `short_trade_boundary + catalyst_freshness_min=0.00`。
-13. 因而“下一轮最应该做的 3 件事”已经从泛化的 P2/P3/P5 讨论，进一步收敛为：等新增窗口数据出现后复跑 `001309` 的独立窗口验证；把 `300383` 固定为单票 shadow；再把 `002015 / 600821` 作为 recurring shadow 的 close 候选与 intraday 控制样本推进，而 `300724` 保持治理性冻结，同时不再回头重开 shared Layer B 池的大范围 floor 扫描。
+13. 因而“下一轮最应该做的 3 件事”已经从泛化的 P2/P3/P5 讨论，进一步收敛为：等新增窗口数据出现后复跑 `001309` 的独立窗口验证；把 `300383` 固定为单票 shadow；再把 `002015 / 600821` 维持为 recurring shadow 的 close 候选与 intraday 控制样本的 shadow-validation 准备态，等待第二个独立窗口，而 `300724` 保持治理性冻结，同时不再回头重开 shared Layer B 池的大范围 floor 扫描。
 
 ---
 
@@ -350,11 +351,20 @@ Layer 4：执行确认
 2. 继续围绕 `short_trade_boundary_score_fail`、`001309/300383` 与 `300724` 的结构性治理推进 score frontier、selective candidate-entry rule 与 case-based lane。
 3. 等未来新增独立窗口出现后，再用同一份微窗口回归脚本继续验证 `001309` primary lane 和 recurring shadow lane 的跨窗口稳定性。
 
+### 6.5 当前执行边界：先修 coverage，再把入场质量独立成因子包
+
+`btst_micro_window_regression_20260330.md` 已经把 0330 当前窗口的主问题钉死成“漏机会”，不是“缺机会”。因此在当前证据边界内，下一轮路线需要再额外固定 3 条边界：
+
+1. 在 `tradeable surface` 还不能稳定从 `0` 释放到可解释样本前，不继续把“新因子挖掘”当作主线任务。
+2. Section 8 里的开盘消化、盘中确认、结构空间、板块共振、催化兑现节奏，应统一视为独立的 `entry-quality factor pack`；它们的职责是提高主入场票 / 观察票分层与执行确认质量，而不是承担 coverage 放行职责。
+3. 任何把 Section 8 因子直接写回 broad admission floor 的动作，都应视为越界；除非未来新窗口再次证明 admission 级失败簇重新成为主矛盾，否则默认只允许它们作为 score、execution 或 risk weight 层的独立增强。
+
 ---
 
 ## 7. 因子优化方向：下一轮最值得做的不是一锅炖，而是 4 个最小主线
 
 本节覆盖 Section 5.2 五条工作流中的 A（Coverage 修复）、B（Quality 守门）、C（执行确认分层）、D（慢变量软化），工作流 E（新因子挖掘）见 Section 8。对应执行清单的 P2–P5 优先级。
+因此，Section 7 是当前必须先完成的主线；在没有形成稳定的 coverage recovery 之前，不得跳到 Section 8 做新的 admission 因子开发。
 
 ### 7.1 主线一：重做 breakout freshness 的使用方式，而不是继续阈值扫描
 
@@ -408,7 +418,11 @@ Layer 4：执行确认
 
 ---
 
-## 8. 新因子挖掘方向：优先从 6 类“现有规则没说清楚”的信息里找
+## 8. 入场质量因子包：仅在 coverage recovery 稳定后推进
+
+本节不是在否定前面的 coverage 主线，而是在明确分工：只有当 P2-P4 已把“漏掉的好票”稳定放出来后，才允许把下列信息做成独立的 `entry-quality factor pack`。它回答的是“放出来以后谁更值得做主入场票、谁只适合观察、盘中该如何确认”，而不是“先不先把票放出来”。
+
+因此，本节默认只允许影响 `selected` / `near_miss` / watch-only 分层、盘中确认强度和风险权重；不直接承担 broad admission 的放行职责。
 
 ### 8.1 开盘消化能力
 
@@ -626,4 +640,4 @@ Layer 4：执行确认
 
 ## 12. 一句话总结
 
-0330 这轮 BTST 讨论的正确落点，不是证明市场上只有 `300757` 一只票，而是确认当前系统把大量潜在机会挡在了 coverage 与边界语义之前。下一步最有杠杆的路线，是先用微窗口双层验证把 false negative 挖出来，再围绕 `breakout_freshness`、profitability 软化、主入场票 / 观察票双名单和 execution confirmation 分层，做单主题、可归因、可滚动验证的优化闭环。
+0330 这轮 BTST 讨论的正确落点，不是证明市场上只有 `300757` 一只票，而是确认当前系统把大量潜在机会挡在了 coverage 与边界语义之前。下一步最有杠杆的路线，是先用微窗口双层验证把 false negative 挖出来，稳定做出 coverage recovery，再把开盘消化、盘中确认、结构空间、板块共振和催化兑现整理成独立的 `entry-quality factor pack`，服务于主入场票 / 观察票分层和 execution confirmation，而不是继续把新因子直接写回 admission 主线。

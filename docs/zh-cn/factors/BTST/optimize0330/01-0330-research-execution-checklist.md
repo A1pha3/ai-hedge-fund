@@ -47,6 +47,8 @@
 
 0330 当前建议的真实顺序是 `P0 -> P1 -> P2 -> P3 -> P4 -> P5`。如果 P1 还没完成，就不要跳去讨论 profitability 或 structural conflict。
 
+这里再固定一条阶段边界：在 P2-P4 尚未证明当前窗口能够稳定释放可解释新增样本前，禁止把开盘消化、盘中确认、结构空间、板块共振、催化兑现节奏当作新的 admission 主线。它们只能在后续作为独立的 `entry-quality factor pack` 使用，用于主入场票 / 观察票分层、执行确认与风险权重。
+
 ### 3.1 截至 2026-03-30 夜间的当前执行状态
 
 以下事项已经在当前窗口真实复跑中完成，不应再按“待探索”处理：
@@ -77,6 +79,7 @@
 5. 所有周会或评审里，必须先引用 `p6_primary_window_gap`、`p6_recurring_shadow_runbook` 和 `p8_structural_shadow_runbook`，防止再次把“证据缺口”“shadow 扩展资格”和“structural freeze 条件”混写。
 6. 在当前 2026-03-30 证据边界内，文档里的方法设计、治理板、runbook、peer scan 已全部落齐；剩余未完成项只可能来自未来新增 paper_trading_window 数据，而不是当前路线仍有未定义动作。
 7. 不要再把旧 `layer_b_boundary` 失败簇当作当前 live 路径的默认优化入口；除非未来窗口重新出现 admission 级大簇，否则当前优先级应停留在 score frontier 与结构性治理。
+8. 在 coverage recovery 稳定前，不要继续堆新的放行因子；下一阶段如果推进开盘消化、盘中确认、结构空间、板块共振或催化兑现，只能以 `entry-quality factor pack` 的方式服务于双名单与执行确认。
 
 ---
 
@@ -144,11 +147,13 @@
 1. 主入场票与观察票在 report 层与 execution 层都有明确语义。
 2. `near_miss` 不再被默认解释成“轻度 selected”。
 3. 所有研究记录都能明确区分“值得盯盘”和“值得执行”。
+4. 开盘消化、盘中确认质量、结构空间、板块共振、催化兑现节奏被明确归类为独立的 `entry-quality factor pack`，且只服务于主入场票 / 观察票分层、执行确认或风险权重，不回写成 broad admission 放行规则。
 
 停止条件：
 
 1. 观察票仍然被研究员直接写进默认买入清单。
 2. 主入场票与观察票的执行动作没有分开定义。
+3. 研究员把 `entry-quality factor pack` 重新写回 admission 主线，导致“放出票”和“买点质量”两件事再次混在一起。
 
 ### 4.6 P5：structural conflict 定点审查
 

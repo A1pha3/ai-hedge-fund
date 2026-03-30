@@ -4,11 +4,137 @@ import json
 from pathlib import Path
 
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
+from src.screening.models import StrategySignal
+from src.targets.router import build_selection_targets
 
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
+    return StrategySignal(
+        direction=direction,
+        confidence=confidence,
+        completeness=completeness,
+        sub_factors=sub_factors or {},
+    )
+
+
+def _build_entry(ticker: str, *, weak_structure: bool) -> dict:
+    if weak_structure:
+        return {
+            "ticker": ticker,
+            "score_b": 0.3829,
+            "score_c": -0.1194,
+            "score_final": 0.1568,
+            "quality_score": 0.9375,
+            "decision": "avoid",
+            "bc_conflict": "b_positive_c_strong_bearish",
+            "candidate_source": "watchlist_filter_diagnostics",
+            "candidate_reason_codes": ["decision_avoid", "score_final_below_watchlist_threshold"],
+            "reason": "decision_avoid",
+            "strategy_signals": {
+                "trend": _make_signal(
+                    1,
+                    70.0,
+                    sub_factors={
+                        "momentum": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                        "volatility": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                        "long_trend_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    },
+                ),
+                "event_sentiment": _make_signal(
+                    0,
+                    0.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    },
+                ),
+                "mean_reversion": _make_signal(0, 0.0),
+            },
+            "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.0646, "investor": -0.0548}},
+        }
+    return {
+        "ticker": ticker,
+        "score_b": 0.4199,
+        "score_c": -0.0961,
+        "score_final": 0.1877,
+        "quality_score": 0.975,
+        "decision": "avoid",
+        "bc_conflict": "b_positive_c_strong_bearish",
+        "candidate_source": "watchlist_filter_diagnostics",
+        "candidate_reason_codes": ["decision_avoid", "score_final_below_watchlist_threshold"],
+        "reason": "decision_avoid",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                100.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 49.24, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "volatility": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                },
+            ),
+            "event_sentiment": _make_signal(
+                0,
+                0.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ),
+            "mean_reversion": _make_signal(0, 0.0),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.0305, "investor": -0.0656}},
+    }
+
+
+def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict]) -> None:
+    selection_targets, summary = build_selection_targets(
+        trade_date=trade_date.replace("-", ""),
+        watchlist=[],
+        rejected_entries=entries,
+        supplemental_short_trade_entries=[],
+        buy_order_tickers=set(),
+        target_mode="dual_target",
+    )
+    payload = {
+        "artifact_version": "v1",
+        "run_id": f"test_{report_dir.name}_{trade_date}",
+        "trade_date": trade_date,
+        "market": "CN",
+        "target_mode": "dual_target",
+        "pipeline_config_snapshot": {},
+        "source_summary": {
+            "watchlist_count": 0,
+            "rejected_entry_count": len(entries),
+            "supplemental_short_trade_entry_count": 0,
+            "buy_order_ticker_count": 0,
+        },
+        "watchlist": [],
+        "rejected_entries": [
+            {
+                **entry,
+                "strategy_signals": {name: signal.model_dump(mode="json") for name, signal in entry["strategy_signals"].items()},
+            }
+            for entry in entries
+        ],
+        "supplemental_short_trade_entries": [],
+        "buy_order_tickers": [],
+        "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
+        "target_summary": summary.model_dump(mode="json"),
+    }
+    target_dir = report_dir / "selection_artifacts" / trade_date
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "selection_target_replay_input.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json(report_dir / "session_summary.json", {"plan_generation": {"selection_target": "dual_target"}})
 
 
 def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entries(tmp_path: Path) -> None:
@@ -83,11 +209,13 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     latest_card_json = latest_report / "btst_premarket_execution_card_latest.json"
     latest_card_md = latest_report / "btst_premarket_execution_card_latest.md"
     latest_opening_card = latest_report / "btst_opening_watch_card_20260331.md"
+    latest_priority_board = latest_report / "btst_next_day_priority_board_20260331.md"
     _write_json(latest_brief_json, {"trade_date": "2026-03-30", "next_trade_date": "2026-03-31"})
     latest_brief_md.write_text("# latest brief\n", encoding="utf-8")
     _write_json(latest_card_json, {"trade_date": "2026-03-30", "next_trade_date": "2026-03-31"})
     latest_card_md.write_text("# latest card\n", encoding="utf-8")
     latest_opening_card.write_text("# opening card\n", encoding="utf-8")
+    latest_priority_board.write_text("# priority board\n", encoding="utf-8")
     _write_json(latest_trade_dir / "selection_snapshot.json", {"trade_date": "20260330"})
     _write_json(
         latest_report / "session_summary.json",
@@ -100,6 +228,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
                 "brief_markdown": str(latest_brief_md.resolve()),
                 "execution_card_json": str(latest_card_json.resolve()),
                 "execution_card_markdown": str(latest_card_md.resolve()),
+                "priority_board_markdown": str(latest_priority_board.resolve()),
             },
         },
     )
@@ -107,6 +236,15 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     result = generate_reports_manifest_artifacts(reports_root=reports_root)
     manifest = result["manifest"]
 
+    assert manifest["candidate_entry_shadow_refresh"] == {
+        "status": "skipped_missing_inputs",
+        "missing_inputs": [
+            "frontier_report",
+            "structural_validation",
+            "score_frontier_report",
+        ],
+        "window_report_count": 0,
+    }
     assert manifest["latest_btst_run"] == {
         "report_dir": "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330",
         "report_dir_abs": str(latest_report.resolve()),
@@ -116,6 +254,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     }
 
     entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
+    assert entries_by_id["latest_btst_priority_board"]["report_path"] == "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330/btst_next_day_priority_board_20260331.md"
     assert entries_by_id["latest_btst_opening_watch_card"]["report_path"] == "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330/btst_opening_watch_card_20260331.md"
     assert entries_by_id["latest_btst_brief_json"]["time_scope"] == {
         "label": "latest_btst_followup",
@@ -133,6 +272,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
 
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
     assert reading_paths["tomorrow_open"]["entry_ids"] == [
+        "latest_btst_priority_board",
         "latest_btst_opening_watch_card",
         "latest_btst_execution_card_markdown",
         "latest_btst_brief_markdown",
@@ -162,7 +302,9 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert Path(result["json_path"]).exists()
     assert Path(result["markdown_path"]).exists()
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
+    assert "candidate_entry_shadow_refresh_status: skipped_missing_inputs" in markdown
     assert "## 明天开盘" in markdown
+    assert "btst_next_day_priority_board_20260331.md" in markdown
     assert "btst_opening_watch_card_20260331.md" in markdown
     assert "btst_micro_window_regression_20260330.md" in markdown
     assert "btst_profile_frontier_20260330.md" in markdown
@@ -170,3 +312,105 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "btst_candidate_entry_frontier_20260330.md" in markdown
     assert "btst_candidate_entry_window_scan_20260330.md" in markdown
     assert "p9_candidate_entry_rollout_governance_20260330.md" in markdown
+
+
+def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifacts(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    reports_root = repo_root / "data" / "reports"
+    docs_root = repo_root / "docs" / "zh-cn"
+
+    (reports_root / "README.md").parent.mkdir(parents=True, exist_ok=True)
+    (reports_root / "README.md").write_text("# Reports Root\n", encoding="utf-8")
+    (docs_root / "factors" / "BTST" / "optimize0330" / "README.md").parent.mkdir(parents=True, exist_ok=True)
+    (docs_root / "factors" / "BTST" / "optimize0330" / "README.md").write_text("# Optimize\n", encoding="utf-8")
+    (docs_root / "factors" / "BTST" / "optimize0330" / "01-0330-research-execution-checklist.md").write_text("# Checklist\n", encoding="utf-8")
+    (docs_root / "product" / "arch" / "arch_optimize_implementation.md").parent.mkdir(parents=True, exist_ok=True)
+    (docs_root / "product" / "arch" / "arch_optimize_implementation.md").write_text("# Arch\n", encoding="utf-8")
+
+    _write_json(
+        reports_root / "btst_candidate_entry_frontier_20260330.json",
+        {
+            "best_variant": {
+                "variant_name": "weak_structure_triplet",
+                "filtered_candidate_entry_count": 1,
+                "focus_filtered_tickers": ["300502"],
+                "preserve_filtered_tickers": [],
+                "filtered_next_high_hit_rate_at_threshold": 0.0,
+                "filtered_next_close_positive_rate": 0.0,
+                "evidence_tier": "window_verified_selective_rule",
+                "selection_basis": "candidate_entry_frontier_priority",
+            }
+        },
+    )
+    _write_json(
+        reports_root / "selection_target_structural_variants_candidate_entry_current_window_20260330.json",
+        {
+            "rows": [
+                {
+                    "structural_variant": "exclude_watchlist_avoid_weak_structure_entries",
+                    "decision_mismatch_count": 1,
+                    "released_from_blocked": ["300502"],
+                    "blocked_to_near_miss": [],
+                    "blocked_to_selected": [],
+                    "analysis": {
+                        "filtered_candidate_entry_counts": {"watchlist_avoid_boundary_weak_structure_entry": 1},
+                        "candidate_entry_filter_observability": {
+                            "watchlist_avoid_boundary_weak_structure_entry": {
+                                "precondition_match_count": 3,
+                                "metric_data_pass_count": 3,
+                                "metric_threshold_match_count": 1,
+                            }
+                        },
+                    },
+                }
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_score_construction_frontier_20260330.json",
+        {
+            "ranked_variants": [
+                {"variant_name": "prepared_breakout_balance", "closed_cycle_tradeable_count": 0},
+                {"variant_name": "catalyst_volume_balance", "closed_cycle_tradeable_count": 0},
+            ]
+        },
+    )
+
+    report_a = reports_root / "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329"
+    _write_replay_input(report_a, trade_date="2026-03-26", entries=[_build_entry("300394", weak_structure=False), _build_entry("300502", weak_structure=True)])
+
+    report_b = reports_root / "paper_trading_window_20260316_20260323_live_m2_7_20260323"
+    _write_replay_input(report_b, trade_date="2026-03-20", entries=[_build_entry("300394", weak_structure=False)])
+
+    result = generate_reports_manifest_artifacts(reports_root=reports_root)
+
+    refresh = result["candidate_entry_shadow_refresh"]
+    assert refresh["status"] == "refreshed"
+    assert refresh["window_report_count"] == 2
+    assert refresh["filtered_report_count"] == 1
+    assert refresh["focus_hit_report_count"] == 1
+    assert refresh["preserve_misfire_report_count"] == 0
+    assert refresh["rollout_readiness"] == "shadow_only_until_second_window"
+    assert refresh["lane_status"] == "shadow_only_until_second_window"
+
+    manifest = result["manifest"]
+    assert manifest["candidate_entry_shadow_refresh"] == refresh
+
+    window_scan = json.loads((reports_root / "btst_candidate_entry_window_scan_20260330.json").read_text(encoding="utf-8"))
+    governance = json.loads((reports_root / "p9_candidate_entry_rollout_governance_20260330.json").read_text(encoding="utf-8"))
+    assert window_scan["filtered_report_count"] == 1
+    assert window_scan["focus_hit_report_count"] == 1
+    assert window_scan["preserve_misfire_report_count"] == 0
+    assert window_scan["rollout_readiness"] == "shadow_only_until_second_window"
+    assert governance["lane_status"] == "shadow_only_until_second_window"
+    assert governance["default_upgrade_status"] == "blocked_by_single_window_candidate_entry_signal"
+
+    entries_by_id = {entry["id"]: entry for entry in result["manifest"]["entries"]}
+    assert entries_by_id["btst_candidate_entry_window_scan_review"]["report_path"] == "data/reports/btst_candidate_entry_window_scan_20260330.md"
+    assert entries_by_id["p9_candidate_entry_rollout_governance"]["report_path"] == "data/reports/p9_candidate_entry_rollout_governance_20260330.md"
+
+    markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
+    assert "candidate_entry_shadow_refresh_status: refreshed" in markdown
+    assert "candidate_entry_shadow_refresh_window_reports: 2" in markdown
+    assert "candidate_entry_shadow_refresh_filtered_reports: 1" in markdown
+    assert "candidate_entry_shadow_refresh_rollout_readiness: shadow_only_until_second_window" in markdown

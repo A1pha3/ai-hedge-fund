@@ -86,7 +86,7 @@ data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_cataly
 
 1. 是否成功生成 `selection_artifacts`。
 2. `session_summary.json` 和 `daily_events.jsonl` 是否齐全。
-3. `short_trade_only` 或 `dual_target` 运行后，目录下是否自动生成 `btst_next_day_trade_brief_latest.{json,md}` 与 `btst_premarket_execution_card_latest.{json,md}`。
+3. `short_trade_only` 或 `dual_target` 运行后，目录下是否自动生成 `btst_next_day_trade_brief_latest.{json,md}` 与 `btst_premarket_execution_card_latest.{json,md}`，且 brief/card 中是否已经带出主票、near-miss 与自动机会池。
 4. 后续 blocker 与 outcome 脚本是否能直接消费该目录。
 
 ### 3.2 admission 变体 live validation
@@ -294,6 +294,29 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
   --ticker 600821
 ```
 
+如果要把 recurring frontier 候选正式收口成 shadow runbook，并明确它们是否还缺第二个独立窗口，可以继续跑：
+
+```bash
+./.venv/bin/python scripts/analyze_recurring_frontier_transition_candidates.py \
+  --recurring-frontier-report data/reports/short_trade_boundary_recurring_frontier_cases_catalyst_floor_zero_<date>.json \
+  --role-history-report-root-dirs data/reports \
+  --report-name-contains paper_trading_window \
+  --output-json data/reports/recurring_frontier_transition_candidates_all_windows_<date>.json \
+  --output-md data/reports/recurring_frontier_transition_candidates_all_windows_<date>.md
+
+./.venv/bin/python scripts/analyze_btst_recurring_shadow_runbook.py \
+  --candidate-report data/reports/multi_window_short_trade_role_candidates_<date>.json \
+  --recurring-transition-report data/reports/recurring_frontier_transition_candidates_all_windows_<date>.json \
+  --output-json data/reports/p6_recurring_shadow_runbook_<date>.json \
+  --output-md data/reports/p6_recurring_shadow_runbook_<date>.md
+```
+
+优先回答：
+
+1. `002015`、`600821` 是否仍然都只是 `emergent_local_baseline`。
+2. recurring shadow lane 当前是 `await_new_close_candidate_window` / `await_new_intraday_control_window`，还是已经具备跨窗口验证资格。
+3. 下一次什么时候可以把这条 lane 回接进 `p5_btst_rollout_governance_board` 做升级评审。
+
 ### 6.5 分析 structural conflict rescue
 
 适用场景：
@@ -367,7 +390,7 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 适用场景：
 
 1. 你已经跑完某个交易日的 live 或 replay report。
-2. 你要把 `selected`、`near_miss` 和 research 侧股票明确拆开，给出次日可执行清单。
+2. 你要把 `selected`、`near_miss`、自动机会池和 research 侧股票明确拆开，给出次日可执行清单。
 
 命令模板：
 
@@ -383,7 +406,8 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 
 1. 主入场票是哪只 `selected`。
 2. 哪些只是 `near_miss`，只能做盘中跟踪。
-3. 哪些 research 侧 `selected` 股票不应误当成 short-trade 执行名单。
+3. 哪些 `rejected` 但结构未坏的股票应进入自动机会池，等待盘中强度确认后再升级。
+4. 哪些 research 侧 `selected` 股票不应误当成 short-trade 执行名单。
 
 补充说明：
 
@@ -394,7 +418,7 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 适用场景：
 
 1. 你已经有了 BTST brief，想把它进一步压缩成盘前动作卡。
-2. 你需要把 `selected`、`near_miss`、research-only exclusion 明确分层，避免盘前误读。
+2. 你需要把 `selected`、`near_miss`、机会池、research-only exclusion 明确分层，避免盘前误读。
 
 命令模板：
 

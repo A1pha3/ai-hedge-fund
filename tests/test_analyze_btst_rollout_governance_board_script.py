@@ -98,8 +98,22 @@ def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurrin
     recurring_runbook.write_text(
         json.dumps(
             {
-                "close_candidate": {"next_step": "validate 002015 via runbook"},
-                "intraday_control": {"next_step": "keep 600821 via runbook"},
+                "close_candidate": {
+                    "next_step": "validate 002015 via runbook",
+                    "lane_status": "await_new_close_candidate_window",
+                    "validation_verdict": "await_new_independent_window_data",
+                    "distinct_window_count": 1,
+                    "missing_window_count": 1,
+                    "transition_locality": "emergent_local_baseline",
+                },
+                "intraday_control": {
+                    "next_step": "keep 600821 via runbook",
+                    "lane_status": "await_new_intraday_control_window",
+                    "validation_verdict": "await_new_independent_window_data",
+                    "distinct_window_count": 1,
+                    "missing_window_count": 1,
+                    "transition_locality": "emergent_local_baseline",
+                },
             },
             ensure_ascii=False,
         )
@@ -157,6 +171,10 @@ def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurrin
     assert analysis["next_3_tasks"][1]["task_id"] == "002015_recurring_shadow_validation"
     assert analysis["governance_rows"][0]["next_step"] == "rerun multi-window scan"
     assert analysis["governance_rows"][2]["next_step"] == "validate 002015 via runbook"
+    assert analysis["governance_rows"][2]["status"] == "await_new_close_candidate_window"
+    assert analysis["governance_rows"][2]["blocker"] == "cross_window_stability_missing"
+    assert analysis["governance_rows"][2]["evidence"]["distinct_window_count"] == 1
+    assert analysis["governance_rows"][3]["status"] == "await_new_intraday_control_window"
     assert analysis["governance_rows"][1]["next_step"] == "keep 300383 as single-name shadow"
     assert analysis["governance_rows"][4]["status"] == "structural_shadow_hold_only"
     assert analysis["governance_rows"][4]["next_step"] == "hold 300724 structural shadow only"

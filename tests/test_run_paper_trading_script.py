@@ -49,14 +49,22 @@ def test_generate_btst_followup_artifacts_writes_latest_brief_and_card(tmp_path)
     assert Path(result["brief_markdown"]).name == "btst_next_day_trade_brief_latest.md"
     assert Path(result["card_json"]).name == "btst_premarket_execution_card_latest.json"
     assert Path(result["card_markdown"]).name == "btst_premarket_execution_card_latest.md"
+    assert Path(result["opening_card_json"]).name == "btst_opening_watch_card_20260330.json"
+    assert Path(result["opening_card_markdown"]).name == "btst_opening_watch_card_20260330.md"
+    assert Path(result["priority_board_json"]).name == "btst_next_day_priority_board_20260330.json"
+    assert Path(result["priority_board_markdown"]).name == "btst_next_day_priority_board_20260330.md"
     assert Path(result["brief_json"]).exists()
     assert Path(result["card_json"]).exists()
+    assert Path(result["opening_card_markdown"]).exists()
+    assert Path(result["priority_board_markdown"]).exists()
 
     session_summary = json.loads((report_dir / "session_summary.json").read_text(encoding="utf-8"))
     assert session_summary["btst_followup"]["trade_date"] == "2026-03-27"
     assert session_summary["btst_followup"]["next_trade_date"] == "2026-03-30"
     assert session_summary["artifacts"]["btst_next_day_trade_brief_json"] == result["brief_json"]
     assert session_summary["artifacts"]["btst_premarket_execution_card_json"] == result["card_json"]
+    assert session_summary["artifacts"]["btst_opening_watch_card_markdown"] == result["opening_card_markdown"]
+    assert session_summary["artifacts"]["btst_next_day_priority_board_markdown"] == result["priority_board_markdown"]
 
 
 def test_refresh_reports_manifest_writes_latest_index_for_reports_root(tmp_path):
@@ -127,5 +135,7 @@ def test_refresh_reports_manifest_writes_latest_index_for_reports_root(tmp_path)
     manifest = json.loads(Path(result["manifest_json"]).read_text(encoding="utf-8"))
     assert manifest["latest_btst_run"]["report_dir"] == "data/reports/paper_trading_20260327_20260327_live_m2_7_short_trade_only_20260329"
     entry_ids = {entry["id"] for entry in manifest["entries"]}
+    assert "latest_btst_priority_board" in entry_ids
+    assert "latest_btst_opening_watch_card" in entry_ids
     assert "latest_btst_brief_markdown" in entry_ids
     assert "latest_btst_execution_card_json" in entry_ids

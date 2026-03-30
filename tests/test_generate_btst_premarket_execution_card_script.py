@@ -48,12 +48,57 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
                             "explainability_payload": {"candidate_source": "short_trade_boundary"},
                         },
                     },
+                    "300442": {
+                        "ticker": "300442",
+                        "short_trade": {
+                            "decision": "rejected",
+                            "score_target": 0.3126,
+                            "confidence": 0.7073,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_catalyst_support"],
+                            "top_reasons": ["catalyst_freshness=0.71", "score_short=0.31"],
+                            "rejection_reasons": ["score_short_below_threshold"],
+                            "gate_status": {"data": "pass", "execution": "proxy_only", "structural": "pass", "score": "fail"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.421,
+                                "trend_acceleration": 0.384,
+                                "volume_expansion_quality": 0.318,
+                                "close_strength": 0.447,
+                                "catalyst_freshness": 0.712,
+                                "thresholds": {"near_miss_threshold": 0.52},
+                            },
+                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                        },
+                    },
                     "002001": {
                         "ticker": "002001",
-                        "research": {"decision": "selected", "score_target": 0.2912},
+                        "research": {"decision": "selected", "score_target": 0.3912},
                         "short_trade": {
                             "decision": "rejected",
                             "score_target": 0.3130,
+                            "confidence": 0.7012,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_catalyst_support"],
+                            "top_reasons": ["catalyst_freshness=0.74"],
+                            "rejection_reasons": ["score_short_below_threshold"],
+                            "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.681,
+                                "trend_acceleration": 0.553,
+                                "volume_expansion_quality": 0.287,
+                                "close_strength": 0.621,
+                                "catalyst_freshness": 0.744,
+                            },
+                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                        },
+                        "delta_summary": ["research target selected while short trade target stays rejected"],
+                    },
+                    "002002": {
+                        "ticker": "002002",
+                        "research": {"decision": "selected", "score_target": 0.2812},
+                        "short_trade": {
+                            "decision": "rejected",
+                            "score_target": 0.1130,
                             "preferred_entry_mode": "next_day_breakout_confirmation",
                         },
                         "delta_summary": ["research target selected while short trade target stays rejected"],
@@ -78,8 +123,13 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
 
     assert result["analysis"]["primary_action"]["ticker"] == "300757"
     assert [entry["ticker"] for entry in payload["watch_actions"]] == ["601869"]
-    assert [entry["ticker"] for entry in payload["excluded_research_entries"]] == ["002001"]
+    assert [entry["ticker"] for entry in payload["opportunity_actions"]] == ["300442"]
+    assert payload["primary_action"]["historical_prior"]["execution_quality_label"] == "unknown"
+    assert [entry["ticker"] for entry in payload["excluded_research_entries"]] == ["002002"]
     assert "# BTST Premarket Execution Card" in markdown
     assert "300757" in markdown
     assert "601869" in markdown
-    assert "002001" in markdown
+    assert "300442" in markdown
+    assert "Opportunity Pool Actions" in markdown
+    assert "execution_quality_label" in markdown
+    assert "002002" in markdown

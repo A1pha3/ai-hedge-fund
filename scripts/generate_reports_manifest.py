@@ -7,10 +7,28 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.analyze_btst_candidate_entry_rollout_governance import (
+    analyze_btst_candidate_entry_rollout_governance,
+    render_btst_candidate_entry_rollout_governance_markdown,
+)
+from scripts.analyze_btst_candidate_entry_window_scan import (
+    analyze_btst_candidate_entry_window_scan,
+    render_btst_candidate_entry_window_scan_markdown,
+)
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "report_manifest_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "report_manifest_latest.md"
+CANDIDATE_ENTRY_FRONTIER_JSON = "btst_candidate_entry_frontier_20260330.json"
+CANDIDATE_ENTRY_STRUCTURAL_VALIDATION_JSON = "selection_target_structural_variants_candidate_entry_current_window_20260330.json"
+CANDIDATE_ENTRY_SCORE_FRONTIER_JSON = "btst_score_construction_frontier_20260330.json"
+CANDIDATE_ENTRY_WINDOW_SCAN_JSON = "btst_candidate_entry_window_scan_20260330.json"
+CANDIDATE_ENTRY_WINDOW_SCAN_MD = "btst_candidate_entry_window_scan_20260330.md"
+CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON = "p9_candidate_entry_rollout_governance_20260330.json"
+CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_MD = "p9_candidate_entry_rollout_governance_20260330.md"
+CANDIDATE_ENTRY_FOCUS_TICKERS: tuple[str, ...] = ("300502",)
+CANDIDATE_ENTRY_PRESERVE_TICKERS: tuple[str, ...] = ("300394",)
 
 STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
     {
@@ -273,7 +291,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "id": "tomorrow_open",
         "title": "明天开盘",
         "description": "开盘前的最短阅读路径，优先解决明天到底交易什么。",
-        "entry_ids": ["latest_btst_opening_watch_card", "latest_btst_execution_card_markdown", "latest_btst_brief_markdown"],
+        "entry_ids": ["latest_btst_priority_board", "latest_btst_opening_watch_card", "latest_btst_execution_card_markdown", "latest_btst_brief_markdown"],
     },
     {
         "id": "nightly_review",
@@ -404,13 +422,17 @@ def _extract_btst_candidate(report_dir: Path, repo_root: Path) -> dict[str, Any]
     brief_markdown_path = followup.get("brief_markdown") or artifacts.get("btst_next_day_trade_brief_markdown")
     card_json_path = followup.get("execution_card_json") or artifacts.get("btst_premarket_execution_card_json")
     card_markdown_path = followup.get("execution_card_markdown") or artifacts.get("btst_premarket_execution_card_markdown")
+    opening_card_markdown_path = followup.get("opening_watch_card_markdown") or artifacts.get("btst_opening_watch_card_markdown")
+    priority_board_markdown_path = followup.get("priority_board_markdown") or artifacts.get("btst_next_day_priority_board_markdown")
     if not any([brief_json_path, brief_markdown_path, card_json_path, card_markdown_path]):
         return None
 
     trade_date = _normalize_trade_date(followup.get("trade_date") or summary.get("end_date"))
     next_trade_date = _normalize_trade_date(followup.get("next_trade_date"))
     selection_snapshot_path = report_dir / "selection_artifacts" / trade_date / "selection_snapshot.json" if trade_date else None
-    opening_card_path = report_dir / f"btst_opening_watch_card_{next_trade_date.replace('-', '')}.md" if next_trade_date else None
+    opening_card_path = Path(opening_card_markdown_path).expanduser().resolve() if opening_card_markdown_path else None
+    if opening_card_path is None and next_trade_date:
+        opening_card_path = report_dir / f"btst_opening_watch_card_{next_trade_date.replace('-', '')}.md"
 
     trade_date_rank = trade_date or _normalize_trade_date(summary.get("end_date")) or ""
     selection_target_rank = 2 if selection_target == "short_trade_only" else 1
@@ -429,6 +451,7 @@ def _extract_btst_candidate(report_dir: Path, repo_root: Path) -> dict[str, Any]
         "session_summary_path": (report_dir / "session_summary.json").resolve(),
         "selection_snapshot_path": selection_snapshot_path.resolve() if selection_snapshot_path and selection_snapshot_path.exists() else None,
         "opening_card_path": opening_card_path.resolve() if opening_card_path and opening_card_path.exists() else None,
+        "priority_board_markdown_path": Path(priority_board_markdown_path).expanduser().resolve() if priority_board_markdown_path else None,
         "rank": (selection_target_rank, trade_date_rank, report_dir.stat().st_mtime_ns, report_dir.name),
     }
 
@@ -475,15 +498,27 @@ def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, r
 
     dynamic_specs = [
         {
+            "id": "latest_btst_priority_board",
+            "path": latest_btst_run.get("priority_board_markdown_path"),
+            "report_type": "btst_next_day_priority_board_markdown",
+            "topic": "btst_followup",
+            "usage": "tomorrow_open",
+            "priority": 1,
+            "is_latest": True,
+            "question": "明天应该按什么顺序看票",
+            "view_order": 1,
+            "source_kind": "generated_btst_followup",
+        },
+        {
             "id": "latest_btst_opening_watch_card",
             "path": latest_btst_run.get("opening_card_path"),
             "report_type": "btst_opening_watch_card",
             "topic": "btst_followup",
             "usage": "tomorrow_open",
-            "priority": 1,
+            "priority": 2,
             "is_latest": True,
             "question": "明天开盘第一眼该看什么",
-            "view_order": 1,
+            "view_order": 2,
             "source_kind": "generated_btst_followup",
         },
         {
@@ -492,10 +527,10 @@ def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, r
             "report_type": "btst_premarket_execution_card_markdown",
             "topic": "btst_followup",
             "usage": "tomorrow_open",
-            "priority": 2,
+            "priority": 3,
             "is_latest": True,
             "question": "当前执行姿态和 guardrails 是什么",
-            "view_order": 2,
+            "view_order": 3,
             "source_kind": "generated_btst_followup",
         },
         {
@@ -504,10 +539,10 @@ def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, r
             "report_type": "btst_next_day_trade_brief_markdown",
             "topic": "btst_followup",
             "usage": "tomorrow_open",
-            "priority": 3,
+            "priority": 4,
             "is_latest": True,
             "question": "明日主票、观察票和排除票结论是什么",
-            "view_order": 3,
+            "view_order": 4,
             "source_kind": "generated_btst_followup",
         },
         {
@@ -585,7 +620,82 @@ def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, r
     return entries
 
 
-def generate_reports_manifest(reports_root: str | Path) -> dict[str, Any]:
+def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    frontier_report_path = resolved_reports_root / CANDIDATE_ENTRY_FRONTIER_JSON
+    structural_validation_path = resolved_reports_root / CANDIDATE_ENTRY_STRUCTURAL_VALIDATION_JSON
+    score_frontier_path = resolved_reports_root / CANDIDATE_ENTRY_SCORE_FRONTIER_JSON
+    window_scan_json_path = resolved_reports_root / CANDIDATE_ENTRY_WINDOW_SCAN_JSON
+    window_scan_md_path = resolved_reports_root / CANDIDATE_ENTRY_WINDOW_SCAN_MD
+    rollout_governance_json_path = resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON
+    rollout_governance_md_path = resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_MD
+
+    required_inputs = {
+        "frontier_report": frontier_report_path,
+        "structural_validation": structural_validation_path,
+        "score_frontier_report": score_frontier_path,
+    }
+    missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
+    if missing_inputs:
+        return {
+            "status": "skipped_missing_inputs",
+            "missing_inputs": missing_inputs,
+            "window_report_count": 0,
+        }
+
+    report_dirs = [path for path in _discover_report_dirs(resolved_reports_root) if "paper_trading_window" in path.name]
+    if not report_dirs:
+        return {
+            "status": "skipped_no_window_reports",
+            "missing_inputs": [],
+            "window_report_count": 0,
+        }
+
+    try:
+        window_scan_analysis = analyze_btst_candidate_entry_window_scan(
+            report_dirs,
+            structural_variant="exclude_watchlist_avoid_weak_structure_entries",
+            focus_tickers=list(CANDIDATE_ENTRY_FOCUS_TICKERS),
+            preserve_tickers=list(CANDIDATE_ENTRY_PRESERVE_TICKERS),
+        )
+        window_scan_json_path.write_text(json.dumps(window_scan_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        window_scan_md_path.write_text(render_btst_candidate_entry_window_scan_markdown(window_scan_analysis), encoding="utf-8")
+
+        rollout_governance_analysis = analyze_btst_candidate_entry_rollout_governance(
+            frontier_report_path,
+            structural_validation_path=structural_validation_path,
+            window_scan_path=window_scan_json_path,
+            score_frontier_path=score_frontier_path,
+        )
+        rollout_governance_json_path.write_text(json.dumps(rollout_governance_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        rollout_governance_md_path.write_text(render_btst_candidate_entry_rollout_governance_markdown(rollout_governance_analysis), encoding="utf-8")
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "missing_inputs": [],
+            "window_report_count": len(report_dirs),
+            "error": str(exc),
+        }
+
+    return {
+        "status": "refreshed",
+        "missing_inputs": [],
+        "window_report_count": len(report_dirs),
+        "filtered_report_count": window_scan_analysis.get("filtered_report_count"),
+        "focus_hit_report_count": window_scan_analysis.get("focus_hit_report_count"),
+        "preserve_misfire_report_count": window_scan_analysis.get("preserve_misfire_report_count"),
+        "rollout_readiness": window_scan_analysis.get("rollout_readiness"),
+        "lane_status": rollout_governance_analysis.get("lane_status"),
+        "window_scan_json": window_scan_json_path.as_posix(),
+        "rollout_governance_json": rollout_governance_json_path.as_posix(),
+    }
+
+
+def generate_reports_manifest(
+    reports_root: str | Path,
+    *,
+    candidate_entry_shadow_refresh: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     repo_root = _resolve_repo_root(resolved_reports_root)
     latest_btst_run = _select_latest_btst_candidate(resolved_reports_root, repo_root)
@@ -619,6 +729,7 @@ def generate_reports_manifest(reports_root: str | Path) -> dict[str, Any]:
         "reports_root": resolved_reports_root.as_posix(),
         "entry_count": len(entries),
         "entry_count_by_usage": entry_count_by_usage,
+        "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
         "latest_btst_run": None,
         "reading_paths": reading_paths,
         "entries": entries,
@@ -649,6 +760,12 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
     lines.append(f"- generated_at: {manifest['generated_at']}")
     lines.append(f"- entry_count: {manifest['entry_count']}")
     lines.append(f"- reports_root: {manifest['reports_root']}")
+    candidate_entry_shadow_refresh = manifest.get("candidate_entry_shadow_refresh") or {}
+    if candidate_entry_shadow_refresh:
+        lines.append(f"- candidate_entry_shadow_refresh_status: {candidate_entry_shadow_refresh.get('status')}")
+        lines.append(f"- candidate_entry_shadow_refresh_window_reports: {candidate_entry_shadow_refresh.get('window_report_count')}")
+        lines.append(f"- candidate_entry_shadow_refresh_filtered_reports: {candidate_entry_shadow_refresh.get('filtered_report_count')}")
+        lines.append(f"- candidate_entry_shadow_refresh_rollout_readiness: {candidate_entry_shadow_refresh.get('rollout_readiness')}")
     latest_btst_run = manifest.get("latest_btst_run") or {}
     if latest_btst_run:
         lines.append(f"- latest_btst_report_dir: {latest_btst_run['report_dir']}")
@@ -681,11 +798,16 @@ def generate_reports_manifest_artifacts(
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     resolved_output_json = Path(output_json).expanduser().resolve() if output_json else (resolved_reports_root / DEFAULT_OUTPUT_JSON.name).resolve()
     resolved_output_md = Path(output_md).expanduser().resolve() if output_md else (resolved_reports_root / DEFAULT_OUTPUT_MD.name).resolve()
-    manifest = generate_reports_manifest(resolved_reports_root)
+    candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
+    manifest = generate_reports_manifest(
+        resolved_reports_root,
+        candidate_entry_shadow_refresh=candidate_entry_shadow_refresh,
+    )
     resolved_output_json.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     resolved_output_md.write_text(render_reports_manifest_markdown(manifest, output_parent=resolved_output_md.parent), encoding="utf-8")
     return {
         "manifest": manifest,
+        "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
         "json_path": resolved_output_json.as_posix(),
         "markdown_path": resolved_output_md.as_posix(),
     }
