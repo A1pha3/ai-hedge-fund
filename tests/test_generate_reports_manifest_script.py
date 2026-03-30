@@ -31,6 +31,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     for filename in [
         "btst_micro_window_regression_20260330.md",
         "btst_profile_frontier_20260330.md",
+        "btst_score_construction_frontier_20260330.md",
+        "btst_candidate_entry_frontier_20260330.md",
+        "btst_candidate_entry_window_scan_20260330.md",
+        "p9_candidate_entry_rollout_governance_20260330.md",
         "p2_top3_experiment_execution_summary_20260330.json",
         "p3_top3_post_execution_action_board_20260330.json",
         "p5_btst_rollout_governance_board_20260330.json",
@@ -120,6 +124,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     }
     assert entries_by_id["btst_micro_window_regression_review"]["report_path"] == "data/reports/btst_micro_window_regression_20260330.md"
     assert entries_by_id["btst_profile_frontier_review"]["report_path"] == "data/reports/btst_profile_frontier_20260330.md"
+    assert entries_by_id["btst_score_construction_frontier_review"]["report_path"] == "data/reports/btst_score_construction_frontier_20260330.md"
+    assert entries_by_id["btst_candidate_entry_frontier_review"]["report_path"] == "data/reports/btst_candidate_entry_frontier_20260330.md"
+    assert entries_by_id["btst_candidate_entry_window_scan_review"]["report_path"] == "data/reports/btst_candidate_entry_window_scan_20260330.md"
+    assert entries_by_id["p9_candidate_entry_rollout_governance"]["report_path"] == "data/reports/p9_candidate_entry_rollout_governance_20260330.md"
     assert entries_by_id["p5_rollout_governance_board"]["report_path"] == "data/reports/p5_btst_rollout_governance_board_20260330.json"
     assert entries_by_id["optimize0330_readme"]["report_path"] == "docs/zh-cn/factors/BTST/optimize0330/README.md"
 
@@ -141,6 +149,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "p5_rollout_governance_board",
         "btst_micro_window_regression_review",
         "btst_profile_frontier_review",
+        "btst_score_construction_frontier_review",
+        "btst_candidate_entry_frontier_review",
+        "btst_candidate_entry_window_scan_review",
+        "p9_candidate_entry_rollout_governance",
         "p6_primary_window_gap",
         "p6_recurring_shadow_runbook",
         "p7_primary_window_validation_runbook",
@@ -154,3 +166,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "btst_opening_watch_card_20260331.md" in markdown
     assert "btst_micro_window_regression_20260330.md" in markdown
     assert "btst_profile_frontier_20260330.md" in markdown
+    assert "btst_score_construction_frontier_20260330.md" in markdown
+    assert "btst_candidate_entry_frontier_20260330.md" in markdown
+    assert "btst_candidate_entry_window_scan_20260330.md" in markdown
+    assert "p9_candidate_entry_rollout_governance_20260330.md" in markdown

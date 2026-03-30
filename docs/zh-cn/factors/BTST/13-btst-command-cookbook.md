@@ -498,6 +498,130 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 1. 这条脚本的定位不是替代 `analyze_short_trade_blockers.py` 或 `analyze_pre_layer_short_trade_outcomes.py`，而是把它们压成同一份 researcher-facing 回归摘要。
 2. 当前 2026-03-30 的实跑结果已经落在 `data/reports/btst_micro_window_regression_20260330.{json,md}`，可直接用于引用 0323-0326 closed-cycle baseline 与 `catalyst_floor_zero` 的对照结论。
 
+### 7.8 做 score construction frontier 闭环比较
+
+适用场景：
+
+1. 你已经验证过 admission baseline 和 profile-only 变体都没有把窗口从 0 actionable 推起来。
+2. 你要确认“只调正向 score weight 分配”是否真能形成 closed-cycle actionable surface。
+3. 你要把 `prepared_breakout_balance`、`catalyst_volume_balance`、`trend_alignment_balance` 放到同一个 outcome 面上比较。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/analyze_btst_score_construction_frontier.py \
+  data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329 \
+  --baseline-profile default \
+  --output-json data/reports/btst_score_construction_frontier_20260330.json \
+  --output-md data/reports/btst_score_construction_frontier_20260330.md
+```
+
+优先回答：
+
+1. 哪个正向 weight 变体真的新增了 closed-cycle actionable surface。
+2. 如果所有 score 变体都仍是 0 actionable，是否可以正式把 score-only tuning 从主线里降级。
+3. 这些 weight 变体有没有改变 baseline false negative proxy 的规模或质量。
+
+补充说明：
+
+1. 当前 2026-03-30 的实跑结果已经落在 `data/reports/btst_score_construction_frontier_20260330.{json,md}`。
+2. 这份结果若依旧是全 0 actionable，就说明当前问题不能再理解成“只要重配正向分数权重就能推起 surface”。
+
+### 7.9 做 candidate entry frontier 闭环比较
+
+适用场景：
+
+1. 你已经确认 score-only tuning 仍没有形成 actionable surface。
+2. 你要验证 selective candidate-entry 语义，看看能不能过滤掉 300502 这类弱结构 watchlist_avoid 样本，同时保住 300394 这类 preserve 样本。
+3. 你要把 `weak_structure_triplet`、`semantic_pair_300502`、`volume_only_20260326` 放到同一套 filtered-cohort outcome 面上比较。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/analyze_btst_candidate_entry_frontier.py \
+  data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329 \
+  --focus-ticker 300502 \
+  --preserve-ticker 300394 \
+  --output-json data/reports/btst_candidate_entry_frontier_20260330.json \
+  --output-md data/reports/btst_candidate_entry_frontier_20260330.md
+```
+
+优先回答：
+
+1. 哪条 candidate-entry 规则能过滤 focus ticker，而不误伤 preserve ticker。
+2. 被过滤 cohort 的 `next_high_hit_rate@2%`、`next_close_positive_rate` 是否显著弱于 baseline false negative pool。
+3. 如果多条规则命中同一弱样本，应优先相信哪条 evidence tier 更高的规则。
+
+补充说明：
+
+1. 当前 2026-03-30 的实跑结果已经落在 `data/reports/btst_candidate_entry_frontier_20260330.{json,md}`。
+2. 当前窗口里 `weak_structure_triplet`、`semantic_pair_300502`、`volume_only_20260326` 都命中了同一个 300502 弱样本，但默认应优先 `weak_structure_triplet`，因为它是 window-verified selective rule，而不是 single-day hypothesis。
+3. 如果要把这条规则接回 replay calibration 主链路，直接复用 `exclude_watchlist_avoid_weak_structure_entries` 这个 structural variant 即可，不需要再造一条新的命名规则。
+
+### 7.10 做 candidate entry 多窗口稳定性扫描
+
+适用场景：
+
+1. 你已经在当前窗口确认 `weak_structure_triplet` 是最强 candidate-entry selective rule。
+2. 你要确认这条规则是不是只在一个窗口键里反复命中，还是已经具备跨窗口稳定性。
+3. 你要先判断能不能进入 shadow rollout review，再决定是否值得做默认升级讨论。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/analyze_btst_candidate_entry_window_scan.py \
+  --report-root-dirs data/reports \
+  --report-name-contains paper_trading_window \
+  --focus-tickers 300502 \
+  --preserve-tickers 300394 \
+  --output-json data/reports/btst_candidate_entry_window_scan_20260330.json \
+  --output-md data/reports/btst_candidate_entry_window_scan_20260330.md
+```
+
+优先回答：
+
+1. 弱结构规则到底命中了多少份 report，以及它们是否属于多个独立 `window_key`。
+2. `preserve_misfire_report_count` 是否仍然保持为 0。
+3. 当前结论应该是 `research_only`、`shadow_only_until_second_window`，还是已经能进入 `shadow_rollout_review_ready`。
+
+补充说明：
+
+1. 当前 2026-03-30 的实跑结果已经落在 `data/reports/btst_candidate_entry_window_scan_20260330.{json,md}`。
+2. 真实结果扫描了 14 份 `paper_trading_window` 报告，其中只有 3 份报告过滤了 `300502`，且都落在同一个 `window_key=20260323_20260326`，所以当前结论只能是 `shadow_only_until_second_window`。
+3. 由于 `preserve_misfire_report_count=0`，这条规则可以继续保留为 shadow candidate-entry 旁路，但不能升级为默认 admission 行为。
+
+### 7.11 生成 candidate entry rollout governance 板
+
+适用场景：
+
+1. 你已经有 current-window candidate-entry frontier 结果。
+2. 你已经用 structural variant 主链回放验证过 `exclude_watchlist_avoid_weak_structure_entries`。
+3. 你需要把单窗 frontier、多窗扫描和 score frontier 零结果收口成一个明确的治理结论。
+
+命令模板：
+
+```bash
+./.venv/bin/python scripts/analyze_btst_candidate_entry_rollout_governance.py \
+  --frontier-report data/reports/btst_candidate_entry_frontier_20260330.json \
+  --structural-validation-report data/reports/selection_target_structural_variants_candidate_entry_current_window_20260330.json \
+  --window-scan-report data/reports/btst_candidate_entry_window_scan_20260330.json \
+  --score-frontier-report data/reports/btst_score_construction_frontier_20260330.json \
+  --output-json data/reports/p9_candidate_entry_rollout_governance_20260330.json \
+  --output-md data/reports/p9_candidate_entry_rollout_governance_20260330.md
+```
+
+优先回答：
+
+1. 当前 `candidate_entry_rule` 应该固定成哪条语义，以及对应哪条 structural variant。
+2. 当前 lane status 是否只允许 `shadow_only_until_second_window`。
+3. 为什么现在不能把 candidate-entry 规则误写成默认升级依据。
+
+补充说明：
+
+1. 当前 2026-03-30 的实跑结果已经落在 `data/reports/p9_candidate_entry_rollout_governance_20260330.{json,md}`。
+2. 当前治理结论非常明确：`weak_structure_triplet` 只能以 `exclude_watchlist_avoid_weak_structure_entries` 的形式进入 shadow-only lane，`default_upgrade_status=blocked_by_single_window_candidate_entry_signal`。
+3. `semantic_pair_300502` 与 `volume_only_20260326` 继续保留为研究参考，不进入 rollout 主链。
+
 ---
 
 ## 8. 两套推荐命令顺序
@@ -517,10 +641,13 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 推荐顺序：
 
 1. 跑 `analyze_short_trade_blockers.py`。
-2. 跑 `analyze_short_trade_boundary_score_failures.py` 与 frontier 版本。
-3. 先做 `300383` 的 targeted release。
-4. 再看 `600821` / `002015` recurring frontier。
-5. 最后用 outcome 脚本验证 release 样本次日质量。
+2. 跑 `analyze_short_trade_boundary_score_failures.py` 与 frontier 版本，确认 score fail 主簇。
+3. 跑 `analyze_btst_score_construction_frontier.py`，验证正向 weight 微调是否真能形成 closed-cycle actionable surface。
+4. 如果 score frontier 仍然全是 0 actionable，再跑 `analyze_btst_candidate_entry_frontier.py`，验证 selective weak-structure 过滤能否清理 300502 类样本而不误伤 300394。
+5. 跑 `analyze_btst_candidate_entry_window_scan.py`，确认这条 selective 规则是否已经跨多个独立 `window_key` 命中。
+6. 跑 `analyze_btst_candidate_entry_rollout_governance.py`，把 frontier、多窗口扫描和主链验证收口成 lane status。
+7. 再看 `300383` 的 targeted release 与 `600821` / `002015` recurring frontier。
+8. 最后用 outcome 脚本验证 release 样本次日质量。
 
 ---
 

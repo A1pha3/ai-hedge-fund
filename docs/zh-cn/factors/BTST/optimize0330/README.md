@@ -130,6 +130,14 @@
 
 补充一条新的反证：`data/reports/btst_profile_frontier_20260330.md` 已把同一 0323-0326 closed-cycle 窗口下的 `default`、`staged_breakout`、`aggressive`、`conservative` 放到统一 outcome 面上比较，结果四个 profile 的 `tradeable surface` 都仍然是 `0`。这说明当前问题也不适合再理解成“换个 short-trade profile 就能推起来”，而应继续把主优化面收敛在 `score construction` 与 `candidate entry` 语义上。
 
+再补一条更强的反证：`data/reports/btst_score_construction_frontier_20260330.md` 已把 `prepared_breakout_balance`、`catalyst_volume_balance`、`trend_alignment_balance` 三条正向 weight 变体放到同一 closed-cycle outcome 面上比较，结果三者依然全部是 `tradeable surface=0`，而 baseline false negative proxy 规模也没有缩小。这说明当前窗口里“只调正向分数权重”同样不是突破口。
+
+当前窗口里真正新增解释力的是 `data/reports/btst_candidate_entry_frontier_20260330.md`：`weak_structure_triplet`、`semantic_pair_300502`、`volume_only_20260326` 都能过滤 `2026-03-26` 的 `300502` 弱结构样本，同时不误伤 `300394` preserve 样本；但由于 `weak_structure_triplet` 属于 window-verified selective rule，而 `volume_only_20260326` 只是 single-day hypothesis，因此当前最应优先保留的是 selective weak-structure candidate-entry 语义，而不是继续做 broad score rebalance。并且这条规则在 replay calibration 里已经有可复用的结构变体实现：`exclude_watchlist_avoid_weak_structure_entries`。
+
+接着往前推进的关键不是直接改默认，而是先验证它到底是不是“单窗偶然”。`data/reports/btst_candidate_entry_window_scan_20260330.md` 已对当前可发现的 14 份 `paper_trading_window` 报告做了统一扫描：共有 3 份报告触发了弱结构过滤，且三者都只是同一个 `window_key=20260323_20260326` 上的重复命中；`300394` 在全部扫描结果里仍保持 `preserve_misfire_report_count=0`。这说明当前证据已经足以支持 shadow candidate-entry 旁路，但还不足以支持默认升级。
+
+因此最新治理收口已经落在 `data/reports/p9_candidate_entry_rollout_governance_20260330.md`：`candidate_entry_rule=weak_structure_triplet`，`recommended_structural_variant=exclude_watchlist_avoid_weak_structure_entries`，`lane_status=shadow_only_until_second_window`，`default_upgrade_status=blocked_by_single_window_candidate_entry_signal`。也就是说，下一步该做的是继续累积第二个独立 `window_key` 命中，同时确保 `300394` 这类 preserve 样本持续不被误伤，而不是把 `semantic_pair_300502`、`volume_only_20260326` 或弱结构规则本身提前写成默认 admission 改动。
+
 ### 3.5 profitability 为什么值得单独提出
 
 基于 2026-03-23、24、25、26 四个交易日（对应 `paper_trading_window` 的 `trade_dates`）的 `analyze_profitability_subfactor_breakdown.py` 分析结果（`data/reports/profitability_subfactor_breakdown_current_window_20260327.json`），需要先明确证据边界：这份统计针对 `build_candidate_pool -> score_batch -> fuse_batch` 之后、落在 `FAST_AGENT_SCORE_THRESHOLD` 下方且完成了 profitability 评分的更广义 Layer B 融合低分样本，不是 BTST-only 候选统计。
@@ -339,7 +347,7 @@ Layer 4：执行确认
 这意味着：在 0330 当前证据边界内，微窗口方法本身已经完成验证，下一步主线不应再回到“是否继续大范围 admission floor 扫描”，而应固定为三件事：
 
 1. 保留 `short_trade_boundary + catalyst_freshness_min=0.00` 作为当前 live admission 基线。
-2. 继续围绕 `short_trade_boundary_score_fail`、`001309/300383` 与 `300724` 的结构性治理推进 score frontier / case-based lane。
+2. 继续围绕 `short_trade_boundary_score_fail`、`001309/300383` 与 `300724` 的结构性治理推进 score frontier、selective candidate-entry rule 与 case-based lane。
 3. 等未来新增独立窗口出现后，再用同一份微窗口回归脚本继续验证 `001309` primary lane 和 recurring shadow lane 的跨窗口稳定性。
 
 ---
@@ -526,7 +534,7 @@ Layer 4：执行确认
 3. watch-only 双名单扩展。
 4. 结构冲突 case-based release。
 
-这里需要明确一条与上游实施文档一致的阶段边界：`catalyst_freshness_min=0.00` 已经完成完整窗口 live 验证，旧 shared `layer_b_boundary` 失败簇也已经被 dedicated builder 清零，因此 Phase 2 不应重新退回到 admission floor 大范围网格扫描；除非未来新窗口出现新的 admission 失败簇，否则当前默认单主题变体应以 score frontier 为起点。
+这里需要明确一条与上游实施文档一致的阶段边界：`catalyst_freshness_min=0.00` 已经完成完整窗口 live 验证，旧 shared `layer_b_boundary` 失败簇也已经被 dedicated builder 清零，因此 Phase 2 不应重新退回到 admission floor 大范围网格扫描；除非未来新窗口出现新的 admission 失败簇，否则当前默认单主题变体应以 score frontier 为起点；若 score-only 变体仍然维持 `0 actionable`，就应转入 selective candidate-entry frontier，而不是回退到 broad admission 扫描。
 
 纪律：
 
