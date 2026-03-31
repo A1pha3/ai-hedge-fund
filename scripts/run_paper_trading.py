@@ -6,6 +6,7 @@ from pathlib import Path
 
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
 from scripts.model_selection import resolve_model_selection
+from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
 from src.paper_trading.btst_reporting import (
     generate_and_register_btst_followup_artifacts,
 )
@@ -40,6 +41,22 @@ def refresh_reports_manifest(report_dir: Path) -> dict[str, str] | None:
     return {
         "manifest_json": result["json_path"],
         "manifest_markdown": result["markdown_path"],
+    }
+
+
+def refresh_btst_nightly_control_tower(report_dir: Path) -> dict[str, str] | None:
+    resolved_report_dir = report_dir.expanduser().resolve()
+    reports_root = resolved_report_dir.parent
+    if reports_root.name != "reports":
+        return None
+    result = generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
+    return {
+        "open_ready_delta_json": result["delta_json_path"],
+        "open_ready_delta_markdown": result["delta_markdown_path"],
+        "nightly_control_tower_json": result["json_path"],
+        "nightly_control_tower_markdown": result["markdown_path"],
+        "manifest_json": result["manifest_json"],
+        "manifest_markdown": result["manifest_markdown"],
     }
 
 
@@ -100,10 +117,14 @@ def main() -> None:
         print(f"paper_trading_btst_opening_watch_card_markdown={followup_artifacts['opening_card_markdown']}")
         print(f"paper_trading_btst_priority_board_json={followup_artifacts['priority_board_json']}")
         print(f"paper_trading_btst_priority_board_markdown={followup_artifacts['priority_board_markdown']}")
-        manifest_artifacts = refresh_reports_manifest(output_dir)
-        if manifest_artifacts:
-            print(f"paper_trading_report_manifest_json={manifest_artifacts['manifest_json']}")
-            print(f"paper_trading_report_manifest_markdown={manifest_artifacts['manifest_markdown']}")
+        nightly_control_tower_artifacts = refresh_btst_nightly_control_tower(output_dir)
+        if nightly_control_tower_artifacts:
+            print(f"paper_trading_btst_open_ready_delta_json={nightly_control_tower_artifacts['open_ready_delta_json']}")
+            print(f"paper_trading_btst_open_ready_delta_markdown={nightly_control_tower_artifacts['open_ready_delta_markdown']}")
+            print(f"paper_trading_btst_nightly_control_tower_json={nightly_control_tower_artifacts['nightly_control_tower_json']}")
+            print(f"paper_trading_btst_nightly_control_tower_markdown={nightly_control_tower_artifacts['nightly_control_tower_markdown']}")
+            print(f"paper_trading_report_manifest_json={nightly_control_tower_artifacts['manifest_json']}")
+            print(f"paper_trading_report_manifest_markdown={nightly_control_tower_artifacts['manifest_markdown']}")
     if args.cache_benchmark:
         print(f"paper_trading_cache_benchmark=enabled")
     if args.frozen_plan_source:

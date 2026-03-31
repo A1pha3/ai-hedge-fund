@@ -155,11 +155,14 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     (docs_root / "analysis" / "historical-edge-artifact-index-20260318.md").write_text("# Historical Edge\n", encoding="utf-8")
 
     for filename in [
+        "btst_open_ready_delta_latest.md",
+        "btst_nightly_control_tower_latest.md",
         "btst_micro_window_regression_20260330.md",
         "btst_profile_frontier_20260330.md",
         "btst_score_construction_frontier_20260330.md",
         "btst_candidate_entry_frontier_20260330.md",
         "btst_candidate_entry_window_scan_20260330.md",
+        "p9_candidate_entry_rollout_governance_20260330.json",
         "p9_candidate_entry_rollout_governance_20260330.md",
         "p2_top3_experiment_execution_summary_20260330.json",
         "p3_top3_post_execution_action_board_20260330.json",
@@ -245,6 +248,16 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         ],
         "window_report_count": 0,
     }
+    assert manifest["btst_governance_synthesis_refresh"]["status"] == "refreshed"
+    assert manifest["btst_governance_validation_refresh"]["status"] == "refreshed"
+    assert manifest["btst_replay_cohort_refresh"] == {
+        "status": "refreshed",
+        "report_count": 2,
+        "short_trade_only_report_count": 2,
+        "dual_target_report_count": 0,
+        "latest_short_trade_report": "paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330",
+        "output_json": str((reports_root / "btst_replay_cohort_latest.json").resolve()),
+    }
     assert manifest["latest_btst_run"] == {
         "report_dir": "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330",
         "report_dir_abs": str(latest_report.resolve()),
@@ -268,22 +281,42 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert entries_by_id["btst_candidate_entry_window_scan_review"]["report_path"] == "data/reports/btst_candidate_entry_window_scan_20260330.md"
     assert entries_by_id["p9_candidate_entry_rollout_governance"]["report_path"] == "data/reports/p9_candidate_entry_rollout_governance_20260330.md"
     assert entries_by_id["p5_rollout_governance_board"]["report_path"] == "data/reports/p5_btst_rollout_governance_board_20260330.json"
+    assert entries_by_id["btst_open_ready_delta_latest"]["report_path"] == "data/reports/btst_open_ready_delta_latest.md"
+    assert entries_by_id["btst_nightly_control_tower_latest"]["report_path"] == "data/reports/btst_nightly_control_tower_latest.md"
+    assert entries_by_id["btst_governance_synthesis_latest"]["report_path"] == "data/reports/btst_governance_synthesis_latest.md"
+    assert entries_by_id["btst_governance_validation_latest"]["report_path"] == "data/reports/btst_governance_validation_latest.md"
+    assert entries_by_id["btst_replay_cohort_latest"]["report_path"] == "data/reports/btst_replay_cohort_latest.md"
     assert entries_by_id["optimize0330_readme"]["report_path"] == "docs/zh-cn/factors/BTST/optimize0330/README.md"
 
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
+    assert reading_paths["btst_control_tower"]["entry_ids"] == [
+        "btst_open_ready_delta_latest",
+        "btst_nightly_control_tower_latest",
+        "btst_governance_synthesis_latest",
+        "latest_btst_priority_board",
+        "btst_governance_validation_latest",
+        "btst_replay_cohort_latest",
+        "p5_rollout_governance_board",
+        "p9_candidate_entry_rollout_governance",
+    ]
     assert reading_paths["tomorrow_open"]["entry_ids"] == [
+        "btst_open_ready_delta_latest",
         "latest_btst_priority_board",
         "latest_btst_opening_watch_card",
         "latest_btst_execution_card_markdown",
         "latest_btst_brief_markdown",
     ]
     assert reading_paths["nightly_review"]["entry_ids"] == [
+        "btst_open_ready_delta_latest",
+        "btst_nightly_control_tower_latest",
         "latest_btst_session_summary",
         "latest_btst_brief_json",
         "latest_btst_execution_card_json",
         "latest_btst_selection_snapshot",
     ]
     assert reading_paths["btst_governance"]["entry_ids"] == [
+        "btst_governance_synthesis_latest",
+        "btst_governance_validation_latest",
         "p2_top3_execution_summary",
         "p3_post_execution_action_board",
         "p5_rollout_governance_board",
@@ -298,14 +331,28 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "p7_primary_window_validation_runbook",
         "p8_structural_shadow_runbook",
     ]
+    assert reading_paths["replay_history"]["entry_ids"] == [
+        "btst_replay_cohort_latest",
+        "replay_artifacts_stock_selection_manual",
+        "historical_edge_artifact_index",
+    ]
 
     assert Path(result["json_path"]).exists()
     assert Path(result["markdown_path"]).exists()
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
     assert "candidate_entry_shadow_refresh_status: skipped_missing_inputs" in markdown
+    assert "btst_governance_synthesis_status: refreshed" in markdown
+    assert "btst_governance_validation_status: refreshed" in markdown
+    assert "btst_replay_cohort_status: refreshed" in markdown
+    assert "## BTST 控制塔" in markdown
     assert "## 明天开盘" in markdown
+    assert "btst_open_ready_delta_latest.md" in markdown
+    assert "btst_nightly_control_tower_latest.md" in markdown
     assert "btst_next_day_priority_board_20260331.md" in markdown
     assert "btst_opening_watch_card_20260331.md" in markdown
+    assert "btst_governance_synthesis_latest.md" in markdown
+    assert "btst_governance_validation_latest.md" in markdown
+    assert "btst_replay_cohort_latest.md" in markdown
     assert "btst_micro_window_regression_20260330.md" in markdown
     assert "btst_profile_frontier_20260330.md" in markdown
     assert "btst_score_construction_frontier_20260330.md" in markdown
@@ -395,6 +442,10 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
 
     manifest = result["manifest"]
     assert manifest["candidate_entry_shadow_refresh"] == refresh
+    assert manifest["btst_governance_synthesis_refresh"]["status"] == "skipped_missing_inputs"
+    assert manifest["btst_governance_validation_refresh"]["status"] == "skipped_missing_inputs"
+    assert manifest["btst_replay_cohort_refresh"]["status"] == "refreshed"
+    assert manifest["btst_replay_cohort_refresh"]["report_count"] == 2
 
     window_scan = json.loads((reports_root / "btst_candidate_entry_window_scan_20260330.json").read_text(encoding="utf-8"))
     governance = json.loads((reports_root / "p9_candidate_entry_rollout_governance_20260330.json").read_text(encoding="utf-8"))
@@ -414,3 +465,6 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert "candidate_entry_shadow_refresh_window_reports: 2" in markdown
     assert "candidate_entry_shadow_refresh_filtered_reports: 1" in markdown
     assert "candidate_entry_shadow_refresh_rollout_readiness: shadow_only_until_second_window" in markdown
+    assert "btst_governance_synthesis_status: skipped_missing_inputs" in markdown
+    assert "btst_governance_validation_status: skipped_missing_inputs" in markdown
+    assert "btst_replay_cohort_status: refreshed" in markdown

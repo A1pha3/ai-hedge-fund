@@ -15,6 +15,18 @@ from scripts.analyze_btst_candidate_entry_window_scan import (
     analyze_btst_candidate_entry_window_scan,
     render_btst_candidate_entry_window_scan_markdown,
 )
+from scripts.analyze_btst_governance_synthesis import (
+    analyze_btst_governance_synthesis,
+    render_btst_governance_synthesis_markdown,
+)
+from scripts.analyze_btst_replay_cohort import (
+    analyze_btst_replay_cohort,
+    render_btst_replay_cohort_markdown,
+)
+from scripts.validate_btst_governance_consistency import (
+    render_btst_governance_validation_markdown,
+    validate_btst_governance_consistency,
+)
 
 
 REPORTS_DIR = Path("data/reports")
@@ -27,10 +39,48 @@ CANDIDATE_ENTRY_WINDOW_SCAN_JSON = "btst_candidate_entry_window_scan_20260330.js
 CANDIDATE_ENTRY_WINDOW_SCAN_MD = "btst_candidate_entry_window_scan_20260330.md"
 CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON = "p9_candidate_entry_rollout_governance_20260330.json"
 CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_MD = "p9_candidate_entry_rollout_governance_20260330.md"
+ACTION_BOARD_JSON = "p3_top3_post_execution_action_board_20260330.json"
+ROLLOUT_GOVERNANCE_JSON = "p5_btst_rollout_governance_board_20260330.json"
+PRIMARY_WINDOW_GAP_JSON = "p6_primary_window_gap_001309_20260330.json"
+RECURRING_SHADOW_RUNBOOK_JSON = "p6_recurring_shadow_runbook_20260330.json"
+PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON = "p7_primary_window_validation_runbook_001309_20260330.json"
+STRUCTURAL_SHADOW_RUNBOOK_JSON = "p8_structural_shadow_runbook_300724_20260330.json"
+BTST_GOVERNANCE_SYNTHESIS_JSON = "btst_governance_synthesis_latest.json"
+BTST_GOVERNANCE_SYNTHESIS_MD = "btst_governance_synthesis_latest.md"
+BTST_GOVERNANCE_VALIDATION_JSON = "btst_governance_validation_latest.json"
+BTST_GOVERNANCE_VALIDATION_MD = "btst_governance_validation_latest.md"
+BTST_REPLAY_COHORT_JSON = "btst_replay_cohort_latest.json"
+BTST_REPLAY_COHORT_MD = "btst_replay_cohort_latest.md"
 CANDIDATE_ENTRY_FOCUS_TICKERS: tuple[str, ...] = ("300502",)
 CANDIDATE_ENTRY_PRESERVE_TICKERS: tuple[str, ...] = ("300394",)
 
 STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "btst_open_ready_delta_latest",
+        "path": "data/reports/btst_open_ready_delta_latest.md",
+        "report_type": "btst_open_ready_delta",
+        "topic": "btst_followup",
+        "usage": "tomorrow_open",
+        "priority": 1,
+        "is_latest": True,
+        "question": "相对上一轮，今晚最该知道的 delta 是什么",
+        "view_order": 0,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_nightly_control_tower_latest",
+        "path": "data/reports/btst_nightly_control_tower_latest.md",
+        "report_type": "btst_nightly_control_tower",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "今晚 control tower 的一页总览是什么",
+        "view_order": 1,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
     {
         "id": "reports_hub_readme",
         "path": "data/reports/README.md",
@@ -82,6 +132,32 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "view_order": 3,
         "time_scope": {"label": "rolling"},
         "source_kind": "source_of_truth",
+    },
+    {
+        "id": "btst_governance_synthesis_latest",
+        "path": "data/reports/btst_governance_synthesis_latest.md",
+        "report_type": "btst_governance_synthesis",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 1,
+        "is_latest": True,
+        "question": "当前 BTST 治理总览板是什么",
+        "view_order": 1,
+        "time_scope": {"label": "current_window_20260330"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_governance_validation_latest",
+        "path": "data/reports/btst_governance_validation_latest.md",
+        "report_type": "btst_governance_validation",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 2,
+        "is_latest": True,
+        "question": "当前 BTST 治理结论之间是否一致",
+        "view_order": 2,
+        "time_scope": {"label": "current_window_20260330"},
+        "source_kind": "generated_governance_artifact",
     },
     {
         "id": "p2_top3_execution_summary",
@@ -253,6 +329,19 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "source_kind": "governance_artifact",
     },
     {
+        "id": "btst_replay_cohort_latest",
+        "path": "data/reports/btst_replay_cohort_latest.md",
+        "report_type": "btst_replay_cohort",
+        "topic": "replay_artifacts",
+        "usage": "replay_history",
+        "priority": 1,
+        "is_latest": True,
+        "question": "当前 BTST live/frozen replay 队列和 short-trade 样本汇总是什么",
+        "view_order": 1,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
         "id": "replay_artifacts_stock_selection_manual",
         "path": "docs/zh-cn/manual/replay-artifacts-stock-selection-manual.md",
         "report_type": "manual",
@@ -288,22 +377,39 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "entry_ids": ["reports_hub_readme", "optimize0330_readme", "optimize0330_checklist", "arch_optimize_implementation"],
     },
     {
+        "id": "btst_control_tower",
+        "title": "BTST 控制塔",
+        "description": "先看相对上一轮的 delta，再看当前 lane 状态，最后确认历史回放样本。",
+        "entry_ids": [
+            "btst_open_ready_delta_latest",
+            "btst_nightly_control_tower_latest",
+            "btst_governance_synthesis_latest",
+            "latest_btst_priority_board",
+            "btst_governance_validation_latest",
+            "btst_replay_cohort_latest",
+            "p5_rollout_governance_board",
+            "p9_candidate_entry_rollout_governance",
+        ],
+    },
+    {
         "id": "tomorrow_open",
         "title": "明天开盘",
         "description": "开盘前的最短阅读路径，优先解决明天到底交易什么。",
-        "entry_ids": ["latest_btst_priority_board", "latest_btst_opening_watch_card", "latest_btst_execution_card_markdown", "latest_btst_brief_markdown"],
+        "entry_ids": ["btst_open_ready_delta_latest", "latest_btst_priority_board", "latest_btst_opening_watch_card", "latest_btst_execution_card_markdown", "latest_btst_brief_markdown"],
     },
     {
         "id": "nightly_review",
         "title": "晚间复盘",
         "description": "晚间确认本次运行发生了什么、明日结论为何如此。",
-        "entry_ids": ["latest_btst_session_summary", "latest_btst_brief_json", "latest_btst_execution_card_json", "latest_btst_selection_snapshot"],
+        "entry_ids": ["btst_open_ready_delta_latest", "btst_nightly_control_tower_latest", "latest_btst_session_summary", "latest_btst_brief_json", "latest_btst_execution_card_json", "latest_btst_selection_snapshot"],
     },
     {
         "id": "btst_governance",
         "title": "BTST 治理主线",
         "description": "解释当前 lane 为什么被保留、冻结或只允许 shadow。",
         "entry_ids": [
+            "btst_governance_synthesis_latest",
+            "btst_governance_validation_latest",
             "p2_top3_execution_summary",
             "p3_post_execution_action_board",
             "p5_rollout_governance_board",
@@ -329,7 +435,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "id": "replay_history",
         "title": "Replay 与历史专题",
         "description": "需要从工作台或历史专题入口回查时，固定从这里进入。",
-        "entry_ids": ["replay_artifacts_stock_selection_manual", "historical_edge_artifact_index"],
+        "entry_ids": ["btst_replay_cohort_latest", "replay_artifacts_stock_selection_manual", "historical_edge_artifact_index"],
     },
 )
 
@@ -691,14 +797,152 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
     }
 
 
+def refresh_btst_governance_synthesis_artifacts(
+    reports_root: str | Path,
+    *,
+    latest_btst_run: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    required_inputs = {
+        "action_board": resolved_reports_root / ACTION_BOARD_JSON,
+        "rollout_governance": resolved_reports_root / ROLLOUT_GOVERNANCE_JSON,
+        "primary_window_gap": resolved_reports_root / PRIMARY_WINDOW_GAP_JSON,
+        "recurring_shadow_runbook": resolved_reports_root / RECURRING_SHADOW_RUNBOOK_JSON,
+        "primary_window_validation_runbook": resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON,
+        "structural_shadow_runbook": resolved_reports_root / STRUCTURAL_SHADOW_RUNBOOK_JSON,
+        "candidate_entry_governance": resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON,
+    }
+    missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
+    if missing_inputs:
+        return {
+            "status": "skipped_missing_inputs",
+            "missing_inputs": missing_inputs,
+        }
+
+    output_json_path = resolved_reports_root / BTST_GOVERNANCE_SYNTHESIS_JSON
+    output_md_path = resolved_reports_root / BTST_GOVERNANCE_SYNTHESIS_MD
+    try:
+        analysis = analyze_btst_governance_synthesis(
+            resolved_reports_root,
+            action_board_path=required_inputs["action_board"],
+            rollout_governance_path=required_inputs["rollout_governance"],
+            primary_window_gap_path=required_inputs["primary_window_gap"],
+            recurring_shadow_runbook_path=required_inputs["recurring_shadow_runbook"],
+            primary_window_validation_runbook_path=required_inputs["primary_window_validation_runbook"],
+            structural_shadow_runbook_path=required_inputs["structural_shadow_runbook"],
+            candidate_entry_governance_path=required_inputs["candidate_entry_governance"],
+            latest_btst_report_dir=latest_btst_run.get("report_dir") if latest_btst_run else None,
+        )
+        output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_md_path.write_text(render_btst_governance_synthesis_markdown(analysis), encoding="utf-8")
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "missing_inputs": [],
+            "error": str(exc),
+        }
+
+    latest_followup = dict(analysis.get("latest_btst_followup") or {})
+    return {
+        "status": "refreshed",
+        "missing_inputs": [],
+        "ready_lane_count": analysis.get("ready_lane_count"),
+        "waiting_lane_count": analysis.get("waiting_lane_count"),
+        "latest_trade_date": latest_followup.get("trade_date"),
+        "latest_selected_count": latest_followup.get("selected_count"),
+        "output_json": output_json_path.as_posix(),
+    }
+
+
+def refresh_btst_governance_validation_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    required_inputs = {
+        "action_board": resolved_reports_root / ACTION_BOARD_JSON,
+        "rollout_governance": resolved_reports_root / ROLLOUT_GOVERNANCE_JSON,
+        "primary_window_gap": resolved_reports_root / PRIMARY_WINDOW_GAP_JSON,
+        "recurring_shadow_runbook": resolved_reports_root / RECURRING_SHADOW_RUNBOOK_JSON,
+        "primary_window_validation_runbook": resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON,
+        "structural_shadow_runbook": resolved_reports_root / STRUCTURAL_SHADOW_RUNBOOK_JSON,
+        "candidate_entry_governance": resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON,
+    }
+    missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
+    if missing_inputs:
+        return {
+            "status": "skipped_missing_inputs",
+            "missing_inputs": missing_inputs,
+        }
+
+    output_json_path = resolved_reports_root / BTST_GOVERNANCE_VALIDATION_JSON
+    output_md_path = resolved_reports_root / BTST_GOVERNANCE_VALIDATION_MD
+    try:
+        analysis = validate_btst_governance_consistency(
+            action_board_path=required_inputs["action_board"],
+            rollout_governance_path=required_inputs["rollout_governance"],
+            primary_window_gap_path=required_inputs["primary_window_gap"],
+            recurring_shadow_runbook_path=required_inputs["recurring_shadow_runbook"],
+            primary_window_validation_runbook_path=required_inputs["primary_window_validation_runbook"],
+            structural_shadow_runbook_path=required_inputs["structural_shadow_runbook"],
+            candidate_entry_governance_path=required_inputs["candidate_entry_governance"],
+        )
+        output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_md_path.write_text(render_btst_governance_validation_markdown(analysis), encoding="utf-8")
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "missing_inputs": [],
+            "error": str(exc),
+        }
+
+    return {
+        "status": "refreshed",
+        "missing_inputs": [],
+        "overall_verdict": analysis.get("overall_verdict"),
+        "pass_count": analysis.get("pass_count"),
+        "warn_count": analysis.get("warn_count"),
+        "fail_count": analysis.get("fail_count"),
+        "output_json": output_json_path.as_posix(),
+    }
+
+
+def refresh_btst_replay_cohort_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    output_json_path = resolved_reports_root / BTST_REPLAY_COHORT_JSON
+    output_md_path = resolved_reports_root / BTST_REPLAY_COHORT_MD
+    try:
+        analysis = analyze_btst_replay_cohort(resolved_reports_root)
+        output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_md_path.write_text(render_btst_replay_cohort_markdown(analysis), encoding="utf-8")
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "error": str(exc),
+            "report_count": 0,
+        }
+
+    selection_target_counts = dict(analysis.get("selection_target_counts") or {})
+    latest_short_trade = dict(analysis.get("latest_short_trade_row") or {})
+    return {
+        "status": "refreshed",
+        "report_count": analysis.get("report_count"),
+        "short_trade_only_report_count": selection_target_counts.get("short_trade_only"),
+        "dual_target_report_count": selection_target_counts.get("dual_target"),
+        "latest_short_trade_report": latest_short_trade.get("report_dir_name"),
+        "output_json": output_json_path.as_posix(),
+    }
+
+
 def generate_reports_manifest(
     reports_root: str | Path,
     *,
+    latest_btst_run: dict[str, Any] | None = None,
     candidate_entry_shadow_refresh: dict[str, Any] | None = None,
+    btst_governance_synthesis_refresh: dict[str, Any] | None = None,
+    btst_governance_validation_refresh: dict[str, Any] | None = None,
+    btst_replay_cohort_refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     repo_root = _resolve_repo_root(resolved_reports_root)
-    latest_btst_run = _select_latest_btst_candidate(resolved_reports_root, repo_root)
+    latest_btst_run = latest_btst_run or _select_latest_btst_candidate(resolved_reports_root, repo_root)
 
     entries = _build_static_entries(repo_root) + _build_dynamic_latest_btst_entries(latest_btst_run, repo_root)
     entries.sort(key=lambda entry: (entry["usage"], entry["priority"], entry["view_order"], entry["id"]))
@@ -730,6 +974,9 @@ def generate_reports_manifest(
         "entry_count": len(entries),
         "entry_count_by_usage": entry_count_by_usage,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
+        "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
+        "btst_governance_validation_refresh": btst_governance_validation_refresh,
+        "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
         "latest_btst_run": None,
         "reading_paths": reading_paths,
         "entries": entries,
@@ -766,6 +1013,20 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         lines.append(f"- candidate_entry_shadow_refresh_window_reports: {candidate_entry_shadow_refresh.get('window_report_count')}")
         lines.append(f"- candidate_entry_shadow_refresh_filtered_reports: {candidate_entry_shadow_refresh.get('filtered_report_count')}")
         lines.append(f"- candidate_entry_shadow_refresh_rollout_readiness: {candidate_entry_shadow_refresh.get('rollout_readiness')}")
+    btst_governance_synthesis_refresh = manifest.get("btst_governance_synthesis_refresh") or {}
+    if btst_governance_synthesis_refresh:
+        lines.append(f"- btst_governance_synthesis_status: {btst_governance_synthesis_refresh.get('status')}")
+        lines.append(f"- btst_governance_synthesis_waiting_lane_count: {btst_governance_synthesis_refresh.get('waiting_lane_count')}")
+        lines.append(f"- btst_governance_synthesis_ready_lane_count: {btst_governance_synthesis_refresh.get('ready_lane_count')}")
+    btst_governance_validation_refresh = manifest.get("btst_governance_validation_refresh") or {}
+    if btst_governance_validation_refresh:
+        lines.append(f"- btst_governance_validation_status: {btst_governance_validation_refresh.get('status')}")
+        lines.append(f"- btst_governance_validation_overall_verdict: {btst_governance_validation_refresh.get('overall_verdict')}")
+    btst_replay_cohort_refresh = manifest.get("btst_replay_cohort_refresh") or {}
+    if btst_replay_cohort_refresh:
+        lines.append(f"- btst_replay_cohort_status: {btst_replay_cohort_refresh.get('status')}")
+        lines.append(f"- btst_replay_cohort_report_count: {btst_replay_cohort_refresh.get('report_count')}")
+        lines.append(f"- btst_replay_cohort_short_trade_only_report_count: {btst_replay_cohort_refresh.get('short_trade_only_report_count')}")
     latest_btst_run = manifest.get("latest_btst_run") or {}
     if latest_btst_run:
         lines.append(f"- latest_btst_report_dir: {latest_btst_run['report_dir']}")
@@ -798,16 +1059,31 @@ def generate_reports_manifest_artifacts(
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     resolved_output_json = Path(output_json).expanduser().resolve() if output_json else (resolved_reports_root / DEFAULT_OUTPUT_JSON.name).resolve()
     resolved_output_md = Path(output_md).expanduser().resolve() if output_md else (resolved_reports_root / DEFAULT_OUTPUT_MD.name).resolve()
+    repo_root = _resolve_repo_root(resolved_reports_root)
+    latest_btst_run = _select_latest_btst_candidate(resolved_reports_root, repo_root)
     candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
+    btst_governance_synthesis_refresh = refresh_btst_governance_synthesis_artifacts(
+        resolved_reports_root,
+        latest_btst_run=latest_btst_run,
+    )
+    btst_governance_validation_refresh = refresh_btst_governance_validation_artifacts(resolved_reports_root)
+    btst_replay_cohort_refresh = refresh_btst_replay_cohort_artifacts(resolved_reports_root)
     manifest = generate_reports_manifest(
         resolved_reports_root,
+        latest_btst_run=latest_btst_run,
         candidate_entry_shadow_refresh=candidate_entry_shadow_refresh,
+        btst_governance_synthesis_refresh=btst_governance_synthesis_refresh,
+        btst_governance_validation_refresh=btst_governance_validation_refresh,
+        btst_replay_cohort_refresh=btst_replay_cohort_refresh,
     )
     resolved_output_json.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     resolved_output_md.write_text(render_reports_manifest_markdown(manifest, output_parent=resolved_output_md.parent), encoding="utf-8")
     return {
         "manifest": manifest,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
+        "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
+        "btst_governance_validation_refresh": btst_governance_validation_refresh,
+        "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
         "json_path": resolved_output_json.as_posix(),
         "markdown_path": resolved_output_md.as_posix(),
     }

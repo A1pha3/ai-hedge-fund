@@ -1,0 +1,249 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+
+REPORTS_DIR = Path("data/reports")
+DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260330.json"
+DEFAULT_ROLLOUT_GOVERNANCE_PATH = REPORTS_DIR / "p5_btst_rollout_governance_board_20260330.json"
+DEFAULT_PRIMARY_WINDOW_GAP_PATH = REPORTS_DIR / "p6_primary_window_gap_001309_20260330.json"
+DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbook_20260330.json"
+DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH = REPORTS_DIR / "p7_primary_window_validation_runbook_001309_20260330.json"
+DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p8_structural_shadow_runbook_300724_20260330.json"
+DEFAULT_CANDIDATE_ENTRY_GOVERNANCE_PATH = REPORTS_DIR / "p9_candidate_entry_rollout_governance_20260330.json"
+DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_governance_validation_latest.json"
+DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_governance_validation_latest.md"
+
+
+def _load_json(path: str | Path) -> dict[str, Any]:
+    resolved = Path(path).expanduser().resolve()
+    return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _find_row(rows: list[dict[str, Any]], ticker: str) -> dict[str, Any]:
+    normalized_ticker = str(ticker or "").strip()
+    return next((dict(row or {}) for row in rows if str((row or {}).get("ticker") or "") == normalized_ticker), {})
+
+
+def _build_check(check_id: str, status: str, summary: str, *, details: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "check_id": check_id,
+        "status": status,
+        "summary": summary,
+        "details": details or {},
+    }
+
+
+def _missing(*values: Any) -> bool:
+    return all(value in (None, "", [], {}) for value in values)
+
+
+def validate_btst_governance_consistency(
+    *,
+    action_board_path: str | Path,
+    rollout_governance_path: str | Path,
+    primary_window_gap_path: str | Path,
+    recurring_shadow_runbook_path: str | Path,
+    primary_window_validation_runbook_path: str | Path,
+    structural_shadow_runbook_path: str | Path,
+    candidate_entry_governance_path: str | Path,
+) -> dict[str, Any]:
+    action_board = _load_json(action_board_path)
+    rollout_governance = _load_json(rollout_governance_path)
+    primary_window_gap = _load_json(primary_window_gap_path)
+    recurring_shadow_runbook = _load_json(recurring_shadow_runbook_path)
+    primary_window_validation_runbook = _load_json(primary_window_validation_runbook_path)
+    structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
+    candidate_entry_governance = _load_json(candidate_entry_governance_path)
+
+    board_rows = [dict(row or {}) for row in list(action_board.get("board_rows") or [])]
+    governance_rows = [dict(row or {}) for row in list(rollout_governance.get("governance_rows") or [])]
+
+    primary_board = _find_row(board_rows, "001309")
+    primary_governance = _find_row(governance_rows, "001309")
+    recurring_close_governance = _find_row(governance_rows, "002015")
+    recurring_intraday_governance = _find_row(governance_rows, "600821")
+    structural_board = _find_row(board_rows, "300724")
+    structural_governance = _find_row(governance_rows, "300724")
+    recurring_close = dict(recurring_shadow_runbook.get("close_candidate") or {})
+    recurring_intraday = dict(recurring_shadow_runbook.get("intraday_control") or {})
+
+    checks: list[dict[str, Any]] = []
+
+    if _missing(primary_board, primary_governance, primary_window_gap, primary_window_validation_runbook):
+        checks.append(_build_check("primary_lane_alignment", "warn", "primary lane 缺少足够输入，无法完成一致性校验。"))
+    else:
+        missing_window_count = primary_window_gap.get("missing_window_count")
+        validation_verdict = primary_window_validation_runbook.get("validation_verdict")
+        blocker = primary_governance.get("blocker")
+        is_aligned = blocker == "cross_window_stability_missing" and validation_verdict == "await_new_independent_window_data" and int(missing_window_count or 0) > 0
+        checks.append(
+            _build_check(
+                "primary_lane_alignment",
+                "pass" if is_aligned else "fail",
+                "001309 primary lane 的 blocker、window gap 与 validation verdict 一致。" if is_aligned else "001309 primary lane 在 p5 / p6 / p7 之间存在不一致。",
+                details={
+                    "blocker": blocker,
+                    "missing_window_count": missing_window_count,
+                    "validation_verdict": validation_verdict,
+                    "action_tier": primary_board.get("action_tier"),
+                },
+            )
+        )
+
+    if _missing(recurring_close_governance, recurring_intraday_governance, recurring_close, recurring_intraday):
+        checks.append(_build_check("recurring_shadow_alignment", "warn", "recurring shadow lane 缺少足够输入，无法完成一致性校验。"))
+    else:
+        close_aligned = recurring_close_governance.get("status") == recurring_close.get("lane_status") and recurring_close.get("validation_verdict") == "await_new_independent_window_data"
+        intraday_aligned = recurring_intraday_governance.get("status") == recurring_intraday.get("lane_status") and recurring_intraday.get("validation_verdict") == "await_new_independent_window_data"
+        global_verdict = recurring_shadow_runbook.get("global_validation_verdict")
+        is_aligned = close_aligned and intraday_aligned and global_verdict == "await_new_recurring_window_evidence"
+        checks.append(
+            _build_check(
+                "recurring_shadow_alignment",
+                "pass" if is_aligned else "fail",
+                "recurring shadow 的 close / intraday 双车道与全局 verdict 一致。" if is_aligned else "recurring shadow lane 在 p5 / p6 之间存在不一致。",
+                details={
+                    "close_status": recurring_close_governance.get("status"),
+                    "close_lane_status": recurring_close.get("lane_status"),
+                    "intraday_status": recurring_intraday_governance.get("status"),
+                    "intraday_lane_status": recurring_intraday.get("lane_status"),
+                    "global_validation_verdict": global_verdict,
+                },
+            )
+        )
+
+    if _missing(structural_board, structural_governance, structural_shadow_runbook):
+        checks.append(_build_check("structural_shadow_alignment", "warn", "structural shadow lane 缺少足够输入，无法完成一致性校验。"))
+    else:
+        structural_lane_status = structural_shadow_runbook.get("lane_status")
+        structural_action_tier = structural_board.get("action_tier")
+        governance_status = structural_governance.get("status")
+        is_aligned = structural_lane_status == "structural_shadow_hold_only" and governance_status == structural_lane_status and structural_action_tier == "structural_shadow_hold"
+        checks.append(
+            _build_check(
+                "structural_shadow_alignment",
+                "pass" if is_aligned else "fail",
+                "300724 structural shadow hold 在 p3 / p5 / p8 之间一致。" if is_aligned else "300724 structural shadow hold 在 p3 / p5 / p8 之间存在不一致。",
+                details={
+                    "action_tier": structural_action_tier,
+                    "governance_status": governance_status,
+                    "lane_status": structural_lane_status,
+                },
+            )
+        )
+
+    candidate_lane_status = candidate_entry_governance.get("lane_status")
+    candidate_default_status = candidate_entry_governance.get("default_upgrade_status")
+    if _missing(candidate_lane_status, candidate_default_status):
+        checks.append(_build_check("candidate_entry_shadow_alignment", "warn", "candidate-entry governance 缺少足够输入，无法完成一致性校验。"))
+    else:
+        is_aligned = candidate_lane_status == "shadow_only_until_second_window" and candidate_default_status == "blocked_by_single_window_candidate_entry_signal"
+        checks.append(
+            _build_check(
+                "candidate_entry_shadow_alignment",
+                "pass" if is_aligned else "warn",
+                "candidate-entry lane 仍停留在 shadow-only until second window。" if is_aligned else "candidate-entry lane 与 default upgrade 状态需要重新人工复核。",
+                details={
+                    "lane_status": candidate_lane_status,
+                    "default_upgrade_status": candidate_default_status,
+                    "recommended_structural_variant": candidate_entry_governance.get("recommended_structural_variant"),
+                },
+            )
+        )
+
+    recommendation_text = str(rollout_governance.get("recommendation") or "")
+    action_recommendation = str(action_board.get("recommendation") or "")
+    if _missing(recommendation_text, action_recommendation):
+        checks.append(_build_check("topline_recommendation_alignment", "warn", "缺少 recommendation 文本，无法校验当前主线叙事是否一致。"))
+    else:
+        shared_signal = "001309" in recommendation_text and "300383" in recommendation_text and "300724" in recommendation_text and "001309" in action_recommendation and "300383" in action_recommendation and "300724" in action_recommendation
+        checks.append(
+            _build_check(
+                "topline_recommendation_alignment",
+                "pass" if shared_signal else "warn",
+                "p3 与 p5 的 recommendation 都指向 001309 主推进、300383 shadow、300724 structural hold。" if shared_signal else "p3 与 p5 的 recommendation 需要人工复核是否仍然指向同一条主线。",
+                details={
+                    "action_board_recommendation": action_recommendation,
+                    "rollout_recommendation": recommendation_text,
+                },
+            )
+        )
+
+    fail_count = sum(1 for check in checks if check["status"] == "fail")
+    warn_count = sum(1 for check in checks if check["status"] == "warn")
+    pass_count = sum(1 for check in checks if check["status"] == "pass")
+    overall_verdict = "fail" if fail_count > 0 else "pass_with_warnings" if warn_count > 0 else "pass"
+
+    return {
+        "overall_verdict": overall_verdict,
+        "pass_count": pass_count,
+        "warn_count": warn_count,
+        "fail_count": fail_count,
+        "checks": checks,
+        "source_reports": {
+            "action_board": str(Path(action_board_path).expanduser().resolve()),
+            "rollout_governance": str(Path(rollout_governance_path).expanduser().resolve()),
+            "primary_window_gap": str(Path(primary_window_gap_path).expanduser().resolve()),
+            "recurring_shadow_runbook": str(Path(recurring_shadow_runbook_path).expanduser().resolve()),
+            "primary_window_validation_runbook": str(Path(primary_window_validation_runbook_path).expanduser().resolve()),
+            "structural_shadow_runbook": str(Path(structural_shadow_runbook_path).expanduser().resolve()),
+            "candidate_entry_governance": str(Path(candidate_entry_governance_path).expanduser().resolve()),
+        },
+    }
+
+
+def render_btst_governance_validation_markdown(analysis: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# BTST Governance Validation")
+    lines.append("")
+    lines.append("## Overview")
+    lines.append(f"- overall_verdict: {analysis.get('overall_verdict')}")
+    lines.append(f"- pass_count: {analysis.get('pass_count')}")
+    lines.append(f"- warn_count: {analysis.get('warn_count')}")
+    lines.append(f"- fail_count: {analysis.get('fail_count')}")
+    lines.append("")
+    lines.append("## Checks")
+    for check in list(analysis.get("checks") or []):
+        lines.append(f"- {check.get('check_id')}: {check.get('status')} | {check.get('summary')}")
+        details = dict(check.get("details") or {})
+        for key, value in details.items():
+            lines.append(f"  {key}: {value}")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Validate whether current BTST governance artifacts are logically aligned across p3/p5/p6/p7/p8/p9.")
+    parser.add_argument("--action-board", default=str(DEFAULT_ACTION_BOARD_PATH))
+    parser.add_argument("--rollout-governance", default=str(DEFAULT_ROLLOUT_GOVERNANCE_PATH))
+    parser.add_argument("--primary-window-gap", default=str(DEFAULT_PRIMARY_WINDOW_GAP_PATH))
+    parser.add_argument("--recurring-shadow-runbook", default=str(DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH))
+    parser.add_argument("--primary-window-validation-runbook", default=str(DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH))
+    parser.add_argument("--structural-shadow-runbook", default=str(DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH))
+    parser.add_argument("--candidate-entry-governance", default=str(DEFAULT_CANDIDATE_ENTRY_GOVERNANCE_PATH))
+    parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
+    parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
+    args = parser.parse_args()
+
+    analysis = validate_btst_governance_consistency(
+        action_board_path=args.action_board,
+        rollout_governance_path=args.rollout_governance,
+        primary_window_gap_path=args.primary_window_gap,
+        recurring_shadow_runbook_path=args.recurring_shadow_runbook,
+        primary_window_validation_runbook_path=args.primary_window_validation_runbook,
+        structural_shadow_runbook_path=args.structural_shadow_runbook,
+        candidate_entry_governance_path=args.candidate_entry_governance,
+    )
+    output_json = Path(args.output_json).expanduser().resolve()
+    output_md = Path(args.output_md).expanduser().resolve()
+    output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output_md.write_text(render_btst_governance_validation_markdown(analysis), encoding="utf-8")
+    print(json.dumps(analysis, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
