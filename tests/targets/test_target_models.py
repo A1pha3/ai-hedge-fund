@@ -49,6 +49,63 @@ def _make_prepared_breakout_entry() -> dict:
     }
 
 
+def _make_profitability_hard_cliff_signal() -> StrategySignal:
+    return _make_signal(
+        -1,
+        68.0,
+        sub_factors={
+            "profitability": {
+                "direction": -1,
+                "confidence": 72.0,
+                "completeness": 1.0,
+                "metrics": {"positive_count": 0},
+            },
+            "financial_health": {"direction": 0, "confidence": 34.0, "completeness": 1.0},
+            "growth": {"direction": 1, "confidence": 48.0, "completeness": 1.0},
+        },
+    )
+
+
+def _make_profitability_relief_entry(*, sector_resonance_ready: bool = True, include_profitability_hard_cliff: bool = True) -> dict:
+    agent_contributions = {"analyst": 0.48, "investor": 0.28} if sector_resonance_ready else {"analyst": 0.08, "investor": 0.04}
+    strategy_signals = {
+        "trend": _make_signal(
+            1,
+            55.0,
+            sub_factors={
+                "momentum": {"direction": 1, "confidence": 55.0, "completeness": 1.0},
+                "adx_strength": {"direction": 1, "confidence": 52.0, "completeness": 1.0},
+                "ema_alignment": {"direction": 1, "confidence": 52.0, "completeness": 1.0},
+                "volatility": {"direction": 1, "confidence": 45.0, "completeness": 1.0},
+                "long_trend_alignment": {"direction": 1, "confidence": 8.0, "completeness": 1.0},
+            },
+        ).model_dump(mode="json"),
+        "event_sentiment": _make_signal(
+            1,
+            52.0,
+            sub_factors={
+                "event_freshness": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                "news_sentiment": {"direction": 1, "confidence": 52.0, "completeness": 1.0},
+            },
+        ).model_dump(mode="json"),
+        "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+    }
+    if include_profitability_hard_cliff:
+        strategy_signals["fundamental"] = _make_profitability_hard_cliff_signal().model_dump(mode="json")
+    return {
+        "ticker": "300987",
+        "score_b": 0.30,
+        "score_c": 0.05,
+        "score_final": 0.18,
+        "quality_score": 0.60,
+        "decision": "avoid",
+        "reason": "decision_avoid",
+        "reasons": ["decision_avoid"],
+        "strategy_signals": strategy_signals,
+        "agent_contribution_summary": {"cohort_contributions": agent_contributions},
+    }
+
+
 def test_build_selection_targets_wraps_research_semantics_for_watchlist() -> None:
     watchlist = [
         LayerCResult(
@@ -483,3 +540,54 @@ def test_short_trade_target_can_remove_conflict_hard_block_without_dropping_over
     assert result.metrics_payload["overhead_supply_penalty"] > 0.0
     assert result.metrics_payload["thresholds"]["hard_block_bearish_conflicts"] == []
     assert result.metrics_payload["thresholds"]["overhead_conflict_penalty_conflicts"] == ["b_positive_c_strong_bearish"]
+
+
+def test_profitability_relief_profile_reduces_avoid_penalty_for_strong_btst_context() -> None:
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_profitability_relief_entry(),
+        profile_name="default",
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_profitability_relief_entry(),
+        profile_name="staged_breakout_profitability_relief",
+    )
+
+    assert baseline_result.decision == "rejected"
+    assert relief_result.decision == "near_miss"
+    assert baseline_result.metrics_payload["profitability_relief_applied"] is False
+    assert relief_result.metrics_payload["profitability_relief_applied"] is True
+    assert relief_result.metrics_payload["profitability_hard_cliff"] is True
+    assert relief_result.metrics_payload["layer_c_avoid_penalty"] == 0.04
+    assert relief_result.metrics_payload["base_layer_c_avoid_penalty"] == 0.12
+    assert relief_result.metrics_payload["thresholds"]["profile_name"] == "staged_breakout_profitability_relief"
+    assert relief_result.metrics_payload["thresholds"]["profitability_relief_enabled"] is True
+    assert relief_result.explainability_payload["profitability_relief"]["applied"] is True
+
+
+def test_profitability_relief_requires_sector_resonance_confirmation() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_profitability_relief_entry(sector_resonance_ready=False),
+        profile_name="staged_breakout_profitability_relief",
+    )
+
+    assert result.decision == "rejected"
+    assert result.metrics_payload["profitability_relief_applied"] is False
+    assert result.metrics_payload["layer_c_avoid_penalty"] == 0.12
+    assert result.metrics_payload["profitability_relief_gate_hits"]["sector_resonance"] is False
+    assert "profitability_relief_not_triggered" in result.negative_tags
+
+
+def test_profitability_relief_does_not_trigger_without_profitability_hard_cliff() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_profitability_relief_entry(include_profitability_hard_cliff=False),
+        profile_name="staged_breakout_profitability_relief",
+    )
+
+    assert result.metrics_payload["profitability_hard_cliff"] is False
+    assert result.metrics_payload["profitability_relief_applied"] is False
+    assert result.metrics_payload["layer_c_avoid_penalty"] == 0.12
+    assert result.explainability_payload["profitability_relief"]["hard_cliff"] is False

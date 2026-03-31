@@ -50,6 +50,64 @@ def _subfactor_positive_strength(signal: StrategySignal | None, name: str) -> fl
     return clamp_unit_interval(max(0.0, _subfactor_signed_strength(signal, name)))
 
 
+def _profitability_snapshot(signal: StrategySignal | None) -> dict[str, Any]:
+    if signal is None or not isinstance(signal.sub_factors, dict):
+        return {}
+    snapshot = signal.sub_factors.get("profitability", {})
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _resolve_profitability_relief(
+    *,
+    input_data: TargetEvaluationInput,
+    fundamental_signal: StrategySignal | None,
+    breakout_freshness: float,
+    catalyst_freshness: float,
+    sector_resonance: float,
+    profile: Any,
+) -> dict[str, Any]:
+    profitability = _profitability_snapshot(fundamental_signal)
+    profitability_metrics = profitability.get("metrics", {}) if isinstance(profitability.get("metrics", {}), dict) else {}
+    positive_count_raw = profitability_metrics.get("positive_count")
+    try:
+        profitability_positive_count = int(positive_count_raw) if positive_count_raw is not None else None
+    except (TypeError, ValueError):
+        profitability_positive_count = None
+    profitability_confidence = float(profitability.get("confidence", 0.0) or 0.0)
+    hard_cliff = profitability.get("direction") == -1 and profitability_positive_count == 0
+
+    base_layer_c_avoid_penalty = float(profile.layer_c_avoid_penalty) if input_data.layer_c_decision == "avoid" else 0.0
+    relief_gate_hits = {
+        "breakout_freshness": breakout_freshness >= float(profile.profitability_relief_breakout_freshness_min),
+        "catalyst_freshness": catalyst_freshness >= float(profile.profitability_relief_catalyst_freshness_min),
+        "sector_resonance": sector_resonance >= float(profile.profitability_relief_sector_resonance_min),
+    }
+    relief_eligible = (
+        bool(profile.profitability_relief_enabled)
+        and input_data.layer_c_decision == "avoid"
+        and hard_cliff
+        and all(relief_gate_hits.values())
+    )
+    effective_avoid_penalty = base_layer_c_avoid_penalty
+    if relief_eligible and base_layer_c_avoid_penalty > 0:
+        effective_avoid_penalty = min(base_layer_c_avoid_penalty, float(profile.profitability_relief_avoid_penalty))
+
+    return {
+        "hard_cliff": hard_cliff,
+        "profitability_direction": int(profitability.get("direction", 0) or 0),
+        "profitability_positive_count": profitability_positive_count,
+        "profitability_confidence": profitability_confidence,
+        "relief_enabled": bool(profile.profitability_relief_enabled),
+        "relief_gate_hits": relief_gate_hits,
+        "relief_eligible": relief_eligible,
+        "relief_applied": relief_eligible and effective_avoid_penalty < base_layer_c_avoid_penalty,
+        "base_layer_c_avoid_penalty": base_layer_c_avoid_penalty,
+        "effective_avoid_penalty": effective_avoid_penalty,
+        "soft_penalty": float(profile.profitability_relief_avoid_penalty),
+        "metrics": profitability_metrics,
+    }
+
+
 def _cohort_alignment(agent_contribution_summary: dict[str, Any], cohort_name: str) -> float:
     cohort_contributions = dict(agent_contribution_summary.get("cohort_contributions", {}) or {})
     return clamp_unit_interval(max(0.0, float(cohort_contributions.get(cohort_name, 0.0) or 0.0)))
@@ -149,6 +207,7 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     positive_score_weights = _resolve_positive_score_weights(profile)
     trend_signal = _load_signal(input_data.strategy_signals.get("trend"))
     event_signal = _load_signal(input_data.strategy_signals.get("event_sentiment"))
+    fundamental_signal = _load_signal(input_data.strategy_signals.get("fundamental"))
     mean_reversion_signal = _load_signal(input_data.strategy_signals.get("mean_reversion"))
 
     momentum_strength = _subfactor_positive_strength(trend_signal, "momentum")
@@ -176,7 +235,15 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     sector_resonance = clamp_unit_interval((0.45 * analyst_alignment) + (0.20 * investor_alignment) + (0.20 * score_c_strength) + (0.15 * event_signal_strength))
     catalyst_freshness = clamp_unit_interval((0.65 * event_freshness_strength) + (0.35 * news_sentiment_strength))
     layer_c_alignment = clamp_unit_interval((0.55 * score_c_strength) + (0.25 * analyst_alignment) + (0.20 * clamp_unit_interval(1.0 if input_data.layer_c_decision != "avoid" else 0.0)))
-    layer_c_avoid_penalty = profile.layer_c_avoid_penalty if input_data.layer_c_decision == "avoid" else 0.0
+    profitability_relief = _resolve_profitability_relief(
+        input_data=input_data,
+        fundamental_signal=fundamental_signal,
+        breakout_freshness=breakout_freshness,
+        catalyst_freshness=catalyst_freshness,
+        sector_resonance=sector_resonance,
+        profile=profile,
+    )
+    layer_c_avoid_penalty = float(profitability_relief["effective_avoid_penalty"])
 
     stale_trend_repair_penalty = clamp_unit_interval((0.45 * mean_reversion_strength) + (0.35 * long_trend_strength) + (0.20 * max(0.0, long_trend_strength - breakout_freshness)))
     overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.overhead_conflict_penalty_conflicts else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
@@ -231,6 +298,12 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         negative_tags.append("event_signal_incomplete")
     if input_data.layer_c_decision == "avoid":
         negative_tags.append("layer_c_avoid_signal")
+    if profitability_relief["hard_cliff"]:
+        negative_tags.append("profitability_hard_cliff")
+    if profitability_relief["relief_applied"]:
+        positive_tags.append("profitability_relief_applied")
+    elif profitability_relief["relief_enabled"] and profitability_relief["hard_cliff"] and input_data.layer_c_decision == "avoid":
+        negative_tags.append("profitability_relief_not_triggered")
     if input_data.bc_conflict in profile.hard_block_bearish_conflicts:
         blockers.append("layer_c_bearish_conflict")
         gate_status["structural"] = "fail"
@@ -267,6 +340,15 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "sector_resonance": sector_resonance,
         "catalyst_freshness": catalyst_freshness,
         "layer_c_alignment": layer_c_alignment,
+        "profitability_hard_cliff": profitability_relief["hard_cliff"],
+        "profitability_positive_count": profitability_relief["profitability_positive_count"],
+        "profitability_confidence": profitability_relief["profitability_confidence"],
+        "profitability_relief_enabled": profitability_relief["relief_enabled"],
+        "profitability_relief_gate_hits": profitability_relief["relief_gate_hits"],
+        "profitability_relief_eligible": profitability_relief["relief_eligible"],
+        "profitability_relief_applied": profitability_relief["relief_applied"],
+        "profitability_relief_soft_penalty": profitability_relief["soft_penalty"],
+        "base_layer_c_avoid_penalty": profitability_relief["base_layer_c_avoid_penalty"],
         "layer_c_avoid_penalty": layer_c_avoid_penalty,
         "stale_trend_repair_penalty": stale_trend_repair_penalty,
         "overhead_supply_penalty": overhead_supply_penalty,
@@ -323,7 +405,16 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     trend_acceleration = float(snapshot["trend_acceleration"])
     catalyst_freshness = float(snapshot["catalyst_freshness"])
     score_target = float(snapshot["score_target"])
+    base_layer_c_avoid_penalty = float(snapshot["base_layer_c_avoid_penalty"])
     layer_c_avoid_penalty = float(snapshot["layer_c_avoid_penalty"])
+    profitability_hard_cliff = bool(snapshot["profitability_hard_cliff"])
+    profitability_positive_count = snapshot["profitability_positive_count"]
+    profitability_confidence = float(snapshot["profitability_confidence"])
+    profitability_relief_enabled = bool(snapshot["profitability_relief_enabled"])
+    profitability_relief_gate_hits = dict(snapshot["profitability_relief_gate_hits"])
+    profitability_relief_eligible = bool(snapshot["profitability_relief_eligible"])
+    profitability_relief_applied = bool(snapshot["profitability_relief_applied"])
+    profitability_relief_soft_penalty = float(snapshot["profitability_relief_soft_penalty"])
     stale_trend_repair_penalty = float(snapshot["stale_trend_repair_penalty"])
     overhead_supply_penalty = float(snapshot["overhead_supply_penalty"])
     extension_without_room_penalty = float(snapshot["extension_without_room_penalty"])
@@ -388,6 +479,8 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 _summarize_positive_factor("breakout_freshness", breakout_freshness),
                 _summarize_positive_factor("trend_acceleration", trend_acceleration),
                 _summarize_positive_factor("catalyst_freshness", catalyst_freshness),
+                "profitability_relief_applied" if profitability_relief_applied else None,
+                "profitability_hard_cliff" if profitability_hard_cliff and not profitability_relief_applied else None,
                 breakout_stage,
                 _summarize_penalty("layer_c_avoid_penalty", layer_c_avoid_penalty),
                 _summarize_penalty("stale_trend_repair_penalty", stale_trend_repair_penalty),
@@ -462,6 +555,15 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "breakout_stage": breakout_stage,
             "selected_breakout_gate_pass": selected_breakout_gate_pass,
             "near_miss_breakout_gate_pass": near_miss_breakout_gate_pass,
+            "profitability_hard_cliff": profitability_hard_cliff,
+            "profitability_positive_count": profitability_positive_count,
+            "profitability_confidence": round(profitability_confidence, 4),
+            "profitability_relief_enabled": profitability_relief_enabled,
+            "profitability_relief_gate_hits": profitability_relief_gate_hits,
+            "profitability_relief_eligible": profitability_relief_eligible,
+            "profitability_relief_applied": profitability_relief_applied,
+            "base_layer_c_avoid_penalty": round(base_layer_c_avoid_penalty, 4),
+            "profitability_relief_soft_penalty": round(profitability_relief_soft_penalty, 4),
             "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
             "stale_trend_repair_penalty": round(stale_trend_repair_penalty, 4),
             "overhead_supply_penalty": round(overhead_supply_penalty, 4),
@@ -490,6 +592,11 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "overhead_penalty_block_threshold": round(float(profile.overhead_penalty_block_threshold), 4),
                 "extension_penalty_block_threshold": round(float(profile.extension_penalty_block_threshold), 4),
                 "layer_c_avoid_penalty": round(float(profile.layer_c_avoid_penalty), 4),
+                "profitability_relief_enabled": bool(profile.profitability_relief_enabled),
+                "profitability_relief_breakout_freshness_min": round(float(profile.profitability_relief_breakout_freshness_min), 4),
+                "profitability_relief_catalyst_freshness_min": round(float(profile.profitability_relief_catalyst_freshness_min), 4),
+                "profitability_relief_sector_resonance_min": round(float(profile.profitability_relief_sector_resonance_min), 4),
+                "profitability_relief_avoid_penalty": round(float(profile.profitability_relief_avoid_penalty), 4),
                 "stale_score_penalty_weight": round(float(profile.stale_score_penalty_weight), 4),
                 "overhead_score_penalty_weight": round(float(profile.overhead_score_penalty_weight), 4),
                 "extension_score_penalty_weight": round(float(profile.extension_score_penalty_weight), 4),
@@ -506,6 +613,16 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "bc_conflict": input_data.bc_conflict,
             "candidate_source": str(input_data.replay_context.get("source") or ""),
             "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {}).keys()),
+            "profitability_relief": {
+                "enabled": profitability_relief_enabled,
+                "hard_cliff": profitability_hard_cliff,
+                "eligible": profitability_relief_eligible,
+                "applied": profitability_relief_applied,
+                "gate_hits": profitability_relief_gate_hits,
+                "base_layer_c_avoid_penalty": round(base_layer_c_avoid_penalty, 4),
+                "effective_layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
+                "soft_penalty": round(profitability_relief_soft_penalty, 4),
+            },
             "replay_context": dict(input_data.replay_context or {}),
         },
     )

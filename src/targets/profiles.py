@@ -26,6 +26,11 @@ class ShortTradeTargetProfile:
     overhead_penalty_block_threshold: float = 0.68
     extension_penalty_block_threshold: float = 0.74
     layer_c_avoid_penalty: float = 0.12
+    profitability_relief_enabled: bool = False
+    profitability_relief_breakout_freshness_min: float = 0.42
+    profitability_relief_catalyst_freshness_min: float = 0.45
+    profitability_relief_sector_resonance_min: float = 0.45
+    profitability_relief_avoid_penalty: float = 0.04
     stale_score_penalty_weight: float = 0.12
     overhead_score_penalty_weight: float = 0.10
     extension_score_penalty_weight: float = 0.08
@@ -79,6 +84,20 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         selected_trend_acceleration_min=0.38,
         near_miss_breakout_freshness_min=0.18,
         near_miss_trend_acceleration_min=0.22,
+    ),
+    "staged_breakout_profitability_relief": ShortTradeTargetProfile(
+        name="staged_breakout_profitability_relief",
+        select_threshold=0.58,
+        near_miss_threshold=0.42,
+        selected_breakout_freshness_min=0.35,
+        selected_trend_acceleration_min=0.38,
+        near_miss_breakout_freshness_min=0.18,
+        near_miss_trend_acceleration_min=0.22,
+        profitability_relief_enabled=True,
+        profitability_relief_breakout_freshness_min=0.42,
+        profitability_relief_catalyst_freshness_min=0.45,
+        profitability_relief_sector_resonance_min=0.45,
+        profitability_relief_avoid_penalty=0.04,
     ),
 }
 

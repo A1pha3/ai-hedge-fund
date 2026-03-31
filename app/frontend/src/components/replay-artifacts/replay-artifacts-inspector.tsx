@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Skeleton } from '@/components/ui/skeleton';
 import type {
   ReplayArtifactDetail,
+  ReplayBtstControlTowerOverview,
+  ReplayBtstControlTowerReference,
   ReplaySelectionArtifactDay,
   ReplayCacheBenchmarkOverview,
   ReplayReasonCount,
@@ -102,6 +104,27 @@ function formatRepresentativeCases(overview: ReplaySelectionArtifactDualTargetOv
     .join(' | ');
 }
 
+function formatBtstControlTowerReference(reference: ReplayBtstControlTowerReference | null | undefined): string {
+  if (!reference) {
+    return '--';
+  }
+  const reportName = formatOptionalText(reference.report_name || formatPathLeaf(reference.report_dir));
+  return `${reportName} | ${formatOptionalText(reference.trade_date)} | ${formatOptionalText(reference.selection_target)}`;
+}
+
+function formatBtstControlTowerChangeSummary(overview: ReplayBtstControlTowerOverview | null | undefined): string {
+  if (!overview) {
+    return '--';
+  }
+  const changedSurfaces = [
+    overview.priority_has_changes ? 'priority' : null,
+    overview.governance_has_changes ? 'governance' : null,
+    overview.replay_has_changes ? 'replay' : null,
+  ].filter(Boolean);
+  const surfaceSummary = changedSurfaces.length > 0 ? changedSurfaces.join('/') : 'stable';
+  return `${formatOptionalText(overview.overall_delta_verdict)} | ${surfaceSummary}`;
+}
+
 function PathPreviewCard({
   label,
   value,
@@ -168,6 +191,7 @@ export function ReplayArtifactsInspector({
 
   const dualTargetOverview = detail.selection_artifact_overview.dual_target_overview;
   const btstFollowupOverview = detail.selection_artifact_overview.btst_followup_overview;
+  const btstControlTowerOverview = detail.selection_artifact_overview.btst_control_tower_overview;
   const visibleDraftQueue = focusedSymbol === 'all'
     ? (feedbackActivity?.workflow_queue?.draft || [])
     : (feedbackActivity?.workflow_queue?.draft || []).filter((record) => record.symbol === focusedSymbol);
@@ -417,6 +441,43 @@ export function ReplayArtifactsInspector({
             </div>
             {Object.entries(btstFollowupOverview.artifacts || {}).map(([key, value]) => (
               <PathPreviewCard key={key} label={key} value={String(value)} />
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {btstControlTowerOverview ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>BTST Control Tower</CardTitle>
+            <CardDescription>压缩展示最新 open-ready delta、nightly 状态和关键 operator focus，值班时不用再手动翻 reports 目录。</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Delta Verdict</p>
+              <p className="mt-2 text-sm font-semibold text-primary">{formatBtstControlTowerChangeSummary(btstControlTowerOverview)}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">comparison {formatOptionalText(btstControlTowerOverview.comparison_basis)}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Current Latest</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatBtstControlTowerReference(btstControlTowerOverview.current_reference)}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">{btstControlTowerOverview.selected_report_matches_current_reference ? 'selected report matches latest BTST run' : 'selected report differs from latest BTST run'}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Governance</p>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(btstControlTowerOverview.governance_overall_verdict)} | waiting {btstControlTowerOverview.waiting_lane_count ?? '--'} | ready {btstControlTowerOverview.ready_lane_count ?? '--'}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">lanes {formatCounterMap(btstControlTowerOverview.lane_status_counts)}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Operator Focus</p>
+              <div className="mt-2 space-y-2 text-xs leading-6 text-muted-foreground">
+                {(btstControlTowerOverview.operator_focus.length > 0 ? btstControlTowerOverview.operator_focus : [btstControlTowerOverview.recommendation || '--']).map((item, index) => (
+                  <p key={`btst-control-focus-${index}`}>{item}</p>
+                ))}
+              </div>
+            </div>
+            {Object.entries(btstControlTowerOverview.artifacts).map(([key, value]) => (
+              <PathPreviewCard key={`btst-control-artifact-${key}`} label={key} value={value} />
             ))}
           </CardContent>
         </Card>

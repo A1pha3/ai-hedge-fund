@@ -92,6 +92,7 @@ export interface ReplaySelectionArtifactOverview {
   dual_target_overview?: ReplaySelectionArtifactDualTargetOverview | null;
   feedback_summary: Record<string, unknown> | null;
   btst_followup_overview?: ReplayBtstFollowupOverview | null;
+  btst_control_tower_overview?: ReplayBtstControlTowerOverview | null;
 }
 
 export interface ReplayBtstFollowupOverview {
@@ -105,6 +106,44 @@ export interface ReplayBtstFollowupOverview {
   selected_count: number;
   watchlist_count: number;
   excluded_research_count: number;
+  artifacts: Record<string, string>;
+}
+
+export interface ReplayBtstControlTowerReference {
+  report_dir: string | null;
+  report_name: string | null;
+  selection_target: string | null;
+  trade_date: string | null;
+  next_trade_date: string | null;
+}
+
+export interface ReplayBtstControlTowerAction {
+  task_id: string | null;
+  title: string | null;
+  why_now: string | null;
+  next_step: string | null;
+  source: string | null;
+}
+
+export interface ReplayBtstControlTowerOverview {
+  available: boolean;
+  generated_at: string | null;
+  comparison_basis: string | null;
+  overall_delta_verdict: string | null;
+  operator_focus: string[];
+  current_reference: ReplayBtstControlTowerReference | null;
+  previous_reference: ReplayBtstControlTowerReference | null;
+  selected_report_matches_current_reference: boolean;
+  priority_has_changes: boolean;
+  governance_has_changes: boolean;
+  replay_has_changes: boolean;
+  governance_overall_verdict: string | null;
+  recommendation: string | null;
+  waiting_lane_count: number | null;
+  ready_lane_count: number | null;
+  lane_status_counts: Record<string, number>;
+  refresh_status: Record<string, string>;
+  next_actions: ReplayBtstControlTowerAction[];
   artifacts: Record<string, string>;
 }
 

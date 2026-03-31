@@ -393,6 +393,12 @@ Layer 4：执行确认
 2. 再做条件式软化，只对高 breakout、高催化、板块强共振行业放松。
 3. 最后比较软化前后 false negative 是否显著下降。
 
+2026-03-31 的第一版代码已经把这条路线落成实验 profile：`staged_breakout_profitability_relief` 会在 `short_trade_target` 里识别 profitability hard cliff，并且只在 `breakout_freshness`、`catalyst_freshness`、`sector_resonance` 同时达标时，把 `decision=avoid` 的硬惩罚降成软惩罚。这个实现刻意保持为 target profile 级实验，不回写默认主线，也不等同于全局取消 Layer B 的 profitability 压制。
+
+同日用当前窗口 `selection_artifacts` 跑的真实 frontier 验证结果见 `data/reports/btst_profile_frontier_profitability_relief_current_window_20260331.{json,md}`：`staged_breakout_profitability_relief` 与 `staged_breakout` 一样，仍然没有把 tradeable surface 从 0 推高到正值，说明 profitability 条件软化至少在当前窗口不是主释放杠杆，后续优先级仍应回到 score frontier 与 stale/extension penalty 主线。
+
+同日也补上了整窗闭环脚本 `scripts/analyze_btst_penalty_frontier.py`，专门把 `near_miss_threshold` 与 `stale/extension penalty weight` 的组合直接 replay 成 closed-cycle surface，再用 false negative proxy 的 `next_high_hit_rate` / `next_close_positive_rate` 做 guardrail。当前窗口结果见 `data/reports/btst_penalty_frontier_current_window_20260331.{json,md}`：扫描空间内没有任何 guardrail-passing row；最高 surface 的组合 `near_miss=0.42 / stale=0.08 / extension=0.02` 只把两条 `300724` 样本推到 `near_miss`，`next_high_hit_rate=0.5`、`next_close_positive_rate=0.0`，而且没有释放 `300383 / 600821 / 002015`。这说明 broad stale/extension penalty route 目前仍不成立，后续应继续维持 `300383` 单票 shadow、`002015 / 600821` recurring lane 与 `300724` structural freeze 的分层治理。
+
 不建议一开始就全局取消 profitability。
 
 ### 7.3 主线三：把主入场票和观察票做成显式双名单

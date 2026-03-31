@@ -37,6 +37,93 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
     brief_markdown_path = report_dir / "btst_next_day_trade_brief_latest.md"
     card_json_path = report_dir / "btst_premarket_execution_card_latest.json"
     card_markdown_path = report_dir / "btst_premarket_execution_card_latest.md"
+    delta_json_path = tmp_path / "btst_open_ready_delta_latest.json"
+    delta_markdown_path = tmp_path / "btst_open_ready_delta_latest.md"
+    nightly_json_path = tmp_path / "btst_nightly_control_tower_latest.json"
+    nightly_markdown_path = tmp_path / "btst_nightly_control_tower_latest.md"
+    manifest_json_path = tmp_path / "report_manifest_latest.json"
+    manifest_markdown_path = tmp_path / "report_manifest_latest.md"
+    current_priority_board_path = report_dir / "btst_next_day_priority_board_20260312.json"
+
+    _write_json(
+        delta_json_path,
+        {
+            "generated_at": "2026-03-31T08:19:55",
+            "comparison_basis": "nightly_history",
+            "overall_delta_verdict": "changed",
+            "current_reference": {
+                "report_dir": "data/reports/demo_report",
+                "selection_target": "short_trade_only",
+                "trade_date": "2026-03-11",
+                "next_trade_date": "2026-03-12",
+            },
+            "previous_reference": {
+                "report_dir": "data/reports/demo_report_prev",
+                "selection_target": "short_trade_only",
+                "trade_date": "2026-03-10",
+                "next_trade_date": "2026-03-11",
+            },
+            "operator_focus": ["replay cohort 变化: report_count +1, short_trade_only +1。"],
+            "priority_delta": {"has_changes": False},
+            "governance_delta": {
+                "current_overall_verdict": "pass_with_warnings",
+                "has_changes": False,
+            },
+            "replay_delta": {"has_changes": True},
+            "source_paths": {
+                "current_priority_board_json": str(current_priority_board_path),
+                "report_manifest_json": str(manifest_json_path),
+                "report_manifest_markdown": str(manifest_markdown_path),
+            },
+        },
+    )
+    delta_markdown_path.write_text("# delta\n", encoding="utf-8")
+    _write_json(
+        nightly_json_path,
+        {
+            "generated_at": "2026-03-31T08:19:55",
+            "latest_btst_run": {
+                "report_dir": "data/reports/demo_report",
+                "selection_target": "short_trade_only",
+                "trade_date": "2026-03-11",
+                "next_trade_date": "2026-03-12",
+            },
+            "refresh_status": {
+                "candidate_entry_shadow_refresh": "refreshed",
+                "btst_governance_synthesis_refresh": "refreshed",
+            },
+            "control_tower_snapshot": {
+                "recommendation": "保持 near-miss 观察，不做直接升格。",
+                "waiting_lane_count": 2,
+                "ready_lane_count": 1,
+                "lane_status_counts": {
+                    "shadow_only": 1,
+                    "continue_controlled_roll_forward": 1,
+                },
+                "validation": {"overall_verdict": "pass_with_warnings"},
+                "next_actions": [
+                    {
+                        "task_id": "001309_primary_follow_through_roll_forward",
+                        "title": "推进 001309 primary follow-through",
+                        "why_now": "当前唯一 primary 入口。",
+                        "next_step": "继续滚动窗口验证。",
+                        "source": "p3_action_board",
+                    },
+                    {
+                        "task_id": "300383_shadow_queue_hold",
+                        "title": "维持 300383 shadow entry",
+                        "why_now": "防止 shadow 规则扩散。",
+                        "next_step": "保持单票 shadow。",
+                        "source": "p3_action_board",
+                    },
+                ],
+            },
+        },
+    )
+    nightly_markdown_path.write_text("# nightly\n", encoding="utf-8")
+    _write_json(manifest_json_path, {"entries": []})
+    manifest_markdown_path.write_text("# manifest\n", encoding="utf-8")
+    _write_json(current_priority_board_path, {})
 
     _write_json(
         brief_json_path,
@@ -277,6 +364,68 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
             "brief_markdown": str(brief_markdown_path),
             "execution_card_json": str(card_json_path),
             "execution_card_markdown": str(card_markdown_path),
+        },
+    }
+    assert overview["btst_control_tower_overview"] == {
+        "available": True,
+        "generated_at": "2026-03-31T08:19:55",
+        "comparison_basis": "nightly_history",
+        "overall_delta_verdict": "changed",
+        "operator_focus": ["replay cohort 变化: report_count +1, short_trade_only +1。"],
+        "current_reference": {
+            "report_dir": "data/reports/demo_report",
+            "report_name": "demo_report",
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+        },
+        "previous_reference": {
+            "report_dir": "data/reports/demo_report_prev",
+            "report_name": "demo_report_prev",
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-03-10",
+            "next_trade_date": "2026-03-11",
+        },
+        "selected_report_matches_current_reference": True,
+        "priority_has_changes": False,
+        "governance_has_changes": False,
+        "replay_has_changes": True,
+        "governance_overall_verdict": "pass_with_warnings",
+        "recommendation": "保持 near-miss 观察，不做直接升格。",
+        "waiting_lane_count": 2,
+        "ready_lane_count": 1,
+        "lane_status_counts": {
+            "shadow_only": 1,
+            "continue_controlled_roll_forward": 1,
+        },
+        "refresh_status": {
+            "candidate_entry_shadow_refresh": "refreshed",
+            "btst_governance_synthesis_refresh": "refreshed",
+        },
+        "next_actions": [
+            {
+                "task_id": "001309_primary_follow_through_roll_forward",
+                "title": "推进 001309 primary follow-through",
+                "why_now": "当前唯一 primary 入口。",
+                "next_step": "继续滚动窗口验证。",
+                "source": "p3_action_board",
+            },
+            {
+                "task_id": "300383_shadow_queue_hold",
+                "title": "维持 300383 shadow entry",
+                "why_now": "防止 shadow 规则扩散。",
+                "next_step": "保持单票 shadow。",
+                "source": "p3_action_board",
+            },
+        ],
+        "artifacts": {
+            "open_ready_delta_json": str(delta_json_path),
+            "open_ready_delta_markdown": str(delta_markdown_path),
+            "nightly_control_tower_json": str(nightly_json_path),
+            "nightly_control_tower_markdown": str(nightly_markdown_path),
+            "report_manifest_json": str(manifest_json_path),
+            "report_manifest_markdown": str(manifest_markdown_path),
+            "current_priority_board_json": str(current_priority_board_path),
         },
     }
     assert cache_overview == {

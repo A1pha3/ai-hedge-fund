@@ -6,6 +6,8 @@ import { useAuth } from '@/contexts/auth-context';
 import {
   replayArtifactApi,
   type ReplayArtifactDetail,
+  type ReplayBtstControlTowerOverview,
+  type ReplayBtstControlTowerReference,
   type ReplayFeedbackActivity,
   type ReplayFeedbackRecord,
   type ReplayCacheBenchmarkOverview,
@@ -235,6 +237,39 @@ function formatShortTradeProfileOverview(
   const counts = formatCounterMap(overview.profile_name_counts);
   const latestName = formatOptionalText(overview.latest_profile_name);
   return `${counts} | latest ${latestName}`;
+}
+
+function formatBtstControlTowerReference(reference: ReplayBtstControlTowerReference | null | undefined): string {
+  if (!reference) {
+    return '--';
+  }
+  const reportName = formatOptionalText(reference.report_name || formatPathLeaf(reference.report_dir));
+  const tradeDate = formatOptionalText(reference.trade_date);
+  const selectionTarget = formatOptionalText(reference.selection_target);
+  return `${reportName} | ${tradeDate} | ${selectionTarget}`;
+}
+
+function formatBtstControlTowerChangeSummary(overview: ReplayBtstControlTowerOverview | null | undefined): string {
+  if (!overview) {
+    return '--';
+  }
+  const changedSurfaces = [
+    overview.priority_has_changes ? 'priority' : null,
+    overview.governance_has_changes ? 'governance' : null,
+    overview.replay_has_changes ? 'replay' : null,
+  ].filter(Boolean);
+  const surfaceSummary = changedSurfaces.length > 0 ? changedSurfaces.join('/') : 'stable';
+  return `${formatOptionalText(overview.overall_delta_verdict)} | ${surfaceSummary}`;
+}
+
+function formatBtstControlTowerFocus(overview: ReplayBtstControlTowerOverview | null | undefined): string {
+  if (!overview) {
+    return '--';
+  }
+  if (overview.operator_focus.length > 0) {
+    return overview.operator_focus[0];
+  }
+  return formatOptionalText(overview.recommendation);
 }
 
 function formatTargetDecision(decision: ReplayTargetEvaluationResult | null | undefined): string {
@@ -816,6 +851,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   const reportDualTargetOverview = detail?.selection_artifact_overview?.dual_target_overview;
   const reportShortTradeProfileOverview = detail?.selection_artifact_overview?.short_trade_profile_overview;
   const btstFollowupOverview = detail?.selection_artifact_overview?.btst_followup_overview;
+  const btstControlTowerOverview = detail?.selection_artifact_overview?.btst_control_tower_overview;
   const reportTargetModeOptions = useMemo(() => {
     const optionSet = new Set<string>();
     reports.forEach((report) => {
@@ -1561,6 +1597,11 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                         <p className="mt-2 break-all text-xs leading-5 text-muted-foreground">
                           {formatCacheBenchmarkDescription(report.cache_benchmark_overview)}
                         </p>
+                        {report.selection_artifact_overview.btst_control_tower_overview?.selected_report_matches_current_reference ? (
+                          <p className="mt-2 text-xs leading-5 text-primary">
+                            open-ready current | {formatBtstControlTowerChangeSummary(report.selection_artifact_overview.btst_control_tower_overview)}
+                          </p>
+                        ) : null}
                         <p className="mt-2 text-xs leading-5 text-muted-foreground">
                           short profile {formatShortTradeProfileOverview(report.selection_artifact_overview.short_trade_profile_overview)}
                         </p>
@@ -1691,7 +1732,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
                 <KpiCard
                   title="Selection Days"
                   value={`${detail.selection_artifact_overview.trade_date_count}`}
@@ -1736,7 +1777,80 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                   description={btstFollowupOverview ? `watch ${btstFollowupOverview.watchlist_count} / excluded ${btstFollowupOverview.excluded_research_count}` : '当前 report 还没有 BTST follow-up 产物'}
                   icon={BarChart3}
                 />
+                <KpiCard
+                  title="Open-Ready Delta"
+                  value={btstControlTowerOverview?.overall_delta_verdict || '--'}
+                  description={btstControlTowerOverview ? `${formatOptionalText(btstControlTowerOverview.comparison_basis)} | ${formatBtstControlTowerFocus(btstControlTowerOverview)}` : '当前还没有 BTST control tower 产物'}
+                  icon={RefreshCw}
+                />
               </div>
+
+              {btstControlTowerOverview ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>BTST Control Tower</CardTitle>
+                    <CardDescription>把 open-ready delta 和 nightly control tower 的关键结论直接带进工作台，先回答昨晚到今晚变了什么，以及明早先看什么。</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Delta Verdict</p>
+                        <p className="mt-2 text-sm font-semibold text-primary">{formatBtstControlTowerChangeSummary(btstControlTowerOverview)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">comparison {formatOptionalText(btstControlTowerOverview.comparison_basis)}</p>
+                      </div>
+                      <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Current Latest</p>
+                        <p className="mt-2 text-sm font-semibold text-primary">{formatBtstControlTowerReference(btstControlTowerOverview.current_reference)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{btstControlTowerOverview.selected_report_matches_current_reference ? '当前选中 report 就是 latest BTST run。' : '当前选中 report 不是 latest BTST run。'}</p>
+                      </div>
+                      <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Governance</p>
+                        <p className="mt-2 text-sm font-semibold text-primary">{formatOptionalText(btstControlTowerOverview.governance_overall_verdict)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">waiting {btstControlTowerOverview.waiting_lane_count ?? '--'} | ready {btstControlTowerOverview.ready_lane_count ?? '--'}</p>
+                      </div>
+                      <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Refresh Status</p>
+                        <p className="mt-2 text-xs leading-6 text-muted-foreground">{Object.entries(btstControlTowerOverview.refresh_status).map(([key, value]) => `${key}:${value}`).join(' | ') || '--'}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">lanes {formatCounterMap(btstControlTowerOverview.lane_status_counts)}</p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Operator Focus</p>
+                      <div className="mt-2 space-y-2 text-sm text-foreground">
+                        {(btstControlTowerOverview.operator_focus.length > 0 ? btstControlTowerOverview.operator_focus : [btstControlTowerOverview.recommendation || '--']).map((item, index) => (
+                          <p key={`btst-control-focus-${index}`}>{item}</p>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 xl:grid-cols-2">
+                      <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Next Actions</p>
+                          <p className="mt-1 text-xs text-muted-foreground">先看 control tower 给出的前 3 个动作，不必再手动翻 nightly markdown 才知道今晚的主线。</p>
+                        </div>
+                        {btstControlTowerOverview.next_actions.length > 0 ? btstControlTowerOverview.next_actions.map((action) => (
+                          <div key={action.task_id || action.title || 'btst-control-action'} className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                            <p className="text-sm font-medium text-primary">{formatOptionalText(action.title)}</p>
+                            <p className="mt-1 text-xs leading-6 text-muted-foreground">{formatOptionalText(action.why_now)}</p>
+                            <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(action.next_step)}</p>
+                          </div>
+                        )) : (
+                          <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
+                            当前 control tower 没有可展示的 next actions。
+                          </div>
+                        )}
+                      </div>
+                      <div className="grid gap-3">
+                        {Object.entries(btstControlTowerOverview.artifacts).map(([key, value]) => (
+                          <PathPreviewCard key={`btst-control-artifact-${key}`} label={key} value={value} />
+                        ))}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
 
               <Card>
                 <CardHeader>

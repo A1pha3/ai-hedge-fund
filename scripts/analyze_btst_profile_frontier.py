@@ -26,7 +26,7 @@ from src.targets import SHORT_TRADE_TARGET_PROFILES, build_short_trade_target_pr
 from src.targets.router import build_selection_targets
 
 
-DEFAULT_PROFILE_VARIANTS = ["staged_breakout", "aggressive", "conservative"]
+DEFAULT_PROFILE_VARIANTS = ["staged_breakout", "staged_breakout_profitability_relief", "aggressive", "conservative"]
 DEFAULT_GUARDRAIL_NEXT_HIGH_HIT_RATE = 0.5217
 DEFAULT_GUARDRAIL_NEXT_CLOSE_POSITIVE_RATE = 0.5652
 
@@ -51,6 +51,11 @@ def _serialize_profile(profile: Any) -> dict[str, Any]:
         "overhead_penalty_block_threshold": round(float(profile.overhead_penalty_block_threshold), 4),
         "extension_penalty_block_threshold": round(float(profile.extension_penalty_block_threshold), 4),
         "layer_c_avoid_penalty": round(float(profile.layer_c_avoid_penalty), 4),
+        "profitability_relief_enabled": bool(profile.profitability_relief_enabled),
+        "profitability_relief_breakout_freshness_min": round(float(profile.profitability_relief_breakout_freshness_min), 4),
+        "profitability_relief_catalyst_freshness_min": round(float(profile.profitability_relief_catalyst_freshness_min), 4),
+        "profitability_relief_sector_resonance_min": round(float(profile.profitability_relief_sector_resonance_min), 4),
+        "profitability_relief_avoid_penalty": round(float(profile.profitability_relief_avoid_penalty), 4),
         "stale_score_penalty_weight": round(float(profile.stale_score_penalty_weight), 4),
         "overhead_score_penalty_weight": round(float(profile.overhead_score_penalty_weight), 4),
         "extension_score_penalty_weight": round(float(profile.extension_score_penalty_weight), 4),

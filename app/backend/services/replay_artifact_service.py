@@ -827,6 +827,101 @@ class ReplayArtifactService:
             },
         }
 
+    def _normalize_btst_reference(self, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(payload, dict) or not payload:
+            return None
+
+        report_dir_value = payload.get("report_dir") or payload.get("report_dir_abs")
+        report_name = Path(str(report_dir_value)).name if report_dir_value else None
+        normalized = {
+            "report_dir": payload.get("report_dir"),
+            "report_name": report_name,
+            "selection_target": payload.get("selection_target"),
+            "trade_date": payload.get("trade_date"),
+            "next_trade_date": payload.get("next_trade_date"),
+        }
+        if not any(normalized.values()):
+            return None
+        return normalized
+
+    def _derive_btst_control_tower_overview(self, report_dir: Path) -> dict[str, Any] | None:
+        delta_json_path = self._reports_root / "btst_open_ready_delta_latest.json"
+        delta_markdown_path = self._reports_root / "btst_open_ready_delta_latest.md"
+        nightly_json_path = self._reports_root / "btst_nightly_control_tower_latest.json"
+        nightly_markdown_path = self._reports_root / "btst_nightly_control_tower_latest.md"
+        manifest_json_path = self._reports_root / "report_manifest_latest.json"
+        manifest_markdown_path = self._reports_root / "report_manifest_latest.md"
+
+        if not any(path.exists() for path in [delta_json_path, delta_markdown_path, nightly_json_path, nightly_markdown_path]):
+            return None
+
+        delta_payload = self._read_json(delta_json_path) if delta_json_path.exists() else {}
+        nightly_payload = self._read_json(nightly_json_path) if nightly_json_path.exists() else {}
+        control_tower_snapshot = nightly_payload.get("control_tower_snapshot") or {}
+        validation = control_tower_snapshot.get("validation") or {}
+        source_paths = delta_payload.get("source_paths") or {}
+
+        current_reference = self._normalize_btst_reference(delta_payload.get("current_reference")) or self._normalize_btst_reference(nightly_payload.get("latest_btst_run"))
+        previous_reference = self._normalize_btst_reference(delta_payload.get("previous_reference"))
+
+        next_actions: list[dict[str, Any]] = []
+        for item in (control_tower_snapshot.get("next_actions") or [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            next_actions.append(
+                {
+                    "task_id": item.get("task_id"),
+                    "title": item.get("title"),
+                    "why_now": item.get("why_now"),
+                    "next_step": item.get("next_step"),
+                    "source": item.get("source"),
+                }
+            )
+
+        artifacts = {
+            key: value
+            for key, value in {
+                "open_ready_delta_json": str(delta_json_path) if delta_json_path.exists() else None,
+                "open_ready_delta_markdown": str(delta_markdown_path) if delta_markdown_path.exists() else None,
+                "nightly_control_tower_json": str(nightly_json_path) if nightly_json_path.exists() else None,
+                "nightly_control_tower_markdown": str(nightly_markdown_path) if nightly_markdown_path.exists() else None,
+                "report_manifest_json": source_paths.get("report_manifest_json") or (str(manifest_json_path) if manifest_json_path.exists() else None),
+                "report_manifest_markdown": source_paths.get("report_manifest_markdown") or (str(manifest_markdown_path) if manifest_markdown_path.exists() else None),
+                "current_priority_board_json": source_paths.get("current_priority_board_json"),
+                "previous_priority_board_json": source_paths.get("previous_priority_board_json"),
+            }.items()
+            if value
+        }
+
+        priority_delta = delta_payload.get("priority_delta") or {}
+        governance_delta = delta_payload.get("governance_delta") or {}
+        replay_delta = delta_payload.get("replay_delta") or {}
+        recommendation = control_tower_snapshot.get("recommendation")
+        if not recommendation:
+            recommendation = ((control_tower_snapshot.get("synthesis") or {}).get("recommendation"))
+
+        return {
+            "available": True,
+            "generated_at": delta_payload.get("generated_at") or nightly_payload.get("generated_at"),
+            "comparison_basis": delta_payload.get("comparison_basis"),
+            "overall_delta_verdict": delta_payload.get("overall_delta_verdict"),
+            "operator_focus": [str(item) for item in (delta_payload.get("operator_focus") or []) if item],
+            "current_reference": current_reference,
+            "previous_reference": previous_reference,
+            "selected_report_matches_current_reference": bool(current_reference and current_reference.get("report_name") == report_dir.name),
+            "priority_has_changes": bool(priority_delta.get("has_changes")),
+            "governance_has_changes": bool(governance_delta.get("has_changes")),
+            "replay_has_changes": bool(replay_delta.get("has_changes")),
+            "governance_overall_verdict": governance_delta.get("current_overall_verdict") or validation.get("overall_verdict"),
+            "recommendation": recommendation,
+            "waiting_lane_count": control_tower_snapshot.get("waiting_lane_count"),
+            "ready_lane_count": control_tower_snapshot.get("ready_lane_count"),
+            "lane_status_counts": dict(control_tower_snapshot.get("lane_status_counts") or {}),
+            "refresh_status": {str(key): str(value) for key, value in (nightly_payload.get("refresh_status") or {}).items()},
+            "next_actions": next_actions,
+            "artifacts": artifacts,
+        }
+
     def _derive_selection_artifact_overview(
         self,
         report_dir: Path,
@@ -846,6 +941,7 @@ class ReplayArtifactService:
                 "dual_target_overview": None,
                 "feedback_summary": None,
                 "btst_followup_overview": self._derive_btst_followup_overview(session_summary),
+                "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir),
             }
 
         write_status_counts: Counter[str] = Counter()
@@ -888,6 +984,7 @@ class ReplayArtifactService:
             "dual_target_overview": self._derive_dual_target_overview(snapshots_by_trade_date),
             "feedback_summary": feedback_summary,
             "btst_followup_overview": self._derive_btst_followup_overview(session_summary),
+            "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir),
         }
 
     def _derive_trade_date_target_index(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:

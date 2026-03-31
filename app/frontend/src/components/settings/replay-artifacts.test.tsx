@@ -166,6 +166,57 @@ const reports: ReplayArtifactSummary[] = [
         ],
       },
       feedback_summary: null,
+      btst_control_tower_overview: {
+        available: true,
+        generated_at: '2026-03-31T08:19:55',
+        comparison_basis: 'nightly_history',
+        overall_delta_verdict: 'changed',
+        operator_focus: ['replay cohort 变化: report_count +1, short_trade_only +1。'],
+        current_reference: {
+          report_dir: 'data/reports/paper_trading_window_recent',
+          report_name: 'paper_trading_window_recent',
+          selection_target: 'short_trade_only',
+          trade_date: '2026-03-23',
+          next_trade_date: '2026-03-24',
+        },
+        previous_reference: {
+          report_dir: 'data/reports/paper_trading_window_prev',
+          report_name: 'paper_trading_window_prev',
+          selection_target: 'short_trade_only',
+          trade_date: '2026-03-20',
+          next_trade_date: '2026-03-21',
+        },
+        selected_report_matches_current_reference: true,
+        priority_has_changes: false,
+        governance_has_changes: false,
+        replay_has_changes: true,
+        governance_overall_verdict: 'pass_with_warnings',
+        recommendation: '保持 near-miss 观察，不做直接升格。',
+        waiting_lane_count: 2,
+        ready_lane_count: 1,
+        lane_status_counts: {
+          continue_controlled_roll_forward: 1,
+          shadow_only_until_second_window: 1,
+        },
+        refresh_status: {
+          candidate_entry_shadow_refresh: 'refreshed',
+          btst_governance_synthesis_refresh: 'refreshed',
+        },
+        next_actions: [
+          {
+            task_id: '001309_primary_follow_through_roll_forward',
+            title: '推进 001309 primary follow-through',
+            why_now: '当前唯一 primary 入口。',
+            next_step: '继续滚动窗口验证。',
+            source: 'p3_action_board',
+          },
+        ],
+        artifacts: {
+          open_ready_delta_json: '/tmp/replay/btst_open_ready_delta_latest.json',
+          nightly_control_tower_json: '/tmp/replay/btst_nightly_control_tower_latest.json',
+          report_manifest_json: '/tmp/replay/report_manifest_latest.json',
+        },
+      },
     },
   },
   {
@@ -299,6 +350,57 @@ const detail: ReplayArtifactDetail = {
       excluded_research_count: 1,
       artifacts: {},
     },
+    btst_control_tower_overview: {
+      available: true,
+      generated_at: '2026-03-31T08:19:55',
+      comparison_basis: 'nightly_history',
+      overall_delta_verdict: 'changed',
+      operator_focus: ['replay cohort 变化: report_count +1, short_trade_only +1。'],
+      current_reference: {
+        report_dir: 'data/reports/paper_trading_window_recent',
+        report_name: 'paper_trading_window_recent',
+        selection_target: 'short_trade_only',
+        trade_date: '2026-03-23',
+        next_trade_date: '2026-03-24',
+      },
+      previous_reference: {
+        report_dir: 'data/reports/paper_trading_window_prev',
+        report_name: 'paper_trading_window_prev',
+        selection_target: 'short_trade_only',
+        trade_date: '2026-03-20',
+        next_trade_date: '2026-03-21',
+      },
+      selected_report_matches_current_reference: true,
+      priority_has_changes: false,
+      governance_has_changes: false,
+      replay_has_changes: true,
+      governance_overall_verdict: 'pass_with_warnings',
+      recommendation: '保持 near-miss 观察，不做直接升格。',
+      waiting_lane_count: 2,
+      ready_lane_count: 1,
+      lane_status_counts: {
+        continue_controlled_roll_forward: 1,
+        shadow_only_until_second_window: 1,
+      },
+      refresh_status: {
+        candidate_entry_shadow_refresh: 'refreshed',
+        btst_governance_synthesis_refresh: 'refreshed',
+      },
+      next_actions: [
+        {
+          task_id: '001309_primary_follow_through_roll_forward',
+          title: '推进 001309 primary follow-through',
+          why_now: '当前唯一 primary 入口。',
+          next_step: '继续滚动窗口验证。',
+          source: 'p3_action_board',
+        },
+      ],
+      artifacts: {
+        open_ready_delta_json: '/tmp/replay/btst_open_ready_delta_latest.json',
+        nightly_control_tower_json: '/tmp/replay/btst_nightly_control_tower_latest.json',
+        report_manifest_json: '/tmp/replay/report_manifest_latest.json',
+      },
+    },
   },
 };
 
@@ -414,6 +516,9 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     expect(screen.getAllByText('paper_trading_window_recent').length).toBeGreaterThan(0);
     expect(screen.getByText('1 trade dates')).toBeInTheDocument();
     expect(screen.getAllByText('BTST Follow-Up').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('BTST Control Tower').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('changed').length).toBeGreaterThan(0);
+    expect(screen.getByText('open-ready current | changed | replay')).toBeInTheDocument();
     expect(screen.getAllByText('300757').length).toBeGreaterThan(0);
   });
 
