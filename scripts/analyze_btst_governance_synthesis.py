@@ -51,6 +51,16 @@ def _first(items: list[Any], default: Any = None) -> Any:
     return items[0] if items else default
 
 
+def _collect_closed_frontiers(rollout_governance: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    frontier_constraints = [dict(row or {}) for row in list(rollout_governance.get("frontier_constraints") or [])]
+    closed_frontiers = [
+        row
+        for row in frontier_constraints
+        if "closed" in str(row.get("status") or "")
+    ]
+    return frontier_constraints, closed_frontiers
+
+
 def _looks_like_report_dir(path: Path) -> bool:
     return path.is_dir() and (path / "session_summary.json").exists() and (path / "selection_artifacts").exists()
 
@@ -305,6 +315,7 @@ def analyze_btst_governance_synthesis(
     structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
     candidate_entry_governance = _load_json(candidate_entry_governance_path)
     latest_btst_followup = _extract_latest_btst_followup(reports_root, latest_btst_report_dir=latest_btst_report_dir)
+    frontier_constraints, closed_frontiers = _collect_closed_frontiers(rollout_governance)
 
     lane_matrix = _build_lane_matrix(
         action_board=action_board,
@@ -360,6 +371,8 @@ def analyze_btst_governance_synthesis(
         "waiting_lane_count": waiting_lane_count,
         "lane_matrix": lane_matrix,
         "next_actions": next_actions,
+        "frontier_constraints": frontier_constraints,
+        "closed_frontiers": closed_frontiers,
         "recommendation": " ".join(part for part in recommendation_parts if part),
         "source_reports": {
             "action_board": str(Path(action_board_path).expanduser().resolve()),
@@ -416,6 +429,20 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
         if row.get("missing_window_count") is not None:
             lines.append(f"  missing_window_count: {row.get('missing_window_count')}")
         lines.append(f"  next_step: {row.get('next_step')}")
+    lines.append("")
+
+    lines.append("## Closed Frontiers")
+    closed_frontiers = list(analysis.get("closed_frontiers") or [])
+    if not closed_frontiers:
+        lines.append("- none")
+    else:
+        for row in closed_frontiers:
+            lines.append(
+                f"- frontier_id={row.get('frontier_id')} status={row.get('status')} passing_variant_count={row.get('passing_variant_count')} headline={row.get('headline')}"
+            )
+            lines.append(f"  best_variant: {row.get('best_variant_name')}")
+            lines.append(f"  released_tickers: {row.get('best_variant_released_tickers')}")
+            lines.append(f"  focus_released_tickers: {row.get('best_variant_focus_released_tickers')}")
     lines.append("")
 
     lines.append("## Next Actions")

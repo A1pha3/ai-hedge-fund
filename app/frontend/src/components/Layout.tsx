@@ -17,6 +17,12 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import { TopBar } from './layout/top-bar';
 
+const COMPACT_VIEWPORT_WIDTH = 1200;
+
+function shouldUseCompactShell() {
+  return typeof window !== 'undefined' && window.innerWidth < COMPACT_VIEWPORT_WIDTH;
+}
+
 // Create a LayoutContent component to access the FlowContext, TabsContext, and LayoutContext
 function LayoutContent() {
   const { reactFlowInstance } = useFlowContext();
@@ -24,14 +30,15 @@ function LayoutContent() {
   const { isBottomCollapsed, expandBottomPanel, collapseBottomPanel, toggleBottomPanel } = useLayoutContext();
   const { user } = useAuth();
   const [showUserSettings, setShowUserSettings] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : COMPACT_VIEWPORT_WIDTH));
   
   // Initialize sidebar states from storage service
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(() => 
-    SidebarStorageService.loadLeftSidebarState(false)
+    shouldUseCompactShell() || SidebarStorageService.loadLeftSidebarState(false)
   );
   
   const [isRightCollapsed, setIsRightCollapsed] = useState(() => 
-    SidebarStorageService.loadRightSidebarState(false)
+    shouldUseCompactShell() || SidebarStorageService.loadRightSidebarState(false)
   );
 
   // Track actual sidebar widths for dynamic positioning
@@ -70,8 +77,37 @@ function LayoutContent() {
     SidebarStorageService.saveRightSidebarState(isRightCollapsed);
   }, [isRightCollapsed]);
 
+  useEffect(() => {
+    const handleResize = () => {
+      setViewportWidth(window.innerWidth);
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
+
+  const isCompactShell = viewportWidth < COMPACT_VIEWPORT_WIDTH;
+
+  useEffect(() => {
+    if (isCompactShell) {
+      setIsLeftCollapsed(true);
+      setIsRightCollapsed(true);
+    }
+  }, [isCompactShell]);
+
   // Calculate tab bar and bottom panel positioning based on actual sidebar widths
   const getSidebarBasedStyle = () => {
+    if (isCompactShell) {
+      return {
+        left: '0px',
+        right: '0px',
+      };
+    }
+
     let left = 0;
     let right = 0;
     
@@ -117,8 +153,8 @@ function LayoutContent() {
       <main 
         className="absolute inset-0 overflow-hidden" 
         style={{
-          left: !isLeftCollapsed ? `${leftSidebarWidth}px` : '0px',
-          right: !isRightCollapsed ? `${rightSidebarWidth}px` : '0px',
+          left: !isCompactShell && !isLeftCollapsed ? `${leftSidebarWidth}px` : '0px',
+          right: !isCompactShell && !isRightCollapsed ? `${rightSidebarWidth}px` : '0px',
           top: '40px', // Tab bar height
           bottom: !isBottomCollapsed ? `${bottomPanelHeight}px` : '0px',
         }}

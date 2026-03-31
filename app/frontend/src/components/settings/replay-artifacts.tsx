@@ -6,8 +6,10 @@ import { useAuth } from '@/contexts/auth-context';
 import {
   replayArtifactApi,
   type ReplayArtifactDetail,
+  type ReplayBtstControlTowerLaneRow,
   type ReplayBtstControlTowerOverview,
   type ReplayBtstControlTowerReference,
+  type ReplayBtstReplayContextReference,
   type ReplayFeedbackActivity,
   type ReplayFeedbackRecord,
   type ReplayCacheBenchmarkOverview,
@@ -29,9 +31,66 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+
+const BTST_TOKEN_LABELS: Record<string, string> = {
+  stable: '稳定',
+  changed: '有变化',
+  priority: '优先级',
+  governance: '治理',
+  replay: '回放',
+  nightly_history: '夜间归档',
+  previous_report: '上一份报告',
+  short_trade_only: '短线专用',
+  dual_target: '双目标',
+  research_only: '研究优先',
+  pass: '通过',
+  pass_with_warnings: '通过但有警告',
+  fail: '失败',
+  hold: '维持观察',
+  refreshed: '已刷新',
+  skipped_missing_inputs: '缺少输入',
+  skipped_refresh_error: '刷新失败',
+  primary_roll_forward_only: '主线滚动验证',
+  single_name_shadow_only: '单票 shadow',
+  recurring_shadow_close_candidate: '收盘延续候选',
+  recurring_intraday_control: '盘中控制候选',
+  structural_shadow_hold_only: '结构性冻结观察',
+  candidate_entry_shadow_only: '候选入口 shadow',
+  continue_controlled_roll_forward: '继续受控推进',
+  hold_shadow_only_no_same_rule_expansion: '维持单票 shadow，不做扩散',
+  await_new_close_candidate_window: '等待新的收盘延续窗口',
+  await_new_intraday_control_window: '等待新的盘中控制窗口',
+  shadow_only_until_second_window: '第二独立窗口前仅 shadow',
+  await_new_independent_window_data: '等待新增独立窗口',
+  hold_single_name_only_quality_negative: '仅保留单票观察',
+  cross_window_stability_missing: '缺少跨窗口稳定性',
+  same_rule_shadow_expansion_not_ready: '同规则 shadow 扩散未就绪',
+  post_release_quality_negative: 'release 后质量转负',
+  blocked_by_single_window_candidate_entry_signal: '仍是单窗口候选信号',
+  broad_penalty_relief: '广义 stale/extension 惩罚放松',
+  broad_penalty_route_closed_current_window: '当前窗口已关闭',
+  candidate_entry_shadow_refresh: '候选入口 shadow',
+  btst_governance_synthesis_refresh: '治理综合',
+  btst_governance_validation_refresh: '治理校验',
+  btst_replay_cohort_refresh: '回放队列',
+};
+
+const BTST_ARTIFACT_LABELS: Record<string, string> = {
+  open_ready_delta_json: '开盘前差分 JSON',
+  open_ready_delta_markdown: '开盘前差分 Markdown',
+  nightly_control_tower_json: '夜间控制塔 JSON',
+  nightly_control_tower_markdown: '夜间控制塔 Markdown',
+  governance_synthesis_json: '治理综合 JSON',
+  rollout_governance_json: 'rollout 治理 JSON',
+  report_manifest_json: '报告清单 JSON',
+  report_manifest_markdown: '报告清单 Markdown',
+  current_priority_board_json: '当前优先级面板 JSON',
+  previous_priority_board_json: '上一轮优先级面板 JSON',
+};
 
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined) {
@@ -245,7 +304,7 @@ function formatBtstControlTowerReference(reference: ReplayBtstControlTowerRefere
   }
   const reportName = formatOptionalText(reference.report_name || formatPathLeaf(reference.report_dir));
   const tradeDate = formatOptionalText(reference.trade_date);
-  const selectionTarget = formatOptionalText(reference.selection_target);
+  const selectionTarget = formatBtstToken(reference.selection_target);
   return `${reportName} | ${tradeDate} | ${selectionTarget}`;
 }
 
@@ -258,8 +317,10 @@ function formatBtstControlTowerChangeSummary(overview: ReplayBtstControlTowerOve
     overview.governance_has_changes ? 'governance' : null,
     overview.replay_has_changes ? 'replay' : null,
   ].filter(Boolean);
-  const surfaceSummary = changedSurfaces.length > 0 ? changedSurfaces.join('/') : 'stable';
-  return `${formatOptionalText(overview.overall_delta_verdict)} | ${surfaceSummary}`;
+  const surfaceSummary = changedSurfaces.length > 0
+    ? changedSurfaces.map((item) => formatBtstToken(item)).join(' / ')
+    : '无结构变化';
+  return `${formatBtstToken(overview.overall_delta_verdict)} | ${surfaceSummary}`;
 }
 
 function formatBtstControlTowerFocus(overview: ReplayBtstControlTowerOverview | null | undefined): string {
@@ -270,6 +331,200 @@ function formatBtstControlTowerFocus(overview: ReplayBtstControlTowerOverview | 
     return overview.operator_focus[0];
   }
   return formatOptionalText(overview.recommendation);
+}
+
+function formatBtstControlTowerLaneEvidence(lane: ReplayBtstControlTowerLaneRow | null | undefined): string {
+  if (!lane || lane.evidence_highlights.length === 0) {
+    return '--';
+  }
+  return lane.evidence_highlights.map((item) => formatBtstEvidenceHighlight(item)).join(' | ');
+}
+
+function buildReplayContextParams(
+  reference: ReplayBtstControlTowerReference | ReplayBtstReplayContextReference | null | undefined,
+  fallbackSymbol = 'all',
+): { reportName: string; tradeDate: string; symbol: string } | null {
+  if (!reference?.report_name || !reference.trade_date) {
+    return null;
+  }
+  const symbol = 'symbol' in reference && typeof reference.symbol === 'string' && reference.symbol
+    ? reference.symbol
+    : fallbackSymbol;
+  return {
+    reportName: reference.report_name,
+    tradeDate: reference.trade_date,
+    symbol,
+  };
+}
+
+function formatBtstToken(value: string | null | undefined): string {
+  if (!value) {
+    return '--';
+  }
+  return BTST_TOKEN_LABELS[value] || value.replace(/_/g, ' ');
+}
+
+function formatBtstArtifactLabel(key: string): string {
+  return BTST_ARTIFACT_LABELS[key] || key.replace(/_/g, ' ');
+}
+
+function formatBtstEvidenceHighlight(value: string): string {
+  return value
+    .replace('missing windows', '缺失窗口')
+    .replace('close+ rate', '收盘正收益率')
+    .replace('close mean', '收盘均值')
+    .replace('high mean', '次日高点均值')
+    .replace('same-rule peers', '同规则 peer')
+    .replace('blocked cases', '阻塞样本')
+    .replace('threshold-only', 'threshold-only 样本')
+    .replace('freeze', '冻结结论')
+    .replace('locality', '局部性')
+    .replace('rescuable', '可救回样本')
+    .replace('cases', '样本')
+    .replace('windows', '窗口');
+}
+
+function formatBtstCounterMap(values: Record<string, number> | undefined, emptyLabel = '--'): string {
+  if (!values) {
+    return emptyLabel;
+  }
+  const entries = Object.entries(values);
+  if (entries.length === 0) {
+    return emptyLabel;
+  }
+  return entries.map(([key, value]) => `${formatBtstToken(key)}:${value}`).join(' | ');
+}
+
+function formatBtstRefreshSummary(refreshStatus: Record<string, string> | undefined): string {
+  if (!refreshStatus) {
+    return '--';
+  }
+  const entries = Object.entries(refreshStatus);
+  if (entries.length === 0) {
+    return '--';
+  }
+  const refreshedCount = entries.filter(([, value]) => value === 'refreshed').length;
+  return `${refreshedCount}/${entries.length} 条链路已刷新`;
+}
+
+function isSameBtstReference(
+  left: ReplayBtstControlTowerReference | null | undefined,
+  right: ReplayBtstControlTowerReference | null | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+  return left.report_name === right.report_name
+    && left.trade_date === right.trade_date
+    && left.next_trade_date === right.next_trade_date
+    && left.selection_target === right.selection_target;
+}
+
+function formatBtstReferenceCompactName(reference: ReplayBtstControlTowerReference | null | undefined): string {
+  if (!reference) {
+    return '--';
+  }
+  return formatCompactReportLabel(reference.report_name || formatPathLeaf(reference.report_dir || '--'));
+}
+
+function BtstReferenceSnapshot({
+  label,
+  reference,
+  summary,
+  actionLabel,
+  actionAriaLabel,
+  onOpen,
+}: {
+  label: string;
+  reference: ReplayBtstControlTowerReference | null | undefined;
+  summary?: string;
+  actionLabel?: string;
+  actionAriaLabel?: string;
+  onOpen?: (() => void) | null;
+}) {
+  if (!reference) {
+    return (
+      <div className="rounded-lg border border-border/50 bg-background/60 px-3 py-3 text-sm text-muted-foreground">
+        暂无可展示的运行上下文。
+      </div>
+    );
+  }
+
+  const rawReportName = formatOptionalText(reference.report_name || formatPathLeaf(reference.report_dir));
+  const compactReportName = formatBtstReferenceCompactName(reference);
+
+  return (
+    <div className="rounded-lg border border-border/50 bg-background/70 px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">{label}</Badge>
+            <Badge variant="outline">{formatOptionalText(reference.trade_date)}</Badge>
+            <Badge variant="outline">{formatBtstToken(reference.selection_target)}</Badge>
+          </div>
+          <p className="mt-3 truncate text-sm font-semibold text-foreground" title={rawReportName}>
+            {compactReportName}
+          </p>
+          <p className="mt-1 text-xs leading-6 text-muted-foreground">
+            T+1 {formatOptionalText(reference.next_trade_date)}
+          </p>
+          {summary ? <p className="mt-2 text-xs leading-6 text-muted-foreground">{summary}</p> : null}
+        </div>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs">
+              详情
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-80 space-y-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">报告目录</p>
+              <p className="mt-2 break-all text-sm font-medium text-foreground">{rawReportName}</p>
+            </div>
+            <div className="grid gap-2 text-xs text-muted-foreground">
+              <p>交易日：{formatOptionalText(reference.trade_date)}</p>
+              <p>T+1：{formatOptionalText(reference.next_trade_date)}</p>
+              <p>目标模式：{formatBtstToken(reference.selection_target)}</p>
+              <p className="break-all">原始引用：{formatBtstControlTowerReference(reference)}</p>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+      {onOpen && actionLabel ? (
+        <div className="mt-3 flex justify-end">
+          <Button type="button" size="sm" variant="secondary" aria-label={actionAriaLabel || actionLabel} onClick={onOpen}>
+            {actionLabel}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BtstArtifactSummaryPopover({ artifacts }: { artifacts: Record<string, string> }) {
+  const entries = Object.entries(artifacts);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button type="button" size="sm" variant="outline">
+          查看产物路径
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="max-h-[28rem] w-[26rem] space-y-3 overflow-y-auto">
+        {entries.map(([key, value]) => (
+          <div key={`btst-artifact-${key}`} className="rounded-lg border border-border/50 bg-background/60 px-3 py-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{formatBtstArtifactLabel(key)}</p>
+            <p className="mt-2 break-all text-sm font-medium text-foreground">{formatPathLeaf(value)}</p>
+            <p className="mt-1 break-all font-mono text-[11px] leading-5 text-muted-foreground">{value}</p>
+          </div>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function formatTargetDecision(decision: ReplayTargetEvaluationResult | null | undefined): string {
@@ -460,6 +715,24 @@ type ExplainabilityFilterState = {
 
 type ReportRailSortMode = 'window_end_desc' | 'dual_target_days_desc' | 'delta_case_count_desc';
 
+const DEFAULT_REPORT_RAIL_DUAL_TARGET_FILTER: ReportRailDualTargetFilterState = {
+  targetMode: 'all',
+  deltaClass: 'all',
+  shortTradeProfile: 'all',
+};
+
+const DEFAULT_TRADE_DATE_DUAL_TARGET_FILTER: TradeDateDualTargetFilterState = {
+  targetMode: 'all',
+  deltaClass: 'all',
+  shortTradeProfile: 'all',
+};
+
+const DEFAULT_EXPLAINABILITY_FILTER: ExplainabilityFilterState = {
+  profile: 'all',
+  source: 'all',
+  decision: 'all',
+};
+
 function promptList(items: string[] | undefined): string {
   if (!items || items.length === 0) {
     return '--';
@@ -604,21 +877,9 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
     symbol: 'all',
     reviewStatus: 'all',
   });
-  const [reportRailDualTargetFilter, setReportRailDualTargetFilter] = useState<ReportRailDualTargetFilterState>({
-    targetMode: 'all',
-    deltaClass: 'all',
-    shortTradeProfile: 'all',
-  });
-  const [tradeDateDualTargetFilter, setTradeDateDualTargetFilter] = useState<TradeDateDualTargetFilterState>({
-    targetMode: 'all',
-    deltaClass: 'all',
-    shortTradeProfile: 'all',
-  });
-  const [explainabilityFilter, setExplainabilityFilter] = useState<ExplainabilityFilterState>({
-    profile: 'all',
-    source: 'all',
-    decision: 'all',
-  });
+  const [reportRailDualTargetFilter, setReportRailDualTargetFilter] = useState<ReportRailDualTargetFilterState>(DEFAULT_REPORT_RAIL_DUAL_TARGET_FILTER);
+  const [tradeDateDualTargetFilter, setTradeDateDualTargetFilter] = useState<TradeDateDualTargetFilterState>(DEFAULT_TRADE_DATE_DUAL_TARGET_FILTER);
+  const [explainabilityFilter, setExplainabilityFilter] = useState<ExplainabilityFilterState>(DEFAULT_EXPLAINABILITY_FILTER);
   const [reportRailSortMode, setReportRailSortMode] = useState<ReportRailSortMode>('window_end_desc');
   const [focusedSymbol, setFocusedSymbol] = useState<string>('all');
   const [workflowQueueFilter, setWorkflowQueueFilter] = useState<WorkflowQueueFilterState>({
@@ -841,6 +1102,14 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
     return symbolMatched && statusMatched;
   });
   const isWorkspace = mode === 'workspace';
+  const workspaceLayoutClass = isWorkspace ? 'grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]' : 'space-y-6';
+  const workspaceFourCardGridClass = isWorkspace ? 'md:grid-cols-2 2xl:grid-cols-4' : 'md:grid-cols-2 xl:grid-cols-4';
+  const workspaceDenseCardGridClass = isWorkspace ? 'md:grid-cols-2 2xl:grid-cols-4' : 'md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8';
+  const workspaceSummaryGridClass = isWorkspace ? 'md:grid-cols-2 2xl:grid-cols-3' : 'md:grid-cols-3';
+  const workspaceTwoColumnGridClass = isWorkspace ? '2xl:grid-cols-2' : 'xl:grid-cols-2';
+  const workspaceFiveCardGridClass = isWorkspace ? 'md:grid-cols-2 2xl:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-5';
+  const workspaceFilterGridClass = isWorkspace ? 'md:grid-cols-2 2xl:grid-cols-3 md:items-end' : 'md:grid-cols-2 xl:grid-cols-5 md:items-end';
+  const workspaceTertiaryGridClass = isWorkspace ? 'md:grid-cols-2 2xl:grid-cols-3' : 'xl:grid-cols-3';
   const layerBFilter = getFunnelFilter(selectionSnapshot, 'layer_b');
   const watchlistFilter = getFunnelFilter(selectionSnapshot, 'watchlist');
   const buyOrdersFilter = getFunnelFilter(selectionSnapshot, 'buy_orders');
@@ -1155,6 +1424,8 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   }, [focusedSymbol, symbolOptions]);
 
   function jumpToRepresentativeCase(caseItem: ReplayDualTargetRepresentativeCase) {
+    setTradeDateDualTargetFilter(DEFAULT_TRADE_DATE_DUAL_TARGET_FILTER);
+    setExplainabilityFilter(DEFAULT_EXPLAINABILITY_FILTER);
     if (caseItem.trade_date) {
       setSelectedTradeDate(caseItem.trade_date);
     }
@@ -1238,6 +1509,9 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   }
 
   function openWorkflowQueueItemContext(item: ReplayWorkflowQueueItem) {
+    setReportRailDualTargetFilter(DEFAULT_REPORT_RAIL_DUAL_TARGET_FILTER);
+    setTradeDateDualTargetFilter(DEFAULT_TRADE_DATE_DUAL_TARGET_FILTER);
+    setExplainabilityFilter(DEFAULT_EXPLAINABILITY_FILTER);
     setSelectedReport(item.report_name);
     setSelectedTradeDate(item.trade_date);
     setFocusedSymbol(item.symbol);
@@ -1245,6 +1519,9 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
   }
 
   function openReplayContext(params: { reportName: string; tradeDate: string; symbol: string }) {
+    setReportRailDualTargetFilter(DEFAULT_REPORT_RAIL_DUAL_TARGET_FILTER);
+    setTradeDateDualTargetFilter(DEFAULT_TRADE_DATE_DUAL_TARGET_FILTER);
+    setExplainabilityFilter(DEFAULT_EXPLAINABILITY_FILTER);
     setSelectedReport(params.reportName);
     setSelectedTradeDate(params.tradeDate);
     setFocusedSymbol(params.symbol);
@@ -1388,7 +1665,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
         </Card>
       ) : null}
 
-      <div className={cn(isWorkspace ? 'grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)_340px]' : 'space-y-6')}>
+      <div className={workspaceLayoutClass}>
         <div className="space-y-4">
           {isWorkspace ? (
             <Card>
@@ -1599,17 +1876,17 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                         </p>
                         {report.selection_artifact_overview.btst_control_tower_overview?.selected_report_matches_current_reference ? (
                           <p className="mt-2 text-xs leading-5 text-primary">
-                            open-ready current | {formatBtstControlTowerChangeSummary(report.selection_artifact_overview.btst_control_tower_overview)}
+                            已对齐最新 BTST | {formatBtstControlTowerChangeSummary(report.selection_artifact_overview.btst_control_tower_overview)}
                           </p>
                         ) : null}
                         <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                          short profile {formatShortTradeProfileOverview(report.selection_artifact_overview.short_trade_profile_overview)}
+                          短线画像 {formatShortTradeProfileOverview(report.selection_artifact_overview.short_trade_profile_overview)}
                         </p>
                         <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                          target modes {formatDualTargetOverviewModes(report.selection_artifact_overview.dual_target_overview)}
+                          目标模式 {formatDualTargetOverviewModes(report.selection_artifact_overview.dual_target_overview)}
                         </p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          dual target {formatDualTargetOverviewCounts(report.selection_artifact_overview.dual_target_overview)}
+                          双目标 {formatDualTargetOverviewCounts(report.selection_artifact_overview.dual_target_overview)}
                         </p>
                       </button>
                     ))}
@@ -1685,9 +1962,9 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
           ) : null}
         </div>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           {isDetailLoading || !detail ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className={cn('grid gap-4', workspaceFourCardGridClass)}>
               <Skeleton className="h-36" />
               <Skeleton className="h-36" />
               <Skeleton className="h-36" />
@@ -1705,7 +1982,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                 </div>
               ) : null}
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className={cn('grid gap-4', workspaceFourCardGridClass)}>
                 <KpiCard
                   title="Return"
                   value={formatPercent(detail.headline_kpi.total_return_pct)}
@@ -1732,7 +2009,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+              <div className={cn('grid gap-4', workspaceDenseCardGridClass)}>
                 <KpiCard
                   title="Selection Days"
                   value={`${detail.selection_artifact_overview.trade_date_count}`}
@@ -1748,39 +2025,39 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                   icon={RefreshCw}
                 />
                 <KpiCard
-                  title="Selection Blockers"
+                  title="筛选阻断"
                   value={formatBlockers(detail.selection_artifact_overview.blocker_counts)}
                   description="按 selection snapshot 汇总的执行阻断原因"
                   icon={BarChart3}
                 />
                 <KpiCard
-                  title="Dual Target"
-                  value={reportDualTargetOverview ? `${reportDualTargetOverview.dual_target_trade_date_count} days` : '--'}
-                  description={reportDualTargetOverview ? `modes ${formatDualTargetOverviewModes(reportDualTargetOverview)}` : '当前 report 还没有 report-level dual target 聚合'}
+                  title="双目标"
+                  value={reportDualTargetOverview ? `${reportDualTargetOverview.dual_target_trade_date_count} 天` : '--'}
+                  description={reportDualTargetOverview ? `模式 ${formatDualTargetOverviewModes(reportDualTargetOverview)}` : '当前 report 还没有 report 级双目标聚合'}
                   icon={BarChart3}
                 />
                 <KpiCard
-                  title="Feedback Summary"
+                  title="反馈总览"
                   value={feedbackSummary?.overall?.feedback_count?.toString() || '0'}
-                  description={`Final ${feedbackSummary?.overall?.final_feedback_count || 0} / Files ${feedbackSummary?.feedback_file_count || 0}`}
+                  description={`已定稿 ${feedbackSummary?.overall?.final_feedback_count || 0} / 文件 ${feedbackSummary?.feedback_file_count || 0}`}
                   icon={Wallet}
                 />
                 <KpiCard
-                  title="Cache Benchmark"
+                  title="缓存基准"
                   value={formatCacheBenchmarkValue(detail.cache_benchmark_overview)}
                   description={formatCacheBenchmarkDescription(detail.cache_benchmark_overview)}
                   icon={RefreshCw}
                 />
                 <KpiCard
-                  title="BTST Follow-Up"
+                  title="BTST 次日简报"
                   value={btstFollowupOverview?.primary_entry_ticker || '--'}
-                  description={btstFollowupOverview ? `watch ${btstFollowupOverview.watchlist_count} / excluded ${btstFollowupOverview.excluded_research_count}` : '当前 report 还没有 BTST follow-up 产物'}
+                  description={btstFollowupOverview ? `观察 ${btstFollowupOverview.watchlist_count} / 排除 ${btstFollowupOverview.excluded_research_count}` : '当前 report 还没有 BTST 次日简报产物'}
                   icon={BarChart3}
                 />
                 <KpiCard
-                  title="Open-Ready Delta"
-                  value={btstControlTowerOverview?.overall_delta_verdict || '--'}
-                  description={btstControlTowerOverview ? `${formatOptionalText(btstControlTowerOverview.comparison_basis)} | ${formatBtstControlTowerFocus(btstControlTowerOverview)}` : '当前还没有 BTST control tower 产物'}
+                  title="开盘前差分"
+                  value={btstControlTowerOverview ? formatBtstToken(btstControlTowerOverview.overall_delta_verdict) : '--'}
+                  description={btstControlTowerOverview ? `${formatBtstToken(btstControlTowerOverview.comparison_basis)} | ${formatBtstControlTowerFocus(btstControlTowerOverview)}` : '当前还没有 BTST 控制塔产物'}
                   icon={RefreshCw}
                 />
               </div>
@@ -1788,35 +2065,95 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
               {btstControlTowerOverview ? (
                 <Card>
                   <CardHeader>
-                    <CardTitle>BTST Control Tower</CardTitle>
-                    <CardDescription>把 open-ready delta 和 nightly control tower 的关键结论直接带进工作台，先回答昨晚到今晚变了什么，以及明早先看什么。</CardDescription>
+                    <CardTitle>BTST 控制塔</CardTitle>
+                    <CardDescription>把开盘前差分、夜间治理和回放上下文收进同一块工作面，优先回答昨晚到今天是否变了、明早先看哪条车道。</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className={cn('grid gap-3', workspaceSummaryGridClass)}>
                       <div className="rounded-md border border-border/60 bg-muted/10 p-4">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Delta Verdict</p>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">变化结论</p>
                         <p className="mt-2 text-sm font-semibold text-primary">{formatBtstControlTowerChangeSummary(btstControlTowerOverview)}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">comparison {formatOptionalText(btstControlTowerOverview.comparison_basis)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">对比基准：{formatBtstToken(btstControlTowerOverview.comparison_basis)}</p>
                       </div>
                       <div className="rounded-md border border-border/60 bg-muted/10 p-4">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Current Latest</p>
-                        <p className="mt-2 text-sm font-semibold text-primary">{formatBtstControlTowerReference(btstControlTowerOverview.current_reference)}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{btstControlTowerOverview.selected_report_matches_current_reference ? '当前选中 report 就是 latest BTST run。' : '当前选中 report 不是 latest BTST run。'}</p>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">治理状态</p>
+                        <p className="mt-2 text-sm font-semibold text-primary">{formatBtstToken(btstControlTowerOverview.governance_overall_verdict)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">等待 {btstControlTowerOverview.waiting_lane_count ?? '--'} 条 | 就绪 {btstControlTowerOverview.ready_lane_count ?? '--'} 条</p>
+                        <p className="mt-1 text-xs text-muted-foreground">建议：{formatOptionalText(btstControlTowerOverview.recommendation)}</p>
                       </div>
                       <div className="rounded-md border border-border/60 bg-muted/10 p-4">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Governance</p>
-                        <p className="mt-2 text-sm font-semibold text-primary">{formatOptionalText(btstControlTowerOverview.governance_overall_verdict)}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">waiting {btstControlTowerOverview.waiting_lane_count ?? '--'} | ready {btstControlTowerOverview.ready_lane_count ?? '--'}</p>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">运行概览</p>
+                        <p className="mt-2 text-sm font-semibold text-primary">{formatBtstRefreshSummary(btstControlTowerOverview.refresh_status)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">车道分布：{formatBtstCounterMap(btstControlTowerOverview.lane_status_counts)}</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs">
+                                刷新明细
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent align="end" className="w-80 space-y-3">
+                              {Object.entries(btstControlTowerOverview.refresh_status).map(([key, value]) => (
+                                <div key={`btst-refresh-${key}`} className="rounded-lg border border-border/50 bg-background/60 px-3 py-3">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{formatBtstToken(key)}</p>
+                                  <p className="mt-2 text-sm font-medium text-foreground">{formatBtstToken(value)}</p>
+                                </div>
+                              ))}
+                            </PopoverContent>
+                          </Popover>
+                          <BtstArtifactSummaryPopover artifacts={btstControlTowerOverview.artifacts} />
+                        </div>
                       </div>
-                      <div className="rounded-md border border-border/60 bg-muted/10 p-4">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Refresh Status</p>
-                        <p className="mt-2 text-xs leading-6 text-muted-foreground">{Object.entries(btstControlTowerOverview.refresh_status).map(([key, value]) => `${key}:${value}`).join(' | ') || '--'}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">lanes {formatCounterMap(btstControlTowerOverview.lane_status_counts)}</p>
+                    </div>
+
+                    <div className="rounded-xl border border-border/60 bg-muted/10 p-4 space-y-3">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">当前与对照运行</p>
+                          <p className="mt-1 text-xs text-muted-foreground">长报告名已收起到详情弹层，主面只保留交易日、目标模式和关键跳转。</p>
+                        </div>
+                        <Badge variant={btstControlTowerOverview.selected_report_matches_current_reference ? 'secondary' : 'outline'}>
+                          {btstControlTowerOverview.selected_report_matches_current_reference ? '当前报告已对齐最新运行' : '当前报告不是最新运行'}
+                        </Badge>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <BtstReferenceSnapshot
+                          label="当前运行"
+                          reference={btstControlTowerOverview.current_reference}
+                          summary={btstControlTowerOverview.selected_report_matches_current_reference ? '当前工作台已对齐最新 BTST 运行。' : '建议先打开当前运行，再判断 lane 与动作。'}
+                          actionLabel="打开当前"
+                          actionAriaLabel="打开当前 BTST 运行"
+                          onOpen={buildReplayContextParams(btstControlTowerOverview.current_reference)
+                            ? () => {
+                                const params = buildReplayContextParams(btstControlTowerOverview.current_reference);
+                                if (params) {
+                                  openReplayContext(params);
+                                }
+                              }
+                            : null}
+                        />
+                        <BtstReferenceSnapshot
+                          label="上一轮对照"
+                          reference={btstControlTowerOverview.previous_reference}
+                          summary={isSameBtstReference(btstControlTowerOverview.current_reference, btstControlTowerOverview.previous_reference)
+                            ? '上一轮对照与当前一致，本轮可视为稳定复跑。'
+                            : '用于判断本轮是否出现新的运行切换或治理变化。'}
+                          actionLabel={!isSameBtstReference(btstControlTowerOverview.current_reference, btstControlTowerOverview.previous_reference) ? '打开上一轮' : undefined}
+                          actionAriaLabel="打开上一轮 BTST 运行"
+                          onOpen={buildReplayContextParams(btstControlTowerOverview.previous_reference) && !isSameBtstReference(btstControlTowerOverview.current_reference, btstControlTowerOverview.previous_reference)
+                            ? () => {
+                                const params = buildReplayContextParams(btstControlTowerOverview.previous_reference);
+                                if (params) {
+                                  openReplayContext(params);
+                                }
+                              }
+                            : null}
+                        />
                       </div>
                     </div>
 
                     <div className="rounded-md border border-border/60 bg-muted/10 p-4">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Operator Focus</p>
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">值班关注</p>
                       <div className="mt-2 space-y-2 text-sm text-foreground">
                         {(btstControlTowerOverview.operator_focus.length > 0 ? btstControlTowerOverview.operator_focus : [btstControlTowerOverview.recommendation || '--']).map((item, index) => (
                           <p key={`btst-control-focus-${index}`}>{item}</p>
@@ -1824,28 +2161,119 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                       </div>
                     </div>
 
-                    <div className="grid gap-3 xl:grid-cols-2">
+                    {btstControlTowerOverview.closed_frontiers && btstControlTowerOverview.closed_frontiers.length > 0 ? (
                       <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-3">
                         <div>
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Next Actions</p>
-                          <p className="mt-1 text-xs text-muted-foreground">先看 control tower 给出的前 3 个动作，不必再手动翻 nightly markdown 才知道今晚的主线。</p>
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">已关闭路线</p>
+                          <p className="mt-1 text-xs text-muted-foreground">把已经被当前窗口证伪的 broad route 直接暴露出来，避免继续把夜间精力投在已关闭路线。</p>
+                        </div>
+                        <div className={cn('grid gap-3', workspaceTwoColumnGridClass)}>
+                          {btstControlTowerOverview.closed_frontiers.map((frontier) => (
+                            <div key={`${frontier.frontier_id || 'frontier'}-${frontier.status || 'status'}`} className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                              <div className="flex flex-wrap gap-2">
+                                <Badge variant="secondary">{formatBtstToken(frontier.frontier_id)}</Badge>
+                                <Badge variant="outline">{formatBtstToken(frontier.status)}</Badge>
+                                <Badge variant="outline">通过 {frontier.passing_variant_count ?? '--'} 条</Badge>
+                              </div>
+                              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(frontier.headline)}</p>
+                              <p className="mt-2 text-xs leading-6 text-muted-foreground">影响样本：{formatStringList(frontier.best_variant_released_tickers)}</p>
+                              <p className="mt-1 text-xs leading-6 text-muted-foreground">关注样本：{formatStringList(frontier.best_variant_focus_released_tickers)}</p>
+                              <p className="mt-1 truncate text-xs leading-6 text-muted-foreground" title={formatOptionalText(frontier.best_variant_name)}>最佳变体：{formatOptionalText(frontier.best_variant_name)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">执行车道</p>
+                        <p className="mt-1 text-xs text-muted-foreground">把 primary、shadow、recurring、structural 车道压成可操作 lane board，并直接跳到对应回放。</p>
+                      </div>
+                      <div className={cn('grid gap-3', workspaceTwoColumnGridClass)}>
+                        {btstControlTowerOverview.rollout_lane_rows.length > 0 ? btstControlTowerOverview.rollout_lane_rows.map((lane) => {
+                          const laneContextParams = buildReplayContextParams(lane.context_reference, lane.ticker || 'all');
+                          return (
+                            <div key={`${lane.lane_id || lane.ticker || 'lane'}-${lane.governance_tier || 'tier'}`} className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap gap-2">
+                                    <Badge variant="secondary">{formatOptionalText(lane.ticker)}</Badge>
+                                    <Badge variant="outline">{formatBtstToken(lane.governance_tier)}</Badge>
+                                  </div>
+                                  <p className="mt-2 text-xs leading-6 text-muted-foreground">车道状态：{formatBtstToken(lane.lane_status)}</p>
+                                  <p className="text-xs leading-6 text-muted-foreground">阻塞原因：{formatBtstToken(lane.blocker)}</p>
+                                  <p className="text-xs leading-6 text-muted-foreground">验证结论：{formatBtstToken(lane.validation_verdict)}{lane.missing_window_count !== null && lane.missing_window_count !== undefined ? ` | 缺失窗口 ${lane.missing_window_count}` : ''}</p>
+                                </div>
+                                {laneContextParams ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="secondary"
+                                    aria-label={`打开回放 ${lane.ticker || 'lane'}`}
+                                    onClick={() => openReplayContext(laneContextParams)}
+                                  >
+                                    打开回放
+                                  </Button>
+                                ) : null}
+                              </div>
+                              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatBtstControlTowerLaneEvidence(lane)}</p>
+                              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(lane.next_step)}</p>
+                            </div>
+                          );
+                        }) : (
+                          <div className={cn('rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground', isWorkspace ? '2xl:col-span-2' : 'xl:col-span-2')}>
+                            当前 control tower 还没有可展示的 rollout lane rows。
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className={cn('grid gap-3', workspaceTwoColumnGridClass)}>
+                      <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">下一步动作</p>
+                          <p className="mt-1 text-xs text-muted-foreground">先看控制塔给出的前 3 个动作，不必再手动翻 nightly markdown 才知道今晚主线。</p>
                         </div>
                         {btstControlTowerOverview.next_actions.length > 0 ? btstControlTowerOverview.next_actions.map((action) => (
                           <div key={action.task_id || action.title || 'btst-control-action'} className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
                             <p className="text-sm font-medium text-primary">{formatOptionalText(action.title)}</p>
                             <p className="mt-1 text-xs leading-6 text-muted-foreground">{formatOptionalText(action.why_now)}</p>
                             <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(action.next_step)}</p>
+                            {buildReplayContextParams(action.context_reference || null) ? (
+                              <div className="mt-3 flex justify-end">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  aria-label={`打开动作回放 ${action.task_id || action.title || 'task'}`}
+                                  onClick={() => {
+                                    const params = buildReplayContextParams(action.context_reference || null);
+                                    if (params) {
+                                      openReplayContext(params);
+                                    }
+                                  }}
+                                >
+                                  打开回放
+                                </Button>
+                              </div>
+                            ) : null}
                           </div>
                         )) : (
                           <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
-                            当前 control tower 没有可展示的 next actions。
+                            当前控制塔没有可展示的下一步动作。
                           </div>
                         )}
                       </div>
-                      <div className="grid gap-3">
-                        {Object.entries(btstControlTowerOverview.artifacts).map(([key, value]) => (
-                          <PathPreviewCard key={`btst-control-artifact-${key}`} label={key} value={value} />
-                        ))}
+                      <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">辅助资料</p>
+                          <p className="mt-1 text-xs text-muted-foreground">产物路径和原始对照信息已收起，避免主面板被技术路径挤满。</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <BtstArtifactSummaryPopover artifacts={btstControlTowerOverview.artifacts} />
+                        </div>
+                        <p className="text-xs leading-6 text-muted-foreground">需要定位原始 JSON、Markdown 或 manifest 时，再从弹层中查看完整路径。</p>
                       </div>
                     </div>
                   </CardContent>
@@ -1895,7 +2323,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                         <p className="text-sm font-medium text-primary">Report-Level Dual Target Overview</p>
                         <p className="text-xs text-muted-foreground">先看整段 replay 的 target mode 分布和 delta 聚类，再决定要不要钻到某个 trade date。</p>
                       </div>
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className={cn('grid gap-3', workspaceFourCardGridClass)}>
                         <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
                           <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Modes</p>
                           <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatDualTargetOverviewModes(reportDualTargetOverview)}</p>
@@ -1960,7 +2388,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                     </div>
                   ) : null}
 
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5 md:items-end">
+                  <div className={cn('grid gap-3', workspaceFilterGridClass)}>
                     <label className="space-y-1 text-sm">
                       <span className="text-muted-foreground">Trade Date Target Mode Filter</span>
                       <select
@@ -2112,7 +2540,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                           </Badge>
                         ))}
                       </div>
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className={cn('grid gap-3', workspaceFourCardGridClass)}>
                         <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-3">
                           <p className="text-xs uppercase tracking-wide text-muted-foreground">Watchlist</p>
                           <p className="mt-1 text-lg font-semibold">{String(universeSummary.watchlist_count ?? '--')}</p>
@@ -2136,7 +2564,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                           <p className="text-sm font-medium text-primary">Dual Target Snapshot</p>
                           <p className="text-xs text-muted-foreground">直接消费 selection_snapshot 中的 target_summary、research_view、short_trade_view 与 dual_target_delta，不再依赖阅读 markdown 才知道双目标差异。</p>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                        <div className={cn('grid gap-3', workspaceFiveCardGridClass)}>
                           <div className="rounded-md border border-border/60 bg-muted/10 p-4">
                             <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Mode</p>
                             <p className="mt-2 text-sm font-semibold text-primary">{formatOptionalText(selectionSnapshot?.target_mode)}</p>
@@ -2164,7 +2592,7 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
                           </div>
                         </div>
 
-                        <div className="grid gap-3 xl:grid-cols-3">
+                        <div className={cn('grid gap-3', workspaceTertiaryGridClass)}>
                           <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-2">
                             <p className="text-xs uppercase tracking-wide text-muted-foreground">Research Target View</p>
                             <p className="text-sm">selected: {formatStringList(researchTargetView?.selected_symbols)}</p>
@@ -2785,21 +3213,23 @@ export function ReplayArtifactsSettings({ mode = 'settings', className }: Replay
         </div>
 
         {isWorkspace ? (
-          <ReplayArtifactsInspector
-            detail={detail}
-            selectionArtifactDetail={selectionArtifactDetail}
-            feedbackActivity={feedbackActivity}
-            focusedSymbol={focusedSymbol}
-            selectedTradeDate={selectedTradeDate}
-            tradeDateFilterCoverageText={tradeDateFilterCoverageText}
-            visibleFeedbackActivityCount={visibleFeedbackActivityRecords.length}
-            visibleWorkflowQueueCount={workflowFocusMatchCount}
-            totalWorkflowQueueCount={workflowQueue?.items.length || 0}
-            onOpenContext={openReplayContext}
-            isDetailLoading={isDetailLoading}
-            isActivityLoading={isActivityLoading}
-            activityError={activityError}
-          />
+          <div className="min-w-0 xl:col-span-2">
+            <ReplayArtifactsInspector
+              detail={detail}
+              selectionArtifactDetail={selectionArtifactDetail}
+              feedbackActivity={feedbackActivity}
+              focusedSymbol={focusedSymbol}
+              selectedTradeDate={selectedTradeDate}
+              tradeDateFilterCoverageText={tradeDateFilterCoverageText}
+              visibleFeedbackActivityCount={visibleFeedbackActivityRecords.length}
+              visibleWorkflowQueueCount={workflowFocusMatchCount}
+              totalWorkflowQueueCount={workflowQueue?.items.length || 0}
+              onOpenContext={openReplayContext}
+              isDetailLoading={isDetailLoading}
+              isActivityLoading={isActivityLoading}
+              activityError={activityError}
+            />
+          </div>
         ) : null}
       </div>
     </div>

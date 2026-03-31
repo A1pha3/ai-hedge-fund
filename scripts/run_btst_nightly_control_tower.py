@@ -230,6 +230,7 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "ready_lane_count": synthesis.get("ready_lane_count"),
         "recommendation": synthesis.get("recommendation"),
         "lane_status_counts": synthesis.get("lane_status_counts"),
+        "closed_frontiers": list(synthesis.get("closed_frontiers") or []),
         "next_actions": list(synthesis.get("next_actions") or [])[:3],
         "overall_verdict": validation.get("overall_verdict"),
         "warn_count": validation.get("warn_count"),
@@ -817,6 +818,12 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- lane_status_counts: {control_tower_snapshot.get('lane_status_counts')}")
     lines.append(f"- warn_count: {control_tower_snapshot.get('warn_count')}")
     lines.append(f"- fail_count: {control_tower_snapshot.get('fail_count')}")
+    for frontier in list(control_tower_snapshot.get("closed_frontiers") or []):
+        lines.append(
+            f"- closed_frontier: {frontier.get('frontier_id')} status={frontier.get('status')} passing_variant_count={frontier.get('passing_variant_count')}"
+        )
+        lines.append(f"  headline: {frontier.get('headline')}")
+        lines.append(f"  best_variant: {frontier.get('best_variant_name')}")
     for task in list(control_tower_snapshot.get("next_actions") or []):
         lines.append(f"- next_action: {task.get('title')}")
         lines.append(f"  why_now: {task.get('why_now')}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import contextmanager
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -412,7 +413,12 @@ class ReplayArtifactService:
             },
             "artifacts": session_summary.get("artifacts") or {},
             "cache_benchmark_overview": self._derive_cache_benchmark_overview(session_summary),
-            "selection_artifact_overview": self._derive_selection_artifact_overview(report_dir, session_summary, daily_events),
+            "selection_artifact_overview": self._derive_selection_artifact_overview(
+                report_dir,
+                session_summary,
+                daily_events,
+                resolve_btst_contexts=include_tickers,
+            ),
         }
 
         if include_tickers:
@@ -834,7 +840,7 @@ class ReplayArtifactService:
         report_dir_value = payload.get("report_dir") or payload.get("report_dir_abs")
         report_name = Path(str(report_dir_value)).name if report_dir_value else None
         normalized = {
-            "report_dir": payload.get("report_dir"),
+            "report_dir": report_dir_value,
             "report_name": report_name,
             "selection_target": payload.get("selection_target"),
             "trade_date": payload.get("trade_date"),
@@ -844,30 +850,236 @@ class ReplayArtifactService:
             return None
         return normalized
 
-    def _derive_btst_control_tower_overview(self, report_dir: Path) -> dict[str, Any] | None:
+    def _extract_btst_ticker(self, *values: Any) -> str | None:
+        for value in values:
+            if value is None:
+                continue
+            match = re.search(r"(?<!\d)(\d{6})(?!\d)", str(value))
+            if match:
+                return match.group(1)
+        return None
+
+    def _collect_snapshot_stock_symbols(self, payload: Any, symbols: set[str]) -> None:
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                if isinstance(key, str) and re.fullmatch(r"\d{6}", key.strip()):
+                    symbols.add(key.strip())
+                self._collect_snapshot_stock_symbols(value, symbols)
+            return
+
+        if isinstance(payload, list):
+            for item in payload:
+                self._collect_snapshot_stock_symbols(item, symbols)
+            return
+
+        if isinstance(payload, str):
+            normalized = payload.strip()
+            if re.fullmatch(r"\d{6}", normalized):
+                symbols.add(normalized)
+
+    def _build_btst_replay_context_index(self, *, preferred_report_names: list[str] | None = None) -> dict[str, dict[str, Any]]:
+        preferred = {name for name in (preferred_report_names or []) if name}
+        report_dirs = sorted(
+            [summary_path.parent for summary_path in self._reports_root.glob("*/session_summary.json")],
+            key=lambda path: (
+                0 if path.name in preferred else 1,
+                -path.stat().st_mtime_ns,
+                path.name,
+            ),
+        )
+
+        context_index: dict[str, dict[str, Any]] = {}
+        for candidate_report_dir in report_dirs:
+            session_summary_path = candidate_report_dir / "session_summary.json"
+            try:
+                session_summary = self._read_json(session_summary_path)
+            except FileNotFoundError:
+                continue
+
+            artifact_root = self._resolve_selection_artifact_root(candidate_report_dir, session_summary)
+            if artifact_root is None or not artifact_root.exists():
+                continue
+
+            selection_target = (session_summary.get("plan_generation") or {}).get("selection_target") or session_summary.get("selection_target")
+            for day_dir in sorted((path for path in artifact_root.iterdir() if path.is_dir()), key=lambda path: path.name, reverse=True):
+                snapshot_path = day_dir / "selection_snapshot.json"
+                if not snapshot_path.exists():
+                    continue
+
+                snapshot = self._read_json(snapshot_path)
+                snapshot_symbols: set[str] = set()
+                self._collect_snapshot_stock_symbols(snapshot, snapshot_symbols)
+                for symbol in snapshot_symbols:
+                    context_index.setdefault(
+                        symbol,
+                        {
+                            "report_name": candidate_report_dir.name,
+                            "trade_date": day_dir.name,
+                            "symbol": symbol,
+                            "selection_target": selection_target,
+                        },
+                    )
+
+        return context_index
+
+    def _format_btst_lane_evidence_value(self, value: Any) -> str:
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, float):
+            return f"{value:.4f}".rstrip("0").rstrip(".")
+        return str(value)
+
+    def _summarize_btst_lane_evidence(self, evidence: dict[str, Any] | None) -> list[str]:
+        if not isinstance(evidence, dict) or not evidence:
+            return []
+
+        label_map = {
+            "target_case_count": "cases",
+            "distinct_window_count": "windows",
+            "missing_window_count": "missing windows",
+            "next_close_positive_rate": "close+ rate",
+            "next_close_return_mean": "close mean",
+            "next_high_return_mean": "high mean",
+            "threshold_only_candidate_count": "threshold-only",
+            "same_rule_peer_ticker_count": "same-rule peers",
+            "window_blocked_case_count": "blocked cases",
+            "window_near_miss_rescuable_count": "rescuable",
+            "freeze_verdict": "freeze",
+            "transition_locality": "locality",
+        }
+        preferred_keys = [
+            "target_case_count",
+            "distinct_window_count",
+            "missing_window_count",
+            "next_close_positive_rate",
+            "next_close_return_mean",
+            "next_high_return_mean",
+            "threshold_only_candidate_count",
+            "same_rule_peer_ticker_count",
+            "window_blocked_case_count",
+            "window_near_miss_rescuable_count",
+            "freeze_verdict",
+            "transition_locality",
+        ]
+
+        highlights: list[str] = []
+        for key in preferred_keys:
+            if evidence.get(key) is None:
+                continue
+            highlights.append(f"{label_map.get(key, key)} {self._format_btst_lane_evidence_value(evidence[key])}")
+            if len(highlights) >= 3:
+                return highlights
+
+        for key, value in evidence.items():
+            if value is None:
+                continue
+            label = label_map.get(str(key), str(key).replace("_", " "))
+            candidate = f"{label} {self._format_btst_lane_evidence_value(value)}"
+            if candidate not in highlights:
+                highlights.append(candidate)
+            if len(highlights) >= 3:
+                break
+
+        return highlights
+
+    def _derive_btst_rollout_lane_rows(
+        self,
+        governance_synthesis_payload: dict[str, Any],
+        *,
+        resolve_contexts: bool,
+        preferred_report_names: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        source_reports = dict(governance_synthesis_payload.get("source_reports") or {})
+        rollout_governance_path = source_reports.get("rollout_governance")
+        rollout_governance_payload = self._read_json(Path(rollout_governance_path)) if rollout_governance_path and Path(rollout_governance_path).exists() else {}
+        governance_rows = [dict(row) for row in list(rollout_governance_payload.get("governance_rows") or []) if isinstance(row, dict)]
+        if not governance_rows:
+            return []
+
+        lane_matrix = {
+            str(row.get("ticker") or row.get("lane_id") or ""): dict(row)
+            for row in list(governance_synthesis_payload.get("lane_matrix") or [])
+            if isinstance(row, dict)
+        }
+        context_index = self._build_btst_replay_context_index(preferred_report_names=preferred_report_names) if resolve_contexts else {}
+
+        lane_rows: list[dict[str, Any]] = []
+        for governance_row in governance_rows:
+            ticker = self._extract_btst_ticker(governance_row.get("ticker"))
+            matrix_row = lane_matrix.get(str(governance_row.get("ticker") or ""), {})
+            lane_rows.append(
+                {
+                    "lane_id": matrix_row.get("lane_id"),
+                    "ticker": governance_row.get("ticker"),
+                    "governance_tier": governance_row.get("governance_tier") or matrix_row.get("governance_tier"),
+                    "lane_status": governance_row.get("status") or matrix_row.get("lane_status"),
+                    "action_tier": matrix_row.get("action_tier"),
+                    "blocker": governance_row.get("blocker") or matrix_row.get("blocker"),
+                    "validation_verdict": matrix_row.get("validation_verdict"),
+                    "missing_window_count": matrix_row.get("missing_window_count"),
+                    "next_step": governance_row.get("next_step") or matrix_row.get("next_step"),
+                    "evidence_highlights": self._summarize_btst_lane_evidence(governance_row.get("evidence") or {}),
+                    "context_reference": context_index.get(ticker) if ticker else None,
+                }
+            )
+
+        return lane_rows
+
+    def _derive_btst_control_tower_overview(self, report_dir: Path, *, resolve_contexts: bool = False) -> dict[str, Any] | None:
         delta_json_path = self._reports_root / "btst_open_ready_delta_latest.json"
         delta_markdown_path = self._reports_root / "btst_open_ready_delta_latest.md"
         nightly_json_path = self._reports_root / "btst_nightly_control_tower_latest.json"
         nightly_markdown_path = self._reports_root / "btst_nightly_control_tower_latest.md"
         manifest_json_path = self._reports_root / "report_manifest_latest.json"
         manifest_markdown_path = self._reports_root / "report_manifest_latest.md"
+        governance_synthesis_json_path = self._reports_root / "btst_governance_synthesis_latest.json"
 
         if not any(path.exists() for path in [delta_json_path, delta_markdown_path, nightly_json_path, nightly_markdown_path]):
             return None
 
         delta_payload = self._read_json(delta_json_path) if delta_json_path.exists() else {}
         nightly_payload = self._read_json(nightly_json_path) if nightly_json_path.exists() else {}
+        governance_synthesis_payload = self._read_json(governance_synthesis_json_path) if governance_synthesis_json_path.exists() else {}
         control_tower_snapshot = nightly_payload.get("control_tower_snapshot") or {}
         validation = control_tower_snapshot.get("validation") or {}
         source_paths = delta_payload.get("source_paths") or {}
+        governance_source_reports = dict(governance_synthesis_payload.get("source_reports") or {})
 
         current_reference = self._normalize_btst_reference(delta_payload.get("current_reference")) or self._normalize_btst_reference(nightly_payload.get("latest_btst_run"))
         previous_reference = self._normalize_btst_reference(delta_payload.get("previous_reference"))
+
+        preferred_report_names = [
+            str(item)
+            for item in [
+                report_dir.name,
+                current_reference.get("report_name") if current_reference else None,
+                previous_reference.get("report_name") if previous_reference else None,
+            ]
+            if item
+        ]
+        rollout_lane_rows = self._derive_btst_rollout_lane_rows(
+            governance_synthesis_payload,
+            resolve_contexts=resolve_contexts,
+            preferred_report_names=preferred_report_names,
+        )
+        lane_context_by_ticker = {
+            str(row.get("ticker")): dict(row.get("context_reference") or {})
+            for row in rollout_lane_rows
+            if row.get("ticker") and row.get("context_reference")
+        }
 
         next_actions: list[dict[str, Any]] = []
         for item in (control_tower_snapshot.get("next_actions") or [])[:3]:
             if not isinstance(item, dict):
                 continue
+            action_ticker = self._extract_btst_ticker(
+                item.get("task_id"),
+                item.get("title"),
+                item.get("why_now"),
+                item.get("next_step"),
+            )
             next_actions.append(
                 {
                     "task_id": item.get("task_id"),
@@ -875,6 +1087,7 @@ class ReplayArtifactService:
                     "why_now": item.get("why_now"),
                     "next_step": item.get("next_step"),
                     "source": item.get("source"),
+                    "context_reference": lane_context_by_ticker.get(action_ticker) if action_ticker else None,
                 }
             )
 
@@ -885,6 +1098,8 @@ class ReplayArtifactService:
                 "open_ready_delta_markdown": str(delta_markdown_path) if delta_markdown_path.exists() else None,
                 "nightly_control_tower_json": str(nightly_json_path) if nightly_json_path.exists() else None,
                 "nightly_control_tower_markdown": str(nightly_markdown_path) if nightly_markdown_path.exists() else None,
+                "governance_synthesis_json": str(governance_synthesis_json_path) if governance_synthesis_json_path.exists() else None,
+                "rollout_governance_json": governance_source_reports.get("rollout_governance"),
                 "report_manifest_json": source_paths.get("report_manifest_json") or (str(manifest_json_path) if manifest_json_path.exists() else None),
                 "report_manifest_markdown": source_paths.get("report_manifest_markdown") or (str(manifest_markdown_path) if manifest_markdown_path.exists() else None),
                 "current_priority_board_json": source_paths.get("current_priority_board_json"),
@@ -899,6 +1114,22 @@ class ReplayArtifactService:
         recommendation = control_tower_snapshot.get("recommendation")
         if not recommendation:
             recommendation = ((control_tower_snapshot.get("synthesis") or {}).get("recommendation"))
+
+        closed_frontiers: list[dict[str, Any]] = []
+        for item in list(control_tower_snapshot.get("closed_frontiers") or []):
+            if not isinstance(item, dict):
+                continue
+            closed_frontiers.append(
+                {
+                    "frontier_id": item.get("frontier_id"),
+                    "status": item.get("status"),
+                    "headline": item.get("headline"),
+                    "best_variant_name": item.get("best_variant_name"),
+                    "passing_variant_count": item.get("passing_variant_count"),
+                    "best_variant_released_tickers": [str(value) for value in list(item.get("best_variant_released_tickers") or []) if value],
+                    "best_variant_focus_released_tickers": [str(value) for value in list(item.get("best_variant_focus_released_tickers") or []) if value],
+                }
+            )
 
         return {
             "available": True,
@@ -918,6 +1149,8 @@ class ReplayArtifactService:
             "ready_lane_count": control_tower_snapshot.get("ready_lane_count"),
             "lane_status_counts": dict(control_tower_snapshot.get("lane_status_counts") or {}),
             "refresh_status": {str(key): str(value) for key, value in (nightly_payload.get("refresh_status") or {}).items()},
+            "closed_frontiers": closed_frontiers,
+            "rollout_lane_rows": rollout_lane_rows,
             "next_actions": next_actions,
             "artifacts": artifacts,
         }
@@ -927,6 +1160,8 @@ class ReplayArtifactService:
         report_dir: Path,
         session_summary: dict[str, Any],
         daily_events: list[dict[str, Any]],
+        *,
+        resolve_btst_contexts: bool = False,
     ) -> dict[str, Any]:
         artifact_root = self._resolve_selection_artifact_root(report_dir, session_summary)
         if artifact_root is None or not artifact_root.exists():
@@ -941,7 +1176,7 @@ class ReplayArtifactService:
                 "dual_target_overview": None,
                 "feedback_summary": None,
                 "btst_followup_overview": self._derive_btst_followup_overview(session_summary),
-                "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir),
+                "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir, resolve_contexts=resolve_btst_contexts),
             }
 
         write_status_counts: Counter[str] = Counter()
@@ -984,7 +1219,7 @@ class ReplayArtifactService:
             "dual_target_overview": self._derive_dual_target_overview(snapshots_by_trade_date),
             "feedback_summary": feedback_summary,
             "btst_followup_overview": self._derive_btst_followup_overview(session_summary),
-            "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir),
+            "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir, resolve_contexts=resolve_btst_contexts),
         }
 
     def _derive_trade_date_target_index(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:

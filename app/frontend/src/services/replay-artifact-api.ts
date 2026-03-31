@@ -117,12 +117,44 @@ export interface ReplayBtstControlTowerReference {
   next_trade_date: string | null;
 }
 
+export interface ReplayBtstReplayContextReference {
+  report_name: string | null;
+  trade_date: string | null;
+  symbol: string | null;
+  selection_target?: string | null;
+}
+
+export interface ReplayBtstControlTowerLaneRow {
+  lane_id: string | null;
+  ticker: string | null;
+  governance_tier: string | null;
+  lane_status: string | null;
+  action_tier: string | null;
+  blocker: string | null;
+  validation_verdict: string | null;
+  missing_window_count: number | null;
+  next_step: string | null;
+  evidence_highlights: string[];
+  context_reference: ReplayBtstReplayContextReference | null;
+}
+
+export interface ReplayBtstClosedFrontier {
+  frontier_id: string | null;
+  status: string | null;
+  headline: string | null;
+  best_variant_name: string | null;
+  passing_variant_count: number | null;
+  best_variant_released_tickers: string[];
+  best_variant_focus_released_tickers: string[];
+}
+
 export interface ReplayBtstControlTowerAction {
   task_id: string | null;
   title: string | null;
   why_now: string | null;
   next_step: string | null;
   source: string | null;
+  context_reference?: ReplayBtstReplayContextReference | null;
 }
 
 export interface ReplayBtstControlTowerOverview {
@@ -143,6 +175,8 @@ export interface ReplayBtstControlTowerOverview {
   ready_lane_count: number | null;
   lane_status_counts: Record<string, number>;
   refresh_status: Record<string, string>;
+  closed_frontiers?: ReplayBtstClosedFrontier[];
+  rollout_lane_rows: ReplayBtstControlTowerLaneRow[];
   next_actions: ReplayBtstControlTowerAction[];
   artifacts: Record<string, string>;
 }

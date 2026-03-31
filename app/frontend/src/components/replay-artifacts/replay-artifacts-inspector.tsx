@@ -1,11 +1,14 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import type {
   ReplayArtifactDetail,
+  ReplayBtstControlTowerLaneRow,
   ReplayBtstControlTowerOverview,
   ReplayBtstControlTowerReference,
+  ReplayBtstReplayContextReference,
   ReplaySelectionArtifactDay,
   ReplayCacheBenchmarkOverview,
   ReplayReasonCount,
@@ -104,12 +107,130 @@ function formatRepresentativeCases(overview: ReplaySelectionArtifactDualTargetOv
     .join(' | ');
 }
 
+const BTST_TOKEN_LABELS: Record<string, string> = {
+  stable: '稳定',
+  changed: '有变化',
+  priority: '优先级',
+  governance: '治理',
+  replay: '回放',
+  nightly_history: '夜间历史对照',
+  short_trade_only: '短线专用',
+  governance_ready: '治理就绪',
+  governance_waiting: '等待治理',
+  waiting: '等待中',
+  ready: '已就绪',
+  active: '进行中',
+  blocked: '已阻塞',
+  primary: '主车道',
+  shadow: '影子车道',
+  recurring: '复发车道',
+  structural: '结构车道',
+  candidate_entry_shadow_refresh: '候选入场影子刷新',
+  btst_governance_synthesis_refresh: '治理综合刷新',
+  btst_governance_validation_refresh: '治理验证刷新',
+  btst_replay_cohort_refresh: '回放队列刷新',
+  success: '成功',
+  missing: '缺失',
+  skipped: '跳过',
+  no_change: '无变化',
+  cross_window_stability_missing: '跨窗口稳定性不足',
+  same_rule_shadow_expansion_not_ready: '同规则影子扩展未就绪',
+  post_release_quality_negative: '放量后质量转负',
+  blocked_by_single_window_candidate_entry_signal: '被单窗口候选入场信号阻塞',
+  broad_penalty_relief: '广义 stale/extension 惩罚放松',
+  broad_penalty_route_closed_current_window: '当前窗口已关闭',
+};
+
+const BTST_ARTIFACT_LABELS: Record<string, string> = {
+  open_ready_delta_json: '开盘前差分 JSON',
+  open_ready_delta_markdown: '开盘前差分 Markdown',
+  nightly_control_tower_json: '夜间控制塔 JSON',
+  nightly_control_tower_markdown: '夜间控制塔 Markdown',
+  report_manifest_json: '报告清单 JSON',
+  replay_cohort_json: '回放队列 JSON',
+  replay_cohort_markdown: '回放队列 Markdown',
+};
+
+function formatBtstToken(value: string | null | undefined): string {
+  if (!value) {
+    return '--';
+  }
+  return BTST_TOKEN_LABELS[value] || value.replace(/_/g, ' ');
+}
+
+function formatBtstArtifactLabel(value: string): string {
+  return BTST_ARTIFACT_LABELS[value] || value.replace(/_/g, ' ');
+}
+
+function formatBtstEvidenceHighlight(value: string): string {
+  const replacements: Array<[string, string]> = [
+    ['missing windows', '缺失窗口'],
+    ['close+ rate', '收盘上涨率'],
+    ['close mean', '收盘均值'],
+    ['high mean', '盘中高点均值'],
+    ['same-rule peers', '同规则样本'],
+    ['blocked cases', '阻塞样本'],
+    ['threshold-only', '仅阈值'],
+    ['freeze', '冻结'],
+    ['locality', '局部性'],
+    ['rescuable', '可救援'],
+    ['cases', '样本'],
+    ['windows', '窗口'],
+  ];
+
+  return replacements.reduce((current, [source, target]) => current.split(source).join(target), value);
+}
+
+function formatBtstCounterMap(values: Record<string, number> | undefined): string {
+  if (!values) {
+    return '--';
+  }
+  const entries = Object.entries(values);
+  if (entries.length === 0) {
+    return '--';
+  }
+  return entries.map(([key, count]) => `${formatBtstToken(key)} ${count}`).join(' | ');
+}
+
+function formatBtstRefreshSummary(values: Record<string, string> | undefined): string {
+  if (!values) {
+    return '--';
+  }
+  const entries = Object.values(values);
+  if (entries.length === 0) {
+    return '--';
+  }
+  const translated = entries.map((value) => formatBtstToken(value));
+  const unique = Array.from(new Set(translated));
+  return unique.join(' / ');
+}
+
+function formatBtstReferenceCompactName(reference: ReplayBtstControlTowerReference | null | undefined): string {
+  if (!reference) {
+    return '--';
+  }
+  return formatPathLeaf(reference.report_name || reference.report_dir);
+}
+
+function isSameBtstReference(
+  current: ReplayBtstControlTowerReference | null | undefined,
+  previous: ReplayBtstControlTowerReference | null | undefined,
+): boolean {
+  if (!current || !previous) {
+    return false;
+  }
+  return current.report_name === previous.report_name
+    && current.report_dir === previous.report_dir
+    && current.trade_date === previous.trade_date
+    && current.selection_target === previous.selection_target;
+}
+
 function formatBtstControlTowerReference(reference: ReplayBtstControlTowerReference | null | undefined): string {
   if (!reference) {
     return '--';
   }
   const reportName = formatOptionalText(reference.report_name || formatPathLeaf(reference.report_dir));
-  return `${reportName} | ${formatOptionalText(reference.trade_date)} | ${formatOptionalText(reference.selection_target)}`;
+  return `${reportName} | ${formatOptionalText(reference.trade_date)} | ${formatBtstToken(reference.selection_target)}`;
 }
 
 function formatBtstControlTowerChangeSummary(overview: ReplayBtstControlTowerOverview | null | undefined): string {
@@ -117,12 +238,36 @@ function formatBtstControlTowerChangeSummary(overview: ReplayBtstControlTowerOve
     return '--';
   }
   const changedSurfaces = [
-    overview.priority_has_changes ? 'priority' : null,
-    overview.governance_has_changes ? 'governance' : null,
-    overview.replay_has_changes ? 'replay' : null,
+    overview.priority_has_changes ? '优先级' : null,
+    overview.governance_has_changes ? '治理' : null,
+    overview.replay_has_changes ? '回放' : null,
   ].filter(Boolean);
-  const surfaceSummary = changedSurfaces.length > 0 ? changedSurfaces.join('/') : 'stable';
-  return `${formatOptionalText(overview.overall_delta_verdict)} | ${surfaceSummary}`;
+  const surfaceSummary = changedSurfaces.length > 0 ? changedSurfaces.join('/') : '无结构变化';
+  return `${formatBtstToken(overview.overall_delta_verdict)} | ${surfaceSummary}`;
+}
+
+function formatBtstControlTowerLaneEvidence(lane: ReplayBtstControlTowerLaneRow | null | undefined): string {
+  if (!lane || lane.evidence_highlights.length === 0) {
+    return '--';
+  }
+  return lane.evidence_highlights.map((item) => formatBtstEvidenceHighlight(item)).join(' | ');
+}
+
+function buildReplayContextParams(
+  reference: ReplayBtstControlTowerReference | ReplayBtstReplayContextReference | null | undefined,
+  fallbackSymbol = 'all',
+): { reportName: string; tradeDate: string; symbol: string } | null {
+  if (!reference?.report_name || !reference.trade_date) {
+    return null;
+  }
+  const symbol = 'symbol' in reference && typeof reference.symbol === 'string' && reference.symbol
+    ? reference.symbol
+    : fallbackSymbol;
+  return {
+    reportName: reference.report_name,
+    tradeDate: reference.trade_date,
+    symbol,
+  };
 }
 
 function PathPreviewCard({
@@ -145,6 +290,102 @@ function PathPreviewCard({
         {displayValue}
       </p>
     </div>
+  );
+}
+
+function BtstReferenceSnapshot({
+  label,
+  reference,
+  summary,
+  actionLabel,
+  actionAriaLabel,
+  onOpen,
+}: {
+  label: string;
+  reference: ReplayBtstControlTowerReference | null | undefined;
+  summary: string;
+  actionLabel?: string;
+  actionAriaLabel?: string;
+  onOpen?: (() => void) | null;
+}) {
+  if (!reference) {
+    return (
+      <div className="rounded-lg border border-border/60 bg-background/60 px-3 py-3">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="mt-2 text-sm font-medium text-muted-foreground">--</p>
+      </div>
+    );
+  }
+
+  const fullReference = formatBtstControlTowerReference(reference);
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/60 px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Badge variant="secondary">{formatOptionalText(reference.trade_date)}</Badge>
+            <Badge variant="outline">{formatBtstToken(reference.selection_target)}</Badge>
+          </div>
+          <p className="mt-2 truncate text-sm font-semibold text-primary" title={fullReference}>{formatBtstReferenceCompactName(reference)}</p>
+          <p className="mt-1 text-xs leading-6 text-muted-foreground">{summary}</p>
+        </div>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs">
+              详情
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-80 space-y-2">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">完整引用</p>
+              <p className="mt-2 break-all text-sm leading-6 text-foreground">{fullReference}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">报告目录</p>
+              <p className="mt-2 break-all font-mono text-[11px] leading-5 text-muted-foreground">{formatOptionalText(reference.report_dir)}</p>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+      {actionLabel && onOpen ? (
+        <div className="mt-3 flex justify-end">
+          <Button type="button" variant="outline" size="sm" aria-label={actionAriaLabel || actionLabel} onClick={onOpen}>
+            {actionLabel}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BtstArtifactSummaryPopover({
+  artifacts,
+}: {
+  artifacts: Record<string, string | null | undefined> | undefined;
+}) {
+  const entries = Object.entries(artifacts || {}).filter(([, value]) => Boolean(value));
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-xs">
+          查看产物
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-96 space-y-3">
+        {entries.map(([key, value]) => (
+          <div key={`artifact-${key}`} className="rounded-lg border border-border/50 bg-background/60 px-3 py-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">{formatBtstArtifactLabel(key)}</p>
+            <p className="mt-2 break-all font-mono text-[11px] leading-5 text-muted-foreground">{formatOptionalText(value)}</p>
+          </div>
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -449,36 +690,192 @@ export function ReplayArtifactsInspector({
       {btstControlTowerOverview ? (
         <Card>
           <CardHeader>
-            <CardTitle>BTST Control Tower</CardTitle>
-            <CardDescription>压缩展示最新 open-ready delta、nightly 状态和关键 operator focus，值班时不用再手动翻 reports 目录。</CardDescription>
+            <CardTitle>BTST 控制塔</CardTitle>
+            <CardDescription>压缩展示最新差分、夜间治理和关键值班信息，避免在 inspector 里再看到一整串超长 report 引用。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div className="rounded-md border border-border/60 bg-muted/20 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Delta Verdict</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">变化结论</p>
               <p className="mt-2 text-sm font-semibold text-primary">{formatBtstControlTowerChangeSummary(btstControlTowerOverview)}</p>
-              <p className="mt-1 text-xs leading-6 text-muted-foreground">comparison {formatOptionalText(btstControlTowerOverview.comparison_basis)}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">对比基准：{formatBtstToken(btstControlTowerOverview.comparison_basis)}</p>
             </div>
             <div className="rounded-md border border-border/60 bg-muted/20 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Current Latest</p>
-              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatBtstControlTowerReference(btstControlTowerOverview.current_reference)}</p>
-              <p className="mt-1 text-xs leading-6 text-muted-foreground">{btstControlTowerOverview.selected_report_matches_current_reference ? 'selected report matches latest BTST run' : 'selected report differs from latest BTST run'}</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">治理状态</p>
+              <p className="mt-2 text-sm font-semibold text-primary">{formatBtstToken(btstControlTowerOverview.governance_overall_verdict)}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">等待 {btstControlTowerOverview.waiting_lane_count ?? '--'} 条 | 就绪 {btstControlTowerOverview.ready_lane_count ?? '--'} 条</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">车道分布：{formatBtstCounterMap(btstControlTowerOverview.lane_status_counts)}</p>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">刷新概览：{formatBtstRefreshSummary(btstControlTowerOverview.refresh_status)}</p>
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">当前与对照运行</p>
+                <Badge variant={btstControlTowerOverview.selected_report_matches_current_reference ? 'secondary' : 'outline'}>
+                  {btstControlTowerOverview.selected_report_matches_current_reference ? '当前报告已对齐最新运行' : '当前报告不是最新运行'}
+                </Badge>
+              </div>
+              <div className="grid gap-3">
+                <BtstReferenceSnapshot
+                  label="当前运行"
+                  reference={btstControlTowerOverview.current_reference}
+                  summary={btstControlTowerOverview.selected_report_matches_current_reference ? '当前 inspector 已对齐最新 BTST 运行。' : '建议先打开当前运行，再检查车道和动作。'}
+                  actionLabel={onOpenContext && buildReplayContextParams(btstControlTowerOverview.current_reference) ? '打开当前' : undefined}
+                  actionAriaLabel="打开当前 BTST 运行"
+                  onOpen={onOpenContext && buildReplayContextParams(btstControlTowerOverview.current_reference)
+                    ? () => {
+                        const params = buildReplayContextParams(btstControlTowerOverview.current_reference);
+                        if (params) {
+                          onOpenContext(params);
+                        }
+                      }
+                    : null}
+                />
+                <BtstReferenceSnapshot
+                  label="上一轮对照"
+                  reference={btstControlTowerOverview.previous_reference}
+                  summary={isSameBtstReference(btstControlTowerOverview.current_reference, btstControlTowerOverview.previous_reference)
+                    ? '上一轮与当前一致，本轮属于稳定复跑。'
+                    : '用于判断本轮是否切换了运行基线。'}
+                  actionLabel={onOpenContext && buildReplayContextParams(btstControlTowerOverview.previous_reference) && !isSameBtstReference(btstControlTowerOverview.current_reference, btstControlTowerOverview.previous_reference) ? '打开上一轮' : undefined}
+                  actionAriaLabel="打开上一轮 BTST 运行"
+                  onOpen={onOpenContext && buildReplayContextParams(btstControlTowerOverview.previous_reference) && !isSameBtstReference(btstControlTowerOverview.current_reference, btstControlTowerOverview.previous_reference)
+                    ? () => {
+                        const params = buildReplayContextParams(btstControlTowerOverview.previous_reference);
+                        if (params) {
+                          onOpenContext(params);
+                        }
+                      }
+                    : null}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs">
+                      刷新明细
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-80 space-y-3">
+                    {Object.entries(btstControlTowerOverview.refresh_status).map(([key, value]) => (
+                      <div key={`btst-inspector-refresh-${key}`} className="rounded-lg border border-border/50 bg-background/60 px-3 py-3">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">{formatBtstToken(key)}</p>
+                        <p className="mt-2 text-sm font-medium text-foreground">{formatBtstToken(value)}</p>
+                      </div>
+                    ))}
+                  </PopoverContent>
+                </Popover>
+                <BtstArtifactSummaryPopover artifacts={btstControlTowerOverview.artifacts} />
+              </div>
             </div>
             <div className="rounded-md border border-border/60 bg-muted/20 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Governance</p>
-              <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(btstControlTowerOverview.governance_overall_verdict)} | waiting {btstControlTowerOverview.waiting_lane_count ?? '--'} | ready {btstControlTowerOverview.ready_lane_count ?? '--'}</p>
-              <p className="mt-1 text-xs leading-6 text-muted-foreground">lanes {formatCounterMap(btstControlTowerOverview.lane_status_counts)}</p>
-            </div>
-            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Operator Focus</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">值班关注</p>
               <div className="mt-2 space-y-2 text-xs leading-6 text-muted-foreground">
                 {(btstControlTowerOverview.operator_focus.length > 0 ? btstControlTowerOverview.operator_focus : [btstControlTowerOverview.recommendation || '--']).map((item, index) => (
                   <p key={`btst-control-focus-${index}`}>{item}</p>
                 ))}
               </div>
             </div>
-            {Object.entries(btstControlTowerOverview.artifacts).map(([key, value]) => (
-              <PathPreviewCard key={`btst-control-artifact-${key}`} label={key} value={value} />
-            ))}
+            {btstControlTowerOverview.closed_frontiers && btstControlTowerOverview.closed_frontiers.length > 0 ? (
+              <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-2">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">已关闭路线</p>
+                  <p className="mt-1 text-xs leading-6 text-muted-foreground">明确哪些 broad rollout route 已被当前窗口关闭。</p>
+                </div>
+                {btstControlTowerOverview.closed_frontiers.map((frontier) => (
+                  <div key={`${frontier.frontier_id || 'frontier'}-${frontier.status || 'status'}`} className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="secondary">{formatBtstToken(frontier.frontier_id)}</Badge>
+                      <Badge variant="outline">{formatBtstToken(frontier.status)}</Badge>
+                    </div>
+                    <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(frontier.headline)}</p>
+                    <p className="mt-2 text-xs leading-6 text-muted-foreground">影响样本：{formatStringList(frontier.best_variant_released_tickers)}</p>
+                    <p className="mt-1 text-xs leading-6 text-muted-foreground">关注样本：{formatStringList(frontier.best_variant_focus_released_tickers)}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-2">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">执行车道</p>
+                <p className="mt-1 text-xs leading-6 text-muted-foreground">直接查看 primary、shadow、recurring、structural 车道，并跳到对应回放上下文。</p>
+              </div>
+              {btstControlTowerOverview.rollout_lane_rows.length > 0 ? btstControlTowerOverview.rollout_lane_rows.map((lane) => {
+                const laneContextParams = buildReplayContextParams(lane.context_reference, lane.ticker || 'all');
+                return (
+                  <div key={`${lane.lane_id || lane.ticker || 'lane'}-${lane.governance_tier || 'tier'}`} className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="secondary">{formatOptionalText(lane.ticker)}</Badge>
+                          <Badge variant="outline">{formatBtstToken(lane.governance_tier)}</Badge>
+                        </div>
+                        <p className="mt-2 text-xs leading-6 text-muted-foreground">车道状态：{formatBtstToken(lane.lane_status)}</p>
+                        <p className="text-xs leading-6 text-muted-foreground">阻塞原因：{formatBtstToken(lane.blocker)}</p>
+                        <p className="text-xs leading-6 text-muted-foreground">验证结论：{formatBtstToken(lane.validation_verdict)}{lane.missing_window_count !== null && lane.missing_window_count !== undefined ? ` | 缺失窗口 ${lane.missing_window_count}` : ''}</p>
+                      </div>
+                      {onOpenContext && laneContextParams ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          aria-label={`打开回放 ${lane.ticker || 'lane'}`}
+                          onClick={() => onOpenContext(laneContextParams)}
+                        >
+                          打开回放
+                        </Button>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatBtstControlTowerLaneEvidence(lane)}</p>
+                    <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(lane.next_step)}</p>
+                  </div>
+                );
+              }) : (
+                <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
+                  当前控制塔还没有可展示的执行车道。
+                </div>
+              )}
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-2">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">下一步动作</p>
+                <p className="mt-1 text-xs leading-6 text-muted-foreground">控制塔给出的优先动作，可直接跳到对应回放。</p>
+              </div>
+              {btstControlTowerOverview.next_actions.length > 0 ? btstControlTowerOverview.next_actions.map((action) => (
+                <div key={action.task_id || action.title || 'btst-control-action'} className="rounded-md border border-border/50 bg-background/60 px-3 py-3">
+                  <p className="text-sm font-medium text-primary">{formatOptionalText(action.title)}</p>
+                  <p className="mt-1 text-xs leading-6 text-muted-foreground">{formatOptionalText(action.why_now)}</p>
+                  <p className="mt-2 text-xs leading-6 text-muted-foreground">{formatOptionalText(action.next_step)}</p>
+                  {onOpenContext && buildReplayContextParams(action.context_reference || null) ? (
+                    <div className="mt-3 flex justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label={`打开动作回放 ${action.task_id || action.title || 'task'}`}
+                        onClick={() => {
+                          const params = buildReplayContextParams(action.context_reference || null);
+                          if (params) {
+                            onOpenContext(params);
+                          }
+                        }}
+                      >
+                        打开回放
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              )) : (
+                <div className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
+                  当前控制塔没有可展示的下一步动作。
+                </div>
+              )}
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-2">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">辅助资料</p>
+              <p className="text-xs leading-6 text-muted-foreground">完整产物路径已收起到弹层，避免 inspector 被路径文本顶爆。</p>
+              <div className="flex flex-wrap gap-2">
+                <BtstArtifactSummaryPopover artifacts={btstControlTowerOverview.artifacts} />
+              </div>
+            </div>
           </CardContent>
         </Card>
       ) : null}

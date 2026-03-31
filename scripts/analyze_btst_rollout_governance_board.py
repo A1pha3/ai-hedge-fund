@@ -16,6 +16,7 @@ DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbo
 DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH = REPORTS_DIR / "p7_primary_window_validation_runbook_001309_20260330.json"
 DEFAULT_SHADOW_PEER_SCAN_PATH = REPORTS_DIR / "p7_shadow_peer_scan_300383_20260330.json"
 DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p8_structural_shadow_runbook_300724_20260330.json"
+DEFAULT_PENALTY_FRONTIER_PATH = REPORTS_DIR / "btst_penalty_frontier_current_window_20260331.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p5_btst_rollout_governance_board_20260330.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "p5_btst_rollout_governance_board_20260330.md"
 
@@ -23,6 +24,59 @@ DEFAULT_OUTPUT_MD = REPORTS_DIR / "p5_btst_rollout_governance_board_20260330.md"
 def _load_json(path: str | Path) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
     return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        return {}
+    return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _extract_tradeable_tickers(case_keys: list[Any]) -> list[str]:
+    tickers: list[str] = []
+    for case_key in case_keys:
+        parts = str(case_key or "").split(":")
+        if len(parts) < 3:
+            continue
+        ticker = parts[1].strip()
+        if ticker and ticker not in tickers:
+            tickers.append(ticker)
+    return tickers
+
+
+def _summarize_penalty_frontier(report: dict[str, Any]) -> dict[str, Any]:
+    if not report:
+        return {}
+
+    best_variant = dict(report.get("best_variant") or {})
+    passing_variant_count = int(report.get("passing_variant_count") or 0)
+    released_tickers = _extract_tradeable_tickers(list(best_variant.get("tradeable_cases") or []))
+    focus_released_tickers = _extract_tradeable_tickers(list(best_variant.get("focus_tradeable_cases") or []))
+
+    if passing_variant_count <= 0:
+        status = "broad_penalty_route_closed_current_window"
+        headline = "broad stale/extension penalty relief 在当前窗口没有形成任何通过 closed-tradeable guardrail 的 row。"
+    else:
+        status = "guardrail_passing_penalty_frontier_present"
+        headline = f"当前 penalty frontier 已出现 {passing_variant_count} 个通过 guardrail 的 row，但在新增独立窗口前仍只适合 shadow/research。"
+
+    return {
+        "frontier_id": "broad_penalty_relief",
+        "status": status,
+        "headline": headline,
+        "passing_variant_count": passing_variant_count,
+        "best_variant_name": best_variant.get("variant_name"),
+        "best_variant_family": best_variant.get("variant_family"),
+        "best_variant_guardrail_status": best_variant.get("guardrail_status"),
+        "best_variant_closed_cycle_tradeable_count": best_variant.get("closed_cycle_tradeable_count"),
+        "best_variant_released_tickers": released_tickers,
+        "best_variant_focus_released_tickers": focus_released_tickers,
+        "focus_tickers": list(report.get("focus_tickers") or []),
+        "recommendation": report.get("recommendation"),
+    }
 
 
 def analyze_btst_rollout_governance_board(
@@ -36,6 +90,7 @@ def analyze_btst_rollout_governance_board(
     primary_window_validation_runbook_path: str | Path,
     shadow_peer_scan_path: str | Path,
     structural_shadow_runbook_path: str | Path,
+    penalty_frontier_path: str | Path | None = None,
 ) -> dict[str, Any]:
     action_board = _load_json(action_board_path)
     primary_roll = _load_json(primary_roll_forward_path)
@@ -46,6 +101,7 @@ def analyze_btst_rollout_governance_board(
     primary_window_validation_runbook = _load_json(primary_window_validation_runbook_path)
     shadow_peer_scan = _load_json(shadow_peer_scan_path)
     structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
+    penalty_frontier_summary = _summarize_penalty_frontier(_safe_load_json(penalty_frontier_path))
     recurring_close_candidate = dict(recurring_shadow_runbook.get("close_candidate") or {})
     recurring_intraday_control = dict(recurring_shadow_runbook.get("intraday_control") or {})
 
@@ -155,6 +211,11 @@ def analyze_btst_rollout_governance_board(
         "若要继续扩 shadow lane，应优先转向 002015/600821 的 recurring frontier 组合，而不是复制 300383。"
         " 但在当前证据边界内，这条 recurring lane 同样仍缺第二个独立窗口，只能继续保留 shadow validation 准备态。"
     )
+    if penalty_frontier_summary:
+        if penalty_frontier_summary.get("status") == "broad_penalty_route_closed_current_window":
+            recommendation += " 同时，broad stale/extension penalty relief 已在当前窗口被证伪，应从 nightly open path 中移除，不再作为广义放松路线继续追踪。"
+        else:
+            recommendation += " 同时，penalty frontier 虽已出现 guardrail-passing row，但在新增独立窗口前仍只能保留在 shadow/research lane。"
 
     return {
         "generated_on": action_board.get("generated_on"),
@@ -168,7 +229,10 @@ def analyze_btst_rollout_governance_board(
             "primary_window_validation_runbook": str(Path(primary_window_validation_runbook_path).expanduser().resolve()),
             "shadow_peer_scan": str(Path(shadow_peer_scan_path).expanduser().resolve()),
             "structural_shadow_runbook": str(Path(structural_shadow_runbook_path).expanduser().resolve()),
+            "penalty_frontier": str(Path(penalty_frontier_path).expanduser().resolve()) if penalty_frontier_path else None,
         },
+        "frontier_constraints": [penalty_frontier_summary] if penalty_frontier_summary else [],
+        "penalty_frontier_summary": penalty_frontier_summary,
         "governance_rows": governance_rows,
         "next_3_tasks": next_3_tasks,
         "recommendation": recommendation,
@@ -181,6 +245,19 @@ def render_btst_rollout_governance_board_markdown(analysis: dict[str, Any]) -> s
     lines.append("")
     lines.append("## Overview")
     lines.append(f"- recommendation: {analysis['recommendation']}")
+    lines.append("")
+    lines.append("## Frontier Constraints")
+    frontier_constraints = list(analysis.get("frontier_constraints") or [])
+    if not frontier_constraints:
+        lines.append("- none")
+    for row in frontier_constraints:
+        lines.append(
+            f"- frontier_id={row.get('frontier_id')} status={row.get('status')} passing_variant_count={row.get('passing_variant_count')} headline={row.get('headline')}"
+        )
+        lines.append(f"  best_variant: {row.get('best_variant_name')}")
+        lines.append(f"  best_variant_released_tickers: {row.get('best_variant_released_tickers')}")
+        lines.append(f"  best_variant_focus_released_tickers: {row.get('best_variant_focus_released_tickers')}")
+        lines.append(f"  recommendation: {row.get('recommendation')}")
     lines.append("")
     lines.append("## Governance Rows")
     for row in analysis["governance_rows"]:
@@ -208,6 +285,7 @@ def main() -> None:
     parser.add_argument("--primary-window-validation-runbook", default=str(DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH))
     parser.add_argument("--shadow-peer-scan", default=str(DEFAULT_SHADOW_PEER_SCAN_PATH))
     parser.add_argument("--structural-shadow-runbook", default=str(DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH))
+    parser.add_argument("--penalty-frontier", default=str(DEFAULT_PENALTY_FRONTIER_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -222,6 +300,7 @@ def main() -> None:
         primary_window_validation_runbook_path=args.primary_window_validation_runbook,
         shadow_peer_scan_path=args.shadow_peer_scan,
         structural_shadow_runbook_path=args.structural_shadow_runbook,
+        penalty_frontier_path=args.penalty_frontier or None,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()

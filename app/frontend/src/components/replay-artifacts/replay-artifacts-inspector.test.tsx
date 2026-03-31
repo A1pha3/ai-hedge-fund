@@ -145,13 +145,50 @@ const detail: ReplayArtifactDetail = {
         candidate_entry_shadow_refresh: 'refreshed',
         btst_governance_synthesis_refresh: 'refreshed',
       },
+      closed_frontiers: [
+        {
+          frontier_id: 'broad_penalty_relief',
+          status: 'broad_penalty_route_closed_current_window',
+          headline: 'broad stale/extension penalty relief 已被当前窗口证伪。',
+          best_variant_name: 'nm_0.42__avoid_0.12__stale_0.08__ext_0.02',
+          passing_variant_count: 0,
+          best_variant_released_tickers: ['300724'],
+          best_variant_focus_released_tickers: [],
+        },
+      ],
+      rollout_lane_rows: [
+        {
+          lane_id: 'structural_shadow_hold_only',
+          ticker: '300724',
+          governance_tier: 'structural_shadow_hold_only',
+          lane_status: 'structural_shadow_hold_only',
+          action_tier: 'hold_only',
+          blocker: 'post_release_quality_negative',
+          validation_verdict: 'hold',
+          missing_window_count: 1,
+          next_step: '继续结构化 shadow 观察。',
+          evidence_highlights: ['cases 2', 'missing windows 1', 'freeze negative'],
+          context_reference: {
+            report_name: 'paper_trading_window_demo',
+            trade_date: '2026-03-23',
+            symbol: '300724',
+            selection_target: 'short_trade_only',
+          },
+        },
+      ],
       next_actions: [
         {
-          task_id: '001309_primary_follow_through_roll_forward',
-          title: '推进 001309 primary follow-through',
-          why_now: '当前唯一 primary 入口。',
-          next_step: '继续滚动窗口验证。',
+          task_id: '300724_structural_shadow_hold_only',
+          title: '维持 300724 structural shadow',
+          why_now: 'post-release 质量未修复。',
+          next_step: '继续结构化 shadow 观察。',
           source: 'p3_action_board',
+          context_reference: {
+            report_name: 'paper_trading_window_demo',
+            trade_date: '2026-03-23',
+            symbol: '300724',
+            selection_target: 'short_trade_only',
+          },
         },
       ],
       artifacts: {
@@ -329,12 +366,18 @@ describe('ReplayArtifactsInspector', () => {
     expect(screen.getByText('activity 1/2 | queue 1/2')).toBeInTheDocument();
     expect(screen.getByText('Dual Target Inspector')).toBeInTheDocument();
     expect(screen.getAllByText('BTST Follow-Up').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('BTST Control Tower').length).toBeGreaterThan(0);
-    expect(screen.getByText('changed | replay')).toBeInTheDocument();
-    expect(screen.getByText('paper_trading_window_demo | 2026-03-23 | short_trade_only')).toBeInTheDocument();
-    expect(screen.getByText('selected report matches latest BTST run')).toBeInTheDocument();
+    expect(screen.getAllByText('BTST 控制塔').length).toBeGreaterThan(0);
+    expect(screen.getByText('有变化 | 回放')).toBeInTheDocument();
+    expect(screen.getAllByText('paper_trading_window_demo').length).toBeGreaterThan(0);
+    expect(screen.getByText('当前报告已对齐最新运行')).toBeInTheDocument();
+    expect(screen.getByText('已关闭路线')).toBeInTheDocument();
+    expect(screen.getByText('广义 stale/extension 惩罚放松')).toBeInTheDocument();
+    expect(screen.getByText('当前窗口已关闭')).toBeInTheDocument();
+    expect(screen.getByText('执行车道')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开当前 BTST 运行' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开回放 300724' })).toBeInTheDocument();
     expect(screen.getByText('replay cohort 变化: report_count +1, short_trade_only +1。')).toBeInTheDocument();
-    expect(screen.getByText('btst_open_ready_delta_latest.json')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '查看产物' }).length).toBeGreaterThan(0);
     expect(screen.getAllByText('300757').length).toBeGreaterThan(0);
     expect(screen.getByText('watch 601869 | excluded 002001, 300724')).toBeInTheDocument();
     expect(screen.getByText('2026-03-20 002916:research_reject_short_pass | short trade target promoted a setup that research pipeline kept as near-miss')).toBeInTheDocument();
@@ -376,6 +419,36 @@ describe('ReplayArtifactsInspector', () => {
       reportName: 'paper_trading_window_demo',
       tradeDate: '2026-03-20',
       symbol: '002916',
+    });
+  });
+
+  it('opens replay context from BTST rollout lane cards', async () => {
+    const user = userEvent.setup();
+    const onOpenContext = vi.fn();
+
+    render(
+      <ReplayArtifactsInspector
+        detail={detail}
+        selectionArtifactDetail={selectionArtifactDetail}
+        feedbackActivity={feedbackActivity}
+        focusedSymbol="002916"
+        selectedTradeDate="2026-03-23"
+        tradeDateFilterCoverageText="1 / 6 trade dates"
+        visibleFeedbackActivityCount={1}
+        visibleWorkflowQueueCount={1}
+        totalWorkflowQueueCount={2}
+        onOpenContext={onOpenContext}
+        isDetailLoading={false}
+        isActivityLoading={false}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '打开回放 300724' }));
+
+    expect(onOpenContext).toHaveBeenCalledWith({
+      reportName: 'paper_trading_window_demo',
+      tradeDate: '2026-03-23',
+      symbol: '300724',
     });
   });
 });

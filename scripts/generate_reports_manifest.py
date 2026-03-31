@@ -19,6 +19,10 @@ from scripts.analyze_btst_governance_synthesis import (
     analyze_btst_governance_synthesis,
     render_btst_governance_synthesis_markdown,
 )
+from scripts.analyze_btst_rollout_governance_board import (
+    analyze_btst_rollout_governance_board,
+    render_btst_rollout_governance_board_markdown,
+)
 from scripts.analyze_btst_replay_cohort import (
     analyze_btst_replay_cohort,
     render_btst_replay_cohort_markdown,
@@ -40,11 +44,18 @@ CANDIDATE_ENTRY_WINDOW_SCAN_MD = "btst_candidate_entry_window_scan_20260330.md"
 CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON = "p9_candidate_entry_rollout_governance_20260330.json"
 CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_MD = "p9_candidate_entry_rollout_governance_20260330.md"
 ACTION_BOARD_JSON = "p3_top3_post_execution_action_board_20260330.json"
+PRIMARY_ROLL_FORWARD_JSON = "p4_primary_roll_forward_validation_001309_20260330.json"
+SHADOW_EXPANSION_JSON = "p4_shadow_entry_expansion_board_300383_20260330.json"
+SHADOW_LANE_PRIORITY_JSON = "p4_shadow_lane_priority_board_20260330.json"
 ROLLOUT_GOVERNANCE_JSON = "p5_btst_rollout_governance_board_20260330.json"
+ROLLOUT_GOVERNANCE_MD = "p5_btst_rollout_governance_board_20260330.md"
 PRIMARY_WINDOW_GAP_JSON = "p6_primary_window_gap_001309_20260330.json"
 RECURRING_SHADOW_RUNBOOK_JSON = "p6_recurring_shadow_runbook_20260330.json"
 PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON = "p7_primary_window_validation_runbook_001309_20260330.json"
+SHADOW_PEER_SCAN_JSON = "p7_shadow_peer_scan_300383_20260330.json"
 STRUCTURAL_SHADOW_RUNBOOK_JSON = "p8_structural_shadow_runbook_300724_20260330.json"
+BTST_PENALTY_FRONTIER_JSON = "btst_penalty_frontier_current_window_20260331.json"
+BTST_PENALTY_FRONTIER_MD = "btst_penalty_frontier_current_window_20260331.md"
 BTST_GOVERNANCE_SYNTHESIS_JSON = "btst_governance_synthesis_latest.json"
 BTST_GOVERNANCE_SYNTHESIS_MD = "btst_governance_synthesis_latest.md"
 BTST_GOVERNANCE_VALIDATION_JSON = "btst_governance_validation_latest.json"
@@ -238,15 +249,28 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "source_kind": "governance_artifact",
     },
     {
+        "id": "btst_penalty_frontier_review",
+        "path": "data/reports/btst_penalty_frontier_current_window_20260331.md",
+        "report_type": "btst_penalty_frontier_review",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 7,
+        "is_latest": True,
+        "question": "broad stale/extension penalty relief 为什么不再是 rollout 路线",
+        "view_order": 7,
+        "time_scope": {"label": "current_window_20260331"},
+        "source_kind": "governance_artifact",
+    },
+    {
         "id": "btst_candidate_entry_frontier_review",
         "path": "data/reports/btst_candidate_entry_frontier_20260330.md",
         "report_type": "btst_candidate_entry_frontier_review",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 7,
+        "priority": 8,
         "is_latest": True,
         "question": "哪条 candidate entry selective rule 能过滤 300502 并保住 300394",
-        "view_order": 7,
+        "view_order": 8,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -256,10 +280,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_candidate_entry_window_scan_review",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 8,
+        "priority": 9,
         "is_latest": True,
         "question": "弱结构 candidate entry 规则是否已经跨多个独立窗口命中且没有误伤 preserve 样本",
-        "view_order": 8,
+        "view_order": 9,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -269,10 +293,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_candidate_entry_rollout_governance",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 9,
+        "priority": 10,
         "is_latest": True,
         "question": "为什么弱结构 candidate entry 规则当前只能 shadow-only 而不能升级默认",
-        "view_order": 9,
+        "view_order": 10,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -282,10 +306,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_window_gap_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 10,
+        "priority": 11,
         "is_latest": True,
         "question": "001309 还缺什么窗口证据",
-        "view_order": 10,
+        "view_order": 11,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -295,10 +319,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_recurring_shadow_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 11,
+        "priority": 12,
         "is_latest": True,
         "question": "recurring shadow lane 该如何阅读和执行",
-        "view_order": 11,
+        "view_order": 12,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -308,10 +332,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_primary_validation_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 12,
+        "priority": 13,
         "is_latest": True,
         "question": "001309 后续复跑命令与判断条件是什么",
-        "view_order": 12,
+        "view_order": 13,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -321,10 +345,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_structural_shadow_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 13,
+        "priority": 14,
         "is_latest": True,
         "question": "300724 为什么保持 structural shadow hold",
-        "view_order": 13,
+        "view_order": 14,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -416,6 +440,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_micro_window_regression_review",
             "btst_profile_frontier_review",
             "btst_score_construction_frontier_review",
+            "btst_penalty_frontier_review",
             "btst_candidate_entry_frontier_review",
             "btst_candidate_entry_window_scan_review",
             "p9_candidate_entry_rollout_governance",
@@ -797,6 +822,63 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
     }
 
 
+def refresh_btst_rollout_governance_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    required_inputs = {
+        "action_board": resolved_reports_root / ACTION_BOARD_JSON,
+        "primary_roll_forward": resolved_reports_root / PRIMARY_ROLL_FORWARD_JSON,
+        "shadow_expansion": resolved_reports_root / SHADOW_EXPANSION_JSON,
+        "shadow_lane_priority": resolved_reports_root / SHADOW_LANE_PRIORITY_JSON,
+        "primary_window_gap": resolved_reports_root / PRIMARY_WINDOW_GAP_JSON,
+        "recurring_shadow_runbook": resolved_reports_root / RECURRING_SHADOW_RUNBOOK_JSON,
+        "primary_window_validation_runbook": resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON,
+        "shadow_peer_scan": resolved_reports_root / SHADOW_PEER_SCAN_JSON,
+        "structural_shadow_runbook": resolved_reports_root / STRUCTURAL_SHADOW_RUNBOOK_JSON,
+    }
+    missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
+    if missing_inputs:
+        return {
+            "status": "skipped_missing_inputs",
+            "missing_inputs": missing_inputs,
+        }
+
+    output_json_path = resolved_reports_root / ROLLOUT_GOVERNANCE_JSON
+    output_md_path = resolved_reports_root / ROLLOUT_GOVERNANCE_MD
+    penalty_frontier_path = resolved_reports_root / BTST_PENALTY_FRONTIER_JSON
+    try:
+        analysis = analyze_btst_rollout_governance_board(
+            required_inputs["action_board"],
+            primary_roll_forward_path=required_inputs["primary_roll_forward"],
+            shadow_expansion_path=required_inputs["shadow_expansion"],
+            shadow_lane_priority_path=required_inputs["shadow_lane_priority"],
+            primary_window_gap_path=required_inputs["primary_window_gap"],
+            recurring_shadow_runbook_path=required_inputs["recurring_shadow_runbook"],
+            primary_window_validation_runbook_path=required_inputs["primary_window_validation_runbook"],
+            shadow_peer_scan_path=required_inputs["shadow_peer_scan"],
+            structural_shadow_runbook_path=required_inputs["structural_shadow_runbook"],
+            penalty_frontier_path=penalty_frontier_path if penalty_frontier_path.exists() else None,
+        )
+        output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_md_path.write_text(render_btst_rollout_governance_board_markdown(analysis), encoding="utf-8")
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "missing_inputs": [],
+            "error": str(exc),
+        }
+
+    penalty_frontier_summary = dict(analysis.get("penalty_frontier_summary") or {})
+    return {
+        "status": "refreshed",
+        "missing_inputs": [],
+        "governance_row_count": len(list(analysis.get("governance_rows") or [])),
+        "next_task_count": len(list(analysis.get("next_3_tasks") or [])),
+        "penalty_frontier_status": penalty_frontier_summary.get("status"),
+        "penalty_frontier_passing_variant_count": penalty_frontier_summary.get("passing_variant_count"),
+        "output_json": output_json_path.as_posix(),
+    }
+
+
 def refresh_btst_governance_synthesis_artifacts(
     reports_root: str | Path,
     *,
@@ -936,6 +1018,7 @@ def generate_reports_manifest(
     *,
     latest_btst_run: dict[str, Any] | None = None,
     candidate_entry_shadow_refresh: dict[str, Any] | None = None,
+    btst_rollout_governance_refresh: dict[str, Any] | None = None,
     btst_governance_synthesis_refresh: dict[str, Any] | None = None,
     btst_governance_validation_refresh: dict[str, Any] | None = None,
     btst_replay_cohort_refresh: dict[str, Any] | None = None,
@@ -974,6 +1057,7 @@ def generate_reports_manifest(
         "entry_count": len(entries),
         "entry_count_by_usage": entry_count_by_usage,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
+        "btst_rollout_governance_refresh": btst_rollout_governance_refresh,
         "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
         "btst_governance_validation_refresh": btst_governance_validation_refresh,
         "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
@@ -1013,6 +1097,11 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         lines.append(f"- candidate_entry_shadow_refresh_window_reports: {candidate_entry_shadow_refresh.get('window_report_count')}")
         lines.append(f"- candidate_entry_shadow_refresh_filtered_reports: {candidate_entry_shadow_refresh.get('filtered_report_count')}")
         lines.append(f"- candidate_entry_shadow_refresh_rollout_readiness: {candidate_entry_shadow_refresh.get('rollout_readiness')}")
+    btst_rollout_governance_refresh = manifest.get("btst_rollout_governance_refresh") or {}
+    if btst_rollout_governance_refresh:
+        lines.append(f"- btst_rollout_governance_refresh_status: {btst_rollout_governance_refresh.get('status')}")
+        lines.append(f"- btst_rollout_governance_row_count: {btst_rollout_governance_refresh.get('governance_row_count')}")
+        lines.append(f"- btst_rollout_governance_penalty_status: {btst_rollout_governance_refresh.get('penalty_frontier_status')}")
     btst_governance_synthesis_refresh = manifest.get("btst_governance_synthesis_refresh") or {}
     if btst_governance_synthesis_refresh:
         lines.append(f"- btst_governance_synthesis_status: {btst_governance_synthesis_refresh.get('status')}")
@@ -1062,6 +1151,7 @@ def generate_reports_manifest_artifacts(
     repo_root = _resolve_repo_root(resolved_reports_root)
     latest_btst_run = _select_latest_btst_candidate(resolved_reports_root, repo_root)
     candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
+    btst_rollout_governance_refresh = refresh_btst_rollout_governance_artifacts(resolved_reports_root)
     btst_governance_synthesis_refresh = refresh_btst_governance_synthesis_artifacts(
         resolved_reports_root,
         latest_btst_run=latest_btst_run,
@@ -1072,6 +1162,7 @@ def generate_reports_manifest_artifacts(
         resolved_reports_root,
         latest_btst_run=latest_btst_run,
         candidate_entry_shadow_refresh=candidate_entry_shadow_refresh,
+        btst_rollout_governance_refresh=btst_rollout_governance_refresh,
         btst_governance_synthesis_refresh=btst_governance_synthesis_refresh,
         btst_governance_validation_refresh=btst_governance_validation_refresh,
         btst_replay_cohort_refresh=btst_replay_cohort_refresh,
@@ -1081,6 +1172,7 @@ def generate_reports_manifest_artifacts(
     return {
         "manifest": manifest,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
+        "btst_rollout_governance_refresh": btst_rollout_governance_refresh,
         "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
         "btst_governance_validation_refresh": btst_governance_validation_refresh,
         "btst_replay_cohort_refresh": btst_replay_cohort_refresh,

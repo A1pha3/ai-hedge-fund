@@ -160,22 +160,45 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_micro_window_regression_20260330.md",
         "btst_profile_frontier_20260330.md",
         "btst_score_construction_frontier_20260330.md",
+        "btst_penalty_frontier_current_window_20260331.md",
         "btst_candidate_entry_frontier_20260330.md",
         "btst_candidate_entry_window_scan_20260330.md",
+        "btst_penalty_frontier_current_window_20260331.json",
         "p9_candidate_entry_rollout_governance_20260330.json",
         "p9_candidate_entry_rollout_governance_20260330.md",
         "p2_top3_experiment_execution_summary_20260330.json",
         "p3_top3_post_execution_action_board_20260330.json",
+        "p4_primary_roll_forward_validation_001309_20260330.json",
+        "p4_shadow_entry_expansion_board_300383_20260330.json",
+        "p4_shadow_lane_priority_board_20260330.json",
         "p5_btst_rollout_governance_board_20260330.json",
         "p6_primary_window_gap_001309_20260330.json",
         "p6_recurring_shadow_runbook_20260330.json",
         "p7_primary_window_validation_runbook_001309_20260330.json",
+        "p7_shadow_peer_scan_300383_20260330.json",
         "p8_structural_shadow_runbook_300724_20260330.json",
     ]:
         if filename.endswith(".md"):
             (reports_root / filename).write_text(f"# {filename}\n", encoding="utf-8")
         else:
             _write_json(reports_root / filename, {"path": filename})
+
+    _write_json(
+        reports_root / "btst_penalty_frontier_current_window_20260331.json",
+        {
+            "passing_variant_count": 0,
+            "focus_tickers": ["300383", "002015", "600821"],
+            "best_variant": {
+                "variant_name": "nm_0.42__avoid_0.12__stale_0.08__ext_0.02",
+                "variant_family": "penalty_coupled",
+                "guardrail_status": "fails_closed_tradeable_guardrails",
+                "closed_cycle_tradeable_count": 2,
+                "tradeable_cases": ["2026-03-26:300724:near_miss", "2026-03-26:300724:selected"],
+                "focus_tradeable_cases": [],
+            },
+            "recommendation": "当前窗口 broad penalty relief 不构成 rollout 路线。",
+        },
+    )
 
     older_report = reports_root / "paper_trading_20260329_20260329_live_m2_7_short_trade_only_20260329"
     older_trade_dir = older_report / "selection_artifacts" / "2026-03-29"
@@ -248,6 +271,15 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         ],
         "window_report_count": 0,
     }
+    assert manifest["btst_rollout_governance_refresh"] == {
+        "status": "refreshed",
+        "missing_inputs": [],
+        "governance_row_count": 5,
+        "next_task_count": 3,
+        "penalty_frontier_status": "broad_penalty_route_closed_current_window",
+        "penalty_frontier_passing_variant_count": 0,
+        "output_json": str((reports_root / "p5_btst_rollout_governance_board_20260330.json").resolve()),
+    }
     assert manifest["btst_governance_synthesis_refresh"]["status"] == "refreshed"
     assert manifest["btst_governance_validation_refresh"]["status"] == "refreshed"
     assert manifest["btst_replay_cohort_refresh"] == {
@@ -277,6 +309,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert entries_by_id["btst_micro_window_regression_review"]["report_path"] == "data/reports/btst_micro_window_regression_20260330.md"
     assert entries_by_id["btst_profile_frontier_review"]["report_path"] == "data/reports/btst_profile_frontier_20260330.md"
     assert entries_by_id["btst_score_construction_frontier_review"]["report_path"] == "data/reports/btst_score_construction_frontier_20260330.md"
+    assert entries_by_id["btst_penalty_frontier_review"]["report_path"] == "data/reports/btst_penalty_frontier_current_window_20260331.md"
     assert entries_by_id["btst_candidate_entry_frontier_review"]["report_path"] == "data/reports/btst_candidate_entry_frontier_20260330.md"
     assert entries_by_id["btst_candidate_entry_window_scan_review"]["report_path"] == "data/reports/btst_candidate_entry_window_scan_20260330.md"
     assert entries_by_id["p9_candidate_entry_rollout_governance"]["report_path"] == "data/reports/p9_candidate_entry_rollout_governance_20260330.md"
@@ -323,6 +356,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_micro_window_regression_review",
         "btst_profile_frontier_review",
         "btst_score_construction_frontier_review",
+        "btst_penalty_frontier_review",
         "btst_candidate_entry_frontier_review",
         "btst_candidate_entry_window_scan_review",
         "p9_candidate_entry_rollout_governance",
@@ -339,8 +373,13 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
 
     assert Path(result["json_path"]).exists()
     assert Path(result["markdown_path"]).exists()
+    synthesis = json.loads((reports_root / "btst_governance_synthesis_latest.json").read_text(encoding="utf-8"))
+    assert synthesis["closed_frontiers"][0]["frontier_id"] == "broad_penalty_relief"
+    assert synthesis["closed_frontiers"][0]["status"] == "broad_penalty_route_closed_current_window"
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
     assert "candidate_entry_shadow_refresh_status: skipped_missing_inputs" in markdown
+    assert "btst_rollout_governance_refresh_status: refreshed" in markdown
+    assert "btst_rollout_governance_penalty_status: broad_penalty_route_closed_current_window" in markdown
     assert "btst_governance_synthesis_status: refreshed" in markdown
     assert "btst_governance_validation_status: refreshed" in markdown
     assert "btst_replay_cohort_status: refreshed" in markdown
@@ -356,6 +395,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "btst_micro_window_regression_20260330.md" in markdown
     assert "btst_profile_frontier_20260330.md" in markdown
     assert "btst_score_construction_frontier_20260330.md" in markdown
+    assert "btst_penalty_frontier_current_window_20260331.md" in markdown
     assert "btst_candidate_entry_frontier_20260330.md" in markdown
     assert "btst_candidate_entry_window_scan_20260330.md" in markdown
     assert "p9_candidate_entry_rollout_governance_20260330.md" in markdown
@@ -442,6 +482,7 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
 
     manifest = result["manifest"]
     assert manifest["candidate_entry_shadow_refresh"] == refresh
+    assert manifest["btst_rollout_governance_refresh"]["status"] == "skipped_missing_inputs"
     assert manifest["btst_governance_synthesis_refresh"]["status"] == "skipped_missing_inputs"
     assert manifest["btst_governance_validation_refresh"]["status"] == "skipped_missing_inputs"
     assert manifest["btst_replay_cohort_refresh"]["status"] == "refreshed"
@@ -465,6 +506,7 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert "candidate_entry_shadow_refresh_window_reports: 2" in markdown
     assert "candidate_entry_shadow_refresh_filtered_reports: 1" in markdown
     assert "candidate_entry_shadow_refresh_rollout_readiness: shadow_only_until_second_window" in markdown
+    assert "btst_rollout_governance_refresh_status: skipped_missing_inputs" in markdown
     assert "btst_governance_synthesis_status: skipped_missing_inputs" in markdown
     assert "btst_governance_validation_status: skipped_missing_inputs" in markdown
     assert "btst_replay_cohort_status: refreshed" in markdown

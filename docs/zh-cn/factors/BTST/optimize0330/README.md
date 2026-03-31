@@ -647,3 +647,79 @@ Layer 4：执行确认
 ## 12. 一句话总结
 
 0330 这轮 BTST 讨论的正确落点，不是证明市场上只有 `300757` 一只票，而是确认当前系统把大量潜在机会挡在了 coverage 与边界语义之前。下一步最有杠杆的路线，是先用微窗口双层验证把 false negative 挖出来，稳定做出 coverage recovery，再把开盘消化、盘中确认、结构空间、板块共振和催化兑现整理成独立的 `entry-quality factor pack`，服务于主入场票 / 观察票分层和 execution confirmation，而不是继续把新因子直接写回 admission 主线。
+
+---
+
+## 13. 如何在 Replay Artifacts 里验证 BTST Control Tower
+
+如果你要人工验证 BTST control tower、rollout lane 和 closed frontier 是否已经接进工作台，先解决两个最常见的问题：去哪里选 report，以及当前应该选哪一个。
+
+### 13.1 report 在哪里选
+
+1. 打开 Replay Artifacts 页面后，如果你处在工作台模式，report 选择器就在左侧栏，标题叫 `Report Rail`。
+2. 左侧最上面有一个下拉框，下面还有一组 report 卡片；两者都能切换 report。
+3. 如果你处在非工作台模式，对应区域标题会变成 `Report Selector`，位置仍然是页面上方的 report 下拉框。
+4. 当前代码里这个入口就在 [app/frontend/src/components/settings/replay-artifacts.tsx](../../../../../app/frontend/src/components/settings/replay-artifacts.tsx#L1528)。
+
+### 13.2 当前应该选哪个 report
+
+截至 2026-03-31 当前最新的 BTST control tower reference 指向的是：
+
+1. `paper_trading_20260330_20260330_frozen_replay_m2_7_short_trade_only_20260331_run3`
+
+这个结论来自以下 latest 产物：
+
+1. [data/reports/btst_nightly_control_tower_latest.json](../../../../../data/reports/btst_nightly_control_tower_latest.json)
+2. [data/reports/btst_open_ready_delta_latest.json](../../../../../data/reports/btst_open_ready_delta_latest.json)
+
+所以最稳妥的人工验收做法，就是在 `Report Rail` 里直接选中：
+
+1. `paper_trading_20260330_20260330_frozen_replay_m2_7_short_trade_only_20260331_run3`
+
+如果你不想手动找全名，也可以直接找带有“当前 latest BTST run”语义提示的 report 卡片。当前工作台会在对应 report 卡片上显示 open-ready 当前标记。
+
+### 13.3 选中后应该看到什么
+
+选中上面的 report 之后，主工作台和右侧 Inspector 都应该能看到：
+
+1. `BTST Control Tower`
+2. `Closed Frontiers`
+3. `Rollout Lanes`
+4. `Open Latest`
+5. `Open Previous`
+6. `Open Replay`
+
+其中主工作台实现位置在：
+
+1. [app/frontend/src/components/settings/replay-artifacts.tsx](../../../../../app/frontend/src/components/settings/replay-artifacts.tsx#L1852)
+
+Inspector 实现位置在：
+
+1. [app/frontend/src/components/replay-artifacts/replay-artifacts-inspector.tsx](../../../../../app/frontend/src/components/replay-artifacts/replay-artifacts-inspector.tsx#L499)
+
+### 13.4 手工点击时应该验证什么
+
+至少验证下面 4 点：
+
+1. `Closed Frontiers` 里能看到已关闭路线，例如 `broad_penalty_relief`。
+2. `Rollout Lanes` 里能看到 `001309`、`300383`、`002015`、`600821`、`300724` 这类 lane row，或至少看到当前窗口实际存在的子集。
+3. 点击某个 lane 的 `Open Replay` 后，report、trade date、focus symbol 会一起切到目标上下文。
+4. 跳转后不会因为已有筛选器而被自动打回；这条行为依赖于跳转前先重置 report rail、trade date、explainability filters。
+
+### 13.5 自动验证命令
+
+如果要做代码级验证，可以直接运行：
+
+```bash
+/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/.venv/bin/python -m pytest tests/backend/test_replay_artifact_service.py -q
+
+cd /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/app/frontend
+npm test -- src/components/settings/replay-artifacts.test.tsx src/components/replay-artifacts/replay-artifacts-inspector.test.tsx
+npm run build
+```
+
+本轮实际验证结果：
+
+1. 后端 pytest：6 passed。
+2. 前端 Vitest：11 passed。
+3. 前端 build：通过。

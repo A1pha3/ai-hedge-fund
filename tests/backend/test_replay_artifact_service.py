@@ -43,6 +43,8 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
     nightly_markdown_path = tmp_path / "btst_nightly_control_tower_latest.md"
     manifest_json_path = tmp_path / "report_manifest_latest.json"
     manifest_markdown_path = tmp_path / "report_manifest_latest.md"
+    governance_synthesis_json_path = tmp_path / "btst_governance_synthesis_latest.json"
+    rollout_governance_json_path = tmp_path / "p5_btst_rollout_governance_board_20260330.json"
     current_priority_board_path = report_dir / "btst_next_day_priority_board_20260312.json"
 
     _write_json(
@@ -100,13 +102,24 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
                     "shadow_only": 1,
                     "continue_controlled_roll_forward": 1,
                 },
+                "closed_frontiers": [
+                    {
+                        "frontier_id": "broad_penalty_relief",
+                        "status": "broad_penalty_route_closed_current_window",
+                        "headline": "broad stale/extension penalty relief 已被当前窗口证伪。",
+                        "best_variant_name": "nm_0.42__avoid_0.12__stale_0.08__ext_0.02",
+                        "passing_variant_count": 0,
+                        "best_variant_released_tickers": ["300724"],
+                        "best_variant_focus_released_tickers": [],
+                    }
+                ],
                 "validation": {"overall_verdict": "pass_with_warnings"},
                 "next_actions": [
                     {
-                        "task_id": "001309_primary_follow_through_roll_forward",
-                        "title": "推进 001309 primary follow-through",
-                        "why_now": "当前唯一 primary 入口。",
-                        "next_step": "继续滚动窗口验证。",
+                        "task_id": "300724_structural_shadow_hold_only",
+                        "title": "维持 300724 structural shadow",
+                        "why_now": "post-release 质量未修复。",
+                        "next_step": "继续结构化 shadow 观察。",
                         "source": "p3_action_board",
                     },
                     {
@@ -124,6 +137,46 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
     _write_json(manifest_json_path, {"entries": []})
     manifest_markdown_path.write_text("# manifest\n", encoding="utf-8")
     _write_json(current_priority_board_path, {})
+    _write_json(
+        rollout_governance_json_path,
+        {
+            "governance_rows": [
+                {
+                    "ticker": "300724",
+                    "governance_tier": "structural_shadow_hold_only",
+                    "status": "structural_shadow_hold_only",
+                    "blocker": "post_release_quality_negative",
+                    "next_step": "继续结构化 shadow 观察。",
+                    "evidence": {
+                        "target_case_count": 2,
+                        "missing_window_count": 1,
+                        "freeze_verdict": "negative",
+                    },
+                }
+            ]
+        },
+    )
+    _write_json(
+        governance_synthesis_json_path,
+        {
+            "source_reports": {
+                "rollout_governance": str(rollout_governance_json_path),
+            },
+            "lane_matrix": [
+                {
+                    "lane_id": "structural_shadow_hold_only",
+                    "ticker": "300724",
+                    "governance_tier": "structural_shadow_hold_only",
+                    "lane_status": "structural_shadow_hold_only",
+                    "action_tier": "hold_only",
+                    "blocker": "post_release_quality_negative",
+                    "validation_verdict": "hold",
+                    "missing_window_count": 1,
+                    "next_step": "继续结构化 shadow 观察。",
+                }
+            ],
+        },
+    )
 
     _write_json(
         brief_json_path,
@@ -150,7 +203,7 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
             "portfolio_values": [{"Portfolio Value": 101000.0}],
             "daily_event_stats": {"executed_trade_days": 1, "total_executed_orders": 1},
             "performance_metrics": {"sharpe_ratio": 1.2, "sortino_ratio": 1.8, "max_drawdown": -0.03, "max_drawdown_date": "2026-03-11"},
-            "plan_generation": {"mode": "frozen_replay"},
+            "plan_generation": {"mode": "frozen_replay", "selection_target": "short_trade_only"},
             "model_provider": "MiniMax",
             "model_name": "MiniMax-M2.7",
             "artifacts": {
@@ -402,13 +455,50 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
             "candidate_entry_shadow_refresh": "refreshed",
             "btst_governance_synthesis_refresh": "refreshed",
         },
+        "closed_frontiers": [
+            {
+                "frontier_id": "broad_penalty_relief",
+                "status": "broad_penalty_route_closed_current_window",
+                "headline": "broad stale/extension penalty relief 已被当前窗口证伪。",
+                "best_variant_name": "nm_0.42__avoid_0.12__stale_0.08__ext_0.02",
+                "passing_variant_count": 0,
+                "best_variant_released_tickers": ["300724"],
+                "best_variant_focus_released_tickers": [],
+            }
+        ],
+        "rollout_lane_rows": [
+            {
+                "lane_id": "structural_shadow_hold_only",
+                "ticker": "300724",
+                "governance_tier": "structural_shadow_hold_only",
+                "lane_status": "structural_shadow_hold_only",
+                "action_tier": "hold_only",
+                "blocker": "post_release_quality_negative",
+                "validation_verdict": "hold",
+                "missing_window_count": 1,
+                "next_step": "继续结构化 shadow 观察。",
+                "evidence_highlights": ["cases 2", "missing windows 1", "freeze negative"],
+                "context_reference": {
+                    "report_name": "demo_report",
+                    "trade_date": "2026-03-11",
+                    "symbol": "300724",
+                    "selection_target": "short_trade_only",
+                },
+            }
+        ],
         "next_actions": [
             {
-                "task_id": "001309_primary_follow_through_roll_forward",
-                "title": "推进 001309 primary follow-through",
-                "why_now": "当前唯一 primary 入口。",
-                "next_step": "继续滚动窗口验证。",
+                "task_id": "300724_structural_shadow_hold_only",
+                "title": "维持 300724 structural shadow",
+                "why_now": "post-release 质量未修复。",
+                "next_step": "继续结构化 shadow 观察。",
                 "source": "p3_action_board",
+                "context_reference": {
+                    "report_name": "demo_report",
+                    "trade_date": "2026-03-11",
+                    "symbol": "300724",
+                    "selection_target": "short_trade_only",
+                },
             },
             {
                 "task_id": "300383_shadow_queue_hold",
@@ -416,6 +506,7 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
                 "why_now": "防止 shadow 规则扩散。",
                 "next_step": "保持单票 shadow。",
                 "source": "p3_action_board",
+                "context_reference": None,
             },
         ],
         "artifacts": {
@@ -423,6 +514,8 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
             "open_ready_delta_markdown": str(delta_markdown_path),
             "nightly_control_tower_json": str(nightly_json_path),
             "nightly_control_tower_markdown": str(nightly_markdown_path),
+            "governance_synthesis_json": str(governance_synthesis_json_path),
+            "rollout_governance_json": str(rollout_governance_json_path),
             "report_manifest_json": str(manifest_json_path),
             "report_manifest_markdown": str(manifest_markdown_path),
             "current_priority_board_json": str(current_priority_board_path),

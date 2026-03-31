@@ -202,13 +202,50 @@ const reports: ReplayArtifactSummary[] = [
           candidate_entry_shadow_refresh: 'refreshed',
           btst_governance_synthesis_refresh: 'refreshed',
         },
+        closed_frontiers: [
+          {
+            frontier_id: 'broad_penalty_relief',
+            status: 'broad_penalty_route_closed_current_window',
+            headline: 'broad stale/extension penalty relief 已被当前窗口证伪。',
+            best_variant_name: 'nm_0.42__avoid_0.12__stale_0.08__ext_0.02',
+            passing_variant_count: 0,
+            best_variant_released_tickers: ['300724'],
+            best_variant_focus_released_tickers: [],
+          },
+        ],
+        rollout_lane_rows: [
+          {
+            lane_id: 'structural_shadow_hold_only',
+            ticker: '300724',
+            governance_tier: 'structural_shadow_hold_only',
+            lane_status: 'structural_shadow_hold_only',
+            action_tier: 'hold_only',
+            blocker: 'post_release_quality_negative',
+            validation_verdict: 'hold',
+            missing_window_count: 1,
+            next_step: '继续结构化 shadow 观察。',
+            evidence_highlights: ['cases 2', 'missing windows 1', 'freeze negative'],
+            context_reference: {
+              report_name: 'paper_trading_window_recent',
+              trade_date: '2026-03-23',
+              symbol: '300724',
+              selection_target: 'short_trade_only',
+            },
+          },
+        ],
         next_actions: [
           {
-            task_id: '001309_primary_follow_through_roll_forward',
-            title: '推进 001309 primary follow-through',
-            why_now: '当前唯一 primary 入口。',
-            next_step: '继续滚动窗口验证。',
+            task_id: '300724_structural_shadow_hold_only',
+            title: '维持 300724 structural shadow',
+            why_now: 'post-release 质量未修复。',
+            next_step: '继续结构化 shadow 观察。',
             source: 'p3_action_board',
+            context_reference: {
+              report_name: 'paper_trading_window_recent',
+              trade_date: '2026-03-23',
+              symbol: '300724',
+              selection_target: 'short_trade_only',
+            },
           },
         ],
         artifacts: {
@@ -386,13 +423,50 @@ const detail: ReplayArtifactDetail = {
         candidate_entry_shadow_refresh: 'refreshed',
         btst_governance_synthesis_refresh: 'refreshed',
       },
+      closed_frontiers: [
+        {
+          frontier_id: 'broad_penalty_relief',
+          status: 'broad_penalty_route_closed_current_window',
+          headline: 'broad stale/extension penalty relief 已被当前窗口证伪。',
+          best_variant_name: 'nm_0.42__avoid_0.12__stale_0.08__ext_0.02',
+          passing_variant_count: 0,
+          best_variant_released_tickers: ['300724'],
+          best_variant_focus_released_tickers: [],
+        },
+      ],
+      rollout_lane_rows: [
+        {
+          lane_id: 'structural_shadow_hold_only',
+          ticker: '300724',
+          governance_tier: 'structural_shadow_hold_only',
+          lane_status: 'structural_shadow_hold_only',
+          action_tier: 'hold_only',
+          blocker: 'post_release_quality_negative',
+          validation_verdict: 'hold',
+          missing_window_count: 1,
+          next_step: '继续结构化 shadow 观察。',
+          evidence_highlights: ['cases 2', 'missing windows 1', 'freeze negative'],
+          context_reference: {
+            report_name: 'paper_trading_window_recent',
+            trade_date: '2026-03-23',
+            symbol: '300724',
+            selection_target: 'short_trade_only',
+          },
+        },
+      ],
       next_actions: [
         {
-          task_id: '001309_primary_follow_through_roll_forward',
-          title: '推进 001309 primary follow-through',
-          why_now: '当前唯一 primary 入口。',
-          next_step: '继续滚动窗口验证。',
+          task_id: '300724_structural_shadow_hold_only',
+          title: '维持 300724 structural shadow',
+          why_now: 'post-release 质量未修复。',
+          next_step: '继续结构化 shadow 观察。',
           source: 'p3_action_board',
+          context_reference: {
+            report_name: 'paper_trading_window_recent',
+            trade_date: '2026-03-23',
+            symbol: '300724',
+            selection_target: 'short_trade_only',
+          },
         },
       ],
       artifacts: {
@@ -516,10 +590,75 @@ describe('ReplayArtifactsSettings workspace defaults', () => {
     expect(screen.getAllByText('paper_trading_window_recent').length).toBeGreaterThan(0);
     expect(screen.getByText('1 trade dates')).toBeInTheDocument();
     expect(screen.getAllByText('BTST Follow-Up').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('BTST Control Tower').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('changed').length).toBeGreaterThan(0);
-    expect(screen.getByText('open-ready current | changed | replay')).toBeInTheDocument();
+    expect(screen.getAllByText('BTST 控制塔').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('有变化').length).toBeGreaterThan(0);
+    expect(screen.getByText('已对齐最新 BTST | 有变化 | 回放')).toBeInTheDocument();
+    expect(screen.getAllByText('已关闭路线').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('广义 stale/extension 惩罚放松').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('当前窗口已关闭').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('执行车道').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: '打开当前 BTST 运行' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: '打开回放 300724' }).length).toBeGreaterThan(0);
     expect(screen.getAllByText('300757').length).toBeGreaterThan(0);
+  });
+
+  it('opens replay context from BTST rollout lane cards', async () => {
+    const user = userEvent.setup();
+    const focusableDayDetail: ReplaySelectionArtifactDay = {
+      ...dayDetail,
+      snapshot: {
+        ...dayDetail.snapshot,
+        selected: [
+          {
+            symbol: '300724',
+            name: '捷佳伟创',
+            decision: 'watchlist',
+            score_b: 0.71,
+            score_c: 0.63,
+            score_final: 0.68,
+            rank_in_watchlist: 1,
+          },
+        ],
+      },
+    };
+
+    listMock.mockResolvedValue(reports);
+    getMock.mockResolvedValue(detail);
+    getSelectionArtifactDayMock.mockResolvedValue(focusableDayDetail);
+    getFeedbackActivityMock.mockResolvedValue({
+      report_name: 'paper_trading_window_recent',
+      reviewer: null,
+      limit: 8,
+      record_count: 0,
+      recent_records: [],
+      review_status_counts: {},
+      tag_counts: {},
+      reviewer_counts: {},
+      report_counts: {},
+    });
+    getWorkflowQueueMock.mockResolvedValue({
+      assignee: 'einstein',
+      workflow_status: null,
+      report_name: null,
+      limit: 12,
+      item_count: 0,
+      items: [],
+      workflow_status_counts: {},
+      assignee_counts: {},
+      report_counts: {},
+    });
+
+    render(<ReplayArtifactsSettings mode="workspace" />);
+
+    await screen.findAllByText('执行车道');
+    await user.click(screen.getAllByRole('button', { name: '打开回放 300724' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('focus 300724')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('300724')).toBeInTheDocument();
+    });
   });
 
   it('renders dual-target snapshot sections and candidate target decisions', async () => {

@@ -15,6 +15,7 @@ def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurrin
     primary_window_runbook = tmp_path / "primary_window_runbook.json"
     shadow_peer_scan = tmp_path / "shadow_peer_scan.json"
     structural_shadow_runbook = tmp_path / "structural_shadow_runbook.json"
+    penalty_frontier = tmp_path / "penalty_frontier.json"
 
     action_board.write_text(
         json.dumps(
@@ -152,6 +153,29 @@ def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurrin
         + "\n",
         encoding="utf-8",
     )
+    penalty_frontier.write_text(
+        json.dumps(
+            {
+                "passing_variant_count": 0,
+                "focus_tickers": ["300383", "002015", "600821"],
+                "best_variant": {
+                    "variant_name": "nm_0.42__avoid_0.12__stale_0.08__ext_0.02",
+                    "variant_family": "penalty_coupled",
+                    "guardrail_status": "fails_closed_tradeable_guardrails",
+                    "closed_cycle_tradeable_count": 2,
+                    "tradeable_cases": [
+                        "2026-03-26:300724:near_miss",
+                        "2026-03-26:300724:selected"
+                    ],
+                    "focus_tradeable_cases": [],
+                },
+                "recommendation": "当前窗口 broad penalty relief 不构成 rollout 路线。",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     analysis = analyze_btst_rollout_governance_board(
         action_board,
@@ -163,6 +187,7 @@ def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurrin
         primary_window_validation_runbook_path=primary_window_runbook,
         shadow_peer_scan_path=shadow_peer_scan,
         structural_shadow_runbook_path=structural_shadow_runbook,
+        penalty_frontier_path=penalty_frontier,
     )
 
     assert analysis["governance_rows"][0]["ticker"] == "001309"
@@ -179,3 +204,7 @@ def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurrin
     assert analysis["governance_rows"][4]["status"] == "structural_shadow_hold_only"
     assert analysis["governance_rows"][4]["next_step"] == "hold 300724 structural shadow only"
     assert analysis["governance_rows"][4]["evidence"]["freeze_verdict"] == "hold_single_name_only_quality_negative"
+    assert analysis["penalty_frontier_summary"]["status"] == "broad_penalty_route_closed_current_window"
+    assert analysis["penalty_frontier_summary"]["best_variant_released_tickers"] == ["300724"]
+    assert analysis["frontier_constraints"][0]["frontier_id"] == "broad_penalty_relief"
+    assert "broad stale/extension penalty relief 已在当前窗口被证伪" in analysis["recommendation"]
