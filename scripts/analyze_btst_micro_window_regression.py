@@ -51,6 +51,24 @@ def _iter_selection_snapshots(report_dir: Path):
             yield _load_json(snapshot_path)
 
 
+def _load_session_summary_aggregate(report_dir: Path) -> dict[str, Any] | None:
+    session_summary_path = report_dir / "session_summary.json"
+    if not session_summary_path.exists():
+        return None
+
+    session_summary = _load_json(session_summary_path)
+    selection_artifact_root = Path(str(((session_summary.get("artifacts") or {}).get("selection_artifact_root") or report_dir / "selection_artifacts"))).expanduser()
+    daily_events_path = Path(str(((session_summary.get("artifacts") or {}).get("daily_events") or report_dir / "daily_events.jsonl"))).expanduser()
+    return {
+        "session_summary_path": str(session_summary_path),
+        "selection_target": ((session_summary.get("plan_generation") or {}).get("selection_target")),
+        "dual_target_summary": dict(session_summary.get("dual_target_summary") or {}),
+        "daily_event_stats": dict(session_summary.get("daily_event_stats") or {}),
+        "selection_artifact_root_exists": selection_artifact_root.exists(),
+        "daily_events_exists": daily_events_path.exists(),
+    }
+
+
 def _normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
     if frame is None or frame.empty:
         return pd.DataFrame()
@@ -261,6 +279,7 @@ def analyze_btst_micro_window_report(
     next_high_hit_threshold: float = 0.02,
 ) -> dict[str, Any]:
     report_path = Path(report_dir).expanduser().resolve()
+    selection_root = report_path / "selection_artifacts"
     rows: list[dict[str, Any]] = []
     price_cache: dict[tuple[str, str], pd.DataFrame] = {}
     decision_counts: Counter[str] = Counter()
@@ -311,10 +330,18 @@ def analyze_btst_micro_window_report(
 
     top_tradeable_rows = sorted(actionable_rows, key=lambda row: (1 if row.get("decision") == "selected" else 0, float(row.get("score_target") or -999.0), float(row.get("next_high_return") or -999.0)), reverse=True)[:8]
 
+    session_summary_aggregate = None
+    artifact_status = "complete"
+    if not selection_root.exists():
+        session_summary_aggregate = _load_session_summary_aggregate(report_path)
+        artifact_status = "missing_selection_artifacts"
+
     if actionable_rows:
         recommendation = "当前窗口已经形成可研究的 tradeable surface，下一步优先比较 actionable surface 的机会质量与 false negative proxy 的剩余规模。"
     elif false_negative_rows:
         recommendation = "当前窗口的 tradeable surface 仍为空或偏窄，但 closed-cycle false negative proxy 已经存在，优先继续做 score frontier / case-based release，而不是重开 admission floor。"
+    elif session_summary_aggregate is not None:
+        recommendation = "当前报告目录缺少 selection_artifacts，无法自动重建逐行 surface；请结合 session_summary 聚合统计与原始产物完整性一起解读。"
     else:
         recommendation = "当前窗口既没有稳定的 tradeable surface，也没有形成可用 false negative proxy，先检查样本窗口或价格补齐情况。"
 
@@ -324,6 +351,8 @@ def analyze_btst_micro_window_report(
     return {
         "label": label,
         "report_dir": str(report_path),
+        "artifact_status": artifact_status,
+        "session_summary_aggregate": session_summary_aggregate,
         "target_mode": target_modes.most_common(1)[0][0] if target_modes else "unknown",
         "trade_dates": sorted({str(row.get("trade_date") or "") for row in rows}),
         "row_count": len(rows),
@@ -391,7 +420,9 @@ def _compare_reports(
         else:
             guardrail_status = "fails_closed_tradeable_guardrails"
 
-    if int(baseline_tradeable.get("total_count", 0)) == 0 and int(variant_tradeable.get("total_count", 0)) > 0:
+    if variant.get("artifact_status") == "missing_selection_artifacts" and int(variant.get("row_count", 0)) == 0:
+        comparison_note = f"{variant['label']} 的 session_summary 已存在，但 selection_artifacts 缺失，无法自动重建 closed-cycle surface；当前比较仅能视为产物完整性告警，不能解读为 coverage 退化。"
+    elif int(baseline_tradeable.get("total_count", 0)) == 0 and int(variant_tradeable.get("total_count", 0)) > 0:
         comparison_note = (
             f"{variant['label']} 把 tradeable surface 从 0 提升到 {variant_tradeable['total_count']}，"
             f"其中 closed-cycle actionable={variant_tradeable['closed_cycle_count']}。"
@@ -534,6 +565,9 @@ def render_btst_micro_window_regression_markdown(analysis: dict[str, Any]) -> st
         for variant, comparison in zip(analysis["variants"], analysis["comparisons"]):
             lines.append(f"### {variant['label']}")
             lines.append(f"- report_dir: {variant['report_dir']}")
+            lines.append(f"- artifact_status: {variant.get('artifact_status')}")
+            if variant.get("session_summary_aggregate"):
+                lines.append(f"- session_summary_aggregate: {variant['session_summary_aggregate']}")
             lines.append(f"- decision_counts: {variant['decision_counts']}")
             lines.append(f"- cycle_status_counts: {variant['cycle_status_counts']}")
             lines.append(f"- tradeable_surface: {variant['surface_summaries']['tradeable']}")

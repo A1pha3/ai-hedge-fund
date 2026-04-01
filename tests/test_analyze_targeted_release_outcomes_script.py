@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_targeted_release_outcomes import analyze_targeted_release_outcomes
+from scripts.analyze_targeted_release_outcomes import analyze_targeted_release_outcomes, render_targeted_release_outcomes_markdown
 
 
 def test_analyze_targeted_release_outcomes_merges_target_cases_and_price_outcomes(tmp_path, monkeypatch):
@@ -55,3 +55,34 @@ def test_analyze_targeted_release_outcomes_merges_target_cases_and_price_outcome
     assert analysis["next_close_positive_rate"] == 1.0
     assert analysis["target_cases"][0]["release_verdict"] == "promoted_with_positive_close"
     assert analysis["near_miss_threshold"] == 0.42
+
+
+def test_render_targeted_release_outcomes_markdown_tolerates_missing_price_fields():
+    markdown = render_targeted_release_outcomes_markdown(
+        {
+            "release_report": "/tmp/release.json",
+            "report_dir": "/tmp/report-dir",
+            "release_mode": "score_frontier_release",
+            "ticker": "600522",
+            "target_case_count": 1,
+            "promoted_target_case_count": 1,
+            "changed_non_target_case_count": 0,
+            "next_high_return_mean": None,
+            "next_close_return_mean": None,
+            "next_high_hit_rate_at_threshold": 0.0,
+            "next_close_positive_rate": 0.0,
+            "target_cases": [
+                {
+                    "trade_date": "2026-03-31",
+                    "ticker": "600522",
+                    "before_decision": "rejected",
+                    "after_decision": "near_miss",
+                    "release_verdict": "promoted_but_outcome_mixed",
+                }
+            ],
+            "recommendation": "keep observing",
+        }
+    )
+
+    assert "next_open_return=None" in markdown
+    assert "release_verdict=promoted_but_outcome_mixed" in markdown

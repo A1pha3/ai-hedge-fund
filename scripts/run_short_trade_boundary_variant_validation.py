@@ -24,6 +24,46 @@ def _run_command(command: list[str], *, cwd: Path, env: dict[str, str]) -> subpr
     return subprocess.run(command, cwd=cwd, env=env, text=True, capture_output=True, check=False)
 
 
+def _validate_report_artifacts(output_dir: Path) -> dict[str, Any]:
+    report_dir = output_dir.expanduser().resolve()
+    session_summary_path = report_dir / "session_summary.json"
+    daily_events_path = report_dir / "daily_events.jsonl"
+    timing_log_path = report_dir / "pipeline_timings.jsonl"
+    selection_root = report_dir / "selection_artifacts"
+    snapshot_paths = sorted(selection_root.glob("*/selection_snapshot.json")) if selection_root.exists() else []
+
+    missing_paths: list[str] = []
+    for candidate in (session_summary_path, daily_events_path, timing_log_path):
+        if not candidate.exists():
+            missing_paths.append(str(candidate))
+    if not selection_root.exists():
+        missing_paths.append(str(selection_root))
+    elif not snapshot_paths:
+        missing_paths.append(str(selection_root / "*/selection_snapshot.json"))
+
+    validation: dict[str, Any] = {
+        "report_dir": str(report_dir),
+        "session_summary_exists": session_summary_path.exists(),
+        "daily_events_exists": daily_events_path.exists(),
+        "timing_log_exists": timing_log_path.exists(),
+        "selection_artifact_root_exists": selection_root.exists(),
+        "selection_snapshot_count": len(snapshot_paths),
+        "latest_selection_snapshot": str(snapshot_paths[-1]) if snapshot_paths else None,
+        "missing_paths": missing_paths,
+        "is_complete": not missing_paths,
+    }
+    if session_summary_path.exists():
+        try:
+            session_summary = json.loads(session_summary_path.read_text(encoding="utf-8"))
+        except Exception as error:
+            validation["session_summary_read_error"] = str(error)
+        else:
+            validation["summary_dual_target_counts"] = dict(session_summary.get("dual_target_summary") or {})
+            validation["summary_daily_event_stats"] = dict(session_summary.get("daily_event_stats") or {})
+            validation["summary_artifacts"] = dict(session_summary.get("artifacts") or {})
+    return validation
+
+
 def run_short_trade_boundary_variant_validation(
     *,
     repo_root: Path,
@@ -69,6 +109,13 @@ def run_short_trade_boundary_variant_validation(
     if run_result.returncode != 0:
         return result
 
+    artifact_validation = _validate_report_artifacts(output_dir)
+    result["artifact_validation"] = artifact_validation
+    if not artifact_validation.get("is_complete"):
+        result["run_exit_code"] = 2
+        result["error"] = "required_report_artifacts_missing"
+        return result
+
     coverage_json = output_dir / "short_trade_boundary_filtered_candidates.json"
     coverage_md = output_dir / "short_trade_boundary_filtered_candidates.md"
     analyze_command = [
@@ -94,6 +141,7 @@ def run_short_trade_boundary_variant_validation(
             "analysis_output_md": str(coverage_md),
         }
     )
+    result["artifact_validation"] = _validate_report_artifacts(output_dir)
     return result
 
 
@@ -125,6 +173,10 @@ def main() -> None:
         summary_path = Path(args.summary_json).expanduser().resolve()
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if summary.get("run_exit_code") not in (0, None):
+        raise SystemExit(int(summary["run_exit_code"]))
+    if summary.get("analysis_exit_code") not in (0, None):
+        raise SystemExit(int(summary["analysis_exit_code"]))
 
 
 if __name__ == "__main__":

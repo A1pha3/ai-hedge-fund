@@ -8,11 +8,11 @@ from typing import Any
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_SHADOW_EXPANSION_BOARD_PATH = REPORTS_DIR / "p4_shadow_entry_expansion_board_300383_20260330.json"
-DEFAULT_RECURRING_PAIR_COMPARISON_PATH = REPORTS_DIR / "recurring_frontier_release_pair_comparison_600821_vs_002015_20260329.json"
-DEFAULT_RECURRING_002015_PATH = REPORTS_DIR / "recurring_frontier_ticker_release_outcomes_002015_20260329.json"
-DEFAULT_RECURRING_600821_PATH = REPORTS_DIR / "recurring_frontier_ticker_release_outcomes_600821_20260329.json"
-DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p4_shadow_lane_priority_board_20260330.json"
-DEFAULT_OUTPUT_MD = REPORTS_DIR / "p4_shadow_lane_priority_board_20260330.md"
+DEFAULT_RECURRING_PAIR_COMPARISON_PATH = REPORTS_DIR / "recurring_frontier_release_pair_comparison_600821_vs_300113_catalyst_floor_zero_refresh_20260401.json"
+DEFAULT_RECURRING_CLOSE_CANDIDATE_PATH = REPORTS_DIR / "recurring_frontier_ticker_release_outcomes_300113_catalyst_floor_zero_refresh_20260401.json"
+DEFAULT_RECURRING_INTRADAY_CONTROL_PATH = REPORTS_DIR / "recurring_frontier_ticker_release_outcomes_600821_catalyst_floor_zero_refresh_20260401.json"
+DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p4_shadow_lane_priority_board_20260401.json"
+DEFAULT_OUTPUT_MD = REPORTS_DIR / "p4_shadow_lane_priority_board_20260401.md"
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -41,13 +41,16 @@ def analyze_btst_shadow_lane_priority(
     shadow_expansion_board_path: str | Path,
     *,
     recurring_pair_comparison_path: str | Path,
-    recurring_002015_path: str | Path,
-    recurring_600821_path: str | Path,
+    recurring_close_candidate_path: str | Path,
+    recurring_intraday_control_path: str | Path,
 ) -> dict[str, Any]:
     shadow_board = _load_json(shadow_expansion_board_path)
     pair_comparison = _load_json(recurring_pair_comparison_path)
-    report_002015 = _load_json(recurring_002015_path)
-    report_600821 = _load_json(recurring_600821_path)
+    close_candidate_report = _load_json(recurring_close_candidate_path)
+    intraday_control_report = _load_json(recurring_intraday_control_path)
+
+    close_candidate_ticker = str(close_candidate_report.get("ticker") or "close_candidate")
+    intraday_control_ticker = str(intraday_control_report.get("ticker") or "intraday_control")
 
     if not bool(dict(shadow_board.get("frontier_uniqueness") or {}).get("same_rule_expansion_ready")):
         expansion_constraint = "300383_same_rule_expansion_blocked"
@@ -56,16 +59,16 @@ def analyze_btst_shadow_lane_priority(
 
     lane_rows = [
         _build_lane_row(
-            report_002015,
+            close_candidate_report,
             lane_role="recurring_shadow_close_candidate",
-            why_now="它是 300383 之后最接近 close-continuation 语义的 recurring frontier peer，且已有 3/3 定向 release outcome 证据。",
-            next_step="先把 002015 固定为 recurring shadow 的 close-continuation 候选，再决定是否需要新一轮 recurring lane runbook。",
+            why_now=f"{close_candidate_ticker} 在当前 recurring frontier peer 里给出了更强的 close-continuation 证据，应作为 close-candidate 主车道。",
+            next_step=f"先把 {close_candidate_ticker} 固定为 recurring shadow 的 close-continuation 候选，再决定是否需要新一轮 recurring lane runbook。",
         ),
         _build_lane_row(
-            report_600821,
+            intraday_control_report,
             lane_role="recurring_shadow_intraday_control",
-            why_now="它的 intraday upside 更强，但 close continuation 更弱，适合作为 recurring shadow 的 intraday 控制样本。",
-            next_step="把 600821 保留为 recurring intraday control，不要把它误写成 close-continuation 规则。",
+            why_now=f"{intraday_control_ticker} 的 intraday upside 更强，但 close continuation 更弱，适合作为 recurring shadow 的 intraday 控制样本。",
+            next_step=f"把 {intraday_control_ticker} 保留为 recurring intraday control，不要把它误写成 close-continuation 规则。",
         ),
     ]
 
@@ -83,7 +86,7 @@ def analyze_btst_shadow_lane_priority(
     if expansion_constraint == "300383_same_rule_expansion_blocked":
         recommendation = (
             "300383 继续保留单票 shadow entry，但下一条可推进的 shadow 扩展路线应切到 recurring frontier。"
-            "其中 002015 优先作为 close-continuation shadow 候选，600821 作为 intraday control。"
+            f"其中 {close_candidate_ticker} 优先作为 close-continuation shadow 候选，{intraday_control_ticker} 作为 intraday control。"
         )
     else:
         recommendation = "300383 之外仍有同规则 threshold-only peer，可继续优先做同规则 shadow 扩展。"
@@ -103,14 +106,14 @@ def analyze_btst_shadow_lane_priority(
                 "next_step": "继续保留单票 shadow，不做参数克隆式扩张。",
             },
             {
-                "task_id": "002015_recurring_shadow_close_candidate",
-                "title": "推进 002015 recurring shadow close 候选",
+                "task_id": f"{close_candidate_ticker}_recurring_shadow_close_candidate",
+                "title": f"推进 {close_candidate_ticker} recurring shadow close 候选",
                 "why_now": lane_rows[0]["why_now"],
                 "next_step": lane_rows[0]["next_step"],
             },
             {
-                "task_id": "600821_recurring_intraday_control",
-                "title": "保留 600821 recurring intraday control",
+                "task_id": f"{intraday_control_ticker}_recurring_intraday_control",
+                "title": f"保留 {intraday_control_ticker} recurring intraday control",
                 "why_now": lane_rows[1]["why_now"],
                 "next_step": lane_rows[1]["next_step"],
             },
@@ -148,8 +151,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Prioritize the next shadow lane once the 300383 threshold-only path cannot be cloned.")
     parser.add_argument("--shadow-expansion-board", default=str(DEFAULT_SHADOW_EXPANSION_BOARD_PATH))
     parser.add_argument("--recurring-pair-comparison", default=str(DEFAULT_RECURRING_PAIR_COMPARISON_PATH))
-    parser.add_argument("--recurring-002015", default=str(DEFAULT_RECURRING_002015_PATH))
-    parser.add_argument("--recurring-600821", default=str(DEFAULT_RECURRING_600821_PATH))
+    parser.add_argument("--recurring-close-candidate", default=str(DEFAULT_RECURRING_CLOSE_CANDIDATE_PATH))
+    parser.add_argument("--recurring-intraday-control", "--recurring-600821", default=str(DEFAULT_RECURRING_INTRADAY_CONTROL_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -157,8 +160,8 @@ def main() -> None:
     analysis = analyze_btst_shadow_lane_priority(
         args.shadow_expansion_board,
         recurring_pair_comparison_path=args.recurring_pair_comparison,
-        recurring_002015_path=args.recurring_002015,
-        recurring_600821_path=args.recurring_600821,
+        recurring_close_candidate_path=args.recurring_close_candidate,
+        recurring_intraday_control_path=args.recurring_intraday_control,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()

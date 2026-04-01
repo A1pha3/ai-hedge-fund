@@ -159,7 +159,7 @@ def render_targeted_release_outcomes_markdown(analysis: dict[str, Any]) -> str:
     lines.append("## Target Cases")
     for row in analysis["target_cases"]:
         lines.append(
-            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, next_open_return={row['next_open_return']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, release_verdict={row['release_verdict']}"
+            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, next_open_return={row.get('next_open_return')}, next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, release_verdict={row['release_verdict']}"
         )
     if not analysis["target_cases"]:
         lines.append("- none")

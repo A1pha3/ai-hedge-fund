@@ -55,12 +55,24 @@ def analyze_recurring_frontier_release_pair_comparison(
         "next_close_positive_rate_delta": _delta(left, right, "next_close_positive_rate"),
     }
 
-    if float(left.get("next_high_return_mean") or -999.0) > float(right.get("next_high_return_mean") or -999.0) and float(left.get("next_close_positive_rate") or -999.0) < float(right.get("next_close_positive_rate") or -999.0):
+    left_high = float(left.get("next_high_return_mean") or -999.0)
+    right_high = float(right.get("next_high_return_mean") or -999.0)
+    left_close_mean = float(left.get("next_close_return_mean") or -999.0)
+    right_close_mean = float(right.get("next_close_return_mean") or -999.0)
+    left_close_positive = float(left.get("next_close_positive_rate") or -999.0)
+    right_close_positive = float(right.get("next_close_positive_rate") or -999.0)
+
+    if right_close_mean > left_close_mean and right_close_positive > left_close_positive and left_high >= right_high - 0.01:
         recommendation = (
             f"{left_ticker} 更适合作为 recurring release 的 intraday 主样本，"
             f"{right_ticker} 更适合作为 close-continuation 对照样本。"
         )
-    elif float(left.get("next_close_return_mean") or -999.0) > float(right.get("next_close_return_mean") or -999.0):
+    elif left_high > right_high and left_close_positive < right_close_positive:
+        recommendation = (
+            f"{left_ticker} 更适合作为 recurring release 的 intraday 主样本，"
+            f"{right_ticker} 更适合作为 close-continuation 对照样本。"
+        )
+    elif left_close_mean > right_close_mean:
         recommendation = f"{left_ticker} 在 release 后整体 follow-through 更强，应继续优先推进。"
     else:
         recommendation = f"{left_ticker} 与 {right_ticker} 的 release 表现仍需继续观察，当前没有足够清晰的分工。"

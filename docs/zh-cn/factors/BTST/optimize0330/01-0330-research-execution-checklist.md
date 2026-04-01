@@ -60,9 +60,9 @@
 5. `300383` 只应继续保留为 `shadow_keep`，不应因为次日表现为正就抢占 primary 位置。
 6. `300383` 当前还是整个 frontier 里唯一的 threshold-only 低成本 rescue；`data/reports/p4_shadow_entry_expansion_board_300383_20260330.json` 已明确同规则扩样条件尚不成立。
 7. `300724` 只应继续保留为 `structural_shadow_hold`；后验 `next_close_return_mean=-0.0443`，因此不得升级成窗口级 structural release 依据。
-8. 如果研究团队要继续推进 shadow lane，下一条路线不应再复制 `300383`，而应改走 recurring frontier：`data/reports/p4_shadow_lane_priority_board_20260330.json` 已把 `002015` 定义为 close-continuation shadow 候选，把 `600821` 定义为 intraday control。
+8. 如果研究团队要继续推进 shadow lane，下一条路线不应再复制 `300383`，而应改走 recurring frontier：截至 2026-04-01，`data/reports/p4_shadow_lane_priority_board_20260401.json` 已把 `300113` 定义为 close-continuation shadow 候选，把 `600821` 定义为 intraday control。
 9. `001309` 当前的真实缺口也已独立成报告：`data/reports/p6_primary_window_gap_001309_20260330.json` 已确认至少还缺 1 个新增独立窗口，不能把“继续 primary roll-forward”误写成“已经具备默认升级条件”。
-10. recurring shadow 也已有正式 runbook：`data/reports/p6_recurring_shadow_runbook_20260330.json` 已明确 `002015` 和 `600821` 的 close / intraday 分工。
+10. recurring shadow 也已有正式 runbook：截至 2026-04-01，`data/reports/p6_recurring_shadow_runbook_20260401.json` 已明确 `300113` 和 `600821` 的 close / intraday 分工。
 11. `001309` 的滚动验证现在也已从“原则”收紧到“复跑命令级 runbook”：`data/reports/p7_primary_window_validation_runbook_001309_20260330.json` 已把当前所有已发现窗口逐个扫描，确认除了 `20260323_20260326` 外暂无第二个独立 short-trade window，因此当前剩余工作已经是未来窗口数据依赖，而不是方法缺口。
 12. `300383` 的扩样扫描也已补成独立板：`data/reports/p7_shadow_peer_scan_300383_20260330.json` 已把全部 peer 按 threshold-only / penalty-coupled 分开，确认当前不存在第二只 same-rule peer，因此它只能固定为单票 shadow，扩 lane 时必须改走 recurring frontier。
 13. `300724` 的 structural freeze 现在也已补成正式 runbook：`data/reports/p8_structural_shadow_runbook_300724_20260330.json` 已把 blocked cluster 的 rescue ranking、单票 targeted release 和负的 post-release outcome 合并成统一 stop-condition，明确不得重开 cluster-wide structural 放松。
@@ -74,7 +74,7 @@
 
 1. 把 `001309` 推进到滚动窗口 follow-through 复核，但在新增独立窗口前不得讨论默认升级。
 2. 把 `300383` 固定在 shadow queue；在出现第二只 threshold-only peer 且仍零 spillover 前，禁止按同规则扩样。
-3. 若要继续扩 shadow lane，优先推进 `002015` 的 recurring shadow close 验证，并把 `600821` 保留为 recurring intraday control。
+3. 若要继续扩 shadow lane，优先推进 `300113` 的 recurring shadow close 验证，并把 `600821` 保留为 recurring intraday control。
 4. 把 `300724` 固定为单票 structural 观察样本，明确禁止 cluster-wide structural 放松。
 5. 所有周会或评审里，必须先引用 `p6_primary_window_gap`、`p6_recurring_shadow_runbook` 和 `p8_structural_shadow_runbook`，防止再次把“证据缺口”“shadow 扩展资格”和“structural freeze 条件”混写。
 6. 在当前 2026-03-30 证据边界内，文档里的方法设计、治理板、runbook、peer scan 已全部落齐；剩余未完成项只可能来自未来新增 paper_trading_window 数据，而不是当前路线仍有未定义动作。

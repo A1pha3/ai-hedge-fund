@@ -10,6 +10,7 @@ def test_analyze_btst_top3_post_execution_action_board_orders_primary_shadow_and
     readiness_report = tmp_path / "readiness.json"
     scoreboard_report = tmp_path / "scoreboard.json"
     runbook = tmp_path / "runbook.json"
+    recurring_shadow_runbook = tmp_path / "recurring_shadow_runbook.json"
 
     runbook.write_text(
         json.dumps(
@@ -121,11 +122,23 @@ def test_analyze_btst_top3_post_execution_action_board_orders_primary_shadow_and
         + "\n",
         encoding="utf-8",
     )
+    recurring_shadow_runbook.write_text(
+        json.dumps(
+            {
+                "close_candidate": {"ticker": "300113"},
+                "intraday_control": {"ticker": "600821"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     analysis = analyze_btst_top3_post_execution_action_board(
         execution_summary,
         readiness_report_path=readiness_report,
         scoreboard_report_path=scoreboard_report,
+        recurring_shadow_runbook_path=recurring_shadow_runbook,
     )
 
     assert analysis["board_rows"][0]["ticker"] == "001309"
@@ -134,3 +147,5 @@ def test_analyze_btst_top3_post_execution_action_board_orders_primary_shadow_and
     assert analysis["next_3_tasks"][0]["task_id"] == "001309_primary_follow_through_roll_forward"
     assert analysis["next_3_tasks"][1]["task_id"] == "300383_shadow_queue_hold"
     assert analysis["next_3_tasks"][2]["task_id"] == "300724_structural_shadow_freeze"
+    assert "300113" in analysis["recommendation"]
+    assert "600821" in analysis["recommendation"]

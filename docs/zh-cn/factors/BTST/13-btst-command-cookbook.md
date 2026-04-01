@@ -277,7 +277,7 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 适用场景：
 
 1. 你想从单票走向 recurring ticker。
-2. 你要判断 `600821`、`002015` 这类样本是不是局部 baseline。
+2. 你要判断 `600821`、`300113` 这类样本是不是局部 baseline。
 
 命令模板：
 
@@ -294,6 +294,20 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
   --ticker 600821
 ```
 
+如果要直接复用当前 close-candidate 车道，而不是手工拼 release / outcome / pair comparison，优先跑：
+
+```bash
+./.venv/bin/python scripts/run_btst_recurring_shadow_close_bundle.py \
+  --report-dir data/reports/<report_dir> \
+  --recurring-frontier-report data/reports/short_trade_boundary_recurring_frontier_cases_<artifact>.json \
+  --outcome-report data/reports/pre_layer_short_trade_outcomes_600821_300113_<artifact>.json \
+  --intraday-control-outcomes-report data/reports/recurring_frontier_ticker_release_outcomes_600821_<artifact>.json \
+  --close-candidate-ticker 300113 \
+  --intraday-control-ticker 600821 \
+  --summary-json data/reports/btst_recurring_shadow_close_bundle_300113_<date>.json \
+  --summary-md data/reports/btst_recurring_shadow_close_bundle_300113_<date>.md
+```
+
 如果要把复现前沿候选正式收口成复现影子运行手册，并明确它们是否还缺第二个独立窗口，可以继续跑：
 
 ```bash
@@ -307,13 +321,14 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 ./.venv/bin/python scripts/analyze_btst_recurring_shadow_runbook.py \
   --candidate-report data/reports/multi_window_short_trade_role_candidates_<date>.json \
   --recurring-transition-report data/reports/recurring_frontier_transition_candidates_all_windows_<date>.json \
+  --recurring-close-bundle data/reports/btst_recurring_shadow_close_bundle_300113_<date>.json \
   --output-json data/reports/p6_recurring_shadow_runbook_<date>.json \
   --output-md data/reports/p6_recurring_shadow_runbook_<date>.md
 ```
 
 优先回答：
 
-1. `002015`、`600821` 是否仍然都只是 `emergent_local_baseline`。
+1. `300113`、`600821` 是否仍然都只是 `emergent_local_baseline`。
 2. 复现影子车道当前是“等待新的收盘延续窗口”（`await_new_close_candidate_window`）/“等待新的盘中控制窗口”（`await_new_intraday_control_window`），还是已经具备跨窗口验证资格。
 3. 下一次什么时候可以把这条车道回接进 `p5_btst_rollout_governance_board` 做升级评审。
 
@@ -670,7 +685,7 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 4. 如果 score frontier（分数前沿）仍然全是 0 actionable，再跑 `analyze_btst_candidate_entry_frontier.py`，验证 selective weak-structure（选择性弱结构）过滤能否清理 300502 类样本而不误伤 300394。
 5. 跑 `analyze_btst_candidate_entry_window_scan.py`，确认这条 selective（选择性）规则是否已经跨多个独立 `window_key` 命中。
 6. 跑 `analyze_btst_candidate_entry_rollout_governance.py`，把 frontier（前沿）、多窗口扫描和主链验证收口成车道状态。
-7. 再看 `300383` 的 targeted release 与 `600821` / `002015` recurring frontier（复现前沿）。
+7. 再看 `300383` 的 targeted release 与 `600821` / `300113` recurring frontier（复现前沿）。
 8. 最后用 outcome 脚本验证 release 样本次日质量。
 
 ---

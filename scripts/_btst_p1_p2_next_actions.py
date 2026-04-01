@@ -551,8 +551,8 @@ def build_top3_runbook() -> dict[str, Any]:
         ],
         "deferred_queue": [
             {
-                "experiment_id": "002015_recurring_frontier_close_continuation",
-                "reason": "优先级分数高，但当前摘要里未包含最小参数行，先保留为紧随其后的 recurring frontier 队列。",
+                "experiment_id": "300113_recurring_frontier_close_continuation",
+                "reason": "当前 close-candidate 车道已刷新为 300113，先保留为紧随其后的 recurring frontier 队列。",
             },
             {
                 "experiment_id": "600821_recurring_frontier_intraday_primary",

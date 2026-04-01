@@ -7,18 +7,19 @@ from typing import Any
 
 
 REPORTS_DIR = Path("data/reports")
-DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260330.json"
+DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260401.json"
 DEFAULT_PRIMARY_ROLL_FORWARD_PATH = REPORTS_DIR / "p4_primary_roll_forward_validation_001309_20260330.json"
 DEFAULT_SHADOW_EXPANSION_PATH = REPORTS_DIR / "p4_shadow_entry_expansion_board_300383_20260330.json"
-DEFAULT_SHADOW_LANE_PRIORITY_PATH = REPORTS_DIR / "p4_shadow_lane_priority_board_20260330.json"
+DEFAULT_SHADOW_LANE_PRIORITY_PATH = REPORTS_DIR / "p4_shadow_lane_priority_board_20260401.json"
 DEFAULT_PRIMARY_WINDOW_GAP_PATH = REPORTS_DIR / "p6_primary_window_gap_001309_20260330.json"
-DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbook_20260330.json"
+DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbook_20260401.json"
+DEFAULT_RECURRING_CLOSE_BUNDLE_PATH = REPORTS_DIR / "btst_recurring_shadow_close_bundle_300113_20260401.json"
 DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH = REPORTS_DIR / "p7_primary_window_validation_runbook_001309_20260330.json"
-DEFAULT_SHADOW_PEER_SCAN_PATH = REPORTS_DIR / "p7_shadow_peer_scan_300383_20260330.json"
+DEFAULT_SHADOW_PEER_SCAN_PATH = REPORTS_DIR / "p7_shadow_peer_scan_300383_20260401.json"
 DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p8_structural_shadow_runbook_300724_20260330.json"
 DEFAULT_PENALTY_FRONTIER_PATH = REPORTS_DIR / "btst_penalty_frontier_current_window_20260331.json"
-DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p5_btst_rollout_governance_board_20260330.json"
-DEFAULT_OUTPUT_MD = REPORTS_DIR / "p5_btst_rollout_governance_board_20260330.md"
+DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p5_btst_rollout_governance_board_20260401.json"
+DEFAULT_OUTPUT_MD = REPORTS_DIR / "p5_btst_rollout_governance_board_20260401.md"
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -45,6 +46,11 @@ def _extract_tradeable_tickers(case_keys: list[Any]) -> list[str]:
         if ticker and ticker not in tickers:
             tickers.append(ticker)
     return tickers
+
+
+def _find_lane_row(rows: list[dict[str, Any]], lane_role: str) -> dict[str, Any]:
+    normalized_lane_role = str(lane_role or "").strip()
+    return next((dict(row or {}) for row in rows if str((row or {}).get("lane_role") or "") == normalized_lane_role), {})
 
 
 def _summarize_penalty_frontier(report: dict[str, Any]) -> dict[str, Any]:
@@ -87,6 +93,7 @@ def analyze_btst_rollout_governance_board(
     shadow_lane_priority_path: str | Path,
     primary_window_gap_path: str | Path,
     recurring_shadow_runbook_path: str | Path,
+    recurring_close_bundle_path: str | Path | None = None,
     primary_window_validation_runbook_path: str | Path,
     shadow_peer_scan_path: str | Path,
     structural_shadow_runbook_path: str | Path,
@@ -98,18 +105,25 @@ def analyze_btst_rollout_governance_board(
     shadow_lane_priority = _load_json(shadow_lane_priority_path)
     primary_window_gap = _load_json(primary_window_gap_path)
     recurring_shadow_runbook = _load_json(recurring_shadow_runbook_path)
+    recurring_close_bundle = _safe_load_json(recurring_close_bundle_path)
     primary_window_validation_runbook = _load_json(primary_window_validation_runbook_path)
     shadow_peer_scan = _load_json(shadow_peer_scan_path)
     structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
     penalty_frontier_summary = _summarize_penalty_frontier(_safe_load_json(penalty_frontier_path))
     recurring_close_candidate = dict(recurring_shadow_runbook.get("close_candidate") or {})
     recurring_intraday_control = dict(recurring_shadow_runbook.get("intraday_control") or {})
+    recurring_close_ticker = str(recurring_close_candidate.get("ticker") or "close_candidate")
+    recurring_intraday_ticker = str(recurring_intraday_control.get("ticker") or "intraday_control")
 
     structural_row = next(
         (row for row in list(action_board.get("board_rows") or []) if str(row.get("ticker") or "") == "300724"),
         {},
     )
     recurring_rows = list(shadow_lane_priority.get("lane_rows") or [])
+    recurring_close_row = _find_lane_row(recurring_rows, "recurring_shadow_close_candidate")
+    recurring_intraday_row = _find_lane_row(recurring_rows, "recurring_shadow_intraday_control")
+    close_bundle_outcomes = dict(recurring_close_bundle.get("close_candidate_outcomes") or {})
+    close_bundle_summary_path = str(Path(recurring_close_bundle_path).expanduser().resolve()) if recurring_close_bundle_path else None
 
     governance_rows = [
         {
@@ -140,30 +154,32 @@ def analyze_btst_rollout_governance_board(
             },
         },
         {
-            "ticker": "002015",
+            "ticker": recurring_close_ticker,
             "governance_tier": "recurring_shadow_close_candidate",
             "status": recurring_close_candidate.get("lane_status") or "ready_for_shadow_lane_validation",
             "blocker": "cross_window_stability_missing" if recurring_close_candidate.get("validation_verdict") != "independent_window_requirement_satisfied" else "shadow_lane_validation_ready",
-            "next_step": recurring_close_candidate.get("next_step") or (recurring_rows[0]["next_step"] if recurring_rows else ""),
+            "next_step": recurring_close_bundle.get("next_step") or recurring_close_candidate.get("next_step") or recurring_close_row.get("next_step") or "",
             "evidence": {
-                "target_case_count": recurring_rows[0].get("target_case_count") if recurring_rows else None,
-                "next_close_positive_rate": recurring_rows[0].get("next_close_positive_rate") if recurring_rows else None,
-                "next_close_return_mean": recurring_rows[0].get("next_close_return_mean") if recurring_rows else None,
+                "target_case_count": recurring_close_row.get("target_case_count"),
+                "next_close_positive_rate": close_bundle_outcomes.get("next_close_positive_rate") if close_bundle_outcomes else recurring_close_row.get("next_close_positive_rate"),
+                "next_close_return_mean": close_bundle_outcomes.get("next_close_return_mean") if close_bundle_outcomes else recurring_close_row.get("next_close_return_mean"),
                 "distinct_window_count": recurring_close_candidate.get("distinct_window_count"),
                 "missing_window_count": recurring_close_candidate.get("missing_window_count"),
                 "transition_locality": recurring_close_candidate.get("transition_locality"),
+                "bundle_report": close_bundle_summary_path,
+                "promoted_target_case_count": close_bundle_outcomes.get("promoted_target_case_count") or recurring_close_bundle.get("close_candidate_release", {}).get("promoted_target_case_count"),
             },
         },
         {
-            "ticker": "600821",
+            "ticker": recurring_intraday_ticker,
             "governance_tier": "recurring_intraday_control",
             "status": recurring_intraday_control.get("lane_status") or "ready_for_shadow_control_validation",
             "blocker": "cross_window_stability_missing" if recurring_intraday_control.get("validation_verdict") != "independent_window_requirement_satisfied" else "intraday_control_only",
-            "next_step": recurring_intraday_control.get("next_step") or (recurring_rows[1]["next_step"] if len(recurring_rows) > 1 else ""),
+            "next_step": recurring_intraday_control.get("next_step") or recurring_intraday_row.get("next_step") or "",
             "evidence": {
-                "target_case_count": recurring_rows[1].get("target_case_count") if len(recurring_rows) > 1 else None,
-                "next_high_return_mean": recurring_rows[1].get("next_high_return_mean") if len(recurring_rows) > 1 else None,
-                "next_close_positive_rate": recurring_rows[1].get("next_close_positive_rate") if len(recurring_rows) > 1 else None,
+                "target_case_count": recurring_intraday_row.get("target_case_count"),
+                "next_high_return_mean": recurring_intraday_row.get("next_high_return_mean"),
+                "next_close_positive_rate": recurring_intraday_row.get("next_close_positive_rate"),
                 "distinct_window_count": recurring_intraday_control.get("distinct_window_count"),
                 "missing_window_count": recurring_intraday_control.get("missing_window_count"),
                 "transition_locality": recurring_intraday_control.get("transition_locality"),
@@ -193,24 +209,28 @@ def analyze_btst_rollout_governance_board(
             "next_step": governance_rows[0]["next_step"],
         },
         {
-            "task_id": "002015_recurring_shadow_validation",
-            "title": "推进 002015 recurring shadow 验证",
-            "why_now": "300383 的同规则扩样被封住后，002015 是最合适的 close-continuation recurring shadow 候选。",
+            "task_id": f"{recurring_close_ticker}_recurring_shadow_validation",
+            "title": f"推进 {recurring_close_ticker} recurring shadow 验证",
+            "why_now": f"300383 的同规则扩样被封住后，{recurring_close_ticker} 是最合适的 close-continuation recurring shadow 候选。",
             "next_step": governance_rows[2]["next_step"],
         },
         {
-            "task_id": "600821_intraday_control_validation",
-            "title": "保留 600821 intraday control 验证",
+            "task_id": f"{recurring_intraday_ticker}_intraday_control_validation",
+            "title": f"保留 {recurring_intraday_ticker} intraday control 验证",
             "why_now": "需要一个 recurring intraday 控制样本，防止把 shadow 扩展误判成 close-continuation 规则。",
             "next_step": governance_rows[3]["next_step"],
         },
     ]
 
     recommendation = (
-        "当前 rollout 治理应分成三条清晰车道：001309 只做 primary roll-forward；300383 只做单票 shadow；"
-        "若要继续扩 shadow lane，应优先转向 002015/600821 的 recurring frontier 组合，而不是复制 300383。"
+        "当前 rollout 治理应分成四条清晰车道：001309 只做 primary roll-forward；300383 只做单票 shadow；"
+        f"{recurring_close_ticker}/{recurring_intraday_ticker} 组成 recurring frontier 的 close/intraday 双轨；"
+        "300724 继续保持 structural shadow hold。"
+        f" 若要继续扩 shadow lane，应优先转向 {recurring_close_ticker}/{recurring_intraday_ticker} 的 recurring frontier 组合，而不是复制 300383。"
         " 但在当前证据边界内，这条 recurring lane 同样仍缺第二个独立窗口，只能继续保留 shadow validation 准备态。"
     )
+    if recurring_close_bundle:
+        recommendation += f" {recurring_close_ticker} close-candidate 侧已经补成可直接复用的 bundle，应优先用 bundle 结果回接 governance，而不是手工拼 release/outcome/pair comparison。"
     if penalty_frontier_summary:
         if penalty_frontier_summary.get("status") == "broad_penalty_route_closed_current_window":
             recommendation += " 同时，broad stale/extension penalty relief 已在当前窗口被证伪，应从 nightly open path 中移除，不再作为广义放松路线继续追踪。"
@@ -226,6 +246,7 @@ def analyze_btst_rollout_governance_board(
             "shadow_lane_priority": str(Path(shadow_lane_priority_path).expanduser().resolve()),
             "primary_window_gap": str(Path(primary_window_gap_path).expanduser().resolve()),
             "recurring_shadow_runbook": str(Path(recurring_shadow_runbook_path).expanduser().resolve()),
+            "recurring_close_bundle": close_bundle_summary_path,
             "primary_window_validation_runbook": str(Path(primary_window_validation_runbook_path).expanduser().resolve()),
             "shadow_peer_scan": str(Path(shadow_peer_scan_path).expanduser().resolve()),
             "structural_shadow_runbook": str(Path(structural_shadow_runbook_path).expanduser().resolve()),
@@ -282,6 +303,7 @@ def main() -> None:
     parser.add_argument("--shadow-lane-priority", default=str(DEFAULT_SHADOW_LANE_PRIORITY_PATH))
     parser.add_argument("--primary-window-gap", default=str(DEFAULT_PRIMARY_WINDOW_GAP_PATH))
     parser.add_argument("--recurring-shadow-runbook", default=str(DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH))
+    parser.add_argument("--recurring-close-bundle", default=str(DEFAULT_RECURRING_CLOSE_BUNDLE_PATH))
     parser.add_argument("--primary-window-validation-runbook", default=str(DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH))
     parser.add_argument("--shadow-peer-scan", default=str(DEFAULT_SHADOW_PEER_SCAN_PATH))
     parser.add_argument("--structural-shadow-runbook", default=str(DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH))
@@ -297,6 +319,7 @@ def main() -> None:
         shadow_lane_priority_path=args.shadow_lane_priority,
         primary_window_gap_path=args.primary_window_gap,
         recurring_shadow_runbook_path=args.recurring_shadow_runbook,
+        recurring_close_bundle_path=args.recurring_close_bundle,
         primary_window_validation_runbook_path=args.primary_window_validation_runbook,
         shadow_peer_scan_path=args.shadow_peer_scan,
         structural_shadow_runbook_path=args.structural_shadow_runbook,

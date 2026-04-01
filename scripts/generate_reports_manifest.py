@@ -80,20 +80,22 @@ CANDIDATE_ENTRY_WINDOW_SCAN_JSON = "btst_candidate_entry_window_scan_20260330.js
 CANDIDATE_ENTRY_WINDOW_SCAN_MD = "btst_candidate_entry_window_scan_20260330.md"
 CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON = "p9_candidate_entry_rollout_governance_20260330.json"
 CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_MD = "p9_candidate_entry_rollout_governance_20260330.md"
-ACTION_BOARD_JSON = "p3_top3_post_execution_action_board_20260330.json"
+ACTION_BOARD_JSON = "p3_top3_post_execution_action_board_20260401.json"
 PRIMARY_ROLL_FORWARD_JSON = "p4_primary_roll_forward_validation_001309_20260330.json"
 PRIMARY_ROLL_FORWARD_MD = "p4_primary_roll_forward_validation_001309_20260330.md"
 SHADOW_EXPANSION_JSON = "p4_shadow_entry_expansion_board_300383_20260330.json"
-SHADOW_LANE_PRIORITY_JSON = "p4_shadow_lane_priority_board_20260330.json"
-ROLLOUT_GOVERNANCE_JSON = "p5_btst_rollout_governance_board_20260330.json"
-ROLLOUT_GOVERNANCE_MD = "p5_btst_rollout_governance_board_20260330.md"
+SHADOW_LANE_PRIORITY_JSON = "p4_shadow_lane_priority_board_20260401.json"
+ROLLOUT_GOVERNANCE_JSON = "p5_btst_rollout_governance_board_20260401.json"
+ROLLOUT_GOVERNANCE_MD = "p5_btst_rollout_governance_board_20260401.md"
 PRIMARY_WINDOW_GAP_JSON = "p6_primary_window_gap_001309_20260330.json"
 PRIMARY_WINDOW_GAP_MD = "p6_primary_window_gap_001309_20260330.md"
-RECURRING_SHADOW_RUNBOOK_JSON = "p6_recurring_shadow_runbook_20260330.json"
-RECURRING_SHADOW_RUNBOOK_MD = "p6_recurring_shadow_runbook_20260330.md"
+RECURRING_SHADOW_RUNBOOK_JSON = "p6_recurring_shadow_runbook_20260401.json"
+RECURRING_SHADOW_RUNBOOK_MD = "p6_recurring_shadow_runbook_20260401.md"
+RECURRING_CLOSE_BUNDLE_JSON = "btst_recurring_shadow_close_bundle_300113_20260401.json"
+RECURRING_CLOSE_BUNDLE_MD = "btst_recurring_shadow_close_bundle_300113_20260401.md"
 PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON = "p7_primary_window_validation_runbook_001309_20260330.json"
 PRIMARY_WINDOW_VALIDATION_RUNBOOK_MD = "p7_primary_window_validation_runbook_001309_20260330.md"
-SHADOW_PEER_SCAN_JSON = "p7_shadow_peer_scan_300383_20260330.json"
+SHADOW_PEER_SCAN_JSON = "p7_shadow_peer_scan_300383_20260401.json"
 STRUCTURAL_SHADOW_RUNBOOK_JSON = "p8_structural_shadow_runbook_300724_20260330.json"
 BTST_PENALTY_FRONTIER_JSON = "btst_penalty_frontier_current_window_20260331.json"
 BTST_PENALTY_FRONTIER_MD = "btst_penalty_frontier_current_window_20260331.md"
@@ -115,7 +117,7 @@ SHORT_TRADE_BOUNDARY_SCORE_FAILURES_FRONTIER_LATEST_JSON = "short_trade_boundary
 SHORT_TRADE_BOUNDARY_SCORE_FAILURES_FRONTIER_LATEST_MD = "short_trade_boundary_score_failures_frontier_latest.md"
 SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_JSON = "short_trade_boundary_recurring_frontier_cases_latest.json"
 SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_MD = "short_trade_boundary_recurring_frontier_cases_latest.md"
-RECURRING_PAIR_COMPARISON_JSON = "recurring_frontier_release_pair_comparison_600821_vs_002015_20260329.json"
+RECURRING_PAIR_COMPARISON_JSON = "recurring_frontier_release_pair_comparison_600821_vs_300113_catalyst_floor_zero_refresh_20260401.json"
 CANDIDATE_ENTRY_FOCUS_TICKERS: tuple[str, ...] = ("300502",)
 CANDIDATE_ENTRY_PRESERVE_TICKERS: tuple[str, ...] = ("300394",)
 
@@ -239,7 +241,7 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "p3_post_execution_action_board",
-        "path": "data/reports/p3_top3_post_execution_action_board_20260330.json",
+        "path": "data/reports/p3_top3_post_execution_action_board_20260401.json",
         "report_type": "btst_action_board",
         "topic": "btst_governance",
         "usage": "btst_governance",
@@ -252,7 +254,7 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "p5_rollout_governance_board",
-        "path": "data/reports/p5_btst_rollout_governance_board_20260330.json",
+        "path": "data/reports/p5_btst_rollout_governance_board_20260401.json",
         "report_type": "btst_rollout_governance_board",
         "topic": "btst_governance",
         "usage": "btst_governance",
@@ -265,7 +267,7 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "btst_micro_window_regression_review",
-        "path": "data/reports/btst_micro_window_regression_20260330.md",
+        "path": "data/reports/btst_micro_window_regression_march_refresh.md",
         "report_type": "btst_micro_window_regression_review",
         "topic": "btst_governance",
         "usage": "btst_governance",
@@ -421,7 +423,7 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "p6_recurring_shadow_runbook",
-        "path": "data/reports/p6_recurring_shadow_runbook_20260330.json",
+        "path": "data/reports/p6_recurring_shadow_runbook_20260401.json",
         "report_type": "btst_recurring_shadow_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
@@ -429,6 +431,19 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "is_latest": True,
         "question": "recurring shadow lane 该如何阅读和执行",
         "view_order": 16,
+        "time_scope": {"label": "current_window_20260330"},
+        "source_kind": "governance_artifact",
+    },
+    {
+        "id": "btst_recurring_shadow_close_bundle",
+        "path": "data/reports/btst_recurring_shadow_close_bundle_300113_20260401.json",
+        "report_type": "btst_recurring_shadow_close_bundle",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 17,
+        "is_latest": True,
+        "question": "300113 close-candidate shadow bundle 该如何直接复用",
+        "view_order": 17,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -1227,6 +1242,7 @@ def refresh_btst_score_fail_frontier_artifacts(
         "recurring_pair_comparison": recurring_pair_comparison_path,
         "candidate_report": Path(candidate_report_json).expanduser().resolve() if candidate_report_json else None,
         "recurring_transition_report": recurring_transition_json_path if recurring_transition_json_path.exists() else None,
+        "recurring_close_bundle": (resolved_reports_root / RECURRING_CLOSE_BUNDLE_JSON),
     }
     missing_recurring_shadow_inputs = [
         label
@@ -1246,6 +1262,7 @@ def refresh_btst_score_fail_frontier_artifacts(
             recurring_pair_comparison_path=recurring_shadow_inputs["recurring_pair_comparison"],
             candidate_report_path=recurring_shadow_inputs["candidate_report"],
             recurring_transition_report_path=recurring_shadow_inputs["recurring_transition_report"],
+            recurring_close_bundle_path=recurring_shadow_inputs["recurring_close_bundle"] if recurring_shadow_inputs["recurring_close_bundle"].exists() else None,
         )
         _write_json(recurring_shadow_json_path, recurring_shadow_analysis)
         _write_markdown(recurring_shadow_md_path, render_btst_recurring_shadow_runbook_markdown(recurring_shadow_analysis))
@@ -1272,8 +1289,9 @@ def refresh_btst_rollout_governance_artifacts(reports_root: str | Path) -> dict[
         "primary_window_validation_runbook": resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON,
         "shadow_peer_scan": resolved_reports_root / SHADOW_PEER_SCAN_JSON,
         "structural_shadow_runbook": resolved_reports_root / STRUCTURAL_SHADOW_RUNBOOK_JSON,
+        "recurring_close_bundle": resolved_reports_root / RECURRING_CLOSE_BUNDLE_JSON,
     }
-    missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
+    missing_inputs = [label for label, path in required_inputs.items() if label != "recurring_close_bundle" and not path.exists()]
     if missing_inputs:
         return {
             "status": "skipped_missing_inputs",
@@ -1291,6 +1309,7 @@ def refresh_btst_rollout_governance_artifacts(reports_root: str | Path) -> dict[
             shadow_lane_priority_path=required_inputs["shadow_lane_priority"],
             primary_window_gap_path=required_inputs["primary_window_gap"],
             recurring_shadow_runbook_path=required_inputs["recurring_shadow_runbook"],
+            recurring_close_bundle_path=required_inputs["recurring_close_bundle"] if required_inputs["recurring_close_bundle"].exists() else None,
             primary_window_validation_runbook_path=required_inputs["primary_window_validation_runbook"],
             shadow_peer_scan_path=required_inputs["shadow_peer_scan"],
             structural_shadow_runbook_path=required_inputs["structural_shadow_runbook"],

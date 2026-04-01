@@ -10,6 +10,7 @@
 > Catalyst-only live（仅催化项真实窗口）摘要：关于“`catalyst_freshness_min=0.00` 是否在真实窗口路径中也成立”的短版结论，见 [pre_layer_short_trade_catalyst_floor_zero_full_live_summary_20260329.md](./pre_layer_short_trade_catalyst_floor_zero_full_live_summary_20260329.md)。
 > 前置短线 score-fail frontier（分数失利前沿）摘要：关于“新增 `short_trade_boundary` 分数失利簇下一步该怎么救”的短版结论，见 [pre_layer_short_trade_boundary_score_fail_frontier_summary_20260329.md](./pre_layer_short_trade_boundary_score_fail_frontier_summary_20260329.md)。
 > 前置短线分数前沿优先级摘要：关于“下一轮分数前沿先做 300383 还是 recurring ticker（复现股票）”的短版结论，见 [pre_layer_short_trade_score_frontier_priority_summary_20260329.md](./pre_layer_short_trade_score_frontier_priority_summary_20260329.md)。
+> 2026-04-01 复现影子 split 最新摘要：关于“当前 recurring shadow 应如何按 `300113 close-candidate / 600821 intraday control` 执行”的短版结论，见 [btst_recurring_shadow_split_summary_20260401.md](./btst_recurring_shadow_split_summary_20260401.md)。
 
 ## 0. 专题导航
 

@@ -10,10 +10,10 @@ from scripts.analyze_btst_candidate_entry_rollout_governance import derive_candi
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR
-DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260330.json"
-DEFAULT_ROLLOUT_GOVERNANCE_PATH = REPORTS_DIR / "p5_btst_rollout_governance_board_20260330.json"
+DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260401.json"
+DEFAULT_ROLLOUT_GOVERNANCE_PATH = REPORTS_DIR / "p5_btst_rollout_governance_board_20260401.json"
 DEFAULT_PRIMARY_WINDOW_GAP_PATH = REPORTS_DIR / "p6_primary_window_gap_001309_20260330.json"
-DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbook_20260330.json"
+DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbook_20260401.json"
 DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH = REPORTS_DIR / "p7_primary_window_validation_runbook_001309_20260330.json"
 DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p8_structural_shadow_runbook_300724_20260330.json"
 DEFAULT_CANDIDATE_ENTRY_GOVERNANCE_PATH = REPORTS_DIR / "p9_candidate_entry_rollout_governance_20260330.json"
@@ -157,14 +157,16 @@ def _build_lane_matrix(
     board_rows = [dict(row or {}) for row in list(action_board.get("board_rows") or [])]
     primary_governance = _find_row(governance_rows, "001309")
     shadow_governance = _find_row(governance_rows, "300383")
-    recurring_close_governance = _find_row(governance_rows, "002015")
-    recurring_intraday_governance = _find_row(governance_rows, "600821")
     structural_governance = _find_row(governance_rows, "300724")
     primary_board = _find_row(board_rows, "001309")
     shadow_board = _find_row(board_rows, "300383")
     structural_board = _find_row(board_rows, "300724")
     recurring_close = dict(recurring_shadow_runbook.get("close_candidate") or {})
     recurring_intraday = dict(recurring_shadow_runbook.get("intraday_control") or {})
+    recurring_close_ticker = str(recurring_close.get("ticker") or "300113")
+    recurring_intraday_ticker = str(recurring_intraday.get("ticker") or "600821")
+    recurring_close_governance = _find_row(governance_rows, recurring_close_ticker)
+    recurring_intraday_governance = _find_row(governance_rows, recurring_intraday_ticker)
     candidate_entry_window_scan = dict(candidate_entry_governance.get("window_scan_summary") or {})
     candidate_entry_shadow_state = derive_candidate_entry_shadow_state(
         rollout_readiness=str(candidate_entry_window_scan.get("rollout_readiness") or candidate_entry_governance.get("lane_status") or "unknown"),
@@ -197,7 +199,7 @@ def _build_lane_matrix(
         },
         {
             "lane_id": "recurring_shadow_close_candidate",
-            "ticker": "002015",
+            "ticker": recurring_close_ticker,
             "governance_tier": recurring_close_governance.get("governance_tier") or "recurring_shadow_close_candidate",
             "lane_status": recurring_close_governance.get("status") or recurring_close.get("lane_status"),
             "action_tier": "recurring_shadow_validation",
@@ -208,7 +210,7 @@ def _build_lane_matrix(
         },
         {
             "lane_id": "recurring_intraday_control",
-            "ticker": "600821",
+            "ticker": recurring_intraday_ticker,
             "governance_tier": recurring_intraday_governance.get("governance_tier") or "recurring_intraday_control",
             "lane_status": recurring_intraday_governance.get("status") or recurring_intraday.get("lane_status"),
             "action_tier": "intraday_control_only",

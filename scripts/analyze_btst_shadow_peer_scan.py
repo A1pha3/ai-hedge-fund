@@ -9,10 +9,10 @@ from typing import Any
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_SHADOW_EXPANSION_PATH = REPORTS_DIR / "p4_shadow_entry_expansion_board_300383_20260330.json"
-DEFAULT_FRONTIER_REPORT_PATH = REPORTS_DIR / "short_trade_boundary_score_failures_frontier_catalyst_floor_zero_full_20260329.json"
+DEFAULT_FRONTIER_REPORT_PATH = REPORTS_DIR / "short_trade_boundary_score_failures_frontier_catalyst_floor_zero_refresh_20260401.json"
 DEFAULT_SCOREBOARD_REPORT_PATH = REPORTS_DIR / "short_trade_release_priority_scoreboard_20260329.json"
-DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p7_shadow_peer_scan_300383_20260330.json"
-DEFAULT_OUTPUT_MD = REPORTS_DIR / "p7_shadow_peer_scan_300383_20260330.md"
+DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p7_shadow_peer_scan_300383_20260401.json"
+DEFAULT_OUTPUT_MD = REPORTS_DIR / "p7_shadow_peer_scan_300383_20260401.md"
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -69,14 +69,14 @@ def analyze_btst_shadow_peer_scan(
         )
     )
     same_rule_peer_rows = [row for row in peer_rows if row["peer_class"] == "threshold_only"]
-    redirect_candidates = [row for row in peer_rows if row["ticker"] in {"002015", "600821"}]
+    redirect_candidates = [row for row in peer_rows if row["ticker"] in {"300113", "600821"}]
 
     if same_rule_peer_rows:
         peer_scan_verdict = "same_rule_peer_exists"
         recommendation = "已经存在第二只 threshold-only peer，可以继续做受控 shadow peer scan。"
     else:
         peer_scan_verdict = "no_same_rule_peer_redirect_to_recurring"
-        recommendation = "当前不存在第二只 threshold-only peer；若继续扩 shadow，只能转向 recurring frontier 的 002015/600821 双轨验证。"
+        recommendation = "当前不存在第二只 threshold-only peer；若继续扩 shadow，只能转向 recurring frontier 的 300113/600821 双轨验证。"
 
     return {
         "generated_on": shadow_expansion.get("generated_on"),
@@ -90,7 +90,7 @@ def analyze_btst_shadow_peer_scan(
         "redirect_candidates": redirect_candidates,
         "next_actions": [
             f"继续把 {normalized_ticker} 固定为单票 shadow entry，不做同规则复制。",
-            "若要继续扩 shadow lane，直接转向 002015 的 close-continuation recurring shadow 验证。",
+            "若要继续扩 shadow lane，直接转向 300113 的 close-continuation recurring shadow 验证。",
             "把 600821 维持为 recurring intraday control，用来约束 intraday-only 漂移。",
         ],
         "recommendation": recommendation,

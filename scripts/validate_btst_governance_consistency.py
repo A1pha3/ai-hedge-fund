@@ -9,10 +9,10 @@ from scripts.analyze_btst_candidate_entry_rollout_governance import derive_candi
 
 
 REPORTS_DIR = Path("data/reports")
-DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260330.json"
-DEFAULT_ROLLOUT_GOVERNANCE_PATH = REPORTS_DIR / "p5_btst_rollout_governance_board_20260330.json"
+DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260401.json"
+DEFAULT_ROLLOUT_GOVERNANCE_PATH = REPORTS_DIR / "p5_btst_rollout_governance_board_20260401.json"
 DEFAULT_PRIMARY_WINDOW_GAP_PATH = REPORTS_DIR / "p6_primary_window_gap_001309_20260330.json"
-DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbook_20260330.json"
+DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbook_20260401.json"
 DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH = REPORTS_DIR / "p7_primary_window_validation_runbook_001309_20260330.json"
 DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p8_structural_shadow_runbook_300724_20260330.json"
 DEFAULT_CANDIDATE_ENTRY_GOVERNANCE_PATH = REPORTS_DIR / "p9_candidate_entry_rollout_governance_20260330.json"
@@ -104,12 +104,14 @@ def validate_btst_governance_consistency(
 
     primary_board = _find_row(board_rows, "001309")
     primary_governance = _find_row(governance_rows, "001309")
-    recurring_close_governance = _find_row(governance_rows, "002015")
-    recurring_intraday_governance = _find_row(governance_rows, "600821")
     structural_board = _find_row(board_rows, "300724")
     structural_governance = _find_row(governance_rows, "300724")
     recurring_close = dict(recurring_shadow_runbook.get("close_candidate") or {})
     recurring_intraday = dict(recurring_shadow_runbook.get("intraday_control") or {})
+    recurring_close_ticker = str(recurring_close.get("ticker") or "300113")
+    recurring_intraday_ticker = str(recurring_intraday.get("ticker") or "600821")
+    recurring_close_governance = _find_row(governance_rows, recurring_close_ticker)
+    recurring_intraday_governance = _find_row(governance_rows, recurring_intraday_ticker)
 
     checks: list[dict[str, Any]] = []
 

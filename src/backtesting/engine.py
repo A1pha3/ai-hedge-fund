@@ -293,6 +293,27 @@ class BacktestEngine:
                 return None
         return current_prices
 
+    def _hydrate_position_prices(self, current_prices: Dict[str, float], previous_date_str: str, current_date_str: str) -> Dict[str, float]:
+        hydrated_prices = dict(current_prices)
+        for ticker, position in self._portfolio.get_positions().items():
+            if ticker in hydrated_prices:
+                continue
+            fallback_price = 0.0
+            if int(position.get("long", 0)) > 0:
+                fallback_price = float(position.get("long_cost_basis", 0.0) or 0.0)
+            elif int(position.get("short", 0)) > 0:
+                fallback_price = float(position.get("short_cost_basis", 0.0) or 0.0)
+            try:
+                price_data = get_price_data(ticker, previous_date_str, current_date_str)
+                if price_data is not None and not price_data.empty:
+                    hydrated_prices[ticker] = float(price_data.iloc[-1]["close"])
+                    continue
+            except Exception:
+                pass
+            if fallback_price > 0:
+                hydrated_prices[ticker] = fallback_price
+        return hydrated_prices
+
     def _append_daily_state(
         self,
         *,
@@ -484,6 +505,7 @@ class BacktestEngine:
             current_prices = self._load_current_prices(active_tickers, previous_date_str, current_date_str)
             if current_prices is None:
                 continue
+            current_prices = self._hydrate_position_prices(current_prices, previous_date_str, current_date_str)
             daily_turnovers = self._get_daily_turnovers(active_tickers, previous_date_str, current_date_str)
             limit_up, limit_down = self._get_limit_state(trade_date_compact)
             load_market_data_seconds = perf_counter() - stage_started_at
@@ -618,6 +640,7 @@ class BacktestEngine:
                 self._pending_sell_queue = self._dedupe_pending_orders(next_pending_sell)
 
             self._portfolio.refresh_position_lifecycle(current_prices, trade_date_compact)
+            current_prices = self._hydrate_position_prices(current_prices, previous_date_str, current_date_str)
 
             agent_output = self._build_pipeline_agent_output(decisions, active_tickers)
             stage_started_at = perf_counter()

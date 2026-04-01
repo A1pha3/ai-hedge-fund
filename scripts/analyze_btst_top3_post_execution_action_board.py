@@ -10,12 +10,22 @@ REPORTS_DIR = Path("data/reports")
 DEFAULT_EXECUTION_SUMMARY_PATH = REPORTS_DIR / "p2_top3_experiment_execution_summary_20260330.json"
 DEFAULT_READINESS_REPORT_PATH = REPORTS_DIR / "case_based_short_trade_entry_readiness_20260329.json"
 DEFAULT_SCOREBOARD_REPORT_PATH = REPORTS_DIR / "short_trade_release_priority_scoreboard_20260329.json"
-DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p3_top3_post_execution_action_board_20260330.json"
-DEFAULT_OUTPUT_MD = REPORTS_DIR / "p3_top3_post_execution_action_board_20260330.md"
+DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbook_20260401.json"
+DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p3_top3_post_execution_action_board_20260401.json"
+DEFAULT_OUTPUT_MD = REPORTS_DIR / "p3_top3_post_execution_action_board_20260401.md"
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
+    return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        return {}
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
@@ -90,11 +100,13 @@ def analyze_btst_top3_post_execution_action_board(
     *,
     readiness_report_path: str | Path,
     scoreboard_report_path: str | Path,
+    recurring_shadow_runbook_path: str | Path | None = None,
 ) -> dict[str, Any]:
     execution_summary = _load_json(execution_summary_path)
     readiness_report = _load_json(readiness_report_path)
     scoreboard_report = _load_json(scoreboard_report_path)
     runbook = _load_json(execution_summary["runbook"])
+    recurring_shadow_runbook = _safe_load_json(recurring_shadow_runbook_path)
 
     readiness_by_ticker = {str(entry.get("ticker") or ""): entry for entry in list(readiness_report.get("entries") or [])}
     scoreboard_by_ticker = {str(entry.get("ticker") or ""): entry for entry in list(scoreboard_report.get("entries") or [])}
@@ -138,6 +150,15 @@ def analyze_btst_top3_post_execution_action_board(
     next_3_tasks = [_build_task(row) for row in board_rows[:3]]
 
     recommendation = execution_summary.get("recommendation") or "当前没有形成明确的 post-execution action board 结论。"
+    recurring_close = dict(recurring_shadow_runbook.get("close_candidate") or {})
+    recurring_intraday = dict(recurring_shadow_runbook.get("intraday_control") or {})
+    recurring_close_ticker = str(recurring_close.get("ticker") or "")
+    recurring_intraday_ticker = str(recurring_intraday.get("ticker") or "")
+    if recurring_close_ticker and recurring_intraday_ticker:
+        recommendation = (
+            f"{recommendation} 同时，300383 之后的影子扩展不再复制 threshold-only 规则，而应把 {recurring_close_ticker} 固定为 recurring close-candidate，"
+            f"把 {recurring_intraday_ticker} 固定为 intraday control；300724 继续 structural shadow hold，不做 cluster-wide 放松。"
+        )
     return {
         "generated_on": execution_summary.get("generated_on"),
         "source_reports": {
@@ -145,6 +166,7 @@ def analyze_btst_top3_post_execution_action_board(
             "readiness_report": str(Path(readiness_report_path).expanduser().resolve()),
             "scoreboard_report": str(Path(scoreboard_report_path).expanduser().resolve()),
             "runbook": execution_summary.get("runbook"),
+            "recurring_shadow_runbook": str(Path(recurring_shadow_runbook_path).expanduser().resolve()) if recurring_shadow_runbook_path else None,
         },
         "recommendation": recommendation,
         "board_rows": board_rows,
@@ -183,6 +205,7 @@ def main() -> None:
     parser.add_argument("--execution-summary", default=str(DEFAULT_EXECUTION_SUMMARY_PATH))
     parser.add_argument("--readiness-report", default=str(DEFAULT_READINESS_REPORT_PATH))
     parser.add_argument("--scoreboard-report", default=str(DEFAULT_SCOREBOARD_REPORT_PATH))
+    parser.add_argument("--recurring-shadow-runbook", default=str(DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -191,6 +214,7 @@ def main() -> None:
         args.execution_summary,
         readiness_report_path=args.readiness_report,
         scoreboard_report_path=args.scoreboard_report,
+        recurring_shadow_runbook_path=args.recurring_shadow_runbook,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()

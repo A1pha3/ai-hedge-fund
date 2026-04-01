@@ -1,5 +1,7 @@
 # 前置短线 score frontier 下一轮先做什么：决策摘要
 
+> 2026-04-01 刷新说明：本文保留 2026-03-29 当时的研究语境与产物引用，用于还原当日决策过程；若作为当前执行口径使用，应以 2026-04-01 刷新的 recurring split 为准，即 `300113` 替代旧 `002015` 成为 close-continuation 候选，`600821` 继续保留为 intraday control。
+
 ## 一句话结论
 
 下一轮前置短线优化不需要再从 18 个 `short_trade_boundary` score-fail 样本里重新发散筛选。当前证据已经把优先级收敛成两层：统一 scorecard 下先做 `001309` 的 near-miss case-based promotion，再做 `2026-03-26 / 300383` 的 threshold-only case-based release；`600821` 与 `002015` 的 recurring frontier 审查继续后置为局部 baseline 验证。

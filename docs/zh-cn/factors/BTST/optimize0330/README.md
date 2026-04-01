@@ -16,7 +16,9 @@
 6. [Paper Trading T 日到 T+1 时序专题](../../28-paper-trading-tday-t1-timing-guide.md)
 7. [Execution Bridge 专业讲解](../../24-execution-bridge-professional-guide.md)
 8. [0330 BTST 研究执行清单](./01-0330-research-execution-checklist.md)
-9. [0330 优化方向速记](./优化方向.md)
+9. [0330 BTST 3 月最小回测方案](./02-0330-march-btst-minimal-backtest-plan.md)
+10. [0330 优化方向速记](./优化方向.md)
+11. [2026-04-01 BTST 复现影子 split 摘要](../../product/arch/btst_recurring_shadow_split_summary_20260401.md)
 
 ---
 
@@ -48,7 +50,7 @@
 3. `601869` 作为 near-miss 观察票也合理，但它的语义是“继续盯盘确认”，不是默认买入。
 4. 当前系统里“会选”与“会买”仍然是两层逻辑，不能混为一谈。
 5. 2026-03-23 到 2026-03-26 的旧 baseline 主失败簇确实是 `rejected_layer_b_boundary_score_fail`，但这条 shared Layer B 失败链已经被当前 live short-trade builder 路径实质性消除；它现在更适合作为“为什么要分池”的历史诊断证据，而不是当前默认路径的主矛盾。
-6. 当前真实窗口路径里，`short_trade_boundary` 已经成为真正的主候选源，且 `catalyst_freshness_min=0.00` 已完成完整窗口验证；因此下一轮主线不再是继续寻找第二条准入底线，而是围绕新的分数前沿与结构性阻断样本做治理。
+6. 当前真实窗口路径里，`short_trade_boundary` 已经成为真正的主候选源，且 `catalyst_freshness_min=0.00` 已完成完整窗口验证；但在 2026-04-01 的严格 3 月重建里，它并没有在 closed-cycle tradeable surface 上跑赢 baseline，因此下一轮主线不再是继续寻找第二条准入底线，也不应直接升级 catalyst 变体，而是围绕新的分数前沿与结构性阻断样本做治理。
 7. breakout 语义过窄仍然是旧阶段的重要根因，但在短线专用构建器与仅催化项扩覆盖落地后，当前更活跃的前沿已经转向 `short_trade_boundary_score_fail` 与 `layer_c_bearish_conflict`，而不是继续回到共享边界池做大范围阈值扫描。
 8. profitability 在 2026-03-23 到 2026-03-26 的更广义 Layer B 融合低分样本里表现出很强的压制性，且与 BTST 当前活跃行业高度重叠，因此需要从硬约束转向条件化惩罚，而不是直接照搬研究型目标的硬杀逻辑。
 9. 你的“收盘选股，次日买入，再下一交易日卖出”方法是可行的，但必须拆成“机会质量验证”和“执行后收益验证”两层，不宜只看最终盈亏。
@@ -63,14 +65,15 @@
 3. `300724` 的定向结构释放只应继续停留在结构性影子持有：虽然它能 `blocked -> near_miss` 且不污染其他样本，但真实后验表现是 `next_high_return_mean=-0.0070`、`next_close_return_mean=-0.0443`，因此不能外推成整簇结构放松依据。
 4. 但 `001309` 目前仍只具备当前窗口内的 `emergent_local_baseline` 证据：`data/reports/p4_primary_roll_forward_validation_001309_20260330.json` 已明确它仍缺 `distinct_window_count>=2` 的跨窗口复现，因此当前只能继续做受控滚动推进，不能进入默认升级讨论。
 5. `300383` 的影子语义也已经进一步收紧：`data/reports/p4_shadow_entry_expansion_board_300383_20260330.json` 证明它是当前整个前沿里唯一的纯阈值低成本释放，下一档样本都需要 stale / extension penalty 联动下调；因此它可以继续保留，但不能按同一规则做批量扩散。
-6. 当 `300383` 的同规则扩样被封住后，下一条更合理的影子扩展路线应切到复现前沿：`data/reports/p4_shadow_lane_priority_board_20260330.json` 已把 `002015` 收紧为收盘延续影子候选，把 `600821` 收紧为盘中控制候选，而不是继续复制 `300383` 的单票纯阈值规则。
+6. 当 `300383` 的同规则扩样被封住后，下一条更合理的影子扩展路线应切到复现前沿：截至 2026-04-01，`data/reports/p4_shadow_lane_priority_board_20260401.json` 已把 `300113` 收紧为收盘延续影子候选，把 `600821` 收紧为盘中控制候选，而不是继续复制 `300383` 的单票纯阈值规则。
 7. 现在连 `001309` 还缺什么证据也已经显式化：`data/reports/p6_primary_window_gap_001309_20260330.json` 已确认它目前不是缺主实验 guardrails，而是至少还缺 1 个新增独立窗口，因此现阶段最该补的是窗口证据而不是默认升级叙事。
-8. 复现影子车道也不再只是排序关系：`data/reports/p6_recurring_shadow_runbook_20260330.json` 已把 `002015` 固定为复现收盘延续影子候选，把 `600821` 固定为复现盘中控制，并明确两者不能被混写成同一条影子规则；同时它也把两者的当前验证状态收紧为 `distinct_window_count=1`、`await_new_close_candidate_window` 与 `await_new_intraday_control_window`，说明这条车道现在缺的同样是新增独立窗口，而不是额外规则。
+8. 复现影子车道也不再只是排序关系：截至 2026-04-01，`data/reports/p6_recurring_shadow_runbook_20260401.json` 已把 `300113` 固定为复现收盘延续影子候选，把 `600821` 固定为复现盘中控制，并明确两者不能被混写成同一条影子规则；同时它也把两者的当前验证状态收紧为 `await_new_close_candidate_window` 与 `await_new_intraday_control_window`，说明这条车道现在缺的同样是新增独立窗口，而不是额外规则。
 9. `001309` 的后续动作现在也已被收紧成复跑命令级别：`data/reports/p7_primary_window_validation_runbook_001309_20260330.json` 已逐窗口扫描当前归档报告，确认除了 `20260323_20260326` 外并不存在第二个独立 short-trade window，因此当前未完成的只剩未来窗口数据本身。
-10. `300383` 的扩样路径也不再只是“不要复制它”的口头判断：`data/reports/p7_shadow_peer_scan_300383_20260330.json` 已确认当前同类样本全部属于惩罚耦合车道，没有第二只同规则纯阈值样本，所以影子扩展必须改走复现前沿。
-11. `300724` 的结构性车道现在也已从“结论”补成“运行手册”：`data/reports/p8_structural_shadow_runbook_300724_20260330.json` 已把窗口级阻断簇、单票定向释放与负的释放后质量一并收口，明确这条车道只能保持 `structural_shadow_hold_only`，只有未来新窗口出现新的高优先级结构性个案且收盘延续转正，才允许重开评审。
-12. 结合上游实施收口文档 [docs/zh-cn/product/arch/arch_optimize_implementation.md](docs/zh-cn/product/arch/arch_optimize_implementation.md)，0330 当前默认真实窗口路径还应再补一条事实：旧的 `layer_b_boundary` score-fail 簇在短线专用构建器上已经降到 `0`，当前完整窗口真实窗口候选的准入主基线已经切换为 `short_trade_boundary + catalyst_freshness_min=0.00`。
-13. 因而“下一轮最应该做的 3 件事”已经从泛化的 P2/P3/P5 讨论，进一步收敛为：等新增窗口数据出现后复跑 `001309` 的独立窗口验证；把 `300383` 固定为单票影子观察；再把 `002015 / 600821` 维持为复现影子车道里的收盘候选与盘中控制样本的影子验证准备态，等待第二个独立窗口，而 `300724` 保持治理性冻结，同时不再回头重开 shared Layer B 池的大范围准入底线扫描。
+10. `300383` 的扩样路径也不再只是“不要复制它”的口头判断：截至 2026-04-01，`data/reports/p7_shadow_peer_scan_300383_20260401.json` 已确认当前同类样本全部属于惩罚耦合车道，没有第二只同规则纯阈值样本，所以影子扩展必须改走复现前沿。
+11. 对复现影子 close-candidate 的执行入口也已经补成 bundle：`data/reports/btst_recurring_shadow_close_bundle_300113_20260401.json` / `.md` 会一次性汇总 `300113` 的 release、outcome 与 `600821` 对照结果，因此下一轮若要继续推进 close-candidate shadow replay，不必再手工拼接脚本链。
+12. `300724` 的结构性车道现在也已从“结论”补成“运行手册”：`data/reports/p8_structural_shadow_runbook_300724_20260330.json` 已把窗口级阻断簇、单票定向释放与负的释放后质量一并收口，明确这条车道只能保持 `structural_shadow_hold_only`，只有未来新窗口出现新的高优先级结构性个案且收盘延续转正，才允许重开评审。
+13. 结合上游实施收口文档 [docs/zh-cn/product/arch/arch_optimize_implementation.md](docs/zh-cn/product/arch/arch_optimize_implementation.md)，0330 当前默认真实窗口路径还应再补一条事实：旧的 `layer_b_boundary` score-fail 簇在短线专用构建器上已经降到 `0`，当前完整窗口真实窗口候选的准入主基线已经切换为 `short_trade_boundary + catalyst_freshness_min=0.00`。
+14. 因而“下一轮最应该做的 3 件事”已经从泛化的 P2/P3/P5 讨论，进一步收敛为：等新增窗口数据出现后复跑 `001309` 的独立窗口验证；把 `300383` 固定为单票影子观察；再把 `300113 / 600821` 维持为复现影子车道里的收盘候选与盘中控制样本的影子验证准备态，等待第二个独立窗口，而 `300724` 保持治理性冻结，同时不再回头重开 shared Layer B 池的大范围准入底线扫描。
 
 ---
 
@@ -334,21 +337,21 @@ Layer 4：执行确认
 
 这样研究团队不会只盯着“买没买”，而能同时判断“系统有没有漏好票”。
 
-### 6.4 2026-03-30 夜间已经补出的微窗口实证结果
+### 6.4 2026-04-01 严格重建后的微窗口实证结果
 
-截至 2026-03-30 夜间，`2026-03-23` 到 `2026-03-26` 的 closed-cycle 微窗口回归已经被正式固化为报告：[btst_micro_window_regression_20260330.md](../../../../../data/reports/btst_micro_window_regression_20260330.md)。这份报告把 baseline、`catalyst_floor_zero` 变体和 `2026-03-27` 的 forward-only short-trade 样本放进了同一套口径里比较。
+截至 2026-04-01，`2026-03-23` 到 `2026-03-26` 的 closed-cycle 微窗口回归已经完成一次严格重建，最终口径以 [btst_micro_window_regression_march_refresh.md](../../../../../data/reports/btst_micro_window_regression_march_refresh.md) 和 [btst_march_backtest_refresh_summary.md](../../../../../data/reports/btst_march_backtest_refresh_summary.md) 为准。与 2026-03-30 夜间的早期结论相比，这次重建的关键差异是：catalyst 变体已通过完整性校验，且比较建立在完整 rerun 上，不再包含“variant 产物缺失”的解释噪声。
 
-它给出的结论非常关键：
+它给出的最新结论是：
 
-1. baseline 在 `2026-03-23` 到 `2026-03-26` 的 closed-cycle 样本里一共 32 行，但 `tradeable surface=0`，说明旧 baseline 在这个闭环窗口里并没有形成可执行 short-trade surface。
-2. 同一窗口下 baseline 仍有 19 个 false negative proxy，且主要来自 `layer_b_boundary`；它们的 `next_high_hit_rate@2%=0.7895`、`next_close_positive_rate=0.8421`，说明问题不是“市场没给机会”，而是系统漏掉了不少机会。
-3. `catalyst_floor_zero` 变体把 closed-cycle actionable 样本从 `0` 提升到 `6`，并给出 `next_high_hit_rate@2%=0.8333`、`next_close_positive_rate=0.8333`、`t_plus_2_close_positive_rate=0.8333`，正式通过当前窗口的 closed-cycle guardrail。
-4. `2026-03-27` 的 short-trade-only 样本虽然已经出现 2 个可研究 tradeable 行，但它们都还是 `t1_only`，因此只能算 forward 观察证据，不能直接当成默认升级依据。
+1. baseline 在 `2026-03-23` 到 `2026-03-26` 的 strict closed-cycle 窗口里形成了 `tradeable surface=7`，`next_high_hit_rate@2%=0.7143`、`next_close_positive_rate=0.7143`、`t_plus_2_close_positive_rate=0.7143`。
+2. `catalyst_floor_zero` 完整 rerun 后的 `tradeable surface=6`，`next_high_hit_rate@2%=0.6667`、`next_close_positive_rate=0.6667`、`t_plus_2_close_positive_rate=0.6667`，在 closed-cycle tradeable surface 质量上并没有超过 baseline。
+3. 但 catalyst 变体的 false negative proxy 从 baseline 的 `6` 扩大到 `21`，且 `next_close_positive_rate` 提升到 `0.8095`，说明它的价值主要不是直接形成更强的可执行曲面，而是把主问题进一步暴露为 `short_trade_boundary_score_fail` 前沿与入口语义压制，而不再是准入底线本身。
+4. `2026-03-27` 的 short-trade-only forward 样本仍只有 2 个可研究 tradeable 行，且它们依然只属于 forward 观察证据，不能直接当成默认升级依据。
 
-这意味着：在 0330 当前证据边界内，微窗口方法本身已经完成验证，下一步主线不应再回到“是否继续大范围准入底线扫描”，而应固定为三件事：
+这意味着：在当前严格证据边界内，微窗口方法已经完成从“验证准入变体”到“定位剩余主矛盾”的过渡，下一步主线应固定为三件事：
 
-1. 保留 `short_trade_boundary + catalyst_freshness_min=0.00` 作为当前真实窗口准入基线。
-2. 继续围绕 `short_trade_boundary_score_fail`、`001309/300383` 与 `300724` 的结构性治理推进分数前沿、选择性候选入口规则与个案释放车道。
+1. 继续把 `short_trade_boundary + catalyst_freshness_min=0.00` 作为当前真实窗口准入基线，但不要把它误解成已经优于 baseline 的默认升级候选。
+2. 优先围绕 `short_trade_boundary_score_fail`、candidate entry semantics 与 `layer_c_bearish_conflict` 的定点治理推进，而不是重新回到大范围准入底线扫描。
 3. 等未来新增独立窗口出现后，再用同一份微窗口回归脚本继续验证 `001309` 主推进车道和复现影子车道的跨窗口稳定性。
 
 ### 6.5 当前执行边界：先修覆盖，再把入场质量独立成因子包
@@ -397,7 +400,7 @@ Layer 4：执行确认
 
 同日用当前窗口 `selection_artifacts` 跑的真实前沿验证结果见 `data/reports/btst_profile_frontier_profitability_relief_current_window_20260331.{json,md}`：`staged_breakout_profitability_relief` 与 `staged_breakout` 一样，仍然没有把 tradeable surface 从 0 推高到正值，说明 profitability 条件软化至少在当前窗口不是主释放杠杆，后续优先级仍应回到分数前沿与 stale/extension penalty 主线。
 
-同日也补上了整窗闭环脚本 `scripts/analyze_btst_penalty_frontier.py`，专门把 `near_miss_threshold` 与 `stale/extension penalty weight` 的组合直接回放成闭环窗口曲面，再用 false negative proxy 的 `next_high_hit_rate` / `next_close_positive_rate` 做护栏。当前窗口结果见 `data/reports/btst_penalty_frontier_current_window_20260331.{json,md}`：扫描空间内没有任何 guardrail-passing row；最高 surface 的组合 `near_miss=0.42 / stale=0.08 / extension=0.02` 只把两条 `300724` 样本推到 `near_miss`，`next_high_hit_rate=0.5`、`next_close_positive_rate=0.0`，而且没有释放 `300383 / 600821 / 002015`。这说明大范围 stale/extension penalty 路线目前仍不成立，后续应继续维持 `300383` 单票影子观察、`002015 / 600821` 复现车道与 `300724` 结构冻结的分层治理。
+同日也补上了整窗闭环脚本 `scripts/analyze_btst_penalty_frontier.py`，专门把 `near_miss_threshold` 与 `stale/extension penalty weight` 的组合直接回放成闭环窗口曲面，再用 false negative proxy 的 `next_high_hit_rate` / `next_close_positive_rate` 做护栏。当前窗口结果见 `data/reports/btst_penalty_frontier_current_window_20260331.{json,md}`：扫描空间内没有任何 guardrail-passing row；最高 surface 的组合 `near_miss=0.42 / stale=0.08 / extension=0.02` 只把两条 `300724` 样本推到 `near_miss`，`next_high_hit_rate=0.5`、`next_close_positive_rate=0.0`，而且没有释放 `300383 / 600821 / 002015`。这说明大范围 stale/extension penalty 路线目前仍不成立；按 2026-04-01 的刷新结论，后续应继续维持 `300383` 单票影子观察、`300113 / 600821` 复现车道与 `300724` 结构冻结的分层治理。
 
 不建议一开始就全局取消 profitability。
 
@@ -588,7 +591,7 @@ Layer 4：执行确认
 
 1. `001309` 只有在新增独立窗口后仍保持 `changed_non_target_case_count=0`、`next_close_return_mean>0`、`next_close_positive_rate>=0.75`，才允许进入默认升级评审。
 2. `300383` 即使继续保留为影子观察，也只能作为单票纯阈值释放；如果要扩大影子车道，应优先转向复现前沿车道，而不是复制它的同一套阈值放松规则。
-3. 复现前沿车道内部也要继续分层：`002015` 作为收盘延续影子候选优先推进，`600821` 只作为盘中控制保留，防止影子扩展再次把 intraday upside 误当成可默认升级的 close 规则。
+3. 复现前沿车道内部也要继续分层：`300113` 作为收盘延续影子候选优先推进，`600821` 只作为盘中控制保留，防止影子扩展再次把 intraday upside 误当成可默认升级的 close 规则。
 4. 截至 2026-03-30，Phase 3 的方法闭环已经补齐：新增窗口扫描、证据缺口说明、roll-forward 判定、治理板回接都已具备；当前唯一无法在本轮直接“完成”的部分，是新增独立窗口尚未自然出现。
 
 只有在滚动窗口稳定后，才允许进入默认升级讨论。
@@ -702,7 +705,7 @@ Inspector 实现位置在：
 至少验证下面 4 点：
 
 1. `Closed Frontiers` 里能看到已关闭路线，例如 `broad_penalty_relief`。
-2. `Rollout Lanes` 里能看到 `001309`、`300383`、`002015`、`600821`、`300724` 这类车道行，或至少看到当前窗口实际存在的子集。
+2. `Rollout Lanes` 里能看到 `001309`、`300383`、`300113`、`600821`、`300724` 这类车道行，或至少看到当前窗口实际存在的子集。
 3. 点击某个车道的 `Open Replay` 后，报告、trade date、focus symbol 会一起切到目标上下文。
 4. 跳转后不会因为已有筛选器而被自动打回；这条行为依赖于跳转前先重置 `Report Rail`、trade date、explainability filters。
 
