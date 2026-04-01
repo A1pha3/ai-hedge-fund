@@ -17,8 +17,12 @@
 7. [Execution Bridge 专业讲解](../../24-execution-bridge-professional-guide.md)
 8. [0330 BTST 研究执行清单](./01-0330-research-execution-checklist.md)
 9. [0330 BTST 3 月最小回测方案](./02-0330-march-btst-minimal-backtest-plan.md)
-10. [0330 优化方向速记](./优化方向.md)
-11. [2026-04-01 BTST 复现影子 split 摘要](../../product/arch/btst_recurring_shadow_split_summary_20260401.md)
+10. [0330 BTST 可交易涨幅池与漏票召回方案](./03-0330-btst-tradeable-opportunity-pool-plan.md)
+11. [0330 优化方向速记](./优化方向.md)
+12. [2026-04-01 BTST 复现影子 split 摘要](../../product/arch/btst_recurring_shadow_split_summary_20260401.md)
+13. [BTST 最新收盘验证摘要](../../../../../data/reports/btst_latest_close_validation_latest.md)
+14. [BTST 独立窗口监控](../../../../../data/reports/btst_independent_window_monitor_latest.md)
+15. [BTST T+1/T+2 目标监控](../../../../../data/reports/btst_tplus1_tplus2_objective_monitor_latest.md)
 
 ---
 
@@ -74,6 +78,9 @@
 12. `300724` 的结构性车道现在也已从“结论”补成“运行手册”：`data/reports/p8_structural_shadow_runbook_300724_20260330.json` 已把窗口级阻断簇、单票定向释放与负的释放后质量一并收口，明确这条车道只能保持 `structural_shadow_hold_only`，只有未来新窗口出现新的高优先级结构性个案且收盘延续转正，才允许重开评审。
 13. 结合上游实施收口文档 [docs/zh-cn/product/arch/arch_optimize_implementation.md](docs/zh-cn/product/arch/arch_optimize_implementation.md)，0330 当前默认真实窗口路径还应再补一条事实：旧的 `layer_b_boundary` score-fail 簇在短线专用构建器上已经降到 `0`，当前完整窗口真实窗口候选的准入主基线已经切换为 `short_trade_boundary + catalyst_freshness_min=0.00`。
 14. 因而“下一轮最应该做的 3 件事”已经从泛化的 P2/P3/P5 讨论，进一步收敛为：等新增窗口数据出现后复跑 `001309` 的独立窗口验证；把 `300383` 固定为单票影子观察；再把 `300113 / 600821` 维持为复现影子车道里的收盘候选与盘中控制样本的影子验证准备态，等待第二个独立窗口，而 `300724` 保持治理性冻结，同时不再回头重开 shared Layer B 池的大范围准入底线扫描。
+15. 截至 2026-04-01 当晚，最新日更收盘验证产物已独立沉淀为 `data/reports/btst_latest_close_validation_latest.{json,md}`：当前 latest BTST run 已切到 `paper_trading_20260401_20260401_live_m2_7_short_trade_only_20260401`，但对 2026-04-02 仍没有正式主票，只保留 `601869`、`300166` 两只 near-miss 观察票和 `600522`、`600118` 两只机会池。这进一步说明当前真实主线仍然不是放宽默认准入，而是继续沿着观察层闭环、跨窗口验证与复现影子车道推进。
+16. 截至 2026-04-02，独立窗口证据也已独立固化到 `data/reports/btst_independent_window_monitor_latest.{json,md}`：当前 `001309`、`300113`、`600821` 三条 lane 都仍然只有 `distinct_window_count=1`、`missing_window_count=1`，整体状态为 `ready_lane_count=0 / waiting_lane_count=3`。它会统一追踪这三条 lane 的 `distinct_window_count / missing_window_count / next_step`，避免再靠人工拼接 `p6/p7` 报告判断 second-window readiness。
+17. 从 2026-04-02 起，`data/reports/btst_tplus1_tplus2_objective_monitor_latest.{json,md}` 也成为固定夜间读物：它不再只问“有没有票”，而是直接回答当前 closed-cycle tradeable surface 距离“明天买、后天卖，80% 胜率且 5% 收益”目标还有多远，并显式列出最接近目标的 decision/source/ticker 组与已命中 5% 目标的 false negative 样本。
 
 ---
 

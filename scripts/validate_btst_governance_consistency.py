@@ -41,6 +41,18 @@ def _find_row(rows: list[dict[str, Any]], ticker: str) -> dict[str, Any]:
     return next((dict(row or {}) for row in rows if str((row or {}).get("ticker") or "") == normalized_ticker), {})
 
 
+def _find_row_by_tier(rows: list[dict[str, Any]], governance_tier: str) -> dict[str, Any]:
+    normalized_tier = str(governance_tier or "").strip()
+    return next((dict(row or {}) for row in rows if str((row or {}).get("governance_tier") or "") == normalized_tier), {})
+
+
+def _resolve_recurring_lane_row(rows: list[dict[str, Any]], ticker: str, governance_tier: str) -> dict[str, Any]:
+    row = _find_row(rows, ticker)
+    if row:
+        return row
+    return _find_row_by_tier(rows, governance_tier)
+
+
 def _find_lane_row(rows: list[dict[str, Any]], lane_id: str) -> dict[str, Any]:
     normalized_lane_id = str(lane_id or "").strip()
     return next((dict(row or {}) for row in rows if str((row or {}).get("lane_id") or "") == normalized_lane_id), {})
@@ -110,8 +122,8 @@ def validate_btst_governance_consistency(
     recurring_intraday = dict(recurring_shadow_runbook.get("intraday_control") or {})
     recurring_close_ticker = str(recurring_close.get("ticker") or "300113")
     recurring_intraday_ticker = str(recurring_intraday.get("ticker") or "600821")
-    recurring_close_governance = _find_row(governance_rows, recurring_close_ticker)
-    recurring_intraday_governance = _find_row(governance_rows, recurring_intraday_ticker)
+    recurring_close_governance = _resolve_recurring_lane_row(governance_rows, recurring_close_ticker, "recurring_shadow_close_candidate")
+    recurring_intraday_governance = _resolve_recurring_lane_row(governance_rows, recurring_intraday_ticker, "recurring_intraday_control")
 
     checks: list[dict[str, Any]] = []
 

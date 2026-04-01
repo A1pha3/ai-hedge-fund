@@ -157,7 +157,8 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     for filename in [
         "btst_open_ready_delta_latest.md",
         "btst_nightly_control_tower_latest.md",
-        "btst_micro_window_regression_20260330.md",
+        "btst_latest_close_validation_latest.md",
+        "btst_micro_window_regression_march_refresh.md",
         "btst_profile_frontier_20260330.md",
         "btst_score_construction_frontier_20260330.md",
         "btst_penalty_frontier_current_window_20260331.md",
@@ -261,6 +262,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
 
     result = generate_reports_manifest_artifacts(reports_root=reports_root)
     manifest = result["manifest"]
+    entry_ids = {entry["id"] for entry in manifest["entries"]}
 
     assert manifest["catalyst_theme_frontier_refresh"]["status"] == "refreshed"
     assert manifest["catalyst_theme_frontier_refresh"]["report_dir"] == "paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330"
@@ -298,6 +300,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
             "recurring_pair_comparison",
             "candidate_report",
             "recurring_transition_report",
+            "recurring_close_bundle",
         ],
     }
     assert manifest["btst_rollout_governance_refresh"] == {
@@ -307,10 +310,32 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "next_task_count": 3,
         "penalty_frontier_status": "broad_penalty_route_closed_current_window",
         "penalty_frontier_passing_variant_count": 0,
-        "output_json": str((reports_root / "p5_btst_rollout_governance_board_20260330.json").resolve()),
+        "output_json": str((reports_root / "p5_btst_rollout_governance_board_20260401.json").resolve()),
     }
+    assert "btst_latest_close_validation_latest" in entry_ids
     assert manifest["btst_governance_synthesis_refresh"]["status"] == "refreshed"
     assert manifest["btst_governance_validation_refresh"]["status"] == "refreshed"
+    assert manifest["btst_independent_window_monitor_refresh"] == {
+        "status": "refreshed",
+        "report_dir_count": 0,
+        "ready_lane_count": 0,
+        "waiting_lane_count": 0,
+        "no_evidence_lane_count": 3,
+        "output_json": str((reports_root / "btst_independent_window_monitor_latest.json").resolve()),
+    }
+    assert manifest["btst_tplus1_tplus2_objective_monitor_refresh"] == {
+        "status": "refreshed",
+        "report_dir_count": 0,
+        "closed_cycle_row_count": 0,
+        "tradeable_closed_cycle_count": 0,
+        "tradeable_positive_rate": None,
+        "tradeable_return_hit_rate": None,
+        "tradeable_mean_t_plus_2_return": None,
+        "tradeable_verdict": "insufficient_closed_cycle_samples",
+        "best_ticker": None,
+        "best_ticker_objective_fit_score": None,
+        "output_json": str((reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json").resolve()),
+    }
     assert manifest["btst_replay_cohort_refresh"] == {
         "status": "refreshed",
         "report_count": 2,
@@ -336,18 +361,20 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "trade_date": "2026-03-30",
         "next_trade_date": "2026-03-31",
     }
-    assert entries_by_id["btst_micro_window_regression_review"]["report_path"] == "data/reports/btst_micro_window_regression_20260330.md"
+    assert entries_by_id["btst_micro_window_regression_review"]["report_path"] == "data/reports/btst_micro_window_regression_march_refresh.md"
     assert entries_by_id["btst_profile_frontier_review"]["report_path"] == "data/reports/btst_profile_frontier_20260330.md"
     assert entries_by_id["btst_score_construction_frontier_review"]["report_path"] == "data/reports/btst_score_construction_frontier_20260330.md"
     assert entries_by_id["btst_penalty_frontier_review"]["report_path"] == "data/reports/btst_penalty_frontier_current_window_20260331.md"
     assert entries_by_id["btst_candidate_entry_frontier_review"]["report_path"] == "data/reports/btst_candidate_entry_frontier_20260330.md"
     assert entries_by_id["btst_candidate_entry_window_scan_review"]["report_path"] == "data/reports/btst_candidate_entry_window_scan_20260330.md"
     assert entries_by_id["p9_candidate_entry_rollout_governance"]["report_path"] == "data/reports/p9_candidate_entry_rollout_governance_20260330.md"
-    assert entries_by_id["p5_rollout_governance_board"]["report_path"] == "data/reports/p5_btst_rollout_governance_board_20260330.json"
+    assert entries_by_id["p5_rollout_governance_board"]["report_path"] == "data/reports/p5_btst_rollout_governance_board_20260401.json"
     assert entries_by_id["btst_open_ready_delta_latest"]["report_path"] == "data/reports/btst_open_ready_delta_latest.md"
     assert entries_by_id["btst_nightly_control_tower_latest"]["report_path"] == "data/reports/btst_nightly_control_tower_latest.md"
     assert entries_by_id["btst_governance_synthesis_latest"]["report_path"] == "data/reports/btst_governance_synthesis_latest.md"
     assert entries_by_id["btst_governance_validation_latest"]["report_path"] == "data/reports/btst_governance_validation_latest.md"
+    assert entries_by_id["btst_independent_window_monitor_latest"]["report_path"] == "data/reports/btst_independent_window_monitor_latest.md"
+    assert entries_by_id["btst_tplus1_tplus2_objective_monitor_latest"]["report_path"] == "data/reports/btst_tplus1_tplus2_objective_monitor_latest.md"
     assert entries_by_id["btst_replay_cohort_latest"]["report_path"] == "data/reports/btst_replay_cohort_latest.md"
     assert entries_by_id["btst_score_fail_frontier_latest"]["report_path"] == "data/reports/short_trade_boundary_score_failures_frontier_latest.md"
     assert entries_by_id["btst_score_fail_recurring_frontier_latest"]["report_path"] == "data/reports/short_trade_boundary_recurring_frontier_cases_latest.md"
@@ -356,8 +383,11 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
     assert reading_paths["btst_control_tower"]["entry_ids"] == [
         "btst_open_ready_delta_latest",
+        "btst_latest_close_validation_latest",
         "btst_nightly_control_tower_latest",
         "btst_governance_synthesis_latest",
+        "btst_tplus1_tplus2_objective_monitor_latest",
+        "btst_independent_window_monitor_latest",
         "latest_btst_priority_board",
         "latest_btst_catalyst_theme_frontier_markdown",
         "btst_score_fail_frontier_latest",
@@ -369,6 +399,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     ]
     assert reading_paths["tomorrow_open"]["entry_ids"] == [
         "btst_open_ready_delta_latest",
+        "btst_latest_close_validation_latest",
         "latest_btst_priority_board",
         "latest_btst_opening_watch_card",
         "latest_btst_execution_card_markdown",
@@ -376,6 +407,8 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     ]
     assert reading_paths["nightly_review"]["entry_ids"] == [
         "btst_open_ready_delta_latest",
+        "btst_latest_close_validation_latest",
+        "btst_tplus1_tplus2_objective_monitor_latest",
         "btst_nightly_control_tower_latest",
         "latest_btst_session_summary",
         "latest_btst_brief_json",
@@ -397,6 +430,8 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_candidate_entry_frontier_review",
         "btst_candidate_entry_window_scan_review",
         "p9_candidate_entry_rollout_governance",
+        "btst_tplus1_tplus2_objective_monitor_latest",
+        "btst_independent_window_monitor_latest",
         "btst_score_fail_frontier_latest",
         "btst_score_fail_recurring_frontier_latest",
         "p6_primary_window_gap",
@@ -428,20 +463,25 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "btst_rollout_governance_penalty_status: broad_penalty_route_closed_current_window" in markdown
     assert "btst_governance_synthesis_status: refreshed" in markdown
     assert "btst_governance_validation_status: refreshed" in markdown
+    assert "btst_independent_window_monitor_status: refreshed" in markdown
+    assert "btst_tplus1_tplus2_objective_monitor_status: refreshed" in markdown
     assert "btst_replay_cohort_status: refreshed" in markdown
     assert "## BTST 控制塔" in markdown
     assert "## 明天开盘" in markdown
     assert "btst_open_ready_delta_latest.md" in markdown
+    assert "btst_latest_close_validation_latest.md" in markdown
     assert "btst_nightly_control_tower_latest.md" in markdown
     assert "btst_next_day_priority_board_20260331.md" in markdown
     assert "catalyst_theme_frontier_latest.md" in markdown
     assert "btst_opening_watch_card_20260331.md" in markdown
     assert "btst_governance_synthesis_latest.md" in markdown
     assert "btst_governance_validation_latest.md" in markdown
+    assert "btst_independent_window_monitor_latest.md" in markdown
+    assert "btst_tplus1_tplus2_objective_monitor_latest.md" in markdown
     assert "btst_replay_cohort_latest.md" in markdown
     assert "short_trade_boundary_score_failures_frontier_latest.md" in markdown
     assert "short_trade_boundary_recurring_frontier_cases_latest.md" in markdown
-    assert "btst_micro_window_regression_20260330.md" in markdown
+    assert "btst_micro_window_regression_march_refresh.md" in markdown
     assert "btst_profile_frontier_20260330.md" in markdown
     assert "btst_score_construction_frontier_20260330.md" in markdown
     assert "btst_penalty_frontier_current_window_20260331.md" in markdown

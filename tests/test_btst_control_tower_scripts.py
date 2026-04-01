@@ -877,6 +877,12 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["latest_btst_snapshot"]["score_fail_frontier_summary"]["status"] == "refreshed"
     assert payload["latest_btst_snapshot"]["score_fail_frontier_summary"]["rejected_short_trade_boundary_count"] == 0
     assert payload["recommended_reading_order"][0]["entry_id"] == "btst_governance_synthesis_latest"
+    assert payload["recommended_reading_order"][1]["entry_id"] == "btst_tplus1_tplus2_objective_monitor_latest"
+    assert payload["recommended_reading_order"][2]["entry_id"] == "btst_independent_window_monitor_latest"
+    assert payload["control_tower_snapshot"]["independent_window_ready_lane_count"] == 0
+    assert payload["control_tower_snapshot"]["independent_window_waiting_lane_count"] == 0
+    assert payload["control_tower_snapshot"]["independent_window_monitor"]["report_dir_count"] == 0
+    assert payload["control_tower_snapshot"]["tplus1_tplus2_tradeable_verdict"] == "insufficient_closed_cycle_samples"
     assert any(item["entry_id"] == "latest_btst_catalyst_theme_frontier_markdown" for item in payload["recommended_reading_order"])
     assert any(item["entry_id"] == "btst_score_fail_frontier_latest" for item in payload["recommended_reading_order"])
     assert delta_payload["comparison_basis"] == "previous_btst_report"
@@ -884,6 +890,8 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert delta_payload["overall_delta_verdict"] == "changed"
     assert Path(result["delta_json_path"]).name == "btst_open_ready_delta_latest.json"
     assert Path(result["delta_markdown_path"]).name == "btst_open_ready_delta_latest.md"
+    assert Path(result["close_validation_json_path"]).name == "btst_latest_close_validation_latest.json"
+    assert Path(result["close_validation_markdown_path"]).name == "btst_latest_close_validation_latest.md"
     assert Path(result["history_json_path"]).exists()
 
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
@@ -891,6 +899,8 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "## Nightly Summary" in markdown
     assert "watch 600522 before 300442" in markdown
     assert "## Rollout Lanes" in markdown
+    assert "## Independent Window Monitor" in markdown
+    assert "## T+1/T+2 Objective Monitor" in markdown
     assert "## Catalyst Theme Frontier" in markdown
     assert "## Score-Fail Frontier Queue" in markdown
     assert "301001" in markdown
@@ -898,21 +908,36 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "llm_health_status: degraded" in markdown
     assert "sample_error: MiniMax TimeoutError" in markdown
     assert "btst_governance_synthesis_latest.md" in markdown
+    assert "btst_tplus1_tplus2_objective_monitor_latest.md" in markdown
+    assert "btst_independent_window_monitor_latest.md" in markdown
     assert "btst_replay_cohort_latest.md" in markdown
     delta_markdown = Path(result["delta_markdown_path"]).read_text(encoding="utf-8")
+    close_validation_markdown = Path(result["close_validation_markdown_path"]).read_text(encoding="utf-8")
     assert "# BTST Open-Ready Delta" in delta_markdown
     assert "## Score-Fail Frontier Delta" in delta_markdown
     assert "previous_btst_report" in delta_markdown
+    assert "# BTST Latest Close Validation" in close_validation_markdown
+    assert "## Tonight Verdict" in close_validation_markdown
+    assert "## Governance Check" in close_validation_markdown
 
     manifest = json.loads(Path(result["manifest_json"]).read_text(encoding="utf-8"))
     entry_ids = {entry["id"] for entry in manifest["entries"]}
     assert "btst_open_ready_delta_latest" in entry_ids
     assert "btst_nightly_control_tower_latest" in entry_ids
+    assert "btst_latest_close_validation_latest" in entry_ids
+    assert "btst_tplus1_tplus2_objective_monitor_latest" in entry_ids
+    assert "btst_independent_window_monitor_latest" in entry_ids
     assert "latest_btst_catalyst_theme_frontier_markdown" in entry_ids
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
     assert reading_paths["btst_control_tower"]["entry_ids"][0] == "btst_open_ready_delta_latest"
+    assert reading_paths["btst_control_tower"]["entry_ids"][1] == "btst_latest_close_validation_latest"
+    assert "btst_tplus1_tplus2_objective_monitor_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_independent_window_monitor_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert reading_paths["tomorrow_open"]["entry_ids"][0] == "btst_open_ready_delta_latest"
+    assert reading_paths["tomorrow_open"]["entry_ids"][1] == "btst_latest_close_validation_latest"
     assert reading_paths["nightly_review"]["entry_ids"][0] == "btst_open_ready_delta_latest"
+    assert reading_paths["nightly_review"]["entry_ids"][1] == "btst_latest_close_validation_latest"
+    assert "btst_tplus1_tplus2_objective_monitor_latest" in reading_paths["nightly_review"]["entry_ids"]
 
 
 def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_path: Path) -> None:

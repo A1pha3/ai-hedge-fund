@@ -44,6 +44,14 @@ from scripts.analyze_btst_replay_cohort import (
     analyze_btst_replay_cohort,
     render_btst_replay_cohort_markdown,
 )
+from scripts.analyze_btst_independent_window_monitor import (
+    analyze_btst_independent_window_monitor,
+    render_btst_independent_window_monitor_markdown,
+)
+from scripts.analyze_btst_tplus1_tplus2_objective_monitor import (
+    analyze_btst_tplus1_tplus2_objective_monitor,
+    render_btst_tplus1_tplus2_objective_monitor_markdown,
+)
 from scripts.analyze_multi_window_short_trade_role_candidates import (
     analyze_multi_window_short_trade_role_candidates,
     render_multi_window_short_trade_role_candidates_markdown,
@@ -107,6 +115,10 @@ BTST_GOVERNANCE_VALIDATION_JSON = "btst_governance_validation_latest.json"
 BTST_GOVERNANCE_VALIDATION_MD = "btst_governance_validation_latest.md"
 BTST_REPLAY_COHORT_JSON = "btst_replay_cohort_latest.json"
 BTST_REPLAY_COHORT_MD = "btst_replay_cohort_latest.md"
+BTST_INDEPENDENT_WINDOW_MONITOR_JSON = "btst_independent_window_monitor_latest.json"
+BTST_INDEPENDENT_WINDOW_MONITOR_MD = "btst_independent_window_monitor_latest.md"
+BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_JSON = "btst_tplus1_tplus2_objective_monitor_latest.json"
+BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_MD = "btst_tplus1_tplus2_objective_monitor_latest.md"
 MULTI_WINDOW_ROLE_CANDIDATES_LATEST_JSON = "multi_window_short_trade_role_candidates_latest.json"
 MULTI_WINDOW_ROLE_CANDIDATES_LATEST_MD = "multi_window_short_trade_role_candidates_latest.md"
 RECURRING_FRONTIER_TRANSITION_LATEST_JSON = "recurring_frontier_transition_candidates_latest.json"
@@ -120,6 +132,16 @@ SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_MD = "short_trade_boundary_recurr
 RECURRING_PAIR_COMPARISON_JSON = "recurring_frontier_release_pair_comparison_600821_vs_300113_catalyst_floor_zero_refresh_20260401.json"
 CANDIDATE_ENTRY_FOCUS_TICKERS: tuple[str, ...] = ("300502",)
 CANDIDATE_ENTRY_PRESERVE_TICKERS: tuple[str, ...] = ("300394",)
+STATIC_ENTRY_GLOB_OVERRIDES: dict[str, str] = {
+    "p2_top3_execution_summary": "p2_top3_experiment_execution_summary_*.json",
+    "p3_post_execution_action_board": "p3_top3_post_execution_action_board_*.json",
+    "p5_rollout_governance_board": "p5_btst_rollout_governance_board_*.json",
+    "p6_primary_window_gap": "p6_primary_window_gap_001309_*.json",
+    "p6_recurring_shadow_runbook": "p6_recurring_shadow_runbook_*.json",
+    "btst_recurring_shadow_close_bundle": "btst_recurring_shadow_close_bundle_*.json",
+    "p7_primary_window_validation_runbook": "p7_primary_window_validation_runbook_001309_*.json",
+    "p8_structural_shadow_runbook": "p8_structural_shadow_runbook_300724_*.json",
+}
 
 STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
     {
@@ -145,6 +167,19 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "is_latest": True,
         "question": "今晚 control tower 的一页总览是什么",
         "view_order": 1,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_latest_close_validation_latest",
+        "path": "data/reports/btst_latest_close_validation_latest.md",
+        "report_type": "btst_latest_close_validation",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "今天收盘到底验证了什么，明天该如何理解当前 BTST 结论",
+        "view_order": 2,
         "time_scope": {"label": "rolling"},
         "source_kind": "generated_runtime_artifact",
     },
@@ -197,6 +232,19 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "is_latest": True,
         "question": "上游真实落地事实与系统边界是什么",
         "view_order": 3,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "source_of_truth",
+    },
+    {
+        "id": "btst_recurring_shadow_split_summary_20260401",
+        "path": "docs/zh-cn/product/arch/btst_recurring_shadow_split_summary_20260401.md",
+        "report_type": "btst_recurring_shadow_split_summary",
+        "topic": "btst_governance",
+        "usage": "truth_source",
+        "priority": 2,
+        "is_latest": True,
+        "question": "当前 recurring shadow 的 300113/600821 split 应如何执行",
+        "view_order": 4,
         "time_scope": {"label": "rolling"},
         "source_kind": "source_of_truth",
     },
@@ -355,6 +403,32 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "view_order": 10,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
+    },
+    {
+        "id": "btst_independent_window_monitor_latest",
+        "path": "data/reports/btst_independent_window_monitor_latest.md",
+        "report_type": "btst_independent_window_monitor",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "001309、300113、600821 还差几个独立窗口，哪条 lane 已经具备重审条件",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_tplus1_tplus2_objective_monitor_latest",
+        "path": "data/reports/btst_tplus1_tplus2_objective_monitor_latest.md",
+        "report_type": "btst_tplus1_tplus2_objective_monitor",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "当前 BTST 距离“明天买、后天卖，80% 胜率且 5% 收益”目标还有多远",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
     },
     {
         "id": "btst_multi_window_role_candidates_latest",
@@ -519,7 +593,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "id": "navigation",
         "title": "入口导航",
         "description": "先看稳定入口，不直接翻 data/reports 目录。",
-        "entry_ids": ["reports_hub_readme", "optimize0330_readme", "optimize0330_checklist", "arch_optimize_implementation"],
+        "entry_ids": ["reports_hub_readme", "optimize0330_readme", "optimize0330_checklist", "arch_optimize_implementation", "btst_recurring_shadow_split_summary_20260401"],
     },
     {
         "id": "btst_control_tower",
@@ -527,8 +601,11 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "description": "先看相对上一轮的 delta，再看当前 lane 状态，最后确认历史回放样本。",
         "entry_ids": [
             "btst_open_ready_delta_latest",
+            "btst_latest_close_validation_latest",
             "btst_nightly_control_tower_latest",
             "btst_governance_synthesis_latest",
+            "btst_tplus1_tplus2_objective_monitor_latest",
+            "btst_independent_window_monitor_latest",
             "latest_btst_priority_board",
             "latest_btst_catalyst_theme_frontier_markdown",
             "btst_score_fail_frontier_latest",
@@ -536,6 +613,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_governance_validation_latest",
             "btst_replay_cohort_latest",
             "p5_rollout_governance_board",
+            "btst_recurring_shadow_close_bundle",
             "p9_candidate_entry_rollout_governance",
         ],
     },
@@ -543,7 +621,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "id": "tomorrow_open",
         "title": "明天开盘",
         "description": "开盘前的最短阅读路径，优先解决明天到底交易什么。",
-        "entry_ids": ["btst_open_ready_delta_latest", "latest_btst_priority_board", "latest_btst_opening_watch_card", "latest_btst_execution_card_markdown", "latest_btst_brief_markdown"],
+        "entry_ids": ["btst_open_ready_delta_latest", "btst_latest_close_validation_latest", "latest_btst_priority_board", "latest_btst_opening_watch_card", "latest_btst_execution_card_markdown", "latest_btst_brief_markdown"],
     },
     {
         "id": "nightly_review",
@@ -551,6 +629,8 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "description": "晚间确认本次运行发生了什么、明日结论为何如此。",
         "entry_ids": [
             "btst_open_ready_delta_latest",
+            "btst_latest_close_validation_latest",
+            "btst_tplus1_tplus2_objective_monitor_latest",
             "btst_nightly_control_tower_latest",
             "latest_btst_session_summary",
             "latest_btst_brief_json",
@@ -577,12 +657,15 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_candidate_entry_frontier_review",
             "btst_candidate_entry_window_scan_review",
             "p9_candidate_entry_rollout_governance",
+            "btst_tplus1_tplus2_objective_monitor_latest",
+            "btst_independent_window_monitor_latest",
             "btst_multi_window_role_candidates_latest",
             "btst_recurring_frontier_transition_latest",
             "btst_score_fail_frontier_latest",
             "btst_score_fail_recurring_frontier_latest",
             "p6_primary_window_gap",
             "p6_recurring_shadow_runbook",
+            "btst_recurring_shadow_close_bundle",
             "p7_primary_window_validation_runbook",
             "p8_structural_shadow_runbook",
         ],
@@ -591,7 +674,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "id": "truth_source",
         "title": "真相源文档",
         "description": "专题逻辑、执行状态和上游实现事实的固定 source of truth。",
-        "entry_ids": ["optimize0330_readme", "optimize0330_checklist", "arch_optimize_implementation"],
+        "entry_ids": ["optimize0330_readme", "optimize0330_checklist", "arch_optimize_implementation", "btst_recurring_shadow_split_summary_20260401"],
     },
     {
         "id": "replay_history",
@@ -616,6 +699,27 @@ def _write_markdown(path: str | Path, content: str) -> None:
     resolved = Path(path).expanduser().resolve()
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
+
+
+def _resolve_existing_artifact_path(
+    reports_root: str | Path,
+    preferred_name: str,
+    *,
+    glob_pattern: str | None = None,
+) -> Path:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    preferred_path = resolved_reports_root / preferred_name
+    if preferred_path.exists():
+        return preferred_path
+    if not glob_pattern:
+        return preferred_path
+
+    matches = sorted(
+        [path for path in resolved_reports_root.glob(glob_pattern) if path.is_file()],
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
+    )
+    return matches[0] if matches else preferred_path
 
 
 def _normalize_trade_date(value: Any) -> str | None:
@@ -750,9 +854,18 @@ def _select_latest_btst_candidate(reports_root: Path, repo_root: Path) -> dict[s
 def _build_static_entries(repo_root: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for spec in STATIC_ENTRY_SPECS:
+        absolute_path = repo_root / spec["path"]
+        if not absolute_path.exists() and spec["id"] in STATIC_ENTRY_GLOB_OVERRIDES and str(spec["path"]).startswith("data/reports/"):
+            resolved_reports_root = repo_root / "data" / "reports"
+            relative_name = str(spec["path"]).replace("data/reports/", "", 1)
+            absolute_path = _resolve_existing_artifact_path(
+                resolved_reports_root,
+                relative_name,
+                glob_pattern=STATIC_ENTRY_GLOB_OVERRIDES[spec["id"]],
+            )
         entry = _build_entry(
             entry_id=spec["id"],
-            absolute_path=repo_root / spec["path"],
+            absolute_path=absolute_path,
             repo_root=repo_root,
             report_type=spec["report_type"],
             topic=spec["topic"],
@@ -1235,14 +1348,26 @@ def refresh_btst_score_fail_frontier_artifacts(
             refresh["transition_refresh_error"] = str(exc)
 
     candidate_report_json = str((window_evidence_refresh or {}).get("candidate_report_json") or "")
-    shadow_lane_priority_path = resolved_reports_root / SHADOW_LANE_PRIORITY_JSON
-    recurring_pair_comparison_path = resolved_reports_root / RECURRING_PAIR_COMPARISON_JSON
+    shadow_lane_priority_path = _resolve_existing_artifact_path(
+        resolved_reports_root,
+        SHADOW_LANE_PRIORITY_JSON,
+        glob_pattern="p4_shadow_lane_priority_board_*.json",
+    )
+    recurring_pair_comparison_path = _resolve_existing_artifact_path(
+        resolved_reports_root,
+        RECURRING_PAIR_COMPARISON_JSON,
+        glob_pattern="recurring_frontier_release_pair_comparison_*.json",
+    )
     recurring_shadow_inputs = {
         "shadow_lane_priority": shadow_lane_priority_path,
         "recurring_pair_comparison": recurring_pair_comparison_path,
         "candidate_report": Path(candidate_report_json).expanduser().resolve() if candidate_report_json else None,
         "recurring_transition_report": recurring_transition_json_path if recurring_transition_json_path.exists() else None,
-        "recurring_close_bundle": (resolved_reports_root / RECURRING_CLOSE_BUNDLE_JSON),
+        "recurring_close_bundle": _resolve_existing_artifact_path(
+            resolved_reports_root,
+            RECURRING_CLOSE_BUNDLE_JSON,
+            glob_pattern="btst_recurring_shadow_close_bundle_*.json",
+        ),
     }
     missing_recurring_shadow_inputs = [
         label
@@ -1280,16 +1405,16 @@ def refresh_btst_score_fail_frontier_artifacts(
 def refresh_btst_rollout_governance_artifacts(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     required_inputs = {
-        "action_board": resolved_reports_root / ACTION_BOARD_JSON,
-        "primary_roll_forward": resolved_reports_root / PRIMARY_ROLL_FORWARD_JSON,
-        "shadow_expansion": resolved_reports_root / SHADOW_EXPANSION_JSON,
-        "shadow_lane_priority": resolved_reports_root / SHADOW_LANE_PRIORITY_JSON,
-        "primary_window_gap": resolved_reports_root / PRIMARY_WINDOW_GAP_JSON,
-        "recurring_shadow_runbook": resolved_reports_root / RECURRING_SHADOW_RUNBOOK_JSON,
-        "primary_window_validation_runbook": resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON,
-        "shadow_peer_scan": resolved_reports_root / SHADOW_PEER_SCAN_JSON,
-        "structural_shadow_runbook": resolved_reports_root / STRUCTURAL_SHADOW_RUNBOOK_JSON,
-        "recurring_close_bundle": resolved_reports_root / RECURRING_CLOSE_BUNDLE_JSON,
+        "action_board": _resolve_existing_artifact_path(resolved_reports_root, ACTION_BOARD_JSON, glob_pattern="p3_top3_post_execution_action_board_*.json"),
+        "primary_roll_forward": _resolve_existing_artifact_path(resolved_reports_root, PRIMARY_ROLL_FORWARD_JSON, glob_pattern="p4_primary_roll_forward_validation_001309_*.json"),
+        "shadow_expansion": _resolve_existing_artifact_path(resolved_reports_root, SHADOW_EXPANSION_JSON, glob_pattern="p4_shadow_entry_expansion_board_300383_*.json"),
+        "shadow_lane_priority": _resolve_existing_artifact_path(resolved_reports_root, SHADOW_LANE_PRIORITY_JSON, glob_pattern="p4_shadow_lane_priority_board_*.json"),
+        "primary_window_gap": _resolve_existing_artifact_path(resolved_reports_root, PRIMARY_WINDOW_GAP_JSON, glob_pattern="p6_primary_window_gap_001309_*.json"),
+        "recurring_shadow_runbook": _resolve_existing_artifact_path(resolved_reports_root, RECURRING_SHADOW_RUNBOOK_JSON, glob_pattern="p6_recurring_shadow_runbook_*.json"),
+        "primary_window_validation_runbook": _resolve_existing_artifact_path(resolved_reports_root, PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON, glob_pattern="p7_primary_window_validation_runbook_001309_*.json"),
+        "shadow_peer_scan": _resolve_existing_artifact_path(resolved_reports_root, SHADOW_PEER_SCAN_JSON, glob_pattern="p7_shadow_peer_scan_300383_*.json"),
+        "structural_shadow_runbook": _resolve_existing_artifact_path(resolved_reports_root, STRUCTURAL_SHADOW_RUNBOOK_JSON, glob_pattern="p8_structural_shadow_runbook_300724_*.json"),
+        "recurring_close_bundle": _resolve_existing_artifact_path(resolved_reports_root, RECURRING_CLOSE_BUNDLE_JSON, glob_pattern="btst_recurring_shadow_close_bundle_*.json"),
     }
     missing_inputs = [label for label, path in required_inputs.items() if label != "recurring_close_bundle" and not path.exists()]
     if missing_inputs:
@@ -1343,13 +1468,13 @@ def refresh_btst_governance_synthesis_artifacts(
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     required_inputs = {
-        "action_board": resolved_reports_root / ACTION_BOARD_JSON,
-        "rollout_governance": resolved_reports_root / ROLLOUT_GOVERNANCE_JSON,
-        "primary_window_gap": resolved_reports_root / PRIMARY_WINDOW_GAP_JSON,
-        "recurring_shadow_runbook": resolved_reports_root / RECURRING_SHADOW_RUNBOOK_JSON,
-        "primary_window_validation_runbook": resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON,
-        "structural_shadow_runbook": resolved_reports_root / STRUCTURAL_SHADOW_RUNBOOK_JSON,
-        "candidate_entry_governance": resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON,
+        "action_board": _resolve_existing_artifact_path(resolved_reports_root, ACTION_BOARD_JSON, glob_pattern="p3_top3_post_execution_action_board_*.json"),
+        "rollout_governance": _resolve_existing_artifact_path(resolved_reports_root, ROLLOUT_GOVERNANCE_JSON, glob_pattern="p5_btst_rollout_governance_board_*.json"),
+        "primary_window_gap": _resolve_existing_artifact_path(resolved_reports_root, PRIMARY_WINDOW_GAP_JSON, glob_pattern="p6_primary_window_gap_001309_*.json"),
+        "recurring_shadow_runbook": _resolve_existing_artifact_path(resolved_reports_root, RECURRING_SHADOW_RUNBOOK_JSON, glob_pattern="p6_recurring_shadow_runbook_*.json"),
+        "primary_window_validation_runbook": _resolve_existing_artifact_path(resolved_reports_root, PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON, glob_pattern="p7_primary_window_validation_runbook_001309_*.json"),
+        "structural_shadow_runbook": _resolve_existing_artifact_path(resolved_reports_root, STRUCTURAL_SHADOW_RUNBOOK_JSON, glob_pattern="p8_structural_shadow_runbook_300724_*.json"),
+        "candidate_entry_governance": _resolve_existing_artifact_path(resolved_reports_root, CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON, glob_pattern="p9_candidate_entry_rollout_governance_*.json"),
     }
     missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
     if missing_inputs:
@@ -1396,13 +1521,13 @@ def refresh_btst_governance_synthesis_artifacts(
 def refresh_btst_governance_validation_artifacts(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     required_inputs = {
-        "action_board": resolved_reports_root / ACTION_BOARD_JSON,
-        "rollout_governance": resolved_reports_root / ROLLOUT_GOVERNANCE_JSON,
-        "primary_window_gap": resolved_reports_root / PRIMARY_WINDOW_GAP_JSON,
-        "recurring_shadow_runbook": resolved_reports_root / RECURRING_SHADOW_RUNBOOK_JSON,
-        "primary_window_validation_runbook": resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON,
-        "structural_shadow_runbook": resolved_reports_root / STRUCTURAL_SHADOW_RUNBOOK_JSON,
-        "candidate_entry_governance": resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON,
+        "action_board": _resolve_existing_artifact_path(resolved_reports_root, ACTION_BOARD_JSON, glob_pattern="p3_top3_post_execution_action_board_*.json"),
+        "rollout_governance": _resolve_existing_artifact_path(resolved_reports_root, ROLLOUT_GOVERNANCE_JSON, glob_pattern="p5_btst_rollout_governance_board_*.json"),
+        "primary_window_gap": _resolve_existing_artifact_path(resolved_reports_root, PRIMARY_WINDOW_GAP_JSON, glob_pattern="p6_primary_window_gap_001309_*.json"),
+        "recurring_shadow_runbook": _resolve_existing_artifact_path(resolved_reports_root, RECURRING_SHADOW_RUNBOOK_JSON, glob_pattern="p6_recurring_shadow_runbook_*.json"),
+        "primary_window_validation_runbook": _resolve_existing_artifact_path(resolved_reports_root, PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON, glob_pattern="p7_primary_window_validation_runbook_001309_*.json"),
+        "structural_shadow_runbook": _resolve_existing_artifact_path(resolved_reports_root, STRUCTURAL_SHADOW_RUNBOOK_JSON, glob_pattern="p8_structural_shadow_runbook_300724_*.json"),
+        "candidate_entry_governance": _resolve_existing_artifact_path(resolved_reports_root, CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON, glob_pattern="p9_candidate_entry_rollout_governance_*.json"),
         "governance_synthesis": resolved_reports_root / BTST_GOVERNANCE_SYNTHESIS_JSON,
     }
     missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
@@ -1473,6 +1598,64 @@ def refresh_btst_replay_cohort_artifacts(reports_root: str | Path) -> dict[str, 
     }
 
 
+def refresh_btst_independent_window_monitor_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    output_json_path = resolved_reports_root / BTST_INDEPENDENT_WINDOW_MONITOR_JSON
+    output_md_path = resolved_reports_root / BTST_INDEPENDENT_WINDOW_MONITOR_MD
+    try:
+        analysis = analyze_btst_independent_window_monitor(resolved_reports_root)
+        output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_md_path.write_text(render_btst_independent_window_monitor_markdown(analysis), encoding="utf-8")
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "error": str(exc),
+            "report_dir_count": 0,
+        }
+
+    return {
+        "status": "refreshed",
+        "report_dir_count": analysis.get("report_dir_count"),
+        "ready_lane_count": analysis.get("ready_lane_count"),
+        "waiting_lane_count": analysis.get("waiting_lane_count"),
+        "no_evidence_lane_count": analysis.get("no_evidence_lane_count"),
+        "output_json": output_json_path.as_posix(),
+    }
+
+
+def refresh_btst_tplus1_tplus2_objective_monitor_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    output_json_path = resolved_reports_root / BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_JSON
+    output_md_path = resolved_reports_root / BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_MD
+    try:
+        analysis = analyze_btst_tplus1_tplus2_objective_monitor(resolved_reports_root)
+        output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_md_path.write_text(render_btst_tplus1_tplus2_objective_monitor_markdown(analysis), encoding="utf-8")
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "error": str(exc),
+            "report_dir_count": 0,
+        }
+
+    tradeable_surface = dict(analysis.get("tradeable_surface") or {})
+    ticker_leaderboard = list(analysis.get("ticker_leaderboard") or [])
+    best_ticker_row = ticker_leaderboard[0] if ticker_leaderboard else {}
+    return {
+        "status": "refreshed",
+        "report_dir_count": analysis.get("report_dir_count"),
+        "closed_cycle_row_count": dict(analysis.get("all_surface") or {}).get("closed_cycle_count"),
+        "tradeable_closed_cycle_count": tradeable_surface.get("closed_cycle_count"),
+        "tradeable_positive_rate": tradeable_surface.get("t_plus_2_positive_rate"),
+        "tradeable_return_hit_rate": tradeable_surface.get("t_plus_2_return_hit_rate_at_target"),
+        "tradeable_mean_t_plus_2_return": tradeable_surface.get("mean_t_plus_2_return"),
+        "tradeable_verdict": tradeable_surface.get("verdict"),
+        "best_ticker": best_ticker_row.get("group_label"),
+        "best_ticker_objective_fit_score": best_ticker_row.get("objective_fit_score"),
+        "output_json": output_json_path.as_posix(),
+    }
+
+
 def generate_reports_manifest(
     reports_root: str | Path,
     *,
@@ -1485,6 +1668,8 @@ def generate_reports_manifest(
     btst_governance_synthesis_refresh: dict[str, Any] | None = None,
     btst_governance_validation_refresh: dict[str, Any] | None = None,
     btst_replay_cohort_refresh: dict[str, Any] | None = None,
+    btst_independent_window_monitor_refresh: dict[str, Any] | None = None,
+    btst_tplus1_tplus2_objective_monitor_refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     repo_root = _resolve_repo_root(resolved_reports_root)
@@ -1527,6 +1712,8 @@ def generate_reports_manifest(
         "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
         "btst_governance_validation_refresh": btst_governance_validation_refresh,
         "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
+        "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
+        "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
         "latest_btst_run": None,
         "reading_paths": reading_paths,
         "entries": entries,
@@ -1604,6 +1791,20 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         lines.append(f"- btst_replay_cohort_status: {btst_replay_cohort_refresh.get('status')}")
         lines.append(f"- btst_replay_cohort_report_count: {btst_replay_cohort_refresh.get('report_count')}")
         lines.append(f"- btst_replay_cohort_short_trade_only_report_count: {btst_replay_cohort_refresh.get('short_trade_only_report_count')}")
+    btst_independent_window_monitor_refresh = manifest.get("btst_independent_window_monitor_refresh") or {}
+    if btst_independent_window_monitor_refresh:
+        lines.append(f"- btst_independent_window_monitor_status: {btst_independent_window_monitor_refresh.get('status')}")
+        lines.append(f"- btst_independent_window_monitor_report_dir_count: {btst_independent_window_monitor_refresh.get('report_dir_count')}")
+        lines.append(f"- btst_independent_window_monitor_ready_lane_count: {btst_independent_window_monitor_refresh.get('ready_lane_count')}")
+        lines.append(f"- btst_independent_window_monitor_waiting_lane_count: {btst_independent_window_monitor_refresh.get('waiting_lane_count')}")
+    btst_tplus1_tplus2_objective_monitor_refresh = manifest.get("btst_tplus1_tplus2_objective_monitor_refresh") or {}
+    if btst_tplus1_tplus2_objective_monitor_refresh:
+        lines.append(f"- btst_tplus1_tplus2_objective_monitor_status: {btst_tplus1_tplus2_objective_monitor_refresh.get('status')}")
+        lines.append(f"- btst_tplus1_tplus2_objective_monitor_report_dir_count: {btst_tplus1_tplus2_objective_monitor_refresh.get('report_dir_count')}")
+        lines.append(f"- btst_tplus1_tplus2_objective_monitor_tradeable_closed_cycle_count: {btst_tplus1_tplus2_objective_monitor_refresh.get('tradeable_closed_cycle_count')}")
+        lines.append(f"- btst_tplus1_tplus2_objective_monitor_tradeable_positive_rate: {btst_tplus1_tplus2_objective_monitor_refresh.get('tradeable_positive_rate')}")
+        lines.append(f"- btst_tplus1_tplus2_objective_monitor_tradeable_return_hit_rate: {btst_tplus1_tplus2_objective_monitor_refresh.get('tradeable_return_hit_rate')}")
+        lines.append(f"- btst_tplus1_tplus2_objective_monitor_best_ticker: {btst_tplus1_tplus2_objective_monitor_refresh.get('best_ticker')}")
     latest_btst_run = manifest.get("latest_btst_run") or {}
     if latest_btst_run:
         lines.append(f"- latest_btst_report_dir: {latest_btst_run['report_dir']}")
@@ -1642,6 +1843,8 @@ def generate_reports_manifest_artifacts(
     if latest_btst_run:
         latest_btst_run = _extract_btst_candidate(latest_btst_run["report_dir"], repo_root)
     btst_window_evidence_refresh = refresh_btst_window_evidence_artifacts(resolved_reports_root)
+    btst_independent_window_monitor_refresh = refresh_btst_independent_window_monitor_artifacts(resolved_reports_root)
+    btst_tplus1_tplus2_objective_monitor_refresh = refresh_btst_tplus1_tplus2_objective_monitor_artifacts(resolved_reports_root)
     candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
     btst_score_fail_frontier_refresh = refresh_btst_score_fail_frontier_artifacts(
         resolved_reports_root,
@@ -1666,6 +1869,8 @@ def generate_reports_manifest_artifacts(
         btst_governance_synthesis_refresh=btst_governance_synthesis_refresh,
         btst_governance_validation_refresh=btst_governance_validation_refresh,
         btst_replay_cohort_refresh=btst_replay_cohort_refresh,
+        btst_independent_window_monitor_refresh=btst_independent_window_monitor_refresh,
+        btst_tplus1_tplus2_objective_monitor_refresh=btst_tplus1_tplus2_objective_monitor_refresh,
     )
     resolved_output_json.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     resolved_output_md.write_text(render_reports_manifest_markdown(manifest, output_parent=resolved_output_md.parent), encoding="utf-8")
@@ -1679,6 +1884,8 @@ def generate_reports_manifest_artifacts(
         "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
         "btst_governance_validation_refresh": btst_governance_validation_refresh,
         "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
+        "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
+        "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
         "json_path": resolved_output_json.as_posix(),
         "markdown_path": resolved_output_md.as_posix(),
     }

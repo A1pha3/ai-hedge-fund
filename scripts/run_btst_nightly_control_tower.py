@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.analyze_btst_latest_close_validation import generate_btst_latest_close_validation_artifacts
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
 
 
@@ -15,6 +16,8 @@ DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_nightly_control_tower_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_nightly_control_tower_latest.md"
 DEFAULT_DELTA_JSON = REPORTS_DIR / "btst_open_ready_delta_latest.json"
 DEFAULT_DELTA_MD = REPORTS_DIR / "btst_open_ready_delta_latest.md"
+DEFAULT_CLOSE_VALIDATION_JSON = REPORTS_DIR / "btst_latest_close_validation_latest.json"
+DEFAULT_CLOSE_VALIDATION_MD = REPORTS_DIR / "btst_latest_close_validation_latest.md"
 DEFAULT_HISTORY_DIR = REPORTS_DIR / "archive" / "btst_nightly_control_tower_history"
 
 
@@ -320,9 +323,13 @@ def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
 def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     synthesis = _safe_load_json(dict(manifest.get("btst_governance_synthesis_refresh") or {}).get("output_json"))
     validation = _safe_load_json(dict(manifest.get("btst_governance_validation_refresh") or {}).get("output_json"))
+    independent_window_monitor = _safe_load_json(dict(manifest.get("btst_independent_window_monitor_refresh") or {}).get("output_json"))
+    tplus1_tplus2_objective_monitor = _safe_load_json(dict(manifest.get("btst_tplus1_tplus2_objective_monitor_refresh") or {}).get("output_json"))
     return {
         "synthesis": synthesis,
         "validation": validation,
+        "independent_window_monitor": independent_window_monitor,
+        "tplus1_tplus2_objective_monitor": tplus1_tplus2_objective_monitor,
         "rollout_lanes": list(synthesis.get("lane_matrix") or []),
         "waiting_lane_count": synthesis.get("waiting_lane_count"),
         "ready_lane_count": synthesis.get("ready_lane_count"),
@@ -330,6 +337,12 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "lane_status_counts": synthesis.get("lane_status_counts"),
         "closed_frontiers": list(synthesis.get("closed_frontiers") or []),
         "next_actions": list(synthesis.get("next_actions") or [])[:3],
+        "independent_window_ready_lane_count": independent_window_monitor.get("ready_lane_count"),
+        "independent_window_waiting_lane_count": independent_window_monitor.get("waiting_lane_count"),
+        "tplus1_tplus2_tradeable_positive_rate": dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {}).get("t_plus_2_positive_rate"),
+        "tplus1_tplus2_tradeable_return_hit_rate": dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {}).get("t_plus_2_return_hit_rate_at_target"),
+        "tplus1_tplus2_tradeable_mean_return": dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {}).get("mean_t_plus_2_return"),
+        "tplus1_tplus2_tradeable_verdict": dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {}).get("verdict"),
         "overall_verdict": validation.get("overall_verdict"),
         "warn_count": validation.get("warn_count"),
         "fail_count": validation.get("fail_count"),
@@ -1208,6 +1221,8 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
     recommended_reading_order: list[dict[str, Any]] = []
     for entry_id in (
         "btst_governance_synthesis_latest",
+        "btst_tplus1_tplus2_objective_monitor_latest",
+        "btst_independent_window_monitor_latest",
         "latest_btst_priority_board",
         "latest_btst_catalyst_theme_frontier_markdown",
         "btst_score_fail_frontier_latest",
@@ -1237,6 +1252,7 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "btst_governance_synthesis_refresh": dict(manifest.get("btst_governance_synthesis_refresh") or {}).get("status"),
             "btst_governance_validation_refresh": dict(manifest.get("btst_governance_validation_refresh") or {}).get("status"),
             "btst_replay_cohort_refresh": dict(manifest.get("btst_replay_cohort_refresh") or {}).get("status"),
+            "btst_independent_window_monitor_refresh": dict(manifest.get("btst_independent_window_monitor_refresh") or {}).get("status"),
         },
         "control_tower_snapshot": control_tower_snapshot,
         "latest_priority_board_snapshot": {
@@ -1263,6 +1279,8 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "score_fail_recurring_markdown": latest_btst_snapshot.get("score_fail_recurring_markdown_path"),
             "score_fail_transition_markdown": latest_btst_snapshot.get("score_fail_transition_markdown_path"),
             "replay_cohort_markdown": _entry_by_id(manifest, "btst_replay_cohort_latest").get("absolute_path"),
+            "independent_window_monitor_markdown": _entry_by_id(manifest, "btst_independent_window_monitor_latest").get("absolute_path"),
+            "tplus1_tplus2_objective_monitor_markdown": _entry_by_id(manifest, "btst_tplus1_tplus2_objective_monitor_latest").get("absolute_path"),
         },
     }
 
@@ -1291,6 +1309,12 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- governance_verdict: {control_tower_snapshot.get('overall_verdict')}")
     lines.append(f"- waiting_lane_count: {control_tower_snapshot.get('waiting_lane_count')}")
     lines.append(f"- ready_lane_count: {control_tower_snapshot.get('ready_lane_count')}")
+    lines.append(f"- independent_window_ready_lane_count: {control_tower_snapshot.get('independent_window_ready_lane_count')}")
+    lines.append(f"- independent_window_waiting_lane_count: {control_tower_snapshot.get('independent_window_waiting_lane_count')}")
+    lines.append(f"- tplus1_tplus2_tradeable_positive_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_positive_rate')}")
+    lines.append(f"- tplus1_tplus2_tradeable_return_hit_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_return_hit_rate')}")
+    lines.append(f"- tplus1_tplus2_tradeable_mean_return: {control_tower_snapshot.get('tplus1_tplus2_tradeable_mean_return')}")
+    lines.append(f"- tplus1_tplus2_tradeable_verdict: {control_tower_snapshot.get('tplus1_tplus2_tradeable_verdict')}")
     lines.append(f"- replay_report_count: {replay_cohort_snapshot.get('report_count')}")
     lines.append(f"- replay_selection_target_counts: {replay_cohort_snapshot.get('selection_target_counts')}")
     lines.append(f"- catalyst_frontier_status: {catalyst_theme_frontier_summary.get('status') or 'unavailable'}")
@@ -1340,6 +1364,39 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
             lines.append(f"  validation_verdict: {row.get('validation_verdict')}")
             lines.append(f"  missing_window_count: {row.get('missing_window_count')}")
             lines.append(f"  next_step: {row.get('next_step')}")
+    lines.append("")
+
+    lines.append("## Independent Window Monitor")
+    independent_window_monitor = dict(control_tower_snapshot.get("independent_window_monitor") or {})
+    if not independent_window_monitor:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- report_dir_count: {independent_window_monitor.get('report_dir_count')}")
+        lines.append(f"- recommendation: {independent_window_monitor.get('recommendation')}")
+        for row in list(independent_window_monitor.get("rows") or []):
+            lines.append(
+                f"- ticker={row.get('ticker')} lane_id={row.get('lane_id')} readiness={row.get('readiness')} distinct_window_count={row.get('distinct_window_count')} missing_window_count={row.get('missing_window_count')}"
+            )
+            lines.append(f"  next_step: {row.get('next_step')}")
+    lines.append("")
+
+    lines.append("## T+1/T+2 Objective Monitor")
+    tplus1_tplus2_objective_monitor = dict(control_tower_snapshot.get("tplus1_tplus2_objective_monitor") or {})
+    if not tplus1_tplus2_objective_monitor:
+        lines.append("- unavailable")
+    else:
+        tradeable_surface = dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {})
+        lines.append(f"- report_dir_count: {tplus1_tplus2_objective_monitor.get('report_dir_count')}")
+        lines.append(f"- recommendation: {tplus1_tplus2_objective_monitor.get('recommendation')}")
+        lines.append(f"- tradeable_closed_cycle_count: {tradeable_surface.get('closed_cycle_count')}")
+        lines.append(f"- tradeable_positive_rate: {tradeable_surface.get('t_plus_2_positive_rate')}")
+        lines.append(f"- tradeable_return_hit_rate_at_target: {tradeable_surface.get('t_plus_2_return_hit_rate_at_target')}")
+        lines.append(f"- tradeable_mean_t_plus_2_return: {tradeable_surface.get('mean_t_plus_2_return')}")
+        lines.append(f"- tradeable_verdict: {tradeable_surface.get('verdict')}")
+        for row in list(tplus1_tplus2_objective_monitor.get("ticker_leaderboard") or [])[:3]:
+            lines.append(
+                f"- ticker_objective_leader: {row.get('group_label')} closed_cycle_count={row.get('closed_cycle_count')} positive_rate={row.get('t_plus_2_positive_rate')} return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
+            )
     lines.append("")
 
     lines.append("## Priority Board Snapshot")
@@ -1467,6 +1524,8 @@ def generate_btst_nightly_control_tower_artifacts(
     output_md: str | Path | None = None,
     delta_output_json: str | Path | None = None,
     delta_output_md: str | Path | None = None,
+    close_validation_output_json: str | Path | None = None,
+    close_validation_output_md: str | Path | None = None,
     history_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
@@ -1474,6 +1533,8 @@ def generate_btst_nightly_control_tower_artifacts(
     resolved_output_md = Path(output_md).expanduser().resolve() if output_md else (resolved_reports_root / DEFAULT_OUTPUT_MD.name).resolve()
     resolved_delta_output_json = Path(delta_output_json).expanduser().resolve() if delta_output_json else (resolved_reports_root / DEFAULT_DELTA_JSON.name).resolve()
     resolved_delta_output_md = Path(delta_output_md).expanduser().resolve() if delta_output_md else (resolved_reports_root / DEFAULT_DELTA_MD.name).resolve()
+    resolved_close_validation_output_json = Path(close_validation_output_json).expanduser().resolve() if close_validation_output_json else (resolved_reports_root / DEFAULT_CLOSE_VALIDATION_JSON.name).resolve()
+    resolved_close_validation_output_md = Path(close_validation_output_md).expanduser().resolve() if close_validation_output_md else (resolved_reports_root / DEFAULT_CLOSE_VALIDATION_MD.name).resolve()
     resolved_history_dir = Path(history_dir).expanduser().resolve() if history_dir else (resolved_reports_root / DEFAULT_HISTORY_DIR.relative_to(REPORTS_DIR)).resolve()
 
     pre_manifest_result = generate_reports_manifest_artifacts(reports_root=resolved_reports_root)
@@ -1492,6 +1553,14 @@ def generate_btst_nightly_control_tower_artifacts(
     resolved_delta_output_md.write_text(render_btst_open_ready_delta_markdown(delta_payload, output_parent=resolved_delta_output_md.parent), encoding="utf-8")
     resolved_output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     resolved_output_md.write_text(render_btst_nightly_control_tower_markdown(payload, output_parent=resolved_output_md.parent), encoding="utf-8")
+    close_validation_result = generate_btst_latest_close_validation_artifacts(
+        nightly_payload=payload,
+        delta_payload=delta_payload,
+        nightly_json_path=resolved_output_json,
+        delta_json_path=resolved_delta_output_json,
+        output_json=resolved_close_validation_output_json,
+        output_md=resolved_close_validation_output_md,
+    )
     history_json_path = _archive_nightly_payload(payload, resolved_history_dir)
     post_manifest_result = generate_reports_manifest_artifacts(reports_root=resolved_reports_root)
 
@@ -1502,6 +1571,8 @@ def generate_btst_nightly_control_tower_artifacts(
         "markdown_path": resolved_output_md.as_posix(),
         "delta_json_path": resolved_delta_output_json.as_posix(),
         "delta_markdown_path": resolved_delta_output_md.as_posix(),
+        "close_validation_json_path": close_validation_result["json_path"],
+        "close_validation_markdown_path": close_validation_result["markdown_path"],
         "history_json_path": history_json_path,
         "catalyst_theme_frontier_json": dict(payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_json_path"),
         "catalyst_theme_frontier_markdown": dict(payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_markdown_path"),
@@ -1517,6 +1588,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD), help="Output Markdown artifact path")
     parser.add_argument("--delta-output-json", default=str(DEFAULT_DELTA_JSON), help="Output JSON path for the open-ready delta artifact")
     parser.add_argument("--delta-output-md", default=str(DEFAULT_DELTA_MD), help="Output Markdown path for the open-ready delta artifact")
+    parser.add_argument("--close-validation-output-json", default=str(DEFAULT_CLOSE_VALIDATION_JSON), help="Output JSON path for the latest close validation artifact")
+    parser.add_argument("--close-validation-output-md", default=str(DEFAULT_CLOSE_VALIDATION_MD), help="Output Markdown path for the latest close validation artifact")
     parser.add_argument("--history-dir", default=str(DEFAULT_HISTORY_DIR), help="Directory used to archive historical nightly control tower JSON snapshots")
     return parser.parse_args()
 
@@ -1529,12 +1602,16 @@ def main() -> None:
         output_md=args.output_md,
         delta_output_json=args.delta_output_json,
         delta_output_md=args.delta_output_md,
+        close_validation_output_json=args.close_validation_output_json,
+        close_validation_output_md=args.close_validation_output_md,
         history_dir=args.history_dir,
     )
     print(f"btst_open_ready_delta_json={result['delta_json_path']}")
     print(f"btst_open_ready_delta_markdown={result['delta_markdown_path']}")
     print(f"btst_nightly_control_tower_json={result['json_path']}")
     print(f"btst_nightly_control_tower_markdown={result['markdown_path']}")
+    print(f"btst_latest_close_validation_json={result['close_validation_json_path']}")
+    print(f"btst_latest_close_validation_markdown={result['close_validation_markdown_path']}")
     print(f"btst_nightly_control_tower_manifest_json={result['manifest_json']}")
     print(f"btst_nightly_control_tower_manifest_markdown={result['manifest_markdown']}")
 
