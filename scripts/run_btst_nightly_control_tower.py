@@ -234,6 +234,37 @@ def _extract_catalyst_theme_frontier_summary(frontier: dict[str, Any]) -> dict[s
     }
 
 
+def _extract_score_fail_frontier_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    refresh = dict(manifest.get("btst_score_fail_frontier_refresh") or {})
+    score_fail_analysis = _safe_load_json(refresh.get("analysis_json"))
+    score_fail_frontier = _safe_load_json(refresh.get("frontier_json"))
+    recurring_frontier = _safe_load_json(refresh.get("recurring_json"))
+    if not any([refresh, score_fail_analysis, score_fail_frontier, recurring_frontier]):
+        return {}
+
+    top_rescue_rows = list(score_fail_frontier.get("minimal_near_miss_rows") or [])[:3]
+    priority_queue = list(recurring_frontier.get("priority_queue") or [])[:3]
+    return {
+        "status": refresh.get("status"),
+        "report_dir": refresh.get("report_dir"),
+        "rejected_short_trade_boundary_count": score_fail_analysis.get("rejected_short_trade_boundary_count"),
+        "rescueable_case_count": score_fail_frontier.get("rescueable_case_count"),
+        "threshold_only_rescue_count": score_fail_frontier.get("rescueable_with_threshold_only_count"),
+        "recurring_case_count": recurring_frontier.get("recurring_case_count"),
+        "transition_candidate_count": refresh.get("transition_candidate_count"),
+        "recurring_shadow_refresh_status": refresh.get("recurring_shadow_refresh_status"),
+        "priority_queue_tickers": [str(row.get("ticker") or "") for row in priority_queue if row.get("ticker")],
+        "top_rescue_tickers": [str(row.get("ticker") or "") for row in top_rescue_rows if row.get("ticker")],
+        "top_rescue_rows": top_rescue_rows,
+        "priority_queue": priority_queue,
+        "recommendation": recurring_frontier.get("recommendation") or score_fail_frontier.get("recommendation") or score_fail_analysis.get("recommendation"),
+        "analysis_markdown_path": refresh.get("analysis_markdown"),
+        "frontier_markdown_path": refresh.get("frontier_markdown"),
+        "recurring_markdown_path": refresh.get("recurring_markdown"),
+        "transition_markdown_path": refresh.get("transition_markdown"),
+    }
+
+
 def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     latest_btst_run = dict(manifest.get("latest_btst_run") or {})
     report_dir_abs = latest_btst_run.get("report_dir_abs")
@@ -258,6 +289,7 @@ def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     brief = _safe_load_json(brief_json_path)
     catalyst_theme_frontier = _safe_load_json(catalyst_theme_frontier_json_path)
     brief_summary = dict(brief.get("summary") or {})
+    score_fail_frontier_summary = _extract_score_fail_frontier_summary(manifest)
 
     return {
         "report_dir_abs": report_dir_abs,
@@ -273,10 +305,14 @@ def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "opening_watch_card_markdown_path": str(Path(opening_watch_card_markdown_path).expanduser().resolve()) if opening_watch_card_markdown_path else None,
         "catalyst_theme_frontier_json_path": str(Path(catalyst_theme_frontier_json_path).expanduser().resolve()) if catalyst_theme_frontier_json_path else None,
         "catalyst_theme_frontier_markdown_path": str(Path(catalyst_theme_frontier_markdown_path).expanduser().resolve()) if catalyst_theme_frontier_markdown_path else None,
+        "score_fail_frontier_markdown_path": score_fail_frontier_summary.get("frontier_markdown_path"),
+        "score_fail_recurring_markdown_path": score_fail_frontier_summary.get("recurring_markdown_path"),
+        "score_fail_transition_markdown_path": score_fail_frontier_summary.get("transition_markdown_path"),
         "priority_board": priority_board,
         "brief_recommendation": brief.get("recommendation"),
         "brief_summary": brief_summary,
         "catalyst_theme_frontier_summary": _extract_catalyst_theme_frontier_summary(catalyst_theme_frontier),
+        "score_fail_frontier_summary": score_fail_frontier_summary,
         "llm_error_digest": dict(session_summary.get("llm_error_digest") or {}),
     }
 
@@ -287,6 +323,7 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     return {
         "synthesis": synthesis,
         "validation": validation,
+        "rollout_lanes": list(synthesis.get("lane_matrix") or []),
         "waiting_lane_count": synthesis.get("waiting_lane_count"),
         "ready_lane_count": synthesis.get("ready_lane_count"),
         "recommendation": synthesis.get("recommendation"),
@@ -667,12 +704,89 @@ def _diff_catalyst_frontier(
     }
 
 
+def _diff_score_fail_frontier(current_payload: dict[str, Any], previous_payload: dict[str, Any]) -> dict[str, Any]:
+    if not previous_payload:
+        return {
+            "available": False,
+            "reason": "no_previous_nightly_snapshot",
+            "has_changes": False,
+        }
+
+    current_summary = dict(dict(current_payload.get("latest_btst_snapshot") or {}).get("score_fail_frontier_summary") or {})
+    previous_summary = dict(dict(previous_payload.get("latest_btst_snapshot") or {}).get("score_fail_frontier_summary") or {})
+    if not current_summary and not previous_summary:
+        return {
+            "available": False,
+            "reason": "no_score_fail_frontier_summary",
+            "has_changes": False,
+        }
+
+    current_priority_queue_tickers = list(current_summary.get("priority_queue_tickers") or [])
+    previous_priority_queue_tickers = list(previous_summary.get("priority_queue_tickers") or [])
+    current_top_rescue_tickers = list(current_summary.get("top_rescue_tickers") or [])
+    previous_top_rescue_tickers = list(previous_summary.get("top_rescue_tickers") or [])
+    added_priority_tickers = [ticker for ticker in current_priority_queue_tickers if ticker not in previous_priority_queue_tickers]
+    removed_priority_tickers = [ticker for ticker in previous_priority_queue_tickers if ticker not in current_priority_queue_tickers]
+    added_top_rescue_tickers = [ticker for ticker in current_top_rescue_tickers if ticker not in previous_top_rescue_tickers]
+    removed_top_rescue_tickers = [ticker for ticker in previous_top_rescue_tickers if ticker not in current_top_rescue_tickers]
+
+    rejected_case_count_delta = int(current_summary.get("rejected_short_trade_boundary_count") or 0) - int(previous_summary.get("rejected_short_trade_boundary_count") or 0)
+    rescueable_case_count_delta = int(current_summary.get("rescueable_case_count") or 0) - int(previous_summary.get("rescueable_case_count") or 0)
+    threshold_only_rescue_count_delta = int(current_summary.get("threshold_only_rescue_count") or 0) - int(previous_summary.get("threshold_only_rescue_count") or 0)
+    recurring_case_count_delta = int(current_summary.get("recurring_case_count") or 0) - int(previous_summary.get("recurring_case_count") or 0)
+    transition_candidate_count_delta = int(current_summary.get("transition_candidate_count") or 0) - int(previous_summary.get("transition_candidate_count") or 0)
+    status_changed = str(current_summary.get("status") or "") != str(previous_summary.get("status") or "")
+    previous_data_available = bool(previous_summary)
+    comparison_note = None
+    if not previous_data_available and current_summary:
+        comparison_note = "上一版 nightly 快照尚未记录 score-fail frontier 摘要，本轮是首个可比较的 frontier queue 暴露。"
+
+    has_changes = any(
+        [
+            status_changed,
+            rejected_case_count_delta != 0,
+            rescueable_case_count_delta != 0,
+            threshold_only_rescue_count_delta != 0,
+            recurring_case_count_delta != 0,
+            transition_candidate_count_delta != 0,
+            bool(added_priority_tickers),
+            bool(removed_priority_tickers),
+            bool(added_top_rescue_tickers),
+            bool(removed_top_rescue_tickers),
+        ]
+    )
+    return {
+        "available": True,
+        "previous_data_available": previous_data_available,
+        "comparison_note": comparison_note,
+        "previous_status": previous_summary.get("status"),
+        "current_status": current_summary.get("status"),
+        "status_changed": status_changed,
+        "rejected_case_count_delta": rejected_case_count_delta,
+        "rescueable_case_count_delta": rescueable_case_count_delta,
+        "threshold_only_rescue_count_delta": threshold_only_rescue_count_delta,
+        "recurring_case_count_delta": recurring_case_count_delta,
+        "transition_candidate_count_delta": transition_candidate_count_delta,
+        "previous_priority_queue_tickers": previous_priority_queue_tickers,
+        "current_priority_queue_tickers": current_priority_queue_tickers,
+        "added_priority_tickers": added_priority_tickers,
+        "removed_priority_tickers": removed_priority_tickers,
+        "previous_top_rescue_tickers": previous_top_rescue_tickers,
+        "current_top_rescue_tickers": current_top_rescue_tickers,
+        "added_top_rescue_tickers": added_top_rescue_tickers,
+        "removed_top_rescue_tickers": removed_top_rescue_tickers,
+        "has_changes": has_changes,
+    }
+
+
 def _list_changed_delta_sections(delta_payload: dict[str, Any]) -> list[str]:
     changed_sections: list[str] = []
     if dict(delta_payload.get("priority_delta") or {}).get("has_changes"):
         changed_sections.append("priority")
     if dict(delta_payload.get("catalyst_frontier_delta") or {}).get("has_changes"):
         changed_sections.append("catalyst_frontier")
+    if dict(delta_payload.get("score_fail_frontier_delta") or {}).get("has_changes"):
+        changed_sections.append("score_fail_frontier")
     if dict(delta_payload.get("governance_delta") or {}).get("has_changes"):
         changed_sections.append("governance")
     if dict(delta_payload.get("replay_delta") or {}).get("has_changes"):
@@ -775,6 +889,7 @@ def build_btst_open_ready_delta_payload(
     governance_delta = _diff_governance(current_payload, previous_payload)
     replay_delta = _diff_replay(current_payload, previous_payload, previous_report_snapshot)
     catalyst_frontier_delta = _diff_catalyst_frontier(current_payload, previous_payload, previous_report_snapshot)
+    score_fail_frontier_delta = _diff_score_fail_frontier(current_payload, previous_payload)
 
     operator_focus: list[str] = []
     if comparison_basis == "baseline_captured":
@@ -811,12 +926,23 @@ def build_btst_open_ready_delta_payload(
             )
         elif catalyst_frontier_delta.get("comparison_note"):
             operator_focus.append(str(catalyst_frontier_delta.get("comparison_note")))
+    if score_fail_frontier_delta.get("available") and score_fail_frontier_delta.get("has_changes"):
+        if score_fail_frontier_delta.get("added_priority_tickers"):
+            operator_focus.append("score-fail recurring 队列新增重点票: " + ", ".join(score_fail_frontier_delta.get("added_priority_tickers") or []))
+        elif score_fail_frontier_delta.get("added_top_rescue_tickers"):
+            operator_focus.append("score-fail frontier 新增 near-miss rescue 票: " + ", ".join(score_fail_frontier_delta.get("added_top_rescue_tickers") or []))
+        elif score_fail_frontier_delta.get("status_changed"):
+            operator_focus.append(
+                f"score-fail frontier 状态变化: {score_fail_frontier_delta.get('previous_status') or 'n/a'} -> {score_fail_frontier_delta.get('current_status') or 'n/a'}。"
+            )
+        elif score_fail_frontier_delta.get("comparison_note"):
+            operator_focus.append(str(score_fail_frontier_delta.get("comparison_note")))
     if not operator_focus:
-        operator_focus.append("本轮相对上一轮没有检测到 priority / governance / replay 的结构变化，可视为稳定复跑。")
+        operator_focus.append("本轮相对上一轮没有检测到 priority / governance / replay / score-fail frontier 的结构变化，可视为稳定复跑。")
 
     overall_delta_verdict = "baseline_captured"
     if comparison_basis != "baseline_captured":
-        overall_delta_verdict = "changed" if any([priority_delta.get("has_changes"), governance_delta.get("has_changes"), replay_delta.get("has_changes"), catalyst_frontier_delta.get("has_changes")]) else "stable"
+        overall_delta_verdict = "changed" if any([priority_delta.get("has_changes"), governance_delta.get("has_changes"), replay_delta.get("has_changes"), catalyst_frontier_delta.get("has_changes"), score_fail_frontier_delta.get("has_changes")]) else "stable"
 
     material_change_anchor: dict[str, Any] = {}
     if enable_material_anchor and historical_payload_candidates and comparison_scope == "same_report_rerun" and overall_delta_verdict == "stable":
@@ -842,6 +968,7 @@ def build_btst_open_ready_delta_payload(
         "operator_focus": operator_focus[:6],
         "priority_delta": priority_delta,
         "catalyst_frontier_delta": catalyst_frontier_delta,
+        "score_fail_frontier_delta": score_fail_frontier_delta,
         "governance_delta": governance_delta,
         "replay_delta": replay_delta,
         "material_change_anchor": material_change_anchor,
@@ -852,6 +979,10 @@ def build_btst_open_ready_delta_payload(
             "previous_priority_board_json": previous_payload.get("latest_btst_snapshot", {}).get("priority_board_json_path") if previous_payload else previous_report_snapshot.get("priority_board_json_path"),
             "current_catalyst_theme_frontier_markdown": dict(current_payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_markdown_path"),
             "previous_catalyst_theme_frontier_markdown": previous_payload.get("latest_btst_snapshot", {}).get("catalyst_theme_frontier_markdown_path") if previous_payload else previous_report_snapshot.get("catalyst_theme_frontier_markdown_path"),
+            "current_score_fail_frontier_markdown": dict(current_payload.get("latest_btst_snapshot") or {}).get("score_fail_frontier_markdown_path"),
+            "previous_score_fail_frontier_markdown": previous_payload.get("latest_btst_snapshot", {}).get("score_fail_frontier_markdown_path") if previous_payload else None,
+            "current_score_fail_recurring_markdown": dict(current_payload.get("latest_btst_snapshot") or {}).get("score_fail_recurring_markdown_path"),
+            "previous_score_fail_recurring_markdown": previous_payload.get("latest_btst_snapshot", {}).get("score_fail_recurring_markdown_path") if previous_payload else None,
             "report_manifest_json": dict(current_payload.get("source_paths") or {}).get("report_manifest_json"),
             "report_manifest_markdown": dict(current_payload.get("source_paths") or {}).get("report_manifest_markdown"),
         },
@@ -864,6 +995,7 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
     previous_reference = dict(payload.get("previous_reference") or {})
     priority_delta = dict(payload.get("priority_delta") or {})
     catalyst_frontier_delta = dict(payload.get("catalyst_frontier_delta") or {})
+    score_fail_frontier_delta = dict(payload.get("score_fail_frontier_delta") or {})
     governance_delta = dict(payload.get("governance_delta") or {})
     replay_delta = dict(payload.get("replay_delta") or {})
     material_change_anchor = dict(payload.get("material_change_anchor") or {})
@@ -971,6 +1103,36 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
             lines.append("- no_catalyst_frontier_change_detected")
     lines.append("")
 
+    lines.append("## Score-Fail Frontier Delta")
+    if not score_fail_frontier_delta.get("available"):
+        lines.append(f"- unavailable: {score_fail_frontier_delta.get('reason')}")
+    else:
+        lines.append(f"- previous_data_available: {score_fail_frontier_delta.get('previous_data_available')}")
+        lines.append(f"- previous_status: {score_fail_frontier_delta.get('previous_status') or 'n/a'}")
+        lines.append(f"- current_status: {score_fail_frontier_delta.get('current_status') or 'n/a'}")
+        lines.append(f"- rejected_case_count_delta: {score_fail_frontier_delta.get('rejected_case_count_delta')}")
+        lines.append(f"- rescueable_case_count_delta: {score_fail_frontier_delta.get('rescueable_case_count_delta')}")
+        lines.append(f"- threshold_only_rescue_count_delta: {score_fail_frontier_delta.get('threshold_only_rescue_count_delta')}")
+        lines.append(f"- recurring_case_count_delta: {score_fail_frontier_delta.get('recurring_case_count_delta')}")
+        lines.append(f"- transition_candidate_count_delta: {score_fail_frontier_delta.get('transition_candidate_count_delta')}")
+        if score_fail_frontier_delta.get("comparison_note"):
+            lines.append(f"- note: {score_fail_frontier_delta.get('comparison_note')}")
+        previous_priority_queue = list(score_fail_frontier_delta.get("previous_priority_queue_tickers") or [])
+        current_priority_queue = list(score_fail_frontier_delta.get("current_priority_queue_tickers") or [])
+        lines.append(f"- previous_priority_queue_tickers: {', '.join(previous_priority_queue) if previous_priority_queue else 'none'}")
+        lines.append(f"- current_priority_queue_tickers: {', '.join(current_priority_queue) if current_priority_queue else 'none'}")
+        for ticker in list(score_fail_frontier_delta.get("added_priority_tickers") or []):
+            lines.append(f"- added_priority_ticker: {ticker}")
+        for ticker in list(score_fail_frontier_delta.get("removed_priority_tickers") or []):
+            lines.append(f"- removed_priority_ticker: {ticker}")
+        for ticker in list(score_fail_frontier_delta.get("added_top_rescue_tickers") or []):
+            lines.append(f"- added_top_rescue_ticker: {ticker}")
+        for ticker in list(score_fail_frontier_delta.get("removed_top_rescue_tickers") or []):
+            lines.append(f"- removed_top_rescue_ticker: {ticker}")
+        if not score_fail_frontier_delta.get("has_changes"):
+            lines.append("- no_score_fail_frontier_change_detected")
+    lines.append("")
+
     lines.append("## Governance Delta")
     if not governance_delta.get("available"):
         lines.append(f"- unavailable: {governance_delta.get('reason')}")
@@ -1048,6 +1210,8 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
         "btst_governance_synthesis_latest",
         "latest_btst_priority_board",
         "latest_btst_catalyst_theme_frontier_markdown",
+        "btst_score_fail_frontier_latest",
+        "btst_score_fail_recurring_frontier_latest",
         "btst_governance_validation_latest",
         "btst_replay_cohort_latest",
     ):
@@ -1067,7 +1231,9 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
         "reports_root": manifest.get("reports_root"),
         "latest_btst_run": manifest.get("latest_btst_run"),
         "refresh_status": {
+            "btst_window_evidence_refresh": dict(manifest.get("btst_window_evidence_refresh") or {}).get("status"),
             "candidate_entry_shadow_refresh": dict(manifest.get("candidate_entry_shadow_refresh") or {}).get("status"),
+            "btst_score_fail_frontier_refresh": dict(manifest.get("btst_score_fail_frontier_refresh") or {}).get("status"),
             "btst_governance_synthesis_refresh": dict(manifest.get("btst_governance_synthesis_refresh") or {}).get("status"),
             "btst_governance_validation_refresh": dict(manifest.get("btst_governance_validation_refresh") or {}).get("status"),
             "btst_replay_cohort_refresh": dict(manifest.get("btst_replay_cohort_refresh") or {}).get("status"),
@@ -1093,6 +1259,9 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "execution_card_markdown": latest_btst_snapshot.get("execution_card_markdown_path"),
             "opening_watch_card_markdown": latest_btst_snapshot.get("opening_watch_card_markdown_path"),
             "catalyst_theme_frontier_markdown": latest_btst_snapshot.get("catalyst_theme_frontier_markdown_path"),
+            "score_fail_frontier_markdown": latest_btst_snapshot.get("score_fail_frontier_markdown_path"),
+            "score_fail_recurring_markdown": latest_btst_snapshot.get("score_fail_recurring_markdown_path"),
+            "score_fail_transition_markdown": latest_btst_snapshot.get("score_fail_transition_markdown_path"),
             "replay_cohort_markdown": _entry_by_id(manifest, "btst_replay_cohort_latest").get("absolute_path"),
         },
     }
@@ -1106,6 +1275,7 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     replay_cohort_snapshot = dict(payload.get("replay_cohort_snapshot") or {})
     latest_btst_snapshot = dict(payload.get("latest_btst_snapshot") or {})
     catalyst_theme_frontier_summary = dict(latest_btst_snapshot.get("catalyst_theme_frontier_summary") or {})
+    score_fail_frontier_summary = dict(latest_btst_snapshot.get("score_fail_frontier_summary") or {})
     llm_error_digest = dict(latest_btst_snapshot.get("llm_error_digest") or {})
     source_paths = dict(payload.get("source_paths") or {})
 
@@ -1125,6 +1295,9 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- replay_selection_target_counts: {replay_cohort_snapshot.get('selection_target_counts')}")
     lines.append(f"- catalyst_frontier_status: {catalyst_theme_frontier_summary.get('status') or 'unavailable'}")
     lines.append(f"- catalyst_frontier_promoted_shadow_count: {catalyst_theme_frontier_summary.get('recommended_promoted_shadow_count')}")
+    lines.append(f"- score_fail_frontier_status: {score_fail_frontier_summary.get('status') or 'unavailable'}")
+    lines.append(f"- score_fail_rejected_case_count: {score_fail_frontier_summary.get('rejected_short_trade_boundary_count')}")
+    lines.append(f"- score_fail_recurring_case_count: {score_fail_frontier_summary.get('recurring_case_count')}")
     lines.append(f"- llm_health_status: {llm_error_digest.get('status')}")
     lines.append(f"- llm_error_count: {llm_error_digest.get('error_count')}")
     lines.append(f"- llm_fallback_attempt_count: {llm_error_digest.get('fallback_attempt_count')}")
@@ -1135,6 +1308,7 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- priority_board_headline: {latest_priority_board_snapshot.get('headline')}")
     lines.append(f"- replay_recommendation: {replay_cohort_snapshot.get('recommendation')}")
     lines.append(f"- catalyst_frontier_recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
+    lines.append(f"- score_fail_frontier_recommendation: {score_fail_frontier_summary.get('recommendation')}")
     lines.append(f"- llm_recommendation: {llm_error_digest.get('recommendation')}")
     lines.append("")
 
@@ -1152,6 +1326,20 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
         lines.append(f"- next_action: {task.get('title')}")
         lines.append(f"  why_now: {task.get('why_now')}")
         lines.append(f"  next_step: {task.get('next_step')}")
+    lines.append("")
+
+    lines.append("## Rollout Lanes")
+    rollout_lanes = list(control_tower_snapshot.get("rollout_lanes") or [])
+    if not rollout_lanes:
+        lines.append("- unavailable")
+    else:
+        for row in rollout_lanes:
+            lines.append(
+                f"- lane_id={row.get('lane_id')} ticker={row.get('ticker')} governance_tier={row.get('governance_tier')} lane_status={row.get('lane_status')} blocker={row.get('blocker')}"
+            )
+            lines.append(f"  validation_verdict: {row.get('validation_verdict')}")
+            lines.append(f"  missing_window_count: {row.get('missing_window_count')}")
+            lines.append(f"  next_step: {row.get('next_step')}")
     lines.append("")
 
     lines.append("## Priority Board Snapshot")
@@ -1182,6 +1370,32 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
         promoted_tickers = list(catalyst_theme_frontier_summary.get("recommended_promoted_tickers") or [])
         lines.append(f"- recommended_promoted_tickers: {', '.join(promoted_tickers) if promoted_tickers else 'none'}")
         lines.append(f"- recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
+    lines.append("")
+
+    lines.append("## Score-Fail Frontier Queue")
+    if not score_fail_frontier_summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {score_fail_frontier_summary.get('status')}")
+        lines.append(f"- rejected_short_trade_boundary_count: {score_fail_frontier_summary.get('rejected_short_trade_boundary_count')}")
+        lines.append(f"- rescueable_case_count: {score_fail_frontier_summary.get('rescueable_case_count')}")
+        lines.append(f"- threshold_only_rescue_count: {score_fail_frontier_summary.get('threshold_only_rescue_count')}")
+        lines.append(f"- recurring_case_count: {score_fail_frontier_summary.get('recurring_case_count')}")
+        lines.append(f"- transition_candidate_count: {score_fail_frontier_summary.get('transition_candidate_count')}")
+        lines.append(f"- recurring_shadow_refresh_status: {score_fail_frontier_summary.get('recurring_shadow_refresh_status')}")
+        priority_queue_tickers = list(score_fail_frontier_summary.get("priority_queue_tickers") or [])
+        lines.append(f"- priority_queue_tickers: {', '.join(priority_queue_tickers) if priority_queue_tickers else 'none'}")
+        top_rescue_tickers = list(score_fail_frontier_summary.get("top_rescue_tickers") or [])
+        lines.append(f"- top_rescue_tickers: {', '.join(top_rescue_tickers) if top_rescue_tickers else 'none'}")
+        for row in list(score_fail_frontier_summary.get("priority_queue") or []):
+            lines.append(
+                f"- recurring_priority: {row.get('ticker')} occurrence_count={row.get('occurrence_count')} minimal_adjustment_cost={row.get('minimal_adjustment_cost')} gap_to_near_miss_mean={row.get('gap_to_near_miss_mean')}"
+            )
+        for row in list(score_fail_frontier_summary.get("top_rescue_rows") or []):
+            lines.append(
+                f"- top_rescue_row: {row.get('trade_date')} {row.get('ticker')} baseline_score={row.get('baseline_score_target')} replayed_score={row.get('replayed_score_target')} adjustment_cost={row.get('adjustment_cost')}"
+            )
+        lines.append(f"- recommendation: {score_fail_frontier_summary.get('recommendation')}")
     lines.append("")
 
     lines.append("## LLM Health")

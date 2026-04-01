@@ -264,6 +264,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
 
     assert manifest["catalyst_theme_frontier_refresh"]["status"] == "refreshed"
     assert manifest["catalyst_theme_frontier_refresh"]["report_dir"] == "paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330"
+    assert manifest["btst_window_evidence_refresh"] == {
+        "status": "skipped_no_window_reports",
+        "window_report_count": 0,
+    }
     assert manifest["candidate_entry_shadow_refresh"] == {
         "status": "skipped_missing_inputs",
         "missing_inputs": [
@@ -272,6 +276,29 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
             "score_frontier_report",
         ],
         "window_report_count": 0,
+    }
+    assert manifest["btst_score_fail_frontier_refresh"] == {
+        "status": "refreshed",
+        "report_dir": "paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330",
+        "rejected_short_trade_boundary_count": 0,
+        "rescueable_case_count": 0,
+        "threshold_only_rescue_count": 0,
+        "recurring_case_count": 0,
+        "priority_queue_tickers": [],
+        "top_rescue_tickers": [],
+        "analysis_json": str((reports_root / "short_trade_boundary_score_failures_latest.json").resolve()),
+        "analysis_markdown": str((reports_root / "short_trade_boundary_score_failures_latest.md").resolve()),
+        "frontier_json": str((reports_root / "short_trade_boundary_score_failures_frontier_latest.json").resolve()),
+        "frontier_markdown": str((reports_root / "short_trade_boundary_score_failures_frontier_latest.md").resolve()),
+        "recurring_json": str((reports_root / "short_trade_boundary_recurring_frontier_cases_latest.json").resolve()),
+        "recurring_markdown": str((reports_root / "short_trade_boundary_recurring_frontier_cases_latest.md").resolve()),
+        "transition_refresh_status": "skipped_no_window_reports",
+        "recurring_shadow_refresh_status": "skipped_missing_inputs",
+        "missing_recurring_shadow_inputs": [
+            "recurring_pair_comparison",
+            "candidate_report",
+            "recurring_transition_report",
+        ],
     }
     assert manifest["btst_rollout_governance_refresh"] == {
         "status": "refreshed",
@@ -322,6 +349,8 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert entries_by_id["btst_governance_synthesis_latest"]["report_path"] == "data/reports/btst_governance_synthesis_latest.md"
     assert entries_by_id["btst_governance_validation_latest"]["report_path"] == "data/reports/btst_governance_validation_latest.md"
     assert entries_by_id["btst_replay_cohort_latest"]["report_path"] == "data/reports/btst_replay_cohort_latest.md"
+    assert entries_by_id["btst_score_fail_frontier_latest"]["report_path"] == "data/reports/short_trade_boundary_score_failures_frontier_latest.md"
+    assert entries_by_id["btst_score_fail_recurring_frontier_latest"]["report_path"] == "data/reports/short_trade_boundary_recurring_frontier_cases_latest.md"
     assert entries_by_id["optimize0330_readme"]["report_path"] == "docs/zh-cn/factors/BTST/optimize0330/README.md"
 
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
@@ -331,6 +360,8 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_governance_synthesis_latest",
         "latest_btst_priority_board",
         "latest_btst_catalyst_theme_frontier_markdown",
+        "btst_score_fail_frontier_latest",
+        "btst_score_fail_recurring_frontier_latest",
         "btst_governance_validation_latest",
         "btst_replay_cohort_latest",
         "p5_rollout_governance_board",
@@ -350,6 +381,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "latest_btst_brief_json",
         "latest_btst_execution_card_json",
         "latest_btst_catalyst_theme_frontier_markdown",
+        "btst_score_fail_frontier_latest",
         "latest_btst_selection_snapshot",
     ]
     assert reading_paths["btst_governance"]["entry_ids"] == [
@@ -365,6 +397,8 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_candidate_entry_frontier_review",
         "btst_candidate_entry_window_scan_review",
         "p9_candidate_entry_rollout_governance",
+        "btst_score_fail_frontier_latest",
+        "btst_score_fail_recurring_frontier_latest",
         "p6_primary_window_gap",
         "p6_recurring_shadow_runbook",
         "p7_primary_window_validation_runbook",
@@ -385,7 +419,11 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert latest_session_summary["artifacts"]["btst_catalyst_theme_frontier_markdown"].endswith("catalyst_theme_frontier_latest.md")
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
     assert "catalyst_theme_frontier_refresh_status: refreshed" in markdown
+    assert "btst_window_evidence_refresh_status: skipped_no_window_reports" in markdown
     assert "candidate_entry_shadow_refresh_status: skipped_missing_inputs" in markdown
+    assert "btst_score_fail_frontier_refresh_status: refreshed" in markdown
+    assert "btst_score_fail_frontier_rejected_case_count: 0" in markdown
+    assert "btst_score_fail_frontier_recurring_case_count: 0" in markdown
     assert "btst_rollout_governance_refresh_status: refreshed" in markdown
     assert "btst_rollout_governance_penalty_status: broad_penalty_route_closed_current_window" in markdown
     assert "btst_governance_synthesis_status: refreshed" in markdown
@@ -401,6 +439,8 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "btst_governance_synthesis_latest.md" in markdown
     assert "btst_governance_validation_latest.md" in markdown
     assert "btst_replay_cohort_latest.md" in markdown
+    assert "short_trade_boundary_score_failures_frontier_latest.md" in markdown
+    assert "short_trade_boundary_recurring_frontier_cases_latest.md" in markdown
     assert "btst_micro_window_regression_20260330.md" in markdown
     assert "btst_profile_frontier_20260330.md" in markdown
     assert "btst_score_construction_frontier_20260330.md" in markdown

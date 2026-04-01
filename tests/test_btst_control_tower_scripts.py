@@ -874,8 +874,11 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["latest_btst_snapshot"]["llm_error_digest"]["fallback_gap_detected"] is True
     assert payload["latest_btst_snapshot"]["catalyst_theme_frontier_summary"]["status"] == "promotable_shadow_exists"
     assert payload["latest_btst_snapshot"]["catalyst_theme_frontier_summary"]["recommended_promoted_tickers"] == ["301001"]
+    assert payload["latest_btst_snapshot"]["score_fail_frontier_summary"]["status"] == "refreshed"
+    assert payload["latest_btst_snapshot"]["score_fail_frontier_summary"]["rejected_short_trade_boundary_count"] == 0
     assert payload["recommended_reading_order"][0]["entry_id"] == "btst_governance_synthesis_latest"
     assert any(item["entry_id"] == "latest_btst_catalyst_theme_frontier_markdown" for item in payload["recommended_reading_order"])
+    assert any(item["entry_id"] == "btst_score_fail_frontier_latest" for item in payload["recommended_reading_order"])
     assert delta_payload["comparison_basis"] == "previous_btst_report"
     assert delta_payload["comparison_scope"] == "previous_btst_report"
     assert delta_payload["overall_delta_verdict"] == "changed"
@@ -887,7 +890,9 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "# BTST Nightly Control Tower" in markdown
     assert "## Nightly Summary" in markdown
     assert "watch 600522 before 300442" in markdown
+    assert "## Rollout Lanes" in markdown
     assert "## Catalyst Theme Frontier" in markdown
+    assert "## Score-Fail Frontier Queue" in markdown
     assert "301001" in markdown
     assert "## LLM Health" in markdown
     assert "llm_health_status: degraded" in markdown
@@ -896,6 +901,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "btst_replay_cohort_latest.md" in markdown
     delta_markdown = Path(result["delta_markdown_path"]).read_text(encoding="utf-8")
     assert "# BTST Open-Ready Delta" in delta_markdown
+    assert "## Score-Fail Frontier Delta" in delta_markdown
     assert "previous_btst_report" in delta_markdown
 
     manifest = json.loads(Path(result["manifest_json"]).read_text(encoding="utf-8"))

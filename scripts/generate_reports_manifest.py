@@ -16,6 +16,22 @@ from scripts.analyze_btst_candidate_entry_window_scan import (
     analyze_btst_candidate_entry_window_scan,
     render_btst_candidate_entry_window_scan_markdown,
 )
+from scripts.analyze_btst_primary_roll_forward import (
+    analyze_btst_primary_roll_forward,
+    render_btst_primary_roll_forward_markdown,
+)
+from scripts.analyze_btst_primary_window_gap import (
+    analyze_btst_primary_window_gap,
+    render_btst_primary_window_gap_markdown,
+)
+from scripts.analyze_btst_primary_window_validation_runbook import (
+    analyze_btst_primary_window_validation_runbook,
+    render_btst_primary_window_validation_runbook_markdown,
+)
+from scripts.analyze_btst_recurring_shadow_runbook import (
+    analyze_btst_recurring_shadow_runbook,
+    render_btst_recurring_shadow_runbook_markdown,
+)
 from scripts.analyze_btst_governance_synthesis import (
     analyze_btst_governance_synthesis,
     render_btst_governance_synthesis_markdown,
@@ -27,6 +43,26 @@ from scripts.analyze_btst_rollout_governance_board import (
 from scripts.analyze_btst_replay_cohort import (
     analyze_btst_replay_cohort,
     render_btst_replay_cohort_markdown,
+)
+from scripts.analyze_multi_window_short_trade_role_candidates import (
+    analyze_multi_window_short_trade_role_candidates,
+    render_multi_window_short_trade_role_candidates_markdown,
+)
+from scripts.analyze_recurring_frontier_transition_candidates import (
+    analyze_recurring_frontier_transition_candidates,
+    render_recurring_frontier_transition_candidates_markdown,
+)
+from scripts.analyze_short_trade_boundary_recurring_frontier_cases import (
+    analyze_short_trade_boundary_recurring_frontier_cases,
+    render_short_trade_boundary_recurring_frontier_markdown,
+)
+from scripts.analyze_short_trade_boundary_score_failures import (
+    analyze_short_trade_boundary_score_failures,
+    render_short_trade_boundary_score_failure_markdown,
+)
+from scripts.analyze_short_trade_boundary_score_failures_frontier import (
+    analyze_short_trade_boundary_score_failures_frontier,
+    render_short_trade_boundary_score_failure_frontier_markdown,
 )
 from scripts.validate_btst_governance_consistency import (
     render_btst_governance_validation_markdown,
@@ -46,13 +82,17 @@ CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON = "p9_candidate_entry_rollout_governance
 CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_MD = "p9_candidate_entry_rollout_governance_20260330.md"
 ACTION_BOARD_JSON = "p3_top3_post_execution_action_board_20260330.json"
 PRIMARY_ROLL_FORWARD_JSON = "p4_primary_roll_forward_validation_001309_20260330.json"
+PRIMARY_ROLL_FORWARD_MD = "p4_primary_roll_forward_validation_001309_20260330.md"
 SHADOW_EXPANSION_JSON = "p4_shadow_entry_expansion_board_300383_20260330.json"
 SHADOW_LANE_PRIORITY_JSON = "p4_shadow_lane_priority_board_20260330.json"
 ROLLOUT_GOVERNANCE_JSON = "p5_btst_rollout_governance_board_20260330.json"
 ROLLOUT_GOVERNANCE_MD = "p5_btst_rollout_governance_board_20260330.md"
 PRIMARY_WINDOW_GAP_JSON = "p6_primary_window_gap_001309_20260330.json"
+PRIMARY_WINDOW_GAP_MD = "p6_primary_window_gap_001309_20260330.md"
 RECURRING_SHADOW_RUNBOOK_JSON = "p6_recurring_shadow_runbook_20260330.json"
+RECURRING_SHADOW_RUNBOOK_MD = "p6_recurring_shadow_runbook_20260330.md"
 PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON = "p7_primary_window_validation_runbook_001309_20260330.json"
+PRIMARY_WINDOW_VALIDATION_RUNBOOK_MD = "p7_primary_window_validation_runbook_001309_20260330.md"
 SHADOW_PEER_SCAN_JSON = "p7_shadow_peer_scan_300383_20260330.json"
 STRUCTURAL_SHADOW_RUNBOOK_JSON = "p8_structural_shadow_runbook_300724_20260330.json"
 BTST_PENALTY_FRONTIER_JSON = "btst_penalty_frontier_current_window_20260331.json"
@@ -65,6 +105,17 @@ BTST_GOVERNANCE_VALIDATION_JSON = "btst_governance_validation_latest.json"
 BTST_GOVERNANCE_VALIDATION_MD = "btst_governance_validation_latest.md"
 BTST_REPLAY_COHORT_JSON = "btst_replay_cohort_latest.json"
 BTST_REPLAY_COHORT_MD = "btst_replay_cohort_latest.md"
+MULTI_WINDOW_ROLE_CANDIDATES_LATEST_JSON = "multi_window_short_trade_role_candidates_latest.json"
+MULTI_WINDOW_ROLE_CANDIDATES_LATEST_MD = "multi_window_short_trade_role_candidates_latest.md"
+RECURRING_FRONTIER_TRANSITION_LATEST_JSON = "recurring_frontier_transition_candidates_latest.json"
+RECURRING_FRONTIER_TRANSITION_LATEST_MD = "recurring_frontier_transition_candidates_latest.md"
+SHORT_TRADE_BOUNDARY_SCORE_FAILURES_LATEST_JSON = "short_trade_boundary_score_failures_latest.json"
+SHORT_TRADE_BOUNDARY_SCORE_FAILURES_LATEST_MD = "short_trade_boundary_score_failures_latest.md"
+SHORT_TRADE_BOUNDARY_SCORE_FAILURES_FRONTIER_LATEST_JSON = "short_trade_boundary_score_failures_frontier_latest.json"
+SHORT_TRADE_BOUNDARY_SCORE_FAILURES_FRONTIER_LATEST_MD = "short_trade_boundary_score_failures_frontier_latest.md"
+SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_JSON = "short_trade_boundary_recurring_frontier_cases_latest.json"
+SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_MD = "short_trade_boundary_recurring_frontier_cases_latest.md"
+RECURRING_PAIR_COMPARISON_JSON = "recurring_frontier_release_pair_comparison_600821_vs_002015_20260329.json"
 CANDIDATE_ENTRY_FOCUS_TICKERS: tuple[str, ...] = ("300502",)
 CANDIDATE_ENTRY_PRESERVE_TICKERS: tuple[str, ...] = ("300394",)
 
@@ -304,15 +355,67 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "source_kind": "governance_artifact",
     },
     {
+        "id": "btst_multi_window_role_candidates_latest",
+        "path": "data/reports/multi_window_short_trade_role_candidates_latest.md",
+        "report_type": "btst_multi_window_role_candidates",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 11,
+        "is_latest": True,
+        "question": "当前跨窗口 short-trade 角色候选名单是什么",
+        "view_order": 11,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_recurring_frontier_transition_latest",
+        "path": "data/reports/recurring_frontier_transition_candidates_latest.md",
+        "report_type": "btst_recurring_frontier_transition",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 12,
+        "is_latest": True,
+        "question": "recurring frontier 候选里哪些已接近跨窗口稳定",
+        "view_order": 12,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_score_fail_frontier_latest",
+        "path": "data/reports/short_trade_boundary_score_failures_frontier_latest.md",
+        "report_type": "btst_score_fail_frontier",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 13,
+        "is_latest": True,
+        "question": "当前 short-trade score-fail 样本里哪些最接近 near-miss rescue",
+        "view_order": 13,
+        "time_scope": {"label": "latest_btst_followup"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_score_fail_recurring_frontier_latest",
+        "path": "data/reports/short_trade_boundary_recurring_frontier_cases_latest.md",
+        "report_type": "btst_score_fail_recurring_frontier",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 14,
+        "is_latest": True,
+        "question": "当前 score-fail recurring 队列里最值得跟踪的 ticker 是谁",
+        "view_order": 14,
+        "time_scope": {"label": "latest_btst_followup"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
         "id": "p6_primary_window_gap",
         "path": "data/reports/p6_primary_window_gap_001309_20260330.json",
         "report_type": "btst_window_gap_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 11,
+        "priority": 15,
         "is_latest": True,
         "question": "001309 还缺什么窗口证据",
-        "view_order": 11,
+        "view_order": 15,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -322,10 +425,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_recurring_shadow_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 12,
+        "priority": 16,
         "is_latest": True,
         "question": "recurring shadow lane 该如何阅读和执行",
-        "view_order": 12,
+        "view_order": 16,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -335,10 +438,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_primary_validation_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 13,
+        "priority": 17,
         "is_latest": True,
         "question": "001309 后续复跑命令与判断条件是什么",
-        "view_order": 13,
+        "view_order": 17,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -348,10 +451,10 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "report_type": "btst_structural_shadow_runbook",
         "topic": "btst_governance",
         "usage": "btst_governance",
-        "priority": 14,
+        "priority": 18,
         "is_latest": True,
         "question": "300724 为什么保持 structural shadow hold",
-        "view_order": 14,
+        "view_order": 18,
         "time_scope": {"label": "current_window_20260330"},
         "source_kind": "governance_artifact",
     },
@@ -413,6 +516,8 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_governance_synthesis_latest",
             "latest_btst_priority_board",
             "latest_btst_catalyst_theme_frontier_markdown",
+            "btst_score_fail_frontier_latest",
+            "btst_score_fail_recurring_frontier_latest",
             "btst_governance_validation_latest",
             "btst_replay_cohort_latest",
             "p5_rollout_governance_board",
@@ -436,6 +541,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "latest_btst_brief_json",
             "latest_btst_execution_card_json",
             "latest_btst_catalyst_theme_frontier_markdown",
+            "btst_score_fail_frontier_latest",
             "latest_btst_selection_snapshot",
         ],
     },
@@ -456,6 +562,10 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_candidate_entry_frontier_review",
             "btst_candidate_entry_window_scan_review",
             "p9_candidate_entry_rollout_governance",
+            "btst_multi_window_role_candidates_latest",
+            "btst_recurring_frontier_transition_latest",
+            "btst_score_fail_frontier_latest",
+            "btst_score_fail_recurring_frontier_latest",
             "p6_primary_window_gap",
             "p6_recurring_shadow_runbook",
             "p7_primary_window_validation_runbook",
@@ -485,6 +595,12 @@ def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     resolved = Path(path).expanduser().resolve()
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_markdown(path: str | Path, content: str) -> None:
+    resolved = Path(path).expanduser().resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(content, encoding="utf-8")
 
 
 def _normalize_trade_date(value: Any) -> str | None:
@@ -918,6 +1034,232 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
     }
 
 
+def refresh_btst_window_evidence_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    report_dirs = [path for path in _discover_report_dirs(resolved_reports_root) if "paper_trading_window" in path.name]
+    if not report_dirs:
+        return {
+            "status": "skipped_no_window_reports",
+            "window_report_count": 0,
+        }
+
+    candidate_json_path = resolved_reports_root / MULTI_WINDOW_ROLE_CANDIDATES_LATEST_JSON
+    candidate_md_path = resolved_reports_root / MULTI_WINDOW_ROLE_CANDIDATES_LATEST_MD
+    try:
+        candidate_analysis = analyze_multi_window_short_trade_role_candidates(
+            report_dirs,
+            min_short_trade_trade_dates=2,
+        )
+        _write_json(candidate_json_path, candidate_analysis)
+        _write_markdown(candidate_md_path, render_multi_window_short_trade_role_candidates_markdown(candidate_analysis))
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "window_report_count": len(report_dirs),
+            "error": str(exc),
+        }
+
+    refresh: dict[str, Any] = {
+        "status": "refreshed",
+        "window_report_count": len(report_dirs),
+        "candidate_count": candidate_analysis.get("candidate_count"),
+        "stable_candidate_count": candidate_analysis.get("stable_candidate_count"),
+        "candidate_report_json": candidate_json_path.as_posix(),
+        "candidate_report_markdown": candidate_md_path.as_posix(),
+        "primary_refresh_status": "skipped_missing_execution_summary",
+        "primary_window_gap_status": "skipped_missing_primary_roll_forward",
+        "primary_window_validation_status": "skipped_missing_primary_window_gap",
+    }
+
+    execution_summary_path = resolved_reports_root / "p2_top3_experiment_execution_summary_20260330.json"
+    if not execution_summary_path.exists():
+        return refresh
+
+    primary_roll_forward_json_path = resolved_reports_root / PRIMARY_ROLL_FORWARD_JSON
+    primary_roll_forward_md_path = resolved_reports_root / PRIMARY_ROLL_FORWARD_MD
+    try:
+        primary_analysis = analyze_btst_primary_roll_forward(
+            execution_summary_path,
+            candidate_report_path=candidate_json_path,
+            ticker="001309",
+        )
+        _write_json(primary_roll_forward_json_path, primary_analysis)
+        _write_markdown(primary_roll_forward_md_path, render_btst_primary_roll_forward_markdown(primary_analysis))
+        refresh["primary_refresh_status"] = "refreshed"
+        refresh["primary_roll_forward_verdict"] = primary_analysis.get("roll_forward_verdict")
+        refresh["primary_distinct_window_count"] = primary_analysis.get("distinct_window_count")
+    except Exception as exc:
+        refresh["primary_refresh_status"] = "skipped_refresh_error"
+        refresh["primary_refresh_error"] = str(exc)
+        return refresh
+
+    primary_window_gap_json_path = resolved_reports_root / PRIMARY_WINDOW_GAP_JSON
+    primary_window_gap_md_path = resolved_reports_root / PRIMARY_WINDOW_GAP_MD
+    try:
+        primary_gap_analysis = analyze_btst_primary_window_gap(
+            primary_roll_forward_json_path,
+            candidate_report_path=candidate_json_path,
+            ticker="001309",
+        )
+        _write_json(primary_window_gap_json_path, primary_gap_analysis)
+        _write_markdown(primary_window_gap_md_path, render_btst_primary_window_gap_markdown(primary_gap_analysis))
+        refresh["primary_window_gap_status"] = "refreshed"
+        refresh["primary_missing_window_count"] = primary_gap_analysis.get("missing_window_count")
+    except Exception as exc:
+        refresh["primary_window_gap_status"] = "skipped_refresh_error"
+        refresh["primary_window_gap_error"] = str(exc)
+        return refresh
+
+    primary_window_validation_json_path = resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON
+    primary_window_validation_md_path = resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_MD
+    try:
+        primary_validation_analysis = analyze_btst_primary_window_validation_runbook(
+            candidate_json_path,
+            primary_roll_forward_path=primary_roll_forward_json_path,
+            primary_window_gap_path=primary_window_gap_json_path,
+            ticker="001309",
+        )
+        _write_json(primary_window_validation_json_path, primary_validation_analysis)
+        _write_markdown(primary_window_validation_md_path, render_btst_primary_window_validation_runbook_markdown(primary_validation_analysis))
+        refresh["primary_window_validation_status"] = "refreshed"
+        refresh["primary_validation_verdict"] = primary_validation_analysis.get("validation_verdict")
+    except Exception as exc:
+        refresh["primary_window_validation_status"] = "skipped_refresh_error"
+        refresh["primary_window_validation_error"] = str(exc)
+
+    return refresh
+
+
+def refresh_btst_score_fail_frontier_artifacts(
+    reports_root: str | Path,
+    *,
+    latest_btst_run: dict[str, Any] | None = None,
+    window_evidence_refresh: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    if not latest_btst_run:
+        return {
+            "status": "skipped_no_latest_btst_run",
+        }
+
+    report_dir_value = latest_btst_run.get("report_dir")
+    report_dir = Path(report_dir_value).expanduser().resolve() if report_dir_value else None
+    if report_dir is None or not report_dir.exists():
+        return {
+            "status": "skipped_missing_latest_report_dir",
+        }
+
+    analysis_json_path = resolved_reports_root / SHORT_TRADE_BOUNDARY_SCORE_FAILURES_LATEST_JSON
+    analysis_md_path = resolved_reports_root / SHORT_TRADE_BOUNDARY_SCORE_FAILURES_LATEST_MD
+    frontier_json_path = resolved_reports_root / SHORT_TRADE_BOUNDARY_SCORE_FAILURES_FRONTIER_LATEST_JSON
+    frontier_md_path = resolved_reports_root / SHORT_TRADE_BOUNDARY_SCORE_FAILURES_FRONTIER_LATEST_MD
+    recurring_json_path = resolved_reports_root / SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_JSON
+    recurring_md_path = resolved_reports_root / SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_MD
+
+    try:
+        score_fail_analysis = analyze_short_trade_boundary_score_failures(report_dir)
+        score_fail_frontier_analysis = analyze_short_trade_boundary_score_failures_frontier(report_dir)
+        recurring_frontier_analysis = analyze_short_trade_boundary_recurring_frontier_cases(report_dir)
+        _write_json(analysis_json_path, score_fail_analysis)
+        _write_markdown(analysis_md_path, render_short_trade_boundary_score_failure_markdown(score_fail_analysis))
+        _write_json(frontier_json_path, score_fail_frontier_analysis)
+        _write_markdown(frontier_md_path, render_short_trade_boundary_score_failure_frontier_markdown(score_fail_frontier_analysis))
+        _write_json(recurring_json_path, recurring_frontier_analysis)
+        _write_markdown(recurring_md_path, render_short_trade_boundary_recurring_frontier_markdown(recurring_frontier_analysis))
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "report_dir": report_dir.name,
+            "error": str(exc),
+        }
+
+    refresh: dict[str, Any] = {
+        "status": "refreshed",
+        "report_dir": report_dir.name,
+        "rejected_short_trade_boundary_count": score_fail_analysis.get("rejected_short_trade_boundary_count"),
+        "rescueable_case_count": score_fail_frontier_analysis.get("rescueable_case_count"),
+        "threshold_only_rescue_count": score_fail_frontier_analysis.get("rescueable_with_threshold_only_count"),
+        "recurring_case_count": recurring_frontier_analysis.get("recurring_case_count"),
+        "priority_queue_tickers": [
+            str(row.get("ticker") or "")
+            for row in list(recurring_frontier_analysis.get("priority_queue") or [])[:3]
+            if row.get("ticker")
+        ],
+        "top_rescue_tickers": [
+            str(row.get("ticker") or "")
+            for row in list(score_fail_frontier_analysis.get("minimal_near_miss_rows") or [])[:3]
+            if row.get("ticker")
+        ],
+        "analysis_json": analysis_json_path.as_posix(),
+        "analysis_markdown": analysis_md_path.as_posix(),
+        "frontier_json": frontier_json_path.as_posix(),
+        "frontier_markdown": frontier_md_path.as_posix(),
+        "recurring_json": recurring_json_path.as_posix(),
+        "recurring_markdown": recurring_md_path.as_posix(),
+        "transition_refresh_status": "skipped_no_window_reports",
+        "recurring_shadow_refresh_status": "skipped_missing_inputs",
+    }
+
+    report_dirs = [path for path in _discover_report_dirs(resolved_reports_root) if "paper_trading_window" in path.name]
+    recurring_transition_json_path = resolved_reports_root / RECURRING_FRONTIER_TRANSITION_LATEST_JSON
+    recurring_transition_md_path = resolved_reports_root / RECURRING_FRONTIER_TRANSITION_LATEST_MD
+    if report_dirs:
+        try:
+            recurring_transition_analysis = analyze_recurring_frontier_transition_candidates(
+                recurring_json_path,
+                role_history_report_dirs=report_dirs,
+            )
+            _write_json(recurring_transition_json_path, recurring_transition_analysis)
+            _write_markdown(recurring_transition_md_path, render_recurring_frontier_transition_candidates_markdown(recurring_transition_analysis))
+            refresh["transition_refresh_status"] = "refreshed"
+            refresh["transition_candidate_count"] = len(list(recurring_transition_analysis.get("candidates") or []))
+            refresh["transition_json"] = recurring_transition_json_path.as_posix()
+            refresh["transition_markdown"] = recurring_transition_md_path.as_posix()
+        except Exception as exc:
+            refresh["transition_refresh_status"] = "skipped_refresh_error"
+            refresh["transition_refresh_error"] = str(exc)
+
+    candidate_report_json = str((window_evidence_refresh or {}).get("candidate_report_json") or "")
+    shadow_lane_priority_path = resolved_reports_root / SHADOW_LANE_PRIORITY_JSON
+    recurring_pair_comparison_path = resolved_reports_root / RECURRING_PAIR_COMPARISON_JSON
+    recurring_shadow_inputs = {
+        "shadow_lane_priority": shadow_lane_priority_path,
+        "recurring_pair_comparison": recurring_pair_comparison_path,
+        "candidate_report": Path(candidate_report_json).expanduser().resolve() if candidate_report_json else None,
+        "recurring_transition_report": recurring_transition_json_path if recurring_transition_json_path.exists() else None,
+    }
+    missing_recurring_shadow_inputs = [
+        label
+        for label, path in recurring_shadow_inputs.items()
+        if path is None or not Path(path).exists()
+    ]
+    if missing_recurring_shadow_inputs:
+        refresh["recurring_shadow_refresh_status"] = "skipped_missing_inputs"
+        refresh["missing_recurring_shadow_inputs"] = missing_recurring_shadow_inputs
+        return refresh
+
+    recurring_shadow_json_path = resolved_reports_root / RECURRING_SHADOW_RUNBOOK_JSON
+    recurring_shadow_md_path = resolved_reports_root / RECURRING_SHADOW_RUNBOOK_MD
+    try:
+        recurring_shadow_analysis = analyze_btst_recurring_shadow_runbook(
+            recurring_shadow_inputs["shadow_lane_priority"],
+            recurring_pair_comparison_path=recurring_shadow_inputs["recurring_pair_comparison"],
+            candidate_report_path=recurring_shadow_inputs["candidate_report"],
+            recurring_transition_report_path=recurring_shadow_inputs["recurring_transition_report"],
+        )
+        _write_json(recurring_shadow_json_path, recurring_shadow_analysis)
+        _write_markdown(recurring_shadow_md_path, render_btst_recurring_shadow_runbook_markdown(recurring_shadow_analysis))
+        refresh["recurring_shadow_refresh_status"] = "refreshed"
+        refresh["recurring_shadow_global_validation_verdict"] = recurring_shadow_analysis.get("global_validation_verdict")
+        refresh["recurring_shadow_close_candidate_status"] = dict(recurring_shadow_analysis.get("close_candidate") or {}).get("lane_status")
+        refresh["recurring_shadow_intraday_control_status"] = dict(recurring_shadow_analysis.get("intraday_control") or {}).get("lane_status")
+    except Exception as exc:
+        refresh["recurring_shadow_refresh_status"] = "skipped_refresh_error"
+        refresh["recurring_shadow_refresh_error"] = str(exc)
+
+    return refresh
+
+
 def refresh_btst_rollout_governance_artifacts(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     required_inputs = {
@@ -1117,7 +1459,9 @@ def generate_reports_manifest(
     *,
     latest_btst_run: dict[str, Any] | None = None,
     catalyst_theme_frontier_refresh: dict[str, Any] | None = None,
+    btst_window_evidence_refresh: dict[str, Any] | None = None,
     candidate_entry_shadow_refresh: dict[str, Any] | None = None,
+    btst_score_fail_frontier_refresh: dict[str, Any] | None = None,
     btst_rollout_governance_refresh: dict[str, Any] | None = None,
     btst_governance_synthesis_refresh: dict[str, Any] | None = None,
     btst_governance_validation_refresh: dict[str, Any] | None = None,
@@ -1157,7 +1501,9 @@ def generate_reports_manifest(
         "entry_count": len(entries),
         "entry_count_by_usage": entry_count_by_usage,
         "catalyst_theme_frontier_refresh": catalyst_theme_frontier_refresh,
+        "btst_window_evidence_refresh": btst_window_evidence_refresh,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
+        "btst_score_fail_frontier_refresh": btst_score_fail_frontier_refresh,
         "btst_rollout_governance_refresh": btst_rollout_governance_refresh,
         "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
         "btst_governance_validation_refresh": btst_governance_validation_refresh,
@@ -1198,12 +1544,28 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         lines.append(f"- catalyst_theme_frontier_shadow_candidate_count: {catalyst_theme_frontier_refresh.get('shadow_candidate_count')}")
         lines.append(f"- catalyst_theme_frontier_promoted_shadow_count: {catalyst_theme_frontier_refresh.get('recommended_promoted_shadow_count')}")
         lines.append(f"- catalyst_theme_frontier_recommended_variant: {catalyst_theme_frontier_refresh.get('recommended_variant_name')}")
+    btst_window_evidence_refresh = manifest.get("btst_window_evidence_refresh") or {}
+    if btst_window_evidence_refresh:
+        lines.append(f"- btst_window_evidence_refresh_status: {btst_window_evidence_refresh.get('status')}")
+        lines.append(f"- btst_window_evidence_window_report_count: {btst_window_evidence_refresh.get('window_report_count')}")
+        lines.append(f"- btst_window_evidence_candidate_count: {btst_window_evidence_refresh.get('candidate_count')}")
+        lines.append(f"- btst_window_evidence_stable_candidate_count: {btst_window_evidence_refresh.get('stable_candidate_count')}")
+        lines.append(f"- btst_window_evidence_primary_refresh_status: {btst_window_evidence_refresh.get('primary_refresh_status')}")
+        lines.append(f"- btst_window_evidence_primary_missing_window_count: {btst_window_evidence_refresh.get('primary_missing_window_count')}")
     candidate_entry_shadow_refresh = manifest.get("candidate_entry_shadow_refresh") or {}
     if candidate_entry_shadow_refresh:
         lines.append(f"- candidate_entry_shadow_refresh_status: {candidate_entry_shadow_refresh.get('status')}")
         lines.append(f"- candidate_entry_shadow_refresh_window_reports: {candidate_entry_shadow_refresh.get('window_report_count')}")
         lines.append(f"- candidate_entry_shadow_refresh_filtered_reports: {candidate_entry_shadow_refresh.get('filtered_report_count')}")
         lines.append(f"- candidate_entry_shadow_refresh_rollout_readiness: {candidate_entry_shadow_refresh.get('rollout_readiness')}")
+    btst_score_fail_frontier_refresh = manifest.get("btst_score_fail_frontier_refresh") or {}
+    if btst_score_fail_frontier_refresh:
+        lines.append(f"- btst_score_fail_frontier_refresh_status: {btst_score_fail_frontier_refresh.get('status')}")
+        lines.append(f"- btst_score_fail_frontier_rejected_case_count: {btst_score_fail_frontier_refresh.get('rejected_short_trade_boundary_count')}")
+        lines.append(f"- btst_score_fail_frontier_rescueable_case_count: {btst_score_fail_frontier_refresh.get('rescueable_case_count')}")
+        lines.append(f"- btst_score_fail_frontier_recurring_case_count: {btst_score_fail_frontier_refresh.get('recurring_case_count')}")
+        lines.append(f"- btst_score_fail_frontier_transition_refresh_status: {btst_score_fail_frontier_refresh.get('transition_refresh_status')}")
+        lines.append(f"- btst_score_fail_frontier_recurring_shadow_refresh_status: {btst_score_fail_frontier_refresh.get('recurring_shadow_refresh_status')}")
     btst_rollout_governance_refresh = manifest.get("btst_rollout_governance_refresh") or {}
     if btst_rollout_governance_refresh:
         lines.append(f"- btst_rollout_governance_refresh_status: {btst_rollout_governance_refresh.get('status')}")
@@ -1260,7 +1622,13 @@ def generate_reports_manifest_artifacts(
     catalyst_theme_frontier_refresh = refresh_latest_btst_catalyst_theme_frontier_artifacts(latest_btst_run)
     if latest_btst_run:
         latest_btst_run = _extract_btst_candidate(latest_btst_run["report_dir"], repo_root)
+    btst_window_evidence_refresh = refresh_btst_window_evidence_artifacts(resolved_reports_root)
     candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
+    btst_score_fail_frontier_refresh = refresh_btst_score_fail_frontier_artifacts(
+        resolved_reports_root,
+        latest_btst_run=latest_btst_run,
+        window_evidence_refresh=btst_window_evidence_refresh,
+    )
     btst_rollout_governance_refresh = refresh_btst_rollout_governance_artifacts(resolved_reports_root)
     btst_governance_synthesis_refresh = refresh_btst_governance_synthesis_artifacts(
         resolved_reports_root,
@@ -1272,7 +1640,9 @@ def generate_reports_manifest_artifacts(
         resolved_reports_root,
         latest_btst_run=latest_btst_run,
         catalyst_theme_frontier_refresh=catalyst_theme_frontier_refresh,
+        btst_window_evidence_refresh=btst_window_evidence_refresh,
         candidate_entry_shadow_refresh=candidate_entry_shadow_refresh,
+        btst_score_fail_frontier_refresh=btst_score_fail_frontier_refresh,
         btst_rollout_governance_refresh=btst_rollout_governance_refresh,
         btst_governance_synthesis_refresh=btst_governance_synthesis_refresh,
         btst_governance_validation_refresh=btst_governance_validation_refresh,
@@ -1283,7 +1653,9 @@ def generate_reports_manifest_artifacts(
     return {
         "manifest": manifest,
         "catalyst_theme_frontier_refresh": catalyst_theme_frontier_refresh,
+        "btst_window_evidence_refresh": btst_window_evidence_refresh,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
+        "btst_score_fail_frontier_refresh": btst_score_fail_frontier_refresh,
         "btst_rollout_governance_refresh": btst_rollout_governance_refresh,
         "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
         "btst_governance_validation_refresh": btst_governance_validation_refresh,
