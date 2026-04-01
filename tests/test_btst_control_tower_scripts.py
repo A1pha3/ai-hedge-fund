@@ -266,6 +266,15 @@ def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_p
         candidate_entry_governance_path=reports_root / "p9_candidate_entry_rollout_governance_20260330.json",
         latest_btst_report_dir=latest_report,
     )
+    _write_json(reports_root / "btst_governance_synthesis_latest.json", synthesis)
+    _write_json(
+        reports_root / "btst_nightly_control_tower_latest.json",
+        {
+            "control_tower_snapshot": {
+                "closed_frontiers": synthesis["closed_frontiers"],
+            }
+        },
+    )
     validation = validate_btst_governance_consistency(
         action_board_path=reports_root / "p3_top3_post_execution_action_board_20260330.json",
         rollout_governance_path=reports_root / "p5_btst_rollout_governance_board_20260330.json",
@@ -274,6 +283,8 @@ def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_p
         primary_window_validation_runbook_path=reports_root / "p7_primary_window_validation_runbook_001309_20260330.json",
         structural_shadow_runbook_path=reports_root / "p8_structural_shadow_runbook_300724_20260330.json",
         candidate_entry_governance_path=reports_root / "p9_candidate_entry_rollout_governance_20260330.json",
+        governance_synthesis_path=reports_root / "btst_governance_synthesis_latest.json",
+        nightly_control_tower_path=reports_root / "btst_nightly_control_tower_latest.json",
     )
 
     assert synthesis["latest_btst_followup"]["trade_date"] == "2026-03-30"
@@ -294,6 +305,89 @@ def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_p
     assert validation["overall_verdict"] == "pass"
     assert validation["fail_count"] == 0
     assert validation["warn_count"] == 0
+    assert any(check["check_id"] == "closed_frontier_alignment" and check["status"] == "pass" for check in validation["checks"])
+
+
+def test_validate_btst_governance_consistency_fails_on_closed_frontier_drift(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+
+    _write_json(
+        reports_root / "p3_top3_post_execution_action_board_20260330.json",
+        {
+            "board_rows": [
+                {"ticker": "001309", "action_tier": "primary_promote"},
+                {"ticker": "300724", "action_tier": "structural_shadow_hold"},
+            ],
+            "recommendation": "001309, 300383, 300724",
+        },
+    )
+    closed_frontier = {
+        "frontier_id": "broad_penalty_relief",
+        "status": "broad_penalty_route_closed_current_window",
+        "headline": "broad stale/extension penalty relief 在当前窗口没有形成任何通过 closed-tradeable guardrail 的 row。",
+        "passing_variant_count": 0,
+        "best_variant_name": "nm_0.42__avoid_0.12__stale_0.08__ext_0.02",
+        "best_variant_released_tickers": ["300724"],
+        "best_variant_focus_released_tickers": [],
+    }
+    _write_json(
+        reports_root / "p5_btst_rollout_governance_board_20260330.json",
+        {
+            "governance_rows": [
+                {"ticker": "001309", "status": "continue_controlled_roll_forward", "blocker": "cross_window_stability_missing"},
+                {"ticker": "002015", "status": "await_new_close_candidate_window"},
+                {"ticker": "600821", "status": "await_new_intraday_control_window"},
+                {"ticker": "300724", "status": "structural_shadow_hold_only"},
+            ],
+            "frontier_constraints": [closed_frontier],
+            "recommendation": "001309, 300383, 300724 broad penalty route closed",
+        },
+    )
+    _write_json(reports_root / "p6_primary_window_gap_001309_20260330.json", {"missing_window_count": 1})
+    _write_json(
+        reports_root / "p6_recurring_shadow_runbook_20260330.json",
+        {
+            "close_candidate": {"lane_status": "await_new_close_candidate_window", "validation_verdict": "await_new_independent_window_data"},
+            "intraday_control": {"lane_status": "await_new_intraday_control_window", "validation_verdict": "await_new_independent_window_data"},
+            "global_validation_verdict": "await_new_recurring_window_evidence",
+        },
+    )
+    _write_json(reports_root / "p7_primary_window_validation_runbook_001309_20260330.json", {"validation_verdict": "await_new_independent_window_data"})
+    _write_json(reports_root / "p8_structural_shadow_runbook_300724_20260330.json", {"lane_status": "structural_shadow_hold_only"})
+    _write_json(
+        reports_root / "p9_candidate_entry_rollout_governance_20260330.json",
+        {
+            "lane_status": "shadow_only_until_second_window",
+            "default_upgrade_status": "blocked_by_single_window_candidate_entry_signal",
+        },
+    )
+    _write_json(reports_root / "btst_governance_synthesis_latest.json", {"closed_frontiers": [closed_frontier]})
+    drifted_frontier = dict(closed_frontier)
+    drifted_frontier["best_variant_released_tickers"] = ["300383"]
+    _write_json(
+        reports_root / "btst_nightly_control_tower_latest.json",
+        {
+            "control_tower_snapshot": {
+                "closed_frontiers": [drifted_frontier],
+            }
+        },
+    )
+
+    validation = validate_btst_governance_consistency(
+        action_board_path=reports_root / "p3_top3_post_execution_action_board_20260330.json",
+        rollout_governance_path=reports_root / "p5_btst_rollout_governance_board_20260330.json",
+        primary_window_gap_path=reports_root / "p6_primary_window_gap_001309_20260330.json",
+        recurring_shadow_runbook_path=reports_root / "p6_recurring_shadow_runbook_20260330.json",
+        primary_window_validation_runbook_path=reports_root / "p7_primary_window_validation_runbook_001309_20260330.json",
+        structural_shadow_runbook_path=reports_root / "p8_structural_shadow_runbook_300724_20260330.json",
+        candidate_entry_governance_path=reports_root / "p9_candidate_entry_rollout_governance_20260330.json",
+        governance_synthesis_path=reports_root / "btst_governance_synthesis_latest.json",
+        nightly_control_tower_path=reports_root / "btst_nightly_control_tower_latest.json",
+    )
+
+    assert validation["overall_verdict"] == "fail"
+    assert any(check["check_id"] == "closed_frontier_alignment" and check["status"] == "fail" for check in validation["checks"])
 
 
 def test_btst_replay_cohort_summarizes_short_trade_and_frozen_reports(tmp_path: Path) -> None:

@@ -14,12 +14,23 @@ DEFAULT_RECURRING_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p6_recurring_shadow_runbo
 DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH = REPORTS_DIR / "p7_primary_window_validation_runbook_001309_20260330.json"
 DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p8_structural_shadow_runbook_300724_20260330.json"
 DEFAULT_CANDIDATE_ENTRY_GOVERNANCE_PATH = REPORTS_DIR / "p9_candidate_entry_rollout_governance_20260330.json"
+DEFAULT_GOVERNANCE_SYNTHESIS_PATH = REPORTS_DIR / "btst_governance_synthesis_latest.json"
+DEFAULT_NIGHTLY_CONTROL_TOWER_PATH = REPORTS_DIR / "btst_nightly_control_tower_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_governance_validation_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_governance_validation_latest.md"
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
+    return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        return {}
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
@@ -41,6 +52,24 @@ def _missing(*values: Any) -> bool:
     return all(value in (None, "", [], {}) for value in values)
 
 
+def _normalize_frontier_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "frontier_id": row.get("frontier_id"),
+        "status": row.get("status"),
+        "headline": row.get("headline"),
+        "passing_variant_count": row.get("passing_variant_count"),
+        "best_variant_name": row.get("best_variant_name"),
+        "best_variant_released_tickers": sorted(str(value) for value in list(row.get("best_variant_released_tickers") or []) if value),
+        "best_variant_focus_released_tickers": sorted(str(value) for value in list(row.get("best_variant_focus_released_tickers") or []) if value),
+    }
+
+
+def _closed_frontiers(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = [_normalize_frontier_row(dict(row or {})) for row in rows if "closed" in str((row or {}).get("status") or "")]
+    normalized.sort(key=lambda row: (str(row.get("frontier_id") or ""), str(row.get("status") or ""), str(row.get("best_variant_name") or "")))
+    return normalized
+
+
 def validate_btst_governance_consistency(
     *,
     action_board_path: str | Path,
@@ -50,6 +79,8 @@ def validate_btst_governance_consistency(
     primary_window_validation_runbook_path: str | Path,
     structural_shadow_runbook_path: str | Path,
     candidate_entry_governance_path: str | Path,
+    governance_synthesis_path: str | Path | None = None,
+    nightly_control_tower_path: str | Path | None = None,
 ) -> dict[str, Any]:
     action_board = _load_json(action_board_path)
     rollout_governance = _load_json(rollout_governance_path)
@@ -58,6 +89,8 @@ def validate_btst_governance_consistency(
     primary_window_validation_runbook = _load_json(primary_window_validation_runbook_path)
     structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
     candidate_entry_governance = _load_json(candidate_entry_governance_path)
+    governance_synthesis = _safe_load_json(governance_synthesis_path)
+    nightly_control_tower = _safe_load_json(nightly_control_tower_path)
 
     board_rows = [dict(row or {}) for row in list(action_board.get("board_rows") or [])]
     governance_rows = [dict(row or {}) for row in list(rollout_governance.get("governance_rows") or [])]
@@ -173,6 +206,50 @@ def validate_btst_governance_consistency(
             )
         )
 
+    rollout_closed_frontiers = _closed_frontiers([dict(row or {}) for row in list(rollout_governance.get("frontier_constraints") or [])])
+    synthesis_closed_frontiers = _closed_frontiers([dict(row or {}) for row in list(governance_synthesis.get("closed_frontiers") or [])])
+    nightly_closed_frontiers = _closed_frontiers([dict(row or {}) for row in list(dict(nightly_control_tower.get("control_tower_snapshot") or {}).get("closed_frontiers") or [])])
+    if not governance_synthesis:
+        checks.append(
+            _build_check(
+                "closed_frontier_alignment",
+                "warn",
+                "缺少 governance synthesis，无法校验 closed_frontiers 是否已从 p5 正确传导。",
+                details={
+                    "rollout_closed_frontiers": rollout_closed_frontiers,
+                    "synthesis_available": False,
+                    "nightly_available": bool(nightly_control_tower),
+                },
+            )
+        )
+    elif not nightly_control_tower:
+        checks.append(
+            _build_check(
+                "closed_frontier_alignment",
+                "warn",
+                "governance synthesis 已存在，但 nightly control tower 尚未生成，暂时无法完成 p5 / synthesis / nightly 三方闭环校验。",
+                details={
+                    "rollout_closed_frontiers": rollout_closed_frontiers,
+                    "synthesis_closed_frontiers": synthesis_closed_frontiers,
+                    "nightly_available": False,
+                },
+            )
+        )
+    else:
+        is_aligned = rollout_closed_frontiers == synthesis_closed_frontiers == nightly_closed_frontiers
+        checks.append(
+            _build_check(
+                "closed_frontier_alignment",
+                "pass" if is_aligned else "fail",
+                "closed_frontiers 在 p5 / synthesis / nightly 三处保持一致。" if is_aligned else "closed_frontiers 在 p5 / synthesis / nightly 之间存在漂移，需先修复治理链路再继续使用。",
+                details={
+                    "rollout_closed_frontiers": rollout_closed_frontiers,
+                    "synthesis_closed_frontiers": synthesis_closed_frontiers,
+                    "nightly_closed_frontiers": nightly_closed_frontiers,
+                },
+            )
+        )
+
     fail_count = sum(1 for check in checks if check["status"] == "fail")
     warn_count = sum(1 for check in checks if check["status"] == "warn")
     pass_count = sum(1 for check in checks if check["status"] == "pass")
@@ -192,6 +269,8 @@ def validate_btst_governance_consistency(
             "primary_window_validation_runbook": str(Path(primary_window_validation_runbook_path).expanduser().resolve()),
             "structural_shadow_runbook": str(Path(structural_shadow_runbook_path).expanduser().resolve()),
             "candidate_entry_governance": str(Path(candidate_entry_governance_path).expanduser().resolve()),
+            "governance_synthesis": str(Path(governance_synthesis_path).expanduser().resolve()) if governance_synthesis_path else None,
+            "nightly_control_tower": str(Path(nightly_control_tower_path).expanduser().resolve()) if nightly_control_tower_path else None,
         },
     }
 
@@ -225,6 +304,8 @@ def main() -> None:
     parser.add_argument("--primary-window-validation-runbook", default=str(DEFAULT_PRIMARY_WINDOW_VALIDATION_RUNBOOK_PATH))
     parser.add_argument("--structural-shadow-runbook", default=str(DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH))
     parser.add_argument("--candidate-entry-governance", default=str(DEFAULT_CANDIDATE_ENTRY_GOVERNANCE_PATH))
+    parser.add_argument("--governance-synthesis", default=str(DEFAULT_GOVERNANCE_SYNTHESIS_PATH))
+    parser.add_argument("--nightly-control-tower", default=str(DEFAULT_NIGHTLY_CONTROL_TOWER_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -237,6 +318,8 @@ def main() -> None:
         primary_window_validation_runbook_path=args.primary_window_validation_runbook,
         structural_shadow_runbook_path=args.structural_shadow_runbook,
         candidate_entry_governance_path=args.candidate_entry_governance,
+        governance_synthesis_path=args.governance_synthesis or None,
+        nightly_control_tower_path=args.nightly_control_tower or None,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()

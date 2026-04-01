@@ -946,6 +946,7 @@ def refresh_btst_governance_validation_artifacts(reports_root: str | Path) -> di
         "primary_window_validation_runbook": resolved_reports_root / PRIMARY_WINDOW_VALIDATION_RUNBOOK_JSON,
         "structural_shadow_runbook": resolved_reports_root / STRUCTURAL_SHADOW_RUNBOOK_JSON,
         "candidate_entry_governance": resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON,
+        "governance_synthesis": resolved_reports_root / BTST_GOVERNANCE_SYNTHESIS_JSON,
     }
     missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
     if missing_inputs:
@@ -965,6 +966,8 @@ def refresh_btst_governance_validation_artifacts(reports_root: str | Path) -> di
             primary_window_validation_runbook_path=required_inputs["primary_window_validation_runbook"],
             structural_shadow_runbook_path=required_inputs["structural_shadow_runbook"],
             candidate_entry_governance_path=required_inputs["candidate_entry_governance"],
+            governance_synthesis_path=required_inputs["governance_synthesis"],
+            nightly_control_tower_path=resolved_reports_root / "btst_nightly_control_tower_latest.json",
         )
         output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         output_md_path.write_text(render_btst_governance_validation_markdown(analysis), encoding="utf-8")
