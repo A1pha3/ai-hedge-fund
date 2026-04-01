@@ -248,8 +248,18 @@ def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_p
         {
             "lane_status": "shadow_only_until_second_window",
             "default_upgrade_status": "blocked_by_single_window_candidate_entry_signal",
+            "target_window_count": 2,
+            "missing_window_count": 1,
+            "upgrade_gap": "await_new_independent_window_data",
             "recommended_structural_variant": "exclude_watchlist_avoid_weak_structure_entries",
-            "window_scan_summary": {"rollout_readiness": "shadow_only_until_second_window"},
+            "window_scan_summary": {
+                "report_count": 3,
+                "filtered_report_count": 1,
+                "focus_hit_report_count": 1,
+                "preserve_misfire_report_count": 0,
+                "distinct_window_count_with_filtered_entries": 1,
+                "rollout_readiness": "shadow_only_until_second_window",
+            },
             "next_actions": ["等待第二个独立窗口确认 preserve 不误伤"],
             "recommendation": "candidate-entry 仅允许 shadow-only，等待第二个独立窗口。",
         },
@@ -301,11 +311,21 @@ def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_p
     }
     assert synthesis["waiting_lane_count"] >= 4
     assert any(task["source"] == "p3_action_board" for task in synthesis["next_actions"])
+    candidate_row = next(row for row in synthesis["lane_matrix"] if row["lane_id"] == "candidate_entry_shadow")
+    assert candidate_row["missing_window_count"] == 1
+    assert candidate_row["target_window_count"] == 2
+    assert candidate_row["upgrade_gap"] == "await_new_independent_window_data"
+    assert candidate_row["distinct_window_count_with_filtered_entries"] == 1
+    assert candidate_row["preserve_misfire_report_count"] == 0
 
     assert validation["overall_verdict"] == "pass"
     assert validation["fail_count"] == 0
     assert validation["warn_count"] == 0
     assert any(check["check_id"] == "closed_frontier_alignment" and check["status"] == "pass" for check in validation["checks"])
+    candidate_check = next(check for check in validation["checks"] if check["check_id"] == "candidate_entry_shadow_alignment")
+    assert candidate_check["status"] == "pass"
+    assert candidate_check["details"]["distinct_window_count_with_filtered_entries"] == 1
+    assert candidate_check["details"]["expected_missing_window_count"] == 1
 
 
 def test_validate_btst_governance_consistency_fails_on_closed_frontier_drift(tmp_path: Path) -> None:
@@ -388,6 +408,86 @@ def test_validate_btst_governance_consistency_fails_on_closed_frontier_drift(tmp
 
     assert validation["overall_verdict"] == "fail"
     assert any(check["check_id"] == "closed_frontier_alignment" and check["status"] == "fail" for check in validation["checks"])
+
+
+def test_validate_btst_governance_consistency_fails_on_candidate_entry_evidence_drift(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+
+    _write_json(
+        reports_root / "p3_top3_post_execution_action_board_20260330.json",
+        {
+            "board_rows": [
+                {"ticker": "001309", "action_tier": "primary_promote"},
+                {"ticker": "300724", "action_tier": "structural_shadow_hold"},
+            ],
+            "recommendation": "001309, 300383, 300724",
+        },
+    )
+    _write_json(
+        reports_root / "p5_btst_rollout_governance_board_20260330.json",
+        {
+            "governance_rows": [
+                {"ticker": "001309", "status": "continue_controlled_roll_forward", "blocker": "cross_window_stability_missing"},
+                {"ticker": "002015", "status": "await_new_close_candidate_window"},
+                {"ticker": "600821", "status": "await_new_intraday_control_window"},
+                {"ticker": "300724", "status": "structural_shadow_hold_only"},
+            ],
+            "recommendation": "001309, 300383, 300724",
+        },
+    )
+    _write_json(reports_root / "p6_primary_window_gap_001309_20260330.json", {"missing_window_count": 1})
+    _write_json(
+        reports_root / "p6_recurring_shadow_runbook_20260330.json",
+        {
+            "close_candidate": {"lane_status": "await_new_close_candidate_window", "validation_verdict": "await_new_independent_window_data"},
+            "intraday_control": {"lane_status": "await_new_intraday_control_window", "validation_verdict": "await_new_independent_window_data"},
+            "global_validation_verdict": "await_new_recurring_window_evidence",
+        },
+    )
+    _write_json(reports_root / "p7_primary_window_validation_runbook_001309_20260330.json", {"validation_verdict": "await_new_independent_window_data"})
+    _write_json(
+        reports_root / "p8_structural_shadow_runbook_300724_20260330.json",
+        {
+            "lane_status": "structural_shadow_hold_only",
+            "freeze_verdict": "structural_shadow_hold_only",
+        },
+    )
+    _write_json(
+        reports_root / "p9_candidate_entry_rollout_governance_20260330.json",
+        {
+            "lane_status": "shadow_only_until_second_window",
+            "default_upgrade_status": "blocked_by_single_window_candidate_entry_signal",
+            "target_window_count": 2,
+            "missing_window_count": 1,
+            "upgrade_gap": "await_new_independent_window_data",
+            "recommended_structural_variant": "exclude_watchlist_avoid_weak_structure_entries",
+            "window_scan_summary": {
+                "report_count": 4,
+                "filtered_report_count": 2,
+                "focus_hit_report_count": 2,
+                "preserve_misfire_report_count": 0,
+                "distinct_window_count_with_filtered_entries": 2,
+                "rollout_readiness": "shadow_rollout_review_ready",
+            },
+        },
+    )
+
+    validation = validate_btst_governance_consistency(
+        action_board_path=reports_root / "p3_top3_post_execution_action_board_20260330.json",
+        rollout_governance_path=reports_root / "p5_btst_rollout_governance_board_20260330.json",
+        primary_window_gap_path=reports_root / "p6_primary_window_gap_001309_20260330.json",
+        recurring_shadow_runbook_path=reports_root / "p6_recurring_shadow_runbook_20260330.json",
+        primary_window_validation_runbook_path=reports_root / "p7_primary_window_validation_runbook_001309_20260330.json",
+        structural_shadow_runbook_path=reports_root / "p8_structural_shadow_runbook_300724_20260330.json",
+        candidate_entry_governance_path=reports_root / "p9_candidate_entry_rollout_governance_20260330.json",
+    )
+
+    candidate_check = next(check for check in validation["checks"] if check["check_id"] == "candidate_entry_shadow_alignment")
+    assert validation["overall_verdict"] == "fail"
+    assert candidate_check["status"] == "fail"
+    assert candidate_check["details"]["distinct_window_count_with_filtered_entries"] == 2
+    assert candidate_check["details"]["expected_missing_window_count"] == 0
 
 
 def test_btst_replay_cohort_summarizes_short_trade_and_frozen_reports(tmp_path: Path) -> None:
@@ -658,8 +758,18 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
         {
             "lane_status": "shadow_only_until_second_window",
             "default_upgrade_status": "blocked_by_single_window_candidate_entry_signal",
+            "target_window_count": 2,
+            "missing_window_count": 1,
+            "upgrade_gap": "await_new_independent_window_data",
             "recommended_structural_variant": "exclude_watchlist_avoid_weak_structure_entries",
-            "window_scan_summary": {"rollout_readiness": "shadow_only_until_second_window"},
+            "window_scan_summary": {
+                "report_count": 2,
+                "filtered_report_count": 1,
+                "focus_hit_report_count": 1,
+                "preserve_misfire_report_count": 0,
+                "distinct_window_count_with_filtered_entries": 1,
+                "rollout_readiness": "shadow_only_until_second_window",
+            },
             "next_actions": ["等待第二个独立窗口确认 preserve 不误伤"],
             "recommendation": "candidate-entry 仅允许 shadow-only，等待第二个独立窗口。",
         },
@@ -790,8 +900,18 @@ def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_pa
         {
             "lane_status": "shadow_only_until_second_window",
             "default_upgrade_status": "blocked_by_single_window_candidate_entry_signal",
+            "target_window_count": 2,
+            "missing_window_count": 1,
+            "upgrade_gap": "await_new_independent_window_data",
             "recommended_structural_variant": "exclude_watchlist_avoid_weak_structure_entries",
-            "window_scan_summary": {"rollout_readiness": "shadow_only_until_second_window"},
+            "window_scan_summary": {
+                "report_count": 2,
+                "filtered_report_count": 1,
+                "focus_hit_report_count": 1,
+                "preserve_misfire_report_count": 0,
+                "distinct_window_count_with_filtered_entries": 1,
+                "rollout_readiness": "shadow_only_until_second_window",
+            },
             "next_actions": ["等待第二个独立窗口确认 preserve 不误伤"],
             "recommendation": "candidate-entry 仅允许 shadow-only，等待第二个独立窗口。",
         },
@@ -881,6 +1001,27 @@ def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_pa
             "recommendation": "当前 rollout 治理应分三条车道：001309 主推进，300383 进入 shadow validation，300724 structural hold。",
         },
     )
+    _write_json(
+        reports_root / "p9_candidate_entry_rollout_governance_20260330.json",
+        {
+            "lane_status": "shadow_rollout_review_ready",
+            "default_upgrade_status": "blocked_pending_additional_shadow_execution_evidence",
+            "target_window_count": 2,
+            "missing_window_count": 0,
+            "upgrade_gap": "ready_for_shadow_rollout_review",
+            "recommended_structural_variant": "exclude_watchlist_avoid_weak_structure_entries",
+            "window_scan_summary": {
+                "report_count": 3,
+                "filtered_report_count": 2,
+                "focus_hit_report_count": 2,
+                "preserve_misfire_report_count": 0,
+                "distinct_window_count_with_filtered_entries": 2,
+                "rollout_readiness": "shadow_rollout_review_ready",
+            },
+            "next_actions": ["进入 shadow rollout review，继续补 shadow execution 证据"],
+            "recommendation": "candidate-entry 进入 shadow rollout review，但仍需补 shadow execution 证据。",
+        },
+    )
 
     _write_btst_followup_report(
         reports_root,
@@ -951,8 +1092,15 @@ def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_pa
     assert any(item["ticker"] == "600111" for item in delta_payload["priority_delta"]["removed_tickers"])
     assert delta_payload["governance_delta"]["available"] is True
     assert any(item["lane_id"] == "single_name_shadow" for item in delta_payload["governance_delta"]["lane_changes"])
+    candidate_lane_delta = next(item for item in delta_payload["governance_delta"]["lane_changes"] if item["lane_id"] == "candidate_entry_shadow")
+    assert candidate_lane_delta["current_missing_window_count"] == 0
+    assert candidate_lane_delta["current_distinct_window_count_with_filtered_entries"] == 2
+    assert candidate_lane_delta["current_upgrade_gap"] == "ready_for_shadow_rollout_review"
     assert delta_payload["replay_delta"]["report_count_delta"] == 1
 
     delta_markdown = Path(second_result["delta_markdown_path"]).read_text(encoding="utf-8")
     assert "300333" in delta_markdown
     assert "single_name_shadow" in delta_markdown
+    assert "candidate_entry_shadow" in delta_markdown
+    assert "missing_window_count 1 -> 0" in delta_markdown
+    assert "distinct_window_count 1 -> 2" in delta_markdown

@@ -86,7 +86,7 @@ data/reports/paper_trading_window_20260323_20260326_live_m2_7_dual_target_cataly
 
 1. 是否成功生成 `selection_artifacts`。
 2. `session_summary.json` 和 `daily_events.jsonl` 是否齐全。
-3. `short_trade_only` 或 `dual_target` 运行后，目录下是否自动生成 `btst_next_day_trade_brief_latest.{json,md}` 与 `btst_premarket_execution_card_latest.{json,md}`，且 brief/card 中是否已经带出主票、near-miss 与自动机会池。
+3. 以“仅短线模式（`short_trade_only`）”或“双目标模式（`dual_target`）”运行后，目录下是否自动生成 `btst_next_day_trade_brief_latest.{json,md}` 与 `btst_premarket_execution_card_latest.{json,md}`，且 brief/card 中是否已经带出主票、near-miss 与自动机会池。
 4. 后续 blocker 与 outcome 脚本是否能直接消费该目录。
 
 ### 3.2 admission 变体 live validation
@@ -314,8 +314,8 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 优先回答：
 
 1. `002015`、`600821` 是否仍然都只是 `emergent_local_baseline`。
-2. recurring shadow lane 当前是 `await_new_close_candidate_window` / `await_new_intraday_control_window`，还是已经具备跨窗口验证资格。
-3. 下一次什么时候可以把这条 lane 回接进 `p5_btst_rollout_governance_board` 做升级评审。
+2. 复现影子车道当前是“等待新的收盘延续窗口”（`await_new_close_candidate_window`）/“等待新的盘中控制窗口”（`await_new_intraday_control_window`），还是已经具备跨窗口验证资格。
+3. 下一次什么时候可以把这条车道回接进 `p5_btst_rollout_governance_board` 做升级评审。
 
 ### 6.5 分析 structural conflict rescue
 
@@ -411,7 +411,7 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 
 补充说明：
 
-1. 如果你直接跑 `scripts/run_paper_trading.py --selection-target short_trade_only|dual_target`，上述 brief 会自动落在 report 目录中，无需手工再跑一次。
+1. 如果你直接以 `--selection-target short_trade_only|dual_target` 运行 `scripts/run_paper_trading.py`，上述 brief 会自动落在 report 目录中，无需手工再跑一次。
 
 ### 7.4 生成盘前执行卡
 
@@ -606,13 +606,13 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 
 1. 弱结构规则到底命中了多少份 report，以及它们是否属于多个独立 `window_key`。
 2. `preserve_misfire_report_count` 是否仍然保持为 0。
-3. 当前结论应该是 `research_only`、`shadow_only_until_second_window`，还是已经能进入 `shadow_rollout_review_ready`。
+3. 当前结论应该是“仅研究模式（`research_only`）”“第二独立窗口前仅影子观察（`shadow_only_until_second_window`）”，还是已经能进入“影子推进复核就绪（`shadow_rollout_review_ready`）”。
 
 补充说明：
 
 1. 当前 2026-03-30 的实跑结果已经落在 `data/reports/btst_candidate_entry_window_scan_20260330.{json,md}`。
-2. 真实结果扫描了 14 份 `paper_trading_window` 报告，其中只有 3 份报告过滤了 `300502`，且都落在同一个 `window_key=20260323_20260326`，所以当前结论只能是 `shadow_only_until_second_window`。
-3. 由于 `preserve_misfire_report_count=0`，这条规则可以继续保留为 shadow candidate-entry 旁路，但不能升级为默认 admission 行为。
+2. 真实结果扫描了 14 份 `paper_trading_window` 报告，其中只有 3 份报告过滤了 `300502`，且都落在同一个 `window_key=20260323_20260326`，所以当前结论只能是“第二独立窗口前仅影子观察”（`shadow_only_until_second_window`）。
+3. 由于 `preserve_misfire_report_count=0`，这条规则可以继续保留为候选入口影子旁路，但不能升级为默认 admission 行为。
 
 ### 7.11 生成 candidate entry rollout governance 板
 
@@ -636,14 +636,14 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 
 优先回答：
 
-1. 当前 `candidate_entry_rule` 应该固定成哪条语义，以及对应哪条 structural variant。
-2. 当前 lane status 是否只允许 `shadow_only_until_second_window`。
+1. 当前 `candidate_entry_rule` 应该固定成哪条语义，以及对应哪条结构变体。
+2. 当前车道状态是否只允许“第二独立窗口前仅影子观察”（`shadow_only_until_second_window`）。
 3. 为什么现在不能把 candidate-entry 规则误写成默认升级依据。
 
 补充说明：
 
 1. 当前 2026-03-30 的实跑结果已经落在 `data/reports/p9_candidate_entry_rollout_governance_20260330.{json,md}`。
-2. 当前治理结论非常明确：`weak_structure_triplet` 只能以 `exclude_watchlist_avoid_weak_structure_entries` 的形式进入 shadow-only lane，`default_upgrade_status=blocked_by_single_window_candidate_entry_signal`。
+2. 当前治理结论非常明确：`weak_structure_triplet` 只能以 `exclude_watchlist_avoid_weak_structure_entries` 的形式进入“仅影子观察车道”，`default_upgrade_status=blocked_by_single_window_candidate_entry_signal`。
 3. `semantic_pair_300502` 与 `volume_only_20260326` 继续保留为研究参考，不进入 rollout 主链。
 
 ---
@@ -669,7 +669,7 @@ DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN=0.0 \
 3. 跑 `analyze_btst_score_construction_frontier.py`，验证正向 weight 微调是否真能形成 closed-cycle actionable surface。
 4. 如果 score frontier 仍然全是 0 actionable，再跑 `analyze_btst_candidate_entry_frontier.py`，验证 selective weak-structure 过滤能否清理 300502 类样本而不误伤 300394。
 5. 跑 `analyze_btst_candidate_entry_window_scan.py`，确认这条 selective 规则是否已经跨多个独立 `window_key` 命中。
-6. 跑 `analyze_btst_candidate_entry_rollout_governance.py`，把 frontier、多窗口扫描和主链验证收口成 lane status。
+6. 跑 `analyze_btst_candidate_entry_rollout_governance.py`，把 frontier、多窗口扫描和主链验证收口成车道状态。
 7. 再看 `300383` 的 targeted release 与 `600821` / `002015` recurring frontier。
 8. 最后用 outcome 脚本验证 release 样本次日质量。
 

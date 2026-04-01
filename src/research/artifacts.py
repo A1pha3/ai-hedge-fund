@@ -423,6 +423,7 @@ def build_selection_target_replay_input(
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
     rejected_entries = list(dict(filters.get("watchlist", {}) or {}).get("tickers", []) or [])
     supplemental_short_trade_entries = list(dict(filters.get("short_trade_candidates", {}) or {}).get("tickers", []) or [])
+    supplemental_catalyst_theme_entries = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
     watchlist_entries = [
         _serialize_layer_c_result_for_replay(item, candidate_source="layer_c_watchlist")
         for item in sorted(plan.watchlist, key=lambda current: current.score_final, reverse=True)
@@ -439,11 +440,13 @@ def build_selection_target_replay_input(
             "watchlist_count": len(watchlist_entries),
             "rejected_entry_count": len(rejected_entries),
             "supplemental_short_trade_entry_count": len(supplemental_short_trade_entries),
+            "supplemental_catalyst_theme_entry_count": len(supplemental_catalyst_theme_entries),
             "buy_order_ticker_count": len(plan.buy_orders),
         },
         watchlist=watchlist_entries,
         rejected_entries=rejected_entries,
         supplemental_short_trade_entries=supplemental_short_trade_entries,
+        supplemental_catalyst_theme_entries=supplemental_catalyst_theme_entries,
         buy_order_tickers=sorted({str(order.ticker) for order in plan.buy_orders}),
         selection_targets=dict(plan.selection_targets or {}),
         target_summary=plan.dual_target_summary,
@@ -464,6 +467,8 @@ def build_selection_snapshot(
     formatted_trade_date = _format_trade_date(trade_date)
     counts = dict((plan.risk_metrics or {}).get("counts", {}) or {})
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
+    filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    catalyst_theme_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
     return SelectionSnapshot(
         artifact_version=artifact_version,
         run_id=run_id,
@@ -479,6 +484,7 @@ def build_selection_snapshot(
             "candidate_count": int(counts.get("layer_a_count", plan.layer_a_count) or 0),
             "high_pool_count": int(counts.get("layer_b_count", plan.layer_b_count) or 0),
             "watchlist_count": int(counts.get("watchlist_count", len(plan.watchlist)) or 0),
+            "catalyst_theme_candidate_count": int(counts.get("catalyst_theme_candidate_count", len(catalyst_theme_candidates)) or 0),
             "buy_order_count": int(counts.get("buy_order_count", len(plan.buy_orders)) or 0),
             "sell_order_count": int(counts.get("sell_order_count", len(plan.sell_orders)) or 0),
         },
@@ -489,6 +495,7 @@ def build_selection_snapshot(
         research_view=_build_research_target_view(plan),
         short_trade_view=_build_short_trade_target_view(plan),
         dual_target_delta=_build_dual_target_delta(plan),
+        catalyst_theme_candidates=catalyst_theme_candidates,
         buy_orders=[order.model_dump(mode="json") for order in plan.buy_orders],
         sell_orders=[order.model_dump(mode="json") for order in plan.sell_orders],
         funnel_diagnostics=funnel_diagnostics,

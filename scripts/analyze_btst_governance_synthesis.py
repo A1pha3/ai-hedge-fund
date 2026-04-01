@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.analyze_btst_candidate_entry_rollout_governance import derive_candidate_entry_shadow_state
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR
@@ -163,6 +165,13 @@ def _build_lane_matrix(
     structural_board = _find_row(board_rows, "300724")
     recurring_close = dict(recurring_shadow_runbook.get("close_candidate") or {})
     recurring_intraday = dict(recurring_shadow_runbook.get("intraday_control") or {})
+    candidate_entry_window_scan = dict(candidate_entry_governance.get("window_scan_summary") or {})
+    candidate_entry_shadow_state = derive_candidate_entry_shadow_state(
+        rollout_readiness=str(candidate_entry_window_scan.get("rollout_readiness") or candidate_entry_governance.get("lane_status") or "unknown"),
+        preserve_misfire_report_count=int(candidate_entry_window_scan.get("preserve_misfire_report_count") or 0),
+        distinct_window_count_with_filtered_entries=int(candidate_entry_window_scan.get("distinct_window_count_with_filtered_entries") or 0),
+        target_window_count=int(candidate_entry_governance.get("target_window_count") or 2),
+    )
 
     return [
         {
@@ -222,10 +231,19 @@ def _build_lane_matrix(
             "lane_id": "candidate_entry_shadow",
             "ticker": str(candidate_entry_governance.get("candidate_entry_rule") or "candidate_entry_rule"),
             "governance_tier": "candidate_entry_shadow_only",
-            "lane_status": candidate_entry_governance.get("lane_status"),
+            "lane_status": candidate_entry_governance.get("lane_status") or candidate_entry_shadow_state.get("lane_status"),
             "action_tier": "shadow_only",
-            "blocker": candidate_entry_governance.get("default_upgrade_status"),
-            "validation_verdict": dict(candidate_entry_governance.get("window_scan_summary") or {}).get("rollout_readiness"),
+            "blocker": candidate_entry_governance.get("default_upgrade_status") or candidate_entry_shadow_state.get("default_upgrade_status"),
+            "validation_verdict": candidate_entry_window_scan.get("rollout_readiness"),
+            "missing_window_count": candidate_entry_governance.get("missing_window_count") if candidate_entry_governance.get("missing_window_count") is not None else candidate_entry_shadow_state.get("missing_window_count"),
+            "target_window_count": candidate_entry_governance.get("target_window_count") if candidate_entry_governance.get("target_window_count") is not None else candidate_entry_shadow_state.get("target_window_count"),
+            "upgrade_gap": candidate_entry_governance.get("upgrade_gap") or candidate_entry_shadow_state.get("upgrade_gap"),
+            "window_report_count": candidate_entry_window_scan.get("report_count"),
+            "filtered_report_count": candidate_entry_window_scan.get("filtered_report_count"),
+            "focus_hit_report_count": candidate_entry_window_scan.get("focus_hit_report_count"),
+            "preserve_misfire_report_count": candidate_entry_window_scan.get("preserve_misfire_report_count"),
+            "distinct_window_count_with_filtered_entries": candidate_entry_window_scan.get("distinct_window_count_with_filtered_entries"),
+            "recommended_structural_variant": candidate_entry_governance.get("recommended_structural_variant"),
             "next_step": _first(list(candidate_entry_governance.get("next_actions") or []), ""),
         },
     ]
@@ -428,6 +446,20 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
         lines.append(f"  validation_verdict: {row.get('validation_verdict')}")
         if row.get("missing_window_count") is not None:
             lines.append(f"  missing_window_count: {row.get('missing_window_count')}")
+        if row.get("target_window_count") is not None:
+            lines.append(f"  target_window_count: {row.get('target_window_count')}")
+        if row.get("distinct_window_count_with_filtered_entries") is not None:
+            lines.append(f"  distinct_window_count_with_filtered_entries: {row.get('distinct_window_count_with_filtered_entries')}")
+        if row.get("preserve_misfire_report_count") is not None:
+            lines.append(f"  preserve_misfire_report_count: {row.get('preserve_misfire_report_count')}")
+        if row.get("filtered_report_count") is not None:
+            lines.append(f"  filtered_report_count: {row.get('filtered_report_count')}")
+        if row.get("focus_hit_report_count") is not None:
+            lines.append(f"  focus_hit_report_count: {row.get('focus_hit_report_count')}")
+        if row.get("upgrade_gap"):
+            lines.append(f"  upgrade_gap: {row.get('upgrade_gap')}")
+        if row.get("recommended_structural_variant"):
+            lines.append(f"  recommended_structural_variant: {row.get('recommended_structural_variant')}")
         lines.append(f"  next_step: {row.get('next_step')}")
     lines.append("")
 

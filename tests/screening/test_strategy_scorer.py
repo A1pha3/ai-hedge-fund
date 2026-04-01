@@ -1,9 +1,11 @@
 import os
+import importlib
 from unittest.mock import patch
 
 from src.data.models import FinancialMetrics
 from src.screening.models import CandidateStock, StrategySignal
 from src.screening.strategy_scorer import _score_profitability, score_batch
+import src.screening.strategy_scorer as strategy_scorer_module
 
 
 def _signal(direction: int, confidence: float, completeness: float = 1.0) -> StrategySignal:
@@ -137,6 +139,21 @@ def test_score_batch_limits_technical_scoring_to_ranked_subset():
     assert technical_calls == ["000001", "000002"]
     assert results["000003"]["trend"].completeness == 0.0
     assert results["000003"]["mean_reversion"].completeness == 0.0
+
+
+def test_scoring_stage_defaults_scale_with_candidate_pool_size(monkeypatch):
+    monkeypatch.setenv("MAX_CANDIDATE_POOL_SIZE", "300")
+    monkeypatch.delenv("SCORE_BATCH_TECHNICAL_MAX_CANDIDATES", raising=False)
+    monkeypatch.delenv("SCORE_BATCH_FUNDAMENTAL_MAX_CANDIDATES", raising=False)
+    monkeypatch.delenv("SCORE_BATCH_EVENT_SENTIMENT_MAX_CANDIDATES", raising=False)
+    reloaded_module = importlib.reload(strategy_scorer_module)
+
+    try:
+        assert reloaded_module.TECHNICAL_SCORE_MAX_CANDIDATES == 225
+        assert reloaded_module.FUNDAMENTAL_SCORE_MAX_CANDIDATES == 141
+        assert reloaded_module.EVENT_SENTIMENT_MAX_CANDIDATES == 60
+    finally:
+        importlib.reload(strategy_scorer_module)
 
 
 def _financial_metrics(**overrides) -> FinancialMetrics:

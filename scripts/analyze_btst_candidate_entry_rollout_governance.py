@@ -19,6 +19,7 @@ VARIANT_TO_STRUCTURAL_ALIAS = {
     "semantic_pair_300502": None,
     "volume_only_20260326": None,
 }
+TARGET_DISTINCT_WINDOW_COUNT = 2
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -31,6 +32,41 @@ def _score_frontier_all_zero(score_frontier_report: dict[str, Any]) -> bool:
     if not variant_rows:
         return True
     return all(int(row.get("closed_cycle_tradeable_count") or 0) == 0 for row in variant_rows)
+
+
+def derive_candidate_entry_shadow_state(
+    *,
+    rollout_readiness: str,
+    preserve_misfire_report_count: int,
+    distinct_window_count_with_filtered_entries: int,
+    target_window_count: int = TARGET_DISTINCT_WINDOW_COUNT,
+) -> dict[str, Any]:
+    missing_window_count = max(int(target_window_count or 0) - max(int(distinct_window_count_with_filtered_entries or 0), 0), 0)
+
+    if preserve_misfire_report_count > 0:
+        lane_status = "research_only"
+        default_upgrade_status = "blocked_by_preserve_misfire"
+        upgrade_gap = "preserve_misfire_present"
+    elif rollout_readiness == "shadow_only_until_second_window":
+        lane_status = "shadow_only_until_second_window"
+        default_upgrade_status = "blocked_by_single_window_candidate_entry_signal"
+        upgrade_gap = "await_new_independent_window_data"
+    elif rollout_readiness == "shadow_rollout_review_ready":
+        lane_status = "shadow_rollout_review_ready"
+        default_upgrade_status = "blocked_pending_additional_shadow_execution_evidence"
+        upgrade_gap = "ready_for_shadow_rollout_review"
+    else:
+        lane_status = "research_only"
+        default_upgrade_status = "blocked_by_missing_window_signal"
+        upgrade_gap = "missing_window_signal"
+
+    return {
+        "lane_status": lane_status,
+        "default_upgrade_status": default_upgrade_status,
+        "target_window_count": int(target_window_count or 0),
+        "missing_window_count": missing_window_count,
+        "upgrade_gap": upgrade_gap,
+    }
 
 
 def analyze_btst_candidate_entry_rollout_governance(
@@ -62,19 +98,13 @@ def analyze_btst_candidate_entry_rollout_governance(
     scan_readiness = str(window_scan.get("rollout_readiness") or "unknown")
     preserve_misfire_report_count = int(window_scan.get("preserve_misfire_report_count") or 0)
     distinct_window_count_with_filtered_entries = int(window_scan.get("distinct_window_count_with_filtered_entries") or 0)
-
-    if preserve_misfire_report_count > 0:
-        lane_status = "research_only"
-        default_upgrade_status = "blocked_by_preserve_misfire"
-    elif scan_readiness == "shadow_only_until_second_window":
-        lane_status = "shadow_only_until_second_window"
-        default_upgrade_status = "blocked_by_single_window_candidate_entry_signal"
-    elif scan_readiness == "shadow_rollout_review_ready":
-        lane_status = "shadow_rollout_review_ready"
-        default_upgrade_status = "blocked_pending_additional_shadow_execution_evidence"
-    else:
-        lane_status = "research_only"
-        default_upgrade_status = "blocked_by_missing_window_signal"
+    shadow_state = derive_candidate_entry_shadow_state(
+        rollout_readiness=scan_readiness,
+        preserve_misfire_report_count=preserve_misfire_report_count,
+        distinct_window_count_with_filtered_entries=distinct_window_count_with_filtered_entries,
+    )
+    lane_status = shadow_state["lane_status"]
+    default_upgrade_status = shadow_state["default_upgrade_status"]
 
     recommendation = (
         "当前 candidate-entry 主结论应收敛为：保留 weak-structure selective rule 作为 shadow-only 入口治理语义，"
@@ -100,6 +130,9 @@ def analyze_btst_candidate_entry_rollout_governance(
         "recommended_structural_variant": structural_alias,
         "lane_status": lane_status,
         "default_upgrade_status": default_upgrade_status,
+        "target_window_count": shadow_state["target_window_count"],
+        "missing_window_count": shadow_state["missing_window_count"],
+        "upgrade_gap": shadow_state["upgrade_gap"],
         "score_frontier_all_zero": score_frontier_all_zero,
         "current_window_evidence": {
             "filtered_candidate_entry_count": current_window_filtered_count,
@@ -159,6 +192,9 @@ def render_btst_candidate_entry_rollout_governance_markdown(analysis: dict[str, 
     lines.append(f"- recommended_structural_variant: {analysis['recommended_structural_variant']}")
     lines.append(f"- lane_status: {analysis['lane_status']}")
     lines.append(f"- default_upgrade_status: {analysis['default_upgrade_status']}")
+    lines.append(f"- target_window_count: {analysis['target_window_count']}")
+    lines.append(f"- missing_window_count: {analysis['missing_window_count']}")
+    lines.append(f"- upgrade_gap: {analysis['upgrade_gap']}")
     lines.append(f"- score_frontier_all_zero: {analysis['score_frontier_all_zero']}")
     lines.append(f"- recommendation: {analysis['recommendation']}")
     lines.append("")

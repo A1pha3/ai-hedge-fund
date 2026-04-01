@@ -1,6 +1,6 @@
 # BTST 优化决策树
 
-适用对象：已经有一批 BTST 样本、分析报告或 replay 结果，但还不确定下一步应该改 admission、改 score frontier、改 blocked release，还是直接停止优化的人。
+适用对象：已经有一批 BTST 样本、分析报告或回放结果，但还不确定下一步应该改准入、改分数前沿、改阻断样本释放，还是直接停止优化的人。
 
 这份文档解决的问题：把 BTST 下一步动作收敛成一棵可执行决策树，减少“每次都从头争论该调什么”的摩擦。
 
@@ -9,7 +9,7 @@
 1. [02-btst-tuning-playbook.md](./02-btst-tuning-playbook.md)
 2. [06-btst-troubleshooting-playbook.md](./06-btst-troubleshooting-playbook.md)
 3. [09-btst-variant-acceptance-checklist.md](./09-btst-variant-acceptance-checklist.md)
-4. [10-btst-artifact-reading-manual.md](./10-btst-artifact-reading-manual.md)
+4. [10-BTST 产物阅读手册](./10-btst-artifact-reading-manual.md)
 
 ---
 
@@ -18,8 +18,8 @@
 每次准备优化 BTST 时，不要重新自由发挥。当前只允许从下面 5 个入口进入：
 
 1. Layer B / 入口供给不足。
-2. short-trade admission 太严。
-3. short-trade score frontier 太严。
+2. short-trade 准入太严。
+3. short-trade 分数前沿太严。
 4. blocked 样本存在结构冲突。
 5. 研究上通过，但 execution 承接差。
 
@@ -34,16 +34,16 @@
 如果是，继续问：
 
 1. 上游 fused / Layer B 候选本来就少：先回到 Layer B 供给，不先动 BTST 阈值。
-2. 上游候选不少，但 `short_trade_boundary` 很少：先看 admission floors。
-3. `short_trade_boundary` 已经不少，但 `selected/near_miss` 还是少：先看 score frontier。
+2. 上游候选不少，但 `short_trade_boundary` 很少：先看准入门槛。
+3. `short_trade_boundary` 已经不少，但 `selected/near_miss` 还是少：先看分数前沿。
 
 ### 第二步：当前最大失败簇是什么
 
 如果最大失败簇是：
 
 1. `rejected_layer_b_boundary_score_fail`：说明你还在看旧共享边界池问题，先切换到独立 builder 口径，不先调 target threshold。
-2. `rejected_short_trade_boundary_score_fail`：说明 admission 已不是主矛盾，优先看 score frontier。
-3. `blocked`：说明结构冲突是主线，优先看 rescue queue，而不是放大 admission。
+2. `rejected_short_trade_boundary_score_fail`：说明准入已不是主矛盾，优先看分数前沿。
+3. `blocked`：说明结构冲突是主线，优先看救援队列，而不是放大准入。
 
 ### 第三步：新增样本质量有没有变好
 
@@ -71,7 +71,7 @@
 
 ---
 
-## 4. 入口 B：admission 太严
+## 4. 入口 B：准入太严
 
 进入条件：
 
@@ -87,33 +87,33 @@
 
 当前窗口的已知默认动作：
 
-1. admission 扩覆盖优先看 `catalyst_freshness_min=0.00`。
+1. 准入扩覆盖优先看 `catalyst_freshness_min=0.00`。
 2. 不优先联动放松 volume floor。
 
 停止条件：
 
 1. 一旦 close 质量明显恶化，立即回滚。
-2. 如果 admission 放松后失败簇转向 score frontier，下一轮换入口，不要继续找第二条 floor。
+2. 如果准入放松后失败簇转向分数前沿，下一轮换入口，不要继续找第二条门槛。
 
 ---
 
-## 5. 入口 C：score frontier 太严
+## 5. 入口 C：分数前沿太严
 
 进入条件：
 
-1. admission 已通过。
+1. 准入已通过。
 2. 失败簇主要是 `rejected_short_trade_boundary_score_fail`。
 3. 样本结构本身已像短线，但离 near-miss 仍有差距。
 
 正确动作：
 
-1. 先做 score-fail frontier 分析。
-2. 区分 threshold-only 样本和 penalty 联动样本。
-3. 先找低 adjustment cost 的 release row，不先做大范围阈值下调。
+1. 先做 score-fail 前沿分析。
+2. 区分仅阈值样本和 penalty 联动样本。
+3. 先找低调整成本的释放行，不先做大范围阈值下调。
 
 停止条件：
 
-1. 如果大部分样本 gap 普遍很大，停止 threshold-only 实验。
+1. 如果大部分样本 gap 普遍很大，停止仅阈值实验。
 2. 转去看 score construction 或 penalty 结构，而不是继续压阈值。
 
 ---
@@ -128,17 +128,17 @@
 正确动作：
 
 1. 先跑窗口级 rescue queue，排序低成本样本。
-2. 只对存在 low-cost rescue row 的样本做 case-based release。
+2. 只对存在 low-cost rescue row 的样本做个案释放。
 3. 先拆 hard block 与 surcharge，避免重复惩罚黑盒。
 
 当前窗口的已知默认动作：
 
 1. 优先审 `300724-only`。
-2. 不做 blocked cluster-wide release。
+2. 不做 blocked 整簇释放。
 
 停止条件：
 
-1. 如果多数 blocked 样本没有 near-miss row，停止整簇 release 讨论。
+1. 如果多数 blocked 样本没有 near-miss row，停止整簇释放讨论。
 2. 把样本转回 candidate-entry 或 penalty 研究路径。
 
 ---
@@ -172,9 +172,9 @@
 
 然后直接归类：
 
-1. 弱结构入口样本：走 candidate-entry / admission 路径。
-2. score-fail 边界样本：走 frontier 路径。
-3. low-cost blocked 样本：走 targeted release 路径。
+1. 弱结构入口样本：走候选入口 / 准入路径。
+2. score-fail 边界样本：走前沿路径。
+3. low-cost blocked 样本：走定向释放路径。
 4. 高成本 penalty 样本：先保存研究证据，不进入默认升级讨论。
 
 ---
@@ -191,4 +191,4 @@
 
 ## 10. 一句话总结
 
-BTST 优化最重要的不是多做实验，而是每一轮都能先把问题送进正确入口。入口选对了，实验数量会显著减少；入口选错了，做再多 frontier 也只是在噪声里打转。
+BTST 优化最重要的不是多做实验，而是每一轮都能先把问题送进正确入口。入口选对了，实验数量会显著减少；入口选错了，做再多前沿分析也只是在噪声里打转。

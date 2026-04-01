@@ -8,24 +8,24 @@
 > 前置短线候选质量摘要：关于“Layer C 之前的短线候选次日表现是否真的变好”的短版结论，见 [pre_layer_short_trade_candidate_outcome_summary_20260329.md](./pre_layer_short_trade_candidate_outcome_summary_20260329.md)。
 > 前置短线扩覆盖摘要：关于“Layer C 之前的短线候选该从哪条 floor 开始扩覆盖”的短版结论，见 [pre_layer_short_trade_boundary_coverage_expansion_summary_20260329.md](./pre_layer_short_trade_boundary_coverage_expansion_summary_20260329.md)。
 > Catalyst-only live 摘要：关于“`catalyst_freshness_min=0.00` 是否在真实 live 路径中也成立”的短版结论，见 [pre_layer_short_trade_catalyst_floor_zero_full_live_summary_20260329.md](./pre_layer_short_trade_catalyst_floor_zero_full_live_summary_20260329.md)。
-> 前置短线 score-fail frontier 摘要：关于“新增 `short_trade_boundary` score-fail 簇下一步该怎么救”的短版结论，见 [pre_layer_short_trade_boundary_score_fail_frontier_summary_20260329.md](./pre_layer_short_trade_boundary_score_fail_frontier_summary_20260329.md)。
-> 前置短线 score frontier 优先级摘要：关于“下一轮 score frontier 先做 300383 还是 recurring ticker”的短版结论，见 [pre_layer_short_trade_score_frontier_priority_summary_20260329.md](./pre_layer_short_trade_score_frontier_priority_summary_20260329.md)。
+> 前置短线 score-fail 前沿摘要：关于“新增 `short_trade_boundary` score-fail 簇下一步该怎么救”的短版结论，见 [pre_layer_short_trade_boundary_score_fail_frontier_summary_20260329.md](./pre_layer_short_trade_boundary_score_fail_frontier_summary_20260329.md)。
+> 前置短线分数前沿优先级摘要：关于“下一轮分数前沿先做 300383 还是 recurring ticker”的短版结论，见 [pre_layer_short_trade_score_frontier_priority_summary_20260329.md](./pre_layer_short_trade_score_frontier_priority_summary_20260329.md)。
 
 ## 0. 专题导航
 
-本文档记录的是“选股优先优化方案”主线的实施落地、Replay Artifacts 工作台建设与试用验收收口状态。
+本文档记录的是“选股优先优化方案”主线的实施落地、回放产物工作台（Replay Artifacts）建设与试用验收收口状态。
 
 如果你现在要继续推进的是以下问题：
 
 1. 如何在保留现有研究型选股主线的同时新增 short trade target。
-2. 如何定义双目标的字段级协议、artifact 承接与 replay 扩展结构。
+2. 如何定义双目标的字段级协议、产物承接与回放扩展结构。
 3. 如何按阶段改造代码而不是继续在本实施文档里追加新分支。
 
 那么应改为从双目标专题目录进入，而不是继续把这份文档当作总入口：
 
 1. [双目标系统专题目录](./dual_target_system/README.md)
 2. [双目标选股与交易目标系统架构设计文档](./dual_target_system/arch_dual_target_selection_system.md)
-3. [双目标系统数据结构与 Artifact Schema 规格](./dual_target_system/dual_target_data_contract_and_artifact_schema.md)
+3. [双目标系统数据结构与产物 Schema 规格](./dual_target_system/dual_target_data_contract_and_artifact_schema.md)
 4. [双目标系统实施与代码改造计划](./dual_target_system/dual_target_implementation_plan.md)
 
 ## 1. 当前落地状态
@@ -41,12 +41,12 @@
 
 #### 1.1.1 主线任务：已完成
 
-这里的主线特指：把 Replay Artifacts 从零散的 artifact/CLI 能力，推进到一个可直接使用的研究工作台。
+这里的主线特指：把回放产物工作台（Replay Artifacts）从零散的产物/CLI 能力，推进到一个可直接使用的研究工作台。
 
 当前可以认为主线已经完成，判断标准如下：
 
 1. selection_artifacts 已在 backtesting / paper trading / live pipeline 的真实输出链路中稳定落盘，并能回填到 session_summary.json、daily_events.jsonl 与 pipeline_timings.jsonl。
-2. Replay Artifacts 已从“只可读文件/CLI”推进为“后端接口 + 前端工作台”闭环，用户可直接浏览 report、切换 trade_date、查看 selection_review、execution blocker、funnel diagnostics，并回写 research feedback。
+2. 回放产物工作台已从“只可读文件/CLI”推进为“后端接口 + 前端工作台”闭环，用户可直接浏览 report、切换 trade_date、查看 selection_review、execution blocker、funnel diagnostics，并回写 research feedback。
 3. 前端工作台迁移已经完成，当前实现不再依赖手工翻 data/reports 或只停留在 settings 内嵌块才能完成最小研究闭环。
 4. 自动化验证已经覆盖 research、runtime、backend routes/services、frontend regression 与生产构建，说明这不是仅停留在演示层的迁移。
 
@@ -57,7 +57,7 @@
 下列能力已经超出“迁移成功”本身，但现已具备首轮可用版本：
 
 1. feedback 标签治理、CLI、summary 聚合与 SQLite-backed ledger。
-2. Replay Artifacts inspector 中的 recent activity、review_status/tag/reviewer 聚合。
+2. 回放产物工作台 inspector 中的 recent activity、review_status/tag/reviewer 聚合。
 3. Batch Label Workspace，用于多只 watchlist / near-miss 样本的批量反馈写入。
 4. report 级 workflow queue 与 pending draft queue。
 5. 跨 report 的 workflow ownership queue，以及 `Assign to me` / `Unassign` 归属入口。
@@ -72,7 +72,7 @@
 
 1. SLA、超时、升级路径、团队级人工工作流编排。
 2. 更高层真实生产条件下的人工作流验收。
-3. 历史 frozen replay 源在缺失原生 strategy_signals 时的 Layer B 解释精度继续提升。
+3. 历史冻结回放源在缺失原生 strategy_signals 时的 Layer B 解释精度继续提升。
 
 后续如果确实需要继续投入，应优先把这些项目视为第二阶段治理工程，而不是继续混入“工作台迁移是否成功”的判断。
 
@@ -101,12 +101,12 @@ P2：生产条件验收
 
 P3：历史解释精度补强
 
-1. 继续提高历史 frozen replay 源在缺失 strategy_signals 时的 Layer B 解释精度。
+1. 继续提高历史冻结回放源在缺失 strategy_signals 时的 Layer B 解释精度。
 2. 如果无法获得更高保真原始信号，则应明确区分“兼容解释”和“原始证据”，避免研究员误判其可信度。
 
 #### 1.1.5 当前建议动作：暂停新增开发，转入试用验收
 
-基于当前已实现状态，本文档建议当前阶段不要继续把 Replay Artifacts 当作“主线开发中”项目推进，而是先转入试用验收。
+基于当前已实现状态，本文档建议当前阶段不要继续把回放产物工作台（Replay Artifacts）当作“主线开发中”项目推进，而是先转入试用验收。
 
 建议原因如下：
 
@@ -123,18 +123,18 @@ P3：历史解释精度补强
    2. 不阻断当前使用但影响团队效率的治理问题，纳入第二阶段 Backlog。
 4. 只有当试用证据表明 SLA、升级流、通知、权限或更复杂协作机制已经成为主矛盾时，再启动第二阶段治理开发。
 
-简化结论：截至当前版本，Replay Artifacts 更适合进入“试用验收 + 收集证据”阶段，而不是继续无边界扩展实现范围。
+简化结论：截至当前版本，回放产物工作台更适合进入“试用验收 + 收集证据”阶段，而不是继续无边界扩展实现范围。
 
 2026-03-26 补充状态：当前试用窗口已经不是停留在纸面计划。
 
 1. 已建立 2026-03-26 至 2026-04-02 的专用试用窗口启动记录、问题台账、总结草稿与首日执行清单。
 2. 已完成第一次真实后端/API 试用，验证 near-miss 阅读、selected 样本 feedback 写入、recent activity 回读，以及 Cross-Report Workflow Queue 的认领与取消认领。
-3. 已补充前端侧证据：本地登录页可真实加载，且 Replay Artifacts 相关前端测试通过 2 个文件、5 个测试。
-4. 同日已补齐已登录态前端真实点击流证据：真实登录后 `hedge_fund_token` 已成功落盘，并可通过顶部 `Replay` 入口打开 Replay Artifacts 工作台，看到 `Cross-Report Workflow Queue`、`Report Rail` 与主观察 report；当前最小试用证据链已经闭合。
+3. 已补充前端侧证据：本地登录页可真实加载，且回放产物工作台相关前端测试通过 2 个文件、5 个测试。
+4. 同日已补齐已登录态前端真实点击流证据：真实登录后 `hedge_fund_token` 已成功落盘，并可通过顶部 `Replay` 入口打开回放产物工作台，看到 `Cross-Report Workflow Queue`、`Report Rail` 与主观察 report；当前最小试用证据链已经闭合。
 
 ### 1.2 已完成事项（详细清单）
 
-- 已新增 research artifact 模块：src/research/models.py、src/research/artifacts.py、src/research/review_renderer.py、src/research/feedback.py。
+- 已新增 research 产物模块：src/research/models.py、src/research/artifacts.py、src/research/review_renderer.py、src/research/feedback.py。
 - 已在 src/backtesting/engine.py 中接入 selection_artifact_writer 注入点。
 - 已在 src/paper_trading/runtime.py 中接入 FileSelectionArtifactWriter，并将产物写入 output_dir/selection_artifacts/。
 - 已在 src/execution/models.py 中为 ExecutionPlan 增加 selection_artifacts 字段。
@@ -142,14 +142,14 @@ P3：历史解释精度补强
 - 已补充 feedback 读取、聚合与标签治理骨架：支持受控标签校验、label_version 校验、JSONL 读取与汇总统计。
 - 已新增最小 file-based feedback CLI：scripts/manage_research_feedback.py，支持 append 与 summarize 两个子命令。
 - 已将 research_feedback_summary 自动接入 paper trading session_summary.json，并额外写出 selection_artifacts/research_feedback_summary.json。
-- 已补齐 artifact 写入失败降级测试，并修正目录创建异常未进入 writer 降级路径的问题。
+- 已补齐产物写入失败降级测试，并修正目录创建异常未进入 writer 降级路径的问题。
 - 已补充基础测试，当前通过的文件包括：tests/research/test_selection_review_renderer.py、tests/research/test_selection_artifact_writer.py、tests/research/test_selection_artifact_engine.py、tests/research/test_feedback_schema.py、tests/research/test_manage_research_feedback_cli.py、tests/research/test_paper_trading_runtime_feedback_summary.py。
 - 已补充轻量级运行级集成测试，覆盖现有 tests/backtesting/test_paper_trading_runtime.py 与 tests/backtesting/test_pipeline_mode.py 中 selection_artifacts 与 research_feedback_summary 的真实挂接断言。
 - 已补充多交易日 live pipeline 自动化集成测试，验证 paper trading runtime 在连续 trade_date 下可稳定生成 selection_artifacts、写入 daily_events/current_plan.selection_artifacts，并把 research_feedback_summary 与 execution_plan_provenance 聚合进 session_summary.json。
 - 已补充 watchlist 未承接 buy_order 时的执行阻塞原因透传，selection_snapshot.json 与 selection_review.md 现可展示 buy_order_blocker、reentry_review_until 等执行层约束信息。
-- 已扩展现有 replay artifacts 后端/前端浏览面：后端可返回 selection_artifact_overview、按 trade_date 读取 selection snapshot/review，并支持以当前登录用户身份追加 research feedback；前端 Replay Artifacts 页面已可直接切换交易日查看 selection_review.md，结构化展示 selected/rejected、top_factors、Layer C analyst 共识、research prompts 与 execution blocker，并直接提交和筛选 research feedback，而无需手动翻 data/reports 目录或调用 CLI。
-- 已新增高保真 `selection_target_replay_input.json` artifact：由 [src/research/artifacts.py](src/research/artifacts.py) 在每个 `selection_artifacts/<trade_date>/` 目录下同步写出，保存 watchlist、watchlist rejected、supplemental short-trade entries、buy_order_tickers 与完整 `strategy_signals`，用于后续 short trade 校准与高保真 replay，而不再依赖历史 `current_plan` 是否保留原生策略信号。
-- 已新增高保真 replay 校准脚本 [scripts/replay_selection_target_calibration.py](scripts/replay_selection_target_calibration.py)，可直接读取 `selection_target_replay_input.json` 重放 short trade 评估、检测 stored decision 与 replayed decision 是否漂移，并支持以 `--select-threshold`、`--near-miss-threshold` 做受控阈值试验；对应回归测试 [tests/test_replay_selection_target_calibration_script.py](tests/test_replay_selection_target_calibration_script.py) 已通过。
+- 已扩展现有回放产物后端/前端浏览面：后端可返回 selection_artifact_overview、按 trade_date 读取 selection snapshot/review，并支持以当前登录用户身份追加 research feedback；前端 Replay Artifacts 页面已可直接切换交易日查看 selection_review.md，结构化展示 selected/rejected、top_factors、Layer C analyst 共识、research prompts 与 execution blocker，并直接提交和筛选 research feedback，而无需手动翻 data/reports 目录或调用 CLI。
+- 已新增高保真 `selection_target_replay_input.json` 产物：由 [src/research/artifacts.py](src/research/artifacts.py) 在每个 `selection_artifacts/<trade_date>/` 目录下同步写出，保存 watchlist、watchlist rejected、supplemental short-trade entries、buy_order_tickers 与完整 `strategy_signals`，用于后续 short trade 校准与高保真回放，而不再依赖历史 `current_plan` 是否保留原生策略信号。
+- 已新增高保真回放校准脚本 [scripts/replay_selection_target_calibration.py](scripts/replay_selection_target_calibration.py)，可直接读取 `selection_target_replay_input.json` 重放 short trade 评估、检测 stored decision 与 replayed decision 是否漂移，并支持以 `--select-threshold`、`--near-miss-threshold` 做受控阈值试验；对应回归测试 [tests/test_replay_selection_target_calibration_script.py](tests/test_replay_selection_target_calibration_script.py) 已通过。
 - 已在真实 `2026-03-26` 高保真 dual-target 样本上完成首轮阈值网格扫描与 blocker 交叉验证：`selection_target_threshold_grid.md` 显示 `300724` 是最先可被阈值放宽推到 `near_miss/selected` 的边界 ticker，而 `300394`、`300502` 仍被 `layer_c_bearish_conflict` 等 structural gate 阻断；这使后续优化可以明确区分“阈值实验”和“结构性 gate 调整”两条路径。
 - 已继续补齐 structural variant replay 实验：`selection_target_structural_variants.md` 证明关闭 `layer_c_bearish_conflict` hard block 可以把 `300394`、`300502` 从 `blocked` 释放到 `rejected`，但单独降低 `avoid penalty` 或放宽 penalty threshold 不会产生任何释放效果；这说明 blocked 样本的下一步不是简单调一个 penalty，而是需要把“hard block 放宽”和“score/threshold 联动”作为组合实验来做。
 - 已继续补齐 structural + threshold 联合扫描与 score-gap 诊断：`selection_target_combination_grid.md` 证明即使同时放开 `layer_c_bearish_conflict` hard block 并把阈值扫描到 `select_threshold=0.36`、`near_miss_threshold=0.36`，本样本里仍然只有 `300724` 会被推进到 `near_miss/selected`；`300394`、`300502` 依旧停留在 `rejected`。定点诊断文件 `selection_target_no_bearish_conflict_diagnostics.json` 进一步显示，`300394` 在移除 hard block 后的 `replayed_score_target=0.2133`，距离当前 near-miss 线仍差 `0.2467`，`300502` 的 `replayed_score_target=0.0`，距离 near-miss 线仍差 `0.46`。这说明下一步不应再把 blocked 样本当作“阈值稍松就能救回”的对象，而应优先重做 score construction / candidate entry 设计。

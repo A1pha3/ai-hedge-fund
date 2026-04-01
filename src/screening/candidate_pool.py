@@ -50,7 +50,28 @@ COOLDOWN_TRADING_DAYS = 15
 DISCLOSURE_MONTHS = {4, 8, 10}  # 财报窗口月份
 TUSHARE_DAILY_CALLS_PER_MINUTE = 200
 TUSHARE_DAILY_BATCH_SIZE = 50
-MAX_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "200"))
+MAX_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "300"))
+
+
+def _candidate_pool_snapshot_path(trade_date: str, pool_size: Optional[int] = None) -> Path:
+    resolved_pool_size = MAX_CANDIDATE_POOL_SIZE if pool_size is None else int(pool_size)
+    return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}_top{resolved_pool_size}.json"
+
+
+def _candidate_pool_legacy_snapshot_path(trade_date: str) -> Path:
+    return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}.json"
+
+
+def _load_candidate_pool_snapshot(snapshot_path: Path) -> List[CandidateStock]:
+    with open(snapshot_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return [CandidateStock(**item) for item in data]
+
+
+def _write_candidate_pool_snapshot(snapshot_path: Path, candidates: List[CandidateStock]) -> None:
+    _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(snapshot_path, "w", encoding="utf-8") as f:
+        json.dump([candidate.model_dump() for candidate in candidates], f, ensure_ascii=False, indent=2)
 
 
 # ============================================================================
@@ -256,16 +277,18 @@ def build_candidate_pool(
         8) 输出结果 + 持久化
     """
     # ---- 缓存检查 ----
-    snapshot_path = _SNAPSHOT_DIR / f"candidate_pool_{trade_date}.json"
+    snapshot_path = _candidate_pool_snapshot_path(trade_date)
+    legacy_snapshot_path = _candidate_pool_legacy_snapshot_path(trade_date)
     if use_cache and snapshot_path.exists():
         try:
-            with open(snapshot_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            candidates = [CandidateStock(**item) for item in data]
-            print(f"[CandidatePool] 从缓存加载 {len(candidates)} 只候选标的 ({trade_date})")
+            candidates = _load_candidate_pool_snapshot(snapshot_path)
+            _write_candidate_pool_snapshot(legacy_snapshot_path, candidates)
+            print(f"[CandidatePool] 从缓存加载 {len(candidates)} 只候选标的 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE})")
             return candidates
         except Exception as e:
             print(f"[CandidatePool] 缓存读取失败，重新计算: {e}")
+    elif use_cache and legacy_snapshot_path.exists():
+        print(f"[CandidatePool] 发现旧版候选池缓存 {legacy_snapshot_path.name}，按当前池大小重算并刷新隔离缓存")
 
     pro = _get_pro()
     if pro is None:
@@ -424,9 +447,8 @@ def build_candidate_pool(
         print(f"[CandidatePool] 候选池截断至 Top {MAX_CANDIDATE_POOL_SIZE}（按20日均成交额/市值排序）")
 
     # ---- 持久化 ----
-    _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(snapshot_path, "w", encoding="utf-8") as f:
-        json.dump([c.model_dump() for c in candidates], f, ensure_ascii=False, indent=2)
+    _write_candidate_pool_snapshot(snapshot_path, candidates)
+    _write_candidate_pool_snapshot(legacy_snapshot_path, candidates)
 
     print(f"[CandidatePool] 最终候选池: {len(candidates)} 只 → {snapshot_path}")
     return candidates

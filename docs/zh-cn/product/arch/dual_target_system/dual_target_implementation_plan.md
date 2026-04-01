@@ -47,9 +47,9 @@
 2. replay / review / feedback 已经具备真实闭环
 3. 先在 artifacts 层看双目标差异，风险远低于直接动订单逻辑
 
-### 1.2 research_only 兼容必须零回归
+### 1.2 仅研究模式（`research_only`）兼容必须零回归
 
-在任何阶段，默认 research_only 行为都不允许退化。
+在任何阶段，默认的仅研究模式（`research_only`）行为都不允许退化。
 
 最小要求：
 
@@ -75,7 +75,7 @@
 
 1. feature flag 或运行模式可关闭
 2. schema 为增量字段，不破坏旧消费方
-3. 验证失败时可快速回退到 research_only
+3. 验证失败时可快速回退到仅研究模式（`research_only`）
 
 ---
 
@@ -212,7 +212,7 @@
 
 验收标准：
 
-1. research_only 默认行为完全不变
+1. 仅研究模式（`research_only`）默认行为完全不变
 2. 新字段为空时不影响现有逻辑
 3. 现有测试无回归
 
@@ -306,19 +306,19 @@
 
 阶段产物：
 
-1. `research_only`
-2. `short_trade_only`
-3. `dual_target` 三种模式可运行
+1. 仅研究模式（`research_only`）
+2. 仅短线模式（`short_trade_only`）
+3. 双目标模式（`dual_target`）
 
 验收标准：
 
 1. research target 输出与旧研究主语义一致
 2. short trade skeleton 可以输出占位结果
-3. dual_target 能稳定写出 artifacts
+3. 双目标模式（`dual_target`）能稳定写出 artifacts
 
 当前落地说明：
 
-1. `src/targets/router.py` 已通过 `build_selection_targets()` 在 `research_only` / `short_trade_only` / `dual_target` 三种模式下组装目标结果
+1. `src/targets/router.py` 已通过 `build_selection_targets()` 在“仅研究模式（`research_only`）”“仅短线模式（`short_trade_only`）”“双目标模式（`dual_target`）”三种模式下组装目标结果
 2. `src/execution/daily_pipeline.py` 已在 live pipeline 和 frozen plan shell 两条路径挂接目标路由
 3. 当前 short trade 实现已经不是纯占位 skeleton，而是具备真实分数、gate、blockers、tags 的首版规则实现
 
@@ -424,7 +424,7 @@
 1. research wrapper 一致性测试
 2. short trade gate 顺序测试
 3. explainability tags / blockers 输出测试
-4. dual_target mode 运行测试
+4. 双目标模式（`dual_target`）运行测试
 
 对应测试：
 
@@ -469,7 +469,7 @@
 
 1. schema 扩展破坏现有 artifacts
 2. review renderer 让旧 report 无法渲染
-3. dual_target 字段污染 research_only 默认流程
+3. 双目标字段污染仅研究模式（`research_only`）默认流程
 
 ### 5.2 控制策略
 

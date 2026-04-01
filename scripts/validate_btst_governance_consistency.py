@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.analyze_btst_candidate_entry_rollout_governance import derive_candidate_entry_shadow_state
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260330.json"
@@ -37,6 +39,11 @@ def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
 def _find_row(rows: list[dict[str, Any]], ticker: str) -> dict[str, Any]:
     normalized_ticker = str(ticker or "").strip()
     return next((dict(row or {}) for row in rows if str((row or {}).get("ticker") or "") == normalized_ticker), {})
+
+
+def _find_lane_row(rows: list[dict[str, Any]], lane_id: str) -> dict[str, Any]:
+    normalized_lane_id = str(lane_id or "").strip()
+    return next((dict(row or {}) for row in rows if str((row or {}).get("lane_id") or "") == normalized_lane_id), {})
 
 
 def _build_check(check_id: str, status: str, summary: str, *, details: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -169,20 +176,47 @@ def validate_btst_governance_consistency(
             )
         )
 
+    candidate_window_scan_summary = dict(candidate_entry_governance.get("window_scan_summary") or {})
+    candidate_shadow_state = derive_candidate_entry_shadow_state(
+        rollout_readiness=str(candidate_window_scan_summary.get("rollout_readiness") or candidate_entry_governance.get("lane_status") or "unknown"),
+        preserve_misfire_report_count=int(candidate_window_scan_summary.get("preserve_misfire_report_count") or 0),
+        distinct_window_count_with_filtered_entries=int(candidate_window_scan_summary.get("distinct_window_count_with_filtered_entries") or 0),
+        target_window_count=int(candidate_entry_governance.get("target_window_count") or 2),
+    )
     candidate_lane_status = candidate_entry_governance.get("lane_status")
     candidate_default_status = candidate_entry_governance.get("default_upgrade_status")
-    if _missing(candidate_lane_status, candidate_default_status):
+    candidate_synthesis_lane = _find_lane_row(list(governance_synthesis.get("lane_matrix") or []), "candidate_entry_shadow")
+    if _missing(candidate_lane_status, candidate_default_status, candidate_window_scan_summary):
         checks.append(_build_check("candidate_entry_shadow_alignment", "warn", "candidate-entry governance 缺少足够输入，无法完成一致性校验。"))
     else:
-        is_aligned = candidate_lane_status == "shadow_only_until_second_window" and candidate_default_status == "blocked_by_single_window_candidate_entry_signal"
+        expected_missing_window_count = int(candidate_shadow_state.get("missing_window_count") or 0)
+        reported_missing_window_count = candidate_entry_governance.get("missing_window_count")
+        if reported_missing_window_count is None:
+            reported_missing_window_count = expected_missing_window_count
+
+        preserve_misfire_report_count = int(candidate_window_scan_summary.get("preserve_misfire_report_count") or 0)
+        distinct_window_count = int(candidate_window_scan_summary.get("distinct_window_count_with_filtered_entries") or 0)
+        synthesis_projection_aligned = True
+        if governance_synthesis:
+            synthesis_projection_aligned = bool(candidate_synthesis_lane) and candidate_synthesis_lane.get("lane_status") == candidate_lane_status and candidate_synthesis_lane.get("blocker") == candidate_default_status and int(candidate_synthesis_lane.get("missing_window_count") or 0) == expected_missing_window_count and int(candidate_synthesis_lane.get("preserve_misfire_report_count") or 0) == preserve_misfire_report_count and int(candidate_synthesis_lane.get("distinct_window_count_with_filtered_entries") or 0) == distinct_window_count
+
+        is_aligned = candidate_lane_status == candidate_shadow_state.get("lane_status") and candidate_default_status == candidate_shadow_state.get("default_upgrade_status") and int(reported_missing_window_count or 0) == expected_missing_window_count and synthesis_projection_aligned
         checks.append(
             _build_check(
                 "candidate_entry_shadow_alignment",
-                "pass" if is_aligned else "warn",
-                "candidate-entry lane 仍停留在 shadow-only until second window。" if is_aligned else "candidate-entry lane 与 default upgrade 状态需要重新人工复核。",
+                "pass" if is_aligned else "fail",
+                "candidate-entry lane 与 window-scan 证据、missing-window 缺口和 synthesis 投影保持一致。" if is_aligned else "candidate-entry lane 与 window-scan 证据或 synthesis 投影不一致，需先修复 shadow 治理链后再继续使用。",
                 details={
                     "lane_status": candidate_lane_status,
                     "default_upgrade_status": candidate_default_status,
+                    "rollout_readiness": candidate_window_scan_summary.get("rollout_readiness"),
+                    "target_window_count": candidate_shadow_state.get("target_window_count"),
+                    "missing_window_count": int(reported_missing_window_count or 0),
+                    "expected_missing_window_count": expected_missing_window_count,
+                    "distinct_window_count_with_filtered_entries": distinct_window_count,
+                    "preserve_misfire_report_count": preserve_misfire_report_count,
+                    "upgrade_gap": candidate_shadow_state.get("upgrade_gap"),
+                    "synthesis_projection_aligned": synthesis_projection_aligned,
                     "recommended_structural_variant": candidate_entry_governance.get("recommended_structural_variant"),
                 },
             )

@@ -378,7 +378,7 @@ def test_run_paper_trading_session_collects_engine_created_pipeline_provenance(t
                 }
             ]
 
-    monkeypatch.setattr("src.backtesting.engine.DailyPipeline", AutoPipeline)
+    monkeypatch.setattr("src.paper_trading.runtime.DailyPipeline", AutoPipeline)
 
     artifacts = run_paper_trading_session(
         start_date="2024-03-01",
@@ -899,6 +899,7 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
     assert summary["plan_generation"] == {
         "mode": "frozen_current_plan_replay",
         "frozen_plan_source": str(source_path.resolve()),
+        "selection_target": "research_only",
     }
     assert summary["execution_plan_provenance"] == {"observation_count": 0, "observations": []}
     assert summary["llm_route_provenance"]["summary_available"] is True
@@ -1055,6 +1056,7 @@ def test_run_paper_trading_session_frozen_replay_long_window_preserves_artifact_
     assert summary["plan_generation"] == {
         "mode": "frozen_current_plan_replay",
         "frozen_plan_source": str(source_path.resolve()),
+        "selection_target": "research_only",
     }
     assert summary["daily_event_stats"]["day_count"] == 5
     assert summary["research_feedback_summary"]["feedback_file_count"] == 5

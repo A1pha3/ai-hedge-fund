@@ -13,11 +13,11 @@
 
 1. 短线已经不该继续和研究主线共用旧 Layer B 边界股票池。
 2. 新的 `short_trade_boundary` 独立建池已经在真实 4 日窗口里稳定消除了旧主失败簇。
-3. 当前更值得优先做的不是继续收紧入口，而是沿着已经验证成立的 admission 变体扩覆盖，并开始精修 score frontier。
+3. 当前更值得优先做的不是继续收紧入口，而是沿着已经验证成立的准入变体扩覆盖，并开始精修分数前沿。
 
 一句话概括：
 
-**BTST 的“独立入口”已经证明成立，当前最该做的是保留 catalyst-only 扩覆盖，并把优化重心切到 `short_trade_boundary` 的 score frontier，而不是回到旧共享池逻辑。**
+**BTST 的“独立入口”已经证明成立，当前最该做的是保留仅催化项扩覆盖，并把优化重心切到 `short_trade_boundary` 的分数前沿，而不是回到旧共享池逻辑。**
 
 ---
 
@@ -63,8 +63,8 @@ Layer C 之前的前置短线候选，在当前窗口下的次日表现明显强
 
 当前主矛盾已经不再是“短线入口有没有独立出来”，而是后面的两件事：
 
-1. admission 如何在不破坏质量的前提下扩一点 coverage。
-2. 已经通过 admission 的 `short_trade_boundary` 候选，为什么还大量停在 score frontier。
+1. 准入如何在不破坏质量的前提下扩一点 coverage。
+2. 已经通过准入的 `short_trade_boundary` 候选，为什么还大量停在分数前沿。
 
 也就是说，当前问题已经从“有没有入口”转向“入口后的质量释放效率”。
 
@@ -72,7 +72,7 @@ Layer C 之前的前置短线候选，在当前窗口下的次日表现明显强
 
 ## 5. 当前最值得保留的默认候选是什么
 
-当前最值得保留的 admission 变体，不是多项放松，而是单项的 catalyst-only 放松。
+当前最值得保留的准入变体，不是多项放松，而是单项的仅催化项放松（catalyst-only）。
 
 为什么：
 
@@ -87,24 +87,24 @@ Layer C 之前的前置短线候选，在当前窗口下的次日表现明显强
 
 所以当前更稳的判断是：
 
-**`catalyst_freshness_min=0.00` 已经可以被视为当前 admission 主线的默认候选。**
+**`catalyst_freshness_min=0.00` 已经可以被视为当前准入主线的默认候选。**
 
 ---
 
 ## 6. 当前最值得优先投入的下一条线是什么
 
-是 score frontier，而不是第二条 admission floor。
+是分数前沿，而不是第二条准入门槛。
 
 原因很简单：
 
-1. 当前 `short_trade_boundary` admission 已经通过了一批质量不差的样本。
+1. 当前 `short_trade_boundary` 准入已经通过了一批质量不差的样本。
 2. 但这批样本里还有大量 `rejected_short_trade_boundary_score_fail`。
-3. frontier 分析已经说明，它们不是 admission 垃圾，而是“结构已像短线，但还没被正式释放”的样本。
+3. 前沿分析已经说明，它们不是准入层垃圾样本，而是“结构已像短线，但还没被正式释放”的样本。
 
 当前这条线上，最值得优先做的是两层：
 
-1. 先做 `300383` 这种 threshold-only、低污染的 case-based release。
-2. 再审 `600821`、`002015` 这类 recurring frontier ticker，作为 recurring release 的 intraday 主样本和 close continuation 对照样本。
+1. 先做 `300383` 这种仅阈值、低污染的个案释放。
+2. 再审 `600821`、`002015` 这类复现前沿股票，作为复现释放的日内主样本和收盘延续对照样本。
 
 ---
 
@@ -118,7 +118,7 @@ Layer C 之前的前置短线候选，在当前窗口下的次日表现明显强
 
 为什么：
 
-1. `300724` 是低成本 case-based structural release 样本。
+1. `300724` 是低成本个案结构释放样本。
 2. `300394` 更像 penalty / score construction 样本。
 3. `300502` 更像 candidate-entry 语义样本。
 
@@ -131,7 +131,7 @@ Layer C 之前的前置短线候选，在当前窗口下的次日表现明显强
 如果你只记两句，请记下面两句：
 
 1. 当前 BTST 不再处在“先证明独立建池是否有必要”的阶段，而已经进入“独立建池成立后如何精修释放效率”的阶段。
-2. 下一步最值得优先投资源的，是 `short_trade_boundary` score frontier，而不是继续为入口找第二条放松杠杆。
+2. 下一步最值得优先投资源的，是 `short_trade_boundary` 分数前沿，而不是继续为入口找第二条放松杠杆。
 
 ---
 
@@ -139,13 +139,13 @@ Layer C 之前的前置短线候选，在当前窗口下的次日表现明显强
 
 如果按优先级排序，当前建议是：
 
-1. 保留 `catalyst_freshness_min=0.00` 作为 admission 默认候选。
-2. 优先做 `300383` 的 case-based threshold-only release。
-3. 再审 `600821` 与 `002015` 这组 recurring frontier ticker。
-4. `300724` 继续按 targeted structural release 单点验证，不做 blocked cluster-wide 放宽。
+1. 保留 `catalyst_freshness_min=0.00` 作为准入默认候选。
+2. 优先做 `300383` 的个案仅阈值释放。
+3. 再审 `600821` 与 `002015` 这组复现前沿股票。
+4. `300724` 继续按定向结构释放做单点验证，不做 blocked 整簇放宽。
 
 ---
 
 ## 10. 一句话版本
 
-**BTST 当前已经证明“短线需要独立建池”这件事是对的，下一步最该做的不是再找第二条 admission floor，而是把已成立的入口候选更稳地释放到 near-miss 和 selected。**
+**BTST 当前已经证明“短线需要独立建池”这件事是对的，下一步最该做的不是再找第二条准入门槛，而是把已成立的入口候选更稳地释放到 near-miss 和 selected。**

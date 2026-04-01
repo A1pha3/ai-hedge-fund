@@ -79,6 +79,9 @@ def test_analyze_btst_candidate_entry_rollout_governance_shadow_only(tmp_path: P
     assert analysis["recommended_structural_variant"] == "exclude_watchlist_avoid_weak_structure_entries"
     assert analysis["lane_status"] == "shadow_only_until_second_window"
     assert analysis["default_upgrade_status"] == "blocked_by_single_window_candidate_entry_signal"
+    assert analysis["target_window_count"] == 2
+    assert analysis["missing_window_count"] == 1
+    assert analysis["upgrade_gap"] == "await_new_independent_window_data"
     assert analysis["score_frontier_all_zero"] is True
     assert analysis["main_chain_validation"]["released_from_blocked"] == ["300502"]
     assert analysis["window_scan_summary"]["distinct_window_count_with_filtered_entries"] == 1

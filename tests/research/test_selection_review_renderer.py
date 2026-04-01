@@ -15,6 +15,7 @@ def test_render_selection_review_contains_key_sections():
             "candidate_count": 20,
             "high_pool_count": 8,
             "watchlist_count": 2,
+            "catalyst_theme_candidate_count": 1,
             "buy_order_count": 1,
         },
         selected=[
@@ -75,6 +76,25 @@ def test_render_selection_review_contains_key_sections():
             ],
             "dominant_delta_reasons": ["research target selected while short trade target stays blocked"],
         },
+        catalyst_theme_candidates=[
+            {
+                "ticker": "300999",
+                "candidate_source": "catalyst_theme",
+                "score_target": 0.4123,
+                "preferred_entry_mode": "theme_research_followup",
+                "positive_tags": ["strong_catalyst_freshness"],
+                "top_reasons": ["catalyst_freshness=0.82", "sector_resonance=0.25"],
+                "metrics": {
+                    "breakout_freshness": 0.31,
+                    "trend_acceleration": 0.26,
+                    "close_strength": 0.57,
+                    "sector_resonance": 0.25,
+                    "catalyst_freshness": 0.82,
+                },
+                "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                "blockers": ["stale_trend_repair_penalty"],
+            }
+        ],
     )
 
     markdown = render_selection_review(snapshot)
@@ -94,6 +114,8 @@ def test_render_selection_review_contains_key_sections():
     assert "blocked_symbols: 000001" in markdown
     assert "## Target Delta Highlights" in markdown
     assert "delta_counts: research_pass_short_reject=1" in markdown
+    assert "## 题材催化研究池" in markdown
+    assert "300999" in markdown
     assert "target_mode: research_only" in markdown
     assert "attached_target_tickers: 000001" in markdown
     assert "research_target: selected (score=0.7200)" in markdown

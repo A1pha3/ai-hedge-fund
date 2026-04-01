@@ -66,6 +66,28 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                         },
                     }
                 },
+                "catalyst_theme_candidates": [
+                    {
+                        "ticker": "300999",
+                        "decision": "catalyst_theme",
+                        "score_target": 0.4011,
+                        "confidence": 0.4011,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "top_reasons": ["catalyst_freshness=0.81", "sector_resonance=0.25"],
+                        "candidate_source": "catalyst_theme",
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                        "blockers": ["stale_trend_repair_penalty"],
+                        "promotion_trigger": "若催化继续扩散并形成量价确认，可升级到 short-trade shadow 观察。",
+                        "metrics": {
+                            "breakout_freshness": 0.301,
+                            "trend_acceleration": 0.251,
+                            "close_strength": 0.571,
+                            "sector_resonance": 0.250,
+                            "catalyst_freshness": 0.812,
+                        },
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -219,6 +241,28 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                         "delta_summary": ["research target selected while short trade target stays rejected"],
                     },
                 },
+                "catalyst_theme_candidates": [
+                    {
+                        "ticker": "300999",
+                        "decision": "catalyst_theme",
+                        "score_target": 0.4126,
+                        "confidence": 0.4126,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "top_reasons": ["catalyst_freshness=0.84", "sector_resonance=0.25"],
+                        "candidate_source": "catalyst_theme",
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                        "blockers": ["stale_trend_repair_penalty"],
+                        "promotion_trigger": "若催化继续扩散并形成量价确认，可升级到 short-trade shadow 观察。",
+                        "metrics": {
+                            "breakout_freshness": 0.321,
+                            "trend_acceleration": 0.264,
+                            "close_strength": 0.582,
+                            "sector_resonance": 0.250,
+                            "catalyst_freshness": 0.844,
+                        },
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -238,11 +282,13 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
     assert analysis["opportunity_pool_entries"][0]["historical_prior"]["summary"] is not None
     assert [entry["ticker"] for entry in analysis["research_upside_radar_entries"]] == ["002001"]
     assert analysis["research_upside_radar_entries"][0]["historical_prior"]["summary"] is not None
+    assert [entry["ticker"] for entry in analysis["catalyst_theme_entries"]] == ["300999"]
+    assert analysis["catalyst_theme_entries"][0]["historical_prior"]["summary"] is not None
     assert [entry["ticker"] for entry in analysis["excluded_research_entries"]] == ["002002"]
     assert "300757" in analysis["recommendation"]
     assert "300442" in analysis["recommendation"]
     assert "002001" in analysis["recommendation"]
-    assert "002001" in analysis["recommendation"]
+    assert "300999" in analysis["recommendation"]
     assert analysis["selected_entries"][0]["historical_prior"]["execution_quality_label"] == "balanced_confirmation"
 
 
@@ -322,6 +368,28 @@ def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_exclude
                         },
                     },
                 },
+                "catalyst_theme_candidates": [
+                    {
+                        "ticker": "300999",
+                        "decision": "catalyst_theme",
+                        "score_target": 0.4126,
+                        "confidence": 0.4126,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "top_reasons": ["catalyst_freshness=0.84", "sector_resonance=0.25"],
+                        "candidate_source": "catalyst_theme",
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+                        "blockers": ["stale_trend_repair_penalty"],
+                        "promotion_trigger": "若催化继续扩散并形成量价确认，可升级到 short-trade shadow 观察。",
+                        "metrics": {
+                            "breakout_freshness": 0.321,
+                            "trend_acceleration": 0.264,
+                            "close_strength": 0.582,
+                            "sector_resonance": 0.250,
+                            "catalyst_freshness": 0.844,
+                        },
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -338,6 +406,8 @@ def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_exclude
     assert "### 300442" in markdown
     assert "historical_summary" in markdown
     assert "Research Upside Radar" in markdown
+    assert "Catalyst Theme Research Lane" in markdown
+    assert "### 300999" in markdown
     assert "### 002001" in markdown
     assert "### 002002" in markdown
     assert "Opportunity Expansion Pool" in markdown

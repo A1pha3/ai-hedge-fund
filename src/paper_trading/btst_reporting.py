@@ -25,6 +25,7 @@ OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD = 0.02
 OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES = 2
 WATCH_CANDIDATE_HISTORICAL_SCORE_BUCKET_SIZE = 0.05
 RESEARCH_UPSIDE_RADAR_MAX_ENTRIES = 3
+CATALYST_THEME_MAX_ENTRIES = 5
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -442,6 +443,37 @@ def _extract_research_upside_radar_entry(selection_entry: dict[str, Any]) -> dic
     }
 
 
+def _extract_catalyst_theme_entry(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    if not candidate:
+        return None
+
+    metrics = dict(candidate.get("metrics") or {})
+    candidate_score = _as_float(candidate.get("score_target") if candidate.get("score_target") is not None else candidate.get("candidate_score"))
+    if candidate_score <= 0:
+        return None
+
+    return {
+        "ticker": candidate.get("ticker"),
+        "decision": candidate.get("decision") or "catalyst_theme",
+        "score_target": candidate_score,
+        "confidence": candidate.get("confidence"),
+        "preferred_entry_mode": candidate.get("preferred_entry_mode") or "theme_research_followup",
+        "candidate_source": candidate.get("candidate_source") or "catalyst_theme",
+        "positive_tags": list(candidate.get("positive_tags") or []),
+        "top_reasons": list(candidate.get("top_reasons") or []),
+        "blockers": list(candidate.get("blockers") or []),
+        "gate_status": dict(candidate.get("gate_status") or {}),
+        "promotion_trigger": candidate.get("promotion_trigger") or "只做题材催化跟踪，不进入主池或 BTST 执行名单。",
+        "metrics": {
+            "breakout_freshness": metrics.get("breakout_freshness"),
+            "trend_acceleration": metrics.get("trend_acceleration"),
+            "close_strength": metrics.get("close_strength"),
+            "sector_resonance": metrics.get("sector_resonance"),
+            "catalyst_freshness": metrics.get("catalyst_freshness"),
+        },
+    }
+
+
 def _decorate_watch_candidate_history_entry(entry: dict[str, Any], family: str) -> dict[str, Any]:
     metrics = dict(entry.get("metrics") or {})
     return {
@@ -490,7 +522,7 @@ def _collect_historical_watch_candidate_rows(report_dir: Path, trade_date: str |
     historical_report_dirs = [report_dir, *_discover_recent_historical_report_dirs(report_dir, trade_date)]
     rows: list[dict[str, Any]] = []
     contributing_reports: set[str] = set()
-    family_counts = {"selected": 0, "near_miss": 0, "opportunity_pool": 0, "research_upside_radar": 0}
+    family_counts = {"selected": 0, "near_miss": 0, "opportunity_pool": 0, "research_upside_radar": 0, "catalyst_theme": 0}
 
     for historical_report_dir in historical_report_dirs:
         for snapshot_path in _iter_selection_snapshot_paths(historical_report_dir):
@@ -539,6 +571,21 @@ def _collect_historical_watch_candidate_rows(report_dir: Path, trade_date: str |
                     )
                     family_counts["research_upside_radar"] += 1
                     contributing_reports.add(str(historical_report_dir))
+
+            for catalyst_entry in snapshot.get("catalyst_theme_candidates") or []:
+                normalized_entry = _extract_catalyst_theme_entry(dict(catalyst_entry))
+                if normalized_entry is None:
+                    continue
+                rows.append(
+                    {
+                        **_decorate_watch_candidate_history_entry(normalized_entry, "catalyst_theme"),
+                        "trade_date": snapshot_trade_date,
+                        "report_dir": str(historical_report_dir),
+                        "snapshot_path": str(snapshot_path),
+                    }
+                )
+                family_counts["catalyst_theme"] += 1
+                contributing_reports.add(str(historical_report_dir))
 
     rows.sort(key=lambda row: (row.get("trade_date") or "", row.get("ticker") or ""), reverse=True)
     return {
@@ -917,6 +964,21 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
     )
     research_upside_radar_entries = research_upside_radar_entries[:RESEARCH_UPSIDE_RADAR_MAX_ENTRIES]
 
+    catalyst_theme_entries = [
+        candidate
+        for candidate in (_extract_catalyst_theme_entry(entry) for entry in (snapshot.get("catalyst_theme_candidates") or []))
+        if candidate is not None
+    ]
+    catalyst_theme_entries.sort(
+        key=lambda entry: (
+            -(entry.get("score_target") or 0.0),
+            -_as_float((entry.get("metrics") or {}).get("catalyst_freshness")),
+            -_as_float((entry.get("metrics") or {}).get("sector_resonance")),
+            entry.get("ticker") or "",
+        )
+    )
+    catalyst_theme_entries = catalyst_theme_entries[:CATALYST_THEME_MAX_ENTRIES]
+
     btst_candidate_historical_context = {
         "lookback_report_limit": OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
         "historical_report_count": 0,
@@ -926,9 +988,10 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
         "historical_near_miss_candidate_count": 0,
         "historical_opportunity_candidate_count": 0,
         "historical_research_upside_radar_count": 0,
+        "historical_catalyst_theme_count": 0,
         "next_high_hit_threshold": OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
     }
-    if selected_entries or near_miss_entries or opportunity_pool_entries or research_upside_radar_entries:
+    if selected_entries or near_miss_entries or opportunity_pool_entries or research_upside_radar_entries or catalyst_theme_entries:
         historical_payload = _collect_historical_watch_candidate_rows(report_dir, actual_trade_date)
         price_cache: dict[tuple[str, str], pd.DataFrame] = {}
         for entry in selected_entries:
@@ -958,6 +1021,13 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
                 historical_payload["rows"],
                 price_cache,
                 family="research_upside_radar",
+            )
+        for entry in catalyst_theme_entries:
+            entry["historical_prior"] = _build_watch_candidate_historical_prior(
+                entry,
+                historical_payload["rows"],
+                price_cache,
+                family="catalyst_theme",
             )
         selected_entries.sort(
             key=lambda entry: (
@@ -996,6 +1066,15 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
                 entry.get("ticker") or "",
             )
         )
+        catalyst_theme_entries.sort(
+            key=lambda entry: (
+                _execution_priority_rank((entry.get("historical_prior") or {}).get("execution_priority")),
+                _monitor_priority_rank((entry.get("historical_prior") or {}).get("monitor_priority")),
+                -(entry.get("score_target") or 0.0),
+                -_as_float((entry.get("metrics") or {}).get("catalyst_freshness")),
+                entry.get("ticker") or "",
+            )
+        )
         btst_candidate_historical_context = {
             "lookback_report_limit": OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
             "historical_report_count": int(historical_payload.get("contributing_report_count") or 0),
@@ -1005,6 +1084,7 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
             "historical_near_miss_candidate_count": int((historical_payload.get("family_counts") or {}).get("near_miss") or 0),
             "historical_opportunity_candidate_count": len(historical_payload.get("rows") or []),
             "historical_research_upside_radar_count": int((historical_payload.get("family_counts") or {}).get("research_upside_radar") or 0),
+            "historical_catalyst_theme_count": int((historical_payload.get("family_counts") or {}).get("catalyst_theme") or 0),
             "next_high_hit_threshold": OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
         }
         btst_candidate_historical_context["historical_opportunity_candidate_count"] = int((historical_payload.get("family_counts") or {}).get("opportunity_pool") or 0)
@@ -1071,6 +1151,12 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
             + ", ".join(entry["ticker"] for entry in research_upside_radar_entries)
             + "，这些票只用于第二天上涨线索复盘，不进入 BTST 执行名单。"
         )
+    if catalyst_theme_entries:
+        recommendation_lines.append(
+            "题材催化研究池为 "
+            + ", ".join(entry["ticker"] for entry in catalyst_theme_entries)
+            + "，这些票只用于专题催化跟踪，不进入主池或 BTST 执行名单。"
+        )
     if excluded_research_entries:
         recommendation_lines.append(
             "research 侧已选中但不属于本次 short-trade 执行名单的股票有 "
@@ -1094,6 +1180,7 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
             "short_trade_rejected_count": _summary_value(dual_target_summary, "short_trade_rejected_count", rejected_count),
             "short_trade_opportunity_pool_count": len(opportunity_pool_entries),
             "research_upside_radar_count": len(research_upside_radar_entries),
+            "catalyst_theme_count": len(catalyst_theme_entries),
             "research_selected_count": _summary_value(dual_target_summary, "research_selected_count", research_selected_count),
         },
         "primary_entry": primary_entry,
@@ -1101,6 +1188,7 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
         "near_miss_entries": near_miss_entries,
         "opportunity_pool_entries": opportunity_pool_entries,
         "research_upside_radar_entries": research_upside_radar_entries,
+        "catalyst_theme_entries": catalyst_theme_entries,
         "btst_candidate_historical_context": btst_candidate_historical_context,
         "watch_candidate_historical_context": btst_candidate_historical_context,
         "opportunity_pool_historical_context": btst_candidate_historical_context,
@@ -1130,6 +1218,7 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- short_trade_rejected_count: {analysis['summary'].get('short_trade_rejected_count')}")
     lines.append(f"- short_trade_opportunity_pool_count: {analysis['summary'].get('short_trade_opportunity_pool_count')}")
     lines.append(f"- research_upside_radar_count: {analysis['summary'].get('research_upside_radar_count')}")
+    lines.append(f"- catalyst_theme_count: {analysis['summary'].get('catalyst_theme_count')}")
     lines.append(f"- opportunity_pool_historical_report_count: {historical_context.get('historical_report_count')}")
     lines.append(f"- btst_candidate_historical_count: {historical_context.get('historical_btst_candidate_count')}")
     lines.append(f"- watch_candidate_historical_count: {historical_context.get('historical_watch_candidate_count')}")
@@ -1137,6 +1226,7 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- watch_near_miss_historical_count: {historical_context.get('historical_near_miss_candidate_count')}")
     lines.append(f"- opportunity_pool_historical_candidate_count: {historical_context.get('historical_opportunity_candidate_count')}")
     lines.append(f"- research_upside_radar_historical_count: {historical_context.get('historical_research_upside_radar_count')}")
+    lines.append(f"- catalyst_theme_historical_count: {historical_context.get('historical_catalyst_theme_count')}")
     lines.append(f"- excluded_research_selected_count: {len(analysis.get('excluded_research_entries') or [])}")
     lines.append("")
     lines.append("## Recommendation")
@@ -1259,6 +1349,38 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
             lines.append(f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}")
             lines.append(f"- rejection_reasons: {', '.join(entry.get('rejection_reasons') or []) or 'n/a'}")
             lines.append(f"- delta_summary: {', '.join(entry.get('delta_summary') or []) or 'n/a'}")
+            lines.append("")
+
+    lines.append("## Catalyst Theme Research Lane")
+    catalyst_theme_entries = analysis.get("catalyst_theme_entries") or []
+    if not catalyst_theme_entries:
+        lines.append("- none")
+        lines.append("")
+    else:
+        for entry in catalyst_theme_entries:
+            historical_prior = entry.get("historical_prior") or {}
+            lines.append(f"### {entry['ticker']}")
+            lines.append(f"- candidate_score: {_format_float(entry.get('score_target'))}")
+            lines.append(f"- preferred_entry_mode: {entry.get('preferred_entry_mode')}")
+            lines.append(f"- candidate_source: {entry.get('candidate_source')}")
+            lines.append(f"- promotion_trigger: {entry.get('promotion_trigger')}")
+            lines.append(f"- historical_monitor_priority: {historical_prior.get('monitor_priority') or 'n/a'}")
+            lines.append(f"- historical_summary: {historical_prior.get('summary') or 'n/a'}")
+            lines.append(f"- positive_tags: {', '.join(entry.get('positive_tags') or []) or 'n/a'}")
+            lines.append(f"- blockers: {', '.join(entry.get('blockers') or []) or 'none'}")
+            lines.append(
+                "- key_metrics: "
+                + ", ".join(
+                    [
+                        f"breakout={_format_float((entry.get('metrics') or {}).get('breakout_freshness'))}",
+                        f"trend={_format_float((entry.get('metrics') or {}).get('trend_acceleration'))}",
+                        f"close={_format_float((entry.get('metrics') or {}).get('close_strength'))}",
+                        f"sector={_format_float((entry.get('metrics') or {}).get('sector_resonance'))}",
+                        f"catalyst={_format_float((entry.get('metrics') or {}).get('catalyst_freshness'))}",
+                    ]
+                )
+            )
+            lines.append("- gate_status: " + ", ".join(f"{key}={value}" for key, value in (entry.get("gate_status") or {}).items()))
             lines.append("")
 
     lines.append("## Research Picks Excluded From Short-Trade Brief")

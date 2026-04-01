@@ -118,6 +118,7 @@ def test_extract_json_from_response_recovers_common_signal_schema_with_unescaped
 
 def test_call_llm_prefers_coding_plan_before_other_supported_providers(monkeypatch):
     calls = []
+    expected_coding_model = llm_utils.DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL
 
     class FakeModelInfo:
         def __init__(self, has_json_mode: bool):
@@ -154,6 +155,7 @@ def test_call_llm_prefers_coding_plan_before_other_supported_providers(monkeypat
     monkeypatch.setenv("ZHIPU_CODE_API_KEY", "coding-key")
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.delenv("ZHIPU_MODEL", raising=False)
     monkeypatch.delenv("ZHIPU_FALLBACK_MODEL", raising=False)
     monkeypatch.delenv("ZHIPU_CODING_FALLBACK_MODEL", raising=False)
     monkeypatch.setattr(llm_utils, "get_agent_model_config", lambda state, agent_name: ("MiniMax-M2.5", "MiniMax"))
@@ -180,12 +182,14 @@ def test_call_llm_prefers_coding_plan_before_other_supported_providers(monkeypat
     )
 
     assert result.signal == "ok"
-    assert ("Zhipu", "glm-4.7", "coding-key", "with_structured_output", "json_mode", "_FallbackSignal") in calls
-    assert ("Zhipu", "glm-4.7", "coding-key", "invoke", "hello") in calls
+    assert ("Zhipu", expected_coding_model, "coding-key", "with_structured_output", "json_mode", "_FallbackSignal") in calls
+    assert ("Zhipu", expected_coding_model, "coding-key", "invoke", "hello") in calls
 
 
 def test_call_llm_falls_back_from_coding_plan_to_minimax_to_standard_zhipu(monkeypatch):
     calls = []
+    expected_coding_model = llm_utils.DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL
+    expected_standard_model = llm_utils.DEFAULT_ZHIPU_FALLBACK_MODEL
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
     class FakeModelInfo:
@@ -224,6 +228,7 @@ def test_call_llm_falls_back_from_coding_plan_to_minimax_to_standard_zhipu(monke
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_CODE_API_KEY", "coding-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "standard-key")
+    monkeypatch.delenv("ZHIPU_MODEL", raising=False)
     monkeypatch.setattr(llm_utils, "get_agent_model_config", lambda state, agent_name: ("MiniMax-M2.5", "MiniMax"))
     monkeypatch.setattr(
         llm_utils,
@@ -248,9 +253,9 @@ def test_call_llm_falls_back_from_coding_plan_to_minimax_to_standard_zhipu(monke
     )
 
     assert result.signal == "ok"
-    assert ("Zhipu", "glm-4.7", "coding-key", "invoke", "hello") in calls
+    assert ("Zhipu", expected_coding_model, "coding-key", "invoke", "hello") in calls
     assert ("MiniMax", "MiniMax-M2.5", "minimax-key", "invoke", "hello") in calls
-    assert ("Zhipu", "glm-4.7", "standard-key", "invoke", "hello") in calls
+    assert ("Zhipu", expected_standard_model, "standard-key", "invoke", "hello") in calls
 
 
 def test_call_llm_agent_override_bypasses_priority_strategy(monkeypatch):

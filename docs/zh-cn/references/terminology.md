@@ -1,6 +1,6 @@
 # 术语表
 
-本术语表汇总本项目中出现的核心专业术语，覆盖金融投资、量化选股、多智能体工作流、A 股数据接入、BTST 短线策略、双目标评估、Replay Artifacts 与控制塔治理等主题。文档目标不是只解释孤立概念，而是帮助读者把术语放回系统上下文中理解。
+本术语表汇总本项目中出现的核心专业术语，覆盖金融投资、量化选股、多智能体工作流、A 股数据接入、BTST 短线策略、双目标评估、回放产物工作台（Replay Artifacts）与控制塔治理等主题。文档目标不是只解释孤立概念，而是帮助读者把术语放回系统上下文中理解。
 
 ---
 
@@ -9,6 +9,8 @@
 - 本文优先收录项目中真实出现、反复使用且会影响理解的术语。
 - 通用金融术语与系统专有术语同时保留，便于跨章节查阅。
 - 同一术语如果同时有英文名、代码字段名和中文业务说法，会尽量合并到一个词条说明。
+- 中文正文优先使用统一译名，例如“仅研究模式”“仅短线模式”“双目标模式”“车道”“仅影子观察”；只有在明确指代码字段、CLI 参数或状态字面量时，才补充 `research_only`、`short_trade_only`、`lane_status`、`shadow_only_until_second_window` 等字面量。
+- 如果需要把中文术语对回字段名、状态字面量或治理矩阵里的键值，请优先看“BTST 中文术语到字段/状态值对照”一节。
 - 如果只关注近期新增能力，建议优先阅读“BTST 短线策略与双目标评估”“BTST 控制塔与治理”“数据、回放与工程术语”三节。
 
 ---
@@ -88,12 +90,14 @@
 | Selection Target | 选股目标 | 针对同一候选从不同目标函数出发的评估结果，如 research 与 short_trade。 |
 | Research Target | 研究目标 | 偏研究、偏质量确认的目标，用于判断标的是否值得进入研究或观察主线。 |
 | Short Trade Target | 短线目标 | 面向 BTST 场景的目标，强调次日交易可操作性、突破质量和执行质量。 |
-| Target Mode | 目标模式 | selection target 的运行模式，支持 research_only、short_trade_only、dual_target。 |
-| Research Only | 仅研究目标 | 只输出 research 结果，不生成 short trade 评估。 |
-| Short Trade Only | 仅短线目标 | 只输出 short trade 评估，用于短线专用回放、治理和统计。 |
-| Dual Target | 双目标 | 对同一候选同时计算 research 与 short trade 两套评估结果。 |
+| Target Mode | 目标模式 | 选股目标（selection target）的运行模式，支持“仅研究模式（`research_only`）”“仅短线模式（`short_trade_only`）”“双目标模式（`dual_target`）”。 |
+| Research Only | 仅研究模式 | `target_mode` 的一种字面量，表示只输出研究目标结果，不生成短线目标评估。 |
+| Short Trade Only | 仅短线模式 | `target_mode` 的一种字面量，表示只输出短线目标评估，用于 BTST 专用回放、治理和统计。 |
+| Dual Target | 双目标模式 | `target_mode` 的一种字面量，表示同时计算研究目标与短线目标两套评估结果。 |
+| Candidate Entry | 候选入口 | 指样本进入短线候选层或进入候选入口治理视野的入口语义；中文正文优先写“候选入口”，只有在脚本名、字段名和报告名中才保留 `candidate_entry` 字面量。 |
+| Candidate-Entry Frontier | 候选入口前沿 | 比较不同候选入口规则在 focus 样本与 preserve 样本上过滤效果的边界实验。 |
 | Target Profile | 目标配置 | 定义阈值、权重、惩罚项与硬性 gate 的参数集合。 |
-| Dual Target Evaluation | 双目标评估 | 同一 ticker 在 research 与 short trade 两条目标线上得到的联合评估结果。 |
+| Dual Target Evaluation | 双目标评估 | 同一 ticker 在研究目标与短线目标两条目标线上得到的联合评估结果。 |
 | Dual Target Summary | 双目标摘要 | 对 selected、near_miss、blocked、rejected 等数量的汇总统计。 |
 | Delta Classification | 差异分类 | research 与 short_trade 结果不一致时的分类标签，如 research_pass_short_reject。 |
 | Delta Summary | 差异摘要 | 对双目标分歧原因的简明解释。 |
@@ -122,7 +126,7 @@
 | Overhead Penalty | 上方压力惩罚 | 对上方套牢、供给压力或冲突型结构施加的扣分。 |
 | Extension Penalty | 延伸过度惩罚 | 对已经运行过远、缺乏空间或离安全位置过远的候选进行扣分。 |
 | Profitability Relief | 盈利约束缓解 | 在某些强趋势、强催化条件下，对盈利类硬性约束做有限软化的机制。 |
-| Opportunity Pool | 机会池 | 尚未进入正式 short_trade 名单，但具备继续观察和条件升级价值的候选集合。 |
+| Opportunity Pool | 机会池 | 尚未进入正式短线名单，但具备继续观察和条件升级价值的候选集合。 |
 | Promotion Trigger | 晋级触发器 | 候选从机会池或 near_miss 升级为更高优先级时所需满足的触发条件。 |
 | Research Upside Radar | 研究上行雷达 | 更偏研究线索的上行动能观察集合，不直接进入当日 BTST 交易名单。 |
 | Next High Hit Rate | 次高点命中率 | 历史同类样本在后续窗口中触及预设涨幅或新高阈值的概率。 |
@@ -151,34 +155,70 @@
 | Premarket Execution Card | 盘前执行卡 | 给出主行动作、条件动作和观察动作的执行级卡片。 |
 | Opening Watch Card | 开盘观察卡 | 开盘阶段重点监控的标的、阈值和关注点清单。 |
 | Next-Day Priority Board | 次日优先级看板 | 对次日优先跟踪或优先执行的标的进行排序和解释的看板。 |
-| Priority Row | 优先级行 | 优先级看板中的单条候选记录，通常包含 lane、why_now、suggested_action 等字段。 |
+| Priority Row | 优先级行 | 优先级看板中的单条候选记录，通常包含车道字段 `lane`、`why_now`、`suggested_action` 等信息。 |
 | Action Board | 动作板 | 汇总下一步高优先级任务、理由和 CLI 提示的治理产物。 |
-| Lane | 车道 | 在治理语境下表示策略或样本当前所在的推进路径。 |
-| Lane Status | 车道状态 | 当前车道是否 ready、waiting、shadow_only、hold_only 或 blocked 的状态描述。 |
-| Lane Promotion | 车道晋级 | 从 shadow_only、research_only 等受限状态升级到更高验证或更高执行等级。 |
-| Governance Tier | 治理层级 | 描述某条 lane 当前所处的治理等级，如 primary_roll_forward_only、candidate_entry_shadow_only。 |
+| Lane | 车道 | 在治理语境下表示策略或样本当前所在的推进路径；中文正文优先写“车道”，只有在明确指字段名时才写 `lane`。 |
+| Shadow Only | 仅影子观察 | 指规则或样本只保留影子验证，不进入默认推进或执行；明确指状态值时常见字面量如 `shadow_only_until_second_window`。 |
+| Lane Status | 车道状态 | 当前车道是否处于“已就绪”“等待中”“仅影子观察”“仅维持观察”或“已阻塞”等状态；明确指字段名时常写成 `lane_status`。 |
+| Lane Promotion | 车道晋级 | 从仅影子观察、仅研究模式等受限状态升级到更高验证或更高执行等级的过程。 |
+| Governance Tier | 治理层级 | 描述某条车道当前所处的治理等级，如“主车道滚动推进专用”（`primary_roll_forward_only`）或“候选入口仅影子观察”（`candidate_entry_shadow_only`）。 |
 | Action Tier | 动作层级 | 描述当前建议动作的强弱与性质，如 primary_entry、watch_only、conditional_watch_upgrade。 |
-| Validation Verdict | 验证结论 | 对某条 lane 或某类规则当前是否达到上线、影子运行或继续观察条件的判断。 |
+| Validation Verdict | 验证结论 | 对某条车道或某类规则当前是否达到上线、影子运行或继续观察条件的判断。 |
 | Global Guardrail | 全局护栏 | 对所有优先候选都适用的全局约束条件。 |
 | Frontier | 前沿/边界 | 已接近可开放区域、但尚未满足全量上线条件的一组参数点或候选集合。 |
-| Frontier Constraint | 前沿约束 | 限制某个 frontier 继续开放、默认上线或晋级的条件集合。 |
-| Closed Frontier | 已关闭前沿 | 当前已经确认不适合继续推进、或需保持关闭状态的 frontier。 |
+| Frontier Constraint | 前沿约束 | 限制某个前沿继续开放、默认上线或晋级的条件集合。 |
+| Closed Frontier | 已关闭前沿 | 当前已经确认不适合继续推进、或需保持关闭状态的前沿。 |
 | Penalty Frontier | 惩罚前沿 | 在 penalty 参数空间内寻找通过 guardrail 的可行区域。 |
 | Score Frontier | 分数前沿 | 围绕 near_miss threshold、penalty 权重和 score gap 进行边界释放的可行区域。 |
 | Recurring Frontier | 复现前沿 | 在重复出现的相似样本上形成的前沿集合，用于判定是否值得持续推进。 |
 | Targeted Release | 定向释放 | 只针对某类候选或某条边界进行小范围参数放松的实验策略。 |
 | Case-Based Release | 个案释放 | 以个别边界样本为中心，验证是否值得局部放行的释放方式。 |
 | Controlled Promotion | 受控推进 | 在满足护栏和验证条件后，按治理规则小步前进的推进方式。 |
-| Blocking Reason | 阻塞原因 | 阻止 lane 晋级、前沿开放或默认上线的主因。 |
+| Blocking Reason | 阻塞原因 | 阻止车道晋级、前沿开放或默认上线的主因。 |
 | Preserve Misfire | 保护误伤 | 本应被保留的关键样本在规则变体中被错误过滤掉的现象。 |
 | Cross-Window Stability | 跨窗口稳定性 | 某规则或候选在多个独立窗口中都表现稳定、不是偶然命中的能力。 |
 | Independent Window | 独立窗口 | 用于验证策略泛化能力的相互独立时间区间。 |
 | Missing Window | 缺失窗口 | 某项验证应覆盖但尚未产出有效样本或结果的窗口。 |
 | Primary Roll Forward | 主车道滚动推进 | 针对主车道样本进行持续验证和逐步推进的治理主线。 |
 | Structural Shadow Hold | 结构性影子持有 | 对结构性冲突样本仅保留 shadow 跟踪而不进入默认推进的治理策略。 |
-| Recurring Shadow Runbook | 复现影子运行手册 | 针对 recurring shadow lane 的验证、复核和下一步动作说明文档。 |
+| Recurring Shadow Runbook | 复现影子运行手册 | 针对复现影子车道的验证、复核和下一步动作说明文档。 |
 | Window Scan | 窗口扫描 | 在多个 trade date 或独立窗口内批量检查规则覆盖和命中质量的过程。 |
-| Rollout Readiness | 推出就绪度 | 某规则是否已达到从 shadow 或 research 升级到默认 rollout 的成熟度。 |
+| Shadow Rollout Review | 影子推进复核 | 影子观察规则在默认推进前的复核阶段；当明确指状态字面量时，常见为 `shadow_rollout_review_ready`。 |
+| Rollout Readiness | 推出就绪度 | 某规则是否已达到从仅影子观察或仅研究模式升级到默认受控推进（rollout）的成熟度。 |
+
+---
+
+## BTST 术语来源索引
+
+下表按术语簇列出最常用的实现入口，方便从中文说明快速跳回脚本或模块。表中路径是主要实现位置，不代表唯一引用位置。
+
+| BTST 术语类别 | 代表术语 | 主要实现入口 | 说明 |
+| --- | --- | --- | --- |
+| 双目标与目标模式 | 目标模式、仅研究模式、仅短线模式、双目标模式、双目标评估 | [src/targets/models.py](../../../src/targets/models.py)、[src/targets/router.py](../../../src/targets/router.py)、[src/targets/research_target.py](../../../src/targets/research_target.py)、[src/targets/short_trade_target.py](../../../src/targets/short_trade_target.py) | 定义 `target_mode`、组装 `selection_targets`，并计算研究目标与短线目标两条目标线。 |
+| 目标配置与解释 | 目标配置、差异摘要、候选原因码、偏好入场模式 | [src/targets/profiles.py](../../../src/targets/profiles.py)、[src/targets/explainability.py](../../../src/targets/explainability.py) | 负责阈值、惩罚项、解释标签与盘前 followup 展示所需语义。 |
+| 候选入口与弱结构治理 | 候选入口、候选入口前沿、窗口扫描、保护误伤、推出就绪度 | [scripts/analyze_btst_candidate_entry_frontier.py](../../../scripts/analyze_btst_candidate_entry_frontier.py)、[scripts/analyze_btst_candidate_entry_window_scan.py](../../../scripts/analyze_btst_candidate_entry_window_scan.py)、[scripts/analyze_btst_candidate_entry_rollout_governance.py](../../../scripts/analyze_btst_candidate_entry_rollout_governance.py) | 负责定义弱结构候选入口规则、跨窗口证据和 p9 治理结论。 |
+| 推进车道与治理校验 | 车道、车道状态、车道晋级、治理层级、治理综合、治理验证 | [scripts/analyze_btst_rollout_governance_board.py](../../../scripts/analyze_btst_rollout_governance_board.py)、[scripts/analyze_btst_governance_synthesis.py](../../../scripts/analyze_btst_governance_synthesis.py)、[scripts/validate_btst_governance_consistency.py](../../../scripts/validate_btst_governance_consistency.py) | 汇总主车道、影子车道、复现车道与结构性车道，并校验状态是否一致。 |
+| 控制塔与夜间差分 | BTST 控制塔、夜间控制塔、开盘就绪差异报告、阅读顺序 | [scripts/run_btst_nightly_control_tower.py](../../../scripts/run_btst_nightly_control_tower.py)、[scripts/generate_reports_manifest.py](../../../scripts/generate_reports_manifest.py) | 生成夜间汇总包、开盘就绪差分与 manifest 索引。 |
+| 盘后后续产物与盘前工件 | 次日交易简报、盘前执行卡、开盘观察卡、次日优先级看板、机会池、研究上行雷达 | [src/paper_trading/btst_reporting.py](../../../src/paper_trading/btst_reporting.py) | 汇总 `selected`、`near_miss`、机会池与研究观察集合，生成盘前可消费工件。 |
+
+---
+
+## BTST 中文术语到字段/状态值对照
+
+下表只收录最常用于读报告、看治理矩阵和对照脚本输出的字段。中文正文应优先写中文术语，只有在需要精确对字段、状态值或报告字面量时，才回落到右侧这些字面量。
+
+| 中文术语 | 常见字段 | 典型状态值/键 | 主要实现入口 |
+| --- | --- | --- | --- |
+| 仅研究模式 | `target_mode` | `research_only` | [src/targets/models.py](../../../src/targets/models.py)、[src/targets/router.py](../../../src/targets/router.py) |
+| 仅短线模式 | `target_mode` | `short_trade_only` | [src/targets/models.py](../../../src/targets/models.py)、[src/targets/router.py](../../../src/targets/router.py) |
+| 双目标模式 | `target_mode` | `dual_target` | [src/targets/models.py](../../../src/targets/models.py)、[src/targets/router.py](../../../src/targets/router.py) |
+| 跟进简报车道 | `lane` | `primary_entry`、`selected_backup`、`near_miss_watch`、`opportunity_pool`、`research_upside_radar` | [src/paper_trading/btst_reporting.py](../../../src/paper_trading/btst_reporting.py) |
+| 治理车道标识 | `lane_id` | `primary_roll_forward`、`single_name_shadow`、`recurring_shadow_close_candidate`、`recurring_intraday_control`、`structural_shadow_hold`、`candidate_entry_shadow` | [scripts/analyze_btst_governance_synthesis.py](../../../scripts/analyze_btst_governance_synthesis.py) |
+| 车道状态 | `lane_status` | `primary_controlled_follow_through`、`ready_for_shadow_validation`、`shadow_only_until_second_window`、`shadow_rollout_review_ready`、`structural_shadow_hold_only` | [scripts/analyze_btst_governance_synthesis.py](../../../scripts/analyze_btst_governance_synthesis.py)、[scripts/analyze_btst_candidate_entry_rollout_governance.py](../../../scripts/analyze_btst_candidate_entry_rollout_governance.py)、[scripts/analyze_btst_recurring_shadow_runbook.py](../../../scripts/analyze_btst_recurring_shadow_runbook.py) |
+| 治理层级 | `governance_tier` | `primary_roll_forward_only`、`single_name_shadow_only`、`recurring_shadow_close_candidate`、`recurring_intraday_control`、`structural_shadow_hold_only`、`candidate_entry_shadow_only` | [scripts/analyze_btst_rollout_governance_board.py](../../../scripts/analyze_btst_rollout_governance_board.py)、[scripts/analyze_btst_governance_synthesis.py](../../../scripts/analyze_btst_governance_synthesis.py) |
+| 动作层级 | `action_tier` | `primary_entry`、`watch_only`、`conditional_watch_upgrade`、`primary_promote`、`intraday_control_only`、`structural_shadow_hold`、`shadow_only` | [src/paper_trading/btst_reporting.py](../../../src/paper_trading/btst_reporting.py)、[scripts/analyze_btst_governance_synthesis.py](../../../scripts/analyze_btst_governance_synthesis.py) |
+| 个案短线入口分层 | `readiness_tier` | `primary_controlled_follow_through`、`secondary_shadow_entry`、`control_only` | [scripts/analyze_case_based_short_trade_entry_readiness.py](../../../scripts/analyze_case_based_short_trade_entry_readiness.py)、[scripts/analyze_case_based_short_trade_follow_through_runbook.py](../../../scripts/analyze_case_based_short_trade_follow_through_runbook.py) |
+| 推出就绪度 | `rollout_readiness` | `shadow_only_until_second_window`、`shadow_rollout_review_ready` | [scripts/analyze_btst_candidate_entry_window_scan.py](../../../scripts/analyze_btst_candidate_entry_window_scan.py)、[scripts/analyze_btst_candidate_entry_rollout_governance.py](../../../scripts/analyze_btst_candidate_entry_rollout_governance.py) |
 
 ---
 
@@ -348,13 +388,15 @@
 
 | 项目 | 信息 |
 | --- | --- |
-| 文档版本 | 1.3.0 |
+| 文档版本 | 1.5.0 |
 | 最后更新 | 2026 年 4 月 1 日 |
 
 ### 更新日志
 
 | 版本 | 日期 | 变更内容 |
 | --- | --- | --- |
+| v1.5.0 | 2026.04.01 | 新增“BTST 中文术语到字段/状态值对照”，并将第二轮 BTST 中文文档中的准入、前沿、释放、回放产物等正文写法继续统一为中文优先 |
+| v1.4.0 | 2026.04.01 | 统一 BTST 相关中英文混用写法，新增 BTST 术语来源索引并补充候选入口、仅影子观察、影子推进复核等词条 |
 | v1.3.0 | 2026.04.01 | 重构术语表结构，新增系统架构、双目标、BTST 控制塔、治理与回放产物术语，补全近期短线策略相关词汇 |
 | v1.2.0 | 2026.02.13 | 全面扩充术语数量，增加分类和常用缩写表 |
 | v1.0.0 | 2025.10 | 初始版本 |

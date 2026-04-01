@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -85,8 +86,10 @@ def _temporary_env(updates: dict[str, str]) -> Iterator[None]:
 def _get_trade_dates(month_prefix: str) -> list[str]:
     dates = []
     for path in sorted(_SNAPSHOT_DIR.glob(f"candidate_pool_{month_prefix}*.json")):
-        stem = path.stem
-        dates.append(stem.rsplit("_", 1)[-1])
+        match = re.fullmatch(r"candidate_pool_(\d{8})", path.stem)
+        if match is None:
+            continue
+        dates.append(match.group(1))
     return dates
 
 

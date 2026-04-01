@@ -175,6 +175,41 @@ def _render_target_delta_highlights(snapshot: SelectionSnapshot) -> list[str]:
     return lines
 
 
+def _render_catalyst_theme_section(snapshot: SelectionSnapshot) -> list[str]:
+    lines = ["## 题材催化研究池", ""]
+    if not snapshot.catalyst_theme_candidates:
+        lines.append("- none")
+        lines.append("")
+        return lines
+
+    for index, entry in enumerate(snapshot.catalyst_theme_candidates, start=1):
+        metrics = dict(entry.get("metrics") or {})
+        lines.append(f"### {index}. {entry.get('ticker')}")
+        lines.append(f"- candidate_source: {entry.get('candidate_source')}")
+        lines.append(f"- candidate_score: {float(entry.get('score_target', 0.0) or 0.0):.4f}")
+        lines.append(f"- preferred_entry_mode: {entry.get('preferred_entry_mode') or 'n/a'}")
+        lines.append(f"- positive_tags: {', '.join(entry.get('positive_tags') or []) or 'n/a'}")
+        lines.append(f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}")
+        blockers = list(entry.get("blockers") or [])
+        lines.append(f"- blockers: {', '.join(blockers) if blockers else 'none'}")
+        gate_status = dict(entry.get("gate_status") or {})
+        lines.append("- gate_status: " + (", ".join(f"{key}={value}" for key, value in gate_status.items()) if gate_status else "none"))
+        lines.append(
+            "- key_metrics: "
+            + ", ".join(
+                [
+                    f"breakout={float(metrics.get('breakout_freshness', 0.0) or 0.0):.4f}",
+                    f"trend={float(metrics.get('trend_acceleration', 0.0) or 0.0):.4f}",
+                    f"close={float(metrics.get('close_strength', 0.0) or 0.0):.4f}",
+                    f"sector={float(metrics.get('sector_resonance', 0.0) or 0.0):.4f}",
+                    f"catalyst={float(metrics.get('catalyst_freshness', 0.0) or 0.0):.4f}",
+                ]
+            )
+        )
+        lines.append("")
+    return lines
+
+
 def render_selection_review(snapshot: SelectionSnapshot) -> str:
     counts = dict(snapshot.universe_summary or {})
     funnel = dict(snapshot.funnel_diagnostics or {})
@@ -187,6 +222,7 @@ def render_selection_review(snapshot: SelectionSnapshot) -> str:
         f"- candidate_count: {counts.get('candidate_count', 0)}",
         f"- high_pool_count: {counts.get('high_pool_count', 0)}",
         f"- watchlist_count: {counts.get('watchlist_count', 0)}",
+        f"- catalyst_theme_candidate_count: {counts.get('catalyst_theme_candidate_count', 0)}",
         f"- buy_order_count: {counts.get('buy_order_count', 0)}",
         "",
     ]
@@ -194,6 +230,7 @@ def render_selection_review(snapshot: SelectionSnapshot) -> str:
     lines.extend(_render_research_target_summary(snapshot))
     lines.extend(_render_short_trade_target_summary(snapshot))
     lines.extend(_render_target_delta_highlights(snapshot))
+    lines.extend(_render_catalyst_theme_section(snapshot))
     lines.extend(_render_selected_section(snapshot))
     lines.extend(_render_rejected_section(snapshot))
     lines.extend(

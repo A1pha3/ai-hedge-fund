@@ -18,7 +18,7 @@ BTST 是一条面向次日短线的规则型目标链路，负责把“明天仍
 4. `blocked` 和 `rejected` 不是一回事，调参方式也不同。
 5. 正向因子主要回答“明天还有没有继续强的理由”。
 6. penalty 主要回答“这是不是老修复票、末端延伸票或上方压力票”。
-7. replay 解决的是规则漂移与可归因，次日结果验证解决的才是策略是否真的更好。
+7. 回放解决的是规则漂移与可归因，次日结果验证解决的才是策略是否真的更好。
 8. 最优参数通常是稳定区间，不是某一天最热的点。
 
 ---
@@ -42,7 +42,7 @@ Layer A 候选池
 
 ### 4.1 short_trade_boundary
 
-定位：前置 admission 层，只决定“值不值得送进 BTST 正式评估”。
+定位：前置准入层，只决定“值不值得送进 BTST 正式评估”。
 
 默认 floor：
 
@@ -59,7 +59,7 @@ Layer A 候选池
 
 ### 4.2 short_trade_target
 
-定位：正式目标评估层，决定次日短线结论与 explainability。
+定位：正式目标评估层，决定次日短线结论与可解释性。
 
 默认 profile：
 
@@ -126,7 +126,7 @@ score_target =
 | 标签 | 意义 | 常见下一步 |
 | --- | --- | --- |
 | `selected` | 规则上已具备次日短线资格 | 继续看 execution bridge 与 T+1 承接 |
-| `near_miss` | 已很接近，值得重点审查 | 优先做 frontier 诊断 |
+| `near_miss` | 已很接近，值得重点审查 | 优先做前沿诊断 |
 | `blocked` | 结构或数据层直接阻断 | 优先看 structural / penalty，不先降阈值 |
 | `rejected` | 结构未必完全错误，但当前还不够 | 看是 threshold 问题还是 score construction 问题 |
 
@@ -136,9 +136,9 @@ score_target =
 
 1. 候选少，就先降 `select_threshold`。
 2. `blocked` 多，就直接当成 near-miss 去救。
-3. admission 和正式评分一起放松。
+3. 准入和正式评分一起放松。
 4. 只看 `selected` 数量，不看次日表现。
-5. 只看 replay 提升，不看真实窗口 live validation。
+5. 只看回放提升，不看真实窗口验证。
 6. 把 `layer_c_bearish_conflict` 当作统一全局放松对象。
 
 ---
@@ -147,19 +147,19 @@ score_target =
 
 | 脚本 | 用途 | 什么时候用 |
 | --- | --- | --- |
-| `scripts/replay_selection_target_calibration.py` | replay 校准总入口 | 每次改规则前后都先跑 |
+| `scripts/replay_selection_target_calibration.py` | 回放校准总入口 | 每次改规则前后都先跑 |
 | `scripts/analyze_pre_layer_short_trade_outcomes.py` | 看前置候选的次日表现 | 判断候选质量是否真的变好 |
-| `scripts/analyze_short_trade_boundary_score_failures.py` | 看 score-fail 簇主因 | admission 已过但大量 rejected 时 |
-| `scripts/analyze_short_trade_boundary_score_failures_frontier.py` | 找最小 rescue row | 确认存在贴线样本时 |
-| `scripts/run_short_trade_boundary_variant_validation.py` | 跑真实窗口变体 | replay 之后做 live 验证 |
+| `scripts/analyze_short_trade_boundary_score_failures.py` | 看 score-fail 簇主因 | 准入已过但大量 rejected 时 |
+| `scripts/analyze_short_trade_boundary_score_failures_frontier.py` | 找最小救援行 | 确认存在贴线样本时 |
+| `scripts/run_short_trade_boundary_variant_validation.py` | 跑真实窗口变体 | 回放之后做真实窗口验证 |
 
 ---
 
 ## 11. 最小调参顺序
 
-1. 先分型：供给、admission、score frontier、structural conflict、execution 承接。
+1. 先分型：供给、准入、分数前沿、结构性冲突、执行承接。
 2. 每次只动一类机制。
-3. 先做 replay。
+3. 先做回放。
 4. 再做真实窗口验证。
 5. 最后才考虑升级默认值。
 
@@ -169,4 +169,4 @@ score_target =
 
 如果你要快速写一句复盘结论，推荐用这个模板：
 
-“该样本当前属于 `selected / near_miss / blocked / rejected`，主正贡献来自 `X / Y`，主负贡献来自 `A / B`；因此下一步更像是 `admission / threshold / penalty / structural conflict / execution` 问题，而不是简单整体降线问题。”
+“该样本当前属于 `selected / near_miss / blocked / rejected`，主正贡献来自 `X / Y`，主负贡献来自 `A / B`；因此下一步更像是 `准入 / 阈值 / 惩罚 / 结构性冲突 / 执行` 问题，而不是简单整体降线问题。”

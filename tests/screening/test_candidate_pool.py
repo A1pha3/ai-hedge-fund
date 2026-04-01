@@ -22,6 +22,7 @@ from src.screening.candidate_pool import (
     save_cooldown_registry,
 )
 from src.screening.models import CandidateStock
+import src.screening.candidate_pool as candidate_pool_module
 
 
 # ============================================================================
@@ -61,6 +62,9 @@ def _make_daily_basic_df(rows: list[dict]) -> pd.DataFrame:
 # ============================================================================
 
 class TestHelpers:
+    def test_default_candidate_pool_size_is_300(self):
+        assert candidate_pool_module.MAX_CANDIDATE_POOL_SIZE == 300
+
     def test_estimate_trading_days(self):
         """上市日距今的交易日估算"""
         # 100 自然日 ≈ 70 交易日
@@ -106,26 +110,28 @@ class TestHelpers:
     def test_get_avg_amount_20d_map_uses_market_daily_batches(self):
         """应按交易日批量拉取 daily，再本地聚合目标股票的 20 日均额。"""
         mock_pro = MagicMock()
-        mock_pro.trade_cal.return_value = pd.DataFrame([
-            {"cal_date": "20260303"},
-            {"cal_date": "20260304"},
-        ])
-        mock_pro.daily.side_effect = [
-            pd.DataFrame([
-                {"ts_code": "000001.SZ", "amount": 10000.0},
-                {"ts_code": "000002.SZ", "amount": 20000.0},
-            ]),
-            pd.DataFrame([
-                {"ts_code": "000001.SZ", "amount": 30000.0},
-                {"ts_code": "000002.SZ", "amount": 40000.0},
-            ]),
-        ]
-
-        result = _get_avg_amount_20d_map(mock_pro, ["000001.SZ", "000002.SZ"], "20260304", lookback_sessions=2)
+        with patch(
+            "src.screening.candidate_pool._cached_tushare_dataframe_call",
+            side_effect=[
+                pd.DataFrame([
+                    {"cal_date": "20260303"},
+                    {"cal_date": "20260304"},
+                ]),
+                pd.DataFrame([
+                    {"ts_code": "000001.SZ", "amount": 10000.0},
+                    {"ts_code": "000002.SZ", "amount": 20000.0},
+                ]),
+                pd.DataFrame([
+                    {"ts_code": "000001.SZ", "amount": 30000.0},
+                    {"ts_code": "000002.SZ", "amount": 40000.0},
+                ]),
+            ],
+        ) as mock_cached_call:
+            result = _get_avg_amount_20d_map(mock_pro, ["000001.SZ", "000002.SZ"], "20260304", lookback_sessions=2)
 
         assert result["000001.SZ"] == pytest.approx(2000.0)
         assert result["000002.SZ"] == pytest.approx(3000.0)
-        assert mock_pro.daily.call_count == 2
+        assert mock_cached_call.call_count == 3
 
 
 class TestCooldownRegistry:
@@ -376,3 +382,51 @@ class TestExcludeRules:
             )
 
         assert len(result) == 200
+
+    @patch("src.screening.candidate_pool.get_sw_industry_classification")
+    @patch("src.screening.candidate_pool.get_daily_basic_batch")
+    @patch("src.screening.candidate_pool.get_limit_list")
+    @patch("src.screening.candidate_pool.get_suspend_list")
+    @patch("src.screening.candidate_pool.get_all_stock_basic")
+    @patch("src.screening.candidate_pool._get_pro")
+    def test_candidate_pool_cache_is_scoped_by_pool_size(
+        self,
+        mock_pro,
+        mock_basic,
+        mock_suspend,
+        mock_limit,
+        mock_daily,
+        mock_sw,
+    ):
+        """不同候选池规模不应复用同一个日期缓存。"""
+        stocks = [
+            {"ts_code": f"{i:06d}.SZ", "symbol": f"{i:06d}", "name": f"股票{i}"}
+            for i in range(250)
+        ]
+        snapshot_dir = Path(tempfile.mkdtemp())
+
+        mock_pro.return_value = MagicMock()
+        mock_basic.return_value = _make_stock_basic_df(stocks)
+        mock_suspend.return_value = pd.DataFrame()
+        mock_limit.return_value = pd.DataFrame()
+        mock_daily.return_value = _make_daily_basic_df(
+            [{"ts_code": stock["ts_code"], "total_mv": 1000000} for stock in stocks]
+        )
+        mock_sw.return_value = {}
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
+             patch(
+                 "src.screening.candidate_pool._get_avg_amount_20d_map",
+                 return_value={f"{i:06d}.SZ": 10000.0 for i in range(250)},
+             ):
+            with patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 200):
+                cached_200 = build_candidate_pool("20260305", use_cache=True, cooldown_tickers=set())
+
+            with patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 300):
+                cached_300 = build_candidate_pool("20260305", use_cache=True, cooldown_tickers=set())
+
+        assert len(cached_200) == 200
+        assert len(cached_300) == 250
+        assert (snapshot_dir / "candidate_pool_20260305_top200.json").exists()
+        assert (snapshot_dir / "candidate_pool_20260305_top300.json").exists()
+        assert (snapshot_dir / "candidate_pool_20260305.json").exists()

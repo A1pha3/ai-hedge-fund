@@ -424,10 +424,27 @@ def _diff_governance(current_payload: dict[str, Any], previous_payload: dict[str
             "current_validation_verdict": current_row.get("validation_verdict"),
             "previous_missing_window_count": previous_row.get("missing_window_count"),
             "current_missing_window_count": current_row.get("missing_window_count"),
+            "previous_upgrade_gap": previous_row.get("upgrade_gap"),
+            "current_upgrade_gap": current_row.get("upgrade_gap"),
+            "previous_filtered_report_count": previous_row.get("filtered_report_count"),
+            "current_filtered_report_count": current_row.get("filtered_report_count"),
+            "previous_distinct_window_count_with_filtered_entries": previous_row.get("distinct_window_count_with_filtered_entries"),
+            "current_distinct_window_count_with_filtered_entries": current_row.get("distinct_window_count_with_filtered_entries"),
+            "previous_preserve_misfire_report_count": previous_row.get("preserve_misfire_report_count"),
+            "current_preserve_misfire_report_count": current_row.get("preserve_misfire_report_count"),
         }
         if any(
             lane_delta[key] != lane_delta[key.replace("current_", "previous_")]
-            for key in ("current_lane_status", "current_blocker", "current_validation_verdict", "current_missing_window_count")
+            for key in (
+                "current_lane_status",
+                "current_blocker",
+                "current_validation_verdict",
+                "current_missing_window_count",
+                "current_upgrade_gap",
+                "current_filtered_report_count",
+                "current_distinct_window_count_with_filtered_entries",
+                "current_preserve_misfire_report_count",
+            )
         ):
             lane_changes.append(lane_delta)
 
@@ -688,8 +705,25 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
         lines.append(f"- fail_count_delta: {governance_delta.get('fail_count_delta')}")
         if governance_delta.get("lane_changes"):
             for item in list(governance_delta.get("lane_changes") or []):
+                extra_segments: list[str] = []
+                if item.get("previous_missing_window_count") is not None or item.get("current_missing_window_count") is not None:
+                    extra_segments.append(f"missing_window_count {item.get('previous_missing_window_count')} -> {item.get('current_missing_window_count')}")
+                if item.get("previous_distinct_window_count_with_filtered_entries") is not None or item.get("current_distinct_window_count_with_filtered_entries") is not None:
+                    extra_segments.append(
+                        f"distinct_window_count {item.get('previous_distinct_window_count_with_filtered_entries')} -> {item.get('current_distinct_window_count_with_filtered_entries')}"
+                    )
+                if item.get("previous_preserve_misfire_report_count") is not None or item.get("current_preserve_misfire_report_count") is not None:
+                    extra_segments.append(
+                        f"preserve_misfire_report_count {item.get('previous_preserve_misfire_report_count')} -> {item.get('current_preserve_misfire_report_count')}"
+                    )
+                if item.get("previous_filtered_report_count") is not None or item.get("current_filtered_report_count") is not None:
+                    extra_segments.append(f"filtered_report_count {item.get('previous_filtered_report_count')} -> {item.get('current_filtered_report_count')}")
+                if item.get("previous_upgrade_gap") or item.get("current_upgrade_gap"):
+                    extra_segments.append(f"upgrade_gap {item.get('previous_upgrade_gap')} -> {item.get('current_upgrade_gap')}")
+
+                extra_suffix = f" | {' | '.join(extra_segments)}" if extra_segments else ""
                 lines.append(
-                    f"- lane_delta: {item.get('lane_id')} | status {item.get('previous_lane_status')} -> {item.get('current_lane_status')} | blocker {item.get('previous_blocker')} -> {item.get('current_blocker')}"
+                    f"- lane_delta: {item.get('lane_id')} | status {item.get('previous_lane_status')} -> {item.get('current_lane_status')} | blocker {item.get('previous_blocker')} -> {item.get('current_blocker')}{extra_suffix}"
                 )
         else:
             lines.append("- no_governance_change_detected")
