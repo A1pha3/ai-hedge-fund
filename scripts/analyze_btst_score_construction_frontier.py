@@ -5,9 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_micro_window_regression import _compare_reports
+from scripts.btst_analysis_utils import compare_reports as _compare_reports, resolve_guardrail as _resolve_guardrail
 from scripts.analyze_btst_profile_frontier import (
-    _resolve_guardrail,
     analyze_btst_profile_replay_window,
 )
 

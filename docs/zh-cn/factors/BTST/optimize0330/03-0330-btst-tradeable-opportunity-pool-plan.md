@@ -310,6 +310,12 @@ profitability 在 BTST 场景里更像慢变量风险，不适合直接做前置
 4. `data/reports/btst_tradeable_opportunity_reason_waterfall_march.json`
 5. `data/reports/btst_tradeable_opportunity_reason_waterfall_march.md`
 
+命名上也要提前避坑：
+
+1. 当前系统在 [src/paper_trading/btst_reporting.py](../../../../../src/paper_trading/btst_reporting.py) 里已经把 `opportunity_pool` 用作 follow-up 观察车道的一部分。
+2. 因此这次新增的外部真值池 / 可交易机会池，必须统一使用 `tradeable_opportunity_pool_*` 或 `result_truth_pool_*` 命名。
+3. 禁止直接复用 `opportunity_pool_*` 作为新 artifact 字段名，否则后续 nightly、brief、manifest 和研究文档会发生语义冲突。
+
 这两组产物分别回答两件事：
 
 1. 3 月到底有哪些“值得被 BTST 看到”的可交易机会。
@@ -330,6 +336,12 @@ profitability 在 BTST 场景里更像慢变量风险，不适合直接做前置
 5. 再将 Pool B 回映射到给定 report dir 或 reports root 下的 `selection_snapshot` / `selection_target_replay_input` / `daily_events`。
 6. 为每只票输出“第一阻断点”。
 7. 生成原因瀑布、行业分布、candidate_source 分布、false negative 优先级榜。
+
+实现约束也需要提前写死：
+
+1. 优先复用现有 `selection_snapshot`、`selection_target_replay_input`、`daily_events` 和 BTST 分析公共 helper。
+2. 新脚本应直接复用 [scripts/btst_analysis_utils.py](../../../../../scripts/btst_analysis_utils.py)，不要再跨脚本 import 其他分析脚本里的私有 helper。
+3. 一旦某类 helper 被提升为共享工具，就应删除旧的脚本内重复实现，避免同一口径在多个脚本里分叉。
 
 第一版为了速度，可以直接复用现有脚本里的公共逻辑：
 

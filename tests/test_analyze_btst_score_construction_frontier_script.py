@@ -98,7 +98,7 @@ def test_analyze_btst_score_construction_frontier_finds_prepared_breakout_balanc
             ]
         ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
 
-    monkeypatch.setattr("scripts.analyze_btst_micro_window_regression.get_price_data", fake_get_price_data)
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 
     analysis = analyze_btst_score_construction_frontier(
         replay_input_path,

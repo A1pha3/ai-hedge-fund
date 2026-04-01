@@ -185,7 +185,7 @@ def test_analyze_btst_profile_frontier_finds_staged_breakout_surface(tmp_path, m
             ]
         ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
 
-    monkeypatch.setattr("scripts.analyze_btst_micro_window_regression.get_price_data", fake_get_price_data)
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 
     analysis = analyze_btst_profile_frontier(
         replay_input_path,
@@ -224,7 +224,7 @@ def test_analyze_btst_profile_frontier_finds_profitability_relief_surface(tmp_pa
             ]
         ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
 
-    monkeypatch.setattr("scripts.analyze_btst_micro_window_regression.get_price_data", fake_get_price_data)
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 
     analysis = analyze_btst_profile_frontier(
         replay_input_path,

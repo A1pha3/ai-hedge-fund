@@ -122,7 +122,7 @@ def test_analyze_btst_micro_window_regression_summarizes_closed_and_forward_wind
             raise AssertionError(f"Unexpected request: {(ticker, start_date, end_date)}")
         return frame.assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
 
-    monkeypatch.setattr("scripts.analyze_btst_micro_window_regression.get_price_data", fake_get_price_data)
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 
     analysis = analyze_btst_micro_window_regression(
         baseline_dir,
@@ -161,7 +161,7 @@ def test_analyze_btst_micro_window_regression_tracks_missing_next_day_data(tmp_p
         candidate_source="short_trade_boundary",
     )
 
-    monkeypatch.setattr("scripts.analyze_btst_micro_window_regression.get_price_data", lambda *args, **kwargs: pd.DataFrame())
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", lambda *args, **kwargs: pd.DataFrame())
 
     analysis = analyze_btst_micro_window_regression(baseline_dir)
     baseline = analysis["baseline"]

@@ -6,12 +6,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_micro_window_regression import (
-    _build_day_breakdown,
-    _build_false_negative_proxy_rows,
-    _build_surface_summary,
-    _compare_reports,
-    _extract_btst_price_outcome,
+from scripts.btst_analysis_utils import (
+    build_day_breakdown as _build_day_breakdown,
+    build_false_negative_proxy_rows as _build_false_negative_proxy_rows,
+    build_surface_summary as _build_surface_summary,
+    compare_reports as _compare_reports,
+    extract_btst_price_outcome as _extract_btst_price_outcome,
+    resolve_guardrail as _resolve_guardrail,
 )
 from scripts.replay_selection_target_calibration import (
     STRUCTURAL_VARIANTS,
@@ -81,14 +82,6 @@ def _resolve_variant_profiles(*, baseline_profile: str, variant_profiles: list[s
     if parsed:
         return [name for name in parsed if name != baseline_profile]
     return [name for name in DEFAULT_PROFILE_VARIANTS if name in SHORT_TRADE_TARGET_PROFILES and name != baseline_profile]
-
-
-def _resolve_guardrail(value: float | None, baseline_value: Any, fallback: float) -> float:
-    if value is not None:
-        return round(float(value), 4)
-    if baseline_value is None:
-        return round(float(fallback), 4)
-    return round(float(baseline_value), 4)
 
 
 def analyze_btst_profile_replay_window(
