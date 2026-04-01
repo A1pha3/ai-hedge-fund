@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from scripts.btst_candidate_entry_utils import build_watchlist_avoid_weak_structure_filter as _build_watchlist_avoid_weak_structure_filter
 from src.execution.models import LayerCResult
 from src.targets import SHORT_TRADE_TARGET_PROFILES, get_active_short_trade_target_profile, get_short_trade_target_profile
 from src.targets.router import build_selection_targets
@@ -21,14 +22,11 @@ WATCHLIST_AVOID_BOUNDARY_ENTRY_FILTER = {
     "all_reason_codes": ["decision_avoid", "score_final_below_watchlist_threshold"],
 }
 WATCHLIST_AVOID_WEAK_STRUCTURE_ENTRY_FILTER = {
-    "name": "watchlist_avoid_boundary_weak_structure_entry",
-    "candidate_sources": ["watchlist_filter_diagnostics"],
-    "all_reason_codes": ["decision_avoid", "score_final_below_watchlist_threshold"],
-    "metric_max_thresholds": {
-        "breakout_freshness": 0.05,
-        "volume_expansion_quality": 0.05,
-        "catalyst_freshness": 0.05,
-    },
+    **_build_watchlist_avoid_weak_structure_filter(
+        breakout_freshness_max=0.05,
+        volume_expansion_quality_max=0.05,
+        catalyst_freshness_max=0.05,
+    )
 }
 
 STRUCTURAL_VARIANTS: dict[str, dict[str, Any]] = {
@@ -170,33 +168,6 @@ def _parse_ticker_grid(raw: str | None) -> list[str]:
     if raw is None or not str(raw).strip():
         return []
     return [token.strip() for token in str(raw).split(",") if token.strip()]
-
-
-def _build_watchlist_avoid_weak_structure_filter(
-    *,
-    breakout_freshness_max: float | None = None,
-    trend_acceleration_max: float | None = None,
-    volume_expansion_quality_max: float | None = None,
-    close_strength_max: float | None = None,
-    catalyst_freshness_max: float | None = None,
-) -> dict[str, Any]:
-    metric_max_thresholds: dict[str, float] = {}
-    if breakout_freshness_max is not None:
-        metric_max_thresholds["breakout_freshness"] = float(breakout_freshness_max)
-    if trend_acceleration_max is not None:
-        metric_max_thresholds["trend_acceleration"] = float(trend_acceleration_max)
-    if volume_expansion_quality_max is not None:
-        metric_max_thresholds["volume_expansion_quality"] = float(volume_expansion_quality_max)
-    if close_strength_max is not None:
-        metric_max_thresholds["close_strength"] = float(close_strength_max)
-    if catalyst_freshness_max is not None:
-        metric_max_thresholds["catalyst_freshness"] = float(catalyst_freshness_max)
-    return {
-        "name": "watchlist_avoid_boundary_weak_structure_entry",
-        "candidate_sources": ["watchlist_filter_diagnostics"],
-        "all_reason_codes": ["decision_avoid", "score_final_below_watchlist_threshold"],
-        "metric_max_thresholds": metric_max_thresholds,
-    }
 
 
 def _build_replay_input_from_selection_snapshot(snapshot_payload: dict[str, Any]) -> dict[str, Any]:

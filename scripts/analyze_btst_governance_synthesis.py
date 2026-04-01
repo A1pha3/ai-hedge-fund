@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_candidate_entry_rollout_governance import derive_candidate_entry_shadow_state
+from scripts.btst_report_utils import load_json as _load_json, looks_like_report_dir as _looks_like_report_dir, normalize_trade_date as _normalize_trade_date, safe_load_json as _safe_load_json
 
 
 REPORTS_DIR = Path("data/reports")
@@ -19,29 +20,6 @@ DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH = REPORTS_DIR / "p8_structural_shadow_run
 DEFAULT_CANDIDATE_ENTRY_GOVERNANCE_PATH = REPORTS_DIR / "p9_candidate_entry_rollout_governance_20260330.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_governance_synthesis_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_governance_synthesis_latest.md"
-
-
-def _load_json(path: str | Path) -> dict[str, Any]:
-    resolved = Path(path).expanduser().resolve()
-    return json.loads(resolved.read_text(encoding="utf-8"))
-
-
-def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
-    if not path:
-        return {}
-    resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        return {}
-    return json.loads(resolved.read_text(encoding="utf-8"))
-
-
-def _normalize_trade_date(value: Any) -> str | None:
-    if value is None:
-        return None
-    digits = "".join(ch for ch in str(value).strip() if ch.isdigit())
-    if len(digits) != 8:
-        return None
-    return f"{digits[:4]}-{digits[4:6]}-{digits[6:]}"
 
 
 def _find_row(rows: list[dict[str, Any]], ticker: str) -> dict[str, Any]:
@@ -73,10 +51,6 @@ def _collect_closed_frontiers(rollout_governance: dict[str, Any]) -> tuple[list[
         if "closed" in str(row.get("status") or "")
     ]
     return frontier_constraints, closed_frontiers
-
-
-def _looks_like_report_dir(path: Path) -> bool:
-    return path.is_dir() and (path / "session_summary.json").exists() and (path / "selection_artifacts").exists()
 
 
 def _extract_latest_btst_candidate(report_dir: Path) -> dict[str, Any] | None:

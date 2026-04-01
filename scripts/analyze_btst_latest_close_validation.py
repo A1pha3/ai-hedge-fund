@@ -6,19 +6,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.btst_report_utils import safe_load_json as _safe_load_json
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_latest_close_validation_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_latest_close_validation_latest.md"
-
-
-def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
-    if not path:
-        return {}
-    resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        return {}
-    return json.loads(resolved.read_text(encoding="utf-8"))
 
 
 def _as_int(value: Any) -> int:

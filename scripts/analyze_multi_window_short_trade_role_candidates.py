@@ -7,7 +7,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_short_trade_ticker_role_history import analyze_short_trade_ticker_role_history, discover_report_dirs
+from scripts.analyze_short_trade_ticker_role_history import analyze_short_trade_ticker_role_history
+from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
 
 
 WINDOW_KEY_PATTERN = re.compile(r"paper_trading_window_(\d{8})_(\d{8})")

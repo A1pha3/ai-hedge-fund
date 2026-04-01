@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_candidate_entry_rollout_governance import derive_candidate_entry_shadow_state
+from scripts.btst_report_utils import load_json as _load_json, safe_load_json as _safe_load_json
 
 
 REPORTS_DIR = Path("data/reports")
@@ -20,20 +21,6 @@ DEFAULT_GOVERNANCE_SYNTHESIS_PATH = REPORTS_DIR / "btst_governance_synthesis_lat
 DEFAULT_NIGHTLY_CONTROL_TOWER_PATH = REPORTS_DIR / "btst_nightly_control_tower_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_governance_validation_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_governance_validation_latest.md"
-
-
-def _load_json(path: str | Path) -> dict[str, Any]:
-    resolved = Path(path).expanduser().resolve()
-    return json.loads(resolved.read_text(encoding="utf-8"))
-
-
-def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
-    if not path:
-        return {}
-    resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        return {}
-    return json.loads(resolved.read_text(encoding="utf-8"))
 
 
 def _find_row(rows: list[dict[str, Any]], ticker: str) -> dict[str, Any]:

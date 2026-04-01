@@ -340,8 +340,8 @@ profitability 在 BTST 场景里更像慢变量风险，不适合直接做前置
 实现约束也需要提前写死：
 
 1. 优先复用现有 `selection_snapshot`、`selection_target_replay_input`、`daily_events` 和 BTST 分析公共 helper。
-2. 新脚本应直接复用 [scripts/btst_analysis_utils.py](../../../../../scripts/btst_analysis_utils.py)，不要再跨脚本 import 其他分析脚本里的私有 helper。
-3. 一旦某类 helper 被提升为共享工具，就应删除旧的脚本内重复实现，避免同一口径在多个脚本里分叉。
+2. 分析脚本、report/control-tower 脚本、frontier/release 脚本应分别优先复用 [scripts/btst_analysis_utils.py](../../../../../scripts/btst_analysis_utils.py)、[scripts/btst_report_utils.py](../../../../../scripts/btst_report_utils.py)、[scripts/btst_candidate_entry_utils.py](../../../../../scripts/btst_candidate_entry_utils.py)、[scripts/btst_score_replay_utils.py](../../../../../scripts/btst_score_replay_utils.py)，不要再跨脚本 import 其他分析脚本里的私有 helper。
+3. 一旦某类 helper 被提升为共享工具，就应删除旧的脚本内重复实现，避免同一口径在多个脚本里分叉；新增逻辑应优先补到共享 helper 或显式业务模块，而不是继续向单个脚本堆叠局部函数。
 
 第一版为了速度，可以直接复用现有脚本里的公共逻辑：
 

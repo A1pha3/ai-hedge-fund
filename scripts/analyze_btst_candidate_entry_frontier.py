@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_profile_frontier import analyze_btst_profile_replay_window
-from scripts.replay_selection_target_calibration import _build_watchlist_avoid_weak_structure_filter
+from scripts.btst_candidate_entry_utils import build_watchlist_avoid_weak_structure_filter
 
 
 CANDIDATE_ENTRY_VARIANTS: dict[str, dict[str, Any]] = {
@@ -16,7 +16,7 @@ CANDIDATE_ENTRY_VARIANTS: dict[str, dict[str, Any]] = {
         "stability_priority": 3,
         "structural_overrides": {
             "exclude_candidate_entries": [
-                _build_watchlist_avoid_weak_structure_filter(
+                build_watchlist_avoid_weak_structure_filter(
                     breakout_freshness_max=0.05,
                     volume_expansion_quality_max=0.05,
                     catalyst_freshness_max=0.05,
@@ -30,7 +30,7 @@ CANDIDATE_ENTRY_VARIANTS: dict[str, dict[str, Any]] = {
         "stability_priority": 2,
         "structural_overrides": {
             "exclude_candidate_entries": [
-                _build_watchlist_avoid_weak_structure_filter(
+                build_watchlist_avoid_weak_structure_filter(
                     trend_acceleration_max=0.34,
                     close_strength_max=0.69,
                 )
@@ -43,7 +43,7 @@ CANDIDATE_ENTRY_VARIANTS: dict[str, dict[str, Any]] = {
         "stability_priority": 1,
         "structural_overrides": {
             "exclude_candidate_entries": [
-                _build_watchlist_avoid_weak_structure_filter(
+                build_watchlist_avoid_weak_structure_filter(
                     volume_expansion_quality_max=0.0,
                 )
             ]

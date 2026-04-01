@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_catalyst_theme_frontier import generate_catalyst_theme_frontier_artifacts
+from scripts.btst_report_utils import discover_report_dirs as _discover_btst_report_dirs, load_json as _load_json, normalize_trade_date as _normalize_trade_date
 from scripts.analyze_btst_candidate_entry_rollout_governance import (
     analyze_btst_candidate_entry_rollout_governance,
     render_btst_candidate_entry_rollout_governance_markdown,
@@ -685,10 +686,6 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
 )
 
 
-def _load_json(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
-
-
 def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     resolved = Path(path).expanduser().resolve()
     resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -699,6 +696,13 @@ def _write_markdown(path: str | Path, content: str) -> None:
     resolved = Path(path).expanduser().resolve()
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
+
+
+def _discover_report_dirs(reports_root: Path) -> list[Path]:
+    resolved_reports_root = reports_root.expanduser().resolve()
+    if not resolved_reports_root.exists():
+        return []
+    return _discover_btst_report_dirs(resolved_reports_root, report_name_prefix="paper_trading")
 
 
 def _resolve_existing_artifact_path(
@@ -720,15 +724,6 @@ def _resolve_existing_artifact_path(
         reverse=True,
     )
     return matches[0] if matches else preferred_path
-
-
-def _normalize_trade_date(value: Any) -> str | None:
-    if value is None:
-        return None
-    digits = "".join(ch for ch in str(value).strip() if ch.isdigit())
-    if len(digits) != 8:
-        return None
-    return f"{digits[:4]}-{digits[4:6]}-{digits[6:]}"
 
 
 def _resolve_repo_root(reports_root: Path) -> Path:
@@ -779,21 +774,6 @@ def _build_entry(
         "source_kind": source_kind,
         "report_dir": report_dir,
     }
-
-
-def _looks_like_report_dir(path: Path) -> bool:
-    return path.is_dir() and (path / "session_summary.json").exists() and (path / "selection_artifacts").exists()
-
-
-def _discover_report_dirs(reports_root: Path) -> list[Path]:
-    resolved_reports_root = reports_root.expanduser().resolve()
-    if not resolved_reports_root.exists():
-        return []
-    return sorted(
-        candidate
-        for candidate in resolved_reports_root.iterdir()
-        if _looks_like_report_dir(candidate) and candidate.name.startswith("paper_trading")
-    )
 
 
 def _extract_btst_candidate(report_dir: Path, repo_root: Path) -> dict[str, Any] | None:

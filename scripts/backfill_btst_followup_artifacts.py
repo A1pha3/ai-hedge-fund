@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from scripts.btst_report_utils import discover_report_dirs as _discover_btst_report_dirs
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
 
 
@@ -15,21 +16,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _looks_like_report_dir(path: Path) -> bool:
-    return path.is_dir() and (path / "session_summary.json").exists() and (path / "selection_artifacts").exists()
-
-
 def _discover_report_dirs(input_path: Path, report_name_contains: str) -> list[Path]:
-    resolved = input_path.expanduser().resolve()
-    if _looks_like_report_dir(resolved):
-        return [resolved]
-    if not resolved.is_dir():
-        raise FileNotFoundError(f"Input path does not exist: {resolved}")
-    return sorted(
-        candidate
-        for candidate in resolved.iterdir()
-        if _looks_like_report_dir(candidate) and report_name_contains in candidate.name
-    )
+    return _discover_btst_report_dirs(input_path, report_name_contains=report_name_contains)
 
 
 def main() -> None:

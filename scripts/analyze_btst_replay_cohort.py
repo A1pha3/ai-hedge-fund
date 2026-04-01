@@ -6,38 +6,13 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+from scripts.btst_report_utils import looks_like_report_dir as _looks_like_report_dir, normalize_trade_date as _normalize_trade_date, safe_load_json as _safe_load_json
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_replay_cohort_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_replay_cohort_latest.md"
-
-
-def _load_json(path: str | Path) -> dict[str, Any]:
-    resolved = Path(path).expanduser().resolve()
-    return json.loads(resolved.read_text(encoding="utf-8"))
-
-
-def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
-    if not path:
-        return {}
-    resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        return {}
-    return json.loads(resolved.read_text(encoding="utf-8"))
-
-
-def _normalize_trade_date(value: Any) -> str | None:
-    if value is None:
-        return None
-    digits = "".join(ch for ch in str(value).strip() if ch.isdigit())
-    if len(digits) != 8:
-        return None
-    return f"{digits[:4]}-{digits[4:6]}-{digits[6:]}"
-
-
-def _looks_like_report_dir(path: Path) -> bool:
-    return path.is_dir() and (path / "session_summary.json").exists() and (path / "selection_artifacts").exists()
 
 
 def _normalize_pct(value: Any) -> float | None:

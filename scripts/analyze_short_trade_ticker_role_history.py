@@ -6,25 +6,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def discover_report_dirs(report_root_dirs: list[str | Path], *, report_name_contains: str = "") -> list[Path]:
-    discovered: set[Path] = set()
-    name_filter = str(report_name_contains or "").strip()
-    for root in [Path(path).expanduser().resolve() for path in report_root_dirs]:
-        if not root.exists():
-            continue
-        for snapshot_path in root.rglob("selection_snapshot.json"):
-            report_dir = snapshot_path.parent.parent.parent
-            if not (report_dir / "selection_artifacts").exists():
-                continue
-            if name_filter and name_filter not in report_dir.name:
-                continue
-            discovered.add(report_dir)
-    return sorted(discovered)
 
 
 def _iter_snapshot_paths(report_dir: Path) -> list[Path]:

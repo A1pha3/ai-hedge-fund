@@ -15,7 +15,7 @@ from scripts.btst_analysis_utils import (
     round_or_none as _round_or_none,
     safe_float as _safe_float,
 )
-from scripts.analyze_short_trade_ticker_role_history import discover_report_dirs
+from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
 
 
 REPORTS_DIR = Path("data/reports")
