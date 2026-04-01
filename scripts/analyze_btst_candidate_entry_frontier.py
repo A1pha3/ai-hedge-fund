@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_profile_frontier import analyze_btst_profile_replay_window
 from scripts.btst_candidate_entry_utils import build_watchlist_avoid_weak_structure_filter
+from scripts.btst_profile_replay_utils import analyze_btst_profile_replay_window
 
 
 CANDIDATE_ENTRY_VARIANTS: dict[str, dict[str, Any]] = {

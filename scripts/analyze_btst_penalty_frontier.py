@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.btst_analysis_utils import compare_reports as _compare_reports, resolve_guardrail as _resolve_guardrail
-from scripts.analyze_btst_profile_frontier import (
+from scripts.btst_profile_replay_utils import (
     DEFAULT_GUARDRAIL_NEXT_CLOSE_POSITIVE_RATE,
     DEFAULT_GUARDRAIL_NEXT_HIGH_HIT_RATE,
     analyze_btst_profile_replay_window,

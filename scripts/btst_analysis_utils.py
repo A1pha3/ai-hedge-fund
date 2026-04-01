@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from scripts.btst_data_utils import load_json, normalize_price_frame, round_or_none, safe_float
 from src.project_env import load_project_dotenv
 from src.tools.api import get_price_data, prices_to_df
 from src.tools.akshare_api import get_prices_robust
@@ -16,28 +17,11 @@ from src.tools.akshare_api import get_prices_robust
 load_project_dotenv()
 
 
-def load_json(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
 def normalize_trade_date(value: Any) -> str:
     token = str(value or "").strip()
     if len(token) == 8 and token.isdigit():
         return f"{token[:4]}-{token[4:6]}-{token[6:8]}"
     return token
-
-
-def safe_float(value: Any, default: float | None = None) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def round_or_none(value: float | None, digits: int = 4) -> float | None:
-    if value is None:
-        return None
-    return round(float(value), digits)
 
 
 def iter_selection_snapshots(report_dir: str | Path):
@@ -67,27 +51,6 @@ def load_session_summary_aggregate(report_dir: str | Path) -> dict[str, Any] | N
         "selection_artifact_root_exists": selection_artifact_root.exists(),
         "daily_events_exists": daily_events_path.exists(),
     }
-
-
-def normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
-    if frame is None or frame.empty:
-        return pd.DataFrame()
-    normalized = frame.copy()
-    if not isinstance(normalized.index, pd.DatetimeIndex):
-        date_column = None
-        for candidate in ("date", "trade_date", "datetime"):
-            if candidate in normalized.columns:
-                date_column = candidate
-                break
-        if date_column is not None:
-            normalized[date_column] = pd.to_datetime(normalized[date_column])
-            normalized = normalized.set_index(date_column)
-        else:
-            normalized.index = pd.to_datetime(normalized.index)
-    normalized.index = pd.to_datetime(normalized.index).normalize()
-    normalized = normalized.sort_index()
-    normalized.columns = [str(column).lower() for column in normalized.columns]
-    return normalized
 
 
 def fetch_price_frame(ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]) -> pd.DataFrame:

@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from scripts.btst_data_utils import load_json, normalize_price_frame, round_or_none, safe_float
 from src.project_env import load_project_dotenv
 from src.execution.daily_pipeline import (
     SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
@@ -35,10 +36,6 @@ BOUNDARY_METRIC_KEYS = (
 )
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def parse_candidate_sources(raw: str | None) -> set[str]:
     if raw is None or not str(raw).strip():
         return set()
@@ -57,19 +54,6 @@ def parse_float_grid(raw: str | None, *, default: float) -> list[float]:
         if value not in values:
             values.append(value)
     return values
-
-
-def safe_float(value: Any, default: float | None = None) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def round_or_none(value: float | None, digits: int = 4) -> float | None:
-    if value is None:
-        return None
-    return round(float(value), digits)
 
 
 def summarize(values: list[float]) -> dict[str, float | int | None]:
@@ -91,17 +75,6 @@ def iter_replay_inputs(report_dir: Path):
         replay_input_path = day_dir / REPLAY_INPUT_FILENAME
         if replay_input_path.exists():
             yield replay_input_path, load_json(replay_input_path)
-
-
-def normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
-    if frame is None or frame.empty:
-        return pd.DataFrame()
-    normalized = frame.copy()
-    if not isinstance(normalized.index, pd.DatetimeIndex):
-        normalized.index = pd.to_datetime(normalized.index)
-    normalized = normalized.sort_index()
-    normalized.columns = [str(column).lower() for column in normalized.columns]
-    return normalized
 
 
 def extract_next_day_outcome(ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]) -> dict[str, Any]:

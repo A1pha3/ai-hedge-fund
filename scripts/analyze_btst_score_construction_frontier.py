@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.btst_analysis_utils import compare_reports as _compare_reports, resolve_guardrail as _resolve_guardrail
-from scripts.analyze_btst_profile_frontier import (
+from scripts.btst_profile_replay_utils import (
     analyze_btst_profile_replay_window,
 )
 
