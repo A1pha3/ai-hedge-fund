@@ -68,6 +68,7 @@ SHORT_TRADE_BOUNDARY_TREND_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUN
 SHORT_TRADE_BOUNDARY_VOLUME_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_VOLUME_MIN", 0.15)
 SHORT_TRADE_BOUNDARY_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN", 0.12)
 CATALYST_THEME_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_CATALYST_THEME_MAX_TICKERS", 8)
+CATALYST_THEME_SHADOW_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_CATALYST_THEME_SHADOW_MAX_TICKERS", 8)
 CATALYST_THEME_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CANDIDATE_SCORE_MIN", 0.34)
 CATALYST_THEME_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_BREAKOUT_MIN", 0.10)
 CATALYST_THEME_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CLOSE_MIN", 0.20)
@@ -367,6 +368,56 @@ def _compute_catalyst_theme_candidate_score(snapshot: dict[str, Any]) -> float:
     )
 
 
+def _compute_catalyst_theme_threshold_shortfalls(metrics_payload: dict[str, Any]) -> dict[str, float]:
+    threshold_checks = {
+        "candidate_score": round(float(CATALYST_THEME_CANDIDATE_SCORE_MIN), 4),
+        "breakout_freshness": round(float(CATALYST_THEME_BREAKOUT_MIN), 4),
+        "close_strength": round(float(CATALYST_THEME_CLOSE_MIN), 4),
+        "sector_resonance": round(float(CATALYST_THEME_SECTOR_MIN), 4),
+        "catalyst_freshness": round(float(CATALYST_THEME_CATALYST_MIN), 4),
+    }
+    shortfalls: dict[str, float] = {}
+    for metric_key, threshold_value in threshold_checks.items():
+        actual_value = round(float(metrics_payload.get(metric_key, 0.0) or 0.0), 4)
+        shortfall = round(threshold_value - actual_value, 4)
+        if shortfall > 0:
+            shortfalls[metric_key] = shortfall
+    return shortfalls
+
+
+def _build_catalyst_theme_shadow_entry(*, item, filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
+    threshold_shortfalls = _compute_catalyst_theme_threshold_shortfalls(metrics_payload)
+    total_shortfall = round(sum(threshold_shortfalls.values()), 4)
+    return {
+        **_build_catalyst_theme_entry(item=item, reason=filter_reason, rank=0),
+        "decision": "catalyst_theme_shadow",
+        "candidate_source": "catalyst_theme_shadow",
+        "score_target": float(metrics_payload.get("candidate_score", 0.0) or 0.0),
+        "confidence": round(min(1.0, max(0.0, float(metrics_payload.get("candidate_score", 0.0) or 0.0))), 4),
+        "top_reasons": [
+            f"candidate_score={float(metrics_payload.get('candidate_score', 0.0) or 0.0):.2f}",
+            f"catalyst_freshness={float(metrics_payload.get('catalyst_freshness', 0.0) or 0.0):.2f}",
+            f"total_shortfall={total_shortfall:.2f}",
+        ],
+        "positive_tags": list(metrics_payload.get("theme_tags") or []),
+        "gate_status": dict(metrics_payload.get("gate_status") or {}),
+        "blockers": list(metrics_payload.get("blockers") or []),
+        "metrics": {
+            "breakout_freshness": metrics_payload.get("breakout_freshness"),
+            "trend_acceleration": metrics_payload.get("trend_acceleration"),
+            "close_strength": metrics_payload.get("close_strength"),
+            "sector_resonance": metrics_payload.get("sector_resonance"),
+            "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
+        },
+        "filter_reason": filter_reason,
+        "threshold_shortfalls": threshold_shortfalls,
+        "failed_threshold_count": len(threshold_shortfalls),
+        "total_shortfall": total_shortfall,
+        "promotion_trigger": "若催化继续发酵，或在受控实验里适度放宽题材催化门槛，可升级到题材催化研究池。",
+        "catalyst_theme_metrics": metrics_payload,
+    }
+
+
 def _qualifies_catalyst_theme_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict[str, Any]]:
     snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
     gate_status = dict(snapshot.get("gate_status") or {})
@@ -436,9 +487,11 @@ def _build_catalyst_theme_candidate_diagnostics(
     excluded_tickers.update(str(ticker) for ticker in list((short_trade_candidate_diagnostics or {}).get("selected_tickers", []) or []))
 
     entries: list[dict[str, Any]] = []
+    shadow_entries: list[dict[str, Any]] = []
     reason_counts: dict[str, int] = {}
     filtered_reason_counts: dict[str, int] = {}
     ranked_candidates: list[tuple[float, float, dict[str, Any]]] = []
+    ranked_shadow_candidates: list[tuple[float, float, float, dict[str, Any]]] = []
     upstream_candidates = sorted(
         [item for item in fused if item.ticker not in excluded_tickers],
         key=lambda current: current.score_b,
@@ -451,6 +504,16 @@ def _build_catalyst_theme_candidate_diagnostics(
         qualified, filter_reason, metrics_payload = _qualifies_catalyst_theme_candidate(trade_date=trade_date, entry=candidate_entry)
         if not qualified:
             filtered_reason_counts[filter_reason] = filtered_reason_counts.get(filter_reason, 0) + 1
+            if filter_reason != "metric_data_fail":
+                shadow_entry = _build_catalyst_theme_shadow_entry(item=item, filter_reason=filter_reason, metrics_payload=metrics_payload)
+                ranked_shadow_candidates.append(
+                    (
+                        float(metrics_payload.get("candidate_score", 0.0) or 0.0),
+                        -float(shadow_entry.get("total_shortfall", 0.0) or 0.0),
+                        float(item.score_b),
+                        shadow_entry,
+                    )
+                )
             continue
 
         ranked_candidates.append(
@@ -489,9 +552,15 @@ def _build_catalyst_theme_candidate_diagnostics(
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
         entries.append(entry)
 
+    ranked_shadow_candidates.sort(key=lambda row: (row[0], row[1], row[2], str(row[3].get("ticker") or "")), reverse=True)
+    for rank, (_, _, _, entry) in enumerate(ranked_shadow_candidates[:CATALYST_THEME_SHADOW_MAX_TICKERS], start=1):
+        entry["rank"] = rank
+        shadow_entries.append(entry)
+
     return {
         "upstream_candidate_count": len(upstream_candidates),
         "candidate_count": len(entries),
+        "shadow_candidate_count": len(shadow_entries),
         "reason_counts": reason_counts,
         "filtered_reason_counts": filtered_reason_counts,
         "prefilter_thresholds": {
@@ -502,8 +571,10 @@ def _build_catalyst_theme_candidate_diagnostics(
             "catalyst_freshness_min": round(CATALYST_THEME_CATALYST_MIN, 4),
         },
         "selected_tickers": [entry["ticker"] for entry in entries],
+        "shadow_tickers": [entry["ticker"] for entry in shadow_entries],
         "max_candidates": CATALYST_THEME_MAX_TICKERS,
         "tickers": entries,
+        "shadow_candidates": shadow_entries,
     }
 
 
@@ -1001,6 +1072,7 @@ class DailyPipeline:
             "buy_order_count": len(buy_orders),
             "sell_order_count": len(sell_orders),
             "catalyst_theme_candidate_count": int((catalyst_theme_candidate_diagnostics or {}).get("candidate_count") or 0),
+            "catalyst_theme_shadow_candidate_count": int((catalyst_theme_candidate_diagnostics or {}).get("shadow_candidate_count") or 0),
             "fast_agent_ticker_count": len(high_pool),
             "precise_agent_ticker_count": len(top_20),
             "precise_stage_skipped": self._skip_precise_stage,

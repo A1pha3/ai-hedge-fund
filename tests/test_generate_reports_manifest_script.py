@@ -262,6 +262,8 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     result = generate_reports_manifest_artifacts(reports_root=reports_root)
     manifest = result["manifest"]
 
+    assert manifest["catalyst_theme_frontier_refresh"]["status"] == "refreshed"
+    assert manifest["catalyst_theme_frontier_refresh"]["report_dir"] == "paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330"
     assert manifest["candidate_entry_shadow_refresh"] == {
         "status": "skipped_missing_inputs",
         "missing_inputs": [
@@ -300,6 +302,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
 
     entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
     assert entries_by_id["latest_btst_priority_board"]["report_path"] == "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330/btst_next_day_priority_board_20260331.md"
+    assert entries_by_id["latest_btst_catalyst_theme_frontier_markdown"]["report_path"] == "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330/catalyst_theme_frontier_latest.md"
     assert entries_by_id["latest_btst_opening_watch_card"]["report_path"] == "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330/btst_opening_watch_card_20260331.md"
     assert entries_by_id["latest_btst_brief_json"]["time_scope"] == {
         "label": "latest_btst_followup",
@@ -327,6 +330,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_nightly_control_tower_latest",
         "btst_governance_synthesis_latest",
         "latest_btst_priority_board",
+        "latest_btst_catalyst_theme_frontier_markdown",
         "btst_governance_validation_latest",
         "btst_replay_cohort_latest",
         "p5_rollout_governance_board",
@@ -345,6 +349,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "latest_btst_session_summary",
         "latest_btst_brief_json",
         "latest_btst_execution_card_json",
+        "latest_btst_catalyst_theme_frontier_markdown",
         "latest_btst_selection_snapshot",
     ]
     assert reading_paths["btst_governance"]["entry_ids"] == [
@@ -376,7 +381,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     synthesis = json.loads((reports_root / "btst_governance_synthesis_latest.json").read_text(encoding="utf-8"))
     assert synthesis["closed_frontiers"][0]["frontier_id"] == "broad_penalty_relief"
     assert synthesis["closed_frontiers"][0]["status"] == "broad_penalty_route_closed_current_window"
+    latest_session_summary = json.loads((latest_report / "session_summary.json").read_text(encoding="utf-8"))
+    assert latest_session_summary["artifacts"]["btst_catalyst_theme_frontier_markdown"].endswith("catalyst_theme_frontier_latest.md")
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
+    assert "catalyst_theme_frontier_refresh_status: refreshed" in markdown
     assert "candidate_entry_shadow_refresh_status: skipped_missing_inputs" in markdown
     assert "btst_rollout_governance_refresh_status: refreshed" in markdown
     assert "btst_rollout_governance_penalty_status: broad_penalty_route_closed_current_window" in markdown
@@ -388,6 +396,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "btst_open_ready_delta_latest.md" in markdown
     assert "btst_nightly_control_tower_latest.md" in markdown
     assert "btst_next_day_priority_board_20260331.md" in markdown
+    assert "catalyst_theme_frontier_latest.md" in markdown
     assert "btst_opening_watch_card_20260331.md" in markdown
     assert "btst_governance_synthesis_latest.md" in markdown
     assert "btst_governance_validation_latest.md" in markdown
@@ -481,6 +490,9 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["lane_status"] == "shadow_only_until_second_window"
 
     manifest = result["manifest"]
+    assert manifest["catalyst_theme_frontier_refresh"] == {
+        "status": "skipped_no_latest_btst_run",
+    }
     assert manifest["candidate_entry_shadow_refresh"] == refresh
     assert manifest["btst_rollout_governance_refresh"]["status"] == "skipped_missing_inputs"
     assert manifest["btst_governance_synthesis_refresh"]["status"] == "skipped_missing_inputs"

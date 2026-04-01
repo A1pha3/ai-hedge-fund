@@ -16,6 +16,7 @@ def test_render_selection_review_contains_key_sections():
             "high_pool_count": 8,
             "watchlist_count": 2,
             "catalyst_theme_candidate_count": 1,
+            "catalyst_theme_shadow_candidate_count": 1,
             "buy_order_count": 1,
         },
         selected=[
@@ -95,6 +96,29 @@ def test_render_selection_review_contains_key_sections():
                 "blockers": ["stale_trend_repair_penalty"],
             }
         ],
+        catalyst_theme_shadow_candidates=[
+            {
+                "ticker": "301000",
+                "candidate_source": "catalyst_theme_shadow",
+                "score_target": 0.3891,
+                "preferred_entry_mode": "theme_research_followup",
+                "positive_tags": ["strong_catalyst_freshness"],
+                "top_reasons": ["candidate_score=0.39", "total_shortfall=0.07"],
+                "metrics": {
+                    "breakout_freshness": 0.28,
+                    "trend_acceleration": 0.22,
+                    "close_strength": 0.41,
+                    "sector_resonance": 0.18,
+                    "catalyst_freshness": 0.79,
+                },
+                "gate_status": {"data": "pass", "structural": "fail", "score": "shadow"},
+                "blockers": ["sector_resonance_below_catalyst_theme_floor"],
+                "filter_reason": "sector_resonance_below_catalyst_theme_floor",
+                "threshold_shortfalls": {"sector_resonance": 0.02, "candidate_score": 0.05},
+                "failed_threshold_count": 2,
+                "total_shortfall": 0.07,
+            }
+        ],
     )
 
     markdown = render_selection_review(snapshot)
@@ -116,6 +140,10 @@ def test_render_selection_review_contains_key_sections():
     assert "delta_counts: research_pass_short_reject=1" in markdown
     assert "## 题材催化研究池" in markdown
     assert "300999" in markdown
+    assert "301000" in markdown
+    assert "catalyst_theme_shadow_candidate_count: 1" in markdown
+    assert "近阈值影子池" in markdown
+    assert "filter_reason: sector_resonance_below_catalyst_theme_floor" in markdown
     assert "target_mode: research_only" in markdown
     assert "attached_target_tickers: 000001" in markdown
     assert "research_target: selected (score=0.7200)" in markdown

@@ -93,6 +93,7 @@ class SelectionSnapshot(BaseModel):
     short_trade_view: ShortTradeTargetView = Field(default_factory=ShortTradeTargetView)
     dual_target_delta: DualTargetDeltaView = Field(default_factory=DualTargetDeltaView)
     catalyst_theme_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    catalyst_theme_shadow_candidates: list[dict[str, Any]] = Field(default_factory=list)
     buy_orders: list[dict[str, Any]] = Field(default_factory=list)
     sell_orders: list[dict[str, Any]] = Field(default_factory=list)
     funnel_diagnostics: dict[str, Any] = Field(default_factory=dict)

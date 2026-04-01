@@ -469,6 +469,7 @@ def build_selection_snapshot(
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
     catalyst_theme_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
+    catalyst_theme_shadow_candidates = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("shadow_candidates", []) or [])
     return SelectionSnapshot(
         artifact_version=artifact_version,
         run_id=run_id,
@@ -485,6 +486,7 @@ def build_selection_snapshot(
             "high_pool_count": int(counts.get("layer_b_count", plan.layer_b_count) or 0),
             "watchlist_count": int(counts.get("watchlist_count", len(plan.watchlist)) or 0),
             "catalyst_theme_candidate_count": int(counts.get("catalyst_theme_candidate_count", len(catalyst_theme_candidates)) or 0),
+            "catalyst_theme_shadow_candidate_count": int(counts.get("catalyst_theme_shadow_candidate_count", len(catalyst_theme_shadow_candidates)) or 0),
             "buy_order_count": int(counts.get("buy_order_count", len(plan.buy_orders)) or 0),
             "sell_order_count": int(counts.get("sell_order_count", len(plan.sell_orders)) or 0),
         },
@@ -496,6 +498,7 @@ def build_selection_snapshot(
         short_trade_view=_build_short_trade_target_view(plan),
         dual_target_delta=_build_dual_target_delta(plan),
         catalyst_theme_candidates=catalyst_theme_candidates,
+        catalyst_theme_shadow_candidates=catalyst_theme_shadow_candidates,
         buy_orders=[order.model_dump(mode="json") for order in plan.buy_orders],
         sell_orders=[order.model_dump(mode="json") for order in plan.sell_orders],
         funnel_diagnostics=funnel_diagnostics,

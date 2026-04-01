@@ -191,7 +191,7 @@ how：这些信号不直接变成 BTST 的显式正向因子，但会通过：
 1. Layer B 供给排序
 2. `quality_score`
 3. analyst / investor cohort alignment
-4. quality-first guard
+4. 质量优先护栏
 
 间接影响 BTST 是否有健康底座。
 
@@ -246,7 +246,7 @@ how：在 short trade target 中，这些输入进一步合成为：
 
 ### 5.3 how：boundary 的 candidate_score 是怎么来的
 
-当前预选得分不是最终 `score_target`，而是一个轻量的 admission score：
+当前预选得分不是最终 `score_target`，而是一个轻量的准入评分：
 
 ```text
 0.30 * breakout_freshness
@@ -258,7 +258,7 @@ how：在 short trade target 中，这些输入进一步合成为：
 
 why：预选层只解决“值不值得送进 BTST 正式评估”，不直接下最终结论。
 
-what：它更像 admission floor。
+what：它更像准入底线。
 
 how：通过 `supplemental_short_trade_entries` 附着到 selection targets 的 replay 输入中。
 
@@ -542,7 +542,7 @@ how：如果命中这些 blocker，样本会优先进入 `blocked` 或 `rejected
 
 1. 结构上不一定完全错误
 2. 但当前分数和条件还不够
-3. 更适合做 near-miss 或 frontier 分析
+3. 更适合做 near-miss 或 frontier（前沿）分析
 
 ---
 
@@ -624,7 +624,7 @@ how：核心脚本是：
 2. threshold grid
 3. structural variants
 4. combination grid
-5. candidate entry metric grid
+5. candidate entry metric grid（候选入口指标网格）
 6. penalty grid
 7. penalty + threshold 联合网格
 
@@ -644,16 +644,16 @@ how：核心脚本是：
 4. 次日最高是否达到阈值，比如 `+2%`
 5. 次日收盘是否为正
 
-#### 第三类：score-fail cluster 诊断
+#### 第三类：分数失利主簇诊断
 
-what：分析被 BTST 拒绝的边界候选，判断问题在 admission、threshold 还是 penalty。
+what：分析被 BTST 拒绝的边界候选，判断问题在准入、阈值还是惩罚。
 
 how：当前核心脚本是：
 
 1. `scripts/analyze_short_trade_boundary_score_failures.py`
 2. `scripts/analyze_short_trade_boundary_score_failures_frontier.py`
 
-#### 第四类：真实窗口 live validation
+#### 第四类：真实窗口验证
 
 what：在真实报告窗口中跑规则变体，再自动导出覆盖情况。
 
@@ -698,8 +698,8 @@ how：当前核心脚本是：
 结合当前仓库里的最新文档和脚本，可以把主线总结成四句：
 
 1. short_trade_boundary 已经证明方向是对的，前置候选的次日质量明显优于旧的 layer_b_boundary。
-2. 当前更大的问题往往不是 admission 完全不行，而是高质量候选数太少。
-3. 在很多窗口里，真正的主矛盾已经从“再放 admission floor”转向“score frontier 和 penalty frontier”。
+2. 当前更大的问题往往不是准入完全不行，而是高质量候选数太少。
+3. 在很多窗口里，真正的主矛盾已经从“继续放宽准入底线”转向“分数前沿和惩罚前沿”。
 4. blocked 样本并不天然等于阈值共调对象，很多样本本质上需要结构或 penalty 重构，而不是简单降线。
 
 ---
@@ -710,7 +710,7 @@ how：当前核心脚本是：
 
 1. 先搞清楚 BTST 的目标不是“找所有强票”，而是“找明天还可能继续强的票”。
 2. 再搞清楚供给来自 Layer B，而不是凭空生成。
-3. 再搞清楚 short trade boundary 只是 admission，不是最终结论。
+3. 再搞清楚 short trade boundary 只是准入层，不是最终结论。
 4. 然后重点理解 `stale_trend_repair_penalty` 和 `extension_without_room_penalty`，因为这两者最容易决定一个样本为什么死掉。
 5. 最后再去看 threshold、near_miss 和 replay grid，因为那是调优阶段，而不是入门阶段。
 

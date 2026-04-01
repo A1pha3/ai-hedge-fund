@@ -1,4 +1,4 @@
-# BTST 0330 优化路线设计文：从 coverage 修复到新因子挖掘
+# BTST 0330 优化路线设计文：从覆盖修复到新因子挖掘
 
 文档日期：2026 年 3 月 30 日  
 适用对象：需要审阅 BTST 优化方向、评估实验优先级、安排研究排期的研究员、研究负责人、开发者、AI 助手。  
@@ -26,12 +26,12 @@
 
 1. 为什么 2026-03-27 的 BTST 结果里，2026-03-30 只出现了 1 只主入场票 `300757`，而这不应被直接解读成“市场里只有 1 只可做”。
 2. 如何把“2026-03-24、25、26、27 收盘后选股，次日买入，再下一交易日卖出”的想法改造成更严谨的 BTST 验证框架。
-3. 当前 BTST 优化主线到底应优先修 coverage、修 score frontier、修结构冲突，还是挖新因子。
+3. 当前 BTST 优化主线到底应优先修覆盖、修分数前沿、修结构冲突，还是挖新因子。
 4. 研究团队下一步应该按什么顺序推进，才能减少拍脑袋调参和小窗口过拟合。
 
 阅读完本文档后，你应该能回答：
 
-1. 当前 BTST 的主矛盾更偏 coverage 还是 quality。
+1. 当前 BTST 的主矛盾更偏覆盖还是质量。
 2. 为什么只看“最终盈利”不足以评价 BTST 因子。
 3. 为什么 `300757` 和 `601869` 的处理方式不同。
 4. 为什么 profitability 在 BTST 场景下更适合作为软约束，而不是前置硬杀。
@@ -43,20 +43,20 @@
 
 如果只保留最重要的结论，请先记住下面 10 条：
 
-1. 当前 BTST 的核心问题更像 coverage 不足，而不是候选质量整体太差。
+1. 当前 BTST 的核心问题更像覆盖不足，而不是候选质量整体太差。
 2. `300757` 作为 2026-03-30 的主入场票是合理的，但它的正确执行方式是 `next_day_breakout_confirmation`，而不是无脑开盘追价。
 3. `601869` 作为 near-miss 观察票也合理，但它的语义是“继续盯盘确认”，不是默认买入。
 4. 当前系统里“会选”与“会买”仍然是两层逻辑，不能混为一谈。
 5. 2026-03-23 到 2026-03-26 的旧 baseline 主失败簇确实是 `rejected_layer_b_boundary_score_fail`，但这条 shared Layer B 失败链已经被当前 live short-trade builder 路径实质性消除；它现在更适合作为“为什么要分池”的历史诊断证据，而不是当前默认路径的主矛盾。
-6. 当前 live 路径里，`short_trade_boundary` 已经成为真正的主候选源，且 `catalyst_freshness_min=0.00` 已完成完整窗口验证；因此下一轮主线不再是继续寻找第二条 admission floor，而是围绕新的 score frontier 与结构性 blocked 样本做治理。
-7. breakout 语义过窄仍然是旧阶段的重要根因，但在 dedicated short-trade builder 与 catalyst-only 扩覆盖落地后，当前更活跃的 frontier 已经转向 `short_trade_boundary_score_fail` 与 `layer_c_bearish_conflict`，而不是继续回到 shared boundary 大范围扫阈值。
+6. 当前真实窗口路径里，`short_trade_boundary` 已经成为真正的主候选源，且 `catalyst_freshness_min=0.00` 已完成完整窗口验证；因此下一轮主线不再是继续寻找第二条准入底线，而是围绕新的分数前沿与结构性阻断样本做治理。
+7. breakout 语义过窄仍然是旧阶段的重要根因，但在短线专用构建器与仅催化项扩覆盖落地后，当前更活跃的前沿已经转向 `short_trade_boundary_score_fail` 与 `layer_c_bearish_conflict`，而不是继续回到共享边界池做大范围阈值扫描。
 8. profitability 在 2026-03-23 到 2026-03-26 的更广义 Layer B 融合低分样本里表现出很强的压制性，且与 BTST 当前活跃行业高度重叠，因此需要从硬约束转向条件化惩罚，而不是直接照搬研究型目标的硬杀逻辑。
 9. 你的“收盘选股，次日买入，再下一交易日卖出”方法是可行的，但必须拆成“机会质量验证”和“执行后收益验证”两层，不宜只看最终盈亏。
 10. 下一轮优化不应该先做大网格乱扫，而应该先建立一套研究员可审阅的分层验证框架，再做单主题实验。
 
 ### 2.1 2026-03-30 夜间复跑后的当前状态
 
-基于 `data/reports/p2_top3_experiment_execution_summary_20260330.json` 的真实复跑结果，0330 当前窗口的 case-based 结论已经进一步收紧：
+基于 `data/reports/p2_top3_experiment_execution_summary_20260330.json` 的真实复跑结果，0330 当前窗口的个案结论已经进一步收紧：
 
 1. `001309` 已完成 `2/2 near_miss -> selected`，且 `changed_non_target_case_count=0`、`next_high_return_mean=0.0510`、`next_close_return_mean=0.0414`、`next_close_positive_rate=1.0`，因此可正式视为当前唯一的 `primary_controlled_follow_through` 入口。
 2. `300383` 仍然成立，但只能定义为影子入场候选：它是 `1/1 rejected -> near_miss`、零 spillover、次日 close 为正的低污染纯阈值释放，不过目前仍只有单样本，不应升级为默认主入场口径。
@@ -68,9 +68,9 @@
 8. 复现影子车道也不再只是排序关系：`data/reports/p6_recurring_shadow_runbook_20260330.json` 已把 `002015` 固定为复现收盘延续影子候选，把 `600821` 固定为复现盘中控制，并明确两者不能被混写成同一条影子规则；同时它也把两者的当前验证状态收紧为 `distinct_window_count=1`、`await_new_close_candidate_window` 与 `await_new_intraday_control_window`，说明这条车道现在缺的同样是新增独立窗口，而不是额外规则。
 9. `001309` 的后续动作现在也已被收紧成复跑命令级别：`data/reports/p7_primary_window_validation_runbook_001309_20260330.json` 已逐窗口扫描当前归档报告，确认除了 `20260323_20260326` 外并不存在第二个独立 short-trade window，因此当前未完成的只剩未来窗口数据本身。
 10. `300383` 的扩样路径也不再只是“不要复制它”的口头判断：`data/reports/p7_shadow_peer_scan_300383_20260330.json` 已确认当前同类样本全部属于惩罚耦合车道，没有第二只同规则纯阈值样本，所以影子扩展必须改走复现前沿。
-11. `300724` 的结构性车道现在也已从“结论”补成“runbook”：`data/reports/p8_structural_shadow_runbook_300724_20260330.json` 已把窗口级 blocked cluster、单票 targeted release 与负的 post-release quality 一并收口，明确这条车道只能保持 `structural_shadow_hold_only`，只有未来新窗口出现新的高优先级 structural case 且 close continuation 转正，才允许重开评审。
-12. 结合上游实施收口文档 [docs/zh-cn/product/arch/arch_optimize_implementation.md](docs/zh-cn/product/arch/arch_optimize_implementation.md)，0330 当前默认 live 路径还应再补一条事实：旧的 `layer_b_boundary` score-fail 簇在 dedicated short-trade builder 上已经降到 `0`，当前完整窗口 live 候选的 admission 主基线已经切换为 `short_trade_boundary + catalyst_freshness_min=0.00`。
-13. 因而“下一轮最应该做的 3 件事”已经从泛化的 P2/P3/P5 讨论，进一步收敛为：等新增窗口数据出现后复跑 `001309` 的独立窗口验证；把 `300383` 固定为单票 shadow；再把 `002015 / 600821` 维持为 recurring shadow 的 close 候选与 intraday 控制样本的 shadow-validation 准备态，等待第二个独立窗口，而 `300724` 保持治理性冻结，同时不再回头重开 shared Layer B 池的大范围 floor 扫描。
+11. `300724` 的结构性车道现在也已从“结论”补成“运行手册”：`data/reports/p8_structural_shadow_runbook_300724_20260330.json` 已把窗口级阻断簇、单票定向释放与负的释放后质量一并收口，明确这条车道只能保持 `structural_shadow_hold_only`，只有未来新窗口出现新的高优先级结构性个案且收盘延续转正，才允许重开评审。
+12. 结合上游实施收口文档 [docs/zh-cn/product/arch/arch_optimize_implementation.md](docs/zh-cn/product/arch/arch_optimize_implementation.md)，0330 当前默认真实窗口路径还应再补一条事实：旧的 `layer_b_boundary` score-fail 簇在短线专用构建器上已经降到 `0`，当前完整窗口真实窗口候选的准入主基线已经切换为 `short_trade_boundary + catalyst_freshness_min=0.00`。
+13. 因而“下一轮最应该做的 3 件事”已经从泛化的 P2/P3/P5 讨论，进一步收敛为：等新增窗口数据出现后复跑 `001309` 的独立窗口验证；把 `300383` 固定为单票影子观察；再把 `002015 / 600821` 维持为复现影子车道里的收盘候选与盘中控制样本的影子验证准备态，等待第二个独立窗口，而 `300724` 保持治理性冻结，同时不再回头重开 shared Layer B 池的大范围准入底线扫描。
 
 ---
 
@@ -99,45 +99,45 @@
 
 这表明旧路径下的主堵点位于 short-trade 边界供给与 pre-score 结构，而不是 Layer C 全面失灵。
 
-但结合上游实施文档当前已收口的 live 证据，这里还必须加一条边界：这组 `rejected_layer_b_boundary_score_fail=23` 更适合作为“为什么短线不应继续与研究型 Layer B 共池”的历史诊断，而不是当前默认 live 路径的在线主堵点。当前 live builder 已把这类 shared boundary rejection 压到 `0`，因此后续研究不应再把主要精力放回 shared Layer B 候选池本身。
+但结合上游实施文档当前已收口的真实窗口证据，这里还必须加一条边界：这组 `rejected_layer_b_boundary_score_fail=23` 更适合作为“为什么短线不应继续与研究型 Layer B 共池”的历史诊断，而不是当前默认真实窗口路径的在线主堵点。当前真实窗口 builder 已把这类 shared boundary rejection 压到 `0`，因此后续研究不应再把主要精力放回 shared Layer B 候选池本身。
 
-### 3.3 当前 coverage 与 quality 是什么关系
+### 3.3 当前覆盖与质量是什么关系
 
-根据 `data/reports/pre_layer_short_trade_outcomes_layer_b_boundary_current_window_20260329.json`、`data/reports/pre_layer_short_trade_outcomes_short_trade_boundary_current_window_20260329.json`，以及上游实施文档已经收口的完整窗口 live admission 结果：
+根据 `data/reports/pre_layer_short_trade_outcomes_layer_b_boundary_current_window_20260329.json`、`data/reports/pre_layer_short_trade_outcomes_short_trade_boundary_current_window_20260329.json`，以及上游实施文档已经收口的完整窗口真实窗口准入结果：
 
 1. 旧的 `layer_b_boundary` 候选池有 23 个，`next_high_return_mean=0.0263`，`next_close_return_mean=0.0027`，`next_high_hit_rate@2%=0.5217`，`next_close_positive_rate=0.5652`。
 2. 新的 `short_trade_boundary` 候选池只有 2 个，但 `next_high_return_mean=0.0829`，`next_close_return_mean=0.0498`，两项命中率都是 `1.0`。
 3. 在完整窗口 live 路径里，默认 `short_trade_boundary + catalyst_freshness_min=0.00` 已把候选扩到 24 个，并给出 `near_miss=6`、`rejected_short_trade_boundary_score_fail=18`；对应 pre-Layer C outcome 为 `next_high_return_mean=0.0471`、`next_close_return_mean=0.0186`、`next_high_hit_rate@2%=0.75`、`next_close_positive_rate=0.7083`。
 
-这里要先把证据边界说清楚：前两份 pre-Layer C outcome 报告用于比较两类 candidate source 的方向差异，不应误读为同一 baseline 下的严格 apples-to-apples A/B；而完整窗口 live admission 结果则回答了“当前默认短线 builder 路径是否已经把旧 shared boundary 问题收掉”。两类证据合起来，才能说明“方向已正确，但活跃 frontier 已经切换”。
+这里要先把证据边界说清楚：前两份 pre-Layer C outcome 报告用于比较两类候选来源的方向差异，不应误读为同一基线下的严格同口径 A/B；而完整窗口真实窗口准入结果则回答了“当前默认短线构建器路径是否已经把旧 shared boundary 问题收掉”。两类证据合起来，才能说明“方向已正确，但活跃前沿已经切换”。
 
 结论很明确：
 
 1. 旧池子覆盖够，但噪声偏大。
 2. 新池子在最早的局部比较里质量高但覆盖塌缩，而在完整窗口 live builder 上已经恢复到可研究覆盖。
-3. 当前最正确的优化目标不再是重新讨论 admission floor，而是维持这条 live admission 基线，并把优化重心切到 `short_trade_boundary` score frontier、recurring frontier 与结构性 blocked 样本。
-4. 当前证据足以支持“admission 主线已切换”的方向判断，但统计把握仍有限，因此默认升级仍必须等待滚动窗口。
+3. 当前最正确的优化目标不再是重新讨论准入底线，而是维持这条真实窗口准入基线，并把优化重心切到 `short_trade_boundary` 分数前沿、复现前沿与结构性阻断样本。
+4. 当前证据足以支持“准入主线已切换”的方向判断，但统计把握仍有限，因此默认升级仍必须等待滚动窗口。
 
 ### 3.4 为什么不能指望简单调阈值救回来
 
-根据 `data/reports/short_trade_boundary_coverage_variants_current_window_20260329.md` 与上游实施文档的完整窗口 live 收口结果：
+根据 `data/reports/short_trade_boundary_coverage_variants_current_window_20260329.md` 与上游实施文档的完整窗口真实窗口收口结果：
 
 1. 多个 boundary threshold 变体在当前候选池上都没有新增通过样本。
 2. 19 个样本反复卡在 `breakout_freshness_below_short_trade_boundary_floor`。
 3. 剩余样本主要卡在 `catalyst_freshness` 或 `volume_expansion`。
-4. 但完整窗口 live 验证已经证明，`catalyst_freshness_min=0.00` 是当前唯一值得保留的 admission 扩覆盖基线；继续联动放松 volume floor 会明显拉低 close continuation 质量。
+4. 但完整窗口真实窗口验证已经证明，`catalyst_freshness_min=0.00` 是当前唯一值得保留的准入扩覆盖基线；继续联动放松 volume floor 会明显拉低 close continuation 质量。
 
-这说明旧阶段的问题不只是阈值高，而是 `breakout_freshness` 的定义或使用方式过窄；但在当前阶段，这条 admission 主线已经完成最小可用收口，因此不应再把“是否继续放 admission floor”当作最优先问题。
+这说明旧阶段的问题不只是阈值高，而是 `breakout_freshness` 的定义或使用方式过窄；但在当前阶段，这条准入主线已经完成最小可用收口，因此不应再把“是否继续放准入底线”当作最优先问题。
 
 补充一条新的反证：`data/reports/btst_profile_frontier_20260330.md` 已把同一 0323-0326 closed-cycle 窗口下的 `default`、`staged_breakout`、`aggressive`、`conservative` 放到统一 outcome 面上比较，结果四个 profile 的 `tradeable surface` 都仍然是 `0`。这说明当前问题也不适合再理解成“换个 short-trade profile 就能推起来”，而应继续把主优化面收敛在 `score construction` 与 `candidate entry` 语义上。
 
 再补一条更强的反证：`data/reports/btst_score_construction_frontier_20260330.md` 已把 `prepared_breakout_balance`、`catalyst_volume_balance`、`trend_alignment_balance` 三条正向 weight 变体放到同一 closed-cycle outcome 面上比较，结果三者依然全部是 `tradeable surface=0`，而 baseline false negative proxy 规模也没有缩小。这说明当前窗口里“只调正向分数权重”同样不是突破口。
 
-当前窗口里真正新增解释力的是 `data/reports/btst_candidate_entry_frontier_20260330.md`：`weak_structure_triplet`、`semantic_pair_300502`、`volume_only_20260326` 都能过滤 `2026-03-26` 的 `300502` 弱结构样本，同时不误伤 `300394` preserve 样本；但由于 `weak_structure_triplet` 属于 window-verified selective rule，而 `volume_only_20260326` 只是 single-day hypothesis，因此当前最应优先保留的是选择性弱结构候选入口语义，而不是继续做 broad score rebalance。并且这条规则在 replay calibration 里已经有可复用的结构变体实现：`exclude_watchlist_avoid_weak_structure_entries`。
+当前窗口里真正新增解释力的是 `data/reports/btst_candidate_entry_frontier_20260330.md`：`weak_structure_triplet`、`semantic_pair_300502`、`volume_only_20260326` 都能过滤 `2026-03-26` 的 `300502` 弱结构样本，同时不误伤 `300394` preserve 样本；但由于 `weak_structure_triplet` 属于 window-verified selective rule，而 `volume_only_20260326` 只是单日假设，因此当前最应优先保留的是选择性弱结构候选入口语义，而不是继续做宽口径分数再平衡。并且这条规则在回放校准里已经有可复用的结构变体实现：`exclude_watchlist_avoid_weak_structure_entries`。
 
 接着往前推进的关键不是直接改默认，而是先验证它到底是不是“单窗偶然”。`data/reports/btst_candidate_entry_window_scan_20260330.md` 已对当前可发现的 14 份 `paper_trading_window` 报告做了统一扫描：共有 3 份报告触发了弱结构过滤，且三者都只是同一个 `window_key=20260323_20260326` 上的重复命中；`300394` 在全部扫描结果里仍保持 `preserve_misfire_report_count=0`。这说明当前证据已经足以支持候选入口影子旁路，但还不足以支持默认升级。
 
-因此最新治理收口已经落在 `data/reports/p9_candidate_entry_rollout_governance_20260330.md`：`candidate_entry_rule=weak_structure_triplet`，`recommended_structural_variant=exclude_watchlist_avoid_weak_structure_entries`，车道状态为“第二独立窗口前仅影子观察”（`shadow_only_until_second_window`），默认升级状态为“被单窗口候选入口信号阻塞”（`blocked_by_single_window_candidate_entry_signal`）。也就是说，下一步该做的是继续累积第二个独立 `window_key` 命中，同时确保 `300394` 这类 preserve 样本持续不被误伤，而不是把 `semantic_pair_300502`、`volume_only_20260326` 或弱结构规则本身提前写成默认 admission 改动。
+因此最新治理收口已经落在 `data/reports/p9_candidate_entry_rollout_governance_20260330.md`：`candidate_entry_rule=weak_structure_triplet`，`recommended_structural_variant=exclude_watchlist_avoid_weak_structure_entries`，车道状态为“第二独立窗口前仅影子观察”（`shadow_only_until_second_window`），默认升级状态为“被单窗口候选入口信号阻塞”（`blocked_by_single_window_candidate_entry_signal`）。也就是说，下一步该做的是继续累积第二个独立 `window_key` 命中，同时确保 `300394` 这类 preserve 样本持续不被误伤，而不是把 `semantic_pair_300502`、`volume_only_20260326` 或弱结构规则本身提前写成默认准入改动。
 
 ### 3.5 profitability 为什么值得单独提出
 
@@ -176,7 +176,7 @@ Layer 4：执行确认
 
 1. 只看 selected 数量，会忽略边界漏票。
 2. 只看次日收益，会把执行问题误判成选股问题。
-3. 只看 score frontier，会掩盖上游供给不足。
+3. 只看分数前沿，会掩盖上游供给不足。
 
 ### 4.2 为什么“是否盈利”不足以评价 BTST 因子
 
@@ -189,11 +189,11 @@ Layer 4：执行确认
 
 更合理的 BTST 评价应分成 3 组：
 
-1. 机会质量：T+1 是否给出足够的 intraday 空间，例如 `next_high_return`、`high_hit_rate@2%`。
+1. 机会质量：T+1 是否给出足够的盘中空间，例如 `next_high_return`、`high_hit_rate@2%`。
 2. 执行质量：若按突破确认入场，开盘到收盘、确认后到收盘、T+2 代理退出结果是否合理。
 3. 风险质量：开盘反向、盘中回撤、行业集中度、样本重复性是否可接受。
 
-### 4.3 为什么当前重点应该是修 coverage，而不是继续压质量
+### 4.3 为什么当前重点应该是修覆盖，而不是继续压质量
 
 现在最危险的误判是：看到 `300757` 很强，就以为系统已经很准，只需要再保守一点。
 
@@ -201,12 +201,12 @@ Layer 4：执行确认
 
 1. 高质量池只有 2 个样本，统计意义太弱。
 2. 旧池子里存在不少被漏掉但次日仍给空间的 false negative。
-3. 如果不先恢复 coverage，后续无论做 penalty、结构冲突还是执行桥接，都只能在过小样本上打转。
+3. 如果不先恢复覆盖，后续无论做 penalty、结构冲突还是执行桥接，都只能在过小样本上打转。
 
 所以 0330 之后的首要目标应分成两个时间层次：
 
-1. 在历史诊断层面，要承认先前的首要问题确实是恢复 coverage 并摆脱 shared Layer B 池。
-2. 在当前 live 默认路径层面，要承认这一步已经基本完成，接下来的主线应转向 `short_trade_boundary` score frontier、局部 recurring baseline 与 `layer_c_bearish_conflict` 的定点治理。
+1. 在历史诊断层面，要承认先前的首要问题确实是恢复覆盖并摆脱 shared Layer B 池。
+2. 在当前真实窗口默认路径层面，要承认这一步已经基本完成，接下来的主线应转向 `short_trade_boundary` 分数前沿、局部复现基线与 `layer_c_bearish_conflict` 的定点治理。
 
 ### 4.4 为什么盘中 breakout confirmation 必须单独建模
 
@@ -241,9 +241,9 @@ Layer 4：执行确认
 
 本文里 false negative 的操作性定义统一为：在当前规则下被判为 `rejected`、`blocked` 或仅保留为观察层样本，但至少满足以下之一：
 
-1. T+1 `next_high_return` 达到研究组设定的 intraday 空间门槛。
+1. T+1 `next_high_return` 达到研究组设定的盘中空间门槛。
 2. T+1 `close` 为正，且延续性没有明显塌陷。
-3. 同类 frontier / 冲突 / 入口语义在滚动窗口中反复出现。
+3. 同类前沿 / 冲突 / 入口语义在滚动窗口中反复出现。
 
 当前 selected 样本太少，单独研究它们会有两个问题：
 
@@ -254,7 +254,7 @@ Layer 4：执行确认
 
 1. 被拒绝，但 T+1 `high` 很强。
 2. 被拒绝，但 T+1 `close` 为正。
-3. 被拒绝，但 repeated frontier 反复出现。
+3. 被拒绝，但复现前沿反复出现。
 
 这些样本才是挖新因子的主矿区。
 
@@ -266,29 +266,29 @@ Layer 4：执行确认
 
 0330 之后的 BTST 优化总目标应统一为一句话：
 
-> 在不破坏 `short_trade_boundary` 当前质量优势的前提下，恢复可研究的 coverage，并把“值得盯盘的票”和“值得执行的票”明确分层。
+> 在不破坏 `short_trade_boundary` 当前质量优势的前提下，恢复可研究的覆盖，并把“值得盯盘的票”和“值得执行的票”明确分层。
 
 ### 5.2 五条工作流
 
 | 工作流 | 核心问题 | 主要抓手 | 首轮成功标准 |
 | --- | --- | --- | --- |
-| A. Coverage 修复 | 当前值得研究的票是否太少 | `breakout_freshness` 语义、candidate entry 边界、boundary admission | 候选数回升，但 `next_high_hit_rate` 不明显恶化 |
-| B. Quality 守门 | 新增样本是否只是噪声 | `next_high_return`、`next_close_return`、行业集中度、重复票比例 | 扩覆盖后仍保持可接受的 hit rate |
-| C. 执行确认分层 | 会选和会买如何拆开 | `selected` / `near_miss` / watch-only 结构、盘中确认代理 | 主入场票与观察票的语义更稳定 |
+| A. 覆盖修复 | 当前值得研究的票是否太少 | `breakout_freshness` 语义、候选入口边界、边界准入 | 候选数回升，但 `next_high_hit_rate` 不明显恶化 |
+| B. 质量守门 | 新增样本是否只是噪声 | `next_high_return`、`next_close_return`、行业集中度、重复票比例 | 扩覆盖后仍保持可接受的 hit rate |
+| C. 执行确认分层 | 会选和会买如何拆开 | `selected` / `near_miss` / 仅观察结构、盘中确认代理 | 主入场票与观察票的语义更稳定 |
 | D. 慢变量软化 | fundamental 是否压制过强 | profitability 软惩罚、行业条件豁免 | false negative 数下降，质量不明显塌陷 |
-| E. 新因子挖掘 | 现有字段解释不了哪些机会 | intraday confirmation、开盘消化、板块共振、结构空间 | 出现可重复解释的新分型或新特征 |
+| E. 新因子挖掘 | 现有字段解释不了哪些机会 | 盘中确认、开盘消化、板块共振、结构空间 | 出现可重复解释的新分型或新特征 |
 
 ### 5.3 统一验证框架：每轮实验都要看 5 组指标
 
 | 指标组 | 代表字段 | 用来回答什么 |
 | --- | --- | --- |
-| Coverage 指标 | `candidate_count`、`selected_count`、`near_miss_count` | 这轮实验有没有把样本池打开 |
+| 覆盖指标 | `candidate_count`、`selected_count`、`near_miss_count` | 这轮实验有没有把样本池打开 |
 | Opportunity 指标 | `next_high_return_mean`、`high_hit_rate@2%` | 这些票是否至少给过次日空间 |
 | Execution 指标 | `next_open_return`、`next_open_to_close_return`、确认后收益 | 如果不追开盘，执行后是否更合理 |
 | Stability 指标 | 行业分布、重复 ticker、日间波动 | 结果是否稳定，是否只是在赌单一主题 |
 | Learnability 指标 | false negative archetype、失败簇迁移 | 这轮实验有没有帮助我们学到新东西 |
 
-这 5 组指标里，Coverage 不是唯一目标，Opportunity 才是 BTST 最核心的上位指标。
+这 5 组指标里，覆盖不是唯一目标，机会才是 BTST 最核心的上位指标。
 
 ---
 
@@ -328,7 +328,7 @@ Layer 4：执行确认
 建议每个 trade_date 最少产出 4 类结果表：
 
 1. 主入场票表：`selected` 且适合次日盘中确认后执行。
-2. 观察票表：`near_miss` 或 watch-only，不默认买入，但需要跟踪。
+2. 观察票表：`near_miss` 或仅观察，不默认买入，但需要跟踪。
 3. false negative 表：被拒绝，但次日 `high` 或 `close` 表现仍然强。
 4. blocker 迁移表：这轮实验后，失败簇从哪一层迁移到了哪一层。
 
@@ -345,26 +345,26 @@ Layer 4：执行确认
 3. `catalyst_floor_zero` 变体把 closed-cycle actionable 样本从 `0` 提升到 `6`，并给出 `next_high_hit_rate@2%=0.8333`、`next_close_positive_rate=0.8333`、`t_plus_2_close_positive_rate=0.8333`，正式通过当前窗口的 closed-cycle guardrail。
 4. `2026-03-27` 的 short-trade-only 样本虽然已经出现 2 个可研究 tradeable 行，但它们都还是 `t1_only`，因此只能算 forward 观察证据，不能直接当成默认升级依据。
 
-这意味着：在 0330 当前证据边界内，微窗口方法本身已经完成验证，下一步主线不应再回到“是否继续大范围 admission floor 扫描”，而应固定为三件事：
+这意味着：在 0330 当前证据边界内，微窗口方法本身已经完成验证，下一步主线不应再回到“是否继续大范围准入底线扫描”，而应固定为三件事：
 
-1. 保留 `short_trade_boundary + catalyst_freshness_min=0.00` 作为当前 live admission 基线。
-2. 继续围绕 `short_trade_boundary_score_fail`、`001309/300383` 与 `300724` 的结构性治理推进 score frontier、选择性候选入口规则与个案释放车道。
+1. 保留 `short_trade_boundary + catalyst_freshness_min=0.00` 作为当前真实窗口准入基线。
+2. 继续围绕 `short_trade_boundary_score_fail`、`001309/300383` 与 `300724` 的结构性治理推进分数前沿、选择性候选入口规则与个案释放车道。
 3. 等未来新增独立窗口出现后，再用同一份微窗口回归脚本继续验证 `001309` 主推进车道和复现影子车道的跨窗口稳定性。
 
-### 6.5 当前执行边界：先修 coverage，再把入场质量独立成因子包
+### 6.5 当前执行边界：先修覆盖，再把入场质量独立成因子包
 
 `btst_micro_window_regression_20260330.md` 已经把 0330 当前窗口的主问题钉死成“漏机会”，不是“缺机会”。因此在当前证据边界内，下一轮路线需要再额外固定 3 条边界：
 
 1. 在 `tradeable surface` 还不能稳定从 `0` 释放到可解释样本前，不继续把“新因子挖掘”当作主线任务。
-2. Section 8 里的开盘消化、盘中确认、结构空间、板块共振、催化兑现节奏，应统一视为独立的 `entry-quality factor pack`；它们的职责是提高主入场票 / 观察票分层与执行确认质量，而不是承担 coverage 放行职责。
-3. 任何把 Section 8 因子直接写回 broad admission floor 的动作，都应视为越界；除非未来新窗口再次证明 admission 级失败簇重新成为主矛盾，否则默认只允许它们作为 score、execution 或 risk weight 层的独立增强。
+2. Section 8 里的开盘消化、盘中确认、结构空间、板块共振、催化兑现节奏，应统一视为独立的“入场质量因子包”；它们的职责是提高主入场票 / 观察票分层与执行确认质量，而不是承担覆盖放行职责。
+3. 任何把 Section 8 因子直接写回宽口径准入底线的动作，都应视为越界；除非未来新窗口再次证明准入级失败簇重新成为主矛盾，否则默认只允许它们作为分数、执行或风险权重层的独立增强。
 
 ---
 
 ## 7. 因子优化方向：下一轮最值得做的不是一锅炖，而是 4 个最小主线
 
-本节覆盖 Section 5.2 五条工作流中的 A（Coverage 修复）、B（Quality 守门）、C（执行确认分层）、D（慢变量软化），工作流 E（新因子挖掘）见 Section 8。对应执行清单的 P2–P5 优先级。
-因此，Section 7 是当前必须先完成的主线；在没有形成稳定的 coverage recovery 之前，不得跳到 Section 8 做新的 admission 因子开发。
+本节覆盖 Section 5.2 五条工作流中的 A（覆盖修复）、B（质量守门）、C（执行确认分层）、D（慢变量软化），工作流 E（新因子挖掘）见 Section 8。对应执行清单的 P2–P5 优先级。
+因此，Section 7 是当前必须先完成的主线；在没有形成稳定的覆盖恢复之前，不得跳到 Section 8 做新的准入因子开发。
 
 ### 7.1 主线一：重做 breakout freshness 的使用方式，而不是继续阈值扫描
 
@@ -377,11 +377,11 @@ Layer 4：执行确认
 
 可行的改造方向：
 
-1. 把 `breakout_freshness` 从单一 admission floor，改成 admission + score 两段式影响。
+1. 把 `breakout_freshness` 从单一准入底线，改成准入 + 分数两段式影响。
 2. 引入“准备突破态”和“完成突破态”分层，而不是只允许后者进入。
-3. 允许一部分 `near_miss` 级别样本进入 watch-only 池，而不是直接拒绝。
+3. 允许一部分 `near_miss` 级别样本进入仅观察池，而不是直接拒绝。
 
-其中第 2 条现在已经有了最小代码原型：`staged_breakout` profile 会把 `near_miss` 解释成“prepared_breakout”，但最新 closed-cycle frontier 结果也同时说明，仅靠这层 profile 语义仍不足以把当前窗口推出 actionable surface，因此它更适合保留为实验语义，而不是当前默认主线。
+其中第 2 条现在已经有了最小代码原型：`staged_breakout` profile 会把 `near_miss` 解释成“prepared_breakout”，但最新闭环窗口前沿结果也同时说明，仅靠这层 profile 语义仍不足以把当前窗口推出可执行曲面，因此它更适合保留为实验语义，而不是当前默认主线。
 
 ### 7.2 主线二：把 profitability 从前置硬杀改成 BTST 软约束
 
@@ -395,9 +395,9 @@ Layer 4：执行确认
 
 2026-03-31 的第一版代码已经把这条路线落成实验 profile：`staged_breakout_profitability_relief` 会在 `short_trade_target` 里识别 profitability hard cliff，并且只在 `breakout_freshness`、`catalyst_freshness`、`sector_resonance` 同时达标时，把 `decision=avoid` 的硬惩罚降成软惩罚。这个实现刻意保持为 target profile 级实验，不回写默认主线，也不等同于全局取消 Layer B 的 profitability 压制。
 
-同日用当前窗口 `selection_artifacts` 跑的真实 frontier 验证结果见 `data/reports/btst_profile_frontier_profitability_relief_current_window_20260331.{json,md}`：`staged_breakout_profitability_relief` 与 `staged_breakout` 一样，仍然没有把 tradeable surface 从 0 推高到正值，说明 profitability 条件软化至少在当前窗口不是主释放杠杆，后续优先级仍应回到 score frontier 与 stale/extension penalty 主线。
+同日用当前窗口 `selection_artifacts` 跑的真实前沿验证结果见 `data/reports/btst_profile_frontier_profitability_relief_current_window_20260331.{json,md}`：`staged_breakout_profitability_relief` 与 `staged_breakout` 一样，仍然没有把 tradeable surface 从 0 推高到正值，说明 profitability 条件软化至少在当前窗口不是主释放杠杆，后续优先级仍应回到分数前沿与 stale/extension penalty 主线。
 
-同日也补上了整窗闭环脚本 `scripts/analyze_btst_penalty_frontier.py`，专门把 `near_miss_threshold` 与 `stale/extension penalty weight` 的组合直接 replay 成 closed-cycle surface，再用 false negative proxy 的 `next_high_hit_rate` / `next_close_positive_rate` 做 guardrail。当前窗口结果见 `data/reports/btst_penalty_frontier_current_window_20260331.{json,md}`：扫描空间内没有任何 guardrail-passing row；最高 surface 的组合 `near_miss=0.42 / stale=0.08 / extension=0.02` 只把两条 `300724` 样本推到 `near_miss`，`next_high_hit_rate=0.5`、`next_close_positive_rate=0.0`，而且没有释放 `300383 / 600821 / 002015`。这说明大范围 stale/extension penalty 路线目前仍不成立，后续应继续维持 `300383` 单票影子观察、`002015 / 600821` 复现车道与 `300724` 结构冻结的分层治理。
+同日也补上了整窗闭环脚本 `scripts/analyze_btst_penalty_frontier.py`，专门把 `near_miss_threshold` 与 `stale/extension penalty weight` 的组合直接回放成闭环窗口曲面，再用 false negative proxy 的 `next_high_hit_rate` / `next_close_positive_rate` 做护栏。当前窗口结果见 `data/reports/btst_penalty_frontier_current_window_20260331.{json,md}`：扫描空间内没有任何 guardrail-passing row；最高 surface 的组合 `near_miss=0.42 / stale=0.08 / extension=0.02` 只把两条 `300724` 样本推到 `near_miss`，`next_high_hit_rate=0.5`、`next_close_positive_rate=0.0`，而且没有释放 `300383 / 600821 / 002015`。这说明大范围 stale/extension penalty 路线目前仍不成立，后续应继续维持 `300383` 单票影子观察、`002015 / 600821` 复现车道与 `300724` 结构冻结的分层治理。
 
 不建议一开始就全局取消 profitability。
 
@@ -412,23 +412,23 @@ Layer 4：执行确认
 
 这比简单把 near-miss 全部抬成 selected 更安全，也更贴合实际交易决策。
 
-### 7.4 主线四：优先挖 false negative archetype，而不是追 single winner story
+### 7.4 主线四：优先挖 false negative 原型，而不是追单一赢家叙事
 
-下一轮研究不应只盯 `300757` 这种成功案例，而应重点提炼三类 false negative：
+下一轮研究不应只盯 `300757` 这种成功案例，而应重点提炼三类 false negative 原型：
 
-1. `score fail but high works`：分数没过，但次日高点表现明显成立。
-2. `watch-only but tradable intraday`：更适合观察票语义，而不是主入场票。
-3. `structural conflict but pattern recurs`：同一种冲突样本反复在同类行业出现。
+1. 分数失利但高点成立：分数没过，但次日高点表现明显成立。
+2. 仅观察但盘中可交易：更适合观察票语义，而不是主入场票。
+3. 结构冲突但模式复现：同一种冲突样本反复在同类行业出现。
 
 这些 archetype 才能支撑后续新因子设计。
 
 ---
 
-## 8. 入场质量因子包：仅在 coverage recovery 稳定后推进
+## 8. 入场质量因子包：仅在覆盖恢复稳定后推进
 
-本节不是在否定前面的 coverage 主线，而是在明确分工：只有当 P2-P4 已把“漏掉的好票”稳定放出来后，才允许把下列信息做成独立的 `entry-quality factor pack`。它回答的是“放出来以后谁更值得做主入场票、谁只适合观察、盘中该如何确认”，而不是“先不先把票放出来”。
+本节不是在否定前面的覆盖主线，而是在明确分工：只有当 P2-P4 已把“漏掉的好票”稳定放出来后，才允许把下列信息做成独立的“入场质量因子包”。它回答的是“放出来以后谁更值得做主入场票、谁只适合观察、盘中该如何确认”，而不是“先不先把票放出来”。
 
-因此，本节默认只允许影响 `selected` / `near_miss` / watch-only 分层、盘中确认强度和风险权重；不直接承担 broad admission 的放行职责。
+因此，本节默认只允许影响 `selected` / `near_miss` / 仅观察分层、盘中确认强度和风险权重；不直接承担宽口径准入的放行职责。
 
 ### 8.1 开盘消化能力
 
@@ -453,7 +453,7 @@ Layer 4：执行确认
 首轮验证口径：
 
 1. 先用现有 T+1 confirmation proxy 做弱验证。
-2. 后续升级到分钟级数据时，再做真实 breakout confirmation quality 因子。
+2. 后续升级到分钟级数据时，再做真实 breakout confirmation 质量因子。
 
 ### 8.3 结构空间因子
 
@@ -549,17 +549,17 @@ Layer 4：执行确认
 
 推荐顺序：
 
-1. `short_trade_boundary` score frontier 的单主题 release / promotion 变体。
+1. `short_trade_boundary` 分数前沿的单主题释放 / 晋级变体。
 2. profitability 软惩罚小变体。
-3. watch-only 双名单扩展。
-4. 结构冲突 case-based release。
+3. 仅观察双名单扩展。
+4. 结构冲突个案释放。
 
-这里需要明确一条与上游实施文档一致的阶段边界：`catalyst_freshness_min=0.00` 已经完成完整窗口 live 验证，旧 shared `layer_b_boundary` 失败簇也已经被 dedicated builder 清零，因此 Phase 2 不应重新退回到 admission floor 大范围网格扫描；除非未来新窗口出现新的 admission 失败簇，否则当前默认单主题变体应以 score frontier 为起点；若 score-only 变体仍然维持 `0 actionable`，就应转入 selective candidate-entry frontier，而不是回退到 broad admission 扫描。
+这里需要明确一条与上游实施文档一致的阶段边界：`catalyst_freshness_min=0.00` 已经完成完整窗口真实窗口验证，旧 shared `layer_b_boundary` 失败簇也已经被 dedicated builder 清零，因此 Phase 2 不应重新退回到准入底线的大范围网格扫描；除非未来新窗口出现新的准入失败簇，否则当前默认单主题变体应以分数前沿为起点；若纯分数变体仍然维持 `0 actionable`，就应转入选择性候选入口前沿，而不是回退到宽口径准入扫描。
 
 纪律：
 
 1. 一轮只动一类机制。
-2. 每轮都同时产出 Coverage、Opportunity、Stability 三组指标。
+2. 每轮都同时产出覆盖、机会、稳定性三组指标。
 3. 若结果只能提升通过数、不能提升学习价值，则不进入下一轮。
 
 ### 9.3.1 Phase 2 的临时进退门槛
@@ -587,7 +587,7 @@ Layer 4：执行确认
 在当前收口口径下，还应额外执行两条治理约束：
 
 1. `001309` 只有在新增独立窗口后仍保持 `changed_non_target_case_count=0`、`next_close_return_mean>0`、`next_close_positive_rate>=0.75`，才允许进入默认升级评审。
-2. `300383` 即使继续保留为影子观察，也只能作为单票 threshold-only release；如果要扩大影子车道，应优先转向复现前沿车道，而不是复制它的同一套阈值放松规则。
+2. `300383` 即使继续保留为影子观察，也只能作为单票纯阈值释放；如果要扩大影子车道，应优先转向复现前沿车道，而不是复制它的同一套阈值放松规则。
 3. 复现前沿车道内部也要继续分层：`002015` 作为收盘延续影子候选优先推进，`600821` 只作为盘中控制保留，防止影子扩展再次把 intraday upside 误当成可默认升级的 close 规则。
 4. 截至 2026-03-30，Phase 3 的方法闭环已经补齐：新增窗口扫描、证据缺口说明、roll-forward 判定、治理板回接都已具备；当前唯一无法在本轮直接“完成”的部分，是新增独立窗口尚未自然出现。
 
@@ -595,23 +595,23 @@ Layer 4：执行确认
 
 ### 9.4.1 Phase 3 的默认升级门槛
 
-1. 如果变体在滚动窗口里只能偶发释放单一 ticker，或只在单一风格窗口有效，则继续保留为 case-based / shadow 变体。
+1. 如果变体在滚动窗口里只能偶发释放单一 ticker，或只在单一风格窗口有效，则继续保留为个案 / 影子变体。
 2. 如果变体在滚动窗口里新增样本持续存在，且机会指标没有重新跌回旧 `layer_b_boundary` 基线以下，才允许进入默认升级讨论。
 3. 只要滚动窗口再次出现新的大失败簇，或新增样本主要转化成低质量噪声，就应回退到 Phase 2，重新拆机制定位，而不是继续叠加改动。
 
 ### 9.5 Phase 4：执行确认增强
 
-截至 2026-03-30，Phase 4 的执行前置件也已经补齐到当前证据边界：主入场票 / 影子观察 / 复现影子 / 盘中控制对应的车道已全部分开，且各自都有 stop condition、治理板和 runbook。后续真正新增的工作量，主要来自新窗口执行数据与更细粒度 execution confirmation 数据，而不是 0330 这份路线仍有定义缺口。
+截至 2026-03-30，Phase 4 的执行前置件也已经补齐到当前证据边界：主入场票 / 影子观察 / 复现影子 / 盘中控制对应的车道已全部分开，且各自都有停止条件、治理板和运行手册。后续真正新增的工作量，主要来自新窗口执行数据与更细粒度执行确认数据，而不是 0330 这份路线仍有定义缺口。
 
 目标：把“会选”与“会买”之间的缺口单独补齐。
 
 动作：
 
 1. 把当前 confirmation proxy 的局限显式写入研究结论。
-2. 设计分钟级或更细粒度的 intraday confirmation 研究方案。
+2. 设计分钟级或更细粒度的盘中确认研究方案。
 3. 明确哪些因子只能在 execution 层验证，而不能继续让 selection 层背锅。
 
-这一步不应和 coverage 修复绑在一轮里一起做。
+这一步不应和覆盖修复绑在一轮里一起做。
 
 ---
 
@@ -619,7 +619,7 @@ Layer 4：执行确认
 
 评审时建议重点问下面 10 个问题：
 
-1. 这条路线是否明确区分了 coverage、quality 和 execution 三个层级。
+1. 这条路线是否明确区分了覆盖、质量和执行三个层级。
 2. 它是否承认 `300757` 是主入场票，但并未把它误写成开盘追价票。
 3. 它是否承认 `601869` 是观察票，而不是被误提升成默认买入票。
 4. 它是否避免把 `blocked` 与 `rejected` 混在一起调。
@@ -627,7 +627,7 @@ Layer 4：执行确认
 6. 它是否把 profitability 的角色从“取消”改成“条件化软化”。
 7. 它是否明确要求先做 false negative 挖掘，再做新因子定义。
 8. 它是否规定每轮只允许一个实验主题，避免归因失效。
-9. 它是否承认当前 execution confirmation 仍是 proxy，不夸大回测可信度。
+9. 它是否承认当前执行确认仍是 proxy，不夸大回测可信度。
 10. 它是否包含停止条件，而不是默认所有实验都继续做下去。
 
 ---
@@ -638,7 +638,7 @@ Layer 4：执行确认
 
 1. 只因为 `selected` 太少，就直接整体下调 `select_threshold`。
 2. 只因为 `near_miss` 看起来不错，就把 near-miss 全部抬升成默认买入。
-3. 在 4 日小窗口里同时修改 admission、penalty、profitability 和 execution。
+3. 在 4 日小窗口里同时修改准入、惩罚、profitability 和 execution。
 4. 用“最终是否赚钱”替代 BTST 的分层验证。
 5. 在没有更长滚动窗口验证前，讨论默认升级。
 
@@ -646,28 +646,28 @@ Layer 4：执行确认
 
 ## 12. 一句话总结
 
-0330 这轮 BTST 讨论的正确落点，不是证明市场上只有 `300757` 一只票，而是确认当前系统把大量潜在机会挡在了 coverage 与边界语义之前。下一步最有杠杆的路线，是先用微窗口双层验证把 false negative 挖出来，稳定做出 coverage recovery，再把开盘消化、盘中确认、结构空间、板块共振和催化兑现整理成独立的 `entry-quality factor pack`，服务于主入场票 / 观察票分层和 execution confirmation，而不是继续把新因子直接写回 admission 主线。
+0330 这轮 BTST 讨论的正确落点，不是证明市场上只有 `300757` 一只票，而是确认当前系统把大量潜在机会挡在了覆盖与边界语义之前。下一步最有杠杆的路线，是先用微窗口双层验证把 false negative 挖出来，稳定做出覆盖恢复，再把开盘消化、盘中确认、结构空间、板块共振和催化兑现整理成独立的入场质量因子包，服务于主入场票 / 观察票分层和执行确认，而不是继续把新因子直接写回准入主线。
 
 ---
 
 ## 13. 如何在 Replay Artifacts 里验证 BTST Control Tower
 
-如果你要人工验证 BTST 控制塔、推进车道（`Rollout Lanes`）和 closed frontier 是否已经接进工作台，先解决两个最常见的问题：去哪里选 report，以及当前应该选哪一个。
+如果你要人工验证 BTST 控制塔、推进车道（`Rollout Lanes`）和 `Closed Frontiers` 面板是否已经接进工作台，先解决两个最常见的问题：去哪里选报告，以及当前应该选哪一个。
 
-### 13.1 report 在哪里选
+### 13.1 报告在哪里选
 
-1. 打开 Replay Artifacts 页面后，如果你处在工作台模式，report 选择器就在左侧栏，标题叫 `Report Rail`。
-2. 左侧最上面有一个下拉框，下面还有一组 report 卡片；两者都能切换 report。
-3. 如果你处在非工作台模式，对应区域标题会变成 `Report Selector`，位置仍然是页面上方的 report 下拉框。
+1. 打开 Replay Artifacts 页面后，如果你处在工作台模式，报告选择器就在左侧栏，标题叫 `Report Rail`。
+2. 左侧最上面有一个下拉框，下面还有一组报告卡片；两者都能切换报告。
+3. 如果你处在非工作台模式，对应区域标题会变成 `Report Selector`，位置仍然是页面上方的报告下拉框。
 4. 当前代码里这个入口就在 [app/frontend/src/components/settings/replay-artifacts.tsx](../../../../../app/frontend/src/components/settings/replay-artifacts.tsx#L1528)。
 
-### 13.2 当前应该选哪个 report
+### 13.2 当前应该选哪个报告
 
 截至 2026-03-31，当前最新的 BTST 控制塔参考运行指向的是：
 
 1. `paper_trading_20260330_20260330_frozen_replay_m2_7_short_trade_only_20260331_run3`
 
-这个结论来自以下 latest 产物：
+这个结论来自以下最新产物：
 
 1. [data/reports/btst_nightly_control_tower_latest.json](../../../../../data/reports/btst_nightly_control_tower_latest.json)
 2. [data/reports/btst_open_ready_delta_latest.json](../../../../../data/reports/btst_open_ready_delta_latest.json)
@@ -676,11 +676,11 @@ Layer 4：执行确认
 
 1. `paper_trading_20260330_20260330_frozen_replay_m2_7_short_trade_only_20260331_run3`
 
-如果你不想手动找全名，也可以直接找带有“当前 latest BTST run”语义提示的 report 卡片。当前工作台会在对应 report 卡片上显示 open-ready 当前标记。
+如果你不想手动找全名，也可以直接找带有“当前 latest BTST run”语义提示的报告卡片。当前工作台会在对应报告卡片上显示 open-ready 当前标记。
 
 ### 13.3 选中后应该看到什么
 
-选中上面的 report 之后，主工作台和右侧 Inspector 都应该能看到：
+选中上面的报告之后，主工作台和右侧 Inspector 都应该能看到：
 
 1. `BTST Control Tower`
 2. `Closed Frontiers`
@@ -703,8 +703,8 @@ Inspector 实现位置在：
 
 1. `Closed Frontiers` 里能看到已关闭路线，例如 `broad_penalty_relief`。
 2. `Rollout Lanes` 里能看到 `001309`、`300383`、`002015`、`600821`、`300724` 这类车道行，或至少看到当前窗口实际存在的子集。
-3. 点击某个车道的 `Open Replay` 后，report、trade date、focus symbol 会一起切到目标上下文。
-4. 跳转后不会因为已有筛选器而被自动打回；这条行为依赖于跳转前先重置 report rail、trade date、explainability filters。
+3. 点击某个车道的 `Open Replay` 后，报告、trade date、focus symbol 会一起切到目标上下文。
+4. 跳转后不会因为已有筛选器而被自动打回；这条行为依赖于跳转前先重置 `Report Rail`、trade date、explainability filters。
 
 ### 13.5 自动验证命令
 

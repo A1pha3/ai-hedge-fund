@@ -31,6 +31,7 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
                 "watchlist_count": 1,
                 "buy_order_count": 1,
                 "sell_order_count": 1,
+                "catalyst_theme_shadow_candidate_count": 1,
             },
             "funnel_diagnostics": {
                 "filters": {
@@ -65,6 +66,30 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
                                 },
                                 "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
                                 "blockers": ["stale_trend_repair_penalty"],
+                            }
+                        ],
+                        "shadow_candidates": [
+                            {
+                                "ticker": "301000",
+                                "decision": "catalyst_theme_shadow",
+                                "score_target": 0.3891,
+                                "preferred_entry_mode": "theme_research_followup",
+                                "candidate_source": "catalyst_theme_shadow",
+                                "positive_tags": ["strong_catalyst_freshness"],
+                                "top_reasons": ["candidate_score=0.39", "total_shortfall=0.07"],
+                                "metrics": {
+                                    "breakout_freshness": 0.28,
+                                    "trend_acceleration": 0.22,
+                                    "close_strength": 0.41,
+                                    "sector_resonance": 0.18,
+                                    "catalyst_freshness": 0.79,
+                                },
+                                "gate_status": {"data": "pass", "structural": "fail", "score": "shadow"},
+                                "blockers": ["sector_resonance_below_catalyst_theme_floor"],
+                                "filter_reason": "sector_resonance_below_catalyst_theme_floor",
+                                "threshold_shortfalls": {"sector_resonance": 0.02, "candidate_score": 0.05},
+                                "failed_threshold_count": 2,
+                                "total_shortfall": 0.07,
                             }
                         ]
                     }
@@ -109,12 +134,15 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     assert '"short_trade_view": {' in snapshot_text
     assert '"dual_target_delta": {' in snapshot_text
     assert '"catalyst_theme_candidates": [' in snapshot_text
+    assert '"catalyst_theme_shadow_candidates": [' in snapshot_text
     assert '"replay_input_written": true' in snapshot_text
     assert '"watchlist": [' in replay_input_text
     assert '"buy_order_tickers": [' in replay_input_text
     assert '"supplemental_catalyst_theme_entries": [' in replay_input_text
     assert "## 双目标空壳状态" in review_text
     assert "## 题材催化研究池" in review_text
+    assert "### 近阈值影子池" in review_text
+    assert "301000" in review_text
     assert "## Research Target Summary" in review_text
     assert "## Short Trade Target Summary" in review_text
     assert "## Target Delta Highlights" in review_text

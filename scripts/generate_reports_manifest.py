@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.analyze_catalyst_theme_frontier import generate_catalyst_theme_frontier_artifacts
 from scripts.analyze_btst_candidate_entry_rollout_governance import (
     analyze_btst_candidate_entry_rollout_governance,
     render_btst_candidate_entry_rollout_governance_markdown,
@@ -56,6 +57,8 @@ SHADOW_PEER_SCAN_JSON = "p7_shadow_peer_scan_300383_20260330.json"
 STRUCTURAL_SHADOW_RUNBOOK_JSON = "p8_structural_shadow_runbook_300724_20260330.json"
 BTST_PENALTY_FRONTIER_JSON = "btst_penalty_frontier_current_window_20260331.json"
 BTST_PENALTY_FRONTIER_MD = "btst_penalty_frontier_current_window_20260331.md"
+CATALYST_THEME_FRONTIER_LATEST_JSON = "catalyst_theme_frontier_latest.json"
+CATALYST_THEME_FRONTIER_LATEST_MD = "catalyst_theme_frontier_latest.md"
 BTST_GOVERNANCE_SYNTHESIS_JSON = "btst_governance_synthesis_latest.json"
 BTST_GOVERNANCE_SYNTHESIS_MD = "btst_governance_synthesis_latest.md"
 BTST_GOVERNANCE_VALIDATION_JSON = "btst_governance_validation_latest.json"
@@ -409,6 +412,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_nightly_control_tower_latest",
             "btst_governance_synthesis_latest",
             "latest_btst_priority_board",
+            "latest_btst_catalyst_theme_frontier_markdown",
             "btst_governance_validation_latest",
             "btst_replay_cohort_latest",
             "p5_rollout_governance_board",
@@ -425,7 +429,15 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "id": "nightly_review",
         "title": "晚间复盘",
         "description": "晚间确认本次运行发生了什么、明日结论为何如此。",
-        "entry_ids": ["btst_open_ready_delta_latest", "btst_nightly_control_tower_latest", "latest_btst_session_summary", "latest_btst_brief_json", "latest_btst_execution_card_json", "latest_btst_selection_snapshot"],
+        "entry_ids": [
+            "btst_open_ready_delta_latest",
+            "btst_nightly_control_tower_latest",
+            "latest_btst_session_summary",
+            "latest_btst_brief_json",
+            "latest_btst_execution_card_json",
+            "latest_btst_catalyst_theme_frontier_markdown",
+            "latest_btst_selection_snapshot",
+        ],
     },
     {
         "id": "btst_governance",
@@ -467,6 +479,12 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
 
 def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
+
+
+def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
+    resolved = Path(path).expanduser().resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _normalize_trade_date(value: Any) -> str | None:
@@ -555,6 +573,8 @@ def _extract_btst_candidate(report_dir: Path, repo_root: Path) -> dict[str, Any]
     card_markdown_path = followup.get("execution_card_markdown") or artifacts.get("btst_premarket_execution_card_markdown")
     opening_card_markdown_path = followup.get("opening_watch_card_markdown") or artifacts.get("btst_opening_watch_card_markdown")
     priority_board_markdown_path = followup.get("priority_board_markdown") or artifacts.get("btst_next_day_priority_board_markdown")
+    catalyst_theme_frontier_json_path = followup.get("catalyst_theme_frontier_json") or artifacts.get("btst_catalyst_theme_frontier_json")
+    catalyst_theme_frontier_markdown_path = followup.get("catalyst_theme_frontier_markdown") or artifacts.get("btst_catalyst_theme_frontier_markdown")
     if not any([brief_json_path, brief_markdown_path, card_json_path, card_markdown_path]):
         return None
 
@@ -583,6 +603,8 @@ def _extract_btst_candidate(report_dir: Path, repo_root: Path) -> dict[str, Any]
         "selection_snapshot_path": selection_snapshot_path.resolve() if selection_snapshot_path and selection_snapshot_path.exists() else None,
         "opening_card_path": opening_card_path.resolve() if opening_card_path and opening_card_path.exists() else None,
         "priority_board_markdown_path": Path(priority_board_markdown_path).expanduser().resolve() if priority_board_markdown_path else None,
+        "catalyst_theme_frontier_json_path": Path(catalyst_theme_frontier_json_path).expanduser().resolve() if catalyst_theme_frontier_json_path else None,
+        "catalyst_theme_frontier_markdown_path": Path(catalyst_theme_frontier_markdown_path).expanduser().resolve() if catalyst_theme_frontier_markdown_path else None,
         "rank": (selection_target_rank, trade_date_rank, report_dir.stat().st_mtime_ns, report_dir.name),
     }
 
@@ -713,15 +735,27 @@ def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, r
             "source_kind": "generated_btst_followup",
         },
         {
+            "id": "latest_btst_catalyst_theme_frontier_markdown",
+            "path": latest_btst_run.get("catalyst_theme_frontier_markdown_path"),
+            "report_type": "catalyst_theme_frontier_markdown",
+            "topic": "btst_followup",
+            "usage": "nightly_review",
+            "priority": 4,
+            "is_latest": True,
+            "question": "题材催化影子池离正式研究池还差什么",
+            "view_order": 4,
+            "source_kind": "generated_btst_followup",
+        },
+        {
             "id": "latest_btst_selection_snapshot",
             "path": latest_btst_run.get("selection_snapshot_path"),
             "report_type": "selection_snapshot",
             "topic": "btst_followup",
             "usage": "nightly_review",
-            "priority": 4,
+            "priority": 5,
             "is_latest": True,
             "question": "逐票底层证据是什么",
-            "view_order": 4,
+            "view_order": 5,
             "source_kind": "generated_runtime_artifact",
         },
     ]
@@ -749,6 +783,68 @@ def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, r
         if entry:
             entries.append(entry)
     return entries
+
+
+def refresh_latest_btst_catalyst_theme_frontier_artifacts(latest_btst_run: dict[str, Any] | None) -> dict[str, Any]:
+    if not latest_btst_run:
+        return {
+            "status": "skipped_no_latest_btst_run",
+        }
+
+    report_dir = Path(latest_btst_run["report_dir"]).expanduser().resolve()
+    summary_path = report_dir / "session_summary.json"
+    if not summary_path.exists():
+        return {
+            "status": "skipped_missing_session_summary",
+            "report_dir": report_dir.name,
+        }
+
+    try:
+        frontier_result = generate_catalyst_theme_frontier_artifacts(
+            report_dir,
+            output_json=report_dir / CATALYST_THEME_FRONTIER_LATEST_JSON,
+            output_md=report_dir / CATALYST_THEME_FRONTIER_LATEST_MD,
+        )
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "report_dir": report_dir.name,
+            "error": str(exc),
+        }
+
+    summary = _load_json(summary_path)
+    followup = dict(summary.get("btst_followup") or {})
+    followup.update(
+        {
+            "catalyst_theme_frontier_json": frontier_result["json_path"],
+            "catalyst_theme_frontier_markdown": frontier_result["markdown_path"],
+        }
+    )
+    summary["btst_followup"] = followup
+
+    artifacts = dict(summary.get("artifacts") or {})
+    artifacts.update(
+        {
+            "btst_catalyst_theme_frontier_json": frontier_result["json_path"],
+            "btst_catalyst_theme_frontier_markdown": frontier_result["markdown_path"],
+        }
+    )
+    summary["artifacts"] = artifacts
+    _write_json(summary_path, summary)
+
+    analysis = dict(frontier_result.get("analysis") or {})
+    recommended_variant = dict(analysis.get("recommended_variant") or {})
+    return {
+        "status": "refreshed",
+        "report_dir": report_dir.name,
+        "shadow_candidate_count": int(analysis.get("shadow_candidate_count") or 0),
+        "baseline_selected_count": int(analysis.get("baseline_selected_count") or 0),
+        "recommended_variant_name": recommended_variant.get("variant_name"),
+        "recommended_promoted_shadow_count": int(recommended_variant.get("promoted_shadow_count") or 0),
+        "recommended_relaxation_cost": recommended_variant.get("threshold_relaxation_cost"),
+        "output_json": frontier_result["json_path"],
+        "output_markdown": frontier_result["markdown_path"],
+    }
 
 
 def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path) -> dict[str, Any]:
@@ -1020,6 +1116,7 @@ def generate_reports_manifest(
     reports_root: str | Path,
     *,
     latest_btst_run: dict[str, Any] | None = None,
+    catalyst_theme_frontier_refresh: dict[str, Any] | None = None,
     candidate_entry_shadow_refresh: dict[str, Any] | None = None,
     btst_rollout_governance_refresh: dict[str, Any] | None = None,
     btst_governance_synthesis_refresh: dict[str, Any] | None = None,
@@ -1059,6 +1156,7 @@ def generate_reports_manifest(
         "reports_root": resolved_reports_root.as_posix(),
         "entry_count": len(entries),
         "entry_count_by_usage": entry_count_by_usage,
+        "catalyst_theme_frontier_refresh": catalyst_theme_frontier_refresh,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
         "btst_rollout_governance_refresh": btst_rollout_governance_refresh,
         "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,
@@ -1094,6 +1192,12 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
     lines.append(f"- generated_at: {manifest['generated_at']}")
     lines.append(f"- entry_count: {manifest['entry_count']}")
     lines.append(f"- reports_root: {manifest['reports_root']}")
+    catalyst_theme_frontier_refresh = manifest.get("catalyst_theme_frontier_refresh") or {}
+    if catalyst_theme_frontier_refresh:
+        lines.append(f"- catalyst_theme_frontier_refresh_status: {catalyst_theme_frontier_refresh.get('status')}")
+        lines.append(f"- catalyst_theme_frontier_shadow_candidate_count: {catalyst_theme_frontier_refresh.get('shadow_candidate_count')}")
+        lines.append(f"- catalyst_theme_frontier_promoted_shadow_count: {catalyst_theme_frontier_refresh.get('recommended_promoted_shadow_count')}")
+        lines.append(f"- catalyst_theme_frontier_recommended_variant: {catalyst_theme_frontier_refresh.get('recommended_variant_name')}")
     candidate_entry_shadow_refresh = manifest.get("candidate_entry_shadow_refresh") or {}
     if candidate_entry_shadow_refresh:
         lines.append(f"- candidate_entry_shadow_refresh_status: {candidate_entry_shadow_refresh.get('status')}")
@@ -1153,6 +1257,9 @@ def generate_reports_manifest_artifacts(
     resolved_output_md = Path(output_md).expanduser().resolve() if output_md else (resolved_reports_root / DEFAULT_OUTPUT_MD.name).resolve()
     repo_root = _resolve_repo_root(resolved_reports_root)
     latest_btst_run = _select_latest_btst_candidate(resolved_reports_root, repo_root)
+    catalyst_theme_frontier_refresh = refresh_latest_btst_catalyst_theme_frontier_artifacts(latest_btst_run)
+    if latest_btst_run:
+        latest_btst_run = _extract_btst_candidate(latest_btst_run["report_dir"], repo_root)
     candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
     btst_rollout_governance_refresh = refresh_btst_rollout_governance_artifacts(resolved_reports_root)
     btst_governance_synthesis_refresh = refresh_btst_governance_synthesis_artifacts(
@@ -1164,6 +1271,7 @@ def generate_reports_manifest_artifacts(
     manifest = generate_reports_manifest(
         resolved_reports_root,
         latest_btst_run=latest_btst_run,
+        catalyst_theme_frontier_refresh=catalyst_theme_frontier_refresh,
         candidate_entry_shadow_refresh=candidate_entry_shadow_refresh,
         btst_rollout_governance_refresh=btst_rollout_governance_refresh,
         btst_governance_synthesis_refresh=btst_governance_synthesis_refresh,
@@ -1174,6 +1282,7 @@ def generate_reports_manifest_artifacts(
     resolved_output_md.write_text(render_reports_manifest_markdown(manifest, output_parent=resolved_output_md.parent), encoding="utf-8")
     return {
         "manifest": manifest,
+        "catalyst_theme_frontier_refresh": catalyst_theme_frontier_refresh,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
         "btst_rollout_governance_refresh": btst_rollout_governance_refresh,
         "btst_governance_synthesis_refresh": btst_governance_synthesis_refresh,

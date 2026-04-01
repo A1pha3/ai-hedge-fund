@@ -67,6 +67,43 @@ def test_generate_btst_followup_artifacts_writes_latest_brief_and_card(tmp_path)
     assert session_summary["artifacts"]["btst_next_day_priority_board_markdown"] == result["priority_board_markdown"]
 
 
+def test_generate_btst_followup_artifacts_refreshes_manifest_before_generation(monkeypatch, tmp_path):
+    report_dir = tmp_path / "data" / "reports" / "paper_trading_20260327_20260327_live_m2_7_short_trade_only_20260329"
+    report_dir.mkdir(parents=True)
+
+    calls: list[str] = []
+
+    def _fake_refresh(report_dir_arg):
+        assert Path(report_dir_arg) == report_dir
+        calls.append("manifest")
+        return {"manifest_json": "manifest.json", "manifest_markdown": "manifest.md"}
+
+    def _fake_generate(report_dir, trade_date, next_trade_date=None):
+        calls.append("followup")
+        assert calls == ["manifest", "followup"]
+        assert trade_date == "2026-03-27"
+        assert next_trade_date == "2026-03-30"
+        return {
+            "brief_json": "brief.json",
+            "brief_markdown": "brief.md",
+            "execution_card_json": "card.json",
+            "execution_card_markdown": "card.md",
+            "opening_watch_card_json": "opening.json",
+            "opening_watch_card_markdown": "opening.md",
+            "priority_board_json": "priority.json",
+            "priority_board_markdown": "priority.md",
+        }
+
+    monkeypatch.setattr("scripts.run_paper_trading.refresh_reports_manifest", _fake_refresh)
+    monkeypatch.setattr("scripts.run_paper_trading.generate_and_register_btst_followup_artifacts", _fake_generate)
+
+    result = generate_btst_followup_artifacts(report_dir, "2026-03-27", next_trade_date="2026-03-30")
+
+    assert calls == ["manifest", "followup"]
+    assert result["brief_json"] == "brief.json"
+    assert result["priority_board_markdown"] == "priority.md"
+
+
 def test_refresh_reports_manifest_writes_latest_index_for_reports_root(tmp_path):
     reports_root = tmp_path / "data" / "reports"
     report_dir = reports_root / "paper_trading_20260327_20260327_live_m2_7_short_trade_only_20260329"
@@ -139,6 +176,8 @@ def test_refresh_reports_manifest_writes_latest_index_for_reports_root(tmp_path)
     assert "latest_btst_opening_watch_card" in entry_ids
     assert "latest_btst_brief_markdown" in entry_ids
     assert "latest_btst_execution_card_json" in entry_ids
+    assert "latest_btst_catalyst_theme_frontier_markdown" in entry_ids
+    assert (report_dir / "catalyst_theme_frontier_latest.md").exists()
 
 
 def test_refresh_btst_nightly_control_tower_writes_bundle_for_reports_root(tmp_path):
@@ -220,10 +259,13 @@ def test_refresh_btst_nightly_control_tower_writes_bundle_for_reports_root(tmp_p
     entry_ids = {entry["id"] for entry in manifest["entries"]}
     assert "btst_open_ready_delta_latest" in entry_ids
     assert "btst_nightly_control_tower_latest" in entry_ids
+    assert "latest_btst_catalyst_theme_frontier_markdown" in entry_ids
+    assert Path(result["catalyst_theme_frontier_markdown"]).exists()
 
     delta_markdown = Path(result["open_ready_delta_markdown"]).read_text(encoding="utf-8")
     assert "# BTST Open-Ready Delta" in delta_markdown
     nightly_markdown = Path(result["nightly_control_tower_markdown"]).read_text(encoding="utf-8")
     assert "# BTST Nightly Control Tower" in nightly_markdown
+    assert "## Catalyst Theme Frontier" in nightly_markdown
     assert "300757" in nightly_markdown
     assert "btst_next_day_priority_board_20260330.md" in nightly_markdown

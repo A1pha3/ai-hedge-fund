@@ -19,6 +19,7 @@ def _default_output_dir(start_date: str, end_date: str) -> Path:
 
 
 def generate_btst_followup_artifacts(report_dir: Path, trade_date: str, next_trade_date: str | None = None) -> dict[str, str] | None:
+    refresh_reports_manifest(report_dir)
     result = generate_and_register_btst_followup_artifacts(report_dir=report_dir, trade_date=trade_date, next_trade_date=next_trade_date)
     return {
         "brief_json": result["brief_json"],
@@ -55,6 +56,8 @@ def refresh_btst_nightly_control_tower(report_dir: Path) -> dict[str, str] | Non
         "open_ready_delta_markdown": result["delta_markdown_path"],
         "nightly_control_tower_json": result["json_path"],
         "nightly_control_tower_markdown": result["markdown_path"],
+        "catalyst_theme_frontier_json": result.get("catalyst_theme_frontier_json"),
+        "catalyst_theme_frontier_markdown": result.get("catalyst_theme_frontier_markdown"),
         "manifest_json": result["manifest_json"],
         "manifest_markdown": result["manifest_markdown"],
     }
@@ -123,6 +126,10 @@ def main() -> None:
             print(f"paper_trading_btst_open_ready_delta_markdown={nightly_control_tower_artifacts['open_ready_delta_markdown']}")
             print(f"paper_trading_btst_nightly_control_tower_json={nightly_control_tower_artifacts['nightly_control_tower_json']}")
             print(f"paper_trading_btst_nightly_control_tower_markdown={nightly_control_tower_artifacts['nightly_control_tower_markdown']}")
+            if nightly_control_tower_artifacts.get("catalyst_theme_frontier_json"):
+                print(f"paper_trading_catalyst_theme_frontier_json={nightly_control_tower_artifacts['catalyst_theme_frontier_json']}")
+            if nightly_control_tower_artifacts.get("catalyst_theme_frontier_markdown"):
+                print(f"paper_trading_catalyst_theme_frontier_markdown={nightly_control_tower_artifacts['catalyst_theme_frontier_markdown']}")
             print(f"paper_trading_report_manifest_json={nightly_control_tower_artifacts['manifest_json']}")
             print(f"paper_trading_report_manifest_markdown={nightly_control_tower_artifacts['manifest_markdown']}")
     if args.cache_benchmark:

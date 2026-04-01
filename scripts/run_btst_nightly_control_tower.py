@@ -66,12 +66,16 @@ def _extract_priority_summary(block: dict[str, Any]) -> dict[str, int]:
             "near_miss_count": int(summary.get("near_miss_count") or 0),
             "opportunity_pool_count": int(summary.get("opportunity_pool_count") or 0),
             "research_upside_radar_count": int(summary.get("research_upside_radar_count") or 0),
+            "catalyst_theme_count": int(summary.get("catalyst_theme_count") or 0),
+            "catalyst_theme_shadow_count": int(summary.get("catalyst_theme_shadow_count") or 0),
         }
     return {
         "primary_count": int(block.get("selected_count") or block.get("short_trade_selected_count") or 0),
         "near_miss_count": int(block.get("near_miss_count") or block.get("short_trade_near_miss_count") or 0),
         "opportunity_pool_count": int(block.get("opportunity_pool_count") or block.get("short_trade_opportunity_pool_count") or 0),
         "research_upside_radar_count": int(block.get("research_upside_radar_count") or block.get("short_trade_research_upside_radar_count") or 0),
+        "catalyst_theme_count": int(block.get("catalyst_theme_count") or block.get("short_trade_catalyst_theme_count") or 0),
+        "catalyst_theme_shadow_count": int(block.get("catalyst_theme_shadow_count") or block.get("short_trade_catalyst_theme_shadow_count") or 0),
     }
 
 
@@ -85,6 +89,8 @@ def _extract_btst_report_candidate(report_dir: Path) -> dict[str, Any] | None:
     artifacts = dict(session_summary.get("artifacts") or {})
     priority_board_json_path = followup.get("priority_board_json") or artifacts.get("btst_next_day_priority_board_json")
     brief_json_path = followup.get("brief_json") or artifacts.get("btst_next_day_trade_brief_json")
+    catalyst_theme_frontier_json_path = followup.get("catalyst_theme_frontier_json") or artifacts.get("btst_catalyst_theme_frontier_json")
+    catalyst_theme_frontier_markdown_path = followup.get("catalyst_theme_frontier_markdown") or artifacts.get("btst_catalyst_theme_frontier_markdown")
     if not priority_board_json_path:
         return None
 
@@ -100,6 +106,8 @@ def _extract_btst_report_candidate(report_dir: Path) -> dict[str, Any] | None:
         "next_trade_date": next_trade_date,
         "priority_board_json_path": str(Path(priority_board_json_path).expanduser().resolve()),
         "brief_json_path": str(Path(brief_json_path).expanduser().resolve()) if brief_json_path else None,
+        "catalyst_theme_frontier_json_path": str(Path(catalyst_theme_frontier_json_path).expanduser().resolve()) if catalyst_theme_frontier_json_path else None,
+        "catalyst_theme_frontier_markdown_path": str(Path(catalyst_theme_frontier_markdown_path).expanduser().resolve()) if catalyst_theme_frontier_markdown_path else None,
         "rank": (trade_date or "", report_dir.stat().st_mtime_ns, report_dir.name),
     }
 
@@ -126,6 +134,7 @@ def _select_previous_btst_report_snapshot(
     selected_candidate = max(candidates, key=lambda candidate: candidate["rank"])
     priority_board = _safe_load_json(selected_candidate.get("priority_board_json_path"))
     brief = _safe_load_json(selected_candidate.get("brief_json_path"))
+    catalyst_theme_frontier = _safe_load_json(selected_candidate.get("catalyst_theme_frontier_json_path"))
     return {
         "reference_kind": "previous_btst_report",
         "report_dir": selected_candidate.get("report_dir_name"),
@@ -136,25 +145,39 @@ def _select_previous_btst_report_snapshot(
         "priority_board": priority_board,
         "brief_summary": dict(brief.get("summary") or {}),
         "priority_board_json_path": selected_candidate.get("priority_board_json_path"),
+        "catalyst_theme_frontier_summary": _extract_catalyst_theme_frontier_summary(catalyst_theme_frontier),
+        "catalyst_theme_frontier_json_path": selected_candidate.get("catalyst_theme_frontier_json_path"),
+        "catalyst_theme_frontier_markdown_path": selected_candidate.get("catalyst_theme_frontier_markdown_path"),
     }
 
 
 def _load_latest_archived_nightly_payload(history_dir: str | Path) -> tuple[dict[str, Any], str | None]:
+    archived_payloads = _load_archived_nightly_payloads(history_dir, limit=1)
+    if archived_payloads:
+        return archived_payloads[0]
+    return {}, None
+
+
+def _load_archived_nightly_payloads(history_dir: str | Path, *, limit: int | None = None) -> list[tuple[dict[str, Any], str | None]]:
     resolved_history_dir = Path(history_dir).expanduser().resolve()
     if not resolved_history_dir.exists():
-        return {}, None
+        return []
 
     archived_paths = sorted(
         [path for path in resolved_history_dir.glob("btst_nightly_control_tower_*.json") if path.is_file()],
         key=lambda path: (path.stat().st_mtime_ns, path.name),
         reverse=True,
     )
+    if limit is not None:
+        archived_paths = archived_paths[:limit]
+
+    archived_payloads: list[tuple[dict[str, Any], str | None]] = []
     for path in archived_paths:
         try:
-            return _load_json(path), str(path.resolve())
+            archived_payloads.append((_load_json(path), str(path.resolve())))
         except json.JSONDecodeError:
             continue
-    return {}, None
+    return archived_payloads
 
 
 def _archive_nightly_payload(payload: dict[str, Any], history_dir: str | Path) -> str:
@@ -180,6 +203,37 @@ def _entry_by_id(manifest: dict[str, Any], entry_id: str) -> dict[str, Any]:
     return next((dict(entry or {}) for entry in list(manifest.get("entries") or []) if entry.get("id") == entry_id), {})
 
 
+def _extract_catalyst_theme_frontier_summary(frontier: dict[str, Any]) -> dict[str, Any]:
+    if not frontier:
+        return {}
+
+    recommended_variant = dict(frontier.get("recommended_variant") or {})
+    promoted_shadow_count = int(recommended_variant.get("promoted_shadow_count") or 0)
+    shadow_candidate_count = int(frontier.get("shadow_candidate_count") or 0)
+    baseline_selected_count = int(frontier.get("baseline_selected_count") or 0)
+    if promoted_shadow_count > 0:
+        status = "promotable_shadow_exists"
+    elif shadow_candidate_count > 0:
+        status = "shadow_only_no_promotion"
+    elif baseline_selected_count > 0:
+        status = "selected_only_no_shadow"
+    else:
+        status = "no_catalyst_theme_candidates"
+
+    top_promoted_rows = list(recommended_variant.get("top_promoted_rows") or [])
+    return {
+        "status": status,
+        "shadow_candidate_count": shadow_candidate_count,
+        "baseline_selected_count": baseline_selected_count,
+        "recommended_variant_name": recommended_variant.get("variant_name"),
+        "recommended_promoted_shadow_count": promoted_shadow_count,
+        "recommended_relaxation_cost": recommended_variant.get("threshold_relaxation_cost"),
+        "recommended_thresholds": dict(recommended_variant.get("thresholds") or {}),
+        "recommended_promoted_tickers": [str(row.get("ticker") or "") for row in top_promoted_rows if row.get("ticker")][:3],
+        "recommendation": frontier.get("recommendation"),
+    }
+
+
 def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     latest_btst_run = dict(manifest.get("latest_btst_run") or {})
     report_dir_abs = latest_btst_run.get("report_dir_abs")
@@ -197,9 +251,12 @@ def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     brief_markdown_path = followup.get("brief_markdown") or artifacts.get("btst_next_day_trade_brief_markdown")
     execution_card_markdown_path = followup.get("execution_card_markdown") or artifacts.get("btst_premarket_execution_card_markdown")
     opening_watch_card_markdown_path = followup.get("opening_watch_card_markdown") or artifacts.get("btst_opening_watch_card_markdown")
+    catalyst_theme_frontier_json_path = followup.get("catalyst_theme_frontier_json") or artifacts.get("btst_catalyst_theme_frontier_json")
+    catalyst_theme_frontier_markdown_path = followup.get("catalyst_theme_frontier_markdown") or artifacts.get("btst_catalyst_theme_frontier_markdown")
 
     priority_board = _safe_load_json(priority_board_json_path)
     brief = _safe_load_json(brief_json_path)
+    catalyst_theme_frontier = _safe_load_json(catalyst_theme_frontier_json_path)
     brief_summary = dict(brief.get("summary") or {})
 
     return {
@@ -214,9 +271,13 @@ def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "brief_markdown_path": str(Path(brief_markdown_path).expanduser().resolve()) if brief_markdown_path else None,
         "execution_card_markdown_path": str(Path(execution_card_markdown_path).expanduser().resolve()) if execution_card_markdown_path else None,
         "opening_watch_card_markdown_path": str(Path(opening_watch_card_markdown_path).expanduser().resolve()) if opening_watch_card_markdown_path else None,
+        "catalyst_theme_frontier_json_path": str(Path(catalyst_theme_frontier_json_path).expanduser().resolve()) if catalyst_theme_frontier_json_path else None,
+        "catalyst_theme_frontier_markdown_path": str(Path(catalyst_theme_frontier_markdown_path).expanduser().resolve()) if catalyst_theme_frontier_markdown_path else None,
         "priority_board": priority_board,
         "brief_recommendation": brief.get("recommendation"),
         "brief_summary": brief_summary,
+        "catalyst_theme_frontier_summary": _extract_catalyst_theme_frontier_summary(catalyst_theme_frontier),
+        "llm_error_digest": dict(session_summary.get("llm_error_digest") or {}),
     }
 
 
@@ -349,7 +410,7 @@ def _diff_priority_board(
     guardrails_removed = [item for item in previous_guardrails if item not in current_guardrails]
     summary_delta = {
         key: int(current_summary.get(key) or 0) - int(previous_summary.get(key) or 0)
-        for key in ("primary_count", "near_miss_count", "opportunity_pool_count", "research_upside_radar_count")
+        for key in ("primary_count", "near_miss_count", "opportunity_pool_count", "research_upside_radar_count", "catalyst_theme_count", "catalyst_theme_shadow_count")
     }
     has_changes = any(
         [
@@ -517,7 +578,7 @@ def _diff_replay(
         current_summary = _extract_priority_summary(current_latest_btst.get("brief_summary") or {})
         summary_delta = {
             key: int(current_summary.get(key) or 0) - int(previous_summary.get(key) or 0)
-            for key in ("primary_count", "near_miss_count", "opportunity_pool_count", "research_upside_radar_count")
+            for key in ("primary_count", "near_miss_count", "opportunity_pool_count", "research_upside_radar_count", "catalyst_theme_count", "catalyst_theme_shadow_count")
         }
         has_changes = any(value != 0 for value in summary_delta.values()) or str(previous_report_snapshot.get("report_dir") or "") != str(current_payload.get("latest_btst_run", {}).get("report_dir") or "")
         return {
@@ -536,6 +597,125 @@ def _diff_replay(
     }
 
 
+def _diff_catalyst_frontier(
+    current_payload: dict[str, Any],
+    previous_payload: dict[str, Any],
+    previous_report_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    current_summary = dict(dict(current_payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_summary") or {})
+    if previous_payload:
+        previous_summary = dict(dict(previous_payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_summary") or {})
+        comparison_basis = "nightly_history"
+    elif previous_report_snapshot:
+        previous_summary = dict(previous_report_snapshot.get("catalyst_theme_frontier_summary") or {})
+        comparison_basis = "previous_btst_report"
+    else:
+        return {
+            "available": False,
+            "comparison_basis": "none",
+            "has_changes": False,
+        }
+
+    current_promoted_tickers = list(current_summary.get("recommended_promoted_tickers") or [])
+    previous_promoted_tickers = list(previous_summary.get("recommended_promoted_tickers") or [])
+    added_promoted_tickers = [ticker for ticker in current_promoted_tickers if ticker not in previous_promoted_tickers]
+    removed_promoted_tickers = [ticker for ticker in previous_promoted_tickers if ticker not in current_promoted_tickers]
+    promoted_shadow_count_delta = int(current_summary.get("recommended_promoted_shadow_count") or 0) - int(previous_summary.get("recommended_promoted_shadow_count") or 0)
+    shadow_candidate_count_delta = int(current_summary.get("shadow_candidate_count") or 0) - int(previous_summary.get("shadow_candidate_count") or 0)
+    baseline_selected_count_delta = int(current_summary.get("baseline_selected_count") or 0) - int(previous_summary.get("baseline_selected_count") or 0)
+    status_changed = str(current_summary.get("status") or "") != str(previous_summary.get("status") or "")
+    recommended_variant_changed = str(current_summary.get("recommended_variant_name") or "") != str(previous_summary.get("recommended_variant_name") or "")
+    previous_data_available = bool(previous_summary)
+    comparison_note = None
+    if not previous_data_available and current_summary:
+        if comparison_basis == "nightly_history":
+            comparison_note = "上一版 nightly 快照尚未记录题材催化前沿摘要，本轮是首个可比较的前沿暴露。"
+        else:
+            comparison_note = "上一份 BTST 报告尚未记录题材催化前沿摘要，本轮是首个可比较的前沿暴露。"
+    has_changes = any(
+        [
+            status_changed,
+            recommended_variant_changed,
+            promoted_shadow_count_delta != 0,
+            shadow_candidate_count_delta != 0,
+            baseline_selected_count_delta != 0,
+            bool(added_promoted_tickers),
+            bool(removed_promoted_tickers),
+        ]
+    )
+    return {
+        "available": True,
+        "comparison_basis": comparison_basis,
+        "previous_status": previous_summary.get("status"),
+        "current_status": current_summary.get("status"),
+        "previous_data_available": previous_data_available,
+        "comparison_note": comparison_note,
+        "status_changed": status_changed,
+        "previous_recommended_variant_name": previous_summary.get("recommended_variant_name"),
+        "current_recommended_variant_name": current_summary.get("recommended_variant_name"),
+        "recommended_variant_changed": recommended_variant_changed,
+        "previous_promoted_tickers": previous_promoted_tickers,
+        "current_promoted_tickers": current_promoted_tickers,
+        "added_promoted_tickers": added_promoted_tickers,
+        "removed_promoted_tickers": removed_promoted_tickers,
+        "promoted_shadow_count_delta": promoted_shadow_count_delta,
+        "shadow_candidate_count_delta": shadow_candidate_count_delta,
+        "baseline_selected_count_delta": baseline_selected_count_delta,
+        "previous_recommendation": previous_summary.get("recommendation"),
+        "current_recommendation": current_summary.get("recommendation"),
+        "has_changes": has_changes,
+    }
+
+
+def _list_changed_delta_sections(delta_payload: dict[str, Any]) -> list[str]:
+    changed_sections: list[str] = []
+    if dict(delta_payload.get("priority_delta") or {}).get("has_changes"):
+        changed_sections.append("priority")
+    if dict(delta_payload.get("catalyst_frontier_delta") or {}).get("has_changes"):
+        changed_sections.append("catalyst_frontier")
+    if dict(delta_payload.get("governance_delta") or {}).get("has_changes"):
+        changed_sections.append("governance")
+    if dict(delta_payload.get("replay_delta") or {}).get("has_changes"):
+        changed_sections.append("replay")
+    return changed_sections
+
+
+def _build_material_change_anchor(
+    current_payload: dict[str, Any],
+    *,
+    reports_root: str | Path,
+    current_nightly_json_path: str | Path,
+    historical_payload_candidates: list[tuple[dict[str, Any], str | None]],
+) -> dict[str, Any]:
+    skipped_snapshot_count = 0
+    for candidate_payload, candidate_path in historical_payload_candidates:
+        anchor_delta = build_btst_open_ready_delta_payload(
+            current_payload,
+            reports_root=reports_root,
+            current_nightly_json_path=current_nightly_json_path,
+            previous_payload=candidate_payload,
+            previous_payload_path=candidate_path,
+            historical_payload_candidates=None,
+            enable_material_anchor=False,
+        )
+        changed_sections = _list_changed_delta_sections(anchor_delta)
+        if not changed_sections and anchor_delta.get("comparison_scope") == "same_report_rerun" and anchor_delta.get("overall_delta_verdict") == "stable":
+            skipped_snapshot_count += 1
+            continue
+        return {
+            "reference_generated_at": candidate_payload.get("generated_at"),
+            "reference_report_dir": dict(candidate_payload.get("latest_btst_run") or {}).get("report_dir"),
+            "reference_snapshot_path": candidate_path,
+            "comparison_basis": anchor_delta.get("comparison_basis"),
+            "comparison_scope": anchor_delta.get("comparison_scope"),
+            "overall_delta_verdict": anchor_delta.get("overall_delta_verdict"),
+            "changed_sections": changed_sections,
+            "operator_focus": list(anchor_delta.get("operator_focus") or [])[:4],
+            "skipped_snapshot_count": skipped_snapshot_count,
+        }
+    return {}
+
+
 def build_btst_open_ready_delta_payload(
     current_payload: dict[str, Any],
     *,
@@ -543,6 +723,8 @@ def build_btst_open_ready_delta_payload(
     current_nightly_json_path: str | Path,
     previous_payload: dict[str, Any] | None = None,
     previous_payload_path: str | None = None,
+    historical_payload_candidates: list[tuple[dict[str, Any], str | None]] | None = None,
+    enable_material_anchor: bool = True,
 ) -> dict[str, Any]:
     latest_btst_run = dict(current_payload.get("latest_btst_run") or {})
     current_priority_snapshot = dict(current_payload.get("latest_priority_board_snapshot") or {})
@@ -556,6 +738,8 @@ def build_btst_open_ready_delta_payload(
         previous_priority_board = dict(previous_payload.get("latest_priority_board_snapshot") or {})
         comparison_basis = "nightly_history"
         previous_reference = dict(previous_payload.get("latest_btst_run") or {})
+        previous_reference["generated_at"] = previous_payload.get("generated_at")
+        previous_reference["reference_kind"] = "nightly_history"
     elif previous_report_snapshot:
         previous_priority_board = dict(previous_report_snapshot.get("priority_board") or {})
         comparison_basis = "previous_btst_report"
@@ -565,11 +749,23 @@ def build_btst_open_ready_delta_payload(
             "selection_target": previous_report_snapshot.get("selection_target"),
             "trade_date": previous_report_snapshot.get("trade_date"),
             "next_trade_date": previous_report_snapshot.get("next_trade_date"),
+            "generated_at": None,
+            "reference_kind": "previous_btst_report",
         }
     else:
         previous_priority_board = {}
         comparison_basis = "baseline_captured"
         previous_reference = {}
+
+    comparison_scope = "baseline_captured"
+    if comparison_basis == "nightly_history":
+        comparison_scope = (
+            "same_report_rerun"
+            if str(previous_reference.get("report_dir") or "") == str(latest_btst_run.get("report_dir") or "")
+            else "report_rollforward"
+        )
+    elif comparison_basis == "previous_btst_report":
+        comparison_scope = "previous_btst_report"
 
     priority_delta = _diff_priority_board(
         current_priority_snapshot,
@@ -578,12 +774,15 @@ def build_btst_open_ready_delta_payload(
     )
     governance_delta = _diff_governance(current_payload, previous_payload)
     replay_delta = _diff_replay(current_payload, previous_payload, previous_report_snapshot)
+    catalyst_frontier_delta = _diff_catalyst_frontier(current_payload, previous_payload, previous_report_snapshot)
 
     operator_focus: list[str] = []
     if comparison_basis == "baseline_captured":
         operator_focus.append("首个 open-ready delta 基线已捕获；下一轮 nightly 后将开始提供完整 lane / replay 差分。")
     elif comparison_basis == "previous_btst_report":
         operator_focus.append("当前已生成 report 级 delta；完整治理 lane 差分将在下一轮 nightly 历史快照后可用。")
+    elif comparison_scope == "same_report_rerun":
+        operator_focus.append("当前 delta 对比的是同一份 report 的上一版 nightly 快照，用于识别复刷变化，而不是跨 report 切换。")
     if priority_delta.get("headline_changed"):
         operator_focus.append(f"开盘 headline 已变化：{priority_delta.get('previous_headline') or 'n/a'} -> {priority_delta.get('current_headline') or 'n/a'}")
     if priority_delta.get("added_tickers"):
@@ -603,28 +802,56 @@ def build_btst_open_ready_delta_payload(
                 "本轮相对上一份 BTST 报告的观察层变化: "
                 + ", ".join(f"{key} {int(value):+d}" for key, value in summary_delta.items() if int(value) != 0)
             )
+    if catalyst_frontier_delta.get("available") and catalyst_frontier_delta.get("has_changes"):
+        if catalyst_frontier_delta.get("added_promoted_tickers"):
+            operator_focus.append("题材催化前沿新增可晋级票: " + ", ".join(catalyst_frontier_delta.get("added_promoted_tickers") or []))
+        elif catalyst_frontier_delta.get("status_changed"):
+            operator_focus.append(
+                f"题材催化前沿状态变化: {catalyst_frontier_delta.get('previous_status') or 'n/a'} -> {catalyst_frontier_delta.get('current_status') or 'n/a'}。"
+            )
+        elif catalyst_frontier_delta.get("comparison_note"):
+            operator_focus.append(str(catalyst_frontier_delta.get("comparison_note")))
     if not operator_focus:
         operator_focus.append("本轮相对上一轮没有检测到 priority / governance / replay 的结构变化，可视为稳定复跑。")
 
     overall_delta_verdict = "baseline_captured"
     if comparison_basis != "baseline_captured":
-        overall_delta_verdict = "changed" if any([priority_delta.get("has_changes"), governance_delta.get("has_changes"), replay_delta.get("has_changes")]) else "stable"
+        overall_delta_verdict = "changed" if any([priority_delta.get("has_changes"), governance_delta.get("has_changes"), replay_delta.get("has_changes"), catalyst_frontier_delta.get("has_changes")]) else "stable"
+
+    material_change_anchor: dict[str, Any] = {}
+    if enable_material_anchor and historical_payload_candidates and comparison_scope == "same_report_rerun" and overall_delta_verdict == "stable":
+        material_change_anchor = _build_material_change_anchor(
+            current_payload,
+            reports_root=reports_root,
+            current_nightly_json_path=current_nightly_json_path,
+            historical_payload_candidates=historical_payload_candidates,
+        )
+        if material_change_anchor:
+            changed_sections = ", ".join(material_change_anchor.get("changed_sections") or []) or "n/a"
+            operator_focus.append(
+                f"最近一次实质变化锚点: {material_change_anchor.get('reference_generated_at') or 'n/a'} | sections={changed_sections}。"
+            )
 
     return {
         "generated_at": current_payload.get("generated_at"),
         "comparison_basis": comparison_basis,
+        "comparison_scope": comparison_scope,
         "overall_delta_verdict": overall_delta_verdict,
         "current_reference": latest_btst_run,
         "previous_reference": previous_reference,
         "operator_focus": operator_focus[:6],
         "priority_delta": priority_delta,
+        "catalyst_frontier_delta": catalyst_frontier_delta,
         "governance_delta": governance_delta,
         "replay_delta": replay_delta,
+        "material_change_anchor": material_change_anchor,
         "source_paths": {
             "current_nightly_control_tower_json": str(Path(current_nightly_json_path).expanduser().resolve()),
             "previous_nightly_control_tower_json": previous_payload_path,
             "current_priority_board_json": dict(current_payload.get("latest_btst_snapshot") or {}).get("priority_board_json_path"),
             "previous_priority_board_json": previous_payload.get("latest_btst_snapshot", {}).get("priority_board_json_path") if previous_payload else previous_report_snapshot.get("priority_board_json_path"),
+            "current_catalyst_theme_frontier_markdown": dict(current_payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_markdown_path"),
+            "previous_catalyst_theme_frontier_markdown": previous_payload.get("latest_btst_snapshot", {}).get("catalyst_theme_frontier_markdown_path") if previous_payload else previous_report_snapshot.get("catalyst_theme_frontier_markdown_path"),
             "report_manifest_json": dict(current_payload.get("source_paths") or {}).get("report_manifest_json"),
             "report_manifest_markdown": dict(current_payload.get("source_paths") or {}).get("report_manifest_markdown"),
         },
@@ -636,8 +863,10 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
     current_reference = dict(payload.get("current_reference") or {})
     previous_reference = dict(payload.get("previous_reference") or {})
     priority_delta = dict(payload.get("priority_delta") or {})
+    catalyst_frontier_delta = dict(payload.get("catalyst_frontier_delta") or {})
     governance_delta = dict(payload.get("governance_delta") or {})
     replay_delta = dict(payload.get("replay_delta") or {})
+    material_change_anchor = dict(payload.get("material_change_anchor") or {})
     source_paths = dict(payload.get("source_paths") or {})
 
     lines: list[str] = []
@@ -646,17 +875,39 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
     lines.append("## Overview")
     lines.append(f"- generated_at: {payload.get('generated_at')}")
     lines.append(f"- comparison_basis: {payload.get('comparison_basis')}")
+    lines.append(f"- comparison_scope: {payload.get('comparison_scope')}")
     lines.append(f"- overall_delta_verdict: {payload.get('overall_delta_verdict')}")
     lines.append(f"- current_report_dir: {current_reference.get('report_dir')}")
     lines.append(f"- previous_report_dir: {previous_reference.get('report_dir') or 'n/a'}")
     lines.append(f"- current_trade_date: {current_reference.get('trade_date')}")
     lines.append(f"- previous_trade_date: {previous_reference.get('trade_date') or 'n/a'}")
+    lines.append(f"- previous_snapshot_generated_at: {previous_reference.get('generated_at') or 'n/a'}")
     lines.append("")
 
     lines.append("## Operator Focus")
     for item in list(payload.get("operator_focus") or []):
         lines.append(f"- {item}")
     lines.append("")
+
+    if material_change_anchor:
+        lines.append("## Last Material Change Anchor")
+        lines.append(f"- reference_generated_at: {material_change_anchor.get('reference_generated_at') or 'n/a'}")
+        lines.append(f"- reference_report_dir: {material_change_anchor.get('reference_report_dir') or 'n/a'}")
+        lines.append(f"- comparison_basis: {material_change_anchor.get('comparison_basis')}")
+        lines.append(f"- comparison_scope: {material_change_anchor.get('comparison_scope')}")
+        lines.append(f"- overall_delta_verdict: {material_change_anchor.get('overall_delta_verdict')}")
+        lines.append(f"- skipped_same_report_rerun_snapshots: {material_change_anchor.get('skipped_snapshot_count') or 0}")
+        changed_sections = list(material_change_anchor.get("changed_sections") or [])
+        lines.append(f"- changed_sections: {', '.join(changed_sections) if changed_sections else 'none'}")
+        reference_snapshot_path = material_change_anchor.get("reference_snapshot_path")
+        relative_anchor_target = _relative_link(reference_snapshot_path, resolved_output_parent)
+        if relative_anchor_target:
+            lines.append(f"- reference_snapshot_json: [{Path(reference_snapshot_path).name}]({relative_anchor_target})")
+        elif reference_snapshot_path:
+            lines.append(f"- reference_snapshot_json: {reference_snapshot_path}")
+        for item in list(material_change_anchor.get("operator_focus") or []):
+            lines.append(f"- anchor_focus: {item}")
+        lines.append("")
 
     lines.append("## Priority Delta")
     lines.append(f"- previous_headline: {priority_delta.get('previous_headline') or 'n/a'}")
@@ -691,6 +942,33 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
             lines.append(f"- guardrail_removed: {item}")
     if not priority_delta.get("has_changes"):
         lines.append("- no_priority_change_detected")
+    lines.append("")
+
+    lines.append("## Catalyst Theme Frontier Delta")
+    if not catalyst_frontier_delta.get("available"):
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- comparison_basis: {catalyst_frontier_delta.get('comparison_basis')}")
+        lines.append(f"- previous_data_available: {catalyst_frontier_delta.get('previous_data_available')}")
+        lines.append(f"- previous_status: {catalyst_frontier_delta.get('previous_status') or 'n/a'}")
+        lines.append(f"- current_status: {catalyst_frontier_delta.get('current_status') or 'n/a'}")
+        lines.append(f"- shadow_candidate_count_delta: {catalyst_frontier_delta.get('shadow_candidate_count_delta')}")
+        lines.append(f"- promoted_shadow_count_delta: {catalyst_frontier_delta.get('promoted_shadow_count_delta')}")
+        lines.append(f"- baseline_selected_count_delta: {catalyst_frontier_delta.get('baseline_selected_count_delta')}")
+        lines.append(f"- previous_recommended_variant_name: {catalyst_frontier_delta.get('previous_recommended_variant_name') or 'n/a'}")
+        lines.append(f"- current_recommended_variant_name: {catalyst_frontier_delta.get('current_recommended_variant_name') or 'n/a'}")
+        if catalyst_frontier_delta.get("comparison_note"):
+            lines.append(f"- note: {catalyst_frontier_delta.get('comparison_note')}")
+        previous_promoted_tickers = list(catalyst_frontier_delta.get("previous_promoted_tickers") or [])
+        current_promoted_tickers = list(catalyst_frontier_delta.get("current_promoted_tickers") or [])
+        lines.append(f"- previous_promoted_tickers: {', '.join(previous_promoted_tickers) if previous_promoted_tickers else 'none'}")
+        lines.append(f"- current_promoted_tickers: {', '.join(current_promoted_tickers) if current_promoted_tickers else 'none'}")
+        for ticker in list(catalyst_frontier_delta.get("added_promoted_tickers") or []):
+            lines.append(f"- added_promoted_ticker: {ticker}")
+        for ticker in list(catalyst_frontier_delta.get("removed_promoted_tickers") or []):
+            lines.append(f"- removed_promoted_ticker: {ticker}")
+        if not catalyst_frontier_delta.get("has_changes"):
+            lines.append("- no_catalyst_frontier_change_detected")
     lines.append("")
 
     lines.append("## Governance Delta")
@@ -769,6 +1047,7 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
     for entry_id in (
         "btst_governance_synthesis_latest",
         "latest_btst_priority_board",
+        "latest_btst_catalyst_theme_frontier_markdown",
         "btst_governance_validation_latest",
         "btst_replay_cohort_latest",
     ):
@@ -813,6 +1092,7 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "brief_markdown": latest_btst_snapshot.get("brief_markdown_path"),
             "execution_card_markdown": latest_btst_snapshot.get("execution_card_markdown_path"),
             "opening_watch_card_markdown": latest_btst_snapshot.get("opening_watch_card_markdown_path"),
+            "catalyst_theme_frontier_markdown": latest_btst_snapshot.get("catalyst_theme_frontier_markdown_path"),
             "replay_cohort_markdown": _entry_by_id(manifest, "btst_replay_cohort_latest").get("absolute_path"),
         },
     }
@@ -824,6 +1104,9 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     control_tower_snapshot = dict(payload.get("control_tower_snapshot") or {})
     latest_priority_board_snapshot = dict(payload.get("latest_priority_board_snapshot") or {})
     replay_cohort_snapshot = dict(payload.get("replay_cohort_snapshot") or {})
+    latest_btst_snapshot = dict(payload.get("latest_btst_snapshot") or {})
+    catalyst_theme_frontier_summary = dict(latest_btst_snapshot.get("catalyst_theme_frontier_summary") or {})
+    llm_error_digest = dict(latest_btst_snapshot.get("llm_error_digest") or {})
     source_paths = dict(payload.get("source_paths") or {})
 
     lines: list[str] = []
@@ -840,12 +1123,19 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- ready_lane_count: {control_tower_snapshot.get('ready_lane_count')}")
     lines.append(f"- replay_report_count: {replay_cohort_snapshot.get('report_count')}")
     lines.append(f"- replay_selection_target_counts: {replay_cohort_snapshot.get('selection_target_counts')}")
+    lines.append(f"- catalyst_frontier_status: {catalyst_theme_frontier_summary.get('status') or 'unavailable'}")
+    lines.append(f"- catalyst_frontier_promoted_shadow_count: {catalyst_theme_frontier_summary.get('recommended_promoted_shadow_count')}")
+    lines.append(f"- llm_health_status: {llm_error_digest.get('status')}")
+    lines.append(f"- llm_error_count: {llm_error_digest.get('error_count')}")
+    lines.append(f"- llm_fallback_attempt_count: {llm_error_digest.get('fallback_attempt_count')}")
     lines.append("")
 
     lines.append("## Nightly Summary")
     lines.append(f"- control_tower_recommendation: {control_tower_snapshot.get('recommendation')}")
     lines.append(f"- priority_board_headline: {latest_priority_board_snapshot.get('headline')}")
     lines.append(f"- replay_recommendation: {replay_cohort_snapshot.get('recommendation')}")
+    lines.append(f"- catalyst_frontier_recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
+    lines.append(f"- llm_recommendation: {llm_error_digest.get('recommendation')}")
     lines.append("")
 
     lines.append("## Control Tower Snapshot")
@@ -876,6 +1166,53 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
         lines.append(f"  historical_summary: {row.get('historical_summary')}")
     for guardrail in list(latest_priority_board_snapshot.get("global_guardrails") or []):
         lines.append(f"- guardrail: {guardrail}")
+    lines.append("")
+
+    lines.append("## Catalyst Theme Frontier")
+    if not catalyst_theme_frontier_summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {catalyst_theme_frontier_summary.get('status')}")
+        lines.append(f"- shadow_candidate_count: {catalyst_theme_frontier_summary.get('shadow_candidate_count')}")
+        lines.append(f"- baseline_selected_count: {catalyst_theme_frontier_summary.get('baseline_selected_count')}")
+        lines.append(f"- recommended_variant_name: {catalyst_theme_frontier_summary.get('recommended_variant_name')}")
+        lines.append(f"- recommended_promoted_shadow_count: {catalyst_theme_frontier_summary.get('recommended_promoted_shadow_count')}")
+        lines.append(f"- recommended_relaxation_cost: {catalyst_theme_frontier_summary.get('recommended_relaxation_cost')}")
+        lines.append(f"- recommended_thresholds: {catalyst_theme_frontier_summary.get('recommended_thresholds')}")
+        promoted_tickers = list(catalyst_theme_frontier_summary.get("recommended_promoted_tickers") or [])
+        lines.append(f"- recommended_promoted_tickers: {', '.join(promoted_tickers) if promoted_tickers else 'none'}")
+        lines.append(f"- recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
+    lines.append("")
+
+    lines.append("## LLM Health")
+    lines.append(f"- status: {llm_error_digest.get('status')}")
+    lines.append(f"- error_count: {llm_error_digest.get('error_count')}")
+    lines.append(f"- rate_limit_error_count: {llm_error_digest.get('rate_limit_error_count')}")
+    lines.append(f"- fallback_attempt_count: {llm_error_digest.get('fallback_attempt_count')}")
+    lines.append(f"- affected_provider_count: {llm_error_digest.get('affected_provider_count')}")
+    lines.append(f"- fallback_gap_detected: {llm_error_digest.get('fallback_gap_detected')}")
+    top_error_types = list(llm_error_digest.get("top_error_types") or [])
+    if top_error_types:
+        for row in top_error_types:
+            lines.append(f"- top_error_type: {row.get('error_type')} count={row.get('count')}")
+    else:
+        lines.append("- top_error_type: none")
+    affected_providers = list(llm_error_digest.get("affected_providers") or [])
+    if affected_providers:
+        for row in affected_providers:
+            lines.append(
+                f"- provider_health: {row.get('provider')} errors={row.get('errors')} attempts={row.get('attempts')} error_rate={row.get('error_rate')} fallback_attempts={row.get('fallback_attempts')}"
+            )
+    else:
+        lines.append("- provider_health: none")
+    sample_errors = list(llm_error_digest.get("sample_errors") or [])
+    if sample_errors:
+        for row in sample_errors:
+            lines.append(
+                f"- sample_error: {row.get('provider')} {row.get('error_type')} stage={row.get('pipeline_stage')} tier={row.get('model_tier')} message={row.get('message')}"
+            )
+    else:
+        lines.append("- sample_error: none")
     lines.append("")
 
     lines.append("## Replay Cohort Snapshot")
@@ -927,13 +1264,15 @@ def generate_btst_nightly_control_tower_artifacts(
 
     pre_manifest_result = generate_reports_manifest_artifacts(reports_root=resolved_reports_root)
     payload = build_btst_nightly_control_tower_payload(pre_manifest_result["manifest"])
-    previous_payload, previous_payload_path = _load_latest_archived_nightly_payload(resolved_history_dir)
+    historical_payload_candidates = _load_archived_nightly_payloads(resolved_history_dir)
+    previous_payload, previous_payload_path = historical_payload_candidates[0] if historical_payload_candidates else ({}, None)
     delta_payload = build_btst_open_ready_delta_payload(
         payload,
         reports_root=resolved_reports_root,
         current_nightly_json_path=resolved_output_json,
         previous_payload=previous_payload,
         previous_payload_path=previous_payload_path,
+        historical_payload_candidates=historical_payload_candidates,
     )
     resolved_delta_output_json.write_text(json.dumps(delta_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     resolved_delta_output_md.write_text(render_btst_open_ready_delta_markdown(delta_payload, output_parent=resolved_delta_output_md.parent), encoding="utf-8")
@@ -950,6 +1289,8 @@ def generate_btst_nightly_control_tower_artifacts(
         "delta_json_path": resolved_delta_output_json.as_posix(),
         "delta_markdown_path": resolved_delta_output_md.as_posix(),
         "history_json_path": history_json_path,
+        "catalyst_theme_frontier_json": dict(payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_json_path"),
+        "catalyst_theme_frontier_markdown": dict(payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_markdown_path"),
         "manifest_json": post_manifest_result["json_path"],
         "manifest_markdown": post_manifest_result["markdown_path"],
     }

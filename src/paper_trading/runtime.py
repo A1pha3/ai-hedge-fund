@@ -96,10 +96,13 @@ def _empty_llm_observability_summary() -> dict:
         "by_model_tier": {},
         "by_provider": {},
         "context_breakdown": [],
+        "error_type_counts": {},
+        "sample_errors": [],
     }
 
 
 def _update_observability_bucket(bucket: dict, entry: dict) -> None:
+    bucket.setdefault("error_types", {})
     bucket["attempts"] = int(bucket.get("attempts") or 0) + 1
     bucket["successes"] = int(bucket.get("successes") or 0) + (1 if entry.get("success") else 0)
     bucket["errors"] = int(bucket.get("errors") or 0) + (0 if entry.get("success") else 1)
@@ -108,6 +111,110 @@ def _update_observability_bucket(bucket: dict, entry: dict) -> None:
     bucket["total_duration_ms"] = round(float(bucket.get("total_duration_ms") or 0.0) + float(entry.get("duration_ms") or 0.0), 3)
     attempts = int(bucket.get("attempts") or 0)
     bucket["avg_duration_ms"] = round(bucket["total_duration_ms"] / attempts, 3) if attempts else 0.0
+    error_type = str(entry.get("error_type") or "").strip()
+    if error_type:
+        error_types = bucket.setdefault("error_types", {})
+        error_types[error_type] = int(error_types.get(error_type) or 0) + 1
+
+
+def _normalize_llm_error_message(message: str | None) -> str | None:
+    normalized = " ".join(str(message or "").split()).strip()
+    if not normalized:
+        return None
+    return normalized[:240]
+
+
+def _record_observability_error(summary: dict, entry: dict) -> None:
+    error_type = str(entry.get("error_type") or "").strip()
+    error_message = _normalize_llm_error_message(entry.get("error_message"))
+    if not error_type and not error_message:
+        return
+
+    if error_type:
+        error_type_counts = summary.setdefault("error_type_counts", {})
+        error_type_counts[error_type] = int(error_type_counts.get(error_type) or 0) + 1
+
+    sample_errors = summary.setdefault("sample_errors", [])
+    sample = {
+        "trade_date": str(entry.get("trade_date") or "unknown"),
+        "pipeline_stage": str(entry.get("pipeline_stage") or "unknown"),
+        "model_tier": str(entry.get("model_tier") or "unknown"),
+        "provider": str(entry.get("model_provider") or "unknown"),
+        "error_type": error_type or "unknown",
+        "message": error_message or "n/a",
+    }
+    sample_key = tuple(sample.values())
+    existing_keys = {tuple(item.get(field) for field in ("trade_date", "pipeline_stage", "model_tier", "provider", "error_type", "message")) for item in sample_errors}
+    if sample_key in existing_keys:
+        return
+    if len(sample_errors) < 5:
+        sample_errors.append(sample)
+
+
+def _sorted_error_type_counts(error_type_counts: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
+    rows = [
+        {"error_type": str(error_type), "count": int(count or 0)}
+        for error_type, count in dict(error_type_counts or {}).items()
+        if int(count or 0) > 0
+    ]
+    rows.sort(key=lambda item: (-item["count"], item["error_type"]))
+    return rows[:limit]
+
+
+def _build_llm_error_digest(llm_route_provenance: dict, llm_observability_summary: dict) -> dict:
+    route = dict(llm_route_provenance or {})
+    observability = dict(llm_observability_summary or {})
+    error_count = int(route.get("errors") or 0)
+    rate_limit_error_count = int(route.get("rate_limit_errors") or 0)
+    fallback_attempt_count = int(route.get("fallback_attempts") or 0)
+
+    affected_providers = []
+    for provider, bucket in dict(observability.get("by_provider") or {}).items():
+        errors = int((bucket or {}).get("errors") or 0)
+        attempts = int((bucket or {}).get("attempts") or 0)
+        if errors <= 0:
+            continue
+        affected_providers.append(
+            {
+                "provider": str(provider),
+                "attempts": attempts,
+                "errors": errors,
+                "error_rate": round((errors / attempts), 4) if attempts else 0.0,
+                "rate_limit_errors": int((bucket or {}).get("rate_limit_errors") or 0),
+                "fallback_attempts": int((bucket or {}).get("fallback_attempts") or 0),
+                "top_error_types": _sorted_error_type_counts(dict((bucket or {}).get("error_types") or {}), limit=2),
+            }
+        )
+    affected_providers.sort(key=lambda item: (-item["errors"], -item["error_rate"], item["provider"]))
+
+    fallback_gap_detected = error_count > 0 and fallback_attempt_count == 0 and len(list(route.get("providers_seen") or [])) > 1
+    if not route.get("summary_available") and not observability.get("jsonl_available"):
+        status = "no_data"
+        recommendation = "no_llm_metrics_available"
+    elif error_count > 0:
+        status = "degraded"
+        if rate_limit_error_count > 0:
+            recommendation = "rate_limit_pressure_detected_consider_cooldown_or_concurrency_reduction"
+        elif fallback_gap_detected:
+            recommendation = "errors_detected_without_fallback_review_provider_routing"
+        else:
+            recommendation = "review_top_error_types_and_provider_breakdown"
+    else:
+        status = "healthy"
+        recommendation = "no_action_needed"
+
+    return {
+        "status": status,
+        "error_count": error_count,
+        "rate_limit_error_count": rate_limit_error_count,
+        "fallback_attempt_count": fallback_attempt_count,
+        "affected_provider_count": len(affected_providers),
+        "top_error_types": _sorted_error_type_counts(dict(observability.get("error_type_counts") or {})),
+        "affected_providers": affected_providers[:3],
+        "sample_errors": list(observability.get("sample_errors") or [])[:3],
+        "fallback_gap_detected": fallback_gap_detected,
+        "recommendation": recommendation,
+    }
 
 
 def _build_llm_observability_summary(jsonl_path: Path) -> dict:
@@ -139,6 +246,8 @@ def _build_llm_observability_summary(jsonl_path: Path) -> dict:
         _update_observability_bucket(summary["by_trade_date"].setdefault(trade_date, {}), entry)
         _update_observability_bucket(summary["by_model_tier"].setdefault(model_tier, {}), entry)
         _update_observability_bucket(summary["by_provider"].setdefault(provider, {}), entry)
+        if not entry.get("success"):
+            _record_observability_error(summary, entry)
 
         context_key = (trade_date, pipeline_stage, model_tier, provider)
         context_bucket = context_buckets.setdefault(
@@ -370,6 +479,7 @@ def run_paper_trading_session(
 
     llm_route_provenance, llm_metrics_artifacts = _build_llm_route_provenance()
     llm_observability_summary = _build_llm_observability_summary(Path(llm_metrics_artifacts["llm_metrics_jsonl"]))
+    llm_error_digest = _build_llm_error_digest(llm_route_provenance, llm_observability_summary)
     execution_plan_provenance = _build_execution_plan_provenance_summary(getattr(engine, "_pipeline", None))
     dual_target_summary = _build_dual_target_session_summary(daily_events_path)
     data_cache_summary = get_cache_runtime_info()
@@ -460,6 +570,7 @@ def run_paper_trading_session(
         "execution_plan_provenance": execution_plan_provenance,
         "dual_target_summary": dual_target_summary,
         "llm_observability_summary": llm_observability_summary,
+        "llm_error_digest": llm_error_digest,
         "data_cache": data_cache_summary,
         "data_cache_benchmark": cache_benchmark_summary,
         "data_cache_benchmark_status": cache_benchmark_status,

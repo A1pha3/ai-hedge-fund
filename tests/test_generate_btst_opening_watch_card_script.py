@@ -18,6 +18,26 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
         json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    (report_dir / "catalyst_theme_frontier_latest.json").write_text(
+        json.dumps(
+            {
+                "shadow_candidate_count": 1,
+                "baseline_selected_count": 0,
+                "recommendation": "优先跟踪 frontier promoted shadow。",
+                "recommended_variant": {
+                    "variant_name": "catalyst_theme_relaxed_sector_frontier",
+                    "promoted_shadow_count": 1,
+                    "threshold_relaxation_cost": 0.09,
+                    "thresholds": {"candidate_score": 0.30, "sector_resonance": 0.20},
+                    "top_promoted_rows": [{"ticker": "301001"}],
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "catalyst_theme_frontier_latest.md").write_text("# Catalyst Theme Frontier\n", encoding="utf-8")
     (historical_report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
 
     (trade_dir / "selection_snapshot.json").write_text(
@@ -77,6 +97,32 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
                         },
                     },
                 },
+                "catalyst_theme_shadow_candidates": [
+                    {
+                        "ticker": "301001",
+                        "decision": "catalyst_theme_shadow",
+                        "score_target": 0.3874,
+                        "confidence": 0.3874,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "top_reasons": ["candidate_score=0.39", "total_shortfall=0.06"],
+                        "candidate_source": "catalyst_theme_shadow",
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "shadow"},
+                        "blockers": ["candidate_score_below_catalyst_theme_floor"],
+                        "filter_reason": "candidate_score_below_catalyst_theme_floor",
+                        "threshold_shortfalls": {"candidate_score": 0.06},
+                        "failed_threshold_count": 1,
+                        "total_shortfall": 0.06,
+                        "promotion_trigger": "若催化继续发酵，可升级到正式题材研究池。",
+                        "metrics": {
+                            "breakout_freshness": 0.301,
+                            "trend_acceleration": 0.241,
+                            "close_strength": 0.541,
+                            "sector_resonance": 0.182,
+                            "catalyst_freshness": 0.812,
+                        },
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -162,7 +208,12 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
     markdown = (tmp_path / "btst_opening_watch_card_20260330.md").read_text(encoding="utf-8")
 
     assert result["analysis"]["headline"]
+    assert "301001" in result["analysis"]["headline"]
     assert [item["ticker"] for item in payload["focus_items"]] == ["300757", "601869", "300442"]
+    assert payload["summary"]["catalyst_theme_frontier_promoted_count"] == 1
+    assert payload["summary"]["catalyst_theme_shadow_count"] == 1
+    assert payload["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
+    assert payload["catalyst_theme_shadow_watch"][0]["ticker"] == "301001"
     assert payload["focus_items"][0]["historical_summary"] is not None
     assert payload["focus_items"][0]["execution_note"] is not None
     assert payload["focus_items"][1]["historical_summary"] is not None
@@ -171,5 +222,10 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
     assert "### 1. 300757" in markdown
     assert "### 2. 601869" in markdown
     assert "### 3. 300442" in markdown
+    assert "## Catalyst Theme Frontier Priority" in markdown
+    assert "## Catalyst Theme Shadow Watch" in markdown
+    assert "### 1. 301001" in markdown
+    assert "focus_tier: catalyst_theme_frontier_priority" in markdown
+    assert "execution_posture: research_followup_only" in markdown
     assert "execution_note" in markdown
     assert "historical_summary" in markdown

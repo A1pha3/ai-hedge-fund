@@ -31,11 +31,13 @@ def _write_btst_followup_report(
     include_btst_followup: bool = True,
     brief_payload: dict[str, object] | None = None,
     priority_board_payload: dict[str, object] | None = None,
+    llm_error_digest: dict[str, object] | None = None,
+    selection_snapshot_payload: dict[str, object] | None = None,
 ) -> Path:
     report_dir = reports_root / report_name
     selection_dir = report_dir / "selection_artifacts" / trade_date
     selection_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(selection_dir / "selection_snapshot.json", {"trade_date": trade_date.replace("-", "")})
+    _write_json(selection_dir / "selection_snapshot.json", selection_snapshot_payload or {"trade_date": trade_date.replace("-", "")})
 
     followup_block = {}
     artifacts_block = {}
@@ -54,6 +56,8 @@ def _write_btst_followup_report(
                     "short_trade_rejected_count": int((summary_counts or {}).get("rejected_count") or 0),
                     "short_trade_opportunity_pool_count": int((summary_counts or {}).get("opportunity_pool_count") or 0),
                     "research_upside_radar_count": int((summary_counts or {}).get("research_upside_radar_count") or 0),
+                    "catalyst_theme_count": int((summary_counts or {}).get("catalyst_theme_count") or 0),
+                    "catalyst_theme_shadow_count": int((summary_counts or {}).get("catalyst_theme_shadow_count") or 0),
                 },
                 "recommendation": "继续用 near-miss 与 opportunity_pool 做明早观察层。",
             }
@@ -70,6 +74,8 @@ def _write_btst_followup_report(
                     "near_miss_count": int((summary_counts or {}).get("near_miss_count") or 0),
                     "opportunity_pool_count": int((summary_counts or {}).get("opportunity_pool_count") or 0),
                     "research_upside_radar_count": int((summary_counts or {}).get("research_upside_radar_count") or 0),
+                    "catalyst_theme_count": int((summary_counts or {}).get("catalyst_theme_count") or 0),
+                    "catalyst_theme_shadow_count": int((summary_counts or {}).get("catalyst_theme_shadow_count") or 0),
                 },
                 "priority_rows": [
                     {
@@ -153,6 +159,21 @@ def _write_btst_followup_report(
                 "executed_trade_days": executed_trade_days,
                 "total_executed_orders": total_executed_orders,
             },
+            "llm_error_digest": dict(
+                llm_error_digest
+                or {
+                    "status": "healthy",
+                    "error_count": 0,
+                    "rate_limit_error_count": 0,
+                    "fallback_attempt_count": 0,
+                    "affected_provider_count": 0,
+                    "top_error_types": [],
+                    "affected_providers": [],
+                    "sample_errors": [],
+                    "fallback_gap_detected": False,
+                    "recommendation": "no_action_needed",
+                }
+            ),
             "btst_followup": followup_block,
             "artifacts": artifacts_block,
         },
@@ -607,12 +628,69 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
             "rejected_count": 2,
             "opportunity_pool_count": 2,
             "research_upside_radar_count": 1,
+            "catalyst_theme_count": 1,
+            "catalyst_theme_shadow_count": 2,
         },
         portfolio_values=[100000.0, 101200.0],
         max_drawdown=-0.2,
         sharpe_ratio=1.3,
         executed_trade_days=1,
         total_executed_orders=2,
+        llm_error_digest={
+            "status": "degraded",
+            "error_count": 5,
+            "rate_limit_error_count": 0,
+            "fallback_attempt_count": 0,
+            "affected_provider_count": 1,
+            "top_error_types": [{"error_type": "TimeoutError", "count": 5}],
+            "affected_providers": [
+                {
+                    "provider": "MiniMax",
+                    "attempts": 49,
+                    "errors": 5,
+                    "error_rate": 0.102,
+                    "rate_limit_errors": 0,
+                    "fallback_attempts": 0,
+                    "top_error_types": [{"error_type": "TimeoutError", "count": 5}],
+                }
+            ],
+            "sample_errors": [
+                {
+                    "trade_date": "2026-03-31",
+                    "pipeline_stage": "daily_pipeline_post_market",
+                    "model_tier": "fast",
+                    "provider": "MiniMax",
+                    "error_type": "TimeoutError",
+                    "message": "upstream timeout after 30s",
+                }
+            ],
+            "fallback_gap_detected": True,
+            "recommendation": "errors_detected_without_fallback_review_provider_routing",
+        },
+        selection_snapshot_payload={
+            "trade_date": "20260331",
+            "catalyst_theme_candidates": [],
+            "catalyst_theme_shadow_candidates": [
+                {
+                    "ticker": "301001",
+                    "decision": "catalyst_theme_shadow",
+                    "score_target": 0.32,
+                    "candidate_source": "catalyst_theme_shadow",
+                    "filter_reason": "sector_resonance_below_catalyst_theme_floor",
+                    "threshold_shortfalls": {"candidate_score": 0.02, "sector_resonance": 0.03},
+                    "failed_threshold_count": 2,
+                    "total_shortfall": 0.05,
+                    "gate_status": {"data": "pass", "structural": "fail", "score": "shadow"},
+                    "metrics": {
+                        "breakout_freshness": 0.14,
+                        "trend_acceleration": 0.21,
+                        "close_strength": 0.41,
+                        "sector_resonance": 0.22,
+                        "catalyst_freshness": 0.82,
+                    },
+                }
+            ],
+        },
     )
     _write_btst_followup_report(
         reports_root,
@@ -792,8 +870,14 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["control_tower_snapshot"]["waiting_lane_count"] == 5
     assert payload["latest_priority_board_snapshot"]["headline"] == "watch 600522 before 300442"
     assert payload["replay_cohort_snapshot"]["report_count"] == 2
+    assert payload["latest_btst_snapshot"]["llm_error_digest"]["status"] == "degraded"
+    assert payload["latest_btst_snapshot"]["llm_error_digest"]["fallback_gap_detected"] is True
+    assert payload["latest_btst_snapshot"]["catalyst_theme_frontier_summary"]["status"] == "promotable_shadow_exists"
+    assert payload["latest_btst_snapshot"]["catalyst_theme_frontier_summary"]["recommended_promoted_tickers"] == ["301001"]
     assert payload["recommended_reading_order"][0]["entry_id"] == "btst_governance_synthesis_latest"
+    assert any(item["entry_id"] == "latest_btst_catalyst_theme_frontier_markdown" for item in payload["recommended_reading_order"])
     assert delta_payload["comparison_basis"] == "previous_btst_report"
+    assert delta_payload["comparison_scope"] == "previous_btst_report"
     assert delta_payload["overall_delta_verdict"] == "changed"
     assert Path(result["delta_json_path"]).name == "btst_open_ready_delta_latest.json"
     assert Path(result["delta_markdown_path"]).name == "btst_open_ready_delta_latest.md"
@@ -803,6 +887,11 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "# BTST Nightly Control Tower" in markdown
     assert "## Nightly Summary" in markdown
     assert "watch 600522 before 300442" in markdown
+    assert "## Catalyst Theme Frontier" in markdown
+    assert "301001" in markdown
+    assert "## LLM Health" in markdown
+    assert "llm_health_status: degraded" in markdown
+    assert "sample_error: MiniMax TimeoutError" in markdown
     assert "btst_governance_synthesis_latest.md" in markdown
     assert "btst_replay_cohort_latest.md" in markdown
     delta_markdown = Path(result["delta_markdown_path"]).read_text(encoding="utf-8")
@@ -813,6 +902,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     entry_ids = {entry["id"] for entry in manifest["entries"]}
     assert "btst_open_ready_delta_latest" in entry_ids
     assert "btst_nightly_control_tower_latest" in entry_ids
+    assert "latest_btst_catalyst_theme_frontier_markdown" in entry_ids
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
     assert reading_paths["btst_control_tower"]["entry_ids"][0] == "btst_open_ready_delta_latest"
     assert reading_paths["tomorrow_open"]["entry_ids"][0] == "btst_open_ready_delta_latest"
@@ -1081,12 +1171,37 @@ def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_pa
             ],
             "global_guardrails": ["guardrail_v1", "guardrail_v2"],
         },
+        selection_snapshot_payload={
+            "trade_date": "20260331",
+            "catalyst_theme_candidates": [],
+            "catalyst_theme_shadow_candidates": [
+                {
+                    "ticker": "301001",
+                    "decision": "catalyst_theme_shadow",
+                    "score_target": 0.32,
+                    "candidate_source": "catalyst_theme_shadow",
+                    "filter_reason": "sector_resonance_below_catalyst_theme_floor",
+                    "threshold_shortfalls": {"candidate_score": 0.02, "sector_resonance": 0.03},
+                    "failed_threshold_count": 2,
+                    "total_shortfall": 0.05,
+                    "gate_status": {"data": "pass", "structural": "fail", "score": "shadow"},
+                    "metrics": {
+                        "breakout_freshness": 0.14,
+                        "trend_acceleration": 0.21,
+                        "close_strength": 0.41,
+                        "sector_resonance": 0.22,
+                        "catalyst_freshness": 0.82,
+                    },
+                }
+            ],
+        },
     )
 
     second_result = generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
     delta_payload = second_result["delta_payload"]
 
     assert delta_payload["comparison_basis"] == "nightly_history"
+    assert delta_payload["comparison_scope"] == "report_rollforward"
     assert delta_payload["overall_delta_verdict"] == "changed"
     assert any(item["ticker"] == "300333" for item in delta_payload["priority_delta"]["added_tickers"])
     assert any(item["ticker"] == "600111" for item in delta_payload["priority_delta"]["removed_tickers"])
@@ -1097,6 +1212,8 @@ def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_pa
     assert candidate_lane_delta["current_distinct_window_count_with_filtered_entries"] == 2
     assert candidate_lane_delta["current_upgrade_gap"] == "ready_for_shadow_rollout_review"
     assert delta_payload["replay_delta"]["report_count_delta"] == 1
+    assert delta_payload["catalyst_frontier_delta"]["current_status"] == "promotable_shadow_exists"
+    assert delta_payload["catalyst_frontier_delta"]["added_promoted_tickers"] == ["301001"]
 
     delta_markdown = Path(second_result["delta_markdown_path"]).read_text(encoding="utf-8")
     assert "300333" in delta_markdown
@@ -1104,3 +1221,29 @@ def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_pa
     assert "candidate_entry_shadow" in delta_markdown
     assert "missing_window_count 1 -> 0" in delta_markdown
     assert "distinct_window_count 1 -> 2" in delta_markdown
+    assert "## Catalyst Theme Frontier Delta" in delta_markdown
+    assert "added_promoted_ticker: 301001" in delta_markdown
+
+    third_result = generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
+    third_delta_payload = third_result["delta_payload"]
+
+    assert third_delta_payload["comparison_basis"] == "nightly_history"
+    assert third_delta_payload["comparison_scope"] == "same_report_rerun"
+    assert third_delta_payload["overall_delta_verdict"] == "stable"
+    assert third_delta_payload["previous_reference"]["report_dir"] == third_delta_payload["current_reference"]["report_dir"]
+    assert third_delta_payload["previous_reference"]["generated_at"] == second_result["payload"]["generated_at"]
+    assert third_delta_payload["catalyst_frontier_delta"]["previous_data_available"] is True
+    assert third_delta_payload["material_change_anchor"]["reference_generated_at"] == first_result["payload"]["generated_at"]
+    assert third_delta_payload["material_change_anchor"]["reference_report_dir"] == "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330"
+    assert third_delta_payload["material_change_anchor"]["comparison_scope"] == "report_rollforward"
+    assert third_delta_payload["material_change_anchor"]["overall_delta_verdict"] == "changed"
+    assert third_delta_payload["material_change_anchor"]["skipped_snapshot_count"] == 1
+    assert "priority" in third_delta_payload["material_change_anchor"]["changed_sections"]
+    assert "catalyst_frontier" in third_delta_payload["material_change_anchor"]["changed_sections"]
+
+    third_delta_markdown = Path(third_result["delta_markdown_path"]).read_text(encoding="utf-8")
+    assert "comparison_scope: same_report_rerun" in third_delta_markdown
+    assert f"previous_snapshot_generated_at: {second_result['payload']['generated_at']}" in third_delta_markdown
+    assert "## Last Material Change Anchor" in third_delta_markdown
+    assert f"reference_generated_at: {first_result['payload']['generated_at']}" in third_delta_markdown
+    assert "skipped_same_report_rerun_snapshots: 1" in third_delta_markdown

@@ -20,11 +20,11 @@
 1. 先定位问题层级，再决定动哪个参数。
 2. 先修语义和结构，再修阈值。
 3. 先修供给质量，再修供给数量。
-4. 先用 replay 做低成本验证，再做真实窗口 live validation。
+4. 先用 replay 做低成本验证，再做 live validation（真实窗口验证）。
 5. 每轮只动一类机制，不做组合拳。
 6. 先看新增样本的次日质量，再看通过数。
 7. `blocked` 和 `rejected` 必须分开调，不要混成一个集合。
-8. `short_trade_boundary` admission 问题和 `short_trade_target` score frontier 问题不是一回事。
+8. `short_trade_boundary` 准入问题和 `short_trade_target` 分数前沿问题不是一回事。
 9. 真实可交易性必须纳入判断，不允许只看规则分数或纸面收益。
 10. 最优参数通常是稳定区间，不是某个窗口里最热的单一点。
 
@@ -52,14 +52,14 @@
 1. `blocked` 往往意味着结构冲突，不该优先用阈值救。
 2. 这类样本更应该先做 structural variant 或 penalty 审查。
 
-### 2.3 错把 admission 问题和正式评分问题混在一起
+### 2.3 错把准入问题和正式评分问题混在一起
 
 症状：short trade boundary 候选少，就同时放宽预选 floor 和 target threshold。
 
 风险：
 
 1. 你会失去归因能力。
-2. 根本无法判断增量来自 admission、正式 score，还是只是整体放热。
+2. 根本无法判断增量来自准入层、正式评分层，还是只是整体放热。
 
 ---
 
@@ -81,7 +81,7 @@
 2. heavy leg 覆盖是否不足。
 3. `FAST_AGENT_SCORE_THRESHOLD` 是否过早截断。
 
-### 3.2 类型 B：short_trade_boundary admission 太严
+### 3.2 类型 B：short_trade_boundary 准入太严
 
 典型症状：
 
@@ -96,11 +96,11 @@
 4. `volume_expansion_quality_min`
 5. `catalyst_freshness_min`
 
-### 3.3 类型 C：BTST score frontier 太严
+### 3.3 类型 C：BTST 分数前沿太严
 
 典型症状：
 
-1. admission 已经通过。
+1. 准入已经通过。
 2. 但大量样本落在 `rejected_short_trade_boundary_score_fail`。
 3. 很多样本距离 near-miss 仍有明确 gap。
 
@@ -109,7 +109,7 @@
 1. `select_threshold`
 2. `near_miss_threshold`
 3. penalty 权重
-4. 是否存在 threshold-only rescue 样本
+4. 是否存在纯阈值救援样本
 
 ### 3.4 类型 D：structural conflict 或 penalty 过重
 
@@ -162,7 +162,7 @@ what：当前常见抓手包括：
 
 how：先用 Layer B 文档和现有 rule variant 比较定位，再决定是否让 BTST 调优从上游开始。
 
-### 4.2 第二类：short trade boundary admission 参数
+### 4.2 第二类：short trade boundary 准入参数
 
 why：这一层决定哪些边界候选有资格进入 BTST 正式评估。
 
@@ -198,11 +198,11 @@ what：当前核心参数包括：
 
 how：主要通过 replay 校准脚本做 profile override，不建议第一步就改源码默认值。
 
-### 4.4 第四类：candidate entry 过滤策略
+### 4.4 第四类：candidate entry（候选入口）过滤策略
 
 why：有些问题不是 target 评分本身，而是某类“弱结构候选”本来就不该进入比较池。
 
-what：当前 replay 工具支持 candidate entry metric grid，按 `breakout_freshness`、`trend_acceleration`、`volume_expansion_quality`、`close_strength`、`catalyst_freshness` 做上限过滤试验。
+what：当前 replay 工具支持候选入口指标网格，按 `breakout_freshness`、`trend_acceleration`、`volume_expansion_quality`、`close_strength`、`catalyst_freshness` 做上限过滤试验。
 
 how：适合回答“如果先把某类明显弱结构样本挡掉，会不会更稳”。
 
@@ -238,7 +238,7 @@ what：优先看：
 how：先回答三个问题：
 
 1. 候选是不是太少。
-2. 是 admission 死掉，还是正式评分死掉。
+2. 是准入层死掉，还是正式评分死掉。
 3. 是 score fail，还是 structural block。
 
 ### 第 2 步：选一个唯一实验主题
@@ -248,11 +248,11 @@ why：只有单主题实验，结果才可归因。
 可选主题通常只有这些：
 
 1. Layer B 供给
-2. short trade boundary admission
-3. threshold frontier
-4. penalty frontier
+2. short trade boundary 准入
+3. 阈值前沿
+4. 惩罚前沿
 5. structural conflict release
-6. candidate entry filter
+6. 候选入口过滤
 
 ### 第 3 步：先做 replay 校准
 
@@ -263,13 +263,13 @@ what：当前最常用的 replay 模式：
 1. threshold grid
 2. structural variants
 3. combination grid
-4. candidate entry metric grid
+4. candidate entry metric grid（候选入口指标网格）
 5. penalty grid
 6. penalty threshold grid
 
 how：用 `scripts/replay_selection_target_calibration.py` 对 `selection_target_replay_input.json` 或整个 report 目录进行分析。
 
-### 第 4 步：再做真实窗口 live validation
+### 第 4 步：再做 live validation（真实窗口验证）
 
 why：replay 能回答“规则是否变化”，但不能直接证明“次日是否更好”。
 
@@ -308,7 +308,7 @@ what：至少需要同时满足：
 
 原因：这类问题通常发生在 BTST 之前，不该第一步就改 BTST 自己的 target threshold。
 
-### 6.2 如果是 boundary admission 太严
+### 6.2 如果是边界准入太严
 
 优先顺序：
 
@@ -318,15 +318,15 @@ what：至少需要同时满足：
 4. `trend_acceleration_min`
 5. `volume_expansion_quality_min`
 
-原因：很多窗口里，catalyst floor 是最容易形成“入口误伤”的 admission 杠杆。
+原因：很多窗口里，catalyst floor 是最容易形成“入口误伤”的准入杠杆。
 
-### 6.3 如果是 score frontier 太严
+### 6.3 如果是分数前沿太严
 
 优先顺序：
 
-1. 先看 threshold-only rescue 样本是否存在
+1. 先看纯阈值救援样本是否存在
 2. 如果有，就先做 `near_miss_threshold` 或 `select_threshold` 小步测试
-3. 如果没有，就别再迷信阈值，直接转到 penalty frontier
+3. 如果没有，就别再迷信阈值，直接转到惩罚前沿
 
 原因：不是所有 rejected 都值得用 threshold 救。
 
@@ -362,7 +362,7 @@ why：这是 BTST replay 校准的总入口。
 
 1. 看代码改动是否引起决策漂移
 2. 做 threshold grid
-3. 做 structural / penalty / candidate entry 联合扫描
+3. 做 structural / penalty / candidate entry（候选入口）联合扫描
 
 重点产出：
 
@@ -396,7 +396,7 @@ why：识别 rejected cluster 的主失败机制。
 
 适合场景：
 
-1. 明明 admission 已经过了，但大批样本仍卡在 BTST score fail
+1. 明明准入已通过，但大批样本仍卡在 BTST score fail
 
 重点产出：
 
@@ -406,15 +406,15 @@ why：识别 rejected cluster 的主失败机制。
 
 ### 7.4 `analyze_short_trade_boundary_score_failures_frontier.py`
 
-why：从 score-fail cluster 里找最小成本 rescue row。
+why：从分数失利主簇里找最小成本救援行。
 
 适合场景：
 
-1. 你已经确认问题在 score frontier，但不想大面积整体放松
+1. 你已经确认问题在分数前沿，但不想大面积整体放松
 
 重点产出：
 
-1. 哪些样本存在 threshold-only rescue
+1. 哪些样本存在纯阈值救援
 2. 哪些样本必须 stale / extension 联动放松
 
 ### 7.5 `run_short_trade_boundary_variant_validation.py`
@@ -433,7 +433,7 @@ why：快速把规则变体跑成真实窗口报告。
 
 ## 8. 推荐的实验顺序模板
 
-### 8.1 模板 A：怀疑 admission 太严
+### 8.1 模板 A：怀疑准入太严
 
 步骤：
 
@@ -441,17 +441,17 @@ why：快速把规则变体跑成真实窗口报告。
 2. 看 `short_trade_boundary_filtered_candidates` 的 `filtered_reason_counts`
 3. 如果主要卡在 catalyst，就先做 `catalyst_floor_zero`
 4. 再跑 `analyze_pre_layer_short_trade_outcomes.py`
-5. 如果候选数上来了但次日质量没明显掉，再考虑更细 admission 调整
+5. 如果候选数上来了但次日质量没明显掉，再考虑更细的准入调整
 
-### 8.2 模板 B：怀疑 score frontier 太严
+### 8.2 模板 B：怀疑分数前沿太严
 
 步骤：
 
 1. 跑 `analyze_short_trade_boundary_score_failures.py`
 2. 判断这些样本离 near-miss 近不近
 3. 如果存在贴线样本，再跑 `analyze_short_trade_boundary_score_failures_frontier.py`
-4. 先做 threshold-only rescue
-5. 只有 threshold-only 不够时，才进 penalty frontier
+4. 先做纯阈值救援
+5. 只有纯阈值救援不够时，才进惩罚前沿
 
 ### 8.3 模板 C：怀疑 blocked 释放有价值
 
@@ -477,7 +477,7 @@ why：快速把规则变体跑成真实窗口报告。
 
 ### 9.1 `catalyst_freshness_min`
 
-why：这是边界 admission 层常见的误伤点。
+why：这是边界准入层常见的误伤点。
 
 什么时候调：
 
@@ -551,7 +551,7 @@ why：它决定 BTST 对研究层 `avoid` 的服从程度。
 
 1. 定位可调参数和脚本入口
 2. 实现最小变体
-3. 组织 replay / live validation 命令
+3. 组织 replay / live validation（真实窗口验证）命令
 4. 生成对照分析文档
 5. 汇总样本台账与主要结论
 
@@ -598,10 +598,10 @@ why：它决定 BTST 对研究层 `avoid` 的服从程度。
 
 如果今天就继续推进 BTST，最稳的顺序通常是：
 
-1. 先确认问题是在 supply、admission、score frontier 还是 structural conflict。
-2. 如果是 admission，先做 `catalyst_floor_zero` 这类最小 live variant。
-3. 如果是 score fail，先做 frontier 诊断，优先找 threshold-only rescue 样本。
-4. 如果问题明确在 stale / extension，再进入 penalty frontier，不要先整体降线。
+1. 先确认问题是在 supply、准入、分数前沿还是 structural conflict。
+2. 如果是准入，先做 `catalyst_floor_zero` 这类最小真实窗口变体。
+3. 如果是 score fail，先做前沿诊断，优先找纯阈值救援样本。
+4. 如果问题明确在 stale / extension，再进入惩罚前沿，不要先整体降线。
 5. 每一轮都用 artifacts 回放和次日结果双重确认，不让任何“看起来更热”的变体直接晋升默认值。
 
 ---

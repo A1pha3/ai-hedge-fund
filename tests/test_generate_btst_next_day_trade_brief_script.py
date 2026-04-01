@@ -8,6 +8,30 @@ from scripts.generate_btst_next_day_trade_brief import analyze_btst_next_day_tra
 from src.paper_trading.btst_reporting import infer_next_trade_date
 
 
+def _write_catalyst_theme_frontier(report_dir, promoted_tickers=None):
+    tickers = list(promoted_tickers or ["301001"])
+    (report_dir / "catalyst_theme_frontier_latest.json").write_text(
+        json.dumps(
+            {
+                "shadow_candidate_count": len(tickers),
+                "baseline_selected_count": 0,
+                "recommendation": "优先跟踪 frontier promoted shadow。",
+                "recommended_variant": {
+                    "variant_name": "catalyst_theme_relaxed_sector_frontier",
+                    "promoted_shadow_count": len(tickers),
+                    "threshold_relaxation_cost": 0.09,
+                    "thresholds": {"candidate_score": 0.30, "sector_resonance": 0.20},
+                    "top_promoted_rows": [{"ticker": ticker} for ticker in tickers],
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "catalyst_theme_frontier_latest.md").write_text("# Catalyst Theme Frontier\n", encoding="utf-8")
+
+
 def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(tmp_path, monkeypatch):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-03-27"
@@ -88,6 +112,32 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                         },
                     }
                 ],
+                "catalyst_theme_shadow_candidates": [
+                    {
+                        "ticker": "301001",
+                        "decision": "catalyst_theme_shadow",
+                        "score_target": 0.3874,
+                        "confidence": 0.3874,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "top_reasons": ["candidate_score=0.39", "total_shortfall=0.06"],
+                        "candidate_source": "catalyst_theme_shadow",
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "shadow"},
+                        "blockers": ["candidate_score_below_catalyst_theme_floor"],
+                        "filter_reason": "candidate_score_below_catalyst_theme_floor",
+                        "threshold_shortfalls": {"candidate_score": 0.06},
+                        "failed_threshold_count": 1,
+                        "total_shortfall": 0.06,
+                        "promotion_trigger": "若催化继续发酵，可升级到正式题材研究池。",
+                        "metrics": {
+                            "breakout_freshness": 0.301,
+                            "trend_acceleration": 0.241,
+                            "close_strength": 0.541,
+                            "sector_resonance": 0.182,
+                            "catalyst_freshness": 0.812,
+                        },
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -119,6 +169,7 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
         + "\n",
         encoding="utf-8",
     )
+    _write_catalyst_theme_frontier(report_dir)
 
     (trade_dir / "selection_snapshot.json").write_text(
         json.dumps(
@@ -263,6 +314,32 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                         },
                     }
                 ],
+                "catalyst_theme_shadow_candidates": [
+                    {
+                        "ticker": "301001",
+                        "decision": "catalyst_theme_shadow",
+                        "score_target": 0.3874,
+                        "confidence": 0.3874,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "top_reasons": ["candidate_score=0.39", "total_shortfall=0.06"],
+                        "candidate_source": "catalyst_theme_shadow",
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "shadow"},
+                        "blockers": ["candidate_score_below_catalyst_theme_floor"],
+                        "filter_reason": "candidate_score_below_catalyst_theme_floor",
+                        "threshold_shortfalls": {"candidate_score": 0.06},
+                        "failed_threshold_count": 1,
+                        "total_shortfall": 0.06,
+                        "promotion_trigger": "若催化继续发酵，可升级到正式题材研究池。",
+                        "metrics": {
+                            "breakout_freshness": 0.301,
+                            "trend_acceleration": 0.241,
+                            "close_strength": 0.541,
+                            "sector_resonance": 0.182,
+                            "catalyst_freshness": 0.812,
+                        },
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -284,11 +361,15 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
     assert analysis["research_upside_radar_entries"][0]["historical_prior"]["summary"] is not None
     assert [entry["ticker"] for entry in analysis["catalyst_theme_entries"]] == ["300999"]
     assert analysis["catalyst_theme_entries"][0]["historical_prior"]["summary"] is not None
+    assert [entry["ticker"] for entry in analysis["catalyst_theme_shadow_entries"]] == ["301001"]
+    assert analysis["summary"]["catalyst_theme_frontier_promoted_count"] == 1
+    assert analysis["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
     assert [entry["ticker"] for entry in analysis["excluded_research_entries"]] == ["002002"]
     assert "300757" in analysis["recommendation"]
     assert "300442" in analysis["recommendation"]
     assert "002001" in analysis["recommendation"]
     assert "300999" in analysis["recommendation"]
+    assert "301001" in analysis["recommendation"]
     assert analysis["selected_entries"][0]["historical_prior"]["execution_quality_label"] == "balanced_confirmation"
 
 
@@ -390,12 +471,39 @@ def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_exclude
                         },
                     }
                 ],
+                "catalyst_theme_shadow_candidates": [
+                    {
+                        "ticker": "301001",
+                        "decision": "catalyst_theme_shadow",
+                        "score_target": 0.3874,
+                        "confidence": 0.3874,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "top_reasons": ["candidate_score=0.39", "total_shortfall=0.06"],
+                        "candidate_source": "catalyst_theme_shadow",
+                        "gate_status": {"data": "pass", "structural": "fail", "score": "shadow"},
+                        "blockers": ["candidate_score_below_catalyst_theme_floor"],
+                        "filter_reason": "candidate_score_below_catalyst_theme_floor",
+                        "threshold_shortfalls": {"candidate_score": 0.06},
+                        "failed_threshold_count": 1,
+                        "total_shortfall": 0.06,
+                        "promotion_trigger": "若催化继续发酵，可升级到正式题材研究池。",
+                        "metrics": {
+                            "breakout_freshness": 0.301,
+                            "trend_acceleration": 0.241,
+                            "close_strength": 0.541,
+                            "sector_resonance": 0.182,
+                            "catalyst_freshness": 0.812,
+                        },
+                    }
+                ],
             },
             ensure_ascii=False,
         )
         + "\n",
         encoding="utf-8",
     )
+    _write_catalyst_theme_frontier(report_dir)
 
     analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-03-27", next_trade_date="2026-03-30")
     markdown = render_btst_next_day_trade_brief_markdown(analysis)
@@ -407,7 +515,11 @@ def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_exclude
     assert "historical_summary" in markdown
     assert "Research Upside Radar" in markdown
     assert "Catalyst Theme Research Lane" in markdown
+    assert "Catalyst Theme Frontier Priority" in markdown
+    assert "Catalyst Theme Shadow Watch" in markdown
     assert "### 300999" in markdown
+    assert "### 301001" in markdown
+    assert "frontier_role: promoted_shadow_priority" in markdown
     assert "### 002001" in markdown
     assert "### 002002" in markdown
     assert "Opportunity Expansion Pool" in markdown

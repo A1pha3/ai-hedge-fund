@@ -211,6 +211,20 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
         "by_model_tier": {},
         "by_provider": {},
         "context_breakdown": [],
+        "error_type_counts": {},
+        "sample_errors": [],
+    }
+    assert summary["llm_error_digest"] == {
+        "status": "no_data",
+        "error_count": 0,
+        "rate_limit_error_count": 0,
+        "fallback_attempt_count": 0,
+        "affected_provider_count": 0,
+        "top_error_types": [],
+        "affected_providers": [],
+        "sample_errors": [],
+        "fallback_gap_detected": False,
+        "recommendation": "no_llm_metrics_available",
     }
     assert summary["research_feedback_summary"]["feedback_file_count"] >= 1
     assert summary["research_feedback_summary"]["trade_date_count"] >= 1
@@ -818,6 +832,8 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
                         "model_tier": "fast",
                         "model_provider": "Volcengine Ark",
                         "success": False,
+                        "error_type": "RateLimitError",
+                        "error_message": "provider burst limit exceeded",
                         "is_rate_limit": True,
                         "used_fallback": True,
                         "duration_ms": 2200.0,
@@ -911,6 +927,17 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
     assert summary["llm_observability_summary"]["by_trade_date"]["20240301"]["attempts"] == 2
     assert summary["llm_observability_summary"]["by_model_tier"]["fast"]["attempts"] == 2
     assert summary["llm_observability_summary"]["by_provider"]["Volcengine Ark"]["rate_limit_errors"] == 1
+    assert summary["llm_observability_summary"]["error_type_counts"] == {"RateLimitError": 1}
+    assert summary["llm_observability_summary"]["sample_errors"] == [
+        {
+            "trade_date": "20240301",
+            "pipeline_stage": "daily_pipeline_post_market",
+            "model_tier": "fast",
+            "provider": "Volcengine Ark",
+            "error_type": "RateLimitError",
+            "message": "provider burst limit exceeded",
+        }
+    ]
     assert summary["llm_observability_summary"]["context_breakdown"] == [
         {
             "trade_date": "20240301",
@@ -924,6 +951,7 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
             "fallback_attempts": 0,
             "total_duration_ms": 1200.0,
             "avg_duration_ms": 1200.0,
+            "error_types": {},
         },
         {
             "trade_date": "20240301",
@@ -937,6 +965,7 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
             "fallback_attempts": 1,
             "total_duration_ms": 2200.0,
             "avg_duration_ms": 2200.0,
+            "error_types": {"RateLimitError": 1},
         },
         {
             "trade_date": "20240304",
@@ -950,8 +979,40 @@ def test_run_paper_trading_session_replays_frozen_current_plans(tmp_path, monkey
             "fallback_attempts": 0,
             "total_duration_ms": 3200.0,
             "avg_duration_ms": 3200.0,
+            "error_types": {},
         },
     ]
+    assert summary["llm_error_digest"] == {
+        "status": "degraded",
+        "error_count": 2,
+        "rate_limit_error_count": 2,
+        "fallback_attempt_count": 3,
+        "affected_provider_count": 1,
+        "top_error_types": [{"error_type": "RateLimitError", "count": 1}],
+        "affected_providers": [
+            {
+                "provider": "Volcengine Ark",
+                "attempts": 1,
+                "errors": 1,
+                "error_rate": 1.0,
+                "rate_limit_errors": 1,
+                "fallback_attempts": 1,
+                "top_error_types": [{"error_type": "RateLimitError", "count": 1}],
+            }
+        ],
+        "sample_errors": [
+            {
+                "trade_date": "20240301",
+                "pipeline_stage": "daily_pipeline_post_market",
+                "model_tier": "fast",
+                "provider": "Volcengine Ark",
+                "error_type": "RateLimitError",
+                "message": "provider burst limit exceeded",
+            }
+        ],
+        "fallback_gap_detected": False,
+        "recommendation": "rate_limit_pressure_detected_consider_cooldown_or_concurrency_reduction",
+    }
     assert summary["final_portfolio_snapshot"]["positions"]["AAPL"]["long"] == 100
 
     lines = [json.loads(line) for line in artifacts.daily_events_path.read_text(encoding="utf-8").splitlines() if line.strip()]

@@ -14,11 +14,52 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
         json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    (report_dir / "catalyst_theme_frontier_latest.json").write_text(
+        json.dumps(
+            {
+                "shadow_candidate_count": 1,
+                "baseline_selected_count": 0,
+                "recommendation": "优先跟踪 frontier promoted shadow。",
+                "recommended_variant": {
+                    "variant_name": "catalyst_theme_relaxed_sector_frontier",
+                    "promoted_shadow_count": 1,
+                    "threshold_relaxation_cost": 0.09,
+                    "thresholds": {"candidate_score": 0.30, "sector_resonance": 0.20},
+                    "top_promoted_rows": [{"ticker": "301001"}],
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "catalyst_theme_frontier_latest.md").write_text("# Catalyst Theme Frontier\n", encoding="utf-8")
     (trade_dir / "selection_snapshot.json").write_text(
         json.dumps(
             {
                 "trade_date": "20260327",
                 "target_mode": "short_trade_only",
+                "catalyst_theme_shadow_candidates": [
+                    {
+                        "ticker": "301001",
+                        "decision": "catalyst_theme_shadow",
+                        "score_target": 0.32,
+                        "candidate_source": "catalyst_theme_shadow",
+                        "filter_reason": "sector_resonance_below_catalyst_theme_floor",
+                        "threshold_shortfalls": {"candidate_score": 0.02, "sector_resonance": 0.03},
+                        "failed_threshold_count": 2,
+                        "total_shortfall": 0.05,
+                        "positive_tags": ["strong_catalyst_freshness", "breakout_watch_ready"],
+                        "top_reasons": ["candidate_score=0.32", "catalyst_freshness=0.82", "total_shortfall=0.05"],
+                        "metrics": {
+                            "breakout_freshness": 0.14,
+                            "trend_acceleration": 0.21,
+                            "close_strength": 0.41,
+                            "sector_resonance": 0.22,
+                            "catalyst_freshness": 0.82,
+                        },
+                    }
+                ],
                 "selection_targets": {
                     "300757": {
                         "ticker": "300757",
@@ -122,14 +163,23 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     markdown = (tmp_path / "btst_premarket_execution_card_20260327_for_20260330.md").read_text(encoding="utf-8")
 
     assert result["analysis"]["primary_action"]["ticker"] == "300757"
+    assert payload["summary"]["catalyst_theme_frontier_promoted_count"] == 1
+    assert payload["summary"]["catalyst_theme_shadow_count"] == 1
     assert [entry["ticker"] for entry in payload["watch_actions"]] == ["601869"]
     assert [entry["ticker"] for entry in payload["opportunity_actions"]] == ["300442"]
+    assert payload["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
+    assert [entry["ticker"] for entry in payload["catalyst_theme_shadow_watch"]] == ["301001"]
     assert payload["primary_action"]["historical_prior"]["execution_quality_label"] == "unknown"
     assert [entry["ticker"] for entry in payload["excluded_research_entries"]] == ["002002"]
     assert "# BTST Premarket Execution Card" in markdown
+    assert "## Catalyst Theme Frontier Priority" in markdown
+    assert "## Catalyst Theme Shadow Watch" in markdown
     assert "300757" in markdown
     assert "601869" in markdown
     assert "300442" in markdown
+    assert "301001" in markdown
+    assert "action_tier: catalyst_theme_frontier_priority" in markdown
     assert "Opportunity Pool Actions" in markdown
+    assert "execution_posture: research_followup_only" in markdown
     assert "execution_quality_label" in markdown
     assert "002002" in markdown
