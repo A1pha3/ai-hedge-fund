@@ -114,6 +114,14 @@ from scripts.run_btst_candidate_pool_rebucket_shadow_pack import (
     render_btst_candidate_pool_rebucket_shadow_pack_markdown,
     run_btst_candidate_pool_rebucket_shadow_pack,
 )
+from scripts.run_btst_candidate_pool_corridor_validation_pack import (
+    analyze_btst_candidate_pool_corridor_validation_pack,
+    render_btst_candidate_pool_corridor_validation_pack_markdown,
+)
+from scripts.run_btst_candidate_pool_rebucket_comparison_bundle import (
+    analyze_btst_candidate_pool_rebucket_comparison_bundle,
+    render_btst_candidate_pool_rebucket_comparison_bundle_markdown,
+)
 from scripts.validate_btst_governance_consistency import (
     render_btst_governance_validation_markdown,
     validate_btst_governance_consistency,
@@ -184,6 +192,10 @@ BTST_CANDIDATE_POOL_REBUCKET_SHADOW_PACK_JSON = "btst_candidate_pool_rebucket_sh
 BTST_CANDIDATE_POOL_REBUCKET_SHADOW_PACK_MD = "btst_candidate_pool_rebucket_shadow_pack_latest.md"
 BTST_CANDIDATE_POOL_REBUCKET_OBJECTIVE_VALIDATION_JSON = "btst_candidate_pool_rebucket_objective_validation_latest.json"
 BTST_CANDIDATE_POOL_REBUCKET_OBJECTIVE_VALIDATION_MD = "btst_candidate_pool_rebucket_objective_validation_latest.md"
+BTST_CANDIDATE_POOL_REBUCKET_COMPARISON_BUNDLE_JSON = "btst_candidate_pool_rebucket_comparison_bundle_latest.json"
+BTST_CANDIDATE_POOL_REBUCKET_COMPARISON_BUNDLE_MD = "btst_candidate_pool_rebucket_comparison_bundle_latest.md"
+BTST_CANDIDATE_POOL_CORRIDOR_VALIDATION_PACK_JSON = "btst_candidate_pool_corridor_validation_pack_latest.json"
+BTST_CANDIDATE_POOL_CORRIDOR_VALIDATION_PACK_MD = "btst_candidate_pool_corridor_validation_pack_latest.md"
 MULTI_WINDOW_ROLE_CANDIDATES_LATEST_JSON = "multi_window_short_trade_role_candidates_latest.json"
 MULTI_WINDOW_ROLE_CANDIDATES_LATEST_MD = "multi_window_short_trade_role_candidates_latest.md"
 RECURRING_FRONTIER_TRANSITION_LATEST_JSON = "recurring_frontier_transition_candidates_latest.json"
@@ -524,6 +536,32 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "source_kind": "generated_governance_artifact",
     },
     {
+        "id": "btst_candidate_pool_rebucket_comparison_bundle_latest",
+        "path": "data/reports/btst_candidate_pool_rebucket_comparison_bundle_latest.md",
+        "report_type": "btst_candidate_pool_rebucket_comparison_bundle",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "rebucket lane 现在该如何和 corridor objective leader 做并行对照",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_corridor_validation_pack_latest",
+        "path": "data/reports/btst_candidate_pool_corridor_validation_pack_latest.md",
+        "report_type": "btst_candidate_pool_corridor_validation_pack",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "corridor objective leader 应先验证哪只票、并行盯哪只票",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
         "id": "btst_tradeable_opportunity_pool_march",
         "path": "data/reports/btst_tradeable_opportunity_pool_march.md",
         "report_type": "btst_tradeable_opportunity_pool",
@@ -792,6 +830,8 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_independent_window_monitor_latest",
             "btst_candidate_pool_lane_objective_support_latest",
             "btst_candidate_pool_rebucket_objective_validation_latest",
+            "btst_candidate_pool_rebucket_comparison_bundle_latest",
+            "btst_candidate_pool_corridor_validation_pack_latest",
             "btst_tradeable_opportunity_pool_march",
             "btst_no_candidate_entry_action_board_latest",
             "btst_no_candidate_entry_replay_bundle_latest",
@@ -826,6 +866,8 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_tplus1_tplus2_objective_monitor_latest",
             "btst_candidate_pool_lane_objective_support_latest",
             "btst_candidate_pool_rebucket_objective_validation_latest",
+            "btst_candidate_pool_rebucket_comparison_bundle_latest",
+            "btst_candidate_pool_corridor_validation_pack_latest",
             "btst_tradeable_opportunity_pool_march",
             "btst_no_candidate_entry_action_board_latest",
             "btst_no_candidate_entry_replay_bundle_latest",
@@ -862,6 +904,8 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_independent_window_monitor_latest",
             "btst_candidate_pool_lane_objective_support_latest",
             "btst_candidate_pool_rebucket_objective_validation_latest",
+            "btst_candidate_pool_rebucket_comparison_bundle_latest",
+            "btst_candidate_pool_corridor_validation_pack_latest",
             "btst_tradeable_opportunity_pool_march",
             "btst_no_candidate_entry_action_board_latest",
             "btst_no_candidate_entry_replay_bundle_latest",
@@ -1308,6 +1352,10 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
     candidate_pool_rebucket_shadow_pack_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_SHADOW_PACK_MD
     candidate_pool_rebucket_objective_validation_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_OBJECTIVE_VALIDATION_JSON
     candidate_pool_rebucket_objective_validation_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_OBJECTIVE_VALIDATION_MD
+    candidate_pool_rebucket_comparison_bundle_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_COMPARISON_BUNDLE_JSON
+    candidate_pool_rebucket_comparison_bundle_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_COMPARISON_BUNDLE_MD
+    candidate_pool_corridor_validation_pack_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_CORRIDOR_VALIDATION_PACK_JSON
+    candidate_pool_corridor_validation_pack_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_CORRIDOR_VALIDATION_PACK_MD
 
     required_inputs = {
         "frontier_report": frontier_report_path,
@@ -1328,10 +1376,14 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
     candidate_pool_branch_priority_board_status = "skipped_missing_candidate_pool_recall_dossier"
     candidate_pool_lane_objective_support_analysis: dict[str, Any] = {}
     candidate_pool_lane_objective_support_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_corridor_validation_pack_analysis: dict[str, Any] = {}
+    candidate_pool_corridor_validation_pack_status = "skipped_missing_candidate_pool_recall_dossier"
     candidate_pool_rebucket_shadow_pack_analysis: dict[str, Any] = {}
     candidate_pool_rebucket_shadow_pack_status = "skipped_missing_candidate_pool_recall_dossier"
     candidate_pool_rebucket_objective_validation_analysis: dict[str, Any] = {}
     candidate_pool_rebucket_objective_validation_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_rebucket_comparison_bundle_analysis: dict[str, Any] = {}
+    candidate_pool_rebucket_comparison_bundle_status = "skipped_missing_candidate_pool_recall_dossier"
     if tradeable_opportunity_pool_json_path.exists():
         try:
             no_candidate_entry_action_board_analysis = analyze_btst_no_candidate_entry_action_board(
@@ -1410,6 +1462,16 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             candidate_pool_branch_priority_board_md_path.write_text(render_btst_candidate_pool_branch_priority_board_markdown(candidate_pool_branch_priority_board_analysis), encoding="utf-8")
             candidate_pool_branch_priority_board_status = "refreshed"
 
+            candidate_pool_corridor_validation_pack_analysis = analyze_btst_candidate_pool_corridor_validation_pack(
+                candidate_pool_recall_dossier_json_path,
+                lane_objective_support_path=candidate_pool_lane_objective_support_json_path,
+                branch_priority_board_path=candidate_pool_branch_priority_board_json_path,
+                objective_monitor_path=objective_monitor_json_path if objective_monitor_json_path.exists() else None,
+            )
+            candidate_pool_corridor_validation_pack_json_path.write_text(json.dumps(candidate_pool_corridor_validation_pack_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_corridor_validation_pack_md_path.write_text(render_btst_candidate_pool_corridor_validation_pack_markdown(candidate_pool_corridor_validation_pack_analysis), encoding="utf-8")
+            candidate_pool_corridor_validation_pack_status = str(candidate_pool_corridor_validation_pack_analysis.get("pack_status") or "refreshed")
+
             rebucket_candidates = [
                 dict(row)
                 for row in list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_experiment_queue") or [])
@@ -1446,6 +1508,18 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 candidate_pool_rebucket_objective_validation_json_path.write_text(json.dumps(candidate_pool_rebucket_objective_validation_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                 candidate_pool_rebucket_objective_validation_md_path.write_text(render_btst_candidate_pool_rebucket_objective_validation_markdown(candidate_pool_rebucket_objective_validation_analysis), encoding="utf-8")
                 candidate_pool_rebucket_objective_validation_status = str(candidate_pool_rebucket_objective_validation_analysis.get("validation_status") or "skipped_no_rebucket_candidate")
+
+            candidate_pool_rebucket_comparison_bundle_analysis = analyze_btst_candidate_pool_rebucket_comparison_bundle(
+                candidate_pool_recall_dossier_json_path,
+                lane_objective_support_path=candidate_pool_lane_objective_support_json_path,
+                branch_priority_board_path=candidate_pool_branch_priority_board_json_path,
+                rebucket_shadow_pack_path=candidate_pool_rebucket_shadow_pack_json_path,
+                rebucket_objective_validation_path=candidate_pool_rebucket_objective_validation_json_path,
+                objective_monitor_path=objective_monitor_json_path if objective_monitor_json_path.exists() else None,
+            )
+            candidate_pool_rebucket_comparison_bundle_json_path.write_text(json.dumps(candidate_pool_rebucket_comparison_bundle_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_rebucket_comparison_bundle_md_path.write_text(render_btst_candidate_pool_rebucket_comparison_bundle_markdown(candidate_pool_rebucket_comparison_bundle_analysis), encoding="utf-8")
+            candidate_pool_rebucket_comparison_bundle_status = str(candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status") or "refreshed")
         except Exception as exc:
             return {
                 "status": "skipped_refresh_error",
@@ -1509,6 +1583,13 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "candidate_pool_branch_priority_board_rows": list(candidate_pool_branch_priority_board_analysis.get("branch_rows") or [])[:3],
             "candidate_pool_branch_priority_alignment_status": candidate_pool_branch_priority_board_analysis.get("priority_alignment_status"),
             "candidate_pool_branch_priority_alignment_summary": candidate_pool_branch_priority_board_analysis.get("alignment_summary"),
+            "candidate_pool_corridor_validation_pack_status": candidate_pool_corridor_validation_pack_status,
+            "candidate_pool_corridor_validation_pack_json": candidate_pool_corridor_validation_pack_json_path.as_posix() if candidate_pool_corridor_validation_pack_analysis else None,
+            "candidate_pool_corridor_validation_pack_summary": {
+                "pack_status": candidate_pool_corridor_validation_pack_analysis.get("pack_status"),
+                "primary_validation_ticker": dict(candidate_pool_corridor_validation_pack_analysis.get("primary_validation_ticker") or {}).get("ticker"),
+                "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_validation_pack_analysis.get("parallel_watch_tickers") or [])[:3] if str(row.get("ticker") or "").strip()],
+            },
             "candidate_pool_lane_objective_support_status": candidate_pool_lane_objective_support_status,
             "candidate_pool_lane_objective_support_json": candidate_pool_lane_objective_support_json_path.as_posix() if candidate_pool_lane_objective_support_analysis else None,
             "candidate_pool_lane_objective_support_rows": list(candidate_pool_lane_objective_support_analysis.get("branch_rows") or [])[:3],
@@ -1521,6 +1602,13 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "validation_status": candidate_pool_rebucket_objective_validation_analysis.get("validation_status"),
                 "support_verdict": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("support_verdict"),
                 "mean_t_plus_2_return": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("mean_t_plus_2_return"),
+            },
+            "candidate_pool_rebucket_comparison_bundle_status": candidate_pool_rebucket_comparison_bundle_status,
+            "candidate_pool_rebucket_comparison_bundle_json": candidate_pool_rebucket_comparison_bundle_json_path.as_posix() if candidate_pool_rebucket_comparison_bundle_analysis else None,
+            "candidate_pool_rebucket_comparison_bundle_summary": {
+                "bundle_status": candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status"),
+                "structural_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("structural_leader") or {}).get("priority_handoff"),
+                "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
             },
             "candidate_pool_recall_action_queue_task_ids": [
                 str(row.get("task_id") or "")
@@ -1684,6 +1772,13 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
         "candidate_pool_branch_priority_board_rows": list(candidate_pool_branch_priority_board_analysis.get("branch_rows") or [])[:3],
         "candidate_pool_branch_priority_alignment_status": candidate_pool_branch_priority_board_analysis.get("priority_alignment_status"),
         "candidate_pool_branch_priority_alignment_summary": candidate_pool_branch_priority_board_analysis.get("alignment_summary"),
+        "candidate_pool_corridor_validation_pack_status": candidate_pool_corridor_validation_pack_status,
+        "candidate_pool_corridor_validation_pack_json": candidate_pool_corridor_validation_pack_json_path.as_posix() if candidate_pool_corridor_validation_pack_analysis else None,
+        "candidate_pool_corridor_validation_pack_summary": {
+            "pack_status": candidate_pool_corridor_validation_pack_analysis.get("pack_status"),
+            "primary_validation_ticker": dict(candidate_pool_corridor_validation_pack_analysis.get("primary_validation_ticker") or {}).get("ticker"),
+            "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_validation_pack_analysis.get("parallel_watch_tickers") or [])[:3] if str(row.get("ticker") or "").strip()],
+        },
         "candidate_pool_lane_objective_support_status": candidate_pool_lane_objective_support_status,
         "candidate_pool_lane_objective_support_json": candidate_pool_lane_objective_support_json_path.as_posix() if candidate_pool_lane_objective_support_analysis else None,
         "candidate_pool_lane_objective_support_rows": list(candidate_pool_lane_objective_support_analysis.get("branch_rows") or [])[:3],
@@ -1696,6 +1791,13 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "validation_status": candidate_pool_rebucket_objective_validation_analysis.get("validation_status"),
             "support_verdict": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("support_verdict"),
             "mean_t_plus_2_return": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("mean_t_plus_2_return"),
+        },
+        "candidate_pool_rebucket_comparison_bundle_status": candidate_pool_rebucket_comparison_bundle_status,
+        "candidate_pool_rebucket_comparison_bundle_json": candidate_pool_rebucket_comparison_bundle_json_path.as_posix() if candidate_pool_rebucket_comparison_bundle_analysis else None,
+        "candidate_pool_rebucket_comparison_bundle_summary": {
+            "bundle_status": candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status"),
+            "structural_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("structural_leader") or {}).get("priority_handoff"),
+            "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
         },
         "candidate_pool_recall_action_queue_task_ids": [
             str(row.get("task_id") or "")
@@ -2450,6 +2552,13 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
                 lines.append(
                     f"- candidate_entry_shadow_candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
                 )
+        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_validation_pack_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_corridor_validation_pack_status: {candidate_entry_shadow_refresh.get('candidate_pool_corridor_validation_pack_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_validation_pack_summary"):
+            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_corridor_validation_pack_summary") or {})
+            lines.append(
+                f"- candidate_entry_shadow_candidate_pool_corridor_validation_pack_summary: pack_status={summary.get('pack_status')} primary_validation_ticker={summary.get('primary_validation_ticker')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}"
+            )
         if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_status") is not None:
             lines.append(f"- candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status: {candidate_entry_shadow_refresh.get('candidate_pool_rebucket_shadow_pack_status')}")
         if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_experiment"):
@@ -2463,6 +2572,13 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
             summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_rebucket_objective_validation_summary") or {})
             lines.append(
                 f"- candidate_entry_shadow_candidate_pool_rebucket_objective_validation_summary: validation_status={summary.get('validation_status')} support_verdict={summary.get('support_verdict')} mean_t_plus_2_return={summary.get('mean_t_plus_2_return')}"
+            )
+        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_comparison_bundle_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_status: {candidate_entry_shadow_refresh.get('candidate_pool_rebucket_comparison_bundle_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_comparison_bundle_summary"):
+            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_rebucket_comparison_bundle_summary") or {})
+            lines.append(
+                f"- candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_summary: bundle_status={summary.get('bundle_status')} structural_leader={summary.get('structural_leader')} objective_leader={summary.get('objective_leader')}"
             )
     btst_score_fail_frontier_refresh = manifest.get("btst_score_fail_frontier_refresh") or {}
     if btst_score_fail_frontier_refresh:

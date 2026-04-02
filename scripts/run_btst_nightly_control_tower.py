@@ -393,10 +393,14 @@ def _extract_candidate_pool_recall_dossier_summary(manifest: dict[str, Any]) -> 
         "branch_priority_alignment_summary": refresh.get("candidate_pool_branch_priority_alignment_summary"),
         "lane_objective_support_status": refresh.get("candidate_pool_lane_objective_support_status"),
         "lane_objective_support_rows": list(refresh.get("candidate_pool_lane_objective_support_rows") or []),
+        "corridor_validation_pack_status": refresh.get("candidate_pool_corridor_validation_pack_status"),
+        "corridor_validation_pack_summary": dict(refresh.get("candidate_pool_corridor_validation_pack_summary") or {}),
         "rebucket_shadow_pack_status": refresh.get("candidate_pool_rebucket_shadow_pack_status"),
         "rebucket_shadow_pack_experiment": dict(refresh.get("candidate_pool_rebucket_shadow_pack_experiment") or {}),
         "rebucket_objective_validation_status": refresh.get("candidate_pool_rebucket_objective_validation_status"),
         "rebucket_objective_validation_summary": dict(refresh.get("candidate_pool_rebucket_objective_validation_summary") or {}),
+        "rebucket_comparison_bundle_status": refresh.get("candidate_pool_rebucket_comparison_bundle_status"),
+        "rebucket_comparison_bundle_summary": dict(refresh.get("candidate_pool_rebucket_comparison_bundle_summary") or {}),
         "action_queue": list(analysis.get("action_queue") or [])[:3],
         "next_actions": list(analysis.get("next_actions") or [])[:4],
         "recommendation": analysis.get("recommendation"),
@@ -524,10 +528,14 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "candidate_pool_branch_priority_alignment_summary": candidate_pool_recall_dossier.get("branch_priority_alignment_summary"),
         "candidate_pool_lane_objective_support_status": candidate_pool_recall_dossier.get("lane_objective_support_status"),
         "candidate_pool_lane_objective_support_rows": list(candidate_pool_recall_dossier.get("lane_objective_support_rows") or []),
+        "candidate_pool_corridor_validation_pack_status": candidate_pool_recall_dossier.get("corridor_validation_pack_status"),
+        "candidate_pool_corridor_validation_pack_summary": dict(candidate_pool_recall_dossier.get("corridor_validation_pack_summary") or {}),
         "candidate_pool_rebucket_shadow_pack_status": candidate_pool_recall_dossier.get("rebucket_shadow_pack_status"),
         "candidate_pool_rebucket_shadow_pack_experiment": dict(candidate_pool_recall_dossier.get("rebucket_shadow_pack_experiment") or {}),
         "candidate_pool_rebucket_objective_validation_status": candidate_pool_recall_dossier.get("rebucket_objective_validation_status"),
         "candidate_pool_rebucket_objective_validation_summary": dict(candidate_pool_recall_dossier.get("rebucket_objective_validation_summary") or {}),
+        "candidate_pool_rebucket_comparison_bundle_status": candidate_pool_recall_dossier.get("rebucket_comparison_bundle_status"),
+        "candidate_pool_rebucket_comparison_bundle_summary": dict(candidate_pool_recall_dossier.get("rebucket_comparison_bundle_summary") or {}),
         "overall_verdict": validation.get("overall_verdict"),
         "warn_count": validation.get("warn_count"),
         "fail_count": validation.get("fail_count"),
@@ -1570,6 +1578,12 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
         lines.append(
             f"- candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
         )
+    lines.append(f"- candidate_pool_corridor_validation_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_validation_pack_status')}")
+    corridor_validation_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_validation_pack_summary") or {})
+    if corridor_validation_summary:
+        lines.append(
+            f"- candidate_pool_corridor_validation_pack_summary: pack_status={corridor_validation_summary.get('pack_status')} primary_validation_ticker={corridor_validation_summary.get('primary_validation_ticker')} parallel_watch_tickers={corridor_validation_summary.get('parallel_watch_tickers')}"
+        )
     lines.append(f"- candidate_pool_rebucket_shadow_pack_status: {control_tower_snapshot.get('candidate_pool_rebucket_shadow_pack_status')}")
     rebucket_experiment = dict(control_tower_snapshot.get("candidate_pool_rebucket_shadow_pack_experiment") or {})
     if rebucket_experiment:
@@ -1581,6 +1595,12 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     if rebucket_validation_summary:
         lines.append(
             f"- candidate_pool_rebucket_objective_validation_summary: validation_status={rebucket_validation_summary.get('validation_status')} support_verdict={rebucket_validation_summary.get('support_verdict')} mean_t_plus_2_return={rebucket_validation_summary.get('mean_t_plus_2_return')}"
+        )
+    lines.append(f"- candidate_pool_rebucket_comparison_bundle_status: {control_tower_snapshot.get('candidate_pool_rebucket_comparison_bundle_status')}")
+    rebucket_comparison_summary = dict(control_tower_snapshot.get("candidate_pool_rebucket_comparison_bundle_summary") or {})
+    if rebucket_comparison_summary:
+        lines.append(
+            f"- candidate_pool_rebucket_comparison_bundle_summary: bundle_status={rebucket_comparison_summary.get('bundle_status')} structural_leader={rebucket_comparison_summary.get('structural_leader')} objective_leader={rebucket_comparison_summary.get('objective_leader')}"
         )
     lines.append(f"- replay_report_count: {replay_cohort_snapshot.get('report_count')}")
     lines.append(f"- replay_selection_target_counts: {replay_cohort_snapshot.get('selection_target_counts')}")
@@ -1803,11 +1823,34 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
             lines.append(
                 f"- branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
             )
+        lines.append(f"- lane_objective_support_status: {candidate_pool_recall_dossier_summary.get('lane_objective_support_status')}")
+        for row in list(candidate_pool_recall_dossier_summary.get("lane_objective_support_rows") or [])[:3]:
+            lines.append(
+                f"- lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
+            )
+        lines.append(f"- corridor_validation_pack_status: {candidate_pool_recall_dossier_summary.get('corridor_validation_pack_status')}")
+        corridor_summary = dict(candidate_pool_recall_dossier_summary.get("corridor_validation_pack_summary") or {})
+        if corridor_summary:
+            lines.append(
+                f"- corridor_validation_pack_summary: pack_status={corridor_summary.get('pack_status')} primary_validation_ticker={corridor_summary.get('primary_validation_ticker')} parallel_watch_tickers={corridor_summary.get('parallel_watch_tickers')}"
+            )
         lines.append(f"- rebucket_shadow_pack_status: {candidate_pool_recall_dossier_summary.get('rebucket_shadow_pack_status')}")
         rebucket_experiment = dict(candidate_pool_recall_dossier_summary.get("rebucket_shadow_pack_experiment") or {})
         if rebucket_experiment:
             lines.append(
                 f"- rebucket_shadow_pack_experiment: handoff={rebucket_experiment.get('priority_handoff')} readiness={rebucket_experiment.get('prototype_readiness')} tickers={rebucket_experiment.get('tickers')}"
+            )
+        lines.append(f"- rebucket_objective_validation_status: {candidate_pool_recall_dossier_summary.get('rebucket_objective_validation_status')}")
+        rebucket_validation_summary = dict(candidate_pool_recall_dossier_summary.get("rebucket_objective_validation_summary") or {})
+        if rebucket_validation_summary:
+            lines.append(
+                f"- rebucket_objective_validation_summary: validation_status={rebucket_validation_summary.get('validation_status')} support_verdict={rebucket_validation_summary.get('support_verdict')} mean_t_plus_2_return={rebucket_validation_summary.get('mean_t_plus_2_return')}"
+            )
+        lines.append(f"- rebucket_comparison_bundle_status: {candidate_pool_recall_dossier_summary.get('rebucket_comparison_bundle_status')}")
+        rebucket_comparison_summary = dict(candidate_pool_recall_dossier_summary.get("rebucket_comparison_bundle_summary") or {})
+        if rebucket_comparison_summary:
+            lines.append(
+                f"- rebucket_comparison_bundle_summary: bundle_status={rebucket_comparison_summary.get('bundle_status')} structural_leader={rebucket_comparison_summary.get('structural_leader')} objective_leader={rebucket_comparison_summary.get('objective_leader')}"
             )
         for row in list(candidate_pool_recall_dossier_summary.get("action_queue") or []):
             lines.append(f"- candidate_pool_recall_task: {row.get('task_id')} stage={row.get('dominant_blocking_stage')} tier={row.get('action_tier')}")

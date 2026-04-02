@@ -1170,8 +1170,10 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["control_tower_snapshot"]["candidate_pool_branch_priority_alignment_status"] == "aligned_top_lane"
     assert payload["control_tower_snapshot"]["candidate_pool_lane_objective_support_status"] == "refreshed"
     assert payload["control_tower_snapshot"]["candidate_pool_lane_objective_support_rows"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert payload["control_tower_snapshot"]["candidate_pool_corridor_validation_pack_status"] in {"parallel_probe_ready", "accumulate_more_corridor_evidence", "skipped_no_corridor_lane"}
     assert payload["control_tower_snapshot"]["candidate_pool_rebucket_shadow_pack_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
     assert payload["control_tower_snapshot"]["candidate_pool_rebucket_objective_validation_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
+    assert payload["control_tower_snapshot"]["candidate_pool_rebucket_comparison_bundle_status"] in {"ready_for_parallel_comparison", "keep_shadow_first", "needs_more_closed_cycle_support", "hold_structure_only", "skipped_no_rebucket_lane"}
     assert any(item["entry_id"] == "latest_btst_catalyst_theme_frontier_markdown" for item in payload["recommended_reading_order"])
     assert any(item["entry_id"] == "btst_score_fail_frontier_latest" for item in payload["recommended_reading_order"])
     assert delta_payload["comparison_basis"] == "previous_btst_report"
@@ -1220,8 +1222,10 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "candidate_pool_branch_priority_board_status:" in markdown
     assert "candidate_pool_branch_priority_alignment_status:" in markdown
     assert "candidate_pool_lane_objective_support_status:" in markdown
+    assert "candidate_pool_corridor_validation_pack_status:" in markdown
     assert "candidate_pool_rebucket_shadow_pack_status:" in markdown
     assert "candidate_pool_rebucket_objective_validation_status:" in markdown
+    assert "candidate_pool_rebucket_comparison_bundle_status:" in markdown
     assert "## Candidate Pool Recall Dossier" in markdown
     assert "dominant_stage: candidate_pool_truncated_after_filters" in markdown
     assert "candidate_pool_recall_task:" in markdown
