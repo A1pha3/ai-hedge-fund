@@ -242,6 +242,168 @@ def _extract_score_fail_frontier_summary(manifest: dict[str, Any]) -> dict[str, 
     }
 
 
+def _extract_tradeable_opportunity_pool_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    refresh = dict(manifest.get("btst_tradeable_opportunity_pool_refresh") or {})
+    analysis = _safe_load_json(refresh.get("analysis_json"))
+    waterfall = _safe_load_json(refresh.get("waterfall_json"))
+    if not any([refresh, analysis, waterfall]):
+        return {}
+
+    top_tradeable_kill_switches = list(waterfall.get("top_tradeable_kill_switches") or refresh.get("top_tradeable_kill_switches") or [])[:3]
+    top_strict_goal_rows = list(analysis.get("top_strict_goal_false_negative_rows") or waterfall.get("top_strict_goal_false_negative_rows") or [])[:3]
+    return {
+        "status": refresh.get("status"),
+        "result_truth_pool_count": refresh.get("result_truth_pool_count") or analysis.get("result_truth_pool_count"),
+        "tradeable_opportunity_pool_count": refresh.get("tradeable_opportunity_pool_count") or analysis.get("tradeable_opportunity_pool_count"),
+        "system_recall_count": refresh.get("system_recall_count") or analysis.get("system_recall_count"),
+        "selected_or_near_miss_count": refresh.get("selected_or_near_miss_count") or analysis.get("selected_or_near_miss_count"),
+        "main_execution_pool_count": refresh.get("main_execution_pool_count") or analysis.get("main_execution_pool_count"),
+        "strict_goal_case_count": refresh.get("strict_goal_case_count") or analysis.get("strict_goal_case_count"),
+        "strict_goal_false_negative_count": refresh.get("strict_goal_false_negative_count") or analysis.get("strict_goal_false_negative_count"),
+        "tradeable_pool_capture_rate": refresh.get("tradeable_pool_capture_rate") or analysis.get("tradeable_pool_capture_rate"),
+        "tradeable_pool_selected_or_near_miss_rate": refresh.get("tradeable_pool_selected_or_near_miss_rate") or analysis.get("tradeable_pool_selected_or_near_miss_rate"),
+        "tradeable_pool_main_execution_rate": refresh.get("tradeable_pool_main_execution_rate") or analysis.get("tradeable_pool_main_execution_rate"),
+        "no_candidate_entry_count": refresh.get("no_candidate_entry_count") or dict(analysis.get("no_candidate_entry_summary") or {}).get("count"),
+        "no_candidate_entry_share_of_tradeable_pool": refresh.get("no_candidate_entry_share_of_tradeable_pool") or dict(analysis.get("no_candidate_entry_summary") or {}).get("share_of_tradeable_pool"),
+        "top_no_candidate_entry_industries": refresh.get("top_no_candidate_entry_industries") or list(dict(dict(analysis.get("no_candidate_entry_summary") or {}).get("industry_counts") or {}).keys())[:3],
+        "top_no_candidate_entry_tickers": refresh.get("top_no_candidate_entry_tickers") or [
+            str(row.get("ticker") or "")
+            for row in list(dict(analysis.get("no_candidate_entry_summary") or {}).get("top_ticker_rows") or [])[:3]
+            if row.get("ticker")
+        ],
+        "top_tradeable_kill_switches": top_tradeable_kill_switches,
+        "top_tradeable_kill_switch_labels": [str(row.get("kill_switch") or "") for row in top_tradeable_kill_switches if row.get("kill_switch")],
+        "top_strict_goal_false_negative_tickers": [str(row.get("ticker") or "") for row in top_strict_goal_rows if row.get("ticker")],
+        "top_strict_goal_false_negative_rows": top_strict_goal_rows,
+        "recommendation": refresh.get("recommendation") or analysis.get("recommendation") or waterfall.get("recommendation"),
+        "analysis_markdown_path": refresh.get("analysis_markdown"),
+        "waterfall_markdown_path": refresh.get("waterfall_markdown"),
+    }
+
+
+def _extract_no_candidate_entry_action_board_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    refresh = dict(manifest.get("candidate_entry_shadow_refresh") or {})
+    action_board_entry = _entry_by_id(manifest, "btst_no_candidate_entry_action_board_latest")
+    analysis = _safe_load_json(refresh.get("no_candidate_entry_action_board_json") or action_board_entry.get("absolute_path"))
+    if not any([refresh, analysis, action_board_entry]):
+        return {}
+
+    next_tasks = list(analysis.get("next_3_tasks") or [])[:3]
+    priority_queue = list(analysis.get("priority_queue") or [])[:3]
+    return {
+        "status": refresh.get("no_candidate_entry_action_board_status") or ("available" if analysis else None),
+        "priority_queue_count": refresh.get("no_candidate_entry_priority_queue_count") or analysis.get("priority_queue_count"),
+        "top_priority_tickers": refresh.get("no_candidate_entry_top_tickers") or analysis.get("top_priority_tickers"),
+        "top_hotspot_report_dirs": refresh.get("no_candidate_entry_hotspot_report_dirs") or analysis.get("top_hotspot_report_dirs"),
+        "next_tasks": next_tasks,
+        "priority_queue": priority_queue,
+        "recommendation": analysis.get("recommendation"),
+        "analysis_markdown_path": action_board_entry.get("absolute_path"),
+    }
+
+
+def _extract_no_candidate_entry_replay_bundle_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    refresh = dict(manifest.get("candidate_entry_shadow_refresh") or {})
+    bundle_entry = _entry_by_id(manifest, "btst_no_candidate_entry_replay_bundle_latest")
+    analysis = _safe_load_json(refresh.get("no_candidate_entry_replay_bundle_json") or bundle_entry.get("absolute_path"))
+    if not any([refresh, analysis, bundle_entry]):
+        return {}
+
+    global_window_scan = dict(analysis.get("global_window_scan") or {})
+    return {
+        "status": refresh.get("no_candidate_entry_replay_bundle_status") or ("available" if analysis else None),
+        "promising_priority_tickers": refresh.get("no_candidate_entry_promising_tickers") or analysis.get("promising_priority_tickers"),
+        "promising_hotspot_report_dirs": analysis.get("promising_hotspot_report_dirs"),
+        "candidate_entry_status_counts": analysis.get("candidate_entry_status_counts"),
+        "global_window_scan_rollout_readiness": global_window_scan.get("rollout_readiness"),
+        "global_window_scan_focus_hit_report_count": global_window_scan.get("focus_hit_report_count"),
+        "next_actions": list(analysis.get("next_actions") or [])[:3],
+        "recommendation": analysis.get("recommendation"),
+        "analysis_markdown_path": bundle_entry.get("absolute_path"),
+    }
+
+
+def _extract_no_candidate_entry_failure_dossier_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    refresh = dict(manifest.get("candidate_entry_shadow_refresh") or {})
+    dossier_entry = _entry_by_id(manifest, "btst_no_candidate_entry_failure_dossier_latest")
+    analysis = _safe_load_json(refresh.get("no_candidate_entry_failure_dossier_json") or dossier_entry.get("absolute_path"))
+    if not any([refresh, analysis, dossier_entry]):
+        return {}
+
+    return {
+        "status": refresh.get("no_candidate_entry_failure_dossier_status") or ("available" if analysis else None),
+        "priority_failure_class_counts": analysis.get("priority_failure_class_counts"),
+        "hotspot_failure_class_counts": analysis.get("hotspot_failure_class_counts"),
+        "priority_handoff_stage_counts": analysis.get("priority_handoff_stage_counts"),
+        "top_absent_from_watchlist_tickers": analysis.get("top_absent_from_watchlist_tickers"),
+        "top_watchlist_visible_but_not_candidate_entry_tickers": analysis.get("top_watchlist_visible_but_not_candidate_entry_tickers"),
+        "top_candidate_entry_visible_but_not_selection_target_tickers": analysis.get("top_candidate_entry_visible_but_not_selection_target_tickers"),
+        "top_upstream_absence_tickers": refresh.get("no_candidate_entry_upstream_absence_tickers") or analysis.get("top_upstream_absence_tickers"),
+        "top_candidate_entry_semantic_miss_tickers": refresh.get("no_candidate_entry_semantic_miss_tickers") or analysis.get("top_candidate_entry_semantic_miss_tickers"),
+        "top_present_but_outside_candidate_entry_tickers": analysis.get("top_present_but_outside_candidate_entry_tickers"),
+        "top_missing_replay_input_tickers": analysis.get("top_missing_replay_input_tickers"),
+        "handoff_action_queue": list(analysis.get("priority_handoff_action_queue") or [])[:3],
+        "next_actions": list(analysis.get("next_actions") or [])[:4],
+        "recommendation": analysis.get("recommendation"),
+        "analysis_markdown_path": dossier_entry.get("absolute_path"),
+    }
+
+
+def _extract_watchlist_recall_dossier_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    refresh = dict(manifest.get("candidate_entry_shadow_refresh") or {})
+    dossier_entry = _entry_by_id(manifest, "btst_watchlist_recall_dossier_latest")
+    analysis = _safe_load_json(refresh.get("watchlist_recall_dossier_json") or dossier_entry.get("absolute_path"))
+    if not any([refresh, analysis, dossier_entry]):
+        return {}
+
+    return {
+        "status": refresh.get("watchlist_recall_dossier_status") or ("available" if analysis else None),
+        "priority_recall_stage_counts": analysis.get("priority_recall_stage_counts"),
+        "top_absent_from_candidate_pool_tickers": refresh.get("watchlist_recall_absent_from_candidate_pool_tickers") or analysis.get("top_absent_from_candidate_pool_tickers"),
+        "top_candidate_pool_visible_but_missing_layer_b_tickers": refresh.get("watchlist_recall_candidate_pool_layer_b_gap_tickers") or analysis.get("top_candidate_pool_visible_but_missing_layer_b_tickers"),
+        "top_layer_b_visible_but_missing_watchlist_tickers": refresh.get("watchlist_recall_layer_b_watchlist_gap_tickers") or analysis.get("top_layer_b_visible_but_missing_watchlist_tickers"),
+        "action_queue": list(analysis.get("action_queue") or [])[:3],
+        "next_actions": list(analysis.get("next_actions") or [])[:4],
+        "recommendation": analysis.get("recommendation"),
+        "analysis_markdown_path": dossier_entry.get("absolute_path"),
+    }
+
+
+def _extract_candidate_pool_recall_dossier_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    refresh = dict(manifest.get("candidate_entry_shadow_refresh") or {})
+    dossier_entry = _entry_by_id(manifest, "btst_candidate_pool_recall_dossier_latest")
+    analysis = _safe_load_json(refresh.get("candidate_pool_recall_dossier_json") or dossier_entry.get("absolute_path"))
+    if not any([refresh, analysis, dossier_entry]):
+        return {}
+
+    return {
+        "status": refresh.get("candidate_pool_recall_dossier_status") or ("available" if analysis else None),
+        "priority_stage_counts": refresh.get("candidate_pool_recall_stage_counts") or analysis.get("priority_stage_counts"),
+        "dominant_stage": refresh.get("candidate_pool_recall_dominant_stage") or analysis.get("dominant_stage"),
+        "top_stage_tickers": refresh.get("candidate_pool_recall_top_stage_tickers") or analysis.get("top_stage_tickers"),
+        "truncation_frontier_summary": refresh.get("candidate_pool_recall_truncation_frontier_summary") or analysis.get("truncation_frontier_summary"),
+        "focus_liquidity_profiles": refresh.get("candidate_pool_recall_focus_liquidity_profiles") or list(dict(analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or [])[:3],
+        "priority_handoff_counts": refresh.get("candidate_pool_recall_priority_handoff_counts") or dict(dict(analysis.get("focus_liquidity_profile_summary") or {}).get("priority_handoff_counts") or {}),
+        "priority_handoff_branch_diagnoses": refresh.get("candidate_pool_recall_priority_handoff_branch_diagnoses") or list(analysis.get("priority_handoff_branch_diagnoses") or [])[:3],
+        "priority_handoff_branch_mechanisms": refresh.get("candidate_pool_recall_priority_handoff_branch_mechanisms") or list(analysis.get("priority_handoff_branch_mechanisms") or [])[:3],
+        "priority_handoff_branch_experiment_queue": refresh.get("candidate_pool_recall_priority_handoff_branch_experiment_queue") or list(analysis.get("priority_handoff_branch_experiment_queue") or [])[:3],
+        "branch_priority_board_status": refresh.get("candidate_pool_branch_priority_board_status"),
+        "branch_priority_board_rows": list(refresh.get("candidate_pool_branch_priority_board_rows") or []),
+        "branch_priority_alignment_status": refresh.get("candidate_pool_branch_priority_alignment_status"),
+        "branch_priority_alignment_summary": refresh.get("candidate_pool_branch_priority_alignment_summary"),
+        "lane_objective_support_status": refresh.get("candidate_pool_lane_objective_support_status"),
+        "lane_objective_support_rows": list(refresh.get("candidate_pool_lane_objective_support_rows") or []),
+        "rebucket_shadow_pack_status": refresh.get("candidate_pool_rebucket_shadow_pack_status"),
+        "rebucket_shadow_pack_experiment": dict(refresh.get("candidate_pool_rebucket_shadow_pack_experiment") or {}),
+        "rebucket_objective_validation_status": refresh.get("candidate_pool_rebucket_objective_validation_status"),
+        "rebucket_objective_validation_summary": dict(refresh.get("candidate_pool_rebucket_objective_validation_summary") or {}),
+        "action_queue": list(analysis.get("action_queue") or [])[:3],
+        "next_actions": list(analysis.get("next_actions") or [])[:4],
+        "recommendation": analysis.get("recommendation"),
+        "analysis_markdown_path": dossier_entry.get("absolute_path"),
+    }
+
+
 def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     latest_btst_run = dict(manifest.get("latest_btst_run") or {})
     report_dir_abs = latest_btst_run.get("report_dir_abs")
@@ -299,11 +461,23 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     validation = _safe_load_json(dict(manifest.get("btst_governance_validation_refresh") or {}).get("output_json"))
     independent_window_monitor = _safe_load_json(dict(manifest.get("btst_independent_window_monitor_refresh") or {}).get("output_json"))
     tplus1_tplus2_objective_monitor = _safe_load_json(dict(manifest.get("btst_tplus1_tplus2_objective_monitor_refresh") or {}).get("output_json"))
+    tradeable_opportunity_pool = _extract_tradeable_opportunity_pool_summary(manifest)
+    no_candidate_entry_action_board = _extract_no_candidate_entry_action_board_summary(manifest)
+    no_candidate_entry_replay_bundle = _extract_no_candidate_entry_replay_bundle_summary(manifest)
+    no_candidate_entry_failure_dossier = _extract_no_candidate_entry_failure_dossier_summary(manifest)
+    watchlist_recall_dossier = _extract_watchlist_recall_dossier_summary(manifest)
+    candidate_pool_recall_dossier = _extract_candidate_pool_recall_dossier_summary(manifest)
     return {
         "synthesis": synthesis,
         "validation": validation,
         "independent_window_monitor": independent_window_monitor,
         "tplus1_tplus2_objective_monitor": tplus1_tplus2_objective_monitor,
+        "tradeable_opportunity_pool": tradeable_opportunity_pool,
+        "no_candidate_entry_action_board": no_candidate_entry_action_board,
+        "no_candidate_entry_replay_bundle": no_candidate_entry_replay_bundle,
+        "no_candidate_entry_failure_dossier": no_candidate_entry_failure_dossier,
+        "watchlist_recall_dossier": watchlist_recall_dossier,
+        "candidate_pool_recall_dossier": candidate_pool_recall_dossier,
         "rollout_lanes": list(synthesis.get("lane_matrix") or []),
         "waiting_lane_count": synthesis.get("waiting_lane_count"),
         "ready_lane_count": synthesis.get("ready_lane_count"),
@@ -317,6 +491,43 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "tplus1_tplus2_tradeable_return_hit_rate": dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {}).get("t_plus_2_return_hit_rate_at_target"),
         "tplus1_tplus2_tradeable_mean_return": dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {}).get("mean_t_plus_2_return"),
         "tplus1_tplus2_tradeable_verdict": dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {}).get("verdict"),
+        "tradeable_opportunity_pool_count": tradeable_opportunity_pool.get("tradeable_opportunity_pool_count"),
+        "tradeable_opportunity_capture_rate": tradeable_opportunity_pool.get("tradeable_pool_capture_rate"),
+        "tradeable_opportunity_selected_or_near_miss_rate": tradeable_opportunity_pool.get("tradeable_pool_selected_or_near_miss_rate"),
+        "tradeable_opportunity_top_kill_switches": tradeable_opportunity_pool.get("top_tradeable_kill_switch_labels"),
+        "no_candidate_entry_priority_queue_count": no_candidate_entry_action_board.get("priority_queue_count"),
+        "no_candidate_entry_priority_tickers": no_candidate_entry_action_board.get("top_priority_tickers"),
+        "no_candidate_entry_recall_probe_tickers": no_candidate_entry_replay_bundle.get("promising_priority_tickers"),
+        "no_candidate_entry_failure_class_counts": no_candidate_entry_failure_dossier.get("priority_failure_class_counts"),
+        "no_candidate_entry_handoff_stage_counts": no_candidate_entry_failure_dossier.get("priority_handoff_stage_counts"),
+        "no_candidate_entry_absent_from_watchlist_tickers": no_candidate_entry_failure_dossier.get("top_absent_from_watchlist_tickers"),
+        "no_candidate_entry_watchlist_handoff_gap_tickers": no_candidate_entry_failure_dossier.get("top_watchlist_visible_but_not_candidate_entry_tickers"),
+        "no_candidate_entry_upstream_absence_tickers": no_candidate_entry_failure_dossier.get("top_upstream_absence_tickers"),
+        "watchlist_recall_stage_counts": watchlist_recall_dossier.get("priority_recall_stage_counts"),
+        "watchlist_recall_absent_from_candidate_pool_tickers": watchlist_recall_dossier.get("top_absent_from_candidate_pool_tickers"),
+        "watchlist_recall_candidate_pool_layer_b_gap_tickers": watchlist_recall_dossier.get("top_candidate_pool_visible_but_missing_layer_b_tickers"),
+        "watchlist_recall_layer_b_watchlist_gap_tickers": watchlist_recall_dossier.get("top_layer_b_visible_but_missing_watchlist_tickers"),
+        "candidate_pool_recall_stage_counts": candidate_pool_recall_dossier.get("priority_stage_counts"),
+        "candidate_pool_recall_dominant_stage": candidate_pool_recall_dossier.get("dominant_stage"),
+        "candidate_pool_recall_top_stage_tickers": candidate_pool_recall_dossier.get("top_stage_tickers"),
+        "candidate_pool_recall_truncation_frontier_summary": candidate_pool_recall_dossier.get("truncation_frontier_summary"),
+        "candidate_pool_recall_dominant_ranking_driver": dict(candidate_pool_recall_dossier.get("truncation_frontier_summary") or {}).get("dominant_ranking_driver"),
+        "candidate_pool_recall_dominant_liquidity_gap_mode": dict(candidate_pool_recall_dossier.get("truncation_frontier_summary") or {}).get("dominant_liquidity_gap_mode"),
+        "candidate_pool_recall_focus_liquidity_profiles": list(candidate_pool_recall_dossier.get("focus_liquidity_profiles") or []),
+        "candidate_pool_recall_priority_handoff_counts": dict(candidate_pool_recall_dossier.get("priority_handoff_counts") or {}),
+        "candidate_pool_recall_priority_handoff_branch_diagnoses": list(candidate_pool_recall_dossier.get("priority_handoff_branch_diagnoses") or []),
+        "candidate_pool_recall_priority_handoff_branch_mechanisms": list(candidate_pool_recall_dossier.get("priority_handoff_branch_mechanisms") or []),
+        "candidate_pool_recall_priority_handoff_branch_experiment_queue": list(candidate_pool_recall_dossier.get("priority_handoff_branch_experiment_queue") or []),
+        "candidate_pool_branch_priority_board_status": candidate_pool_recall_dossier.get("branch_priority_board_status"),
+        "candidate_pool_branch_priority_board_rows": list(candidate_pool_recall_dossier.get("branch_priority_board_rows") or []),
+        "candidate_pool_branch_priority_alignment_status": candidate_pool_recall_dossier.get("branch_priority_alignment_status"),
+        "candidate_pool_branch_priority_alignment_summary": candidate_pool_recall_dossier.get("branch_priority_alignment_summary"),
+        "candidate_pool_lane_objective_support_status": candidate_pool_recall_dossier.get("lane_objective_support_status"),
+        "candidate_pool_lane_objective_support_rows": list(candidate_pool_recall_dossier.get("lane_objective_support_rows") or []),
+        "candidate_pool_rebucket_shadow_pack_status": candidate_pool_recall_dossier.get("rebucket_shadow_pack_status"),
+        "candidate_pool_rebucket_shadow_pack_experiment": dict(candidate_pool_recall_dossier.get("rebucket_shadow_pack_experiment") or {}),
+        "candidate_pool_rebucket_objective_validation_status": candidate_pool_recall_dossier.get("rebucket_objective_validation_status"),
+        "candidate_pool_rebucket_objective_validation_summary": dict(candidate_pool_recall_dossier.get("rebucket_objective_validation_summary") or {}),
         "overall_verdict": validation.get("overall_verdict"),
         "warn_count": validation.get("warn_count"),
         "fail_count": validation.get("fail_count"),
@@ -1197,6 +1408,13 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
         "btst_governance_synthesis_latest",
         "btst_tplus1_tplus2_objective_monitor_latest",
         "btst_independent_window_monitor_latest",
+        "btst_tradeable_opportunity_pool_march",
+        "btst_no_candidate_entry_action_board_latest",
+        "btst_no_candidate_entry_replay_bundle_latest",
+        "btst_no_candidate_entry_failure_dossier_latest",
+        "btst_watchlist_recall_dossier_latest",
+        "btst_candidate_pool_recall_dossier_latest",
+        "btst_tradeable_opportunity_reason_waterfall_march",
         "latest_btst_priority_board",
         "latest_btst_catalyst_theme_frontier_markdown",
         "btst_score_fail_frontier_latest",
@@ -1227,6 +1445,7 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "btst_governance_validation_refresh": dict(manifest.get("btst_governance_validation_refresh") or {}).get("status"),
             "btst_replay_cohort_refresh": dict(manifest.get("btst_replay_cohort_refresh") or {}).get("status"),
             "btst_independent_window_monitor_refresh": dict(manifest.get("btst_independent_window_monitor_refresh") or {}).get("status"),
+            "btst_tradeable_opportunity_pool_refresh": dict(manifest.get("btst_tradeable_opportunity_pool_refresh") or {}).get("status"),
         },
         "control_tower_snapshot": control_tower_snapshot,
         "latest_priority_board_snapshot": {
@@ -1252,6 +1471,13 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "score_fail_frontier_markdown": latest_btst_snapshot.get("score_fail_frontier_markdown_path"),
             "score_fail_recurring_markdown": latest_btst_snapshot.get("score_fail_recurring_markdown_path"),
             "score_fail_transition_markdown": latest_btst_snapshot.get("score_fail_transition_markdown_path"),
+            "tradeable_opportunity_pool_markdown": _entry_by_id(manifest, "btst_tradeable_opportunity_pool_march").get("absolute_path"),
+            "no_candidate_entry_action_board_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_action_board_latest").get("absolute_path"),
+            "no_candidate_entry_replay_bundle_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_replay_bundle_latest").get("absolute_path"),
+            "no_candidate_entry_failure_dossier_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_failure_dossier_latest").get("absolute_path"),
+            "watchlist_recall_dossier_markdown": _entry_by_id(manifest, "btst_watchlist_recall_dossier_latest").get("absolute_path"),
+            "candidate_pool_recall_dossier_markdown": _entry_by_id(manifest, "btst_candidate_pool_recall_dossier_latest").get("absolute_path"),
+            "tradeable_opportunity_waterfall_markdown": _entry_by_id(manifest, "btst_tradeable_opportunity_reason_waterfall_march").get("absolute_path"),
             "replay_cohort_markdown": _entry_by_id(manifest, "btst_replay_cohort_latest").get("absolute_path"),
             "independent_window_monitor_markdown": _entry_by_id(manifest, "btst_independent_window_monitor_latest").get("absolute_path"),
             "tplus1_tplus2_objective_monitor_markdown": _entry_by_id(manifest, "btst_tplus1_tplus2_objective_monitor_latest").get("absolute_path"),
@@ -1268,6 +1494,12 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     latest_btst_snapshot = dict(payload.get("latest_btst_snapshot") or {})
     catalyst_theme_frontier_summary = dict(latest_btst_snapshot.get("catalyst_theme_frontier_summary") or {})
     score_fail_frontier_summary = dict(latest_btst_snapshot.get("score_fail_frontier_summary") or {})
+    tradeable_opportunity_pool_summary = dict(control_tower_snapshot.get("tradeable_opportunity_pool") or {})
+    no_candidate_entry_action_board_summary = dict(control_tower_snapshot.get("no_candidate_entry_action_board") or {})
+    no_candidate_entry_replay_bundle_summary = dict(control_tower_snapshot.get("no_candidate_entry_replay_bundle") or {})
+    no_candidate_entry_failure_dossier_summary = dict(control_tower_snapshot.get("no_candidate_entry_failure_dossier") or {})
+    watchlist_recall_dossier_summary = dict(control_tower_snapshot.get("watchlist_recall_dossier") or {})
+    candidate_pool_recall_dossier_summary = dict(control_tower_snapshot.get("candidate_pool_recall_dossier") or {})
     llm_error_digest = dict(latest_btst_snapshot.get("llm_error_digest") or {})
     source_paths = dict(payload.get("source_paths") or {})
 
@@ -1289,6 +1521,67 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- tplus1_tplus2_tradeable_return_hit_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_return_hit_rate')}")
     lines.append(f"- tplus1_tplus2_tradeable_mean_return: {control_tower_snapshot.get('tplus1_tplus2_tradeable_mean_return')}")
     lines.append(f"- tplus1_tplus2_tradeable_verdict: {control_tower_snapshot.get('tplus1_tplus2_tradeable_verdict')}")
+    lines.append(f"- tradeable_opportunity_pool_count: {control_tower_snapshot.get('tradeable_opportunity_pool_count')}")
+    lines.append(f"- tradeable_opportunity_capture_rate: {control_tower_snapshot.get('tradeable_opportunity_capture_rate')}")
+    lines.append(f"- tradeable_opportunity_selected_or_near_miss_rate: {control_tower_snapshot.get('tradeable_opportunity_selected_or_near_miss_rate')}")
+    lines.append(f"- tradeable_opportunity_top_kill_switches: {control_tower_snapshot.get('tradeable_opportunity_top_kill_switches')}")
+    lines.append(f"- no_candidate_entry_priority_queue_count: {control_tower_snapshot.get('no_candidate_entry_priority_queue_count')}")
+    lines.append(f"- no_candidate_entry_priority_tickers: {control_tower_snapshot.get('no_candidate_entry_priority_tickers')}")
+    lines.append(f"- no_candidate_entry_recall_probe_tickers: {control_tower_snapshot.get('no_candidate_entry_recall_probe_tickers')}")
+    lines.append(f"- no_candidate_entry_failure_class_counts: {control_tower_snapshot.get('no_candidate_entry_failure_class_counts')}")
+    lines.append(f"- no_candidate_entry_handoff_stage_counts: {control_tower_snapshot.get('no_candidate_entry_handoff_stage_counts')}")
+    lines.append(f"- no_candidate_entry_absent_from_watchlist_tickers: {control_tower_snapshot.get('no_candidate_entry_absent_from_watchlist_tickers')}")
+    lines.append(f"- no_candidate_entry_watchlist_handoff_gap_tickers: {control_tower_snapshot.get('no_candidate_entry_watchlist_handoff_gap_tickers')}")
+    lines.append(f"- no_candidate_entry_upstream_absence_tickers: {control_tower_snapshot.get('no_candidate_entry_upstream_absence_tickers')}")
+    lines.append(f"- watchlist_recall_stage_counts: {control_tower_snapshot.get('watchlist_recall_stage_counts')}")
+    lines.append(f"- watchlist_recall_absent_from_candidate_pool_tickers: {control_tower_snapshot.get('watchlist_recall_absent_from_candidate_pool_tickers')}")
+    lines.append(f"- watchlist_recall_candidate_pool_layer_b_gap_tickers: {control_tower_snapshot.get('watchlist_recall_candidate_pool_layer_b_gap_tickers')}")
+    lines.append(f"- watchlist_recall_layer_b_watchlist_gap_tickers: {control_tower_snapshot.get('watchlist_recall_layer_b_watchlist_gap_tickers')}")
+    lines.append(f"- candidate_pool_recall_stage_counts: {control_tower_snapshot.get('candidate_pool_recall_stage_counts')}")
+    lines.append(f"- candidate_pool_recall_dominant_stage: {control_tower_snapshot.get('candidate_pool_recall_dominant_stage')}")
+    lines.append(f"- candidate_pool_recall_top_stage_tickers: {control_tower_snapshot.get('candidate_pool_recall_top_stage_tickers')}")
+    lines.append(f"- candidate_pool_recall_truncation_frontier_summary: {control_tower_snapshot.get('candidate_pool_recall_truncation_frontier_summary')}")
+    lines.append(f"- candidate_pool_recall_dominant_ranking_driver: {control_tower_snapshot.get('candidate_pool_recall_dominant_ranking_driver')}")
+    lines.append(f"- candidate_pool_recall_dominant_liquidity_gap_mode: {control_tower_snapshot.get('candidate_pool_recall_dominant_liquidity_gap_mode')}")
+    lines.append(f"- candidate_pool_recall_focus_liquidity_profiles: {control_tower_snapshot.get('candidate_pool_recall_focus_liquidity_profiles')}")
+    lines.append(f"- candidate_pool_recall_priority_handoff_counts: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_counts')}")
+    lines.append(f"- candidate_pool_recall_priority_handoff_branch_diagnoses: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_diagnoses')}")
+    lines.append(f"- candidate_pool_recall_priority_handoff_branch_mechanisms: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_mechanisms')}")
+    branch_experiment_queue = list(control_tower_snapshot.get("candidate_pool_recall_priority_handoff_branch_experiment_queue") or [])
+    lines.append("- candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
+    lines.append(f"- candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
+    for experiment in branch_experiment_queue[:3]:
+        lines.append(
+            f"- candidate_pool_recall_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
+        )
+        lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
+        lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
+        lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
+    lines.append(f"- candidate_pool_branch_priority_board_status: {control_tower_snapshot.get('candidate_pool_branch_priority_board_status')}")
+    lines.append(f"- candidate_pool_branch_priority_alignment_status: {control_tower_snapshot.get('candidate_pool_branch_priority_alignment_status')}")
+    if control_tower_snapshot.get("candidate_pool_branch_priority_alignment_summary"):
+        lines.append(f"- candidate_pool_branch_priority_alignment_summary: {control_tower_snapshot.get('candidate_pool_branch_priority_alignment_summary')}")
+    for row in list(control_tower_snapshot.get("candidate_pool_branch_priority_board_rows") or [])[:3]:
+        lines.append(
+            f"- candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
+        )
+    lines.append(f"- candidate_pool_lane_objective_support_status: {control_tower_snapshot.get('candidate_pool_lane_objective_support_status')}")
+    for row in list(control_tower_snapshot.get("candidate_pool_lane_objective_support_rows") or [])[:3]:
+        lines.append(
+            f"- candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
+        )
+    lines.append(f"- candidate_pool_rebucket_shadow_pack_status: {control_tower_snapshot.get('candidate_pool_rebucket_shadow_pack_status')}")
+    rebucket_experiment = dict(control_tower_snapshot.get("candidate_pool_rebucket_shadow_pack_experiment") or {})
+    if rebucket_experiment:
+        lines.append(
+            f"- candidate_pool_rebucket_shadow_pack_experiment: handoff={rebucket_experiment.get('priority_handoff')} readiness={rebucket_experiment.get('prototype_readiness')} tickers={rebucket_experiment.get('tickers')}"
+        )
+    lines.append(f"- candidate_pool_rebucket_objective_validation_status: {control_tower_snapshot.get('candidate_pool_rebucket_objective_validation_status')}")
+    rebucket_validation_summary = dict(control_tower_snapshot.get("candidate_pool_rebucket_objective_validation_summary") or {})
+    if rebucket_validation_summary:
+        lines.append(
+            f"- candidate_pool_rebucket_objective_validation_summary: validation_status={rebucket_validation_summary.get('validation_status')} support_verdict={rebucket_validation_summary.get('support_verdict')} mean_t_plus_2_return={rebucket_validation_summary.get('mean_t_plus_2_return')}"
+        )
     lines.append(f"- replay_report_count: {replay_cohort_snapshot.get('report_count')}")
     lines.append(f"- replay_selection_target_counts: {replay_cohort_snapshot.get('selection_target_counts')}")
     lines.append(f"- catalyst_frontier_status: {catalyst_theme_frontier_summary.get('status') or 'unavailable'}")
@@ -1305,6 +1598,13 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- control_tower_recommendation: {control_tower_snapshot.get('recommendation')}")
     lines.append(f"- priority_board_headline: {latest_priority_board_snapshot.get('headline')}")
     lines.append(f"- replay_recommendation: {replay_cohort_snapshot.get('recommendation')}")
+    lines.append(f"- tradeable_opportunity_recommendation: {tradeable_opportunity_pool_summary.get('recommendation')}")
+    lines.append(f"- no_candidate_entry_action_recommendation: {no_candidate_entry_action_board_summary.get('recommendation')}")
+    lines.append(f"- no_candidate_entry_replay_recommendation: {no_candidate_entry_replay_bundle_summary.get('recommendation')}")
+    lines.append(f"- no_candidate_entry_failure_dossier_recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}")
+    lines.append(f"- watchlist_recall_dossier_recommendation: {watchlist_recall_dossier_summary.get('recommendation')}")
+    lines.append(f"- candidate_pool_recall_dossier_recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}")
+    lines.append(f"- candidate_pool_recall_dossier_truncation_frontier_summary: {candidate_pool_recall_dossier_summary.get('truncation_frontier_summary')}")
     lines.append(f"- catalyst_frontier_recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
     lines.append(f"- score_fail_frontier_recommendation: {score_fail_frontier_summary.get('recommendation')}")
     lines.append(f"- llm_recommendation: {llm_error_digest.get('recommendation')}")
@@ -1371,6 +1671,150 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
             lines.append(
                 f"- ticker_objective_leader: {row.get('group_label')} closed_cycle_count={row.get('closed_cycle_count')} positive_rate={row.get('t_plus_2_positive_rate')} return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
             )
+    lines.append("")
+
+    lines.append("## Tradeable Opportunity Pool")
+    if not tradeable_opportunity_pool_summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {tradeable_opportunity_pool_summary.get('status')}")
+        lines.append(f"- result_truth_pool_count: {tradeable_opportunity_pool_summary.get('result_truth_pool_count')}")
+        lines.append(f"- tradeable_opportunity_pool_count: {tradeable_opportunity_pool_summary.get('tradeable_opportunity_pool_count')}")
+        lines.append(f"- system_recall_count: {tradeable_opportunity_pool_summary.get('system_recall_count')}")
+        lines.append(f"- selected_or_near_miss_count: {tradeable_opportunity_pool_summary.get('selected_or_near_miss_count')}")
+        lines.append(f"- main_execution_pool_count: {tradeable_opportunity_pool_summary.get('main_execution_pool_count')}")
+        lines.append(f"- strict_goal_case_count: {tradeable_opportunity_pool_summary.get('strict_goal_case_count')}")
+        lines.append(f"- strict_goal_false_negative_count: {tradeable_opportunity_pool_summary.get('strict_goal_false_negative_count')}")
+        lines.append(f"- tradeable_pool_capture_rate: {tradeable_opportunity_pool_summary.get('tradeable_pool_capture_rate')}")
+        lines.append(f"- tradeable_pool_selected_or_near_miss_rate: {tradeable_opportunity_pool_summary.get('tradeable_pool_selected_or_near_miss_rate')}")
+        lines.append(f"- tradeable_pool_main_execution_rate: {tradeable_opportunity_pool_summary.get('tradeable_pool_main_execution_rate')}")
+        lines.append(f"- no_candidate_entry_count: {tradeable_opportunity_pool_summary.get('no_candidate_entry_count')}")
+        lines.append(f"- no_candidate_entry_share_of_tradeable_pool: {tradeable_opportunity_pool_summary.get('no_candidate_entry_share_of_tradeable_pool')}")
+        lines.append(f"- top_no_candidate_entry_industries: {tradeable_opportunity_pool_summary.get('top_no_candidate_entry_industries')}")
+        lines.append(f"- top_no_candidate_entry_tickers: {tradeable_opportunity_pool_summary.get('top_no_candidate_entry_tickers')}")
+        lines.append(f"- top_tradeable_kill_switch_labels: {tradeable_opportunity_pool_summary.get('top_tradeable_kill_switch_labels')}")
+        for row in list(tradeable_opportunity_pool_summary.get("top_tradeable_kill_switches") or []):
+            lines.append(f"- top_tradeable_kill_switch: {row.get('kill_switch')} count={row.get('count')}")
+        for row in list(tradeable_opportunity_pool_summary.get("top_strict_goal_false_negative_rows") or []):
+            lines.append(
+                f"- top_strict_goal_false_negative: {row.get('trade_date')} {row.get('ticker')} kill_switch={row.get('first_kill_switch')} t_plus_2_close_return={row.get('t_plus_2_close_return')}"
+            )
+        lines.append(f"- recommendation: {tradeable_opportunity_pool_summary.get('recommendation')}")
+    lines.append("")
+
+    lines.append("## No Candidate Entry Action Board")
+    if not no_candidate_entry_action_board_summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {no_candidate_entry_action_board_summary.get('status')}")
+        lines.append(f"- priority_queue_count: {no_candidate_entry_action_board_summary.get('priority_queue_count')}")
+        lines.append(f"- top_priority_tickers: {no_candidate_entry_action_board_summary.get('top_priority_tickers')}")
+        lines.append(f"- top_hotspot_report_dirs: {no_candidate_entry_action_board_summary.get('top_hotspot_report_dirs')}")
+        for row in list(no_candidate_entry_action_board_summary.get("priority_queue") or []):
+            lines.append(
+                f"- no_candidate_entry_priority: {row.get('ticker')} action_tier={row.get('action_tier')} strict_goal_case_count={row.get('strict_goal_case_count')} occurrence_count={row.get('occurrence_count')}"
+            )
+        for task in list(no_candidate_entry_action_board_summary.get("next_tasks") or []):
+            lines.append(f"- next_task: {task.get('task_id')} | {task.get('title')}")
+            lines.append(f"  next_step: {task.get('next_step')}")
+        lines.append(f"- recommendation: {no_candidate_entry_action_board_summary.get('recommendation')}")
+    lines.append("")
+
+    lines.append("## No Candidate Entry Replay Bundle")
+    if not no_candidate_entry_replay_bundle_summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {no_candidate_entry_replay_bundle_summary.get('status')}")
+        lines.append(f"- promising_priority_tickers: {no_candidate_entry_replay_bundle_summary.get('promising_priority_tickers')}")
+        lines.append(f"- promising_hotspot_report_dirs: {no_candidate_entry_replay_bundle_summary.get('promising_hotspot_report_dirs')}")
+        lines.append(f"- candidate_entry_status_counts: {no_candidate_entry_replay_bundle_summary.get('candidate_entry_status_counts')}")
+        lines.append(f"- global_window_scan_rollout_readiness: {no_candidate_entry_replay_bundle_summary.get('global_window_scan_rollout_readiness')}")
+        lines.append(f"- global_window_scan_focus_hit_report_count: {no_candidate_entry_replay_bundle_summary.get('global_window_scan_focus_hit_report_count')}")
+        for item in list(no_candidate_entry_replay_bundle_summary.get("next_actions") or []):
+            lines.append(f"- next_action: {item}")
+        lines.append(f"- recommendation: {no_candidate_entry_replay_bundle_summary.get('recommendation')}")
+    lines.append("")
+
+    lines.append("## No Candidate Entry Failure Dossier")
+    if not no_candidate_entry_failure_dossier_summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {no_candidate_entry_failure_dossier_summary.get('status')}")
+        lines.append(f"- priority_failure_class_counts: {no_candidate_entry_failure_dossier_summary.get('priority_failure_class_counts')}")
+        lines.append(f"- hotspot_failure_class_counts: {no_candidate_entry_failure_dossier_summary.get('hotspot_failure_class_counts')}")
+        lines.append(f"- priority_handoff_stage_counts: {no_candidate_entry_failure_dossier_summary.get('priority_handoff_stage_counts')}")
+        lines.append(f"- top_absent_from_watchlist_tickers: {no_candidate_entry_failure_dossier_summary.get('top_absent_from_watchlist_tickers')}")
+        lines.append(f"- top_watchlist_visible_but_not_candidate_entry_tickers: {no_candidate_entry_failure_dossier_summary.get('top_watchlist_visible_but_not_candidate_entry_tickers')}")
+        lines.append(f"- top_candidate_entry_visible_but_not_selection_target_tickers: {no_candidate_entry_failure_dossier_summary.get('top_candidate_entry_visible_but_not_selection_target_tickers')}")
+        lines.append(f"- top_upstream_absence_tickers: {no_candidate_entry_failure_dossier_summary.get('top_upstream_absence_tickers')}")
+        lines.append(f"- top_candidate_entry_semantic_miss_tickers: {no_candidate_entry_failure_dossier_summary.get('top_candidate_entry_semantic_miss_tickers')}")
+        lines.append(f"- top_present_but_outside_candidate_entry_tickers: {no_candidate_entry_failure_dossier_summary.get('top_present_but_outside_candidate_entry_tickers')}")
+        lines.append(f"- top_missing_replay_input_tickers: {no_candidate_entry_failure_dossier_summary.get('top_missing_replay_input_tickers')}")
+        for row in list(no_candidate_entry_failure_dossier_summary.get("handoff_action_queue") or []):
+            lines.append(f"- handoff_task: {row.get('task_id')} stage={row.get('handoff_stage')} tier={row.get('action_tier')}")
+            lines.append(f"  next_step: {row.get('next_step')}")
+        for item in list(no_candidate_entry_failure_dossier_summary.get("next_actions") or []):
+            lines.append(f"- next_action: {item}")
+        lines.append(f"- recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}")
+    lines.append("")
+
+    lines.append("## Watchlist Recall Dossier")
+    if not watchlist_recall_dossier_summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {watchlist_recall_dossier_summary.get('status')}")
+        lines.append(f"- priority_recall_stage_counts: {watchlist_recall_dossier_summary.get('priority_recall_stage_counts')}")
+        lines.append(f"- top_absent_from_candidate_pool_tickers: {watchlist_recall_dossier_summary.get('top_absent_from_candidate_pool_tickers')}")
+        lines.append(f"- top_candidate_pool_visible_but_missing_layer_b_tickers: {watchlist_recall_dossier_summary.get('top_candidate_pool_visible_but_missing_layer_b_tickers')}")
+        lines.append(f"- top_layer_b_visible_but_missing_watchlist_tickers: {watchlist_recall_dossier_summary.get('top_layer_b_visible_but_missing_watchlist_tickers')}")
+        for row in list(watchlist_recall_dossier_summary.get("action_queue") or []):
+            lines.append(f"- watchlist_recall_task: {row.get('task_id')} stage={row.get('dominant_recall_stage')} tier={row.get('action_tier')}")
+            lines.append(f"  next_step: {row.get('next_step')}")
+        for item in list(watchlist_recall_dossier_summary.get("next_actions") or []):
+            lines.append(f"- next_action: {item}")
+        lines.append(f"- recommendation: {watchlist_recall_dossier_summary.get('recommendation')}")
+    lines.append("")
+
+    lines.append("## Candidate Pool Recall Dossier")
+    if not candidate_pool_recall_dossier_summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {candidate_pool_recall_dossier_summary.get('status')}")
+        lines.append(f"- priority_stage_counts: {candidate_pool_recall_dossier_summary.get('priority_stage_counts')}")
+        lines.append(f"- dominant_stage: {candidate_pool_recall_dossier_summary.get('dominant_stage')}")
+        lines.append(f"- top_stage_tickers: {candidate_pool_recall_dossier_summary.get('top_stage_tickers')}")
+        lines.append(f"- priority_handoff_branch_diagnoses: {candidate_pool_recall_dossier_summary.get('priority_handoff_branch_diagnoses')}")
+        lines.append(f"- priority_handoff_branch_mechanisms: {candidate_pool_recall_dossier_summary.get('priority_handoff_branch_mechanisms')}")
+        branch_experiment_queue = list(candidate_pool_recall_dossier_summary.get("priority_handoff_branch_experiment_queue") or [])
+        lines.append("- priority_handoff_branch_experiment_queue: structured_summary")
+        lines.append(f"- priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
+        for experiment in branch_experiment_queue[:3]:
+            lines.append(
+                f"- branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
+            )
+            lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
+            lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
+            lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
+        lines.append(f"- branch_priority_board_status: {candidate_pool_recall_dossier_summary.get('branch_priority_board_status')}")
+        lines.append(f"- branch_priority_alignment_status: {candidate_pool_recall_dossier_summary.get('branch_priority_alignment_status')}")
+        if candidate_pool_recall_dossier_summary.get("branch_priority_alignment_summary"):
+            lines.append(f"- branch_priority_alignment_summary: {candidate_pool_recall_dossier_summary.get('branch_priority_alignment_summary')}")
+        for row in list(candidate_pool_recall_dossier_summary.get("branch_priority_board_rows") or [])[:3]:
+            lines.append(
+                f"- branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
+            )
+        lines.append(f"- rebucket_shadow_pack_status: {candidate_pool_recall_dossier_summary.get('rebucket_shadow_pack_status')}")
+        rebucket_experiment = dict(candidate_pool_recall_dossier_summary.get("rebucket_shadow_pack_experiment") or {})
+        if rebucket_experiment:
+            lines.append(
+                f"- rebucket_shadow_pack_experiment: handoff={rebucket_experiment.get('priority_handoff')} readiness={rebucket_experiment.get('prototype_readiness')} tickers={rebucket_experiment.get('tickers')}"
+            )
+        for row in list(candidate_pool_recall_dossier_summary.get("action_queue") or []):
+            lines.append(f"- candidate_pool_recall_task: {row.get('task_id')} stage={row.get('dominant_blocking_stage')} tier={row.get('action_tier')}")
+            lines.append(f"  next_step: {row.get('next_step')}")
+        for item in list(candidate_pool_recall_dossier_summary.get("next_actions") or []):
+            lines.append(f"- next_action: {item}")
+        lines.append(f"- recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}")
     lines.append("")
 
     lines.append("## Priority Board Snapshot")

@@ -262,6 +262,8 @@ class TestExcludeRules:
             {"ts_code": "600001.SH", "symbol": "600001", "name": "沪市", "market": "主板"},
             {"ts_code": "430001.BJ", "symbol": "430001", "name": "北交所A", "market": "BJ"},
             {"ts_code": "830001.BJ", "symbol": "830001", "name": "北交所B", "market": "BJ"},
+            {"ts_code": "920001.BJ", "symbol": "920001", "name": "北交所C", "market": "北交所"},
+            {"ts_code": "920375.BJ", "symbol": "920375", "name": "北交所D", "market": "主板"},
         ]
         result = self._run_build(stocks=stocks)
         tickers = {c.ticker for c in result}
@@ -269,6 +271,8 @@ class TestExcludeRules:
         assert "600001" in tickers
         assert "430001" not in tickers
         assert "830001" not in tickers
+        assert "920001" not in tickers
+        assert "920375" not in tickers
 
     def test_cooldown(self):
         """冷却期内的标的被过滤，到期后解除"""

@@ -4,7 +4,7 @@ Layer A 候选池构建器 — 全市场快筛
 实现框架 §1 先验约束矩阵 + §5.1 Step 1：
   1. 获取全 A 股基本信息（~5000 只）
   2. 排除 ST / *ST 标的（名称包含 ST）
-  3. 排除北交所标的（市场 = 'BJ' 或代码 8xxxxx / 4xxxxx）
+    3. 排除北交所标的（市场 = 'BJ' / '北交所'、ts_code = '.BJ' 或代码 4xxxxx / 8xxxxx / 92xxxx）
   4. 排除上市不满 60 个交易日的新股/次新股
   5. 排除当日停牌标的
   6. 排除当日涨停标的（买入排队失败）
@@ -51,6 +51,7 @@ DISCLOSURE_MONTHS = {4, 8, 10}  # 财报窗口月份
 TUSHARE_DAILY_CALLS_PER_MINUTE = 200
 TUSHARE_DAILY_BATCH_SIZE = 50
 MAX_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "300"))
+BEIJING_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("4", "8", "92")
 
 
 def _candidate_pool_snapshot_path(trade_date: str, pool_size: Optional[int] = None) -> Path:
@@ -122,6 +123,41 @@ def get_cooled_tickers(trade_date: str) -> Set[str]:
             del registry[t]
         save_cooldown_registry(registry)
     return cooled
+
+
+def is_beijing_exchange_stock(*, ts_code: str | None = None, symbol: str | None = None, market: str | None = None) -> bool:
+    """判断标的是否属于北交所。"""
+    market_text = str(market or "").strip()
+    if market_text.upper() == "BJ" or market_text == "北交所":
+        return True
+
+    ts_code_text = str(ts_code or "").strip().upper()
+    if ts_code_text.endswith(".BJ"):
+        return True
+
+    symbol_text = str(symbol or "").strip()
+    return symbol_text.startswith(BEIJING_EXCHANGE_SYMBOL_PREFIXES)
+
+
+def build_beijing_exchange_mask(stock_df: pd.DataFrame) -> pd.Series:
+    """构建全量股票表中的北交所掩码。"""
+    if stock_df.empty:
+        return pd.Series(dtype=bool)
+
+    market_series = stock_df["market"] if "market" in stock_df else pd.Series("", index=stock_df.index, dtype="object")
+    ts_code_series = stock_df["ts_code"] if "ts_code" in stock_df else pd.Series("", index=stock_df.index, dtype="object")
+    symbol_series = stock_df["symbol"] if "symbol" in stock_df else pd.Series("", index=stock_df.index, dtype="object")
+
+    normalized_market = market_series.fillna("").astype(str).str.strip()
+    normalized_ts_code = ts_code_series.fillna("").astype(str).str.strip().str.upper()
+    normalized_symbol = symbol_series.fillna("").astype(str).str.strip()
+
+    return (
+        normalized_market.str.upper().eq("BJ")
+        | normalized_market.eq("北交所")
+        | normalized_ts_code.str.endswith(".BJ")
+        | normalized_symbol.str.startswith(BEIJING_EXCHANGE_SYMBOL_PREFIXES)
+    )
 
 
 # ============================================================================
@@ -310,8 +346,7 @@ def build_candidate_pool(
     print(f"[CandidatePool] 排除 ST 后: {len(stock_df)} (过滤 {mask_st.sum()})")
 
     # ---- Step 3: 排除北交所 ----
-    mask_bj = (stock_df["market"] == "BJ") | stock_df["symbol"].str.startswith(("4", "8"))
-    # 仅排除 4xxxxx/8xxxxx 中属于北交所的（排除创业板 3xxxxx 误伤）
+    mask_bj = build_beijing_exchange_mask(stock_df)
     stock_df = stock_df[~mask_bj].copy()
     print(f"[CandidatePool] 排除北交所后: {len(stock_df)} (过滤 {mask_bj.sum()})")
 

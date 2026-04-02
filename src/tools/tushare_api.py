@@ -1647,6 +1647,72 @@ def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
         return None
 
 
+def get_daily_price_batch(trade_date: str) -> Optional[pd.DataFrame]:
+    """
+    获取全市场当日日线行情。
+
+    参数:
+        trade_date: 交易日期，格式 YYYYMMDD
+
+    返回 DataFrame 列: ts_code, trade_date, open, high, low, close,
+                       pre_close, vol, amount, pct_chg
+    """
+    cache_key = f"daily_price_batch_{trade_date}"
+    with _tushare_df_cache_lock:
+        if cache_key in _tushare_df_cache:
+            return _tushare_df_cache[cache_key].copy()
+
+    pro = _get_pro()
+    if pro is None:
+        return None
+
+    try:
+        df = _cached_tushare_dataframe_call(
+            pro,
+            "daily",
+            trade_date=trade_date,
+            fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
+        )
+        if df is not None and not df.empty:
+            with _tushare_df_cache_lock:
+                _tushare_df_cache[cache_key] = df
+            return df.copy()
+        return None
+    except Exception as e:
+        print(f"[Tushare] get_daily_price_batch({trade_date}) 失败: {e}")
+        return None
+
+
+def get_open_trade_dates(start_date: str, end_date: str) -> list[str]:
+    """
+    获取区间内开市交易日列表。
+
+    参数:
+        start_date: 开始日期，格式 YYYYMMDD
+        end_date: 结束日期，格式 YYYYMMDD
+    """
+    pro = _get_pro()
+    if pro is None:
+        return []
+
+    try:
+        df = _cached_tushare_dataframe_call(
+            pro,
+            "trade_cal",
+            exchange="",
+            start_date=start_date,
+            end_date=end_date,
+            is_open=1,
+            fields="cal_date,is_open",
+        )
+        if df is None or df.empty:
+            return []
+        return sorted({str(row["cal_date"]) for _, row in df.iterrows() if str(row.get("cal_date") or "").strip()})
+    except Exception as e:
+        print(f"[Tushare] get_open_trade_dates({start_date}, {end_date}) 失败: {e}")
+        return []
+
+
 def get_sw_industry_classification() -> Optional[Dict[str, str]]:
     """
     获取申万一级行业分类映射：{ts_code -> 行业名称}。

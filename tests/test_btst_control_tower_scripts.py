@@ -7,11 +7,137 @@ from scripts.analyze_btst_governance_synthesis import analyze_btst_governance_sy
 from scripts.analyze_btst_replay_cohort import analyze_btst_replay_cohort
 from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
 from scripts.validate_btst_governance_consistency import validate_btst_governance_consistency
+from src.screening.models import StrategySignal
+from src.targets.router import build_selection_targets
 
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
+    return StrategySignal(
+        direction=direction,
+        confidence=confidence,
+        completeness=completeness,
+        sub_factors=sub_factors or {},
+    )
+
+
+def _build_entry(ticker: str, *, weak_structure: bool) -> dict:
+    if weak_structure:
+        return {
+            "ticker": ticker,
+            "score_b": 0.3829,
+            "score_c": -0.1194,
+            "score_final": 0.1568,
+            "quality_score": 0.9375,
+            "decision": "avoid",
+            "bc_conflict": "b_positive_c_strong_bearish",
+            "candidate_source": "watchlist_filter_diagnostics",
+            "candidate_reason_codes": ["decision_avoid", "score_final_below_watchlist_threshold"],
+            "reason": "decision_avoid",
+            "strategy_signals": {
+                "trend": _make_signal(
+                    1,
+                    70.0,
+                    sub_factors={
+                        "momentum": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                        "volatility": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                        "long_trend_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    },
+                ),
+                "event_sentiment": _make_signal(
+                    0,
+                    0.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    },
+                ),
+                "mean_reversion": _make_signal(0, 0.0),
+            },
+            "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.0646, "investor": -0.0548}},
+        }
+    return {
+        "ticker": ticker,
+        "score_b": 0.4199,
+        "score_c": -0.0961,
+        "score_final": 0.1877,
+        "quality_score": 0.975,
+        "decision": "avoid",
+        "bc_conflict": "b_positive_c_strong_bearish",
+        "candidate_source": "watchlist_filter_diagnostics",
+        "candidate_reason_codes": ["decision_avoid", "score_final_below_watchlist_threshold"],
+        "reason": "decision_avoid",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                100.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 49.24, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "volatility": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                },
+            ),
+            "event_sentiment": _make_signal(
+                0,
+                0.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ),
+            "mean_reversion": _make_signal(0, 0.0),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.0305, "investor": -0.0656}},
+    }
+
+
+def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict]) -> None:
+    selection_targets, summary = build_selection_targets(
+        trade_date=trade_date.replace("-", ""),
+        watchlist=[],
+        rejected_entries=entries,
+        supplemental_short_trade_entries=[],
+        buy_order_tickers=set(),
+        target_mode="dual_target",
+    )
+    payload = {
+        "artifact_version": "v1",
+        "run_id": f"test_{report_dir.name}_{trade_date}",
+        "trade_date": trade_date,
+        "market": "CN",
+        "target_mode": "dual_target",
+        "pipeline_config_snapshot": {},
+        "source_summary": {
+            "watchlist_count": 0,
+            "rejected_entry_count": len(entries),
+            "supplemental_short_trade_entry_count": 0,
+            "buy_order_ticker_count": 0,
+        },
+        "watchlist": [],
+        "rejected_entries": [
+            {
+                **entry,
+                "strategy_signals": {name: signal.model_dump(mode="json") for name, signal in entry["strategy_signals"].items()},
+            }
+            for entry in entries
+        ],
+        "supplemental_short_trade_entries": [],
+        "buy_order_tickers": [],
+        "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
+        "target_summary": summary.model_dump(mode="json"),
+    }
+    target_dir = report_dir / "selection_artifacts" / trade_date
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "selection_target_replay_input.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json(report_dir / "session_summary.json", {"plan_generation": {"selection_target": "dual_target"}})
 
 
 def _write_btst_followup_report(
@@ -179,6 +305,126 @@ def _write_btst_followup_report(
         },
     )
     return report_dir
+
+
+def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:
+    analysis = {
+        "artifact_schema_version": 2,
+        "generated_at": "2026-04-02T09:00:00",
+        "trade_dates": ["2026-03-23", "2026-03-24", "2026-03-25", "2026-03-26"],
+        "trade_date_contexts": {
+            "2026-03-25": {
+                "report_dir": "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329",
+                "selection_target": "dual_target",
+                "mode": "live_pipeline",
+            }
+        },
+        "result_truth_pool_count": 19,
+        "tradeable_opportunity_pool_count": 11,
+        "system_recall_count": 7,
+        "selected_or_near_miss_count": 3,
+        "main_execution_pool_count": 2,
+        "strict_goal_case_count": 4,
+        "strict_goal_false_negative_count": 2,
+        "tradeable_pool_capture_rate": 0.6364,
+        "tradeable_pool_selected_or_near_miss_rate": 0.2727,
+        "tradeable_pool_main_execution_rate": 0.1818,
+        "top_strict_goal_false_negative_rows": [
+            {
+                "trade_date": "2026-03-26",
+                "ticker": "300724",
+                "first_kill_switch": "score_fail",
+                "t_plus_2_close_return": 0.0812,
+            },
+            {
+                "trade_date": "2026-03-24",
+                "ticker": "600522",
+                "first_kill_switch": "candidate_entry_filtered",
+                "t_plus_2_close_return": 0.0621,
+            },
+        ],
+        "no_candidate_entry_summary": {
+            "count": 1,
+            "share_of_tradeable_pool": 0.0909,
+            "strict_goal_case_count": 0,
+            "strict_goal_case_share": 0.0,
+            "industry_counts": {"Chip": 1},
+            "trade_date_counts": {"2026-03-25": 1},
+            "estimated_amount_bucket_counts": {"10000w_to_20000w": 1},
+            "truth_pattern_counts": {"intraday_only": 1},
+            "top_ticker_rows": [
+                {
+                    "ticker": "300502",
+                    "occurrence_count": 1,
+                    "strict_goal_case_count": 0,
+                    "industry": "Chip",
+                    "latest_trade_date": "2026-03-25",
+                    "trade_dates": ["2026-03-25"],
+                    "mean_next_high_return": 0.055,
+                    "mean_next_close_return": 0.018,
+                    "mean_t_plus_2_close_return": 0.021,
+                    "lead_truth_pattern": "intraday_only",
+                }
+            ],
+            "top_priority_rows": [
+                {
+                    "trade_date": "2026-03-25",
+                    "ticker": "300502",
+                    "first_kill_switch": "no_candidate_entry",
+                    "next_high_return": 0.055,
+                    "next_close_return": 0.018,
+                    "t_plus_2_close_return": 0.021,
+                }
+            ],
+            "recommendation": "no_candidate_entry 机会主要集中在 ['Chip']，优先围绕 ['300502'] 回查 candidate entry semantics / watchlist 召回，而不是继续放松 score。",
+        },
+        "recommendation": "当前主瓶颈已经集中到 short-trade boundary / score frontier，优先沿 breakout-trend-catalyst 语义做前沿修复。",
+        "rows": [
+            {
+                "trade_date": "2026-03-25",
+                "ticker": "300502",
+                "industry": "Chip",
+                "first_kill_switch": "no_candidate_entry",
+                "strict_btst_goal_case": False,
+                "next_high_return": 0.055,
+                "next_close_return": 0.018,
+                "t_plus_2_close_return": 0.021,
+                "report_dir": "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329",
+                "report_mode": "live_pipeline",
+                "report_selection_target": "dual_target",
+            },
+            {
+                "trade_date": "2026-03-26",
+                "ticker": "300724",
+                "industry": "Chip",
+                "first_kill_switch": "score_fail",
+                "strict_btst_goal_case": True,
+                "next_high_return": 0.071,
+                "next_close_return": 0.042,
+                "t_plus_2_close_return": 0.0812,
+                "report_dir": "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329",
+                "report_mode": "live_pipeline",
+                "report_selection_target": "dual_target",
+            },
+        ],
+    }
+    waterfall = {
+        "generated_at": "2026-04-02T09:00:00",
+        "top_tradeable_kill_switches": [
+            {"kill_switch": "score_fail", "count": 4},
+            {"kill_switch": "candidate_entry_filtered", "count": 2},
+            {"kill_switch": "no_candidate_entry", "count": 1},
+        ],
+        "recommendation": analysis["recommendation"],
+    }
+    _write_json(reports_root / "btst_tradeable_opportunity_pool_march.json", analysis)
+    _write_json(reports_root / "btst_tradeable_opportunity_reason_waterfall_march.json", waterfall)
+    (reports_root / "btst_tradeable_opportunity_pool_march.md").write_text("# tradeable opportunity pool\n", encoding="utf-8")
+    (reports_root / "btst_tradeable_opportunity_reason_waterfall_march.md").write_text("# tradeable opportunity waterfall\n", encoding="utf-8")
+    (reports_root / "btst_tradeable_opportunity_pool_march.csv").write_text("trade_date,ticker,first_kill_switch\n2026-03-26,300724,score_fail\n", encoding="utf-8")
+    snapshots_root = reports_root.parent / "snapshots"
+    snapshots_root.mkdir(parents=True, exist_ok=True)
+    _write_json(snapshots_root / "candidate_pool_20260325_top300.json", [{"ticker": "300394"}])
 
 
 def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_path: Path) -> None:
@@ -861,6 +1107,13 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
         "p9_candidate_entry_rollout_governance_20260330.md",
     ]:
         (reports_root / filename).write_text(f"# {filename}\n", encoding="utf-8")
+    _write_tradeable_opportunity_artifacts(reports_root)
+
+    report_a = reports_root / "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329"
+    _write_replay_input(report_a, trade_date="2026-03-26", entries=[_build_entry("300394", weak_structure=False), _build_entry("300502", weak_structure=True)])
+
+    report_b = reports_root / "paper_trading_window_20260316_20260323_live_m2_7_20260323"
+    _write_replay_input(report_b, trade_date="2026-03-20", entries=[_build_entry("300394", weak_structure=False)])
 
     result = generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
 
@@ -869,7 +1122,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["latest_btst_run"]["selection_target"] == "short_trade_only"
     assert payload["control_tower_snapshot"]["waiting_lane_count"] == 5
     assert payload["latest_priority_board_snapshot"]["headline"] == "watch 600522 before 300442"
-    assert payload["replay_cohort_snapshot"]["report_count"] == 2
+    assert payload["replay_cohort_snapshot"]["report_count"] == 4
     assert payload["latest_btst_snapshot"]["llm_error_digest"]["status"] == "degraded"
     assert payload["latest_btst_snapshot"]["llm_error_digest"]["fallback_gap_detected"] is True
     assert payload["latest_btst_snapshot"]["catalyst_theme_frontier_summary"]["status"] == "promotable_shadow_exists"
@@ -879,10 +1132,46 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["recommended_reading_order"][0]["entry_id"] == "btst_governance_synthesis_latest"
     assert payload["recommended_reading_order"][1]["entry_id"] == "btst_tplus1_tplus2_objective_monitor_latest"
     assert payload["recommended_reading_order"][2]["entry_id"] == "btst_independent_window_monitor_latest"
+    assert payload["recommended_reading_order"][3]["entry_id"] == "btst_tradeable_opportunity_pool_march"
+    assert payload["recommended_reading_order"][4]["entry_id"] == "btst_no_candidate_entry_action_board_latest"
+    assert payload["recommended_reading_order"][5]["entry_id"] == "btst_no_candidate_entry_replay_bundle_latest"
+    assert payload["recommended_reading_order"][6]["entry_id"] == "btst_no_candidate_entry_failure_dossier_latest"
+    assert payload["recommended_reading_order"][7]["entry_id"] == "btst_watchlist_recall_dossier_latest"
+    assert payload["recommended_reading_order"][8]["entry_id"] == "btst_candidate_pool_recall_dossier_latest"
+    assert payload["recommended_reading_order"][9]["entry_id"] == "btst_tradeable_opportunity_reason_waterfall_march"
     assert payload["control_tower_snapshot"]["independent_window_ready_lane_count"] == 0
     assert payload["control_tower_snapshot"]["independent_window_waiting_lane_count"] == 0
     assert payload["control_tower_snapshot"]["independent_window_monitor"]["report_dir_count"] == 0
     assert payload["control_tower_snapshot"]["tplus1_tplus2_tradeable_verdict"] == "insufficient_closed_cycle_samples"
+    assert payload["control_tower_snapshot"]["tradeable_opportunity_pool_count"] == 11
+    assert payload["control_tower_snapshot"]["tradeable_opportunity_capture_rate"] == 0.6364
+    assert payload["control_tower_snapshot"]["tradeable_opportunity_top_kill_switches"] == ["score_fail", "candidate_entry_filtered", "no_candidate_entry"]
+    assert payload["control_tower_snapshot"]["no_candidate_entry_priority_queue_count"] == 1
+    assert payload["control_tower_snapshot"]["no_candidate_entry_priority_tickers"] == ["300502"]
+    assert payload["control_tower_snapshot"]["no_candidate_entry_recall_probe_tickers"] == []
+    assert payload["control_tower_snapshot"]["no_candidate_entry_failure_class_counts"]
+    assert payload["control_tower_snapshot"]["no_candidate_entry_handoff_stage_counts"]
+    assert payload["control_tower_snapshot"]["watchlist_recall_stage_counts"] == {"absent_from_candidate_pool": 1}
+    assert payload["control_tower_snapshot"]["watchlist_recall_absent_from_candidate_pool_tickers"] == ["300502"]
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_stage_counts"] == {"candidate_pool_truncated_after_filters": 1}
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_dominant_stage"] == "candidate_pool_truncated_after_filters"
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_top_stage_tickers"] == {"candidate_pool_truncated_after_filters": ["300502"]}
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_truncation_frontier_summary"]["observed_case_count"] == 1
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_dominant_ranking_driver"] == "mixed_post_filter_gap"
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_dominant_liquidity_gap_mode"] == "near_cutoff_liquidity_gap"
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_focus_liquidity_profiles"][0]["ticker"] == "300502"
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_focus_liquidity_profiles"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_priority_handoff_counts"] == {"top300_boundary_micro_tuning": 1}
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_priority_handoff_branch_diagnoses"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_priority_handoff_branch_mechanisms"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_priority_handoff_branch_experiment_queue"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert payload["control_tower_snapshot"]["candidate_pool_branch_priority_board_status"] == "refreshed"
+    assert payload["control_tower_snapshot"]["candidate_pool_branch_priority_board_rows"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert payload["control_tower_snapshot"]["candidate_pool_branch_priority_alignment_status"] == "aligned_top_lane"
+    assert payload["control_tower_snapshot"]["candidate_pool_lane_objective_support_status"] == "refreshed"
+    assert payload["control_tower_snapshot"]["candidate_pool_lane_objective_support_rows"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert payload["control_tower_snapshot"]["candidate_pool_rebucket_shadow_pack_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
+    assert payload["control_tower_snapshot"]["candidate_pool_rebucket_objective_validation_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
     assert any(item["entry_id"] == "latest_btst_catalyst_theme_frontier_markdown" for item in payload["recommended_reading_order"])
     assert any(item["entry_id"] == "btst_score_fail_frontier_latest" for item in payload["recommended_reading_order"])
     assert delta_payload["comparison_basis"] == "previous_btst_report"
@@ -901,15 +1190,55 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "## Rollout Lanes" in markdown
     assert "## Independent Window Monitor" in markdown
     assert "## T+1/T+2 Objective Monitor" in markdown
+    assert "## Tradeable Opportunity Pool" in markdown
     assert "## Catalyst Theme Frontier" in markdown
     assert "## Score-Fail Frontier Queue" in markdown
     assert "301001" in markdown
+    assert "tradeable_opportunity_pool_count: 11" in markdown
+    assert "tradeable_pool_capture_rate: 0.6364" in markdown
+    assert "top_no_candidate_entry_industries: ['Chip']" in markdown
+    assert "top_no_candidate_entry_tickers: ['300502']" in markdown
+    assert "## No Candidate Entry Action Board" in markdown
+    assert "priority_queue_count: 1" in markdown
+    assert "top_priority_tickers: ['300502']" in markdown
+    assert "## No Candidate Entry Replay Bundle" in markdown
+    assert "promising_priority_tickers: []" in markdown
+    assert "## No Candidate Entry Failure Dossier" in markdown
+    assert "priority_handoff_stage_counts:" in markdown
+    assert "handoff_task:" in markdown
+    assert "## Watchlist Recall Dossier" in markdown
+    assert "top_absent_from_candidate_pool_tickers: ['300502']" in markdown
+    assert "watchlist_recall_task:" in markdown
+    assert "candidate_pool_recall_truncation_frontier_summary:" in markdown
+    assert "candidate_pool_recall_dominant_ranking_driver: mixed_post_filter_gap" in markdown
+    assert "candidate_pool_recall_dominant_liquidity_gap_mode: near_cutoff_liquidity_gap" in markdown
+    assert "candidate_pool_recall_focus_liquidity_profiles:" in markdown
+    assert "candidate_pool_recall_priority_handoff_counts: {'top300_boundary_micro_tuning': 1}" in markdown
+    assert "candidate_pool_recall_priority_handoff_branch_diagnoses:" in markdown
+    assert "candidate_pool_recall_priority_handoff_branch_mechanisms:" in markdown
+    assert "candidate_pool_recall_priority_handoff_branch_experiment_queue:" in markdown
+    assert "candidate_pool_branch_priority_board_status:" in markdown
+    assert "candidate_pool_branch_priority_alignment_status:" in markdown
+    assert "candidate_pool_lane_objective_support_status:" in markdown
+    assert "candidate_pool_rebucket_shadow_pack_status:" in markdown
+    assert "candidate_pool_rebucket_objective_validation_status:" in markdown
+    assert "## Candidate Pool Recall Dossier" in markdown
+    assert "dominant_stage: candidate_pool_truncated_after_filters" in markdown
+    assert "candidate_pool_recall_task:" in markdown
+    assert "300724" in markdown
     assert "## LLM Health" in markdown
     assert "llm_health_status: degraded" in markdown
     assert "sample_error: MiniMax TimeoutError" in markdown
     assert "btst_governance_synthesis_latest.md" in markdown
     assert "btst_tplus1_tplus2_objective_monitor_latest.md" in markdown
     assert "btst_independent_window_monitor_latest.md" in markdown
+    assert "btst_tradeable_opportunity_pool_march.md" in markdown
+    assert "btst_no_candidate_entry_action_board_latest.md" in markdown
+    assert "btst_no_candidate_entry_replay_bundle_latest.md" in markdown
+    assert "btst_no_candidate_entry_failure_dossier_latest.md" in markdown
+    assert "btst_watchlist_recall_dossier_latest.md" in markdown
+    assert "btst_candidate_pool_recall_dossier_latest.md" in markdown
+    assert "btst_tradeable_opportunity_reason_waterfall_march.md" in markdown
     assert "btst_replay_cohort_latest.md" in markdown
     delta_markdown = Path(result["delta_markdown_path"]).read_text(encoding="utf-8")
     close_validation_markdown = Path(result["close_validation_markdown_path"]).read_text(encoding="utf-8")
@@ -927,6 +1256,13 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "btst_latest_close_validation_latest" in entry_ids
     assert "btst_tplus1_tplus2_objective_monitor_latest" in entry_ids
     assert "btst_independent_window_monitor_latest" in entry_ids
+    assert "btst_tradeable_opportunity_pool_march" in entry_ids
+    assert "btst_no_candidate_entry_action_board_latest" in entry_ids
+    assert "btst_no_candidate_entry_replay_bundle_latest" in entry_ids
+    assert "btst_no_candidate_entry_failure_dossier_latest" in entry_ids
+    assert "btst_watchlist_recall_dossier_latest" in entry_ids
+    assert "btst_candidate_pool_recall_dossier_latest" in entry_ids
+    assert "btst_tradeable_opportunity_reason_waterfall_march" in entry_ids
     assert "latest_btst_catalyst_theme_frontier_markdown" in entry_ids
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
     assert reading_paths["btst_control_tower"]["entry_ids"][0] == "btst_open_ready_delta_latest"
@@ -1057,6 +1393,7 @@ def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_pa
             "recommendation": "当前 rollout 治理应分三条车道：001309 主推进，300383 shadow，300724 structural hold。",
         },
     )
+    _write_tradeable_opportunity_artifacts(reports_root)
 
     _write_btst_followup_report(
         reports_root,

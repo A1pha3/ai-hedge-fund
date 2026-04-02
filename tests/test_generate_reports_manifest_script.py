@@ -137,6 +137,126 @@ def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict
     _write_json(report_dir / "session_summary.json", {"plan_generation": {"selection_target": "dual_target"}})
 
 
+def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:
+    analysis = {
+        "artifact_schema_version": 2,
+        "generated_at": "2026-04-02T09:00:00",
+        "trade_dates": ["2026-03-23", "2026-03-24", "2026-03-25", "2026-03-26"],
+        "trade_date_contexts": {
+            "2026-03-25": {
+                "report_dir": "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329",
+                "selection_target": "dual_target",
+                "mode": "live_pipeline",
+            }
+        },
+        "result_truth_pool_count": 19,
+        "tradeable_opportunity_pool_count": 11,
+        "system_recall_count": 7,
+        "selected_or_near_miss_count": 3,
+        "main_execution_pool_count": 2,
+        "strict_goal_case_count": 4,
+        "strict_goal_false_negative_count": 2,
+        "tradeable_pool_capture_rate": 0.6364,
+        "tradeable_pool_selected_or_near_miss_rate": 0.2727,
+        "tradeable_pool_main_execution_rate": 0.1818,
+        "top_strict_goal_false_negative_rows": [
+            {
+                "trade_date": "2026-03-26",
+                "ticker": "300724",
+                "first_kill_switch": "score_fail",
+                "t_plus_2_close_return": 0.0812,
+            },
+            {
+                "trade_date": "2026-03-24",
+                "ticker": "600522",
+                "first_kill_switch": "candidate_entry_filtered",
+                "t_plus_2_close_return": 0.0621,
+            },
+        ],
+        "no_candidate_entry_summary": {
+            "count": 1,
+            "share_of_tradeable_pool": 0.0909,
+            "strict_goal_case_count": 0,
+            "strict_goal_case_share": 0.0,
+            "industry_counts": {"Chip": 1},
+            "trade_date_counts": {"2026-03-25": 1},
+            "estimated_amount_bucket_counts": {"10000w_to_20000w": 1},
+            "truth_pattern_counts": {"intraday_only": 1},
+            "top_ticker_rows": [
+                {
+                    "ticker": "300502",
+                    "occurrence_count": 1,
+                    "strict_goal_case_count": 0,
+                    "industry": "Chip",
+                    "latest_trade_date": "2026-03-25",
+                    "trade_dates": ["2026-03-25"],
+                    "mean_next_high_return": 0.055,
+                    "mean_next_close_return": 0.018,
+                    "mean_t_plus_2_close_return": 0.021,
+                    "lead_truth_pattern": "intraday_only",
+                }
+            ],
+            "top_priority_rows": [
+                {
+                    "trade_date": "2026-03-25",
+                    "ticker": "300502",
+                    "first_kill_switch": "no_candidate_entry",
+                    "next_high_return": 0.055,
+                    "next_close_return": 0.018,
+                    "t_plus_2_close_return": 0.021,
+                }
+            ],
+            "recommendation": "no_candidate_entry 机会主要集中在 ['Chip']，优先围绕 ['300502'] 回查 candidate entry semantics / watchlist 召回，而不是继续放松 score。",
+        },
+        "recommendation": "当前主瓶颈已经集中到 short-trade boundary / score frontier，优先沿 breakout-trend-catalyst 语义做前沿修复。",
+        "rows": [
+            {
+                "trade_date": "2026-03-25",
+                "ticker": "300502",
+                "industry": "Chip",
+                "first_kill_switch": "no_candidate_entry",
+                "strict_btst_goal_case": False,
+                "next_high_return": 0.055,
+                "next_close_return": 0.018,
+                "t_plus_2_close_return": 0.021,
+                "report_dir": "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329",
+                "report_mode": "live_pipeline",
+                "report_selection_target": "dual_target",
+            },
+            {
+                "trade_date": "2026-03-26",
+                "ticker": "300724",
+                "industry": "Chip",
+                "first_kill_switch": "score_fail",
+                "strict_btst_goal_case": True,
+                "next_high_return": 0.071,
+                "next_close_return": 0.042,
+                "t_plus_2_close_return": 0.0812,
+                "report_dir": "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329",
+                "report_mode": "live_pipeline",
+                "report_selection_target": "dual_target",
+            },
+        ],
+    }
+    waterfall = {
+        "generated_at": "2026-04-02T09:00:00",
+        "top_tradeable_kill_switches": [
+            {"kill_switch": "score_fail", "count": 4},
+            {"kill_switch": "candidate_entry_filtered", "count": 2},
+            {"kill_switch": "no_candidate_entry", "count": 1},
+        ],
+        "recommendation": analysis["recommendation"],
+    }
+    _write_json(reports_root / "btst_tradeable_opportunity_pool_march.json", analysis)
+    _write_json(reports_root / "btst_tradeable_opportunity_reason_waterfall_march.json", waterfall)
+    (reports_root / "btst_tradeable_opportunity_pool_march.md").write_text("# tradeable opportunity pool\n", encoding="utf-8")
+    (reports_root / "btst_tradeable_opportunity_reason_waterfall_march.md").write_text("# tradeable opportunity waterfall\n", encoding="utf-8")
+    (reports_root / "btst_tradeable_opportunity_pool_march.csv").write_text("trade_date,ticker,first_kill_switch\n2026-03-26,300724,score_fail\n", encoding="utf-8")
+    snapshots_root = reports_root.parent / "snapshots"
+    snapshots_root.mkdir(parents=True, exist_ok=True)
+    _write_json(snapshots_root / "candidate_pool_20260325_top300.json", [{"ticker": "300394"}])
+
+
 def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entries(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     reports_root = repo_root / "data" / "reports"
@@ -259,6 +379,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
             },
         },
     )
+    _write_tradeable_opportunity_artifacts(reports_root)
 
     result = generate_reports_manifest_artifacts(reports_root=reports_root)
     manifest = result["manifest"]
@@ -270,15 +391,44 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "status": "skipped_no_window_reports",
         "window_report_count": 0,
     }
-    assert manifest["candidate_entry_shadow_refresh"] == {
-        "status": "skipped_missing_inputs",
-        "missing_inputs": [
-            "frontier_report",
-            "structural_validation",
-            "score_frontier_report",
-        ],
-        "window_report_count": 0,
-    }
+    refresh = manifest["candidate_entry_shadow_refresh"]
+    assert refresh["status"] == "skipped_missing_inputs"
+    assert refresh["missing_inputs"] == [
+        "frontier_report",
+        "structural_validation",
+        "score_frontier_report",
+    ]
+    assert refresh["window_report_count"] == 0
+    assert refresh["no_candidate_entry_action_board_status"] == "refreshed"
+    assert refresh["no_candidate_entry_priority_queue_count"] == 1
+    assert refresh["no_candidate_entry_top_tickers"] == ["300502"]
+    assert refresh["no_candidate_entry_hotspot_report_dirs"] == ["paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329"]
+    assert refresh["no_candidate_entry_action_board_json"] == str((reports_root / "btst_no_candidate_entry_action_board_latest.json").resolve())
+    assert refresh["no_candidate_entry_replay_bundle_status"] == "skipped_missing_replay_reports"
+    assert refresh["no_candidate_entry_replay_bundle_json"] is None
+    assert refresh["no_candidate_entry_promising_tickers"] is None
+    assert refresh["no_candidate_entry_failure_dossier_status"] == "refreshed"
+    assert refresh["no_candidate_entry_failure_dossier_json"] == str((reports_root / "btst_no_candidate_entry_failure_dossier_latest.json").resolve())
+    assert refresh["no_candidate_entry_upstream_absence_tickers"] == []
+    assert refresh["no_candidate_entry_handoff_stage_counts"] == {"missing_replay_input_artifacts": 1}
+    assert refresh["no_candidate_entry_absent_from_watchlist_tickers"] == []
+    assert refresh["no_candidate_entry_watchlist_handoff_gap_tickers"] == []
+    assert refresh["no_candidate_entry_candidate_entry_target_gap_tickers"] == []
+    assert refresh["no_candidate_entry_handoff_action_queue_task_ids"] == ["300502_missing_replay_input_artifacts"]
+    assert refresh["no_candidate_entry_semantic_miss_tickers"] == []
+    assert refresh["watchlist_recall_dossier_status"] == "refreshed"
+    assert refresh["watchlist_recall_stage_counts"] == {"absent_from_candidate_pool": 1}
+    assert refresh["watchlist_recall_absent_from_candidate_pool_tickers"] == ["300502"]
+    assert refresh["watchlist_recall_candidate_pool_layer_b_gap_tickers"] == []
+    assert refresh["watchlist_recall_layer_b_watchlist_gap_tickers"] == []
+    assert refresh["watchlist_recall_action_queue_task_ids"] == ["300502_absent_from_candidate_pool"]
+    assert refresh["candidate_pool_recall_dossier_status"] == "refreshed"
+    assert refresh["candidate_pool_recall_stage_counts"] == {"candidate_pool_truncated_after_filters": 1}
+    assert refresh["candidate_pool_recall_dominant_stage"] == "candidate_pool_truncated_after_filters"
+    assert refresh["candidate_pool_recall_top_stage_tickers"] == {"candidate_pool_truncated_after_filters": ["300502"]}
+    assert refresh["candidate_pool_recall_truncation_frontier_summary"]["observed_case_count"] == 1
+    assert refresh["candidate_pool_recall_dominant_liquidity_gap_mode"] == "near_cutoff_liquidity_gap"
+    assert refresh["candidate_pool_recall_action_queue_task_ids"] == ["300502_candidate_pool_truncated_after_filters"]
     assert manifest["btst_score_fail_frontier_refresh"] == {
         "status": "refreshed",
         "report_dir": "paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330",
@@ -344,6 +494,37 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "latest_short_trade_report": "paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330",
         "output_json": str((reports_root / "btst_replay_cohort_latest.json").resolve()),
     }
+    assert manifest["btst_tradeable_opportunity_pool_refresh"] == {
+        "status": "loaded_existing",
+        "report_dir_count": 2,
+        "analysis_json": str((reports_root / "btst_tradeable_opportunity_pool_march.json").resolve()),
+        "analysis_markdown": str((reports_root / "btst_tradeable_opportunity_pool_march.md").resolve()),
+        "analysis_csv": str((reports_root / "btst_tradeable_opportunity_pool_march.csv").resolve()),
+        "waterfall_json": str((reports_root / "btst_tradeable_opportunity_reason_waterfall_march.json").resolve()),
+        "waterfall_markdown": str((reports_root / "btst_tradeable_opportunity_reason_waterfall_march.md").resolve()),
+        "result_truth_pool_count": 19,
+        "tradeable_opportunity_pool_count": 11,
+        "system_recall_count": 7,
+        "selected_or_near_miss_count": 3,
+        "main_execution_pool_count": 2,
+        "strict_goal_case_count": 4,
+        "strict_goal_false_negative_count": 2,
+        "tradeable_pool_capture_rate": 0.6364,
+        "tradeable_pool_selected_or_near_miss_rate": 0.2727,
+        "tradeable_pool_main_execution_rate": 0.1818,
+        "no_candidate_entry_count": 1,
+        "no_candidate_entry_share_of_tradeable_pool": 0.0909,
+        "top_no_candidate_entry_industries": ["Chip"],
+        "top_no_candidate_entry_tickers": ["300502"],
+        "top_tradeable_kill_switches": [
+            {"kill_switch": "score_fail", "count": 4},
+            {"kill_switch": "candidate_entry_filtered", "count": 2},
+            {"kill_switch": "no_candidate_entry", "count": 1},
+        ],
+        "top_tradeable_kill_switch_labels": ["score_fail", "candidate_entry_filtered", "no_candidate_entry"],
+        "top_strict_goal_false_negative_tickers": ["300724", "600522"],
+        "recommendation": "当前主瓶颈已经集中到 short-trade boundary / score frontier，优先沿 breakout-trend-catalyst 语义做前沿修复。",
+    }
     assert manifest["latest_btst_run"] == {
         "report_dir": "data/reports/paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330",
         "report_dir_abs": str(latest_report.resolve()),
@@ -375,6 +556,12 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert entries_by_id["btst_governance_validation_latest"]["report_path"] == "data/reports/btst_governance_validation_latest.md"
     assert entries_by_id["btst_independent_window_monitor_latest"]["report_path"] == "data/reports/btst_independent_window_monitor_latest.md"
     assert entries_by_id["btst_tplus1_tplus2_objective_monitor_latest"]["report_path"] == "data/reports/btst_tplus1_tplus2_objective_monitor_latest.md"
+    assert entries_by_id["btst_candidate_pool_lane_objective_support_latest"]["report_path"] == "data/reports/btst_candidate_pool_lane_objective_support_latest.md"
+    assert entries_by_id["btst_candidate_pool_rebucket_objective_validation_latest"]["report_path"] == "data/reports/btst_candidate_pool_rebucket_objective_validation_latest.md"
+    assert entries_by_id["btst_tradeable_opportunity_pool_march"]["report_path"] == "data/reports/btst_tradeable_opportunity_pool_march.md"
+    assert entries_by_id["btst_no_candidate_entry_action_board_latest"]["report_path"] == "data/reports/btst_no_candidate_entry_action_board_latest.md"
+    assert entries_by_id["btst_no_candidate_entry_failure_dossier_latest"]["report_path"] == "data/reports/btst_no_candidate_entry_failure_dossier_latest.md"
+    assert entries_by_id["btst_tradeable_opportunity_reason_waterfall_march"]["report_path"] == "data/reports/btst_tradeable_opportunity_reason_waterfall_march.md"
     assert entries_by_id["btst_replay_cohort_latest"]["report_path"] == "data/reports/btst_replay_cohort_latest.md"
     assert entries_by_id["btst_score_fail_frontier_latest"]["report_path"] == "data/reports/short_trade_boundary_score_failures_frontier_latest.md"
     assert entries_by_id["btst_score_fail_recurring_frontier_latest"]["report_path"] == "data/reports/short_trade_boundary_recurring_frontier_cases_latest.md"
@@ -388,6 +575,14 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_governance_synthesis_latest",
         "btst_tplus1_tplus2_objective_monitor_latest",
         "btst_independent_window_monitor_latest",
+        "btst_candidate_pool_lane_objective_support_latest",
+        "btst_candidate_pool_rebucket_objective_validation_latest",
+        "btst_tradeable_opportunity_pool_march",
+        "btst_no_candidate_entry_action_board_latest",
+        "btst_no_candidate_entry_failure_dossier_latest",
+        "btst_watchlist_recall_dossier_latest",
+        "btst_candidate_pool_recall_dossier_latest",
+        "btst_tradeable_opportunity_reason_waterfall_march",
         "latest_btst_priority_board",
         "latest_btst_catalyst_theme_frontier_markdown",
         "btst_score_fail_frontier_latest",
@@ -409,6 +604,13 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_open_ready_delta_latest",
         "btst_latest_close_validation_latest",
         "btst_tplus1_tplus2_objective_monitor_latest",
+        "btst_candidate_pool_lane_objective_support_latest",
+        "btst_candidate_pool_rebucket_objective_validation_latest",
+        "btst_tradeable_opportunity_pool_march",
+        "btst_no_candidate_entry_action_board_latest",
+        "btst_no_candidate_entry_failure_dossier_latest",
+        "btst_watchlist_recall_dossier_latest",
+        "btst_candidate_pool_recall_dossier_latest",
         "btst_nightly_control_tower_latest",
         "latest_btst_session_summary",
         "latest_btst_brief_json",
@@ -432,6 +634,14 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "p9_candidate_entry_rollout_governance",
         "btst_tplus1_tplus2_objective_monitor_latest",
         "btst_independent_window_monitor_latest",
+        "btst_candidate_pool_lane_objective_support_latest",
+        "btst_candidate_pool_rebucket_objective_validation_latest",
+        "btst_tradeable_opportunity_pool_march",
+        "btst_no_candidate_entry_action_board_latest",
+        "btst_no_candidate_entry_failure_dossier_latest",
+        "btst_watchlist_recall_dossier_latest",
+        "btst_candidate_pool_recall_dossier_latest",
+        "btst_tradeable_opportunity_reason_waterfall_march",
         "btst_score_fail_frontier_latest",
         "btst_score_fail_recurring_frontier_latest",
         "p6_primary_window_gap",
@@ -456,6 +666,12 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "catalyst_theme_frontier_refresh_status: refreshed" in markdown
     assert "btst_window_evidence_refresh_status: skipped_no_window_reports" in markdown
     assert "candidate_entry_shadow_refresh_status: skipped_missing_inputs" in markdown
+    assert "candidate_entry_shadow_no_candidate_entry_failure_dossier_status: refreshed" in markdown
+    assert "candidate_entry_shadow_watchlist_recall_dossier_status: refreshed" in markdown
+    assert "candidate_entry_shadow_watchlist_recall_absent_from_candidate_pool_tickers: ['300502']" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_dossier_status: refreshed" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_dominant_stage: candidate_pool_truncated_after_filters" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary:" in markdown
     assert "btst_score_fail_frontier_refresh_status: refreshed" in markdown
     assert "btst_score_fail_frontier_rejected_case_count: 0" in markdown
     assert "btst_score_fail_frontier_recurring_case_count: 0" in markdown
@@ -465,6 +681,13 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "btst_governance_validation_status: refreshed" in markdown
     assert "btst_independent_window_monitor_status: refreshed" in markdown
     assert "btst_tplus1_tplus2_objective_monitor_status: refreshed" in markdown
+    assert "btst_candidate_pool_lane_objective_support_latest.md" in markdown
+    assert "btst_candidate_pool_rebucket_objective_validation_latest.md" in markdown
+    assert "btst_tradeable_opportunity_pool_refresh_status: loaded_existing" in markdown
+    assert "btst_tradeable_opportunity_pool_tradeable_count: 11" in markdown
+    assert "btst_tradeable_opportunity_pool_capture_rate: 0.6364" in markdown
+    assert "btst_tradeable_opportunity_pool_top_no_candidate_entry_industries: ['Chip']" in markdown
+    assert "btst_tradeable_opportunity_pool_top_no_candidate_entry_tickers: ['300502']" in markdown
     assert "btst_replay_cohort_status: refreshed" in markdown
     assert "## BTST 控制塔" in markdown
     assert "## 明天开盘" in markdown
@@ -478,6 +701,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert "btst_governance_validation_latest.md" in markdown
     assert "btst_independent_window_monitor_latest.md" in markdown
     assert "btst_tplus1_tplus2_objective_monitor_latest.md" in markdown
+    assert "btst_tradeable_opportunity_pool_march.md" in markdown
+    assert "btst_no_candidate_entry_action_board_latest.md" in markdown
+    assert "btst_no_candidate_entry_failure_dossier_latest.md" in markdown
+    assert "btst_tradeable_opportunity_reason_waterfall_march.md" in markdown
     assert "btst_replay_cohort_latest.md" in markdown
     assert "short_trade_boundary_score_failures_frontier_latest.md" in markdown
     assert "short_trade_boundary_recurring_frontier_cases_latest.md" in markdown
@@ -551,6 +778,7 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
             ]
         },
     )
+    _write_tradeable_opportunity_artifacts(reports_root)
 
     report_a = reports_root / "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329"
     _write_replay_input(report_a, trade_date="2026-03-26", entries=[_build_entry("300394", weak_structure=False), _build_entry("300502", weak_structure=True)])
@@ -568,12 +796,20 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["preserve_misfire_report_count"] == 0
     assert refresh["rollout_readiness"] == "shadow_only_until_second_window"
     assert refresh["lane_status"] == "shadow_only_until_second_window"
+    assert refresh["no_candidate_entry_action_board_status"] == "refreshed"
+    assert refresh["no_candidate_entry_priority_queue_count"] == 1
+    assert refresh["no_candidate_entry_top_tickers"] == ["300502"]
+    assert refresh["no_candidate_entry_replay_bundle_status"] == "refreshed"
+    assert refresh["no_candidate_entry_promising_tickers"] == []
+    assert refresh["no_candidate_entry_failure_dossier_status"] == "refreshed"
+    assert refresh["no_candidate_entry_failure_dossier_json"] == str((reports_root / "btst_no_candidate_entry_failure_dossier_latest.json").resolve())
 
     manifest = result["manifest"]
     assert manifest["catalyst_theme_frontier_refresh"] == {
         "status": "skipped_no_latest_btst_run",
     }
     assert manifest["candidate_entry_shadow_refresh"] == refresh
+    assert manifest["btst_tradeable_opportunity_pool_refresh"]["status"] == "loaded_existing"
     assert manifest["btst_rollout_governance_refresh"]["status"] == "skipped_missing_inputs"
     assert manifest["btst_governance_synthesis_refresh"]["status"] == "skipped_missing_inputs"
     assert manifest["btst_governance_validation_refresh"]["status"] == "skipped_missing_inputs"
@@ -582,22 +818,80 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
 
     window_scan = json.loads((reports_root / "btst_candidate_entry_window_scan_20260330.json").read_text(encoding="utf-8"))
     governance = json.loads((reports_root / "p9_candidate_entry_rollout_governance_20260330.json").read_text(encoding="utf-8"))
+    action_board = json.loads((reports_root / "btst_no_candidate_entry_action_board_latest.json").read_text(encoding="utf-8"))
+    replay_bundle = json.loads((reports_root / "btst_no_candidate_entry_replay_bundle_latest.json").read_text(encoding="utf-8"))
+    failure_dossier = json.loads((reports_root / "btst_no_candidate_entry_failure_dossier_latest.json").read_text(encoding="utf-8"))
     assert window_scan["filtered_report_count"] == 1
     assert window_scan["focus_hit_report_count"] == 1
     assert window_scan["preserve_misfire_report_count"] == 0
     assert window_scan["rollout_readiness"] == "shadow_only_until_second_window"
     assert governance["lane_status"] == "shadow_only_until_second_window"
     assert governance["default_upgrade_status"] == "blocked_by_single_window_candidate_entry_signal"
+    assert governance["no_candidate_entry_action_board_summary"]["top_priority_tickers"] == ["300502"]
+    assert governance["no_candidate_entry_replay_bundle_summary"]["promising_priority_tickers"] == []
+    assert governance["no_candidate_entry_failure_dossier_summary"]["priority_failure_class_counts"] == failure_dossier["priority_failure_class_counts"]
+    assert governance["no_candidate_entry_failure_dossier_summary"]["priority_handoff_stage_counts"] == failure_dossier["priority_handoff_stage_counts"]
+    assert governance["no_candidate_entry_failure_dossier_summary"]["top_candidate_entry_visible_but_not_selection_target_tickers"] == failure_dossier["top_candidate_entry_visible_but_not_selection_target_tickers"]
+    watchlist_recall = json.loads((reports_root / "btst_watchlist_recall_dossier_latest.json").read_text(encoding="utf-8"))
+    assert governance["watchlist_recall_dossier_summary"]["priority_recall_stage_counts"] == watchlist_recall["priority_recall_stage_counts"]
+    assert governance["watchlist_recall_dossier_summary"]["top_absent_from_candidate_pool_tickers"] == watchlist_recall["top_absent_from_candidate_pool_tickers"]
+    candidate_pool_recall = json.loads((reports_root / "btst_candidate_pool_recall_dossier_latest.json").read_text(encoding="utf-8"))
+    assert governance["candidate_pool_recall_dossier_summary"]["priority_stage_counts"] == candidate_pool_recall["priority_stage_counts"]
+    assert governance["candidate_pool_recall_dossier_summary"]["dominant_stage"] == candidate_pool_recall["dominant_stage"]
+    assert refresh["candidate_pool_recall_dominant_liquidity_gap_mode"] == "near_cutoff_liquidity_gap"
+    assert refresh["candidate_pool_recall_focus_liquidity_profiles"] == candidate_pool_recall["focus_liquidity_profile_summary"]["primary_focus_tickers"][:3]
+    assert refresh["candidate_pool_recall_priority_handoff_counts"] == candidate_pool_recall["focus_liquidity_profile_summary"]["priority_handoff_counts"]
+    assert refresh["candidate_pool_recall_priority_handoff_branch_diagnoses"] == candidate_pool_recall["priority_handoff_branch_diagnoses"][:3]
+    assert refresh["candidate_pool_recall_priority_handoff_branch_mechanisms"] == candidate_pool_recall["priority_handoff_branch_mechanisms"][:3]
+    assert refresh["candidate_pool_recall_priority_handoff_branch_experiment_queue"] == candidate_pool_recall["priority_handoff_branch_experiment_queue"][:3]
+    assert refresh["candidate_pool_branch_priority_board_status"] == "refreshed"
+    assert refresh["candidate_pool_branch_priority_board_rows"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert refresh["candidate_pool_branch_priority_alignment_status"] == "aligned_top_lane"
+    assert refresh["candidate_pool_lane_objective_support_status"] == "refreshed"
+    assert refresh["candidate_pool_lane_objective_support_rows"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert refresh["candidate_pool_rebucket_shadow_pack_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
+    assert refresh["candidate_pool_rebucket_objective_validation_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
+    assert action_board["top_priority_tickers"] == ["300502"]
+    assert replay_bundle["promising_priority_tickers"] == []
+    assert failure_dossier["priority_ticker_dossiers"][0]["ticker"] == "300502"
 
     entries_by_id = {entry["id"]: entry for entry in result["manifest"]["entries"]}
     assert entries_by_id["btst_candidate_entry_window_scan_review"]["report_path"] == "data/reports/btst_candidate_entry_window_scan_20260330.md"
     assert entries_by_id["p9_candidate_entry_rollout_governance"]["report_path"] == "data/reports/p9_candidate_entry_rollout_governance_20260330.md"
+    assert entries_by_id["btst_no_candidate_entry_action_board_latest"]["report_path"] == "data/reports/btst_no_candidate_entry_action_board_latest.md"
+    assert entries_by_id["btst_no_candidate_entry_replay_bundle_latest"]["report_path"] == "data/reports/btst_no_candidate_entry_replay_bundle_latest.md"
+    assert entries_by_id["btst_no_candidate_entry_failure_dossier_latest"]["report_path"] == "data/reports/btst_no_candidate_entry_failure_dossier_latest.md"
+    assert entries_by_id["btst_watchlist_recall_dossier_latest"]["report_path"] == "data/reports/btst_watchlist_recall_dossier_latest.md"
+    assert entries_by_id["btst_candidate_pool_recall_dossier_latest"]["report_path"] == "data/reports/btst_candidate_pool_recall_dossier_latest.md"
 
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
     assert "candidate_entry_shadow_refresh_status: refreshed" in markdown
     assert "candidate_entry_shadow_refresh_window_reports: 2" in markdown
     assert "candidate_entry_shadow_refresh_filtered_reports: 1" in markdown
     assert "candidate_entry_shadow_refresh_rollout_readiness: shadow_only_until_second_window" in markdown
+    assert "candidate_entry_shadow_no_candidate_entry_action_board_status: refreshed" in markdown
+    assert "candidate_entry_shadow_no_candidate_entry_priority_queue_count: 1" in markdown
+    assert "candidate_entry_shadow_no_candidate_entry_top_tickers: ['300502']" in markdown
+    assert "candidate_entry_shadow_no_candidate_entry_replay_bundle_status: refreshed" in markdown
+    assert "candidate_entry_shadow_no_candidate_entry_promising_tickers: []" in markdown
+    assert "candidate_entry_shadow_no_candidate_entry_failure_dossier_status: refreshed" in markdown
+    assert "candidate_entry_shadow_watchlist_recall_dossier_status: refreshed" in markdown
+    assert "candidate_entry_shadow_watchlist_recall_absent_from_candidate_pool_tickers: ['300502']" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_dossier_status: refreshed" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_dominant_stage: candidate_pool_truncated_after_filters" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_dominant_liquidity_gap_mode: near_cutoff_liquidity_gap" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_focus_liquidity_profiles:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_priority_handoff_counts:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_diagnoses:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_mechanisms:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_branch_priority_board_status:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_branch_priority_alignment_status:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_lane_objective_support_status:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_rebucket_objective_validation_status:" in markdown
+    assert "btst_tradeable_opportunity_pool_refresh_status: loaded_existing" in markdown
     assert "btst_rollout_governance_refresh_status: skipped_missing_inputs" in markdown
     assert "btst_governance_synthesis_status: skipped_missing_inputs" in markdown
     assert "btst_governance_validation_status: skipped_missing_inputs" in markdown

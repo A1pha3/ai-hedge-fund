@@ -17,6 +17,38 @@ from scripts.analyze_btst_candidate_entry_window_scan import (
     analyze_btst_candidate_entry_window_scan,
     render_btst_candidate_entry_window_scan_markdown,
 )
+from scripts.analyze_btst_no_candidate_entry_action_board import (
+    analyze_btst_no_candidate_entry_action_board,
+    render_btst_no_candidate_entry_action_board_markdown,
+)
+from scripts.analyze_btst_no_candidate_entry_failure_dossier import (
+    analyze_btst_no_candidate_entry_failure_dossier,
+    render_btst_no_candidate_entry_failure_dossier_markdown,
+)
+from scripts.analyze_btst_no_candidate_entry_replay_bundle import (
+    analyze_btst_no_candidate_entry_replay_bundle,
+    render_btst_no_candidate_entry_replay_bundle_markdown,
+)
+from scripts.analyze_btst_watchlist_recall_dossier import (
+    analyze_btst_watchlist_recall_dossier,
+    render_btst_watchlist_recall_dossier_markdown,
+)
+from scripts.analyze_btst_candidate_pool_recall_dossier import (
+    analyze_btst_candidate_pool_recall_dossier,
+    render_btst_candidate_pool_recall_dossier_markdown,
+)
+from scripts.analyze_btst_candidate_pool_branch_priority_board import (
+    analyze_btst_candidate_pool_branch_priority_board,
+    render_btst_candidate_pool_branch_priority_board_markdown,
+)
+from scripts.analyze_btst_candidate_pool_lane_objective_support import (
+    analyze_btst_candidate_pool_lane_objective_support,
+    render_btst_candidate_pool_lane_objective_support_markdown,
+)
+from scripts.analyze_btst_candidate_pool_rebucket_objective_validation import (
+    analyze_btst_candidate_pool_rebucket_objective_validation,
+    render_btst_candidate_pool_rebucket_objective_validation_markdown,
+)
 from scripts.analyze_btst_primary_roll_forward import (
     analyze_btst_primary_roll_forward,
     render_btst_primary_roll_forward_markdown,
@@ -45,6 +77,11 @@ from scripts.analyze_btst_replay_cohort import (
     analyze_btst_replay_cohort,
     render_btst_replay_cohort_markdown,
 )
+from scripts.analyze_btst_tradeable_opportunity_pool import (
+    generate_btst_tradeable_opportunity_pool_artifacts,
+    load_btst_tradeable_opportunity_artifacts,
+    summarize_btst_tradeable_opportunity_artifacts,
+)
 from scripts.analyze_btst_independent_window_monitor import (
     analyze_btst_independent_window_monitor,
     render_btst_independent_window_monitor_markdown,
@@ -72,6 +109,10 @@ from scripts.analyze_short_trade_boundary_score_failures import (
 from scripts.analyze_short_trade_boundary_score_failures_frontier import (
     analyze_short_trade_boundary_score_failures_frontier,
     render_short_trade_boundary_score_failure_frontier_markdown,
+)
+from scripts.run_btst_candidate_pool_rebucket_shadow_pack import (
+    render_btst_candidate_pool_rebucket_shadow_pack_markdown,
+    run_btst_candidate_pool_rebucket_shadow_pack,
 )
 from scripts.validate_btst_governance_consistency import (
     render_btst_governance_validation_markdown,
@@ -120,6 +161,29 @@ BTST_INDEPENDENT_WINDOW_MONITOR_JSON = "btst_independent_window_monitor_latest.j
 BTST_INDEPENDENT_WINDOW_MONITOR_MD = "btst_independent_window_monitor_latest.md"
 BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_JSON = "btst_tplus1_tplus2_objective_monitor_latest.json"
 BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_MD = "btst_tplus1_tplus2_objective_monitor_latest.md"
+BTST_TRADEABLE_OPPORTUNITY_POOL_JSON = "btst_tradeable_opportunity_pool_march.json"
+BTST_TRADEABLE_OPPORTUNITY_POOL_MD = "btst_tradeable_opportunity_pool_march.md"
+BTST_TRADEABLE_OPPORTUNITY_POOL_CSV = "btst_tradeable_opportunity_pool_march.csv"
+BTST_TRADEABLE_OPPORTUNITY_WATERFALL_JSON = "btst_tradeable_opportunity_reason_waterfall_march.json"
+BTST_TRADEABLE_OPPORTUNITY_WATERFALL_MD = "btst_tradeable_opportunity_reason_waterfall_march.md"
+BTST_NO_CANDIDATE_ENTRY_ACTION_BOARD_JSON = "btst_no_candidate_entry_action_board_latest.json"
+BTST_NO_CANDIDATE_ENTRY_ACTION_BOARD_MD = "btst_no_candidate_entry_action_board_latest.md"
+BTST_NO_CANDIDATE_ENTRY_REPLAY_BUNDLE_JSON = "btst_no_candidate_entry_replay_bundle_latest.json"
+BTST_NO_CANDIDATE_ENTRY_REPLAY_BUNDLE_MD = "btst_no_candidate_entry_replay_bundle_latest.md"
+BTST_NO_CANDIDATE_ENTRY_FAILURE_DOSSIER_JSON = "btst_no_candidate_entry_failure_dossier_latest.json"
+BTST_NO_CANDIDATE_ENTRY_FAILURE_DOSSIER_MD = "btst_no_candidate_entry_failure_dossier_latest.md"
+BTST_WATCHLIST_RECALL_DOSSIER_JSON = "btst_watchlist_recall_dossier_latest.json"
+BTST_WATCHLIST_RECALL_DOSSIER_MD = "btst_watchlist_recall_dossier_latest.md"
+BTST_CANDIDATE_POOL_RECALL_DOSSIER_JSON = "btst_candidate_pool_recall_dossier_latest.json"
+BTST_CANDIDATE_POOL_RECALL_DOSSIER_MD = "btst_candidate_pool_recall_dossier_latest.md"
+BTST_CANDIDATE_POOL_BRANCH_PRIORITY_BOARD_JSON = "btst_candidate_pool_branch_priority_board_latest.json"
+BTST_CANDIDATE_POOL_BRANCH_PRIORITY_BOARD_MD = "btst_candidate_pool_branch_priority_board_latest.md"
+BTST_CANDIDATE_POOL_LANE_OBJECTIVE_SUPPORT_JSON = "btst_candidate_pool_lane_objective_support_latest.json"
+BTST_CANDIDATE_POOL_LANE_OBJECTIVE_SUPPORT_MD = "btst_candidate_pool_lane_objective_support_latest.md"
+BTST_CANDIDATE_POOL_REBUCKET_SHADOW_PACK_JSON = "btst_candidate_pool_rebucket_shadow_pack_latest.json"
+BTST_CANDIDATE_POOL_REBUCKET_SHADOW_PACK_MD = "btst_candidate_pool_rebucket_shadow_pack_latest.md"
+BTST_CANDIDATE_POOL_REBUCKET_OBJECTIVE_VALIDATION_JSON = "btst_candidate_pool_rebucket_objective_validation_latest.json"
+BTST_CANDIDATE_POOL_REBUCKET_OBJECTIVE_VALIDATION_MD = "btst_candidate_pool_rebucket_objective_validation_latest.md"
 MULTI_WINDOW_ROLE_CANDIDATES_LATEST_JSON = "multi_window_short_trade_role_candidates_latest.json"
 MULTI_WINDOW_ROLE_CANDIDATES_LATEST_MD = "multi_window_short_trade_role_candidates_latest.md"
 RECURRING_FRONTIER_TRANSITION_LATEST_JSON = "recurring_frontier_transition_candidates_latest.json"
@@ -131,6 +195,8 @@ SHORT_TRADE_BOUNDARY_SCORE_FAILURES_FRONTIER_LATEST_MD = "short_trade_boundary_s
 SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_JSON = "short_trade_boundary_recurring_frontier_cases_latest.json"
 SHORT_TRADE_BOUNDARY_RECURRING_FRONTIER_LATEST_MD = "short_trade_boundary_recurring_frontier_cases_latest.md"
 RECURRING_PAIR_COMPARISON_JSON = "recurring_frontier_release_pair_comparison_600821_vs_300113_catalyst_floor_zero_refresh_20260401.json"
+TRADEABLE_OPPORTUNITY_POOL_START_DATE = "2026-03-01"
+TRADEABLE_OPPORTUNITY_POOL_END_DATE = "2026-03-31"
 CANDIDATE_ENTRY_FOCUS_TICKERS: tuple[str, ...] = ("300502",)
 CANDIDATE_ENTRY_PRESERVE_TICKERS: tuple[str, ...] = ("300394",)
 STATIC_ENTRY_GLOB_OVERRIDES: dict[str, str] = {
@@ -432,6 +498,123 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "source_kind": "generated_governance_artifact",
     },
     {
+        "id": "btst_candidate_pool_lane_objective_support_latest",
+        "path": "data/reports/btst_candidate_pool_lane_objective_support_latest.md",
+        "report_type": "btst_candidate_pool_lane_objective_support",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "candidate-pool recall 各 lane 的后验收益支持到底如何",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_rebucket_objective_validation_latest",
+        "path": "data/reports/btst_candidate_pool_rebucket_objective_validation_latest.md",
+        "report_type": "btst_candidate_pool_rebucket_objective_validation",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "rebucket shadow lane 是否已有足够收益支持继续优先推进",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_tradeable_opportunity_pool_march",
+        "path": "data/reports/btst_tradeable_opportunity_pool_march.md",
+        "report_type": "btst_tradeable_opportunity_pool",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 11,
+        "is_latest": True,
+        "question": "3 月可交易机会池到底有多大，系统召回率卡在什么位置",
+        "view_order": 11,
+        "time_scope": {"label": "march_2026"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_no_candidate_entry_action_board_latest",
+        "path": "data/reports/btst_no_candidate_entry_action_board_latest.md",
+        "report_type": "btst_no_candidate_entry_action_board",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 12,
+        "is_latest": True,
+        "question": "no_candidate_entry 这批漏召回样本该先打哪几个票、哪几个窗口",
+        "view_order": 12,
+        "time_scope": {"label": "march_2026"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_no_candidate_entry_replay_bundle_latest",
+        "path": "data/reports/btst_no_candidate_entry_replay_bundle_latest.md",
+        "report_type": "btst_no_candidate_entry_replay_bundle",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 12,
+        "is_latest": True,
+        "question": "当前 no_candidate_entry backlog 里哪些票已经形成 preserve-safe recall probe",
+        "view_order": 13,
+        "time_scope": {"label": "march_2026"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_no_candidate_entry_failure_dossier_latest",
+        "path": "data/reports/btst_no_candidate_entry_failure_dossier_latest.md",
+        "report_type": "btst_no_candidate_entry_failure_dossier",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 12,
+        "is_latest": True,
+        "question": "当前 no_candidate_entry backlog 主要是 upstream 缺失，还是 candidate-entry 语义未命中",
+        "view_order": 14,
+        "time_scope": {"label": "march_2026"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_watchlist_recall_dossier_latest",
+        "path": "data/reports/btst_watchlist_recall_dossier_latest.md",
+        "report_type": "btst_watchlist_recall_dossier",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 12,
+        "is_latest": True,
+        "question": "absent_from_watchlist 这批票具体断在 candidate_pool、layer_b，还是 watchlist gate",
+        "view_order": 15,
+        "time_scope": {"label": "march_2026"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_recall_dossier_latest",
+        "path": "data/reports/btst_candidate_pool_recall_dossier_latest.md",
+        "report_type": "btst_candidate_pool_recall_dossier",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 12,
+        "is_latest": True,
+        "question": "absent_from_candidate_pool 这批票具体卡在 Layer A 哪个过滤或 top300 边界",
+        "view_order": 16,
+        "time_scope": {"label": "march_2026"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_tradeable_opportunity_reason_waterfall_march",
+        "path": "data/reports/btst_tradeable_opportunity_reason_waterfall_march.md",
+        "report_type": "btst_tradeable_opportunity_reason_waterfall",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 13,
+        "is_latest": True,
+        "question": "3 月可交易机会池最早死在什么地方，错杀瀑布怎么排",
+        "view_order": 13,
+        "time_scope": {"label": "march_2026"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
         "id": "btst_multi_window_role_candidates_latest",
         "path": "data/reports/multi_window_short_trade_role_candidates_latest.md",
         "report_type": "btst_multi_window_role_candidates",
@@ -607,6 +790,15 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_governance_synthesis_latest",
             "btst_tplus1_tplus2_objective_monitor_latest",
             "btst_independent_window_monitor_latest",
+            "btst_candidate_pool_lane_objective_support_latest",
+            "btst_candidate_pool_rebucket_objective_validation_latest",
+            "btst_tradeable_opportunity_pool_march",
+            "btst_no_candidate_entry_action_board_latest",
+            "btst_no_candidate_entry_replay_bundle_latest",
+            "btst_no_candidate_entry_failure_dossier_latest",
+            "btst_watchlist_recall_dossier_latest",
+            "btst_candidate_pool_recall_dossier_latest",
+            "btst_tradeable_opportunity_reason_waterfall_march",
             "latest_btst_priority_board",
             "latest_btst_catalyst_theme_frontier_markdown",
             "btst_score_fail_frontier_latest",
@@ -632,6 +824,14 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_open_ready_delta_latest",
             "btst_latest_close_validation_latest",
             "btst_tplus1_tplus2_objective_monitor_latest",
+            "btst_candidate_pool_lane_objective_support_latest",
+            "btst_candidate_pool_rebucket_objective_validation_latest",
+            "btst_tradeable_opportunity_pool_march",
+            "btst_no_candidate_entry_action_board_latest",
+            "btst_no_candidate_entry_replay_bundle_latest",
+            "btst_no_candidate_entry_failure_dossier_latest",
+            "btst_watchlist_recall_dossier_latest",
+            "btst_candidate_pool_recall_dossier_latest",
             "btst_nightly_control_tower_latest",
             "latest_btst_session_summary",
             "latest_btst_brief_json",
@@ -660,6 +860,15 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "p9_candidate_entry_rollout_governance",
             "btst_tplus1_tplus2_objective_monitor_latest",
             "btst_independent_window_monitor_latest",
+            "btst_candidate_pool_lane_objective_support_latest",
+            "btst_candidate_pool_rebucket_objective_validation_latest",
+            "btst_tradeable_opportunity_pool_march",
+            "btst_no_candidate_entry_action_board_latest",
+            "btst_no_candidate_entry_replay_bundle_latest",
+            "btst_no_candidate_entry_failure_dossier_latest",
+            "btst_watchlist_recall_dossier_latest",
+            "btst_candidate_pool_recall_dossier_latest",
+            "btst_tradeable_opportunity_reason_waterfall_march",
             "btst_multi_window_role_candidates_latest",
             "btst_recurring_frontier_transition_latest",
             "btst_score_fail_frontier_latest",
@@ -1076,22 +1285,248 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
     frontier_report_path = resolved_reports_root / CANDIDATE_ENTRY_FRONTIER_JSON
     structural_validation_path = resolved_reports_root / CANDIDATE_ENTRY_STRUCTURAL_VALIDATION_JSON
     score_frontier_path = resolved_reports_root / CANDIDATE_ENTRY_SCORE_FRONTIER_JSON
+    tradeable_opportunity_pool_json_path = resolved_reports_root / BTST_TRADEABLE_OPPORTUNITY_POOL_JSON
     window_scan_json_path = resolved_reports_root / CANDIDATE_ENTRY_WINDOW_SCAN_JSON
     window_scan_md_path = resolved_reports_root / CANDIDATE_ENTRY_WINDOW_SCAN_MD
     rollout_governance_json_path = resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_JSON
     rollout_governance_md_path = resolved_reports_root / CANDIDATE_ENTRY_ROLLOUT_GOVERNANCE_MD
+    no_candidate_entry_action_board_json_path = resolved_reports_root / BTST_NO_CANDIDATE_ENTRY_ACTION_BOARD_JSON
+    no_candidate_entry_action_board_md_path = resolved_reports_root / BTST_NO_CANDIDATE_ENTRY_ACTION_BOARD_MD
+    no_candidate_entry_replay_bundle_json_path = resolved_reports_root / BTST_NO_CANDIDATE_ENTRY_REPLAY_BUNDLE_JSON
+    no_candidate_entry_replay_bundle_md_path = resolved_reports_root / BTST_NO_CANDIDATE_ENTRY_REPLAY_BUNDLE_MD
+    no_candidate_entry_failure_dossier_json_path = resolved_reports_root / BTST_NO_CANDIDATE_ENTRY_FAILURE_DOSSIER_JSON
+    no_candidate_entry_failure_dossier_md_path = resolved_reports_root / BTST_NO_CANDIDATE_ENTRY_FAILURE_DOSSIER_MD
+    watchlist_recall_dossier_json_path = resolved_reports_root / BTST_WATCHLIST_RECALL_DOSSIER_JSON
+    watchlist_recall_dossier_md_path = resolved_reports_root / BTST_WATCHLIST_RECALL_DOSSIER_MD
+    candidate_pool_recall_dossier_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_RECALL_DOSSIER_JSON
+    candidate_pool_recall_dossier_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_RECALL_DOSSIER_MD
+    candidate_pool_branch_priority_board_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_BRANCH_PRIORITY_BOARD_JSON
+    candidate_pool_branch_priority_board_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_BRANCH_PRIORITY_BOARD_MD
+    candidate_pool_lane_objective_support_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_LANE_OBJECTIVE_SUPPORT_JSON
+    candidate_pool_lane_objective_support_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_LANE_OBJECTIVE_SUPPORT_MD
+    candidate_pool_rebucket_shadow_pack_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_SHADOW_PACK_JSON
+    candidate_pool_rebucket_shadow_pack_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_SHADOW_PACK_MD
+    candidate_pool_rebucket_objective_validation_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_OBJECTIVE_VALIDATION_JSON
+    candidate_pool_rebucket_objective_validation_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_OBJECTIVE_VALIDATION_MD
 
     required_inputs = {
         "frontier_report": frontier_report_path,
         "structural_validation": structural_validation_path,
         "score_frontier_report": score_frontier_path,
     }
+    no_candidate_entry_action_board_analysis: dict[str, Any] = {}
+    no_candidate_entry_action_board_status = "skipped_missing_tradeable_opportunity_pool"
+    no_candidate_entry_replay_bundle_analysis: dict[str, Any] = {}
+    no_candidate_entry_replay_bundle_status = "skipped_missing_action_board"
+    no_candidate_entry_failure_dossier_analysis: dict[str, Any] = {}
+    no_candidate_entry_failure_dossier_status = "skipped_missing_action_board"
+    watchlist_recall_dossier_analysis: dict[str, Any] = {}
+    watchlist_recall_dossier_status = "skipped_missing_failure_dossier"
+    candidate_pool_recall_dossier_analysis: dict[str, Any] = {}
+    candidate_pool_recall_dossier_status = "skipped_missing_watchlist_recall_dossier"
+    candidate_pool_branch_priority_board_analysis: dict[str, Any] = {}
+    candidate_pool_branch_priority_board_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_lane_objective_support_analysis: dict[str, Any] = {}
+    candidate_pool_lane_objective_support_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_rebucket_shadow_pack_analysis: dict[str, Any] = {}
+    candidate_pool_rebucket_shadow_pack_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_rebucket_objective_validation_analysis: dict[str, Any] = {}
+    candidate_pool_rebucket_objective_validation_status = "skipped_missing_candidate_pool_recall_dossier"
+    if tradeable_opportunity_pool_json_path.exists():
+        try:
+            no_candidate_entry_action_board_analysis = analyze_btst_no_candidate_entry_action_board(
+                tradeable_opportunity_pool_json_path,
+                preserve_tickers=list(CANDIDATE_ENTRY_PRESERVE_TICKERS),
+            )
+            no_candidate_entry_action_board_json_path.write_text(json.dumps(no_candidate_entry_action_board_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            no_candidate_entry_action_board_md_path.write_text(render_btst_no_candidate_entry_action_board_markdown(no_candidate_entry_action_board_analysis), encoding="utf-8")
+            no_candidate_entry_action_board_status = "refreshed"
+
+            replay_report_dir_names = {
+                str(row.get("primary_report_dir") or "").strip()
+                for row in list(no_candidate_entry_action_board_analysis.get("priority_queue") or [])
+                if str(row.get("primary_report_dir") or "").strip()
+            }
+            replay_report_dir_names.update(
+                str(row.get("report_dir") or "").strip()
+                for row in list(no_candidate_entry_action_board_analysis.get("window_hotspot_rows") or [])
+                if str(row.get("report_dir") or "").strip()
+            )
+            available_replay_report_dir_names = [
+                report_dir_name
+                for report_dir_name in replay_report_dir_names
+                if (resolved_reports_root / report_dir_name).exists()
+            ]
+            if available_replay_report_dir_names:
+                no_candidate_entry_replay_bundle_analysis = analyze_btst_no_candidate_entry_replay_bundle(
+                    no_candidate_entry_action_board_json_path,
+                )
+                no_candidate_entry_replay_bundle_json_path.write_text(json.dumps(no_candidate_entry_replay_bundle_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                no_candidate_entry_replay_bundle_md_path.write_text(render_btst_no_candidate_entry_replay_bundle_markdown(no_candidate_entry_replay_bundle_analysis), encoding="utf-8")
+                no_candidate_entry_replay_bundle_status = "refreshed"
+            else:
+                no_candidate_entry_replay_bundle_status = "skipped_missing_replay_reports"
+
+            no_candidate_entry_failure_dossier_analysis = analyze_btst_no_candidate_entry_failure_dossier(
+                tradeable_opportunity_pool_json_path,
+                action_board_path=no_candidate_entry_action_board_json_path,
+                replay_bundle_path=no_candidate_entry_replay_bundle_json_path if no_candidate_entry_replay_bundle_analysis else None,
+            )
+            no_candidate_entry_failure_dossier_json_path.write_text(json.dumps(no_candidate_entry_failure_dossier_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            no_candidate_entry_failure_dossier_md_path.write_text(render_btst_no_candidate_entry_failure_dossier_markdown(no_candidate_entry_failure_dossier_analysis), encoding="utf-8")
+            no_candidate_entry_failure_dossier_status = "refreshed"
+
+            watchlist_recall_dossier_analysis = analyze_btst_watchlist_recall_dossier(
+                tradeable_opportunity_pool_json_path,
+                failure_dossier_path=no_candidate_entry_failure_dossier_json_path if no_candidate_entry_failure_dossier_analysis else None,
+            )
+            watchlist_recall_dossier_json_path.write_text(json.dumps(watchlist_recall_dossier_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            watchlist_recall_dossier_md_path.write_text(render_btst_watchlist_recall_dossier_markdown(watchlist_recall_dossier_analysis), encoding="utf-8")
+            watchlist_recall_dossier_status = "refreshed"
+
+            candidate_pool_recall_dossier_analysis = analyze_btst_candidate_pool_recall_dossier(
+                tradeable_opportunity_pool_json_path,
+                watchlist_recall_dossier_path=watchlist_recall_dossier_json_path if watchlist_recall_dossier_analysis else None,
+                failure_dossier_path=no_candidate_entry_failure_dossier_json_path if no_candidate_entry_failure_dossier_analysis else None,
+            )
+            candidate_pool_recall_dossier_json_path.write_text(json.dumps(candidate_pool_recall_dossier_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_recall_dossier_md_path.write_text(render_btst_candidate_pool_recall_dossier_markdown(candidate_pool_recall_dossier_analysis), encoding="utf-8")
+            candidate_pool_recall_dossier_status = "refreshed"
+
+            objective_monitor_json_path = resolved_reports_root / BTST_TPLUS1_TPLUS2_OBJECTIVE_MONITOR_JSON
+            candidate_pool_lane_objective_support_analysis = analyze_btst_candidate_pool_lane_objective_support(
+                candidate_pool_recall_dossier_json_path,
+                objective_monitor_path=objective_monitor_json_path if objective_monitor_json_path.exists() else None,
+            )
+            candidate_pool_lane_objective_support_json_path.write_text(json.dumps(candidate_pool_lane_objective_support_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_lane_objective_support_md_path.write_text(render_btst_candidate_pool_lane_objective_support_markdown(candidate_pool_lane_objective_support_analysis), encoding="utf-8")
+            candidate_pool_lane_objective_support_status = "refreshed"
+
+            candidate_pool_branch_priority_board_analysis = analyze_btst_candidate_pool_branch_priority_board(
+                candidate_pool_recall_dossier_json_path,
+                lane_objective_support_path=candidate_pool_lane_objective_support_json_path,
+            )
+            candidate_pool_branch_priority_board_json_path.write_text(json.dumps(candidate_pool_branch_priority_board_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_branch_priority_board_md_path.write_text(render_btst_candidate_pool_branch_priority_board_markdown(candidate_pool_branch_priority_board_analysis), encoding="utf-8")
+            candidate_pool_branch_priority_board_status = "refreshed"
+
+            rebucket_candidates = [
+                dict(row)
+                for row in list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_experiment_queue") or [])
+                if str(row.get("prototype_type") or "") == "post_gate_competition_rebucket_probe"
+            ]
+            if rebucket_candidates:
+                rebucket_ticker = str(list(rebucket_candidates[0].get("tickers") or [None])[0] or "") or None
+                candidate_pool_rebucket_shadow_pack_analysis = run_btst_candidate_pool_rebucket_shadow_pack(
+                    candidate_pool_recall_dossier_json_path,
+                    output_dir=resolved_reports_root,
+                    ticker=rebucket_ticker,
+                )
+                candidate_pool_rebucket_shadow_pack_json_path.write_text(json.dumps(candidate_pool_rebucket_shadow_pack_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                candidate_pool_rebucket_shadow_pack_md_path.write_text(render_btst_candidate_pool_rebucket_shadow_pack_markdown(candidate_pool_rebucket_shadow_pack_analysis), encoding="utf-8")
+                candidate_pool_rebucket_shadow_pack_status = "refreshed"
+
+                candidate_pool_rebucket_objective_validation_analysis = analyze_btst_candidate_pool_rebucket_objective_validation(
+                    candidate_pool_recall_dossier_json_path,
+                    objective_monitor_path=objective_monitor_json_path if objective_monitor_json_path.exists() else None,
+                    lane_objective_support_path=candidate_pool_lane_objective_support_json_path if candidate_pool_lane_objective_support_analysis else None,
+                    ticker=rebucket_ticker,
+                )
+                candidate_pool_rebucket_objective_validation_json_path.write_text(json.dumps(candidate_pool_rebucket_objective_validation_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                candidate_pool_rebucket_objective_validation_md_path.write_text(render_btst_candidate_pool_rebucket_objective_validation_markdown(candidate_pool_rebucket_objective_validation_analysis), encoding="utf-8")
+                candidate_pool_rebucket_objective_validation_status = "refreshed"
+            else:
+                candidate_pool_rebucket_shadow_pack_status = "skipped_no_rebucket_candidate"
+                candidate_pool_rebucket_objective_validation_analysis = analyze_btst_candidate_pool_rebucket_objective_validation(
+                    candidate_pool_recall_dossier_json_path,
+                    objective_monitor_path=objective_monitor_json_path if objective_monitor_json_path.exists() else None,
+                    lane_objective_support_path=candidate_pool_lane_objective_support_json_path if candidate_pool_lane_objective_support_analysis else None,
+                    ticker=None,
+                )
+                candidate_pool_rebucket_objective_validation_json_path.write_text(json.dumps(candidate_pool_rebucket_objective_validation_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                candidate_pool_rebucket_objective_validation_md_path.write_text(render_btst_candidate_pool_rebucket_objective_validation_markdown(candidate_pool_rebucket_objective_validation_analysis), encoding="utf-8")
+                candidate_pool_rebucket_objective_validation_status = str(candidate_pool_rebucket_objective_validation_analysis.get("validation_status") or "skipped_no_rebucket_candidate")
+        except Exception as exc:
+            return {
+                "status": "skipped_refresh_error",
+                "missing_inputs": [],
+                "window_report_count": 0,
+                "error": str(exc),
+            }
+
     missing_inputs = [label for label, path in required_inputs.items() if not path.exists()]
     if missing_inputs:
         return {
             "status": "skipped_missing_inputs",
             "missing_inputs": missing_inputs,
             "window_report_count": 0,
+            "no_candidate_entry_action_board_status": no_candidate_entry_action_board_status,
+            "no_candidate_entry_priority_queue_count": no_candidate_entry_action_board_analysis.get("priority_queue_count"),
+            "no_candidate_entry_top_tickers": no_candidate_entry_action_board_analysis.get("top_priority_tickers"),
+            "no_candidate_entry_hotspot_report_dirs": no_candidate_entry_action_board_analysis.get("top_hotspot_report_dirs"),
+            "no_candidate_entry_action_board_json": no_candidate_entry_action_board_json_path.as_posix() if no_candidate_entry_action_board_analysis else None,
+            "no_candidate_entry_replay_bundle_status": no_candidate_entry_replay_bundle_status,
+            "no_candidate_entry_replay_bundle_json": no_candidate_entry_replay_bundle_json_path.as_posix() if no_candidate_entry_replay_bundle_analysis else None,
+            "no_candidate_entry_promising_tickers": no_candidate_entry_replay_bundle_analysis.get("promising_priority_tickers"),
+            "no_candidate_entry_failure_dossier_status": no_candidate_entry_failure_dossier_status,
+            "no_candidate_entry_failure_dossier_json": no_candidate_entry_failure_dossier_json_path.as_posix() if no_candidate_entry_failure_dossier_analysis else None,
+            "no_candidate_entry_upstream_absence_tickers": no_candidate_entry_failure_dossier_analysis.get("top_upstream_absence_tickers"),
+            "no_candidate_entry_handoff_stage_counts": no_candidate_entry_failure_dossier_analysis.get("priority_handoff_stage_counts"),
+            "no_candidate_entry_absent_from_watchlist_tickers": no_candidate_entry_failure_dossier_analysis.get("top_absent_from_watchlist_tickers"),
+            "no_candidate_entry_watchlist_handoff_gap_tickers": no_candidate_entry_failure_dossier_analysis.get("top_watchlist_visible_but_not_candidate_entry_tickers"),
+            "no_candidate_entry_candidate_entry_target_gap_tickers": no_candidate_entry_failure_dossier_analysis.get("top_candidate_entry_visible_but_not_selection_target_tickers"),
+            "no_candidate_entry_handoff_action_queue_task_ids": [
+                str(row.get("task_id") or "")
+                for row in list(no_candidate_entry_failure_dossier_analysis.get("priority_handoff_action_queue") or [])[:3]
+                if str(row.get("task_id") or "").strip()
+            ],
+            "no_candidate_entry_semantic_miss_tickers": no_candidate_entry_failure_dossier_analysis.get("top_candidate_entry_semantic_miss_tickers"),
+            "watchlist_recall_dossier_status": watchlist_recall_dossier_status,
+            "watchlist_recall_dossier_json": watchlist_recall_dossier_json_path.as_posix() if watchlist_recall_dossier_analysis else None,
+            "watchlist_recall_stage_counts": watchlist_recall_dossier_analysis.get("priority_recall_stage_counts"),
+            "watchlist_recall_absent_from_candidate_pool_tickers": watchlist_recall_dossier_analysis.get("top_absent_from_candidate_pool_tickers"),
+            "watchlist_recall_candidate_pool_layer_b_gap_tickers": watchlist_recall_dossier_analysis.get("top_candidate_pool_visible_but_missing_layer_b_tickers"),
+            "watchlist_recall_layer_b_watchlist_gap_tickers": watchlist_recall_dossier_analysis.get("top_layer_b_visible_but_missing_watchlist_tickers"),
+            "watchlist_recall_action_queue_task_ids": [
+                str(row.get("task_id") or "")
+                for row in list(watchlist_recall_dossier_analysis.get("action_queue") or [])[:3]
+                if str(row.get("task_id") or "").strip()
+            ],
+            "candidate_pool_recall_dossier_status": candidate_pool_recall_dossier_status,
+            "candidate_pool_recall_dossier_json": candidate_pool_recall_dossier_json_path.as_posix() if candidate_pool_recall_dossier_analysis else None,
+            "candidate_pool_recall_stage_counts": candidate_pool_recall_dossier_analysis.get("priority_stage_counts"),
+            "candidate_pool_recall_dominant_stage": candidate_pool_recall_dossier_analysis.get("dominant_stage"),
+            "candidate_pool_recall_top_stage_tickers": candidate_pool_recall_dossier_analysis.get("top_stage_tickers"),
+            "candidate_pool_recall_truncation_frontier_summary": candidate_pool_recall_dossier_analysis.get("truncation_frontier_summary"),
+            "candidate_pool_recall_dominant_liquidity_gap_mode": dict(candidate_pool_recall_dossier_analysis.get("truncation_frontier_summary") or {}).get("dominant_liquidity_gap_mode"),
+            "candidate_pool_recall_focus_liquidity_profiles": list(dict(candidate_pool_recall_dossier_analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or [])[:3],
+            "candidate_pool_recall_priority_handoff_counts": dict(dict(candidate_pool_recall_dossier_analysis.get("focus_liquidity_profile_summary") or {}).get("priority_handoff_counts") or {}),
+            "candidate_pool_recall_priority_handoff_branch_diagnoses": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_diagnoses") or [])[:3],
+            "candidate_pool_recall_priority_handoff_branch_mechanisms": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_mechanisms") or [])[:3],
+            "candidate_pool_recall_priority_handoff_branch_experiment_queue": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_experiment_queue") or [])[:3],
+            "candidate_pool_branch_priority_board_status": candidate_pool_branch_priority_board_status,
+            "candidate_pool_branch_priority_board_json": candidate_pool_branch_priority_board_json_path.as_posix() if candidate_pool_branch_priority_board_analysis else None,
+            "candidate_pool_branch_priority_board_rows": list(candidate_pool_branch_priority_board_analysis.get("branch_rows") or [])[:3],
+            "candidate_pool_branch_priority_alignment_status": candidate_pool_branch_priority_board_analysis.get("priority_alignment_status"),
+            "candidate_pool_branch_priority_alignment_summary": candidate_pool_branch_priority_board_analysis.get("alignment_summary"),
+            "candidate_pool_lane_objective_support_status": candidate_pool_lane_objective_support_status,
+            "candidate_pool_lane_objective_support_json": candidate_pool_lane_objective_support_json_path.as_posix() if candidate_pool_lane_objective_support_analysis else None,
+            "candidate_pool_lane_objective_support_rows": list(candidate_pool_lane_objective_support_analysis.get("branch_rows") or [])[:3],
+            "candidate_pool_rebucket_shadow_pack_status": candidate_pool_rebucket_shadow_pack_status,
+            "candidate_pool_rebucket_shadow_pack_json": candidate_pool_rebucket_shadow_pack_json_path.as_posix() if candidate_pool_rebucket_shadow_pack_analysis else None,
+            "candidate_pool_rebucket_shadow_pack_experiment": dict(candidate_pool_rebucket_shadow_pack_analysis.get("experiment") or {}),
+            "candidate_pool_rebucket_objective_validation_status": candidate_pool_rebucket_objective_validation_status,
+            "candidate_pool_rebucket_objective_validation_json": candidate_pool_rebucket_objective_validation_json_path.as_posix() if candidate_pool_rebucket_objective_validation_analysis else None,
+            "candidate_pool_rebucket_objective_validation_summary": {
+                "validation_status": candidate_pool_rebucket_objective_validation_analysis.get("validation_status"),
+                "support_verdict": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("support_verdict"),
+                "mean_t_plus_2_return": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("mean_t_plus_2_return"),
+            },
+            "candidate_pool_recall_action_queue_task_ids": [
+                str(row.get("task_id") or "")
+                for row in list(candidate_pool_recall_dossier_analysis.get("action_queue") or [])[:3]
+                if str(row.get("task_id") or "").strip()
+            ],
         }
 
     report_dirs = [path for path in _discover_report_dirs(resolved_reports_root) if "paper_trading_window" in path.name]
@@ -1100,6 +1535,73 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "status": "skipped_no_window_reports",
             "missing_inputs": [],
             "window_report_count": 0,
+            "no_candidate_entry_action_board_status": no_candidate_entry_action_board_status,
+            "no_candidate_entry_priority_queue_count": no_candidate_entry_action_board_analysis.get("priority_queue_count"),
+            "no_candidate_entry_top_tickers": no_candidate_entry_action_board_analysis.get("top_priority_tickers"),
+            "no_candidate_entry_hotspot_report_dirs": no_candidate_entry_action_board_analysis.get("top_hotspot_report_dirs"),
+            "no_candidate_entry_action_board_json": no_candidate_entry_action_board_json_path.as_posix() if no_candidate_entry_action_board_analysis else None,
+            "no_candidate_entry_replay_bundle_status": no_candidate_entry_replay_bundle_status,
+            "no_candidate_entry_replay_bundle_json": no_candidate_entry_replay_bundle_json_path.as_posix() if no_candidate_entry_replay_bundle_analysis else None,
+            "no_candidate_entry_promising_tickers": no_candidate_entry_replay_bundle_analysis.get("promising_priority_tickers"),
+            "no_candidate_entry_failure_dossier_status": no_candidate_entry_failure_dossier_status,
+            "no_candidate_entry_failure_dossier_json": no_candidate_entry_failure_dossier_json_path.as_posix() if no_candidate_entry_failure_dossier_analysis else None,
+            "no_candidate_entry_upstream_absence_tickers": no_candidate_entry_failure_dossier_analysis.get("top_upstream_absence_tickers"),
+            "no_candidate_entry_handoff_stage_counts": no_candidate_entry_failure_dossier_analysis.get("priority_handoff_stage_counts"),
+            "no_candidate_entry_absent_from_watchlist_tickers": no_candidate_entry_failure_dossier_analysis.get("top_absent_from_watchlist_tickers"),
+            "no_candidate_entry_watchlist_handoff_gap_tickers": no_candidate_entry_failure_dossier_analysis.get("top_watchlist_visible_but_not_candidate_entry_tickers"),
+            "no_candidate_entry_candidate_entry_target_gap_tickers": no_candidate_entry_failure_dossier_analysis.get("top_candidate_entry_visible_but_not_selection_target_tickers"),
+            "no_candidate_entry_handoff_action_queue_task_ids": [
+                str(row.get("task_id") or "")
+                for row in list(no_candidate_entry_failure_dossier_analysis.get("priority_handoff_action_queue") or [])[:3]
+                if str(row.get("task_id") or "").strip()
+            ],
+            "no_candidate_entry_semantic_miss_tickers": no_candidate_entry_failure_dossier_analysis.get("top_candidate_entry_semantic_miss_tickers"),
+            "watchlist_recall_dossier_status": watchlist_recall_dossier_status,
+            "watchlist_recall_dossier_json": watchlist_recall_dossier_json_path.as_posix() if watchlist_recall_dossier_analysis else None,
+            "watchlist_recall_stage_counts": watchlist_recall_dossier_analysis.get("priority_recall_stage_counts"),
+            "watchlist_recall_absent_from_candidate_pool_tickers": watchlist_recall_dossier_analysis.get("top_absent_from_candidate_pool_tickers"),
+            "watchlist_recall_candidate_pool_layer_b_gap_tickers": watchlist_recall_dossier_analysis.get("top_candidate_pool_visible_but_missing_layer_b_tickers"),
+            "watchlist_recall_layer_b_watchlist_gap_tickers": watchlist_recall_dossier_analysis.get("top_layer_b_visible_but_missing_watchlist_tickers"),
+            "watchlist_recall_action_queue_task_ids": [
+                str(row.get("task_id") or "")
+                for row in list(watchlist_recall_dossier_analysis.get("action_queue") or [])[:3]
+                if str(row.get("task_id") or "").strip()
+            ],
+            "candidate_pool_recall_dossier_status": candidate_pool_recall_dossier_status,
+            "candidate_pool_recall_dossier_json": candidate_pool_recall_dossier_json_path.as_posix() if candidate_pool_recall_dossier_analysis else None,
+            "candidate_pool_recall_stage_counts": candidate_pool_recall_dossier_analysis.get("priority_stage_counts"),
+            "candidate_pool_recall_dominant_stage": candidate_pool_recall_dossier_analysis.get("dominant_stage"),
+            "candidate_pool_recall_top_stage_tickers": candidate_pool_recall_dossier_analysis.get("top_stage_tickers"),
+            "candidate_pool_recall_truncation_frontier_summary": candidate_pool_recall_dossier_analysis.get("truncation_frontier_summary"),
+            "candidate_pool_recall_dominant_liquidity_gap_mode": dict(candidate_pool_recall_dossier_analysis.get("truncation_frontier_summary") or {}).get("dominant_liquidity_gap_mode"),
+            "candidate_pool_recall_focus_liquidity_profiles": list(dict(candidate_pool_recall_dossier_analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or [])[:3],
+            "candidate_pool_recall_priority_handoff_counts": dict(dict(candidate_pool_recall_dossier_analysis.get("focus_liquidity_profile_summary") or {}).get("priority_handoff_counts") or {}),
+            "candidate_pool_recall_priority_handoff_branch_diagnoses": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_diagnoses") or [])[:3],
+            "candidate_pool_recall_priority_handoff_branch_mechanisms": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_mechanisms") or [])[:3],
+            "candidate_pool_recall_priority_handoff_branch_experiment_queue": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_experiment_queue") or [])[:3],
+            "candidate_pool_branch_priority_board_status": candidate_pool_branch_priority_board_status,
+            "candidate_pool_branch_priority_board_json": candidate_pool_branch_priority_board_json_path.as_posix() if candidate_pool_branch_priority_board_analysis else None,
+            "candidate_pool_branch_priority_board_rows": list(candidate_pool_branch_priority_board_analysis.get("branch_rows") or [])[:3],
+            "candidate_pool_branch_priority_alignment_status": candidate_pool_branch_priority_board_analysis.get("priority_alignment_status"),
+            "candidate_pool_branch_priority_alignment_summary": candidate_pool_branch_priority_board_analysis.get("alignment_summary"),
+            "candidate_pool_lane_objective_support_status": candidate_pool_lane_objective_support_status,
+            "candidate_pool_lane_objective_support_json": candidate_pool_lane_objective_support_json_path.as_posix() if candidate_pool_lane_objective_support_analysis else None,
+            "candidate_pool_lane_objective_support_rows": list(candidate_pool_lane_objective_support_analysis.get("branch_rows") or [])[:3],
+            "candidate_pool_rebucket_shadow_pack_status": candidate_pool_rebucket_shadow_pack_status,
+            "candidate_pool_rebucket_shadow_pack_json": candidate_pool_rebucket_shadow_pack_json_path.as_posix() if candidate_pool_rebucket_shadow_pack_analysis else None,
+            "candidate_pool_rebucket_shadow_pack_experiment": dict(candidate_pool_rebucket_shadow_pack_analysis.get("experiment") or {}),
+            "candidate_pool_rebucket_objective_validation_status": candidate_pool_rebucket_objective_validation_status,
+            "candidate_pool_rebucket_objective_validation_json": candidate_pool_rebucket_objective_validation_json_path.as_posix() if candidate_pool_rebucket_objective_validation_analysis else None,
+            "candidate_pool_rebucket_objective_validation_summary": {
+                "validation_status": candidate_pool_rebucket_objective_validation_analysis.get("validation_status"),
+                "support_verdict": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("support_verdict"),
+                "mean_t_plus_2_return": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("mean_t_plus_2_return"),
+            },
+            "candidate_pool_recall_action_queue_task_ids": [
+                str(row.get("task_id") or "")
+                for row in list(candidate_pool_recall_dossier_analysis.get("action_queue") or [])[:3]
+                if str(row.get("task_id") or "").strip()
+            ],
         }
 
     try:
@@ -1117,6 +1619,11 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             structural_validation_path=structural_validation_path,
             window_scan_path=window_scan_json_path,
             score_frontier_path=score_frontier_path,
+            no_candidate_entry_action_board_path=no_candidate_entry_action_board_json_path if no_candidate_entry_action_board_analysis else None,
+            no_candidate_entry_replay_bundle_path=no_candidate_entry_replay_bundle_json_path if no_candidate_entry_replay_bundle_analysis else None,
+            no_candidate_entry_failure_dossier_path=no_candidate_entry_failure_dossier_json_path if no_candidate_entry_failure_dossier_analysis else None,
+            watchlist_recall_dossier_path=watchlist_recall_dossier_json_path if watchlist_recall_dossier_analysis else None,
+            candidate_pool_recall_dossier_path=candidate_pool_recall_dossier_json_path if candidate_pool_recall_dossier_analysis else None,
         )
         rollout_governance_json_path.write_text(json.dumps(rollout_governance_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         rollout_governance_md_path.write_text(render_btst_candidate_entry_rollout_governance_markdown(rollout_governance_analysis), encoding="utf-8")
@@ -1137,6 +1644,64 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
         "preserve_misfire_report_count": window_scan_analysis.get("preserve_misfire_report_count"),
         "rollout_readiness": window_scan_analysis.get("rollout_readiness"),
         "lane_status": rollout_governance_analysis.get("lane_status"),
+        "no_candidate_entry_action_board_status": no_candidate_entry_action_board_status,
+        "no_candidate_entry_priority_queue_count": no_candidate_entry_action_board_analysis.get("priority_queue_count"),
+        "no_candidate_entry_top_tickers": no_candidate_entry_action_board_analysis.get("top_priority_tickers"),
+        "no_candidate_entry_hotspot_report_dirs": no_candidate_entry_action_board_analysis.get("top_hotspot_report_dirs"),
+        "no_candidate_entry_action_board_json": no_candidate_entry_action_board_json_path.as_posix() if no_candidate_entry_action_board_analysis else None,
+        "no_candidate_entry_replay_bundle_status": no_candidate_entry_replay_bundle_status,
+        "no_candidate_entry_replay_bundle_json": no_candidate_entry_replay_bundle_json_path.as_posix() if no_candidate_entry_replay_bundle_analysis else None,
+        "no_candidate_entry_promising_tickers": no_candidate_entry_replay_bundle_analysis.get("promising_priority_tickers"),
+        "no_candidate_entry_failure_dossier_status": no_candidate_entry_failure_dossier_status,
+        "no_candidate_entry_failure_dossier_json": no_candidate_entry_failure_dossier_json_path.as_posix() if no_candidate_entry_failure_dossier_analysis else None,
+        "no_candidate_entry_upstream_absence_tickers": no_candidate_entry_failure_dossier_analysis.get("top_upstream_absence_tickers"),
+        "no_candidate_entry_semantic_miss_tickers": no_candidate_entry_failure_dossier_analysis.get("top_candidate_entry_semantic_miss_tickers"),
+        "watchlist_recall_dossier_status": watchlist_recall_dossier_status,
+        "watchlist_recall_dossier_json": watchlist_recall_dossier_json_path.as_posix() if watchlist_recall_dossier_analysis else None,
+        "watchlist_recall_stage_counts": watchlist_recall_dossier_analysis.get("priority_recall_stage_counts"),
+        "watchlist_recall_absent_from_candidate_pool_tickers": watchlist_recall_dossier_analysis.get("top_absent_from_candidate_pool_tickers"),
+        "watchlist_recall_candidate_pool_layer_b_gap_tickers": watchlist_recall_dossier_analysis.get("top_candidate_pool_visible_but_missing_layer_b_tickers"),
+        "watchlist_recall_layer_b_watchlist_gap_tickers": watchlist_recall_dossier_analysis.get("top_layer_b_visible_but_missing_watchlist_tickers"),
+        "watchlist_recall_action_queue_task_ids": [
+            str(row.get("task_id") or "")
+            for row in list(watchlist_recall_dossier_analysis.get("action_queue") or [])[:3]
+            if str(row.get("task_id") or "").strip()
+        ],
+        "candidate_pool_recall_dossier_status": candidate_pool_recall_dossier_status,
+        "candidate_pool_recall_dossier_json": candidate_pool_recall_dossier_json_path.as_posix() if candidate_pool_recall_dossier_analysis else None,
+        "candidate_pool_recall_stage_counts": candidate_pool_recall_dossier_analysis.get("priority_stage_counts"),
+        "candidate_pool_recall_dominant_stage": candidate_pool_recall_dossier_analysis.get("dominant_stage"),
+        "candidate_pool_recall_top_stage_tickers": candidate_pool_recall_dossier_analysis.get("top_stage_tickers"),
+        "candidate_pool_recall_truncation_frontier_summary": candidate_pool_recall_dossier_analysis.get("truncation_frontier_summary"),
+        "candidate_pool_recall_dominant_liquidity_gap_mode": dict(candidate_pool_recall_dossier_analysis.get("truncation_frontier_summary") or {}).get("dominant_liquidity_gap_mode"),
+        "candidate_pool_recall_focus_liquidity_profiles": list(dict(candidate_pool_recall_dossier_analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or [])[:3],
+        "candidate_pool_recall_priority_handoff_counts": dict(dict(candidate_pool_recall_dossier_analysis.get("focus_liquidity_profile_summary") or {}).get("priority_handoff_counts") or {}),
+        "candidate_pool_recall_priority_handoff_branch_diagnoses": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_diagnoses") or [])[:3],
+        "candidate_pool_recall_priority_handoff_branch_mechanisms": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_mechanisms") or [])[:3],
+        "candidate_pool_recall_priority_handoff_branch_experiment_queue": list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_experiment_queue") or [])[:3],
+        "candidate_pool_branch_priority_board_status": candidate_pool_branch_priority_board_status,
+        "candidate_pool_branch_priority_board_json": candidate_pool_branch_priority_board_json_path.as_posix() if candidate_pool_branch_priority_board_analysis else None,
+        "candidate_pool_branch_priority_board_rows": list(candidate_pool_branch_priority_board_analysis.get("branch_rows") or [])[:3],
+        "candidate_pool_branch_priority_alignment_status": candidate_pool_branch_priority_board_analysis.get("priority_alignment_status"),
+        "candidate_pool_branch_priority_alignment_summary": candidate_pool_branch_priority_board_analysis.get("alignment_summary"),
+        "candidate_pool_lane_objective_support_status": candidate_pool_lane_objective_support_status,
+        "candidate_pool_lane_objective_support_json": candidate_pool_lane_objective_support_json_path.as_posix() if candidate_pool_lane_objective_support_analysis else None,
+        "candidate_pool_lane_objective_support_rows": list(candidate_pool_lane_objective_support_analysis.get("branch_rows") or [])[:3],
+        "candidate_pool_rebucket_shadow_pack_status": candidate_pool_rebucket_shadow_pack_status,
+        "candidate_pool_rebucket_shadow_pack_json": candidate_pool_rebucket_shadow_pack_json_path.as_posix() if candidate_pool_rebucket_shadow_pack_analysis else None,
+        "candidate_pool_rebucket_shadow_pack_experiment": dict(candidate_pool_rebucket_shadow_pack_analysis.get("experiment") or {}),
+        "candidate_pool_rebucket_objective_validation_status": candidate_pool_rebucket_objective_validation_status,
+        "candidate_pool_rebucket_objective_validation_json": candidate_pool_rebucket_objective_validation_json_path.as_posix() if candidate_pool_rebucket_objective_validation_analysis else None,
+        "candidate_pool_rebucket_objective_validation_summary": {
+            "validation_status": candidate_pool_rebucket_objective_validation_analysis.get("validation_status"),
+            "support_verdict": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("support_verdict"),
+            "mean_t_plus_2_return": dict(candidate_pool_rebucket_objective_validation_analysis.get("branch_objective_row") or {}).get("mean_t_plus_2_return"),
+        },
+        "candidate_pool_recall_action_queue_task_ids": [
+            str(row.get("task_id") or "")
+            for row in list(candidate_pool_recall_dossier_analysis.get("action_queue") or [])[:3]
+            if str(row.get("task_id") or "").strip()
+        ],
         "window_scan_json": window_scan_json_path.as_posix(),
         "rollout_governance_json": rollout_governance_json_path.as_posix(),
     }
@@ -1636,6 +2201,70 @@ def refresh_btst_tplus1_tplus2_objective_monitor_artifacts(reports_root: str | P
     }
 
 
+def refresh_btst_tradeable_opportunity_pool_artifacts(reports_root: str | Path) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    output_json_path = resolved_reports_root / BTST_TRADEABLE_OPPORTUNITY_POOL_JSON
+    output_md_path = resolved_reports_root / BTST_TRADEABLE_OPPORTUNITY_POOL_MD
+    output_csv_path = resolved_reports_root / BTST_TRADEABLE_OPPORTUNITY_POOL_CSV
+    waterfall_json_path = resolved_reports_root / BTST_TRADEABLE_OPPORTUNITY_WATERFALL_JSON
+    waterfall_md_path = resolved_reports_root / BTST_TRADEABLE_OPPORTUNITY_WATERFALL_MD
+
+    existing_analysis, existing_waterfall = load_btst_tradeable_opportunity_artifacts(
+        resolved_reports_root,
+        output_json=output_json_path,
+        waterfall_json=waterfall_json_path,
+    )
+    if existing_analysis and existing_waterfall and int(existing_analysis.get("artifact_schema_version") or 0) >= 2:
+        summary = summarize_btst_tradeable_opportunity_artifacts(existing_analysis, existing_waterfall)
+        return {
+            "status": "loaded_existing",
+            "report_dir_count": len(_discover_report_dirs(resolved_reports_root)),
+            "analysis_json": output_json_path.as_posix(),
+            "analysis_markdown": output_md_path.as_posix(),
+            "analysis_csv": output_csv_path.as_posix(),
+            "waterfall_json": waterfall_json_path.as_posix(),
+            "waterfall_markdown": waterfall_md_path.as_posix(),
+            **summary,
+        }
+
+    report_dir_count = len(_discover_report_dirs(resolved_reports_root))
+    if report_dir_count <= 0:
+        return {
+            "status": "skipped_no_reports",
+            "report_dir_count": 0,
+        }
+
+    try:
+        result = generate_btst_tradeable_opportunity_pool_artifacts(
+            resolved_reports_root,
+            start_date=TRADEABLE_OPPORTUNITY_POOL_START_DATE,
+            end_date=TRADEABLE_OPPORTUNITY_POOL_END_DATE,
+            output_json=output_json_path,
+            output_md=output_md_path,
+            output_csv=output_csv_path,
+            waterfall_output_json=waterfall_json_path,
+            waterfall_output_md=waterfall_md_path,
+        )
+    except Exception as exc:
+        return {
+            "status": "skipped_refresh_error",
+            "report_dir_count": report_dir_count,
+            "error": str(exc),
+        }
+
+    summary = summarize_btst_tradeable_opportunity_artifacts(result["analysis"], result["waterfall"])
+    return {
+        "status": "refreshed",
+        "report_dir_count": report_dir_count,
+        "analysis_json": result["json_path"],
+        "analysis_markdown": result["markdown_path"],
+        "analysis_csv": result["csv_path"],
+        "waterfall_json": result["waterfall_json_path"],
+        "waterfall_markdown": result["waterfall_markdown_path"],
+        **summary,
+    }
+
+
 def generate_reports_manifest(
     reports_root: str | Path,
     *,
@@ -1650,6 +2279,7 @@ def generate_reports_manifest(
     btst_replay_cohort_refresh: dict[str, Any] | None = None,
     btst_independent_window_monitor_refresh: dict[str, Any] | None = None,
     btst_tplus1_tplus2_objective_monitor_refresh: dict[str, Any] | None = None,
+    btst_tradeable_opportunity_pool_refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     repo_root = _resolve_repo_root(resolved_reports_root)
@@ -1694,6 +2324,7 @@ def generate_reports_manifest(
         "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
         "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
+        "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
         "latest_btst_run": None,
         "reading_paths": reading_paths,
         "entries": entries,
@@ -1744,6 +2375,95 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         lines.append(f"- candidate_entry_shadow_refresh_window_reports: {candidate_entry_shadow_refresh.get('window_report_count')}")
         lines.append(f"- candidate_entry_shadow_refresh_filtered_reports: {candidate_entry_shadow_refresh.get('filtered_report_count')}")
         lines.append(f"- candidate_entry_shadow_refresh_rollout_readiness: {candidate_entry_shadow_refresh.get('rollout_readiness')}")
+        if candidate_entry_shadow_refresh.get("no_candidate_entry_action_board_status") is not None:
+            lines.append(f"- candidate_entry_shadow_no_candidate_entry_action_board_status: {candidate_entry_shadow_refresh.get('no_candidate_entry_action_board_status')}")
+        if candidate_entry_shadow_refresh.get("no_candidate_entry_priority_queue_count") is not None:
+            lines.append(f"- candidate_entry_shadow_no_candidate_entry_priority_queue_count: {candidate_entry_shadow_refresh.get('no_candidate_entry_priority_queue_count')}")
+        if candidate_entry_shadow_refresh.get("no_candidate_entry_top_tickers") is not None:
+            lines.append(f"- candidate_entry_shadow_no_candidate_entry_top_tickers: {candidate_entry_shadow_refresh.get('no_candidate_entry_top_tickers')}")
+        if candidate_entry_shadow_refresh.get("no_candidate_entry_replay_bundle_status") is not None:
+            lines.append(f"- candidate_entry_shadow_no_candidate_entry_replay_bundle_status: {candidate_entry_shadow_refresh.get('no_candidate_entry_replay_bundle_status')}")
+        if candidate_entry_shadow_refresh.get("no_candidate_entry_promising_tickers") is not None:
+            lines.append(f"- candidate_entry_shadow_no_candidate_entry_promising_tickers: {candidate_entry_shadow_refresh.get('no_candidate_entry_promising_tickers')}")
+        if candidate_entry_shadow_refresh.get("no_candidate_entry_failure_dossier_status") is not None:
+            lines.append(f"- candidate_entry_shadow_no_candidate_entry_failure_dossier_status: {candidate_entry_shadow_refresh.get('no_candidate_entry_failure_dossier_status')}")
+        if candidate_entry_shadow_refresh.get("no_candidate_entry_upstream_absence_tickers") is not None:
+            lines.append(f"- candidate_entry_shadow_no_candidate_entry_upstream_absence_tickers: {candidate_entry_shadow_refresh.get('no_candidate_entry_upstream_absence_tickers')}")
+        if candidate_entry_shadow_refresh.get("no_candidate_entry_semantic_miss_tickers") is not None:
+            lines.append(f"- candidate_entry_shadow_no_candidate_entry_semantic_miss_tickers: {candidate_entry_shadow_refresh.get('no_candidate_entry_semantic_miss_tickers')}")
+        if candidate_entry_shadow_refresh.get("watchlist_recall_dossier_status") is not None:
+            lines.append(f"- candidate_entry_shadow_watchlist_recall_dossier_status: {candidate_entry_shadow_refresh.get('watchlist_recall_dossier_status')}")
+        if candidate_entry_shadow_refresh.get("watchlist_recall_stage_counts") is not None:
+            lines.append(f"- candidate_entry_shadow_watchlist_recall_stage_counts: {candidate_entry_shadow_refresh.get('watchlist_recall_stage_counts')}")
+        if candidate_entry_shadow_refresh.get("watchlist_recall_absent_from_candidate_pool_tickers") is not None:
+            lines.append(f"- candidate_entry_shadow_watchlist_recall_absent_from_candidate_pool_tickers: {candidate_entry_shadow_refresh.get('watchlist_recall_absent_from_candidate_pool_tickers')}")
+        if candidate_entry_shadow_refresh.get("watchlist_recall_candidate_pool_layer_b_gap_tickers") is not None:
+            lines.append(f"- candidate_entry_shadow_watchlist_recall_candidate_pool_layer_b_gap_tickers: {candidate_entry_shadow_refresh.get('watchlist_recall_candidate_pool_layer_b_gap_tickers')}")
+        if candidate_entry_shadow_refresh.get("watchlist_recall_layer_b_watchlist_gap_tickers") is not None:
+            lines.append(f"- candidate_entry_shadow_watchlist_recall_layer_b_watchlist_gap_tickers: {candidate_entry_shadow_refresh.get('watchlist_recall_layer_b_watchlist_gap_tickers')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_dossier_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_dossier_status: {candidate_entry_shadow_refresh.get('candidate_pool_recall_dossier_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_stage_counts") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_stage_counts: {candidate_entry_shadow_refresh.get('candidate_pool_recall_stage_counts')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_dominant_stage") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_dominant_stage: {candidate_entry_shadow_refresh.get('candidate_pool_recall_dominant_stage')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_top_stage_tickers") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_top_stage_tickers: {candidate_entry_shadow_refresh.get('candidate_pool_recall_top_stage_tickers')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_truncation_frontier_summary") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary: {candidate_entry_shadow_refresh.get('candidate_pool_recall_truncation_frontier_summary')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_dominant_liquidity_gap_mode") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_dominant_liquidity_gap_mode: {candidate_entry_shadow_refresh.get('candidate_pool_recall_dominant_liquidity_gap_mode')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_focus_liquidity_profiles"):
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_focus_liquidity_profiles: {candidate_entry_shadow_refresh.get('candidate_pool_recall_focus_liquidity_profiles')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_counts"):
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_counts: {candidate_entry_shadow_refresh.get('candidate_pool_recall_priority_handoff_counts')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_branch_diagnoses"):
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_diagnoses: {candidate_entry_shadow_refresh.get('candidate_pool_recall_priority_handoff_branch_diagnoses')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_branch_mechanisms"):
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_mechanisms: {candidate_entry_shadow_refresh.get('candidate_pool_recall_priority_handoff_branch_mechanisms')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_branch_experiment_queue"):
+            branch_experiment_queue = list(candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_branch_experiment_queue") or [])
+            lines.append("- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
+            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
+            for experiment in branch_experiment_queue[:3]:
+                lines.append(
+                    f"- candidate_entry_shadow_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
+                )
+                lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
+                lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
+                lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_board_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_branch_priority_board_status: {candidate_entry_shadow_refresh.get('candidate_pool_branch_priority_board_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_alignment_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_branch_priority_alignment_status: {candidate_entry_shadow_refresh.get('candidate_pool_branch_priority_alignment_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_alignment_summary"):
+            lines.append(f"- candidate_entry_shadow_candidate_pool_branch_priority_alignment_summary: {candidate_entry_shadow_refresh.get('candidate_pool_branch_priority_alignment_summary')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_board_rows"):
+            for row in list(candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_board_rows") or [])[:3]:
+                lines.append(
+                    f"- candidate_entry_shadow_candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
+                )
+        if candidate_entry_shadow_refresh.get("candidate_pool_lane_objective_support_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_lane_objective_support_status: {candidate_entry_shadow_refresh.get('candidate_pool_lane_objective_support_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_lane_objective_support_rows"):
+            for row in list(candidate_entry_shadow_refresh.get("candidate_pool_lane_objective_support_rows") or [])[:3]:
+                lines.append(
+                    f"- candidate_entry_shadow_candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
+                )
+        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status: {candidate_entry_shadow_refresh.get('candidate_pool_rebucket_shadow_pack_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_experiment"):
+            experiment = dict(candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_experiment") or {})
+            lines.append(
+                f"- candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_experiment: handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
+            )
+        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_objective_validation_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_rebucket_objective_validation_status: {candidate_entry_shadow_refresh.get('candidate_pool_rebucket_objective_validation_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_objective_validation_summary"):
+            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_rebucket_objective_validation_summary") or {})
+            lines.append(
+                f"- candidate_entry_shadow_candidate_pool_rebucket_objective_validation_summary: validation_status={summary.get('validation_status')} support_verdict={summary.get('support_verdict')} mean_t_plus_2_return={summary.get('mean_t_plus_2_return')}"
+            )
     btst_score_fail_frontier_refresh = manifest.get("btst_score_fail_frontier_refresh") or {}
     if btst_score_fail_frontier_refresh:
         lines.append(f"- btst_score_fail_frontier_refresh_status: {btst_score_fail_frontier_refresh.get('status')}")
@@ -1785,6 +2505,18 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         lines.append(f"- btst_tplus1_tplus2_objective_monitor_tradeable_positive_rate: {btst_tplus1_tplus2_objective_monitor_refresh.get('tradeable_positive_rate')}")
         lines.append(f"- btst_tplus1_tplus2_objective_monitor_tradeable_return_hit_rate: {btst_tplus1_tplus2_objective_monitor_refresh.get('tradeable_return_hit_rate')}")
         lines.append(f"- btst_tplus1_tplus2_objective_monitor_best_ticker: {btst_tplus1_tplus2_objective_monitor_refresh.get('best_ticker')}")
+    btst_tradeable_opportunity_pool_refresh = manifest.get("btst_tradeable_opportunity_pool_refresh") or {}
+    if btst_tradeable_opportunity_pool_refresh:
+        lines.append(f"- btst_tradeable_opportunity_pool_refresh_status: {btst_tradeable_opportunity_pool_refresh.get('status')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_result_truth_count: {btst_tradeable_opportunity_pool_refresh.get('result_truth_pool_count')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_tradeable_count: {btst_tradeable_opportunity_pool_refresh.get('tradeable_opportunity_pool_count')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_capture_rate: {btst_tradeable_opportunity_pool_refresh.get('tradeable_pool_capture_rate')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_selected_or_near_miss_rate: {btst_tradeable_opportunity_pool_refresh.get('tradeable_pool_selected_or_near_miss_rate')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_strict_goal_false_negative_count: {btst_tradeable_opportunity_pool_refresh.get('strict_goal_false_negative_count')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_top_kill_switches: {btst_tradeable_opportunity_pool_refresh.get('top_tradeable_kill_switch_labels')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_no_candidate_entry_count: {btst_tradeable_opportunity_pool_refresh.get('no_candidate_entry_count')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_top_no_candidate_entry_industries: {btst_tradeable_opportunity_pool_refresh.get('top_no_candidate_entry_industries')}")
+        lines.append(f"- btst_tradeable_opportunity_pool_top_no_candidate_entry_tickers: {btst_tradeable_opportunity_pool_refresh.get('top_no_candidate_entry_tickers')}")
     latest_btst_run = manifest.get("latest_btst_run") or {}
     if latest_btst_run:
         lines.append(f"- latest_btst_report_dir: {latest_btst_run['report_dir']}")
@@ -1825,6 +2557,7 @@ def generate_reports_manifest_artifacts(
     btst_window_evidence_refresh = refresh_btst_window_evidence_artifacts(resolved_reports_root)
     btst_independent_window_monitor_refresh = refresh_btst_independent_window_monitor_artifacts(resolved_reports_root)
     btst_tplus1_tplus2_objective_monitor_refresh = refresh_btst_tplus1_tplus2_objective_monitor_artifacts(resolved_reports_root)
+    btst_tradeable_opportunity_pool_refresh = refresh_btst_tradeable_opportunity_pool_artifacts(resolved_reports_root)
     candidate_entry_shadow_refresh = refresh_btst_candidate_entry_shadow_lane_artifacts(resolved_reports_root)
     btst_score_fail_frontier_refresh = refresh_btst_score_fail_frontier_artifacts(
         resolved_reports_root,
@@ -1851,6 +2584,7 @@ def generate_reports_manifest_artifacts(
         btst_replay_cohort_refresh=btst_replay_cohort_refresh,
         btst_independent_window_monitor_refresh=btst_independent_window_monitor_refresh,
         btst_tplus1_tplus2_objective_monitor_refresh=btst_tplus1_tplus2_objective_monitor_refresh,
+        btst_tradeable_opportunity_pool_refresh=btst_tradeable_opportunity_pool_refresh,
     )
     resolved_output_json.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     resolved_output_md.write_text(render_reports_manifest_markdown(manifest, output_parent=resolved_output_md.parent), encoding="utf-8")
@@ -1866,6 +2600,7 @@ def generate_reports_manifest_artifacts(
         "btst_replay_cohort_refresh": btst_replay_cohort_refresh,
         "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
+        "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
         "json_path": resolved_output_json.as_posix(),
         "markdown_path": resolved_output_md.as_posix(),
     }
