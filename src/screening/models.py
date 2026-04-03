@@ -15,6 +15,11 @@ class CandidateStock(BaseModel):
     avg_volume_20d: float = 0.0
     listing_date: str = ""
     disclosure_risk: bool = False
+    candidate_pool_rank: int = 0
+    candidate_pool_lane: str = ""
+    candidate_pool_shadow_reason: str = ""
+    candidate_pool_avg_amount_share_of_cutoff: float = 0.0
+    candidate_pool_avg_amount_share_of_min_gate: float = 0.0
 
 
 class MarketStateType(str, Enum):

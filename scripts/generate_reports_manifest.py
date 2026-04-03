@@ -118,6 +118,22 @@ from scripts.run_btst_candidate_pool_corridor_validation_pack import (
     analyze_btst_candidate_pool_corridor_validation_pack,
     render_btst_candidate_pool_corridor_validation_pack_markdown,
 )
+from scripts.run_btst_candidate_pool_corridor_shadow_pack import (
+    analyze_btst_candidate_pool_corridor_shadow_pack,
+    render_btst_candidate_pool_corridor_shadow_pack_markdown,
+)
+from scripts.run_btst_candidate_pool_lane_pair_board import (
+    analyze_btst_candidate_pool_lane_pair_board,
+    render_btst_candidate_pool_lane_pair_board_markdown,
+)
+from scripts.run_btst_candidate_pool_upstream_handoff_board import (
+    analyze_btst_candidate_pool_upstream_handoff_board,
+    render_btst_candidate_pool_upstream_handoff_board_markdown,
+)
+from scripts.run_btst_candidate_pool_corridor_uplift_runbook import (
+    analyze_btst_candidate_pool_corridor_uplift_runbook,
+    render_btst_candidate_pool_corridor_uplift_runbook_markdown,
+)
 from scripts.run_btst_candidate_pool_rebucket_comparison_bundle import (
     analyze_btst_candidate_pool_rebucket_comparison_bundle,
     render_btst_candidate_pool_rebucket_comparison_bundle_markdown,
@@ -196,6 +212,14 @@ BTST_CANDIDATE_POOL_REBUCKET_COMPARISON_BUNDLE_JSON = "btst_candidate_pool_rebuc
 BTST_CANDIDATE_POOL_REBUCKET_COMPARISON_BUNDLE_MD = "btst_candidate_pool_rebucket_comparison_bundle_latest.md"
 BTST_CANDIDATE_POOL_CORRIDOR_VALIDATION_PACK_JSON = "btst_candidate_pool_corridor_validation_pack_latest.json"
 BTST_CANDIDATE_POOL_CORRIDOR_VALIDATION_PACK_MD = "btst_candidate_pool_corridor_validation_pack_latest.md"
+BTST_CANDIDATE_POOL_CORRIDOR_SHADOW_PACK_JSON = "btst_candidate_pool_corridor_shadow_pack_latest.json"
+BTST_CANDIDATE_POOL_CORRIDOR_SHADOW_PACK_MD = "btst_candidate_pool_corridor_shadow_pack_latest.md"
+BTST_CANDIDATE_POOL_LANE_PAIR_BOARD_JSON = "btst_candidate_pool_lane_pair_board_latest.json"
+BTST_CANDIDATE_POOL_LANE_PAIR_BOARD_MD = "btst_candidate_pool_lane_pair_board_latest.md"
+BTST_CANDIDATE_POOL_UPSTREAM_HANDOFF_BOARD_JSON = "btst_candidate_pool_upstream_handoff_board_latest.json"
+BTST_CANDIDATE_POOL_UPSTREAM_HANDOFF_BOARD_MD = "btst_candidate_pool_upstream_handoff_board_latest.md"
+BTST_CANDIDATE_POOL_CORRIDOR_UPLIFT_RUNBOOK_JSON = "btst_candidate_pool_corridor_uplift_runbook_latest.json"
+BTST_CANDIDATE_POOL_CORRIDOR_UPLIFT_RUNBOOK_MD = "btst_candidate_pool_corridor_uplift_runbook_latest.md"
 MULTI_WINDOW_ROLE_CANDIDATES_LATEST_JSON = "multi_window_short_trade_role_candidates_latest.json"
 MULTI_WINDOW_ROLE_CANDIDATES_LATEST_MD = "multi_window_short_trade_role_candidates_latest.md"
 RECURRING_FRONTIER_TRANSITION_LATEST_JSON = "recurring_frontier_transition_candidates_latest.json"
@@ -562,6 +586,58 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "source_kind": "generated_governance_artifact",
     },
     {
+        "id": "btst_candidate_pool_corridor_shadow_pack_latest",
+        "path": "data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md",
+        "report_type": "btst_candidate_pool_corridor_shadow_pack",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "corridor lane 当前 primary shadow replay 该先跑谁、并行盯谁",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_lane_pair_board_latest",
+        "path": "data/reports/btst_candidate_pool_lane_pair_board_latest.md",
+        "report_type": "btst_candidate_pool_lane_pair_board",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "corridor 与 rebucket 当前谁应占据第一 replay 槽位",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_upstream_handoff_board_latest",
+        "path": "data/reports/btst_candidate_pool_upstream_handoff_board_latest.md",
+        "report_type": "btst_candidate_pool_upstream_handoff_board",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "300720/003036/301292 在 upstream handoff 链路里最先断在哪一层",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_corridor_uplift_runbook_latest",
+        "path": "data/reports/btst_candidate_pool_corridor_uplift_runbook_latest.md",
+        "report_type": "btst_candidate_pool_corridor_uplift_runbook",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "corridor upstream liquidity uplift probe 当前应如何执行",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
         "id": "btst_tradeable_opportunity_pool_march",
         "path": "data/reports/btst_tradeable_opportunity_pool_march.md",
         "report_type": "btst_tradeable_opportunity_pool",
@@ -832,6 +908,10 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_candidate_pool_rebucket_objective_validation_latest",
             "btst_candidate_pool_rebucket_comparison_bundle_latest",
             "btst_candidate_pool_corridor_validation_pack_latest",
+            "btst_candidate_pool_corridor_shadow_pack_latest",
+            "btst_candidate_pool_lane_pair_board_latest",
+            "btst_candidate_pool_upstream_handoff_board_latest",
+            "btst_candidate_pool_corridor_uplift_runbook_latest",
             "btst_tradeable_opportunity_pool_march",
             "btst_no_candidate_entry_action_board_latest",
             "btst_no_candidate_entry_replay_bundle_latest",
@@ -868,6 +948,10 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_candidate_pool_rebucket_objective_validation_latest",
             "btst_candidate_pool_rebucket_comparison_bundle_latest",
             "btst_candidate_pool_corridor_validation_pack_latest",
+            "btst_candidate_pool_corridor_shadow_pack_latest",
+            "btst_candidate_pool_lane_pair_board_latest",
+            "btst_candidate_pool_upstream_handoff_board_latest",
+            "btst_candidate_pool_corridor_uplift_runbook_latest",
             "btst_tradeable_opportunity_pool_march",
             "btst_no_candidate_entry_action_board_latest",
             "btst_no_candidate_entry_replay_bundle_latest",
@@ -906,6 +990,10 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_candidate_pool_rebucket_objective_validation_latest",
             "btst_candidate_pool_rebucket_comparison_bundle_latest",
             "btst_candidate_pool_corridor_validation_pack_latest",
+            "btst_candidate_pool_corridor_shadow_pack_latest",
+            "btst_candidate_pool_lane_pair_board_latest",
+            "btst_candidate_pool_upstream_handoff_board_latest",
+            "btst_candidate_pool_corridor_uplift_runbook_latest",
             "btst_tradeable_opportunity_pool_march",
             "btst_no_candidate_entry_action_board_latest",
             "btst_no_candidate_entry_replay_bundle_latest",
@@ -1356,6 +1444,14 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
     candidate_pool_rebucket_comparison_bundle_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_REBUCKET_COMPARISON_BUNDLE_MD
     candidate_pool_corridor_validation_pack_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_CORRIDOR_VALIDATION_PACK_JSON
     candidate_pool_corridor_validation_pack_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_CORRIDOR_VALIDATION_PACK_MD
+    candidate_pool_corridor_shadow_pack_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_CORRIDOR_SHADOW_PACK_JSON
+    candidate_pool_corridor_shadow_pack_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_CORRIDOR_SHADOW_PACK_MD
+    candidate_pool_lane_pair_board_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_LANE_PAIR_BOARD_JSON
+    candidate_pool_lane_pair_board_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_LANE_PAIR_BOARD_MD
+    candidate_pool_upstream_handoff_board_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_UPSTREAM_HANDOFF_BOARD_JSON
+    candidate_pool_upstream_handoff_board_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_UPSTREAM_HANDOFF_BOARD_MD
+    candidate_pool_corridor_uplift_runbook_json_path = resolved_reports_root / BTST_CANDIDATE_POOL_CORRIDOR_UPLIFT_RUNBOOK_JSON
+    candidate_pool_corridor_uplift_runbook_md_path = resolved_reports_root / BTST_CANDIDATE_POOL_CORRIDOR_UPLIFT_RUNBOOK_MD
 
     required_inputs = {
         "frontier_report": frontier_report_path,
@@ -1378,12 +1474,20 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
     candidate_pool_lane_objective_support_status = "skipped_missing_candidate_pool_recall_dossier"
     candidate_pool_corridor_validation_pack_analysis: dict[str, Any] = {}
     candidate_pool_corridor_validation_pack_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_corridor_shadow_pack_analysis: dict[str, Any] = {}
+    candidate_pool_corridor_shadow_pack_status = "skipped_missing_candidate_pool_recall_dossier"
     candidate_pool_rebucket_shadow_pack_analysis: dict[str, Any] = {}
     candidate_pool_rebucket_shadow_pack_status = "skipped_missing_candidate_pool_recall_dossier"
     candidate_pool_rebucket_objective_validation_analysis: dict[str, Any] = {}
     candidate_pool_rebucket_objective_validation_status = "skipped_missing_candidate_pool_recall_dossier"
     candidate_pool_rebucket_comparison_bundle_analysis: dict[str, Any] = {}
     candidate_pool_rebucket_comparison_bundle_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_lane_pair_board_analysis: dict[str, Any] = {}
+    candidate_pool_lane_pair_board_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_upstream_handoff_board_analysis: dict[str, Any] = {}
+    candidate_pool_upstream_handoff_board_status = "skipped_missing_candidate_pool_recall_dossier"
+    candidate_pool_corridor_uplift_runbook_analysis: dict[str, Any] = {}
+    candidate_pool_corridor_uplift_runbook_status = "skipped_missing_candidate_pool_recall_dossier"
     if tradeable_opportunity_pool_json_path.exists():
         try:
             no_candidate_entry_action_board_analysis = analyze_btst_no_candidate_entry_action_board(
@@ -1472,6 +1576,11 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             candidate_pool_corridor_validation_pack_md_path.write_text(render_btst_candidate_pool_corridor_validation_pack_markdown(candidate_pool_corridor_validation_pack_analysis), encoding="utf-8")
             candidate_pool_corridor_validation_pack_status = str(candidate_pool_corridor_validation_pack_analysis.get("pack_status") or "refreshed")
 
+            candidate_pool_corridor_shadow_pack_analysis = analyze_btst_candidate_pool_corridor_shadow_pack(candidate_pool_corridor_validation_pack_json_path)
+            candidate_pool_corridor_shadow_pack_json_path.write_text(json.dumps(candidate_pool_corridor_shadow_pack_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_corridor_shadow_pack_md_path.write_text(render_btst_candidate_pool_corridor_shadow_pack_markdown(candidate_pool_corridor_shadow_pack_analysis), encoding="utf-8")
+            candidate_pool_corridor_shadow_pack_status = str(candidate_pool_corridor_shadow_pack_analysis.get("shadow_status") or "refreshed")
+
             rebucket_candidates = [
                 dict(row)
                 for row in list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_experiment_queue") or [])
@@ -1520,6 +1629,32 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             candidate_pool_rebucket_comparison_bundle_json_path.write_text(json.dumps(candidate_pool_rebucket_comparison_bundle_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             candidate_pool_rebucket_comparison_bundle_md_path.write_text(render_btst_candidate_pool_rebucket_comparison_bundle_markdown(candidate_pool_rebucket_comparison_bundle_analysis), encoding="utf-8")
             candidate_pool_rebucket_comparison_bundle_status = str(candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status") or "refreshed")
+
+            candidate_pool_lane_pair_board_analysis = analyze_btst_candidate_pool_lane_pair_board(
+                candidate_pool_corridor_shadow_pack_json_path,
+                candidate_pool_rebucket_comparison_bundle_json_path,
+            )
+            candidate_pool_lane_pair_board_json_path.write_text(json.dumps(candidate_pool_lane_pair_board_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_lane_pair_board_md_path.write_text(render_btst_candidate_pool_lane_pair_board_markdown(candidate_pool_lane_pair_board_analysis), encoding="utf-8")
+            candidate_pool_lane_pair_board_status = str(candidate_pool_lane_pair_board_analysis.get("pair_status") or "refreshed")
+
+            candidate_pool_upstream_handoff_board_analysis = analyze_btst_candidate_pool_upstream_handoff_board(
+                no_candidate_entry_failure_dossier_json_path,
+                watchlist_recall_dossier_path=watchlist_recall_dossier_json_path,
+                candidate_pool_recall_dossier_path=candidate_pool_recall_dossier_json_path,
+            )
+            candidate_pool_upstream_handoff_board_json_path.write_text(json.dumps(candidate_pool_upstream_handoff_board_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_upstream_handoff_board_md_path.write_text(render_btst_candidate_pool_upstream_handoff_board_markdown(candidate_pool_upstream_handoff_board_analysis), encoding="utf-8")
+            candidate_pool_upstream_handoff_board_status = str(candidate_pool_upstream_handoff_board_analysis.get("board_status") or "refreshed")
+
+            candidate_pool_corridor_uplift_runbook_analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+                candidate_pool_recall_dossier_json_path,
+                corridor_shadow_pack_path=candidate_pool_corridor_shadow_pack_json_path,
+                lane_pair_board_path=candidate_pool_lane_pair_board_json_path,
+            )
+            candidate_pool_corridor_uplift_runbook_json_path.write_text(json.dumps(candidate_pool_corridor_uplift_runbook_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_corridor_uplift_runbook_md_path.write_text(render_btst_candidate_pool_corridor_uplift_runbook_markdown(candidate_pool_corridor_uplift_runbook_analysis), encoding="utf-8")
+            candidate_pool_corridor_uplift_runbook_status = str(candidate_pool_corridor_uplift_runbook_analysis.get("runbook_status") or "refreshed")
         except Exception as exc:
             return {
                 "status": "skipped_refresh_error",
@@ -1590,6 +1725,13 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "primary_validation_ticker": dict(candidate_pool_corridor_validation_pack_analysis.get("primary_validation_ticker") or {}).get("ticker"),
                 "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_validation_pack_analysis.get("parallel_watch_tickers") or [])[:3] if str(row.get("ticker") or "").strip()],
             },
+            "candidate_pool_corridor_shadow_pack_status": candidate_pool_corridor_shadow_pack_status,
+            "candidate_pool_corridor_shadow_pack_json": candidate_pool_corridor_shadow_pack_json_path.as_posix() if candidate_pool_corridor_shadow_pack_analysis else None,
+            "candidate_pool_corridor_shadow_pack_summary": {
+                "shadow_status": candidate_pool_corridor_shadow_pack_analysis.get("shadow_status"),
+                "primary_shadow_replay": dict(candidate_pool_corridor_shadow_pack_analysis.get("primary_shadow_replay") or {}).get("ticker"),
+                "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_shadow_pack_analysis.get("parallel_watch_lanes") or [])[:3] if str(row.get("ticker") or "").strip()],
+            },
             "candidate_pool_lane_objective_support_status": candidate_pool_lane_objective_support_status,
             "candidate_pool_lane_objective_support_json": candidate_pool_lane_objective_support_json_path.as_posix() if candidate_pool_lane_objective_support_analysis else None,
             "candidate_pool_lane_objective_support_rows": list(candidate_pool_lane_objective_support_analysis.get("branch_rows") or [])[:3],
@@ -1609,6 +1751,27 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "bundle_status": candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status"),
                 "structural_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("structural_leader") or {}).get("priority_handoff"),
                 "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
+            },
+            "candidate_pool_lane_pair_board_status": candidate_pool_lane_pair_board_status,
+            "candidate_pool_lane_pair_board_json": candidate_pool_lane_pair_board_json_path.as_posix() if candidate_pool_lane_pair_board_analysis else None,
+            "candidate_pool_lane_pair_board_summary": {
+                "pair_status": candidate_pool_lane_pair_board_analysis.get("pair_status"),
+                "board_leader": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("ticker"),
+                "leader_lane_family": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("lane_family"),
+            },
+            "candidate_pool_upstream_handoff_board_status": candidate_pool_upstream_handoff_board_status,
+            "candidate_pool_upstream_handoff_board_json": candidate_pool_upstream_handoff_board_json_path.as_posix() if candidate_pool_upstream_handoff_board_analysis else None,
+            "candidate_pool_upstream_handoff_board_summary": {
+                "board_status": candidate_pool_upstream_handoff_board_analysis.get("board_status"),
+                "focus_tickers": list(candidate_pool_upstream_handoff_board_analysis.get("focus_tickers") or [])[:3],
+                "first_broken_handoff_counts": dict(dict(candidate_pool_upstream_handoff_board_analysis.get("stage_summary") or {}).get("first_broken_handoff_counts") or {}),
+            },
+            "candidate_pool_corridor_uplift_runbook_status": candidate_pool_corridor_uplift_runbook_status,
+            "candidate_pool_corridor_uplift_runbook_json": candidate_pool_corridor_uplift_runbook_json_path.as_posix() if candidate_pool_corridor_uplift_runbook_analysis else None,
+            "candidate_pool_corridor_uplift_runbook_summary": {
+                "runbook_status": candidate_pool_corridor_uplift_runbook_analysis.get("runbook_status"),
+                "primary_shadow_replay": candidate_pool_corridor_uplift_runbook_analysis.get("primary_shadow_replay"),
+                "parallel_watch_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("parallel_watch_tickers") or [])[:3],
             },
             "candidate_pool_recall_action_queue_task_ids": [
                 str(row.get("task_id") or "")
@@ -1779,6 +1942,13 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "primary_validation_ticker": dict(candidate_pool_corridor_validation_pack_analysis.get("primary_validation_ticker") or {}).get("ticker"),
             "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_validation_pack_analysis.get("parallel_watch_tickers") or [])[:3] if str(row.get("ticker") or "").strip()],
         },
+        "candidate_pool_corridor_shadow_pack_status": candidate_pool_corridor_shadow_pack_status,
+        "candidate_pool_corridor_shadow_pack_json": candidate_pool_corridor_shadow_pack_json_path.as_posix() if candidate_pool_corridor_shadow_pack_analysis else None,
+        "candidate_pool_corridor_shadow_pack_summary": {
+            "shadow_status": candidate_pool_corridor_shadow_pack_analysis.get("shadow_status"),
+            "primary_shadow_replay": dict(candidate_pool_corridor_shadow_pack_analysis.get("primary_shadow_replay") or {}).get("ticker"),
+            "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_shadow_pack_analysis.get("parallel_watch_lanes") or [])[:3] if str(row.get("ticker") or "").strip()],
+        },
         "candidate_pool_lane_objective_support_status": candidate_pool_lane_objective_support_status,
         "candidate_pool_lane_objective_support_json": candidate_pool_lane_objective_support_json_path.as_posix() if candidate_pool_lane_objective_support_analysis else None,
         "candidate_pool_lane_objective_support_rows": list(candidate_pool_lane_objective_support_analysis.get("branch_rows") or [])[:3],
@@ -1798,6 +1968,27 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "bundle_status": candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status"),
             "structural_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("structural_leader") or {}).get("priority_handoff"),
             "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
+        },
+        "candidate_pool_lane_pair_board_status": candidate_pool_lane_pair_board_status,
+        "candidate_pool_lane_pair_board_json": candidate_pool_lane_pair_board_json_path.as_posix() if candidate_pool_lane_pair_board_analysis else None,
+        "candidate_pool_lane_pair_board_summary": {
+            "pair_status": candidate_pool_lane_pair_board_analysis.get("pair_status"),
+            "board_leader": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("ticker"),
+            "leader_lane_family": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("lane_family"),
+        },
+        "candidate_pool_upstream_handoff_board_status": candidate_pool_upstream_handoff_board_status,
+        "candidate_pool_upstream_handoff_board_json": candidate_pool_upstream_handoff_board_json_path.as_posix() if candidate_pool_upstream_handoff_board_analysis else None,
+        "candidate_pool_upstream_handoff_board_summary": {
+            "board_status": candidate_pool_upstream_handoff_board_analysis.get("board_status"),
+            "focus_tickers": list(candidate_pool_upstream_handoff_board_analysis.get("focus_tickers") or [])[:3],
+            "first_broken_handoff_counts": dict(dict(candidate_pool_upstream_handoff_board_analysis.get("stage_summary") or {}).get("first_broken_handoff_counts") or {}),
+        },
+        "candidate_pool_corridor_uplift_runbook_status": candidate_pool_corridor_uplift_runbook_status,
+        "candidate_pool_corridor_uplift_runbook_json": candidate_pool_corridor_uplift_runbook_json_path.as_posix() if candidate_pool_corridor_uplift_runbook_analysis else None,
+        "candidate_pool_corridor_uplift_runbook_summary": {
+            "runbook_status": candidate_pool_corridor_uplift_runbook_analysis.get("runbook_status"),
+            "primary_shadow_replay": candidate_pool_corridor_uplift_runbook_analysis.get("primary_shadow_replay"),
+            "parallel_watch_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("parallel_watch_tickers") or [])[:3],
         },
         "candidate_pool_recall_action_queue_task_ids": [
             str(row.get("task_id") or "")
@@ -2559,6 +2750,13 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
             lines.append(
                 f"- candidate_entry_shadow_candidate_pool_corridor_validation_pack_summary: pack_status={summary.get('pack_status')} primary_validation_ticker={summary.get('primary_validation_ticker')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}"
             )
+        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_shadow_pack_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_corridor_shadow_pack_status: {candidate_entry_shadow_refresh.get('candidate_pool_corridor_shadow_pack_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_shadow_pack_summary"):
+            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_corridor_shadow_pack_summary") or {})
+            lines.append(
+                f"- candidate_entry_shadow_candidate_pool_corridor_shadow_pack_summary: shadow_status={summary.get('shadow_status')} primary_shadow_replay={summary.get('primary_shadow_replay')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}"
+            )
         if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_status") is not None:
             lines.append(f"- candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status: {candidate_entry_shadow_refresh.get('candidate_pool_rebucket_shadow_pack_status')}")
         if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_experiment"):
@@ -2579,6 +2777,27 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
             summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_rebucket_comparison_bundle_summary") or {})
             lines.append(
                 f"- candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_summary: bundle_status={summary.get('bundle_status')} structural_leader={summary.get('structural_leader')} objective_leader={summary.get('objective_leader')}"
+            )
+        if candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_lane_pair_board_status: {candidate_entry_shadow_refresh.get('candidate_pool_lane_pair_board_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_summary"):
+            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_summary") or {})
+            lines.append(
+                f"- candidate_entry_shadow_candidate_pool_lane_pair_board_summary: pair_status={summary.get('pair_status')} board_leader={summary.get('board_leader')} leader_lane_family={summary.get('leader_lane_family')}"
+            )
+        if candidate_entry_shadow_refresh.get("candidate_pool_upstream_handoff_board_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_upstream_handoff_board_status: {candidate_entry_shadow_refresh.get('candidate_pool_upstream_handoff_board_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_upstream_handoff_board_summary"):
+            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_upstream_handoff_board_summary") or {})
+            lines.append(
+                f"- candidate_entry_shadow_candidate_pool_upstream_handoff_board_summary: board_status={summary.get('board_status')} focus_tickers={summary.get('focus_tickers')} first_broken_handoff_counts={summary.get('first_broken_handoff_counts')}"
+            )
+        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_uplift_runbook_status") is not None:
+            lines.append(f"- candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_status: {candidate_entry_shadow_refresh.get('candidate_pool_corridor_uplift_runbook_status')}")
+        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_uplift_runbook_summary"):
+            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_corridor_uplift_runbook_summary") or {})
+            lines.append(
+                f"- candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_summary: runbook_status={summary.get('runbook_status')} primary_shadow_replay={summary.get('primary_shadow_replay')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}"
             )
     btst_score_fail_frontier_refresh = manifest.get("btst_score_fail_frontier_refresh") or {}
     if btst_score_fail_frontier_refresh:

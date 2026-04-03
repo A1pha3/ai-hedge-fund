@@ -579,6 +579,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_candidate_pool_rebucket_objective_validation_latest",
         "btst_candidate_pool_rebucket_comparison_bundle_latest",
         "btst_candidate_pool_corridor_validation_pack_latest",
+        "btst_candidate_pool_corridor_shadow_pack_latest",
+        "btst_candidate_pool_lane_pair_board_latest",
+        "btst_candidate_pool_upstream_handoff_board_latest",
+        "btst_candidate_pool_corridor_uplift_runbook_latest",
         "btst_tradeable_opportunity_pool_march",
         "btst_no_candidate_entry_action_board_latest",
         "btst_no_candidate_entry_failure_dossier_latest",
@@ -610,6 +614,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_candidate_pool_rebucket_objective_validation_latest",
         "btst_candidate_pool_rebucket_comparison_bundle_latest",
         "btst_candidate_pool_corridor_validation_pack_latest",
+        "btst_candidate_pool_corridor_shadow_pack_latest",
+        "btst_candidate_pool_lane_pair_board_latest",
+        "btst_candidate_pool_upstream_handoff_board_latest",
+        "btst_candidate_pool_corridor_uplift_runbook_latest",
         "btst_tradeable_opportunity_pool_march",
         "btst_no_candidate_entry_action_board_latest",
         "btst_no_candidate_entry_failure_dossier_latest",
@@ -642,6 +650,10 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         "btst_candidate_pool_rebucket_objective_validation_latest",
         "btst_candidate_pool_rebucket_comparison_bundle_latest",
         "btst_candidate_pool_corridor_validation_pack_latest",
+        "btst_candidate_pool_corridor_shadow_pack_latest",
+        "btst_candidate_pool_lane_pair_board_latest",
+        "btst_candidate_pool_upstream_handoff_board_latest",
+        "btst_candidate_pool_corridor_uplift_runbook_latest",
         "btst_tradeable_opportunity_pool_march",
         "btst_no_candidate_entry_action_board_latest",
         "btst_no_candidate_entry_failure_dossier_latest",
@@ -857,10 +869,18 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["candidate_pool_lane_objective_support_rows"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
     assert refresh["candidate_pool_corridor_validation_pack_status"] in {"parallel_probe_ready", "accumulate_more_corridor_evidence", "skipped_no_corridor_lane"}
     assert refresh["candidate_pool_corridor_validation_pack_summary"]["pack_status"] == refresh["candidate_pool_corridor_validation_pack_status"]
+    assert refresh["candidate_pool_corridor_shadow_pack_status"] in {"ready_for_primary_shadow_replay", "hold_for_more_corridor_evidence", "skipped_no_corridor_lane"}
+    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["shadow_status"] == refresh["candidate_pool_corridor_shadow_pack_status"]
     assert refresh["candidate_pool_rebucket_shadow_pack_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
     assert refresh["candidate_pool_rebucket_objective_validation_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
     assert refresh["candidate_pool_rebucket_comparison_bundle_status"] in {"ready_for_parallel_comparison", "keep_shadow_first", "needs_more_closed_cycle_support", "hold_structure_only", "skipped_no_rebucket_lane"}
     assert refresh["candidate_pool_rebucket_comparison_bundle_summary"]["bundle_status"] == refresh["candidate_pool_rebucket_comparison_bundle_status"]
+    assert refresh["candidate_pool_lane_pair_board_status"] in {"ready_for_ranked_comparison", "await_corridor_shadow_pack", "await_rebucket_bundle", "insufficient_lane_evidence", "skipped_missing_candidates"}
+    assert refresh["candidate_pool_lane_pair_board_summary"]["pair_status"] == refresh["candidate_pool_lane_pair_board_status"]
+    assert refresh["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
+    assert refresh["candidate_pool_upstream_handoff_board_summary"]["board_status"] == refresh["candidate_pool_upstream_handoff_board_status"]
+    assert refresh["candidate_pool_corridor_uplift_runbook_status"] in {"ready_for_upstream_uplift_probe", "skipped_no_corridor_probe"}
+    assert refresh["candidate_pool_corridor_uplift_runbook_summary"]["runbook_status"] == refresh["candidate_pool_corridor_uplift_runbook_status"]
     assert action_board["top_priority_tickers"] == ["300502"]
     assert replay_bundle["promising_priority_tickers"] == []
     assert failure_dossier["priority_ticker_dossiers"][0]["ticker"] == "300502"
@@ -874,7 +894,11 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert entries_by_id["btst_watchlist_recall_dossier_latest"]["report_path"] == "data/reports/btst_watchlist_recall_dossier_latest.md"
     assert entries_by_id["btst_candidate_pool_recall_dossier_latest"]["report_path"] == "data/reports/btst_candidate_pool_recall_dossier_latest.md"
     assert entries_by_id["btst_candidate_pool_corridor_validation_pack_latest"]["report_path"] == "data/reports/btst_candidate_pool_corridor_validation_pack_latest.md"
+    assert entries_by_id["btst_candidate_pool_corridor_shadow_pack_latest"]["report_path"] == "data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md"
     assert entries_by_id["btst_candidate_pool_rebucket_comparison_bundle_latest"]["report_path"] == "data/reports/btst_candidate_pool_rebucket_comparison_bundle_latest.md"
+    assert entries_by_id["btst_candidate_pool_lane_pair_board_latest"]["report_path"] == "data/reports/btst_candidate_pool_lane_pair_board_latest.md"
+    assert entries_by_id["btst_candidate_pool_upstream_handoff_board_latest"]["report_path"] == "data/reports/btst_candidate_pool_upstream_handoff_board_latest.md"
+    assert entries_by_id["btst_candidate_pool_corridor_uplift_runbook_latest"]["report_path"] == "data/reports/btst_candidate_pool_corridor_uplift_runbook_latest.md"
 
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
     assert "candidate_entry_shadow_refresh_status: refreshed" in markdown
@@ -902,9 +926,13 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert "candidate_entry_shadow_candidate_pool_branch_priority_alignment_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_lane_objective_support_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_corridor_validation_pack_status:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_corridor_shadow_pack_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_rebucket_objective_validation_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_status:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_lane_pair_board_status:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_upstream_handoff_board_status:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_status:" in markdown
     assert "btst_tradeable_opportunity_pool_refresh_status: loaded_existing" in markdown
     assert "btst_rollout_governance_refresh_status: skipped_missing_inputs" in markdown
     assert "btst_governance_synthesis_status: skipped_missing_inputs" in markdown

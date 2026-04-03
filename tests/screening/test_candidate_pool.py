@@ -17,6 +17,7 @@ from src.screening.candidate_pool import (
     _is_disclosure_window,
     add_cooldown,
     build_candidate_pool,
+    build_candidate_pool_with_shadow,
     get_cooled_tickers,
     load_cooldown_registry,
     save_cooldown_registry,
@@ -386,6 +387,89 @@ class TestExcludeRules:
             )
 
         assert len(result) == 200
+
+    @patch("src.screening.candidate_pool.get_sw_industry_classification")
+    @patch("src.screening.candidate_pool.get_daily_basic_batch")
+    @patch("src.screening.candidate_pool.get_limit_list")
+    @patch("src.screening.candidate_pool.get_suspend_list")
+    @patch("src.screening.candidate_pool.get_all_stock_basic")
+    @patch("src.screening.candidate_pool._get_pro")
+    def test_candidate_pool_shadow_recall_selects_corridor_and_rebucket_lanes(
+        self,
+        mock_pro,
+        mock_basic,
+        mock_suspend,
+        mock_limit,
+        mock_daily,
+        mock_sw,
+    ):
+        stocks = [
+            {"ts_code": f"{i:06d}.SZ", "symbol": f"{i:06d}", "name": f"股票{i}"}
+            for i in range(305)
+        ]
+        avg_amount_map = {f"{i:06d}.SZ": float(100_000 - i) for i in range(300)}
+        avg_amount_map["000300.SZ"] = 15_000.0
+        avg_amount_map["000301.SZ"] = 45_000.0
+        avg_amount_map["000302.SZ"] = 18_000.0
+        avg_amount_map["000303.SZ"] = 9_000.0
+        avg_amount_map["000304.SZ"] = 4_500.0
+
+        snapshot_dir = Path(tempfile.mkdtemp())
+        mock_pro.return_value = MagicMock()
+        mock_basic.return_value = _make_stock_basic_df(stocks)
+        mock_suspend.return_value = pd.DataFrame()
+        mock_limit.return_value = pd.DataFrame()
+        mock_daily.return_value = _make_daily_basic_df(
+            [{"ts_code": stock["ts_code"], "total_mv": 1_000_000} for stock in stocks]
+        )
+        mock_sw.return_value = {}
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
+             patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 300), \
+             patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value=avg_amount_map):
+            selected_candidates, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow(
+                "20260305",
+                use_cache=False,
+                cooldown_tickers=set(),
+            )
+
+        assert len(selected_candidates) == 300
+        assert [candidate.ticker for candidate in shadow_candidates] == ["000302", "000300", "000301"]
+        assert [candidate.candidate_pool_lane for candidate in shadow_candidates] == [
+            "layer_a_liquidity_corridor",
+            "layer_a_liquidity_corridor",
+            "post_gate_liquidity_competition",
+        ]
+        assert shadow_summary["lane_counts"] == {
+            "layer_a_liquidity_corridor": 2,
+            "post_gate_liquidity_competition": 1,
+        }
+        assert shadow_summary["selected_tickers"] == ["000302", "000300", "000301"]
+
+    def test_candidate_pool_shadow_recall_preserves_cached_main_pool_when_shadow_backfill_unavailable(self):
+        snapshot_dir = Path(tempfile.mkdtemp())
+        cached_candidates = [
+            CandidateStock(
+                ticker="000001",
+                name="缓存主池",
+                industry_sw="银行",
+                avg_volume_20d=12345.0,
+                market_cap=100.0,
+                listing_date="20100101",
+            )
+        ]
+        snapshot_path = snapshot_dir / "candidate_pool_20260305_top300.json"
+        snapshot_path.write_text(json.dumps([candidate.model_dump() for candidate in cached_candidates], ensure_ascii=False, indent=2), encoding="utf-8")
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
+             patch("src.screening.candidate_pool._compute_candidate_pool_candidates", return_value=[]):
+            selected_candidates, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow("20260305", use_cache=True)
+
+        assert [candidate.ticker for candidate in selected_candidates] == ["000001"]
+        assert shadow_candidates == []
+        assert shadow_summary["selected_count"] == 1
+        assert shadow_summary["lane_counts"] == {}
+        assert (snapshot_dir / "candidate_pool_20260305_top300_shadow.json").exists()
 
     @patch("src.screening.candidate_pool.get_sw_industry_classification")
     @patch("src.screening.candidate_pool.get_daily_basic_batch")

@@ -18,7 +18,7 @@ from src.execution.t1_confirmation import confirm_buy_signal
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
 from src.portfolio.position_calculator import STANDARD_EXECUTION_SCORE, calculate_position, enforce_daily_trade_limit
-from src.screening.candidate_pool import build_candidate_pool
+from src.screening.candidate_pool import build_candidate_pool, build_candidate_pool_with_shadow
 from src.screening.models import CandidateStock
 from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
@@ -67,6 +67,7 @@ SHORT_TRADE_BOUNDARY_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_B
 SHORT_TRADE_BOUNDARY_TREND_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_TREND_MIN", 0.22)
 SHORT_TRADE_BOUNDARY_VOLUME_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_VOLUME_MIN", 0.15)
 SHORT_TRADE_BOUNDARY_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN", 0.12)
+UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS", 3)
 CATALYST_THEME_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_CATALYST_THEME_MAX_TICKERS", 8)
 CATALYST_THEME_SHADOW_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_CATALYST_THEME_SHADOW_MAX_TICKERS", 8)
 CATALYST_THEME_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CANDIDATE_SCORE_MIN", 0.34)
@@ -74,6 +75,23 @@ CATALYST_THEME_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_BREA
 CATALYST_THEME_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CLOSE_MIN", 0.20)
 CATALYST_THEME_SECTOR_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SECTOR_MIN", 0.25)
 CATALYST_THEME_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CATALYST_MIN", 0.45)
+_ORIGINAL_BUILD_CANDIDATE_POOL = build_candidate_pool
+_ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW = build_candidate_pool_with_shadow
+
+
+def _load_candidate_pool_bundle(trade_date: str) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
+    if build_candidate_pool is not _ORIGINAL_BUILD_CANDIDATE_POOL and build_candidate_pool_with_shadow is _ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW:
+        candidates = build_candidate_pool(trade_date)
+        return candidates, [], {
+            "pool_size": len(candidates),
+            "selected_count": len(candidates),
+            "overflow_count": 0,
+            "selected_cutoff_avg_volume_20d": round(float(candidates[-1].avg_volume_20d), 4) if candidates else 0.0,
+            "lane_counts": {},
+            "selected_tickers": [],
+            "tickers": [],
+        }
+    return build_candidate_pool_with_shadow(trade_date)
 
 
 def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
@@ -226,7 +244,10 @@ def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], wat
     return summary
 
 
-def _build_short_trade_boundary_entry(*, item, reason: str, rank: int) -> dict:
+def _build_short_trade_boundary_entry(*, item, reason: str, rank: int, candidate_source: str = "short_trade_boundary", upstream_candidate_source: str = "layer_b_boundary", candidate_reason_codes: list[str] | None = None, candidate_pool_rank: int | None = None, candidate_pool_lane: str | None = None, candidate_pool_avg_amount_share_of_cutoff: float | None = None, candidate_pool_avg_amount_share_of_min_gate: float | None = None) -> dict:
+    resolved_reason_codes = [str(code) for code in list(candidate_reason_codes or [reason, "short_trade_prequalified"]) if str(code or "").strip()]
+    if reason not in resolved_reason_codes:
+        resolved_reason_codes.insert(0, reason)
     return {
         "ticker": item.ticker,
         "score_b": round(float(item.score_b), 4),
@@ -235,16 +256,20 @@ def _build_short_trade_boundary_entry(*, item, reason: str, rank: int) -> dict:
         "quality_score": 0.5,
         "decision": str(item.decision or "neutral"),
         "reason": reason,
-        "reasons": [reason, "short_trade_prequalified"],
-        "candidate_source": "short_trade_boundary",
-        "upstream_candidate_source": "layer_b_boundary",
-        "candidate_reason_codes": [reason, "short_trade_prequalified"],
+        "reasons": resolved_reason_codes,
+        "candidate_source": candidate_source,
+        "upstream_candidate_source": upstream_candidate_source,
+        "candidate_reason_codes": resolved_reason_codes,
         "strategy_signals": {
             name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
             for name, signal in dict(item.strategy_signals or {}).items()
         },
         "agent_contribution_summary": {},
         "rank": rank,
+        "candidate_pool_rank": candidate_pool_rank,
+        "candidate_pool_lane": candidate_pool_lane,
+        "candidate_pool_avg_amount_share_of_cutoff": candidate_pool_avg_amount_share_of_cutoff,
+        "candidate_pool_avg_amount_share_of_min_gate": candidate_pool_avg_amount_share_of_min_gate,
     }
 
 
@@ -257,6 +282,37 @@ def _compute_short_trade_boundary_candidate_score(snapshot: dict) -> float:
         + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0)),
         4,
     )
+
+
+def _build_upstream_shadow_observation_entry(*, candidate_entry: dict[str, Any], filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
+    candidate_score = round(float(metrics_payload.get("candidate_score", 0.0) or 0.0), 4)
+    gate_status = dict(metrics_payload.get("gate_status") or {})
+    gate_status.setdefault("score", "shadow_observation")
+    blockers = list(metrics_payload.get("blockers") or [])
+    return {
+        **candidate_entry,
+        "decision": "observation",
+        "score_target": candidate_score,
+        "confidence": round(min(1.0, max(0.0, candidate_score)), 4),
+        "top_reasons": [
+            f"candidate_score={candidate_score:.2f}",
+            f"filter_reason={filter_reason}",
+            f"breakout_freshness={float(metrics_payload.get('breakout_freshness', 0.0) or 0.0):.2f}",
+        ],
+        "rejection_reasons": [filter_reason],
+        "filter_reason": filter_reason,
+        "gate_status": gate_status,
+        "blockers": blockers,
+        "metrics": {
+            "breakout_freshness": metrics_payload.get("breakout_freshness"),
+            "trend_acceleration": metrics_payload.get("trend_acceleration"),
+            "volume_expansion_quality": metrics_payload.get("volume_expansion_quality"),
+            "close_strength": metrics_payload.get("close_strength"),
+            "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
+        },
+        "promotion_trigger": "仅作上游影子补票观察；只有盘中新强度确认后才允许升级到 near-miss 或 selected 观察层。",
+        "short_trade_boundary_metrics": metrics_payload,
+    }
 
 
 def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
@@ -289,20 +345,66 @@ def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -
     return True, "short_trade_prequalified", metrics_payload
 
 
-def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade_date: str) -> dict:
+def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade_date: str, *, shadow_fused: list | None = None, shadow_candidate_by_ticker: dict[str, CandidateStock] | None = None) -> dict:
     selected_tickers = {item.ticker for item in high_pool}
     entries: list[dict] = []
+    shadow_observation_entries: list[dict] = []
     reason_counts: dict[str, int] = {}
     filtered_reason_counts: dict[str, int] = {}
     ranked_candidates: list[tuple[float, float, dict]] = []
-    upstream_candidates = sorted([item for item in fused if item.ticker not in selected_tickers], key=lambda current: current.score_b, reverse=True)
+    ranked_shadow_observations: list[tuple[float, float, dict]] = []
+    shadow_candidate_by_ticker = dict(shadow_candidate_by_ticker or {})
+    upstream_candidates_by_ticker = {item.ticker: item for item in fused if item.ticker not in selected_tickers}
+    for item in list(shadow_fused or []):
+        if item.ticker not in selected_tickers:
+            upstream_candidates_by_ticker.setdefault(item.ticker, item)
+    upstream_candidates = sorted(upstream_candidates_by_ticker.values(), key=lambda current: current.score_b, reverse=True)
 
     for item in upstream_candidates:
-        reason = "short_trade_candidate_score_ranked"
-        candidate_entry = _build_short_trade_boundary_entry(item=item, reason=reason, rank=0)
+        shadow_candidate = shadow_candidate_by_ticker.get(item.ticker)
+        if shadow_candidate and shadow_candidate.candidate_pool_lane == "layer_a_liquidity_corridor":
+            reason = "upstream_base_liquidity_uplift_shadow"
+            candidate_source = "upstream_liquidity_corridor_shadow"
+            upstream_candidate_source = "candidate_pool_truncated_after_filters"
+            candidate_reason_codes = [reason, "candidate_pool_truncated_after_filters", "layer_a_liquidity_corridor"]
+        elif shadow_candidate and shadow_candidate.candidate_pool_lane == "post_gate_liquidity_competition":
+            reason = "post_gate_liquidity_competition_shadow"
+            candidate_source = "post_gate_liquidity_competition_shadow"
+            upstream_candidate_source = "candidate_pool_truncated_after_filters"
+            candidate_reason_codes = [reason, "candidate_pool_truncated_after_filters", "post_gate_liquidity_competition"]
+        else:
+            reason = "short_trade_candidate_score_ranked"
+            candidate_source = "short_trade_boundary"
+            upstream_candidate_source = "layer_b_boundary"
+            candidate_reason_codes = [reason, "short_trade_prequalified"]
+
+        candidate_entry = _build_short_trade_boundary_entry(
+            item=item,
+            reason=reason,
+            rank=0,
+            candidate_source=candidate_source,
+            upstream_candidate_source=upstream_candidate_source,
+            candidate_reason_codes=candidate_reason_codes,
+            candidate_pool_rank=int(shadow_candidate.candidate_pool_rank or 0) if shadow_candidate else None,
+            candidate_pool_lane=str(shadow_candidate.candidate_pool_lane or "") if shadow_candidate else None,
+            candidate_pool_avg_amount_share_of_cutoff=round(float(shadow_candidate.candidate_pool_avg_amount_share_of_cutoff), 4) if shadow_candidate else None,
+            candidate_pool_avg_amount_share_of_min_gate=round(float(shadow_candidate.candidate_pool_avg_amount_share_of_min_gate), 4) if shadow_candidate else None,
+        )
         qualified, filter_reason, metrics_payload = _qualifies_short_trade_boundary_candidate(trade_date=trade_date, entry=candidate_entry)
         if not qualified:
             filtered_reason_counts[filter_reason] = filtered_reason_counts.get(filter_reason, 0) + 1
+            if shadow_candidate is not None:
+                ranked_shadow_observations.append(
+                    (
+                        float(metrics_payload.get("candidate_score", 0.0) or 0.0),
+                        float(item.score_b),
+                        _build_upstream_shadow_observation_entry(
+                            candidate_entry=candidate_entry,
+                            filter_reason=filter_reason,
+                            metrics_payload=metrics_payload,
+                        ),
+                    )
+                )
             continue
 
         ranked_candidates.append((float(metrics_payload.get("candidate_score", 0.0) or 0.0), float(item.score_b), {**candidate_entry, "short_trade_boundary_metrics": metrics_payload}))
@@ -314,9 +416,15 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
         entries.append(entry)
 
+    ranked_shadow_observations.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
+    for rank, (_, _, entry) in enumerate(ranked_shadow_observations[:UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS], start=1):
+        entry["rank"] = rank
+        shadow_observation_entries.append(entry)
+
     return {
         "upstream_candidate_count": len(upstream_candidates),
         "candidate_count": len(entries),
+        "shadow_observation_count": len(shadow_observation_entries),
         "reason_counts": reason_counts,
         "filtered_reason_counts": filtered_reason_counts,
         "prefilter_thresholds": {
@@ -327,10 +435,12 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
             "catalyst_freshness_min": round(SHORT_TRADE_BOUNDARY_CATALYST_MIN, 4),
         },
         "selected_tickers": [entry["ticker"] for entry in entries],
+        "shadow_observation_tickers": [entry["ticker"] for entry in shadow_observation_entries],
         "score_buffer": round(SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
         "minimum_score_b": round(FAST_AGENT_SCORE_THRESHOLD - SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
         "max_candidates": SHORT_TRADE_BOUNDARY_MAX_TICKERS,
         "tickers": entries,
+        "shadow_observation_entries": shadow_observation_entries,
     }
 
 
@@ -996,7 +1106,7 @@ class DailyPipeline:
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
 
         stage_started_at = perf_counter()
-        candidates = build_candidate_pool(trade_date)
+        candidates, shadow_candidates, candidate_pool_shadow_summary = _load_candidate_pool_bundle(trade_date)
         candidate_pool_seconds = perf_counter() - stage_started_at
 
         stage_started_at = perf_counter()
@@ -1008,8 +1118,15 @@ class DailyPipeline:
         score_batch_seconds = perf_counter() - stage_started_at
 
         stage_started_at = perf_counter()
+        shadow_scored = score_batch(shadow_candidates, trade_date) if shadow_candidates else {}
+        shadow_score_batch_seconds = perf_counter() - stage_started_at
+
+        stage_started_at = perf_counter()
         fused = fuse_batch(scored, market_state, trade_date)
         fuse_batch_seconds = perf_counter() - stage_started_at
+        stage_started_at = perf_counter()
+        shadow_fused = fuse_batch(shadow_scored, market_state, trade_date) if shadow_scored else []
+        shadow_fuse_batch_seconds = perf_counter() - stage_started_at
         high_pool = sorted(
             [item for item in fused if item.score_b >= FAST_AGENT_SCORE_THRESHOLD],
             key=lambda item: item.score_b,
@@ -1037,7 +1154,13 @@ class DailyPipeline:
         watchlist = [item for item in layer_c_results if item.score_final >= WATCHLIST_SCORE_THRESHOLD and item.decision != "avoid"]
         layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(fused, high_pool)
         watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(layer_c_results, watchlist)
-        short_trade_candidate_diagnostics = _build_short_trade_candidate_diagnostics(fused, high_pool, trade_date)
+        short_trade_candidate_diagnostics = _build_short_trade_candidate_diagnostics(
+            fused,
+            high_pool,
+            trade_date,
+            shadow_fused=shadow_fused,
+            shadow_candidate_by_ticker={candidate.ticker: candidate for candidate in shadow_candidates},
+        )
         catalyst_theme_candidate_diagnostics = _build_catalyst_theme_candidate_diagnostics(
             fused,
             watchlist,
@@ -1073,6 +1196,8 @@ class DailyPipeline:
             "sell_order_count": len(sell_orders),
             "catalyst_theme_candidate_count": int((catalyst_theme_candidate_diagnostics or {}).get("candidate_count") or 0),
             "catalyst_theme_shadow_candidate_count": int((catalyst_theme_candidate_diagnostics or {}).get("shadow_candidate_count") or 0),
+            "candidate_pool_shadow_candidate_count": len(shadow_candidates),
+            "upstream_shadow_observation_count": int((short_trade_candidate_diagnostics or {}).get("shadow_observation_count") or 0),
             "fast_agent_ticker_count": len(high_pool),
             "precise_agent_ticker_count": len(top_20),
             "precise_stage_skipped": self._skip_precise_stage,
@@ -1086,6 +1211,7 @@ class DailyPipeline:
             "counts": counts,
             "filters": {
                 "layer_b": layer_b_filter_diagnostics,
+                "candidate_pool_shadow": candidate_pool_shadow_summary,
                 "watchlist": watchlist_filter_diagnostics,
                 "short_trade_candidates": short_trade_candidate_diagnostics,
                 "catalyst_theme_candidates": catalyst_theme_candidate_diagnostics,
@@ -1100,6 +1226,8 @@ class DailyPipeline:
             "market_state": round(market_state_seconds, 3),
             "score_batch": round(score_batch_seconds, 3),
             "fuse_batch": round(fuse_batch_seconds, 3),
+            "shadow_score_batch": round(shadow_score_batch_seconds, 3),
+            "shadow_fuse_batch": round(shadow_fuse_batch_seconds, 3),
             "fast_agent": round(fast_agent_seconds, 3),
             "precise_agent": round(precise_agent_seconds, 3),
             "estimated_skipped_precise": round(estimated_skipped_precise_seconds, 3),

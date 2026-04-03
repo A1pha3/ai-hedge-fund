@@ -224,7 +224,13 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                                 "catalyst_freshness": 0.7456,
                             },
                             "explainability_payload": {
-                                "candidate_source": "short_trade_boundary",
+                                "candidate_source": "upstream_liquidity_corridor_shadow",
+                                "replay_context": {
+                                    "candidate_pool_lane": "layer_a_liquidity_corridor",
+                                    "candidate_pool_rank": 301,
+                                    "candidate_pool_avg_amount_share_of_cutoff": 0.97,
+                                    "candidate_pool_avg_amount_share_of_min_gate": 1.12,
+                                },
                             },
                         },
                     },
@@ -248,7 +254,13 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                                 "thresholds": {"near_miss_threshold": 0.52},
                             },
                             "explainability_payload": {
-                                "candidate_source": "short_trade_boundary",
+                                "candidate_source": "post_gate_liquidity_competition_shadow",
+                                "replay_context": {
+                                    "candidate_pool_lane": "post_gate_liquidity_competition",
+                                    "candidate_pool_rank": 304,
+                                    "candidate_pool_avg_amount_share_of_cutoff": 0.91,
+                                    "candidate_pool_avg_amount_share_of_min_gate": 1.05,
+                                },
                             },
                         },
                     },
@@ -353,24 +365,111 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
     assert [entry["ticker"] for entry in analysis["selected_entries"]] == ["300757"]
     assert analysis["selected_entries"][0]["historical_prior"]["summary"] is not None
     assert [entry["ticker"] for entry in analysis["near_miss_entries"]] == ["601869"]
-    assert analysis["near_miss_entries"][0]["historical_prior"]["summary"] is not None
+    assert analysis["near_miss_entries"][0]["candidate_source"] == "upstream_liquidity_corridor_shadow"
     assert [entry["ticker"] for entry in analysis["opportunity_pool_entries"]] == ["300442"]
-    assert analysis["opportunity_pool_entries"][0]["historical_prior"]["applied_scope"] == "family_source_score_catalyst"
-    assert analysis["opportunity_pool_entries"][0]["historical_prior"]["summary"] is not None
+    assert analysis["opportunity_pool_entries"][0]["candidate_source"] == "post_gate_liquidity_competition_shadow"
     assert [entry["ticker"] for entry in analysis["research_upside_radar_entries"]] == ["002001"]
     assert analysis["research_upside_radar_entries"][0]["historical_prior"]["summary"] is not None
     assert [entry["ticker"] for entry in analysis["catalyst_theme_entries"]] == ["300999"]
     assert analysis["catalyst_theme_entries"][0]["historical_prior"]["summary"] is not None
     assert [entry["ticker"] for entry in analysis["catalyst_theme_shadow_entries"]] == ["301001"]
     assert analysis["summary"]["catalyst_theme_frontier_promoted_count"] == 1
+    assert analysis["summary"]["upstream_shadow_candidate_count"] == 2
+    assert analysis["summary"]["upstream_shadow_promotable_count"] == 1
+    assert [entry["ticker"] for entry in analysis["upstream_shadow_entries"]] == ["601869", "300442"]
+    assert analysis["upstream_shadow_summary"]["lane_counts"] == {
+        "layer_a_liquidity_corridor": 1,
+        "post_gate_liquidity_competition": 1,
+    }
     assert analysis["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
     assert [entry["ticker"] for entry in analysis["excluded_research_entries"]] == ["002002"]
     assert "300757" in analysis["recommendation"]
+    assert "601869" in analysis["recommendation"]
     assert "300442" in analysis["recommendation"]
     assert "002001" in analysis["recommendation"]
     assert "300999" in analysis["recommendation"]
     assert "301001" in analysis["recommendation"]
     assert analysis["selected_entries"][0]["historical_prior"]["execution_quality_label"] == "balanced_confirmation"
+
+
+def test_generate_btst_next_day_trade_brief_includes_replay_only_upstream_shadow_observation_entries(tmp_path):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-04-01"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260401",
+                "target_mode": "short_trade_only",
+                "selection_targets": {},
+                "dual_target_summary": {},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (trade_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-04-01",
+                "target_mode": "short_trade_only",
+                "source_summary": {
+                    "watchlist_count": 0,
+                    "rejected_entry_count": 0,
+                    "supplemental_short_trade_entry_count": 0,
+                    "upstream_shadow_observation_entry_count": 1,
+                    "supplemental_catalyst_theme_entry_count": 0,
+                    "buy_order_ticker_count": 0,
+                },
+                "selection_targets": {},
+                "upstream_shadow_observation_entries": [
+                    {
+                        "ticker": "301292",
+                        "decision": "observation",
+                        "candidate_source": "post_gate_liquidity_competition_shadow",
+                        "upstream_candidate_source": "candidate_pool_truncated_after_filters",
+                        "candidate_reason_codes": ["post_gate_liquidity_competition_shadow"],
+                        "candidate_pool_lane": "post_gate_liquidity_competition",
+                        "candidate_pool_rank": 575,
+                        "candidate_pool_avg_amount_share_of_cutoff": 0.6032,
+                        "candidate_pool_avg_amount_share_of_min_gate": 18.5767,
+                        "score_target": 0.318,
+                        "confidence": 0.318,
+                        "filter_reason": "breakout_freshness_below_short_trade_boundary_floor",
+                        "top_reasons": ["candidate_score=0.32"],
+                        "promotion_trigger": "仅作上游影子补票观察。",
+                        "gate_status": {"data": "pass", "structural": "pass", "score": "shadow_observation"},
+                        "metrics": {
+                            "breakout_freshness": 0.11,
+                            "trend_acceleration": 0.33,
+                            "volume_expansion_quality": 0.28,
+                            "close_strength": 0.44,
+                            "catalyst_freshness": 0.21,
+                            "candidate_score": 0.318,
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-04-01", next_trade_date="2026-04-02")
+
+    assert analysis["summary"]["upstream_shadow_candidate_count"] == 1
+    assert analysis["summary"]["upstream_shadow_promotable_count"] == 0
+    assert [entry["ticker"] for entry in analysis["upstream_shadow_entries"]] == ["301292"]
+    assert analysis["upstream_shadow_entries"][0]["decision"] == "observation"
+    assert analysis["upstream_shadow_entries"][0]["candidate_source"] == "post_gate_liquidity_competition_shadow"
+    assert "301292" in analysis["recommendation"]
 
 
 def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_excluded_research(tmp_path):
@@ -419,6 +518,29 @@ def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_exclude
                             "explainability_payload": {"candidate_source": "short_trade_boundary"},
                         },
                         "delta_summary": ["research target selected while short trade target stays rejected"],
+                    },
+                    "601869": {
+                        "ticker": "601869",
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "score_target": 0.5540,
+                            "confidence": 0.8667,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_catalyst_support"],
+                            "top_reasons": ["trend_acceleration=0.76"],
+                            "gate_status": {"score": "near_miss", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.8667,
+                                "trend_acceleration": 0.7637,
+                                "volume_expansion_quality": 0.3434,
+                                "close_strength": 0.8895,
+                                "catalyst_freshness": 0.7456,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "upstream_liquidity_corridor_shadow",
+                                "replay_context": {"candidate_pool_lane": "layer_a_liquidity_corridor", "candidate_pool_rank": 301},
+                            },
+                        },
                     },
                     "002002": {
                         "ticker": "002002",
@@ -517,13 +639,16 @@ def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_exclude
     assert "Catalyst Theme Research Lane" in markdown
     assert "Catalyst Theme Frontier Priority" in markdown
     assert "Catalyst Theme Shadow Watch" in markdown
+    assert "Upstream Shadow Recall" in markdown
     assert "### 300999" in markdown
     assert "### 301001" in markdown
+    assert "### 601869" in markdown
     assert "frontier_role: promoted_shadow_priority" in markdown
     assert "### 002001" in markdown
     assert "### 002002" in markdown
     assert "Opportunity Expansion Pool" in markdown
     assert "Research Picks Excluded From Short-Trade Brief" in markdown
+    assert "candidate_pool_lane: layer_a_liquidity_corridor" in markdown
 
 
 def test_infer_next_trade_date_uses_earliest_open_calendar_date(monkeypatch):

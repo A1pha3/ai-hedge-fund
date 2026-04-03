@@ -51,6 +51,36 @@ def _current_watch_summary(nightly_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _load_latest_brief_payload(nightly_payload: dict[str, Any]) -> dict[str, Any]:
+    latest_snapshot = dict(nightly_payload.get("latest_btst_snapshot") or {})
+    brief_json_path = latest_snapshot.get("brief_json_path")
+    if not brief_json_path:
+        return {}
+    return dict(_safe_load_json(brief_json_path) or {})
+
+
+def _extract_upstream_shadow_context(brief_payload: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(brief_payload.get("upstream_shadow_summary") or {})
+    entries = list(brief_payload.get("upstream_shadow_entries") or [])
+    return {
+        "shadow_candidate_count": _as_int(summary.get("shadow_candidate_count")),
+        "promotable_count": _as_int(summary.get("promotable_count")),
+        "lane_counts": dict(summary.get("lane_counts") or {}),
+        "top_focus_tickers": [str(item).strip() for item in list(summary.get("top_focus_tickers") or []) if str(item).strip()],
+        "entries": [
+            {
+                "ticker": entry.get("ticker"),
+                "decision": entry.get("decision"),
+                "candidate_source": entry.get("candidate_source"),
+                "candidate_pool_lane": entry.get("candidate_pool_lane_display") or entry.get("candidate_pool_lane"),
+                "score_target": entry.get("score_target"),
+                "promotion_trigger": entry.get("promotion_trigger"),
+            }
+            for entry in entries[:3]
+        ],
+    }
+
+
 def _extract_lane_focus(nightly_payload: dict[str, Any]) -> list[dict[str, Any]]:
     lane_matrix = list(dict(dict(nightly_payload.get("control_tower_snapshot") or {}).get("synthesis") or {}).get("lane_matrix") or [])
     focus_lane_ids = {
@@ -79,6 +109,7 @@ def _extract_lane_focus(nightly_payload: dict[str, Any]) -> list[dict[str, Any]]
 
 def _build_key_conclusions(nightly_payload: dict[str, Any], delta_payload: dict[str, Any]) -> list[str]:
     watch_summary = _current_watch_summary(nightly_payload)
+    upstream_shadow_context = _extract_upstream_shadow_context(_load_latest_brief_payload(nightly_payload))
     governance = dict(dict(nightly_payload.get("control_tower_snapshot") or {}).get("validation") or {})
     material_anchor = dict(delta_payload.get("material_change_anchor") or {})
     priority_delta = dict(material_anchor.get("priority_delta") or delta_payload.get("priority_delta") or {})
@@ -110,11 +141,25 @@ def _build_key_conclusions(nightly_payload: dict[str, Any], delta_payload: dict[
     else:
         conclusions.append("相对上一份发生实质变化的 BTST 报告，本轮观察对象没有出现新的结构性切换。")
 
+    if upstream_shadow_context.get("shadow_candidate_count", 0) > 0:
+        top_focus = ", ".join(upstream_shadow_context.get("top_focus_tickers") or []) or "无"
+        lane_counts = dict(upstream_shadow_context.get("lane_counts") or {})
+        lane_summary = ", ".join(f"{key}={value}" for key, value in lane_counts.items()) if lane_counts else "unknown"
+        if upstream_shadow_context.get("promotable_count", 0) > 0:
+            conclusions.append(
+                f"上游影子召回已捕获 {upstream_shadow_context.get('shadow_candidate_count', 0)} 支补票样本，其中 {upstream_shadow_context.get('promotable_count', 0)} 支已进入 selected/near-miss 观察层；当前重点为 {top_focus}，lane 分布={lane_summary}。"
+            )
+        else:
+            conclusions.append(
+                f"上游影子召回已捕获 {upstream_shadow_context.get('shadow_candidate_count', 0)} 支补票样本，但都还停留在非可执行层；当前重点为 {top_focus}，lane 分布={lane_summary}。"
+            )
+
     return conclusions
 
 
 def _build_recommendation(nightly_payload: dict[str, Any]) -> str:
     watch_summary = _current_watch_summary(nightly_payload)
+    upstream_shadow_context = _extract_upstream_shadow_context(_load_latest_brief_payload(nightly_payload))
     priority_rows = list(watch_summary.get("priority_rows") or [])
     near_miss_tickers = [str(row.get("ticker") or "") for row in priority_rows if str(row.get("lane") or "") == "near_miss_watch" and row.get("ticker")]
     opportunity_tickers = [str(row.get("ticker") or "") for row in priority_rows if str(row.get("lane") or "") == "opportunity_pool" and row.get("ticker")]
@@ -124,12 +169,15 @@ def _build_recommendation(nightly_payload: dict[str, Any]) -> str:
 
     near_miss_label = ", ".join(near_miss_tickers) if near_miss_tickers else "无"
     opportunity_label = ", ".join(opportunity_tickers) if opportunity_tickers else "无"
-    return f"当前没有主票，明日应继续把 near-miss 作为盘中跟踪层（{near_miss_label}），把机会池作为仅升级备选（{opportunity_label}），不要把观察层直接上调为默认入场。"
+    upstream_shadow_label = ", ".join(upstream_shadow_context.get("top_focus_tickers") or []) if upstream_shadow_context.get("shadow_candidate_count", 0) > 0 else "无"
+    return f"当前没有主票，明日应继续把 near-miss 作为盘中跟踪层（{near_miss_label}），把机会池作为仅升级备选（{opportunity_label}），并把上游影子召回样本（{upstream_shadow_label}）留在补票观察层，不要把观察层直接上调为默认入场。"
 
 
 def build_btst_latest_close_validation_payload(nightly_payload: dict[str, Any], delta_payload: dict[str, Any]) -> dict[str, Any]:
     latest_run = dict(nightly_payload.get("latest_btst_run") or {})
     latest_snapshot = dict(nightly_payload.get("latest_btst_snapshot") or {})
+    latest_brief_payload = _load_latest_brief_payload(nightly_payload)
+    upstream_shadow_context = _extract_upstream_shadow_context(latest_brief_payload)
     watch_summary = _current_watch_summary(nightly_payload)
     governance_validation = dict(dict(nightly_payload.get("control_tower_snapshot") or {}).get("validation") or {})
     governance_synthesis = dict(dict(nightly_payload.get("control_tower_snapshot") or {}).get("synthesis") or {})
@@ -174,9 +222,12 @@ def build_btst_latest_close_validation_payload(nightly_payload: dict[str, Any], 
                 "blocked_count": watch_summary.get("blocked_count"),
                 "rejected_count": watch_summary.get("rejected_count"),
                 "opportunity_pool_count": watch_summary.get("opportunity_pool_count"),
+                "upstream_shadow_candidate_count": upstream_shadow_context.get("shadow_candidate_count"),
+                "upstream_shadow_promotable_count": upstream_shadow_context.get("promotable_count"),
             },
             "brief_recommendation": watch_summary.get("brief_recommendation"),
             "focus_rows": focus_rows,
+            "upstream_shadow_context": upstream_shadow_context,
         },
         "rollforward_delta": {
             "headline_changed": priority_delta.get("headline_changed"),
@@ -242,6 +293,8 @@ def render_btst_latest_close_validation_markdown(payload: dict[str, Any], *, out
             f"- blocked_count: {current_summary.get('blocked_count') or 0}",
             f"- rejected_count: {current_summary.get('rejected_count') or 0}",
             f"- opportunity_pool_count: {current_summary.get('opportunity_pool_count') or 0}",
+            f"- upstream_shadow_candidate_count: {current_summary.get('upstream_shadow_candidate_count') or 0}",
+            f"- upstream_shadow_promotable_count: {current_summary.get('upstream_shadow_promotable_count') or 0}",
             "",
         ]
     )
@@ -257,6 +310,27 @@ def render_btst_latest_close_validation_markdown(payload: dict[str, Any], *, out
         )
     if not list(current_followup.get("focus_rows") or []):
         lines.append("- none")
+
+    lines.extend(["", "## Upstream Shadow Recall", ""])
+    upstream_shadow_context = dict(current_followup.get("upstream_shadow_context") or {})
+    if not upstream_shadow_context.get("shadow_candidate_count"):
+        lines.append("- none")
+    else:
+        lines.append(f"- shadow_candidate_count: {upstream_shadow_context.get('shadow_candidate_count')}")
+        lines.append(f"- promotable_count: {upstream_shadow_context.get('promotable_count')}")
+        lane_counts = dict(upstream_shadow_context.get("lane_counts") or {})
+        lines.append(
+            "- lane_counts: "
+            + (
+                ", ".join(f"{key}={value}" for key, value in lane_counts.items())
+                if lane_counts
+                else "none"
+            )
+        )
+        for row in list(upstream_shadow_context.get("entries") or []):
+            lines.append(
+                f"- {row.get('ticker')}: lane={row.get('candidate_pool_lane')}, source={row.get('candidate_source')}, decision={row.get('decision')}, score_target={row.get('score_target')}, promotion_trigger={row.get('promotion_trigger')}"
+            )
 
     lines.extend(["", "## Rollforward Delta", ""])
     lines.append(f"- previous_headline: {rollforward_delta.get('previous_headline') or 'unknown'}")

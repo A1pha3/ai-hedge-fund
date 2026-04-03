@@ -15,7 +15,42 @@ def test_generate_btst_latest_close_validation_artifact(tmp_path: Path) -> None:
     brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
     session_summary_path.write_text(json.dumps({"ok": True}, ensure_ascii=False, indent=2), encoding="utf-8")
     priority_board_path.write_text(json.dumps({"ok": True}, ensure_ascii=False, indent=2), encoding="utf-8")
-    brief_path.write_text(json.dumps({"ok": True}, ensure_ascii=False, indent=2), encoding="utf-8")
+    brief_path.write_text(
+        json.dumps(
+            {
+                "upstream_shadow_summary": {
+                    "shadow_candidate_count": 2,
+                    "promotable_count": 1,
+                    "lane_counts": {
+                        "layer_a_liquidity_corridor": 1,
+                        "post_gate_liquidity_competition": 1,
+                    },
+                    "top_focus_tickers": ["601869", "300166"],
+                },
+                "upstream_shadow_entries": [
+                    {
+                        "ticker": "601869",
+                        "decision": "near_miss",
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "candidate_pool_lane_display": "layer_a_liquidity_corridor",
+                        "score_target": 0.5647,
+                        "promotion_trigger": "影子召回样本已进入 near-miss 观察层，只能做盘中跟踪，不可预设交易。",
+                    },
+                    {
+                        "ticker": "300166",
+                        "decision": "rejected",
+                        "candidate_source": "post_gate_liquidity_competition_shadow",
+                        "candidate_pool_lane_display": "post_gate_liquidity_competition",
+                        "score_target": 0.4211,
+                        "promotion_trigger": "影子召回样本尚未进入可执行层，只有盘中新强度确认后才允许升级。",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     nightly_payload = {
         "latest_btst_run": {
@@ -130,13 +165,18 @@ def test_generate_btst_latest_close_validation_artifact(tmp_path: Path) -> None:
 
     payload = result["payload"]
     assert payload["current_followup"]["summary"]["selected_count"] == 0
+    assert payload["current_followup"]["summary"]["upstream_shadow_candidate_count"] == 2
+    assert payload["current_followup"]["summary"]["upstream_shadow_promotable_count"] == 1
     assert payload["governance_check"]["overall_verdict"] == "pass"
     assert payload["rollforward_delta"]["added_tickers"][0]["ticker"] == "300166"
     assert any("仍无正式主票" in item for item in payload["key_conclusions"])
+    assert any("上游影子召回已捕获 2 支补票样本" in item for item in payload["key_conclusions"])
 
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
     assert "# BTST Latest Close Validation" in markdown
     assert "## Tonight Verdict" in markdown
+    assert "## Upstream Shadow Recall" in markdown
     assert "601869" in markdown
     assert "300166" in markdown
+    assert "lane_counts: layer_a_liquidity_corridor=1, post_gate_liquidity_competition=1" in markdown
     assert "overall_verdict: pass" in markdown

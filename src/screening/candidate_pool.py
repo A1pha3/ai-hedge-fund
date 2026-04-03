@@ -19,7 +19,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import time
 
@@ -51,6 +51,13 @@ DISCLOSURE_MONTHS = {4, 8, 10}  # 财报窗口月份
 TUSHARE_DAILY_CALLS_PER_MINUTE = 200
 TUSHARE_DAILY_BATCH_SIZE = 50
 MAX_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "300"))
+SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS = int(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS", "2"))
+SHADOW_REBUCKET_MAX_TICKERS = int(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MAX_TICKERS", "1"))
+SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE", "3.0"))
+SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE", "0.20"))
+SHADOW_REBUCKET_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MIN_GATE_SHARE", "8.0"))
+SHADOW_REBUCKET_MIN_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MIN_CUTOFF_SHARE", "0.30"))
+SHADOW_REBUCKET_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MAX_CUTOFF_SHARE", "0.80"))
 BEIJING_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("4", "8", "92")
 
 
@@ -63,6 +70,11 @@ def _candidate_pool_legacy_snapshot_path(trade_date: str) -> Path:
     return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}.json"
 
 
+def _candidate_pool_shadow_snapshot_path(trade_date: str, pool_size: Optional[int] = None) -> Path:
+    resolved_pool_size = MAX_CANDIDATE_POOL_SIZE if pool_size is None else int(pool_size)
+    return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}_top{resolved_pool_size}_shadow.json"
+
+
 def _load_candidate_pool_snapshot(snapshot_path: Path) -> List[CandidateStock]:
     with open(snapshot_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -73,6 +85,350 @@ def _write_candidate_pool_snapshot(snapshot_path: Path, candidates: List[Candida
     _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     with open(snapshot_path, "w", encoding="utf-8") as f:
         json.dump([candidate.model_dump() for candidate in candidates], f, ensure_ascii=False, indent=2)
+
+
+def _load_candidate_pool_shadow_snapshot(snapshot_path: Path) -> dict[str, Any]:
+    with open(snapshot_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    return {
+        "selected_candidates": [CandidateStock(**item) for item in list(payload.get("selected_candidates") or [])],
+        "shadow_candidates": [CandidateStock(**item) for item in list(payload.get("shadow_candidates") or [])],
+        "shadow_summary": dict(payload.get("shadow_summary") or {}),
+    }
+
+
+def _write_candidate_pool_shadow_snapshot(snapshot_path: Path, *, selected_candidates: List[CandidateStock], shadow_candidates: List[CandidateStock], shadow_summary: dict[str, Any]) -> None:
+    _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(snapshot_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "selected_candidates": [candidate.model_dump() for candidate in selected_candidates],
+                "shadow_candidates": [candidate.model_dump() for candidate in shadow_candidates],
+                "shadow_summary": shadow_summary,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def _candidate_liquidity_sort_key(candidate: CandidateStock) -> tuple[float, float, str]:
+    return (float(candidate.avg_volume_20d), float(candidate.market_cap), str(candidate.ticker))
+
+
+def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, pool_size: int) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
+    ranked_candidates = sorted(candidates, key=_candidate_liquidity_sort_key, reverse=True)
+    selected_candidates = [candidate.model_copy(update={"candidate_pool_rank": rank}) for rank, candidate in enumerate(ranked_candidates[:pool_size], start=1)]
+
+    if len(ranked_candidates) <= pool_size:
+        return selected_candidates, [], {
+            "pool_size": pool_size,
+            "selected_count": len(selected_candidates),
+            "overflow_count": 0,
+            "selected_cutoff_avg_volume_20d": round(float(ranked_candidates[-1].avg_volume_20d), 4) if ranked_candidates else 0.0,
+            "lane_counts": {},
+            "selected_tickers": [],
+            "tickers": [],
+        }
+
+    cutoff_avg_volume = max(float(ranked_candidates[pool_size - 1].avg_volume_20d), 1.0)
+    overflow_candidates = ranked_candidates[pool_size:]
+    corridor_candidates: list[tuple[float, int, CandidateStock]] = []
+    rebucket_candidates: list[tuple[float, int, CandidateStock]] = []
+
+    for rank, candidate in enumerate(overflow_candidates, start=pool_size + 1):
+        cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_avg_volume, 4)
+        min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4)
+        if min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE:
+            corridor_candidates.append((min_gate_share, rank, candidate))
+        elif (
+            min_gate_share >= SHADOW_REBUCKET_MIN_GATE_SHARE
+            and cutoff_share >= SHADOW_REBUCKET_MIN_CUTOFF_SHARE
+            and cutoff_share <= SHADOW_REBUCKET_MAX_CUTOFF_SHARE
+        ):
+            rebucket_candidates.append((cutoff_share, rank, candidate))
+
+    shadow_candidates: list[CandidateStock] = []
+    shadow_entries: list[dict[str, Any]] = []
+
+    def append_shadow(rows: list[tuple[float, int, CandidateStock]], *, max_tickers: int, lane: str, reason: str, rank_key: str) -> None:
+        for score, rank, candidate in sorted(rows, key=lambda item: (item[0], -item[1], _candidate_liquidity_sort_key(item[2])), reverse=True)[:max_tickers]:
+            cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_avg_volume, 4)
+            min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4)
+            shadow_candidate = candidate.model_copy(
+                update={
+                    "candidate_pool_rank": rank,
+                    "candidate_pool_lane": lane,
+                    "candidate_pool_shadow_reason": reason,
+                    "candidate_pool_avg_amount_share_of_cutoff": cutoff_share,
+                    "candidate_pool_avg_amount_share_of_min_gate": min_gate_share,
+                }
+            )
+            shadow_candidates.append(shadow_candidate)
+            shadow_entries.append(
+                {
+                    "ticker": shadow_candidate.ticker,
+                    "candidate_pool_rank": rank,
+                    "candidate_pool_lane": lane,
+                    "candidate_pool_shadow_reason": reason,
+                    "avg_volume_20d": round(float(shadow_candidate.avg_volume_20d), 4),
+                    "market_cap": round(float(shadow_candidate.market_cap), 4),
+                    "avg_amount_share_of_cutoff": cutoff_share,
+                    "avg_amount_share_of_min_gate": min_gate_share,
+                    rank_key: round(float(score), 4),
+                }
+            )
+
+    append_shadow(
+        corridor_candidates,
+        max_tickers=SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS,
+        lane="layer_a_liquidity_corridor",
+        reason="upstream_base_liquidity_uplift_shadow",
+        rank_key="gate_share_score",
+    )
+    append_shadow(
+        rebucket_candidates,
+        max_tickers=SHADOW_REBUCKET_MAX_TICKERS,
+        lane="post_gate_liquidity_competition",
+        reason="post_gate_liquidity_competition_shadow",
+        rank_key="cutoff_share_score",
+    )
+
+    lane_counts: dict[str, int] = {}
+    for entry in shadow_entries:
+        lane = str(entry.get("candidate_pool_lane") or "unknown")
+        lane_counts[lane] = lane_counts.get(lane, 0) + 1
+
+    return selected_candidates, shadow_candidates, {
+        "pool_size": pool_size,
+        "selected_count": len(selected_candidates),
+        "overflow_count": len(overflow_candidates),
+        "selected_cutoff_avg_volume_20d": round(cutoff_avg_volume, 4),
+        "lane_counts": lane_counts,
+        "selected_tickers": [candidate.ticker for candidate in shadow_candidates],
+        "tickers": shadow_entries,
+    }
+
+
+def _build_shadow_summary_from_selected_candidates(selected_candidates: List[CandidateStock], *, pool_size: int) -> dict[str, Any]:
+    cutoff_avg_volume = round(float(selected_candidates[-1].avg_volume_20d), 4) if selected_candidates else 0.0
+    return {
+        "pool_size": pool_size,
+        "selected_count": len(selected_candidates),
+        "overflow_count": 0,
+        "selected_cutoff_avg_volume_20d": cutoff_avg_volume,
+        "lane_counts": {},
+        "selected_tickers": [],
+        "tickers": [],
+    }
+
+
+def _compute_candidate_pool_candidates(
+    trade_date: str,
+    cooldown_tickers: Optional[Set[str]] = None,
+) -> List[CandidateStock]:
+    """计算未截断的候选池，供主池与 shadow recall 共同消费。"""
+    pro = _get_pro()
+    if pro is None:
+        print("[CandidatePool] Tushare 未初始化，无法构建候选池")
+        return []
+
+    stock_df = get_all_stock_basic()
+    if stock_df is None or stock_df.empty:
+        print("[CandidatePool] 无法获取全 A 股基本信息")
+        return []
+
+    initial_count = len(stock_df)
+    print(f"[CandidatePool] 全 A 股标的: {initial_count}")
+
+    mask_st = stock_df["name"].str.contains("ST", case=False, na=False)
+    stock_df = stock_df[~mask_st].copy()
+    print(f"[CandidatePool] 排除 ST 后: {len(stock_df)} (过滤 {mask_st.sum()})")
+
+    mask_bj = build_beijing_exchange_mask(stock_df)
+    stock_df = stock_df[~mask_bj].copy()
+    print(f"[CandidatePool] 排除北交所后: {len(stock_df)} (过滤 {mask_bj.sum()})")
+
+    mask_new = stock_df["list_date"].apply(
+        lambda d: _estimate_trading_days(str(d) if pd.notna(d) else "", trade_date) < MIN_LISTING_DAYS
+    )
+    stock_df = stock_df[~mask_new].copy()
+    print(f"[CandidatePool] 排除新股后: {len(stock_df)} (过滤 {mask_new.sum()})")
+
+    suspend_df = get_suspend_list(trade_date)
+    if suspend_df is not None and not suspend_df.empty:
+        suspend_codes = set(suspend_df["ts_code"].tolist())
+        mask_suspend = stock_df["ts_code"].isin(suspend_codes)
+        stock_df = stock_df[~mask_suspend].copy()
+        print(f"[CandidatePool] 排除停牌后: {len(stock_df)} (过滤 {mask_suspend.sum()})")
+
+    limit_df = get_limit_list(trade_date)
+    if limit_df is not None and not limit_df.empty:
+        limit_up_codes = set(limit_df[limit_df["limit"] == "U"]["ts_code"].tolist())
+        mask_limit_up = stock_df["ts_code"].isin(limit_up_codes)
+        stock_df = stock_df[~mask_limit_up].copy()
+        print(f"[CandidatePool] 排除涨停后: {len(stock_df)} (过滤 {mask_limit_up.sum()})")
+
+    if cooldown_tickers is None:
+        cooldown_tickers = get_cooled_tickers(trade_date)
+    if cooldown_tickers:
+        mask_cool = stock_df["symbol"].isin(cooldown_tickers)
+        stock_df = stock_df[~mask_cool].copy()
+        print(f"[CandidatePool] 排除冷却期后: {len(stock_df)} (过滤 {mask_cool.sum()})")
+
+    daily_df = get_daily_basic_batch(trade_date)
+    amount_map: Dict[str, float] = {}
+    estimated_amount_map: Dict[str, float] = {}
+    mv_map: Dict[str, float] = {}
+
+    if daily_df is not None and not daily_df.empty:
+        for _, row in daily_df.iterrows():
+            ts = str(row["ts_code"])
+            if pd.notna(row.get("total_mv")):
+                mv_map[ts] = float(row["total_mv"])
+            estimated_amount_map[ts] = _estimate_amount_from_daily_basic(row)
+
+    if estimated_amount_map:
+        low_estimated_liq_codes = {
+            ts_code
+            for ts_code in stock_df["ts_code"].tolist()
+            if 0.0 < estimated_amount_map.get(ts_code, 0.0) < MIN_ESTIMATED_AMOUNT_1D
+        }
+        if low_estimated_liq_codes:
+            mask_low_estimated_liq = stock_df["ts_code"].isin(low_estimated_liq_codes)
+            stock_df = stock_df[~mask_low_estimated_liq].copy()
+            print(f"[CandidatePool] 排除低当日估算流动性后: {len(stock_df)} (过滤 {mask_low_estimated_liq.sum()})")
+
+    remaining_codes = stock_df["ts_code"].tolist()
+    print(f"[CandidatePool] 开始计算 {len(remaining_codes)} 只标的的 20 日均成交额...")
+
+    low_liq_codes: Set[str] = set()
+    amount_map = _get_avg_amount_20d_map(pro, remaining_codes, trade_date)
+
+    if amount_map:
+        for ts_code in remaining_codes:
+            avg_amt = amount_map.get(ts_code, 0.0)
+            if avg_amt < MIN_AVG_AMOUNT_20D:
+                low_liq_codes.add(ts_code)
+        print("[CandidatePool] 使用批量 daily 聚合完成 20 日均成交额计算")
+    else:
+        batch_size = TUSHARE_DAILY_BATCH_SIZE
+        for i in range(0, len(remaining_codes), batch_size):
+            batch = remaining_codes[i:i + batch_size]
+            batch_started_at = perf_counter()
+            for ts_code in batch:
+                avg_amt = _get_avg_amount_20d(pro, ts_code, trade_date)
+                amount_map[ts_code] = avg_amt
+                if avg_amt < MIN_AVG_AMOUNT_20D:
+                    low_liq_codes.add(ts_code)
+            _enforce_tushare_daily_rate_limit(
+                batch_started_at=batch_started_at,
+                processed_calls=len(batch),
+                has_more_batches=(i + batch_size) < len(remaining_codes),
+            )
+            progress_pct = min(100, int((i + batch_size) / len(remaining_codes) * 100))
+            print(f"[CandidatePool] 成交额计算进度: {progress_pct}%")
+
+    mask_low_liq = stock_df["ts_code"].isin(low_liq_codes)
+    stock_df = stock_df[~mask_low_liq].copy()
+    print(f"[CandidatePool] 排除低流动性后: {len(stock_df)} (过滤 {mask_low_liq.sum()})")
+
+    sw_map = get_sw_industry_classification()
+    if sw_map is None:
+        sw_map = {}
+
+    is_disclosure = _is_disclosure_window(trade_date)
+    candidates: List[CandidateStock] = []
+
+    for _, row in stock_df.iterrows():
+        ts_code = str(row["ts_code"])
+        symbol = str(row["symbol"])
+        name = str(row["name"])
+        list_date = str(row["list_date"]) if pd.notna(row.get("list_date")) else ""
+        industry_sw = sw_map.get(ts_code, str(row.get("industry", "")))
+        market_cap = mv_map.get(ts_code, 0.0) / 10000.0
+        avg_vol = amount_map.get(ts_code, 0.0)
+
+        candidates.append(CandidateStock(
+            ticker=symbol,
+            name=name,
+            industry_sw=industry_sw,
+            market_cap=market_cap,
+            avg_volume_20d=avg_vol,
+            listing_date=list_date,
+            disclosure_risk=is_disclosure,
+        ))
+
+    return candidates
+
+
+def build_candidate_pool_with_shadow(
+    trade_date: str,
+    use_cache: bool = True,
+    cooldown_tickers: Optional[Set[str]] = None,
+) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
+    snapshot_path = _candidate_pool_snapshot_path(trade_date)
+    legacy_snapshot_path = _candidate_pool_legacy_snapshot_path(trade_date)
+    shadow_snapshot_path = _candidate_pool_shadow_snapshot_path(trade_date)
+    cached_selected_candidates: List[CandidateStock] = []
+
+    if use_cache and snapshot_path.exists() and shadow_snapshot_path.exists():
+        try:
+            shadow_payload = _load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
+            _write_candidate_pool_snapshot(legacy_snapshot_path, shadow_payload["selected_candidates"])
+            print(
+                f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE})"
+            )
+            return shadow_payload["selected_candidates"], shadow_payload["shadow_candidates"], shadow_payload["shadow_summary"]
+        except Exception as e:
+            print(f"[CandidatePool] shadow 缓存读取失败，重新计算: {e}")
+    elif use_cache and snapshot_path.exists():
+        print(f"[CandidatePool] 发现仅主池缓存 {snapshot_path.name}，补算 shadow recall 快照")
+        try:
+            cached_selected_candidates = _load_candidate_pool_snapshot(snapshot_path)
+        except Exception as e:
+            print(f"[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: {e}")
+
+    candidates = _compute_candidate_pool_candidates(trade_date, cooldown_tickers=cooldown_tickers)
+    if not candidates and cached_selected_candidates:
+        shadow_summary = _build_shadow_summary_from_selected_candidates(
+            cached_selected_candidates,
+            pool_size=MAX_CANDIDATE_POOL_SIZE,
+        )
+        _write_candidate_pool_shadow_snapshot(
+            shadow_snapshot_path,
+            selected_candidates=cached_selected_candidates,
+            shadow_candidates=[],
+            shadow_summary=shadow_summary,
+        )
+        _write_candidate_pool_snapshot(legacy_snapshot_path, cached_selected_candidates)
+        print(
+            f"[CandidatePool] 候选池重算失败，保留已有主池缓存并回填空 shadow 快照 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE})"
+        )
+        return cached_selected_candidates, [], shadow_summary
+
+    selected_candidates, shadow_candidates, shadow_summary = _build_shadow_candidate_pool_payload(
+        candidates,
+        pool_size=MAX_CANDIDATE_POOL_SIZE,
+    )
+
+    _write_candidate_pool_snapshot(snapshot_path, selected_candidates)
+    _write_candidate_pool_snapshot(legacy_snapshot_path, selected_candidates)
+    _write_candidate_pool_shadow_snapshot(
+        shadow_snapshot_path,
+        selected_candidates=selected_candidates,
+        shadow_candidates=shadow_candidates,
+        shadow_summary=shadow_summary,
+    )
+
+    if len(candidates) > MAX_CANDIDATE_POOL_SIZE:
+        print(f"[CandidatePool] 候选池截断至 Top {MAX_CANDIDATE_POOL_SIZE}（按20日均成交额/市值排序）")
+    if shadow_candidates:
+        print(
+            f"[CandidatePool] shadow recall 标的: {len(shadow_candidates)} 只 ({shadow_summary.get('lane_counts')})"
+        )
+    print(f"[CandidatePool] 最终候选池: {len(selected_candidates)} 只 → {snapshot_path}")
+    return selected_candidates, shadow_candidates, shadow_summary
 
 
 # ============================================================================
@@ -312,181 +668,12 @@ def build_candidate_pool(
         7) 标记财报窗口期
         8) 输出结果 + 持久化
     """
-    # ---- 缓存检查 ----
-    snapshot_path = _candidate_pool_snapshot_path(trade_date)
-    legacy_snapshot_path = _candidate_pool_legacy_snapshot_path(trade_date)
-    if use_cache and snapshot_path.exists():
-        try:
-            candidates = _load_candidate_pool_snapshot(snapshot_path)
-            _write_candidate_pool_snapshot(legacy_snapshot_path, candidates)
-            print(f"[CandidatePool] 从缓存加载 {len(candidates)} 只候选标的 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE})")
-            return candidates
-        except Exception as e:
-            print(f"[CandidatePool] 缓存读取失败，重新计算: {e}")
-    elif use_cache and legacy_snapshot_path.exists():
-        print(f"[CandidatePool] 发现旧版候选池缓存 {legacy_snapshot_path.name}，按当前池大小重算并刷新隔离缓存")
-
-    pro = _get_pro()
-    if pro is None:
-        print("[CandidatePool] Tushare 未初始化，无法构建候选池")
-        return []
-
-    # ---- Step 1: 全 A 股基本信息 ----
-    stock_df = get_all_stock_basic()
-    if stock_df is None or stock_df.empty:
-        print("[CandidatePool] 无法获取全 A 股基本信息")
-        return []
-
-    initial_count = len(stock_df)
-    print(f"[CandidatePool] 全 A 股标的: {initial_count}")
-
-    # ---- Step 2: 排除 ST ----
-    mask_st = stock_df["name"].str.contains("ST", case=False, na=False)
-    stock_df = stock_df[~mask_st].copy()
-    print(f"[CandidatePool] 排除 ST 后: {len(stock_df)} (过滤 {mask_st.sum()})")
-
-    # ---- Step 3: 排除北交所 ----
-    mask_bj = build_beijing_exchange_mask(stock_df)
-    stock_df = stock_df[~mask_bj].copy()
-    print(f"[CandidatePool] 排除北交所后: {len(stock_df)} (过滤 {mask_bj.sum()})")
-
-    # ---- Step 4: 排除新股 ----
-    mask_new = stock_df["list_date"].apply(
-        lambda d: _estimate_trading_days(str(d) if pd.notna(d) else "", trade_date) < MIN_LISTING_DAYS
+    selected_candidates, _, _ = build_candidate_pool_with_shadow(
+        trade_date,
+        use_cache=use_cache,
+        cooldown_tickers=cooldown_tickers,
     )
-    stock_df = stock_df[~mask_new].copy()
-    print(f"[CandidatePool] 排除新股后: {len(stock_df)} (过滤 {mask_new.sum()})")
-
-    # ---- Step 5: 排除当日停牌 ----
-    suspend_df = get_suspend_list(trade_date)
-    if suspend_df is not None and not suspend_df.empty:
-        suspend_codes = set(suspend_df["ts_code"].tolist())
-        mask_suspend = stock_df["ts_code"].isin(suspend_codes)
-        stock_df = stock_df[~mask_suspend].copy()
-        print(f"[CandidatePool] 排除停牌后: {len(stock_df)} (过滤 {mask_suspend.sum()})")
-
-    # ---- Step 6: 排除当日涨停 ----
-    limit_df = get_limit_list(trade_date)
-    if limit_df is not None and not limit_df.empty:
-        limit_up_codes = set(limit_df[limit_df["limit"] == "U"]["ts_code"].tolist())
-        mask_limit_up = stock_df["ts_code"].isin(limit_up_codes)
-        stock_df = stock_df[~mask_limit_up].copy()
-        print(f"[CandidatePool] 排除涨停后: {len(stock_df)} (过滤 {mask_limit_up.sum()})")
-
-    # ---- Step 7: 排除冷却期标的 ----
-    if cooldown_tickers is None:
-        cooldown_tickers = get_cooled_tickers(trade_date)
-    if cooldown_tickers:
-        # 冷却期用 symbol（6 位数字）匹配
-        mask_cool = stock_df["symbol"].isin(cooldown_tickers)
-        stock_df = stock_df[~mask_cool].copy()
-        print(f"[CandidatePool] 排除冷却期后: {len(stock_df)} (过滤 {mask_cool.sum()})")
-
-    # ---- Step 8: 获取当日 daily_basic 批量数据（市值+成交额筛选） ----
-    daily_df = get_daily_basic_batch(trade_date)
-    amount_map: Dict[str, float] = {}
-    estimated_amount_map: Dict[str, float] = {}
-    mv_map: Dict[str, float] = {}
-
-    if daily_df is not None and not daily_df.empty:
-        for _, row in daily_df.iterrows():
-            ts = str(row["ts_code"])
-            # total_mv 单位万元
-            if pd.notna(row.get("total_mv")):
-                mv_map[ts] = float(row["total_mv"])
-            estimated_amount_map[ts] = _estimate_amount_from_daily_basic(row)
-
-    # 先用便宜的当日流动性估算做粗筛，避免对大量明显弱标的逐只请求 daily
-    if estimated_amount_map:
-        low_estimated_liq_codes = {
-            ts_code
-            for ts_code in stock_df["ts_code"].tolist()
-            if 0.0 < estimated_amount_map.get(ts_code, 0.0) < MIN_ESTIMATED_AMOUNT_1D
-        }
-        if low_estimated_liq_codes:
-            mask_low_estimated_liq = stock_df["ts_code"].isin(low_estimated_liq_codes)
-            stock_df = stock_df[~mask_low_estimated_liq].copy()
-            print(f"[CandidatePool] 排除低当日估算流动性后: {len(stock_df)} (过滤 {mask_low_estimated_liq.sum()})")
-
-    # 对剩余标的计算 20 日均额
-    # 优先方案：按交易日批量拉全市场 daily，再本地聚合到目标股票
-    # 回退方案：若批量拉取失败，再走逐票 daily 查询
-    remaining_codes = stock_df["ts_code"].tolist()
-    print(f"[CandidatePool] 开始计算 {len(remaining_codes)} 只标的的 20 日均成交额...")
-
-    low_liq_codes: Set[str] = set()
-    amount_map = _get_avg_amount_20d_map(pro, remaining_codes, trade_date)
-
-    if amount_map:
-        for ts_code in remaining_codes:
-            avg_amt = amount_map.get(ts_code, 0.0)
-            if avg_amt < MIN_AVG_AMOUNT_20D:
-                low_liq_codes.add(ts_code)
-        print(f"[CandidatePool] 使用批量 daily 聚合完成 20 日均成交额计算")
-    else:
-        batch_size = TUSHARE_DAILY_BATCH_SIZE
-        for i in range(0, len(remaining_codes), batch_size):
-            batch = remaining_codes[i:i + batch_size]
-            batch_started_at = perf_counter()
-            for ts_code in batch:
-                avg_amt = _get_avg_amount_20d(pro, ts_code, trade_date)
-                amount_map[ts_code] = avg_amt
-                if avg_amt < MIN_AVG_AMOUNT_20D:
-                    low_liq_codes.add(ts_code)
-            _enforce_tushare_daily_rate_limit(
-                batch_started_at=batch_started_at,
-                processed_calls=len(batch),
-                has_more_batches=(i + batch_size) < len(remaining_codes),
-            )
-            progress_pct = min(100, int((i + batch_size) / len(remaining_codes) * 100))
-            print(f"[CandidatePool] 成交额计算进度: {progress_pct}%")
-
-    mask_low_liq = stock_df["ts_code"].isin(low_liq_codes)
-    stock_df = stock_df[~mask_low_liq].copy()
-    print(f"[CandidatePool] 排除低流动性后: {len(stock_df)} (过滤 {mask_low_liq.sum()})")
-
-    # ---- Step 9: 获取申万行业分类 ----
-    sw_map = get_sw_industry_classification()
-    if sw_map is None:
-        sw_map = {}
-
-    # ---- Step 10: 组装输出 ----
-    is_disclosure = _is_disclosure_window(trade_date)
-    candidates: List[CandidateStock] = []
-
-    for _, row in stock_df.iterrows():
-        ts_code = str(row["ts_code"])
-        symbol = str(row["symbol"])
-        name = str(row["name"])
-        list_date = str(row["list_date"]) if pd.notna(row.get("list_date")) else ""
-        industry_sw = sw_map.get(ts_code, str(row.get("industry", "")))
-        market_cap = mv_map.get(ts_code, 0.0) / 10000.0  # 万元 → 亿元
-        avg_vol = amount_map.get(ts_code, 0.0)
-
-        candidates.append(CandidateStock(
-            ticker=symbol,
-            name=name,
-            industry_sw=industry_sw,
-            market_cap=market_cap,
-            avg_volume_20d=avg_vol,
-            listing_date=list_date,
-            disclosure_risk=is_disclosure,
-        ))
-
-    if len(candidates) > MAX_CANDIDATE_POOL_SIZE:
-        candidates = sorted(
-            candidates,
-            key=lambda candidate: (candidate.avg_volume_20d, candidate.market_cap),
-            reverse=True,
-        )[:MAX_CANDIDATE_POOL_SIZE]
-        print(f"[CandidatePool] 候选池截断至 Top {MAX_CANDIDATE_POOL_SIZE}（按20日均成交额/市值排序）")
-
-    # ---- 持久化 ----
-    _write_candidate_pool_snapshot(snapshot_path, candidates)
-    _write_candidate_pool_snapshot(legacy_snapshot_path, candidates)
-
-    print(f"[CandidatePool] 最终候选池: {len(candidates)} 只 → {snapshot_path}")
-    return candidates
+    return selected_candidates
 
 
 # ============================================================================

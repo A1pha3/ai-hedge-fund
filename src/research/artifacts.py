@@ -423,6 +423,7 @@ def build_selection_target_replay_input(
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
     rejected_entries = list(dict(filters.get("watchlist", {}) or {}).get("tickers", []) or [])
     supplemental_short_trade_entries = list(dict(filters.get("short_trade_candidates", {}) or {}).get("tickers", []) or [])
+    upstream_shadow_observation_entries = list(dict(filters.get("short_trade_candidates", {}) or {}).get("shadow_observation_entries", []) or [])
     supplemental_catalyst_theme_entries = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
     watchlist_entries = [
         _serialize_layer_c_result_for_replay(item, candidate_source="layer_c_watchlist")
@@ -440,12 +441,14 @@ def build_selection_target_replay_input(
             "watchlist_count": len(watchlist_entries),
             "rejected_entry_count": len(rejected_entries),
             "supplemental_short_trade_entry_count": len(supplemental_short_trade_entries),
+            "upstream_shadow_observation_entry_count": len(upstream_shadow_observation_entries),
             "supplemental_catalyst_theme_entry_count": len(supplemental_catalyst_theme_entries),
             "buy_order_ticker_count": len(plan.buy_orders),
         },
         watchlist=watchlist_entries,
         rejected_entries=rejected_entries,
         supplemental_short_trade_entries=supplemental_short_trade_entries,
+        upstream_shadow_observation_entries=upstream_shadow_observation_entries,
         supplemental_catalyst_theme_entries=supplemental_catalyst_theme_entries,
         buy_order_tickers=sorted({str(order.ticker) for order in plan.buy_orders}),
         selection_targets=dict(plan.selection_targets or {}),

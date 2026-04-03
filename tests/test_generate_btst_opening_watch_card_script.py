@@ -71,7 +71,10 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
                             "top_reasons": ["trend_acceleration=0.76"],
                             "gate_status": {"score": "near_miss", "structural": "pass"},
                             "metrics_payload": {"trend_acceleration": 0.7637},
-                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                            "explainability_payload": {
+                                "candidate_source": "upstream_liquidity_corridor_shadow",
+                                "replay_context": {"candidate_pool_lane": "layer_a_liquidity_corridor", "candidate_pool_rank": 301},
+                            },
                         },
                     },
                     "300442": {
@@ -93,7 +96,10 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
                                 "catalyst_freshness": 0.712,
                                 "thresholds": {"near_miss_threshold": 0.52},
                             },
-                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                            "explainability_payload": {
+                                "candidate_source": "post_gate_liquidity_competition_shadow",
+                                "replay_context": {"candidate_pool_lane": "post_gate_liquidity_competition", "candidate_pool_rank": 304},
+                            },
                         },
                     },
                 },
@@ -209,22 +215,28 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
 
     assert result["analysis"]["headline"]
     assert "301001" in result["analysis"]["headline"]
+    assert "601869" in result["analysis"]["headline"]
     assert [item["ticker"] for item in payload["focus_items"]] == ["300757", "601869", "300442"]
     assert payload["summary"]["catalyst_theme_frontier_promoted_count"] == 1
     assert payload["summary"]["catalyst_theme_shadow_count"] == 1
+    assert payload["summary"]["upstream_shadow_candidate_count"] == 2
+    assert payload["summary"]["upstream_shadow_promotable_count"] == 1
     assert payload["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
     assert payload["catalyst_theme_shadow_watch"][0]["ticker"] == "301001"
+    assert [entry["ticker"] for entry in payload["upstream_shadow_entries"]] == ["601869", "300442"]
     assert payload["focus_items"][0]["historical_summary"] is not None
     assert payload["focus_items"][0]["execution_note"] is not None
-    assert payload["focus_items"][1]["historical_summary"] is not None
-    assert payload["focus_items"][2]["historical_summary"] is not None
+    assert payload["upstream_shadow_entries"][0]["candidate_source"] == "upstream_liquidity_corridor_shadow"
+    assert payload["upstream_shadow_entries"][1]["candidate_source"] == "post_gate_liquidity_competition_shadow"
     assert "# BTST Opening Watch Card" in markdown
     assert "### 1. 300757" in markdown
     assert "### 2. 601869" in markdown
     assert "### 3. 300442" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown
+    assert "## Upstream Shadow Recall" in markdown
     assert "### 1. 301001" in markdown
+    assert "candidate_source: upstream_liquidity_corridor_shadow" in markdown
     assert "focus_tier: catalyst_theme_frontier_priority" in markdown
     assert "execution_posture: research_followup_only" in markdown
     assert "execution_note" in markdown

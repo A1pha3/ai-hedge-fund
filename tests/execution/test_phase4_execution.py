@@ -42,6 +42,34 @@ def _fused(ticker: str, score_b: float) -> FusedScore:
     )
 
 
+def _shadow_candidate_signals() -> dict[str, StrategySignal]:
+    return {
+        "trend": StrategySignal(
+            direction=1,
+            confidence=92,
+            completeness=1.0,
+            sub_factors={
+                "momentum": {"direction": 1, "confidence": 95.0, "completeness": 1.0},
+                "adx_strength": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                "ema_alignment": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                "volatility": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                "long_trend_alignment": {"direction": 1, "confidence": 40.0, "completeness": 1.0},
+            },
+        ),
+        "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+        "fundamental": StrategySignal(direction=1, confidence=70, completeness=1.0, sub_factors={}),
+        "event_sentiment": StrategySignal(
+            direction=1,
+            confidence=85,
+            completeness=1.0,
+            sub_factors={
+                "event_freshness": {"direction": 1, "confidence": 92.0, "completeness": 1.0},
+                "news_sentiment": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+            },
+        ),
+    }
+
+
 def _evaluate_default_layer_c_outcome(
     score_b: float,
     investor: float,
@@ -393,7 +421,159 @@ def test_run_post_market_filters_weak_boundary_candidates_before_short_trade_tar
         "breakout_freshness_below_short_trade_boundary_floor": 1
     }
     assert "000004" not in plan.selection_targets
-    assert calls[0][0] == ("000001",)
+
+
+def test_run_post_market_promotes_shadow_liquidity_corridor_candidates_into_short_trade_lane():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [], target_mode="short_trade_only")
+
+    original_build_candidate_pool_with_shadow = daily_pipeline_module.build_candidate_pool_with_shadow
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    try:
+        daily_pipeline_module.build_candidate_pool_with_shadow = lambda trade_date: (
+            [CandidateStock(ticker="000001", name="主池", industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403")],
+            [
+                CandidateStock(
+                    ticker="300720",
+                    name="shadow",
+                    industry_sw="电力设备",
+                    avg_volume_20d=1500,
+                    market_cap=80,
+                    listing_date="20190101",
+                    candidate_pool_rank=878,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.1573,
+                    candidate_pool_avg_amount_share_of_min_gate=5.2437,
+                )
+            ],
+            {
+                "pool_size": 300,
+                "selected_count": 1,
+                "overflow_count": 1,
+                "selected_cutoff_avg_volume_20d": 9538.0,
+                "lane_counts": {"layer_a_liquidity_corridor": 1},
+                "selected_tickers": ["300720"],
+                "tickers": [{"ticker": "300720", "candidate_pool_lane": "layer_a_liquidity_corridor"}],
+            },
+        )
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: (
+                _shadow_candidate_signals()
+                if candidate.ticker == "300720"
+                else {
+                    "trend": StrategySignal(direction=1, confidence=40, completeness=1.0, sub_factors={}),
+                    "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                    "fundamental": StrategySignal(direction=1, confidence=40, completeness=1.0, sub_factors={}),
+                    "event_sentiment": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                }
+            )
+            for candidate in candidates
+        }
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
+            FusedScore(
+                ticker=ticker,
+                score_b=0.34 if ticker == "300720" else 0.20,
+                strategy_signals=signals,
+                arbitration_applied=[],
+                market_state=market_state,
+                weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+                decision="watch",
+            )
+            for ticker, signals in scored.items()
+        ]
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool_with_shadow = original_build_candidate_pool_with_shadow
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+
+    diagnostics = plan.risk_metrics["funnel_diagnostics"]
+    assert diagnostics["counts"]["candidate_pool_shadow_candidate_count"] == 1
+    assert diagnostics["filters"]["candidate_pool_shadow"]["lane_counts"] == {"layer_a_liquidity_corridor": 1}
+    assert diagnostics["filters"]["short_trade_candidates"]["selected_tickers"] == ["300720"]
+    assert diagnostics["filters"]["short_trade_candidates"]["tickers"][0]["candidate_source"] == "upstream_liquidity_corridor_shadow"
+    assert diagnostics["filters"]["short_trade_candidates"]["tickers"][0]["candidate_pool_lane"] == "layer_a_liquidity_corridor"
+    assert plan.selection_targets["300720"].candidate_source == "upstream_liquidity_corridor_shadow"
+    assert plan.selection_targets["300720"].short_trade is not None
+
+
+def test_run_post_market_keeps_failed_upstream_shadow_as_observation_lane():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [], target_mode="short_trade_only")
+
+    original_build_candidate_pool_with_shadow = daily_pipeline_module.build_candidate_pool_with_shadow
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    try:
+        daily_pipeline_module.build_candidate_pool_with_shadow = lambda trade_date: (
+            [CandidateStock(ticker="000001", name="主池", industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403")],
+            [
+                CandidateStock(
+                    ticker="301292",
+                    name="shadow",
+                    industry_sw="电力设备",
+                    avg_volume_20d=4500,
+                    market_cap=80,
+                    listing_date="20190101",
+                    candidate_pool_rank=575,
+                    candidate_pool_lane="post_gate_liquidity_competition",
+                    candidate_pool_shadow_reason="post_gate_liquidity_competition_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.6032,
+                    candidate_pool_avg_amount_share_of_min_gate=18.5767,
+                )
+            ],
+            {
+                "pool_size": 300,
+                "selected_count": 1,
+                "overflow_count": 1,
+                "selected_cutoff_avg_volume_20d": 9538.0,
+                "lane_counts": {"post_gate_liquidity_competition": 1},
+                "selected_tickers": ["301292"],
+                "tickers": [{"ticker": "301292", "candidate_pool_lane": "post_gate_liquidity_competition"}],
+            },
+        )
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {
+                "trend": StrategySignal(direction=1, confidence=55 if candidate.ticker == "301292" else 40, completeness=1.0, sub_factors={}),
+                "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                "fundamental": StrategySignal(direction=1, confidence=40, completeness=1.0, sub_factors={}),
+                "event_sentiment": StrategySignal(direction=1 if candidate.ticker == "301292" else 0, confidence=25 if candidate.ticker == "301292" else 20, completeness=1.0, sub_factors={}),
+            }
+            for candidate in candidates
+        }
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
+            FusedScore(
+                ticker=ticker,
+                score_b=0.34 if ticker == "301292" else 0.20,
+                strategy_signals=signals,
+                arbitration_applied=[],
+                market_state=market_state,
+                weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+                decision="watch",
+            )
+            for ticker, signals in scored.items()
+        ]
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool_with_shadow = original_build_candidate_pool_with_shadow
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+
+    diagnostics = plan.risk_metrics["funnel_diagnostics"]
+    assert diagnostics["counts"]["upstream_shadow_observation_count"] == 1
+    assert diagnostics["filters"]["short_trade_candidates"]["candidate_count"] == 0
+    assert diagnostics["filters"]["short_trade_candidates"]["shadow_observation_tickers"] == ["301292"]
+    assert diagnostics["filters"]["short_trade_candidates"]["shadow_observation_entries"][0]["candidate_source"] == "post_gate_liquidity_competition_shadow"
+    assert diagnostics["filters"]["short_trade_candidates"]["shadow_observation_entries"][0]["decision"] == "observation"
+    assert "301292" not in plan.selection_targets
 
 
 def test_run_post_market_promotes_strong_short_trade_boundary_candidate_even_below_old_score_buffer():

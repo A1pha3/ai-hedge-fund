@@ -28,6 +28,170 @@ RESEARCH_UPSIDE_RADAR_MAX_ENTRIES = 3
 CATALYST_THEME_MAX_ENTRIES = 5
 CATALYST_THEME_SHADOW_MAX_ENTRIES = 5
 CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES = 3
+UPSTREAM_SHADOW_CANDIDATE_SOURCES = {
+    "upstream_liquidity_corridor_shadow": "layer_a_liquidity_corridor",
+    "post_gate_liquidity_competition_shadow": "post_gate_liquidity_competition",
+}
+
+
+def _shadow_decision_rank(decision: str | None) -> int:
+    return {
+        "selected": 0,
+        "near_miss": 1,
+        "observation": 2,
+        "blocked": 3,
+        "rejected": 4,
+    }.get(str(decision or "rejected"), 5)
+
+
+def _source_lane_label(candidate_source: str | None) -> str:
+    normalized = str(candidate_source or "")
+    return UPSTREAM_SHADOW_CANDIDATE_SOURCES.get(normalized, normalized or "unknown")
+
+
+def _source_lane_display(candidate_source: str | None) -> str:
+    return {
+        "upstream_liquidity_corridor_shadow": "layer_a_liquidity_corridor",
+        "post_gate_liquidity_competition_shadow": "post_gate_liquidity_competition",
+    }.get(str(candidate_source or ""), str(candidate_source or "unknown"))
+
+
+def _resolve_replay_input_path(snapshot_path: str | Path) -> Path:
+    return Path(snapshot_path).expanduser().resolve().with_name("selection_target_replay_input.json")
+
+
+def _load_selection_replay_input(snapshot_path: str | Path) -> dict[str, Any]:
+    replay_input_path = _resolve_replay_input_path(snapshot_path)
+    if not replay_input_path.exists():
+        return {}
+    return _load_json(replay_input_path)
+
+
+def _extract_upstream_shadow_entry(selection_entry: dict[str, Any], supplemental_entry: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    short_trade_entry = dict(selection_entry.get("short_trade") or {})
+    if not short_trade_entry:
+        return None
+
+    explainability_payload = dict(short_trade_entry.get("explainability_payload") or {})
+    replay_context = dict(explainability_payload.get("replay_context") or {})
+    candidate_source = str(explainability_payload.get("candidate_source") or selection_entry.get("candidate_source") or replay_context.get("source") or "")
+    if candidate_source not in UPSTREAM_SHADOW_CANDIDATE_SOURCES:
+        return None
+
+    supplemental_entry = dict(supplemental_entry or {})
+    metrics_payload = dict(short_trade_entry.get("metrics_payload") or {})
+    candidate_reason_codes = [
+        str(reason)
+        for reason in (
+            list(selection_entry.get("candidate_reason_codes") or [])
+            or list(supplemental_entry.get("candidate_reason_codes") or [])
+            or list(replay_context.get("candidate_reason_codes") or [])
+        )
+        if str(reason or "").strip()
+    ]
+    candidate_pool_lane = str(
+        supplemental_entry.get("candidate_pool_lane")
+        or replay_context.get("candidate_pool_lane")
+        or _source_lane_label(candidate_source)
+    )
+    candidate_pool_rank = supplemental_entry.get("candidate_pool_rank") or replay_context.get("candidate_pool_rank")
+    decision = str(short_trade_entry.get("decision") or "rejected")
+
+    if decision == "selected":
+        promotion_trigger = "影子召回样本已晋级为正式 short-trade selected，但仍需盘中确认后才能执行。"
+    elif decision == "near_miss":
+        promotion_trigger = "影子召回样本已进入 near-miss 观察层，只能做盘中跟踪，不可预设交易。"
+    else:
+        promotion_trigger = "影子召回样本尚未进入可执行层，只有盘中新强度确认后才允许升级。"
+
+    return {
+        "ticker": selection_entry.get("ticker"),
+        "decision": decision,
+        "score_target": short_trade_entry.get("score_target"),
+        "confidence": short_trade_entry.get("confidence"),
+        "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
+        "candidate_source": candidate_source,
+        "candidate_pool_lane": candidate_pool_lane,
+        "candidate_pool_lane_display": _source_lane_display(candidate_source),
+        "candidate_pool_rank": int(candidate_pool_rank) if candidate_pool_rank not in (None, "") else None,
+        "candidate_pool_avg_amount_share_of_cutoff": _round_or_none(
+            supplemental_entry.get("candidate_pool_avg_amount_share_of_cutoff") or replay_context.get("candidate_pool_avg_amount_share_of_cutoff")
+        ),
+        "candidate_pool_avg_amount_share_of_min_gate": _round_or_none(
+            supplemental_entry.get("candidate_pool_avg_amount_share_of_min_gate") or replay_context.get("candidate_pool_avg_amount_share_of_min_gate")
+        ),
+        "upstream_candidate_source": str(
+            supplemental_entry.get("upstream_candidate_source") or replay_context.get("upstream_candidate_source") or "candidate_pool_truncated_after_filters"
+        ),
+        "candidate_reason_codes": candidate_reason_codes,
+        "top_reasons": list(short_trade_entry.get("top_reasons") or []),
+        "rejection_reasons": list(short_trade_entry.get("rejection_reasons") or []),
+        "positive_tags": list(short_trade_entry.get("positive_tags") or []),
+        "gate_status": dict(short_trade_entry.get("gate_status") or {}),
+        "promotion_trigger": promotion_trigger,
+        "metrics": {
+            "breakout_freshness": metrics_payload.get("breakout_freshness"),
+            "trend_acceleration": metrics_payload.get("trend_acceleration"),
+            "volume_expansion_quality": metrics_payload.get("volume_expansion_quality"),
+            "close_strength": metrics_payload.get("close_strength"),
+            "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
+        },
+    }
+
+
+def _extract_upstream_shadow_replay_only_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
+    candidate_source = str(entry.get("candidate_source") or "")
+    if candidate_source not in UPSTREAM_SHADOW_CANDIDATE_SOURCES:
+        return None
+
+    metrics_payload = dict(entry.get("metrics") or entry.get("short_trade_boundary_metrics") or {})
+    candidate_pool_rank = entry.get("candidate_pool_rank")
+    return {
+        "ticker": entry.get("ticker"),
+        "decision": str(entry.get("decision") or "observation"),
+        "score_target": entry.get("score_target") if entry.get("score_target") is not None else metrics_payload.get("candidate_score"),
+        "confidence": entry.get("confidence"),
+        "preferred_entry_mode": entry.get("preferred_entry_mode") or "shadow_observation_only",
+        "candidate_source": candidate_source,
+        "candidate_pool_lane": str(entry.get("candidate_pool_lane") or _source_lane_label(candidate_source)),
+        "candidate_pool_lane_display": _source_lane_display(candidate_source),
+        "candidate_pool_rank": int(candidate_pool_rank) if candidate_pool_rank not in (None, "") else None,
+        "candidate_pool_avg_amount_share_of_cutoff": _round_or_none(entry.get("candidate_pool_avg_amount_share_of_cutoff")),
+        "candidate_pool_avg_amount_share_of_min_gate": _round_or_none(entry.get("candidate_pool_avg_amount_share_of_min_gate")),
+        "upstream_candidate_source": str(entry.get("upstream_candidate_source") or "candidate_pool_truncated_after_filters"),
+        "candidate_reason_codes": [str(reason) for reason in list(entry.get("candidate_reason_codes") or []) if str(reason or "").strip()],
+        "top_reasons": list(entry.get("top_reasons") or []),
+        "rejection_reasons": list(entry.get("rejection_reasons") or ([entry.get("filter_reason")] if entry.get("filter_reason") else [])),
+        "positive_tags": list(entry.get("positive_tags") or []),
+        "gate_status": dict(entry.get("gate_status") or {}),
+        "promotion_trigger": str(entry.get("promotion_trigger") or "影子召回样本当前只保留为补票观察层，不自动升级到正式执行名单。"),
+        "metrics": {
+            "breakout_freshness": metrics_payload.get("breakout_freshness"),
+            "trend_acceleration": metrics_payload.get("trend_acceleration"),
+            "volume_expansion_quality": metrics_payload.get("volume_expansion_quality"),
+            "close_strength": metrics_payload.get("close_strength"),
+            "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
+        },
+    }
+
+
+def _build_upstream_shadow_summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    lane_counts: dict[str, int] = {}
+    decision_counts: dict[str, int] = {}
+    for entry in entries:
+        lane = str(entry.get("candidate_pool_lane") or _source_lane_label(entry.get("candidate_source")))
+        decision = str(entry.get("decision") or "rejected")
+        lane_counts[lane] = int(lane_counts.get(lane) or 0) + 1
+        decision_counts[decision] = int(decision_counts.get(decision) or 0) + 1
+
+    top_focus_tickers = [str(entry.get("ticker") or "") for entry in entries if entry.get("ticker")][:3]
+    return {
+        "shadow_candidate_count": len(entries),
+        "promotable_count": sum(1 for entry in entries if str(entry.get("decision") or "") in {"selected", "near_miss"}),
+        "lane_counts": lane_counts,
+        "decision_counts": decision_counts,
+        "top_focus_tickers": top_focus_tickers,
+    }
 
 
 def _extract_catalyst_theme_frontier_summary(frontier: dict[str, Any]) -> dict[str, Any]:
@@ -1061,12 +1225,23 @@ def _execution_priority_rank(priority: str | None) -> int:
 def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | None = None, next_trade_date: str | None = None) -> dict[str, Any]:
     snapshot_path, report_dir = _resolve_snapshot_path(input_path, trade_date)
     snapshot = _load_json(snapshot_path)
+    replay_input = _load_selection_replay_input(snapshot_path)
 
     session_summary_path = report_dir / "session_summary.json"
     session_summary = _load_json(session_summary_path) if session_summary_path.exists() else {}
     actual_trade_date = _normalize_trade_date(snapshot.get("trade_date") or trade_date)
 
     selection_targets = snapshot.get("selection_targets") or {}
+    supplemental_short_trade_entry_by_ticker = {
+        str(entry.get("ticker") or ""): dict(entry)
+        for entry in list(replay_input.get("supplemental_short_trade_entries") or [])
+        if entry.get("ticker")
+    }
+    upstream_shadow_observation_entries = [
+        dict(entry)
+        for entry in list(replay_input.get("upstream_shadow_observation_entries") or [])
+        if entry.get("ticker")
+    ]
     short_trade_entries = [
         candidate
         for candidate in (_extract_short_trade_entry(entry) for entry in selection_targets.values())
@@ -1139,6 +1314,31 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
     catalyst_theme_shadow_entries = catalyst_theme_shadow_entries[:CATALYST_THEME_SHADOW_MAX_ENTRIES]
     catalyst_theme_frontier_summary = _load_catalyst_theme_frontier_summary(report_dir)
     catalyst_theme_frontier_priority = _build_catalyst_theme_frontier_priority(catalyst_theme_frontier_summary, catalyst_theme_shadow_entries)
+    upstream_shadow_entries_by_ticker = {
+        str(candidate.get("ticker") or ""): candidate
+        for candidate in (
+            _extract_upstream_shadow_entry(entry, supplemental_short_trade_entry_by_ticker.get(str(entry.get("ticker") or "")))
+            for entry in selection_targets.values()
+        )
+        if candidate is not None and candidate.get("ticker")
+    }
+    for candidate in (
+        _extract_upstream_shadow_replay_only_entry(entry)
+        for entry in upstream_shadow_observation_entries
+    ):
+        if candidate is None or not candidate.get("ticker"):
+            continue
+        upstream_shadow_entries_by_ticker.setdefault(str(candidate.get("ticker") or ""), candidate)
+    upstream_shadow_entries = list(upstream_shadow_entries_by_ticker.values())
+    upstream_shadow_entries.sort(
+        key=lambda entry: (
+            _shadow_decision_rank(entry.get("decision")),
+            -(entry.get("score_target") or 0.0),
+            entry.get("candidate_pool_rank") if entry.get("candidate_pool_rank") is not None else 999999,
+            entry.get("ticker") or "",
+        )
+    )
+    upstream_shadow_summary = _build_upstream_shadow_summary(upstream_shadow_entries)
 
     btst_candidate_historical_context = {
         "lookback_report_limit": OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
@@ -1336,10 +1536,17 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
             + ", ".join(entry["ticker"] for entry in excluded_research_entries)
             + "。"
         )
+    if upstream_shadow_entries:
+        recommendation_lines.append(
+            "上游影子召回覆盖 "
+            + ", ".join(entry["ticker"] for entry in upstream_shadow_entries)
+            + "，这些票来自 candidate-pool 上游漏票修复通道，只能按当前 short-trade decision 分层处理，不能因为被召回就自动升级。"
+        )
 
     return {
         "report_dir": str(report_dir),
         "snapshot_path": str(snapshot_path),
+        "replay_input_path": str(_resolve_replay_input_path(snapshot_path)) if _resolve_replay_input_path(snapshot_path).exists() else None,
         "session_summary_path": str(session_summary_path) if session_summary_path.exists() else None,
         "trade_date": actual_trade_date,
         "next_trade_date": _normalize_trade_date(next_trade_date),
@@ -1356,6 +1563,8 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
             "catalyst_theme_count": len(catalyst_theme_entries),
             "catalyst_theme_shadow_count": len(catalyst_theme_shadow_entries),
             "catalyst_theme_frontier_promoted_count": len(catalyst_theme_frontier_priority.get("promoted_tickers") or []),
+            "upstream_shadow_candidate_count": upstream_shadow_summary.get("shadow_candidate_count") or 0,
+            "upstream_shadow_promotable_count": upstream_shadow_summary.get("promotable_count") or 0,
             "research_selected_count": _summary_value(dual_target_summary, "research_selected_count", research_selected_count),
         },
         "primary_entry": primary_entry,
@@ -1367,6 +1576,8 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
         "catalyst_theme_shadow_entries": catalyst_theme_shadow_entries,
         "catalyst_theme_frontier_summary": catalyst_theme_frontier_summary,
         "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,
+        "upstream_shadow_entries": upstream_shadow_entries,
+        "upstream_shadow_summary": upstream_shadow_summary,
         "btst_candidate_historical_context": btst_candidate_historical_context,
         "watch_candidate_historical_context": btst_candidate_historical_context,
         "opportunity_pool_historical_context": btst_candidate_historical_context,
@@ -1399,6 +1610,8 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- catalyst_theme_count: {analysis['summary'].get('catalyst_theme_count')}")
     lines.append(f"- catalyst_theme_shadow_count: {analysis['summary'].get('catalyst_theme_shadow_count')}")
     lines.append(f"- catalyst_theme_frontier_promoted_count: {analysis['summary'].get('catalyst_theme_frontier_promoted_count')}")
+    lines.append(f"- upstream_shadow_candidate_count: {analysis['summary'].get('upstream_shadow_candidate_count')}")
+    lines.append(f"- upstream_shadow_promotable_count: {analysis['summary'].get('upstream_shadow_promotable_count')}")
     lines.append(f"- opportunity_pool_historical_report_count: {historical_context.get('historical_report_count')}")
     lines.append(f"- btst_candidate_historical_count: {historical_context.get('historical_btst_candidate_count')}")
     lines.append(f"- watch_candidate_historical_count: {historical_context.get('historical_watch_candidate_count')}")
@@ -1674,9 +1887,60 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
             lines.append(f"- delta_summary: {', '.join(entry.get('delta_summary') or []) or 'n/a'}")
             lines.append("")
 
+    lines.append("## Upstream Shadow Recall")
+    upstream_shadow_summary = analysis.get("upstream_shadow_summary") or {}
+    upstream_shadow_entries = analysis.get("upstream_shadow_entries") or []
+    if not upstream_shadow_entries:
+        lines.append("- none")
+        lines.append("")
+    else:
+        lines.append(f"- shadow_candidate_count: {upstream_shadow_summary.get('shadow_candidate_count')}")
+        lines.append(f"- promotable_count: {upstream_shadow_summary.get('promotable_count')}")
+        lane_counts = dict(upstream_shadow_summary.get("lane_counts") or {})
+        lines.append(
+            "- lane_counts: "
+            + (
+                ", ".join(f"{key}={value}" for key, value in lane_counts.items())
+                if lane_counts
+                else "none"
+            )
+        )
+        for entry in upstream_shadow_entries:
+            lines.append(f"### {entry['ticker']}")
+            lines.append(f"- decision: {entry.get('decision')}")
+            lines.append(f"- score_target: {_format_float(entry.get('score_target'))}")
+            lines.append(f"- confidence: {_format_float(entry.get('confidence'))}")
+            lines.append(f"- candidate_source: {entry.get('candidate_source')}")
+            lines.append(f"- candidate_pool_lane: {entry.get('candidate_pool_lane_display')}")
+            lines.append(f"- candidate_pool_rank: {entry.get('candidate_pool_rank') if entry.get('candidate_pool_rank') is not None else 'n/a'}")
+            lines.append(f"- share_of_cutoff: {_format_float(entry.get('candidate_pool_avg_amount_share_of_cutoff'))}")
+            lines.append(f"- share_of_min_gate: {_format_float(entry.get('candidate_pool_avg_amount_share_of_min_gate'))}")
+            lines.append(f"- upstream_candidate_source: {entry.get('upstream_candidate_source')}")
+            lines.append(f"- preferred_entry_mode: {entry.get('preferred_entry_mode')}")
+            lines.append(f"- promotion_trigger: {entry.get('promotion_trigger')}")
+            lines.append(f"- candidate_reason_codes: {', '.join(entry.get('candidate_reason_codes') or []) or 'n/a'}")
+            lines.append(f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}")
+            lines.append(f"- rejection_reasons: {', '.join(entry.get('rejection_reasons') or []) or 'n/a'}")
+            lines.append(f"- positive_tags: {', '.join(entry.get('positive_tags') or []) or 'n/a'}")
+            lines.append(
+                "- key_metrics: "
+                + ", ".join(
+                    [
+                        f"breakout={_format_float((entry.get('metrics') or {}).get('breakout_freshness'))}",
+                        f"trend={_format_float((entry.get('metrics') or {}).get('trend_acceleration'))}",
+                        f"volume={_format_float((entry.get('metrics') or {}).get('volume_expansion_quality'))}",
+                        f"close={_format_float((entry.get('metrics') or {}).get('close_strength'))}",
+                        f"catalyst={_format_float((entry.get('metrics') or {}).get('catalyst_freshness'))}",
+                    ]
+                )
+            )
+            lines.append("- gate_status: " + ", ".join(f"{key}={value}" for key, value in (entry.get("gate_status") or {}).items()))
+            lines.append("")
+
     lines.append("## Source Paths")
     lines.append(f"- report_dir: {analysis.get('report_dir')}")
     lines.append(f"- snapshot_path: {analysis.get('snapshot_path')}")
+    lines.append(f"- replay_input_path: {analysis.get('replay_input_path') or 'n/a'}")
     lines.append(f"- session_summary_path: {analysis.get('session_summary_path') or 'n/a'}")
     return "\n".join(lines) + "\n"
 
@@ -1710,6 +1974,8 @@ def _resolve_brief_analysis(input_path: str | Path | dict[str, Any], trade_date:
     summary = dict(payload.get("summary") or {})
     summary.setdefault("catalyst_theme_frontier_promoted_count", len(frontier_priority.get("promoted_tickers") or []))
     payload["summary"] = summary
+    payload.setdefault("upstream_shadow_entries", [])
+    payload.setdefault("upstream_shadow_summary", {"shadow_candidate_count": 0, "promotable_count": 0, "lane_counts": {}, "decision_counts": {}, "top_focus_tickers": []})
     return payload
 
 
@@ -1827,6 +2093,8 @@ def analyze_btst_premarket_execution_card(input_path: str | Path | dict[str, Any
             "opportunity_pool_count": len(opportunity_actions),
             "catalyst_theme_frontier_promoted_count": len(catalyst_theme_frontier_priority.get("promoted_tickers") or []),
             "catalyst_theme_shadow_count": len(brief.get("catalyst_theme_shadow_entries") or []),
+            "upstream_shadow_candidate_count": int((brief.get("upstream_shadow_summary") or {}).get("shadow_candidate_count") or 0),
+            "upstream_shadow_promotable_count": int((brief.get("upstream_shadow_summary") or {}).get("promotable_count") or 0),
             "excluded_research_count": len(brief.get("excluded_research_entries") or []),
         },
         "recommendation": brief.get("recommendation"),
@@ -1835,6 +2103,8 @@ def analyze_btst_premarket_execution_card(input_path: str | Path | dict[str, Any
         "opportunity_actions": opportunity_actions,
         "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,
         "catalyst_theme_shadow_watch": catalyst_theme_shadow_watch,
+        "upstream_shadow_entries": list(brief.get("upstream_shadow_entries") or []),
+        "upstream_shadow_summary": dict(brief.get("upstream_shadow_summary") or {}),
         "excluded_research_entries": list(brief.get("excluded_research_entries") or []),
         "global_guardrails": [
             "主执行名单只认 short-trade selected，不把 research selected 自动等价成短线可交易票。",
@@ -1865,6 +2135,8 @@ def render_btst_premarket_execution_card_markdown(card: dict[str, Any]) -> str:
     lines.append(f"- opportunity_pool_count: {summary.get('opportunity_pool_count')}")
     lines.append(f"- catalyst_theme_frontier_promoted_count: {summary.get('catalyst_theme_frontier_promoted_count')}")
     lines.append(f"- catalyst_theme_shadow_count: {summary.get('catalyst_theme_shadow_count')}")
+    lines.append(f"- upstream_shadow_candidate_count: {summary.get('upstream_shadow_candidate_count')}")
+    lines.append(f"- upstream_shadow_promotable_count: {summary.get('upstream_shadow_promotable_count')}")
     lines.append(f"- excluded_research_count: {summary.get('excluded_research_count')}")
     lines.append(f"- recommendation: {card.get('recommendation')}")
     lines.append("")
@@ -2064,6 +2336,31 @@ def render_btst_premarket_execution_card_markdown(card: dict[str, Any]) -> str:
             )
         lines.append("")
 
+    lines.append("## Upstream Shadow Recall")
+    upstream_shadow_summary = card.get("upstream_shadow_summary") or {}
+    upstream_shadow_entries = card.get("upstream_shadow_entries") or []
+    if not upstream_shadow_entries:
+        lines.append("- none")
+        lines.append("")
+    else:
+        lines.append(f"- shadow_candidate_count: {upstream_shadow_summary.get('shadow_candidate_count')}")
+        lines.append(f"- promotable_count: {upstream_shadow_summary.get('promotable_count')}")
+        lines.append(
+            "- lane_counts: "
+            + ", ".join(f"{key}={value}" for key, value in dict(upstream_shadow_summary.get('lane_counts') or {}).items())
+        )
+        lines.append("")
+        for entry in upstream_shadow_entries:
+            lines.append(f"### {entry.get('ticker')}")
+            lines.append(f"- candidate_source: {entry.get('candidate_source')}")
+            lines.append(f"- candidate_pool_lane: {entry.get('candidate_pool_lane_display')}")
+            lines.append(f"- decision: {entry.get('decision')}")
+            lines.append(f"- preferred_entry_mode: {entry.get('preferred_entry_mode')}")
+            lines.append(f"- promotion_trigger: {entry.get('promotion_trigger')}")
+            lines.append(f"- evidence: {', '.join(entry.get('top_reasons') or []) or 'n/a'}")
+            lines.append(f"- rejection_reasons: {', '.join(entry.get('rejection_reasons') or []) or 'n/a'}")
+            lines.append("")
+
     lines.append("## Global Guardrails")
     for item in card.get("global_guardrails") or []:
         lines.append(f"- {item}")
@@ -2186,6 +2483,9 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
         headline = "当前只有机会池可跟踪，除非盘中新强度确认，否则不交易。"
     if catalyst_theme_frontier_priority.get("promoted_tickers"):
         headline = headline.rstrip("。") + "；题材催化前沿优先跟踪 " + ", ".join(catalyst_theme_frontier_priority.get("promoted_tickers") or []) + "，但仍只做研究跟踪。"
+    upstream_shadow_summary = dict(brief.get("upstream_shadow_summary") or {})
+    if upstream_shadow_summary.get("shadow_candidate_count"):
+        headline = headline.rstrip("。") + "；上游影子召回关注 " + ", ".join(upstream_shadow_summary.get("top_focus_tickers") or []) + "。"
 
     return {
         "trade_date": brief.get("trade_date"),
@@ -2199,10 +2499,14 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
             "opportunity_pool_count": len(brief.get("opportunity_pool_entries") or []),
             "catalyst_theme_frontier_promoted_count": len(catalyst_theme_frontier_priority.get("promoted_tickers") or []),
             "catalyst_theme_shadow_count": len(brief.get("catalyst_theme_shadow_entries") or []),
+            "upstream_shadow_candidate_count": int(upstream_shadow_summary.get("shadow_candidate_count") or 0),
+            "upstream_shadow_promotable_count": int(upstream_shadow_summary.get("promotable_count") or 0),
         },
         "focus_items": focus_items,
         "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,
         "catalyst_theme_shadow_watch": catalyst_theme_shadow_watch,
+        "upstream_shadow_entries": list(brief.get("upstream_shadow_entries") or []),
+        "upstream_shadow_summary": upstream_shadow_summary,
         "global_guardrails": [
             "selected 之外的对象默认都不是开盘直接交易名单。",
             "机会池只做覆盖扩容，不因情绪走强直接升级为正式交易票。",
@@ -2233,6 +2537,8 @@ def render_btst_opening_watch_card_markdown(card: dict[str, Any]) -> str:
     lines.append(f"- opportunity_pool_count: {summary.get('opportunity_pool_count')}")
     lines.append(f"- catalyst_theme_frontier_promoted_count: {summary.get('catalyst_theme_frontier_promoted_count')}")
     lines.append(f"- catalyst_theme_shadow_count: {summary.get('catalyst_theme_shadow_count')}")
+    lines.append(f"- upstream_shadow_candidate_count: {summary.get('upstream_shadow_candidate_count')}")
+    lines.append(f"- upstream_shadow_promotable_count: {summary.get('upstream_shadow_promotable_count')}")
     lines.append(f"- recommendation: {card.get('recommendation')}")
     lines.append("")
     lines.append("## Focus Order")
@@ -2347,6 +2653,32 @@ def render_btst_opening_watch_card_markdown(card: dict[str, Any]) -> str:
                     ]
                 )
             )
+            lines.append("")
+
+    lines.append("## Upstream Shadow Recall")
+    upstream_shadow_summary = card.get("upstream_shadow_summary") or {}
+    upstream_shadow_entries = card.get("upstream_shadow_entries") or []
+    if not upstream_shadow_entries:
+        lines.append("- none")
+        lines.append("")
+    else:
+        lines.append(f"- shadow_candidate_count: {upstream_shadow_summary.get('shadow_candidate_count')}")
+        lines.append(f"- promotable_count: {upstream_shadow_summary.get('promotable_count')}")
+        lines.append(
+            "- lane_counts: "
+            + ", ".join(f"{key}={value}" for key, value in dict(upstream_shadow_summary.get('lane_counts') or {}).items())
+        )
+        lines.append("")
+        for index, item in enumerate(upstream_shadow_entries, start=1):
+            lines.append(f"### {index}. {item.get('ticker')}")
+            lines.append("- focus_tier: upstream_shadow_recall")
+            lines.append(f"- candidate_source: {item.get('candidate_source')}")
+            lines.append(f"- candidate_pool_lane: {item.get('candidate_pool_lane_display')}")
+            lines.append(f"- decision: {item.get('decision')}")
+            lines.append(f"- preferred_entry_mode: {item.get('preferred_entry_mode')}")
+            lines.append(f"- opening_plan: {item.get('promotion_trigger')}")
+            lines.append(f"- top_reasons: {', '.join(item.get('top_reasons') or []) or 'n/a'}")
+            lines.append(f"- rejection_reasons: {', '.join(item.get('rejection_reasons') or []) or 'n/a'}")
             lines.append("")
 
     lines.append("## Guardrails")

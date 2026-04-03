@@ -86,7 +86,10 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
                             "top_reasons": ["trend_acceleration=0.76"],
                             "gate_status": {"score": "near_miss"},
                             "metrics_payload": {"trend_acceleration": 0.7637},
-                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                            "explainability_payload": {
+                                "candidate_source": "upstream_liquidity_corridor_shadow",
+                                "replay_context": {"candidate_pool_lane": "layer_a_liquidity_corridor", "candidate_pool_rank": 301},
+                            },
                         },
                     },
                     "300442": {
@@ -108,7 +111,10 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
                                 "catalyst_freshness": 0.712,
                                 "thresholds": {"near_miss_threshold": 0.52},
                             },
-                            "explainability_payload": {"candidate_source": "short_trade_boundary"},
+                            "explainability_payload": {
+                                "candidate_source": "post_gate_liquidity_competition_shadow",
+                                "replay_context": {"candidate_pool_lane": "post_gate_liquidity_competition", "candidate_pool_rank": 304},
+                            },
                         },
                     },
                     "002001": {
@@ -165,8 +171,11 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert result["analysis"]["primary_action"]["ticker"] == "300757"
     assert payload["summary"]["catalyst_theme_frontier_promoted_count"] == 1
     assert payload["summary"]["catalyst_theme_shadow_count"] == 1
+    assert payload["summary"]["upstream_shadow_candidate_count"] == 2
+    assert payload["summary"]["upstream_shadow_promotable_count"] == 1
     assert [entry["ticker"] for entry in payload["watch_actions"]] == ["601869"]
     assert [entry["ticker"] for entry in payload["opportunity_actions"]] == ["300442"]
+    assert [entry["ticker"] for entry in payload["upstream_shadow_entries"]] == ["601869", "300442"]
     assert payload["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
     assert [entry["ticker"] for entry in payload["catalyst_theme_shadow_watch"]] == ["301001"]
     assert payload["primary_action"]["historical_prior"]["execution_quality_label"] == "unknown"
@@ -174,6 +183,7 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert "# BTST Premarket Execution Card" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown
+    assert "## Upstream Shadow Recall" in markdown
     assert "300757" in markdown
     assert "601869" in markdown
     assert "300442" in markdown
@@ -181,5 +191,6 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert "action_tier: catalyst_theme_frontier_priority" in markdown
     assert "Opportunity Pool Actions" in markdown
     assert "execution_posture: research_followup_only" in markdown
+    assert "candidate_source: upstream_liquidity_corridor_shadow" in markdown
     assert "execution_quality_label" in markdown
     assert "002002" in markdown

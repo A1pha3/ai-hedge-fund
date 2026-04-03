@@ -112,6 +112,7 @@ class SelectionTargetReplayInput(BaseModel):
     watchlist: list[dict[str, Any]] = Field(default_factory=list)
     rejected_entries: list[dict[str, Any]] = Field(default_factory=list)
     supplemental_short_trade_entries: list[dict[str, Any]] = Field(default_factory=list)
+    upstream_shadow_observation_entries: list[dict[str, Any]] = Field(default_factory=list)
     supplemental_catalyst_theme_entries: list[dict[str, Any]] = Field(default_factory=list)
     buy_order_tickers: list[str] = Field(default_factory=list)
     selection_targets: dict[str, DualTargetEvaluation] = Field(default_factory=dict)
