@@ -325,3 +325,33 @@ class TestAuthDisabled:
             assert resp.status_code == 200
             assert resp.json()["username"] == "dev"
             assert resp.json()["id"] == -1
+
+    def test_auth_disabled_blocked_in_production(self):
+        """AUTH_DISABLED must not bypass auth in production-like environments."""
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=engine)
+        TS = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+        def override():
+            db = TS()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app = FastAPI()
+        app.dependency_overrides[get_db] = override
+
+        @app.get("/disabled-prod")
+        async def disabled_prod_endpoint(user: User = Depends(get_current_user)):
+            return {"username": user.username}
+
+        with patch("app.backend.auth.dependencies.AUTH_DISABLED", True), patch.dict(os.environ, {"APP_ENV": "production"}):
+            client = TestClient(app)
+            resp = client.get("/disabled-prod")
+            assert resp.status_code == 503
+            assert "AUTH_DISABLED" in resp.json()["detail"]

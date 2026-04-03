@@ -261,12 +261,13 @@ class ApiKeyResponse(BaseModel):
     """Complete API key response"""
     id: int
     provider: str
-    key_value: str
+    masked_key_value: Optional[str] = None
     is_active: bool
     description: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime]
     last_used: Optional[datetime]
+    has_key: bool = True
 
     class Config:
         from_attributes = True
@@ -281,6 +282,7 @@ class ApiKeySummaryResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
     last_used: Optional[datetime]
+    masked_key_value: Optional[str] = None
     has_key: bool = True  # Indicates if a key is set
 
     class Config:

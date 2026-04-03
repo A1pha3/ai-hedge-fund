@@ -14,6 +14,7 @@
 | [02-web-backend.md](./02-web-backend.md) | FastAPI Web 后端问题（路由、数据库、安全） |
 | [03-frontend.md](./03-frontend.md) | React 前端问题（类型安全、性能、可访问性） |
 | [04-infra-config.md](./04-infra-config.md) | 基础设施与配置问题（Docker、依赖、CI/CD） |
+| [05-remediation-roadmap.md](./05-remediation-roadmap.md) | 分阶段整改路线图（立即修复、短期治理、中期演进） |
 
 ---
 
@@ -51,3 +52,15 @@
 8. 🟠 **API 密钥明文返回** — REST API 响应中暴露完整 API key 值
 9. 🟠 **前端无组件缓存** — 80+ 个组件无 `React.memo`，频繁重渲染
 10. 🟠 **无 CI/CD 流水线** — `.github/workflows/` 目录不存在，无自动化质量门控
+
+---
+
+## 建议阅读顺序
+
+1. 先看 `README.md`，快速理解全局风险面
+2. 再看 `05-remediation-roadmap.md`，明确整改优先级
+3. 然后按职责阅读：
+   - 核心计算与数据链路：`01-core-backend.md`
+   - Web 安全与接口：`02-web-backend.md`
+   - 前端稳定性与性能：`03-frontend.md`
+   - 工程治理与交付：`04-infra-config.md`

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing_extensions import Literal
 
 from src.graph.state import AgentState, show_agent_reasoning
+from src.agents.prompt_rules import with_fact_grounding_rules
 from src.tools.api import (
     get_financial_metrics,
     get_market_cap,
@@ -431,7 +432,8 @@ def generate_damodaran_output(
         [
             (
                 "system",
-                """You are Aswath Damodaran, Professor of Finance at NYU Stern.
+                with_fact_grounding_rules(
+                    """You are Aswath Damodaran, Professor of Finance at NYU Stern.
                 Use your valuation framework to issue trading signals on US equities.
 
                 Speak with your usual clear, data-driven tone:
@@ -439,7 +441,8 @@ def generate_damodaran_output(
                   ◦ Connect that story to key numerical drivers: revenue growth, margins, reinvestment, risk
                   ◦ Conclude with value: your FCFF DCF estimate, margin of safety, and relative valuation sanity checks
                   ◦ Highlight major uncertainties and how they affect value
-                Return ONLY the JSON specified below.""",
+                Return ONLY the JSON specified below."""
+                ),
             ),
             (
                 "human",

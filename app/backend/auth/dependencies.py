@@ -9,13 +9,21 @@ from sqlalchemy.orm import Session
 
 from app.backend.database.connection import get_db
 from app.backend.models.user import User
-from app.backend.auth.utils import decode_token
+from app.backend.auth.utils import decode_token, is_production_environment
 from app.backend.auth.constants import ADMIN_USERNAME
 
 # Optional: disable auth for development
 AUTH_DISABLED = os.getenv("AUTH_DISABLED", "false").lower() == "true"
 
 security = HTTPBearer(auto_error=False)
+
+
+def _auth_disabled_enabled() -> bool:
+    if not AUTH_DISABLED:
+        return False
+    if is_production_environment():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AUTH_DISABLED cannot be used in production")
+    return True
 
 
 async def get_current_user(
@@ -30,7 +38,7 @@ async def get_current_user(
     3. Check account lock status (anti brute-force)
     """
     # If auth is disabled, return a mock admin user for development
-    if AUTH_DISABLED:
+    if _auth_disabled_enabled():
         mock_user = db.query(User).filter(User.username == ADMIN_USERNAME).first()
         if mock_user:
             return mock_user

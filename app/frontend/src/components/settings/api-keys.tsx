@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { apiKeysService } from '@/services/api-keys-api';
+import { ApiKeySummary, apiKeysService } from '@/services/api-keys-api';
 import { Eye, EyeOff, Key, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -77,6 +77,7 @@ const LLM_API_KEYS: ApiKey[] = [
 
 export function ApiKeysSettings() {
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+  const [savedKeySummaries, setSavedKeySummaries] = useState<Record<string, ApiKeySummary>>({});
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,19 +92,13 @@ export function ApiKeysSettings() {
       setLoading(true);
       setError(null);
       const apiKeysSummary = await apiKeysService.getAllApiKeys();
-      
-      // Load actual key values for existing keys
-      const keysData: Record<string, string> = {};
-      for (const summary of apiKeysSummary) {
-        try {
-          const fullKey = await apiKeysService.getApiKey(summary.provider);
-          keysData[summary.provider] = fullKey.key_value;
-        } catch (err) {
-          console.warn(`Failed to load key for ${summary.provider}:`, err);
-        }
-      }
-      
-      setApiKeys(keysData);
+      setSavedKeySummaries(
+        apiKeysSummary.reduce<Record<string, ApiKeySummary>>((acc, summary) => {
+          acc[summary.provider] = summary;
+          return acc;
+        }, {})
+      );
+      setApiKeys({});
     } catch (err) {
       console.error('Failed to load API keys:', err);
       setError('Failed to load API keys. Please try again.');
@@ -122,15 +117,24 @@ export function ApiKeysSettings() {
     // Auto-save with debouncing
     try {
       if (value.trim()) {
-        await apiKeysService.createOrUpdateApiKey({
+        const updatedKey = await apiKeysService.createOrUpdateApiKey({
           provider: key,
           key_value: value.trim(),
           is_active: true
         });
+        setSavedKeySummaries(prev => ({
+          ...prev,
+          [key]: updatedKey,
+        }));
       } else {
         // If value is empty, delete the key
         try {
           await apiKeysService.deleteApiKey(key);
+          setSavedKeySummaries(prev => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
         } catch (err) {
           // Key might not exist, which is fine
           console.log(`Key ${key} not found for deletion, which is expected`);
@@ -157,6 +161,11 @@ export function ApiKeysSettings() {
         delete newKeys[key];
         return newKeys;
       });
+      setSavedKeySummaries(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     } catch (err) {
       console.error(`Failed to delete API key ${key}:`, err);
       setError(`Failed to delete ${key}. Please try again.`);
@@ -182,18 +191,18 @@ export function ApiKeysSettings() {
                {apiKey.label}
              </button>
             <div className="relative">
-              <Input
-                type={visibleKeys[apiKey.key] ? 'text' : 'password'}
-                placeholder={apiKey.placeholder}
-                value={apiKeys[apiKey.key] || ''}
-                onChange={(e) => handleKeyChange(apiKey.key, e.target.value)}
-                className="pr-20"
-              />
-              <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                {apiKeys[apiKey.key] && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
+               <Input
+                 type={visibleKeys[apiKey.key] ? 'text' : 'password'}
+                 placeholder={savedKeySummaries[apiKey.key]?.masked_key_value || apiKey.placeholder}
+                 value={apiKeys[apiKey.key] || ''}
+                 onChange={(e) => handleKeyChange(apiKey.key, e.target.value)}
+                 className="pr-20"
+               />
+               <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                 {(apiKeys[apiKey.key] || savedKeySummaries[apiKey.key]?.has_key) && (
+                   <Button
+                     variant="ghost"
+                     size="icon"
                     className="h-7 w-7 hover:bg-red-500/10 hover:text-red-500"
                     onClick={() => clearKey(apiKey.key)}
                   >

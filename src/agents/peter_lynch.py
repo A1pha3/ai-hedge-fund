@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing_extensions import Literal
 
 from src.graph.state import AgentState, show_agent_reasoning
+from src.agents.prompt_rules import with_fact_grounding_rules
 from src.tools.api import (
     get_company_news,
     get_insider_trades,
@@ -438,7 +439,8 @@ def generate_lynch_output(
         [
             (
                 "system",
-                """You are a Peter Lynch AI agent. You make investment decisions based on Peter Lynch's well-known principles:
+                with_fact_grounding_rules(
+                    """You are a Peter Lynch AI agent. You make investment decisions based on Peter Lynch's well-known principles:
                 
                 1. Invest in What You Know: Emphasize understandable businesses, possibly discovered in everyday life.
                 2. Growth at a Reasonable Price (GARP): Rely on the PEG ratio as a prime metric.
@@ -462,7 +464,8 @@ def generate_lynch_output(
                   "reasoning": "string in English",
                   "reasoning_cn": "same analysis in Chinese/中文"
                 }}
-                """,
+                """
+                ),
             ),
             (
                 "human",

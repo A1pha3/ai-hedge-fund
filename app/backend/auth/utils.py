@@ -1,5 +1,6 @@
 """Password hashing + JWT token utilities for authentication."""
 
+import logging
 import os
 import secrets
 import string
@@ -8,12 +9,39 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 from jose import jwt, JWTError
 
-# JWT configuration — read from environment, never hardcode
-_DEFAULT_SECRET = "dev-only-insecure-key-set-AUTH_SECRET_KEY-in-env"
-SECRET_KEY = os.getenv("AUTH_SECRET_KEY", _DEFAULT_SECRET)
-if SECRET_KEY == _DEFAULT_SECRET:
-    import logging as _log
-    _log.getLogger(__name__).warning("⚠ AUTH_SECRET_KEY not set — using insecure default. Set it in .env for production!")
+logger = logging.getLogger(__name__)
+_PRODUCTION_ENV_VALUES = {"prod", "production"}
+_DEV_SECRET_KEY = secrets.token_urlsafe(32)
+_dev_secret_warning_emitted = False
+
+
+def is_production_environment() -> bool:
+    """Return True when the backend is running in a production-like environment."""
+    for env_var in ("APP_ENV", "ENV", "ENVIRONMENT", "FASTAPI_ENV"):
+        value = os.getenv(env_var)
+        if value and value.strip().lower() in _PRODUCTION_ENV_VALUES:
+            return True
+    return False
+
+
+def get_secret_key() -> str:
+    """Resolve the JWT signing key for the current environment."""
+    global _dev_secret_warning_emitted
+
+    configured_secret = os.getenv("AUTH_SECRET_KEY")
+    if configured_secret:
+        return configured_secret
+
+    if is_production_environment():
+        raise RuntimeError("AUTH_SECRET_KEY must be set in production environments")
+
+    if not _dev_secret_warning_emitted:
+        logger.warning("AUTH_SECRET_KEY not set — using an ephemeral development secret")
+        _dev_secret_warning_emitted = True
+
+    return _DEV_SECRET_KEY
+
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTH_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
 RESET_TOKEN_EXPIRE_MINUTES = 60  # 1 hour for password reset tokens
@@ -48,7 +76,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     now = datetime.now(tz=timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire, "iat": now})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(to_encode, get_secret_key(), algorithm=ALGORITHM)
 
 
 def create_reset_token(username: str) -> str:
@@ -62,7 +90,7 @@ def create_reset_token(username: str) -> str:
 def decode_token(token: str) -> dict | None:
     """Decode and validate a JWT token. Returns payload or None on failure."""
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, get_secret_key(), algorithms=[ALGORITHM])
         return payload
     except JWTError:
         return None

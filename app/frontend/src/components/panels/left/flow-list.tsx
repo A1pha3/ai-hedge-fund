@@ -4,6 +4,7 @@ import { Accordion } from '@/components/ui/accordion';
 import { useTabsContext } from '@/contexts/tabs-context';
 import { Flow } from '@/types/flow';
 import { FolderOpen } from 'lucide-react';
+import { memo } from 'react';
 
 interface FlowListProps {
   flows: Flow[];
@@ -20,7 +21,7 @@ interface FlowListProps {
   onRefresh: () => Promise<void>;
 }
 
-export function FlowList({
+export const FlowList = memo(function FlowList({
   flows,
   searchQuery,
   isLoading,
@@ -111,4 +112,6 @@ export function FlowList({
       )}
     </div>
   );
-} 
+});
+
+FlowList.displayName = 'FlowList';

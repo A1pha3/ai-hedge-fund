@@ -128,6 +128,13 @@ class TestJWTTokens:
         assert payload["custom"] == "data"
         assert payload["tv"] == 5
 
+    def test_create_access_token_requires_secret_in_production(self, monkeypatch):
+        monkeypatch.delenv("AUTH_SECRET_KEY", raising=False)
+        monkeypatch.setenv("APP_ENV", "production")
+
+        with pytest.raises(RuntimeError, match="AUTH_SECRET_KEY"):
+            create_access_token({"sub": "prod-user"})
+
 
 # ---- Invitation Code Generation ----
 

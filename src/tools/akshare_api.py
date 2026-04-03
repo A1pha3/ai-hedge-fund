@@ -158,68 +158,15 @@ def _disable_proxy_temporarily():
     """临时禁用系统代理（装饰器）"""
     import functools
 
-    import requests
-
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            saved_proxies_env = {}
-            proxy_vars = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]
-
-            for var in proxy_vars:
-                if var in os.environ:
-                    saved_proxies_env[var] = os.environ[var]
-                    del os.environ[var]
-
-            original_get = requests.get
-            original_post = requests.post
-            original_request = requests.request
-            original_session_get = requests.Session.get
-            original_session_post = requests.Session.post
-            original_session_request = requests.Session.request
-
-            def no_proxy_request(*args, **kwargs):
-                kwargs["proxies"] = {"http": None, "https": None}
-                return original_request(*args, **kwargs)
-
-            def no_proxy_get(*args, **kwargs):
-                kwargs["proxies"] = {"http": None, "https": None}
-                return original_get(*args, **kwargs)
-
-            def no_proxy_post(*args, **kwargs):
-                kwargs["proxies"] = {"http": None, "https": None}
-                return original_post(*args, **kwargs)
-
-            def no_proxy_session_request(self, *args, **kwargs):
-                kwargs["proxies"] = {"http": None, "https": None}
-                return original_session_request(self, *args, **kwargs)
-
-            def no_proxy_session_get(self, *args, **kwargs):
-                kwargs["proxies"] = {"http": None, "https": None}
-                return original_session_get(self, *args, **kwargs)
-
-            def no_proxy_session_post(self, *args, **kwargs):
-                kwargs["proxies"] = {"http": None, "https": None}
-                return original_session_post(self, *args, **kwargs)
-
-            requests.get = no_proxy_get
-            requests.post = no_proxy_post
-            requests.request = no_proxy_request
-            requests.Session.get = no_proxy_session_get
-            requests.Session.post = no_proxy_session_post
-            requests.Session.request = no_proxy_session_request
+            saved_proxies_env = _disable_system_proxies()
 
             try:
                 return func(*args, **kwargs)
             finally:
-                for var, value in saved_proxies_env.items():
-                    os.environ[var] = value
-                requests.get = original_get
-                requests.post = original_post
-                requests.request = original_request
-                requests.Session.get = original_session_get
-                requests.Session.post = original_session_post
-                requests.Session.request = original_session_request
+                _restore_proxies(saved_proxies_env)
 
         return wrapper
 

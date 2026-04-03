@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
+import logging
 from typing import List
 
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+
 from app.backend.database import get_db
+from app.backend.database.models import ApiKey
 from app.backend.repositories.api_key_repository import ApiKeyRepository
 from app.backend.models.schemas import (
     ApiKeyCreateRequest,
@@ -14,6 +17,43 @@ from app.backend.models.schemas import (
 )
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
+logger = logging.getLogger(__name__)
+
+
+def _mask_key_value(key_value: str | None) -> str | None:
+    if not key_value:
+        return None
+    if len(key_value) <= 8:
+        return "*" * len(key_value)
+    return f"{key_value[:4]}...{key_value[-4:]}"
+
+
+def _to_api_key_response(api_key: ApiKey) -> ApiKeyResponse:
+    return ApiKeyResponse(
+        id=api_key.id,
+        provider=api_key.provider,
+        masked_key_value=_mask_key_value(api_key.key_value),
+        is_active=api_key.is_active,
+        description=api_key.description,
+        created_at=api_key.created_at,
+        updated_at=api_key.updated_at,
+        last_used=api_key.last_used,
+        has_key=bool(api_key.key_value),
+    )
+
+
+def _to_api_key_summary(api_key: ApiKey) -> ApiKeySummaryResponse:
+    return ApiKeySummaryResponse(
+        id=api_key.id,
+        provider=api_key.provider,
+        is_active=api_key.is_active,
+        description=api_key.description,
+        created_at=api_key.created_at,
+        updated_at=api_key.updated_at,
+        last_used=api_key.last_used,
+        masked_key_value=_mask_key_value(api_key.key_value),
+        has_key=bool(api_key.key_value),
+    )
 
 
 @router.post(
@@ -34,8 +74,9 @@ async def create_or_update_api_key(request: ApiKeyCreateRequest, db: Session = D
             description=request.description,
             is_active=request.is_active
         )
-        return ApiKeyResponse.from_orm(api_key)
+        return _to_api_key_response(api_key)
     except Exception as e:
+        logger.exception("Failed to create/update API key for provider %s", request.provider)
         raise HTTPException(status_code=500, detail=f"Failed to create/update API key: {str(e)}")
 
 
@@ -51,8 +92,9 @@ async def get_api_keys(include_inactive: bool = False, db: Session = Depends(get
     try:
         repo = ApiKeyRepository(db)
         api_keys = repo.get_all_api_keys(include_inactive=include_inactive)
-        return [ApiKeySummaryResponse.from_orm(key) for key in api_keys]
+        return [_to_api_key_summary(key) for key in api_keys]
     except Exception as e:
+        logger.exception("Failed to retrieve API key summaries")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve API keys: {str(e)}")
 
 
@@ -71,10 +113,11 @@ async def get_api_key(provider: str, db: Session = Depends(get_db)):
         api_key = repo.get_api_key_by_provider(provider)
         if not api_key:
             raise HTTPException(status_code=404, detail="API key not found")
-        return ApiKeyResponse.from_orm(api_key)
+        return _to_api_key_response(api_key)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Failed to retrieve API key for provider %s", provider)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve API key: {str(e)}")
 
 
@@ -98,10 +141,11 @@ async def update_api_key(provider: str, request: ApiKeyUpdateRequest, db: Sessio
         )
         if not api_key:
             raise HTTPException(status_code=404, detail="API key not found")
-        return ApiKeyResponse.from_orm(api_key)
+        return _to_api_key_response(api_key)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Failed to update API key for provider %s", provider)
         raise HTTPException(status_code=500, detail=f"Failed to update API key: {str(e)}")
 
 
@@ -124,6 +168,7 @@ async def delete_api_key(provider: str, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Failed to delete API key for provider %s", provider)
         raise HTTPException(status_code=500, detail=f"Failed to delete API key: {str(e)}")
 
 
@@ -145,10 +190,11 @@ async def deactivate_api_key(provider: str, db: Session = Depends(get_db)):
         
         # Return the updated key
         api_key = repo.get_api_key_by_provider(provider)
-        return ApiKeySummaryResponse.from_orm(api_key)
+        return _to_api_key_summary(api_key)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Failed to deactivate API key for provider %s", provider)
         raise HTTPException(status_code=500, detail=f"Failed to deactivate API key: {str(e)}")
 
 
@@ -174,8 +220,9 @@ async def bulk_update_api_keys(request: ApiKeyBulkUpdateRequest, db: Session = D
             for key in request.api_keys
         ]
         api_keys = repo.bulk_create_or_update(api_keys_data)
-        return [ApiKeyResponse.from_orm(key) for key in api_keys]
+        return [_to_api_key_response(key) for key in api_keys]
     except Exception as e:
+        logger.exception("Failed to bulk update API keys")
         raise HTTPException(status_code=500, detail=f"Failed to bulk update API keys: {str(e)}")
 
 
@@ -198,4 +245,5 @@ async def update_last_used(provider: str, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update last used timestamp: {str(e)}") 
+        logger.exception("Failed to update last-used timestamp for provider %s", provider)
+        raise HTTPException(status_code=500, detail=f"Failed to update last used timestamp: {str(e)}")

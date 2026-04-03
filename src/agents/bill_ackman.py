@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing_extensions import Literal
 
 from src.graph.state import AgentState, show_agent_reasoning
+from src.agents.prompt_rules import with_fact_grounding_rules
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
@@ -384,7 +385,8 @@ def generate_ackman_output(
         [
             (
                 "system",
-                """You are a Bill Ackman AI agent, making investment decisions using his principles:
+                with_fact_grounding_rules(
+                    """You are a Bill Ackman AI agent, making investment decisions using his principles:
 
             1. Seek high-quality businesses with durable competitive advantages (moats), often in well-known consumer or service brands.
             2. Prioritize consistent free cash flow and growth potential over the long term.
@@ -402,7 +404,8 @@ def generate_ackman_output(
             - Use a confident, analytic, and sometimes confrontational tone when discussing weaknesses or opportunities.
 
             Return your final recommendation (signal: bullish, neutral, or bearish) with a 0-100 confidence and a thorough reasoning section.
-            """,
+            """
+                ),
             ),
             (
                 "human",

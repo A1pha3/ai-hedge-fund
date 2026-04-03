@@ -19,6 +19,36 @@ _tushare_df_cache: Dict[str, pd.DataFrame] = {}
 _tushare_df_cache_lock = threading.Lock()
 
 
+def _resolve_tushare_df_cache_max_entries() -> int:
+    raw_value = os.getenv("TUSHARE_DF_CACHE_MAX_ENTRIES", "256")
+    try:
+        return max(64, int(raw_value))
+    except ValueError:
+        return 256
+
+
+_TUSHARE_DF_CACHE_MAX_ENTRIES = _resolve_tushare_df_cache_max_entries()
+
+
+def _get_tushare_cached_df(cache_key: str) -> Optional[pd.DataFrame]:
+    with _tushare_df_cache_lock:
+        cached_df = _tushare_df_cache.pop(cache_key, None)
+        if cached_df is None:
+            return None
+        _tushare_df_cache[cache_key] = cached_df
+        return cached_df.copy()
+
+
+def _store_tushare_cached_df(cache_key: str, df: pd.DataFrame) -> None:
+    with _tushare_df_cache_lock:
+        if cache_key in _tushare_df_cache:
+            _tushare_df_cache.pop(cache_key)
+        _tushare_df_cache[cache_key] = df
+        while len(_tushare_df_cache) > _TUSHARE_DF_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(_tushare_df_cache))
+            _tushare_df_cache.pop(oldest_key)
+
+
 def _normalize_tushare_cache_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _normalize_tushare_cache_value(inner_value) for key, inner_value in sorted(value.items()) if inner_value is not None}
@@ -57,15 +87,13 @@ def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl
     """带进程内 + 持久化缓存的通用 Tushare DataFrame 调用。"""
     cache_key = _make_tushare_query_cache_key(api_name, **kwargs)
 
-    with _tushare_df_cache_lock:
-        cached_df = _tushare_df_cache.get(cache_key)
-        if cached_df is not None:
-            return cached_df.copy()
+    cached_df = _get_tushare_cached_df(cache_key)
+    if cached_df is not None:
+        return cached_df
 
     persisted_df = _persistent_cache.get(cache_key)
     if isinstance(persisted_df, pd.DataFrame):
-        with _tushare_df_cache_lock:
-            _tushare_df_cache[cache_key] = persisted_df
+        _store_tushare_cached_df(cache_key, persisted_df)
         return persisted_df.copy()
 
     api_func = getattr(pro, api_name, None)
@@ -82,8 +110,7 @@ def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl
         df = _dedupe_tushare_df(df)
 
     if df is not None:
-        with _tushare_df_cache_lock:
-            _tushare_df_cache[cache_key] = df
+        _store_tushare_cached_df(cache_key, df)
         _persistent_cache.set(cache_key, df, ttl=ttl if ttl is not None else _resolve_tushare_cache_ttl(api_name, **kwargs))
         return df.copy()
 
@@ -348,10 +375,7 @@ def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: 
     date_fmt = anchor_date.replace("-", "")
 
     # 检查批量缓存
-    df_batch = None
-    with _tushare_df_cache_lock:
-        if batch_cache_key in _tushare_df_cache:
-            df_batch = _tushare_df_cache[batch_cache_key]
+    df_batch = _get_tushare_cached_df(batch_cache_key)
 
     # 首次调用：批量获取近2年的 daily_basic 数据（一次 API 调用覆盖所有周期）
     if df_batch is None:
@@ -374,8 +398,7 @@ def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: 
             print(f"[Tushare] daily_basic 批量获取({ts_code}, {start_fmt}~{actual_end}) 失败: {e}")
             df_batch = pd.DataFrame()  # 空 DataFrame 表示已尝试
 
-        with _tushare_df_cache_lock:
-            _tushare_df_cache[batch_cache_key] = df_batch
+        _store_tushare_cached_df(batch_cache_key, df_batch)
 
     # 从批量数据中查找 <= anchor_date 的最近交易日
     if df_batch is None or df_batch.empty:
@@ -1621,9 +1644,9 @@ def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
                        free_share, total_mv, circ_mv, volume, amount
     """
     cache_key = f"daily_basic_batch_{trade_date}"
-    with _tushare_df_cache_lock:
-        if cache_key in _tushare_df_cache:
-            return _tushare_df_cache[cache_key].copy()
+    cached_df = _get_tushare_cached_df(cache_key)
+    if cached_df is not None:
+        return cached_df
 
     pro = _get_pro()
     if pro is None:
@@ -1638,8 +1661,7 @@ def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
                    "dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv",
         )
         if df is not None and not df.empty:
-            with _tushare_df_cache_lock:
-                _tushare_df_cache[cache_key] = df
+            _store_tushare_cached_df(cache_key, df)
             return df.copy()
         return None
     except Exception as e:
@@ -1658,9 +1680,9 @@ def get_daily_price_batch(trade_date: str) -> Optional[pd.DataFrame]:
                        pre_close, vol, amount, pct_chg
     """
     cache_key = f"daily_price_batch_{trade_date}"
-    with _tushare_df_cache_lock:
-        if cache_key in _tushare_df_cache:
-            return _tushare_df_cache[cache_key].copy()
+    cached_df = _get_tushare_cached_df(cache_key)
+    if cached_df is not None:
+        return cached_df
 
     pro = _get_pro()
     if pro is None:
@@ -1674,8 +1696,7 @@ def get_daily_price_batch(trade_date: str) -> Optional[pd.DataFrame]:
             fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
         )
         if df is not None and not df.empty:
-            with _tushare_df_cache_lock:
-                _tushare_df_cache[cache_key] = df
+            _store_tushare_cached_df(cache_key, df)
             return df.copy()
         return None
     except Exception as e:
@@ -1781,9 +1802,9 @@ def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
     其中 limit 字段: U=涨停, D=跌停, Z=炸板
     """
     cache_key = f"limit_list_{trade_date}"
-    with _tushare_df_cache_lock:
-        if cache_key in _tushare_df_cache:
-            return _tushare_df_cache[cache_key].copy()
+    cached_df = _get_tushare_cached_df(cache_key)
+    if cached_df is not None:
+        return cached_df
 
     pro = _get_pro()
     if pro is None:
@@ -1792,8 +1813,7 @@ def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
     try:
         df = _cached_tushare_dataframe_call(pro, "limit_list_d", trade_date=trade_date)
         if df is not None and not df.empty:
-            with _tushare_df_cache_lock:
-                _tushare_df_cache[cache_key] = df
+            _store_tushare_cached_df(cache_key, df)
             return df.copy()
         return None
     except Exception as e:
@@ -1811,9 +1831,9 @@ def get_suspend_list(trade_date: str) -> Optional[pd.DataFrame]:
     返回 DataFrame 列: ts_code, trade_date, suspend_timing, suspend_type
     """
     cache_key = f"suspend_list_{trade_date}"
-    with _tushare_df_cache_lock:
-        if cache_key in _tushare_df_cache:
-            return _tushare_df_cache[cache_key].copy()
+    cached_df = _get_tushare_cached_df(cache_key)
+    if cached_df is not None:
+        return cached_df
 
     pro = _get_pro()
     if pro is None:
@@ -1822,8 +1842,7 @@ def get_suspend_list(trade_date: str) -> Optional[pd.DataFrame]:
     try:
         df = _cached_tushare_dataframe_call(pro, "suspend_d", trade_date=trade_date)
         if df is not None and not df.empty:
-            with _tushare_df_cache_lock:
-                _tushare_df_cache[cache_key] = df
+            _store_tushare_cached_df(cache_key, df)
             return df.copy()
         return None
     except Exception as e:
@@ -1845,9 +1864,9 @@ def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", l
                        change, pct_chg, vol, amount
     """
     cache_key = f"index_daily_{index_code}_{start_date}_{end_date}_{limit}"
-    with _tushare_df_cache_lock:
-        if cache_key in _tushare_df_cache:
-            return _tushare_df_cache[cache_key].copy()
+    cached_df = _get_tushare_cached_df(cache_key)
+    if cached_df is not None:
+        return cached_df
 
     pro = _get_pro()
     if pro is None:
@@ -1865,8 +1884,7 @@ def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", l
         df = pro.index_daily(**kwargs)
         if df is not None and not df.empty:
             df = df.sort_values("trade_date").reset_index(drop=True)
-            with _tushare_df_cache_lock:
-                _tushare_df_cache[cache_key] = df
+            _store_tushare_cached_df(cache_key, df)
             return df.copy()
         return None
     except Exception as e:
@@ -1887,9 +1905,9 @@ def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: st
                        hgt（沪股通）, sgt（深股通）, north_money（北向合计）, south_money（南向合计）
     """
     cache_key = f"northbound_{trade_date}_{start_date}_{end_date}_{limit}"
-    with _tushare_df_cache_lock:
-        if cache_key in _tushare_df_cache:
-            return _tushare_df_cache[cache_key].copy()
+    cached_df = _get_tushare_cached_df(cache_key)
+    if cached_df is not None:
+        return cached_df
 
     pro = _get_pro()
     if pro is None:
@@ -1909,8 +1927,7 @@ def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: st
         df = pro.moneyflow_hsgt(**kwargs)
         if df is not None and not df.empty:
             df = df.sort_values("trade_date").reset_index(drop=True)
-            with _tushare_df_cache_lock:
-                _tushare_df_cache[cache_key] = df
+            _store_tushare_cached_df(cache_key, df)
             return df.copy()
         return None
     except Exception as e:
