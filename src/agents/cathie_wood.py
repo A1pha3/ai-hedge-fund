@@ -5,6 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from typing_extensions import Literal
 
+from src.agents.prompt_rules import with_fact_grounding_rules
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
@@ -448,7 +449,8 @@ def generate_cathie_wood_output(
         [
             (
                 "system",
-                """You are a Cathie Wood AI agent, making investment decisions using her principles:
+                with_fact_grounding_rules(
+                    """You are a Cathie Wood AI agent, making investment decisions using her principles:
 
             1. Seek companies leveraging disruptive innovation.
             2. Emphasize exponential growth potential, large TAM.
@@ -474,7 +476,8 @@ def generate_cathie_wood_output(
             
             For example, if bullish: "The company's AI-driven platform is transforming the $500B healthcare analytics market, with evidence of platform adoption accelerating from 40% to 65% YoY. Their R&D investments of 22% of revenue are creating a technological moat that positions them to capture a significant share of this expanding market. The current valuation doesn't reflect the exponential growth trajectory we expect as..."
             For example, if bearish: "While operating in the genomics space, the company lacks truly disruptive technology and is merely incrementally improving existing techniques. R&D spending at only 8% of revenue signals insufficient investment in breakthrough innovation. With revenue growth slowing from 45% to 20% YoY, there's limited evidence of the exponential adoption curve we look for in transformative companies..."
-            """,
+            """
+                ),
             ),
             (
                 "human",

@@ -53,6 +53,7 @@ class MarketState(BaseModel):
     state_type: MarketStateType = MarketStateType.MIXED
     adx: float = 0.0
     atr_price_ratio: float = 0.0
+    breadth_ratio: float = 0.5
     limit_up_count: int = 0
     limit_down_count: int = 0
     limit_up_down_ratio: float = 0.0
@@ -105,6 +106,7 @@ class ArbitrationAction(str, Enum):
     AVOID = "avoid"
     SHORT_HOLD = "short_hold"
     LONG_HOLD = "long_hold"
+    RISK_OFF = "risk_off"
     TRUST_TREND = "trust_trend"
     TRUST_REVERSION = "trust_reversion"
     BOTH_DEMOTE = "both_demote"

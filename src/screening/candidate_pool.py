@@ -52,6 +52,7 @@ DISCLOSURE_MONTHS = {4, 8, 10}  # 财报窗口月份
 TUSHARE_DAILY_CALLS_PER_MINUTE = 200
 TUSHARE_DAILY_BATCH_SIZE = 50
 MAX_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "300"))
+BTST_LIQUIDITY_RANK_BUCKET = float(os.getenv("CANDIDATE_POOL_BTST_LIQUIDITY_RANK_BUCKET", "2500"))
 SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS = int(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS", "2"))
 SHADOW_REBUCKET_MAX_TICKERS = int(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MAX_TICKERS", "1"))
 SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE", "3.0"))
@@ -120,8 +121,11 @@ def _write_candidate_pool_shadow_snapshot(snapshot_path: Path, *, selected_candi
         )
 
 
-def _candidate_liquidity_sort_key(candidate: CandidateStock) -> tuple[float, float, str]:
-    return (float(candidate.avg_volume_20d), float(candidate.market_cap), str(candidate.ticker))
+def _candidate_liquidity_sort_key(candidate: CandidateStock) -> tuple[int, float, float, str]:
+    avg_amount = float(candidate.avg_volume_20d)
+    market_cap = float(candidate.market_cap)
+    liquidity_band = int(avg_amount / max(BTST_LIQUIDITY_RANK_BUCKET, 1.0))
+    return (liquidity_band, -market_cap, avg_amount, str(candidate.ticker))
 
 
 def _shadow_focus_payload() -> dict[str, list[str]]:
@@ -448,6 +452,22 @@ def build_candidate_pool_with_shadow(
         print(f"[CandidatePool] 发现仅主池缓存 {snapshot_path.name}，补算 shadow recall 快照{focus_label}")
         try:
             cached_selected_candidates = _load_candidate_pool_snapshot(snapshot_path)
+            if cached_selected_candidates and not focus_signature:
+                shadow_summary = _build_shadow_summary_from_selected_candidates(
+                    cached_selected_candidates,
+                    pool_size=MAX_CANDIDATE_POOL_SIZE,
+                )
+                _write_candidate_pool_shadow_snapshot(
+                    shadow_snapshot_path,
+                    selected_candidates=cached_selected_candidates,
+                    shadow_candidates=[],
+                    shadow_summary=shadow_summary,
+                )
+                _write_candidate_pool_snapshot(legacy_snapshot_path, cached_selected_candidates)
+                print(
+                    f"[CandidatePool] 使用已有主池缓存直接回填空 shadow 快照 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE})"
+                )
+                return cached_selected_candidates, [], shadow_summary
         except Exception as e:
             print(f"[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: {e}")
 

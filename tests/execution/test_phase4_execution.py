@@ -1790,6 +1790,40 @@ def test_default_pipeline_runner_keeps_openai_fast_precise_split(monkeypatch):
     assert calls[1]["llm_observability"] == {"trade_date": "20260305", "pipeline_stage": "daily_pipeline_post_market", "model_tier": "precise"}
 
 
+def test_default_pipeline_runner_uses_tier_specific_selected_analysts(monkeypatch):
+    calls = []
+
+    def fake_run_hedge_fund(**kwargs):
+        calls.append(kwargs)
+        return {"analyst_signals": {}}
+
+    monkeypatch.setattr("src.main.run_hedge_fund", fake_run_hedge_fund)
+
+    pipeline = DailyPipeline(
+        base_model_name="gpt-4.1",
+        base_model_provider="OpenAI",
+        selected_analysts=["technical_analyst", "fundamentals_analyst", "valuation_analyst"],
+        fast_selected_analysts=["technical_analyst"],
+    )
+    pipeline.agent_runner(["000001"], "20260305", "fast")
+    pipeline.agent_runner(["000001"], "20260305", "precise")
+
+    assert calls[0]["selected_analysts"] == ["technical_analyst"]
+    assert calls[0]["llm_observability"] == {
+        "trade_date": "20260305",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "fast",
+        "selected_analysts": ["technical_analyst"],
+    }
+    assert calls[1]["selected_analysts"] == ["technical_analyst", "fundamentals_analyst", "valuation_analyst"]
+    assert calls[1]["llm_observability"] == {
+        "trade_date": "20260305",
+        "pipeline_stage": "daily_pipeline_post_market",
+        "model_tier": "precise",
+        "selected_analysts": ["technical_analyst", "fundamentals_analyst", "valuation_analyst"],
+    }
+
+
 def test_run_post_market_skips_duplicate_precise_stage_for_non_openai():
     calls = []
 

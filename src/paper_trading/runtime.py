@@ -403,6 +403,9 @@ def run_paper_trading_session(
     model_name: str | None = None,
     model_provider: str | None = None,
     selected_analysts: list[str] | None = None,
+    fast_selected_analysts: list[str] | None = None,
+    short_trade_target_profile_name: str = "default",
+    short_trade_target_profile_overrides: dict[str, object] | None = None,
     initial_margin_requirement: float = 0.0,
     agent: Callable = run_hedge_fund,
     pipeline: DailyPipeline | None = None,
@@ -437,6 +440,10 @@ def run_paper_trading_session(
         pipeline = DailyPipeline(
             base_model_name=resolved_model_name,
             base_model_provider=resolved_model_provider,
+            selected_analysts=selected_analysts,
+            fast_selected_analysts=fast_selected_analysts,
+            short_trade_target_profile_name=short_trade_target_profile_name,
+            short_trade_target_profile_overrides=short_trade_target_profile_overrides or {},
             frozen_post_market_plans=load_frozen_post_market_plans(frozen_plan_source_path),
             frozen_plan_source=str(frozen_plan_source_path),
             target_mode=selection_target,
@@ -445,8 +452,19 @@ def run_paper_trading_session(
         pipeline = DailyPipeline(
             base_model_name=resolved_model_name,
             base_model_provider=resolved_model_provider,
+            selected_analysts=selected_analysts,
+            fast_selected_analysts=fast_selected_analysts,
+            short_trade_target_profile_name=short_trade_target_profile_name,
+            short_trade_target_profile_overrides=short_trade_target_profile_overrides or {},
             target_mode=selection_target,
         )
+    elif isinstance(pipeline, DailyPipeline):
+        if selected_analysts is not None:
+            pipeline.selected_analysts = list(selected_analysts)
+        if fast_selected_analysts is not None:
+            pipeline.fast_selected_analysts = list(fast_selected_analysts)
+        pipeline.short_trade_target_profile_name = str(short_trade_target_profile_name or "default")
+        pipeline.short_trade_target_profile_overrides = dict(short_trade_target_profile_overrides or {})
 
     cache_stats_before_run = snapshot_cache_stats()
 
@@ -558,6 +576,9 @@ def run_paper_trading_session(
         "model_name": resolved_model_name,
         "model_provider": resolved_model_provider,
         "selected_analysts": selected_analysts,
+        "fast_selected_analysts": fast_selected_analysts,
+        "short_trade_target_profile_name": short_trade_target_profile_name,
+        "short_trade_target_profile_overrides": short_trade_target_profile_overrides or {},
         "plan_generation": {
             "mode": "frozen_current_plan_replay" if frozen_plan_source_path is not None else "live_pipeline",
             "frozen_plan_source": str(frozen_plan_source_path) if frozen_plan_source_path is not None else None,

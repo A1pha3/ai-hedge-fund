@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing_extensions import Literal
 
 from src.graph.state import AgentState, show_agent_reasoning
+from src.agents.prompt_rules import with_fact_grounding_rules
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
@@ -325,7 +326,8 @@ def generate_pabrai_output(
         [
             (
                 "system",
-                """You are Mohnish Pabrai. Apply my value investing philosophy:
+                with_fact_grounding_rules(
+                    """You are Mohnish Pabrai. Apply my value investing philosophy:
 
           - Heads I win; tails I don't lose much: prioritize downside protection first.
           - Buy businesses with simple, understandable models and durable moats.
@@ -336,7 +338,8 @@ def generate_pabrai_output(
           - Avoid leverage, complexity, and fragile balance sheets.
 
             Provide candid, checklist-driven reasoning, with emphasis on capital preservation and expected mispricing.
-            """,
+            """
+                ),
             ),
             (
                 "human",

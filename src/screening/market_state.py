@@ -8,7 +8,7 @@ import pandas as pd
 
 from src.agents.technicals import calculate_adx, calculate_atr
 from src.screening.models import DEFAULT_STRATEGY_WEIGHTS, MarketState, MarketStateType
-from src.tools.tushare_api import get_daily_basic_batch, get_index_daily, get_limit_list, get_northbound_flow
+from src.tools.tushare_api import get_daily_basic_batch, get_daily_price_batch, get_index_daily, get_limit_list, get_northbound_flow
 
 
 def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
@@ -39,6 +39,22 @@ def _northbound_streak(flow_df: pd.DataFrame) -> int:
     return streak
 
 
+def _market_breadth_ratio(price_df: pd.DataFrame | None) -> float:
+    if price_df is None or price_df.empty:
+        return 0.5
+
+    pct_chg = pd.to_numeric(price_df.get("pct_chg"), errors="coerce").dropna()
+    if pct_chg.empty:
+        return 0.5
+
+    advancers = float((pct_chg > 0).sum())
+    decliners = float((pct_chg < 0).sum())
+    total = advancers + decliners
+    if total <= 0:
+        return 0.5
+    return advancers / total
+
+
 def detect_market_state(trade_date: str) -> MarketState:
     end_dt = datetime.strptime(trade_date, "%Y%m%d")
     start_dt = (end_dt - timedelta(days=180)).strftime("%Y%m%d")
@@ -62,6 +78,7 @@ def detect_market_state(trade_date: str) -> MarketState:
     limit_up_count = int((limit_df["limit"] == "U").sum()) if limit_df is not None and not limit_df.empty else 0
     limit_down_count = int((limit_df["limit"] == "D").sum()) if limit_df is not None and not limit_df.empty else 0
     limit_ratio = (limit_up_count / limit_down_count) if limit_down_count > 0 else float(limit_up_count > 0)
+    breadth_ratio = _market_breadth_ratio(get_daily_price_batch(trade_date))
 
     daily_basic = get_daily_basic_batch(trade_date)
     total_volume = 0.0
@@ -73,16 +90,20 @@ def detect_market_state(trade_date: str) -> MarketState:
     northbound_df = get_northbound_flow(end_date=trade_date, start_date=(end_dt - timedelta(days=20)).strftime("%Y%m%d"), limit=20)
     northbound_flow_days = _northbound_streak(northbound_df)
     is_low_volume = total_volume < 5000.0 if total_volume > 0 else False
+    breadth_is_weak = breadth_ratio <= 0.42
+    breadth_is_strong = breadth_ratio >= 0.58
 
     adjusted = DEFAULT_STRATEGY_WEIGHTS.copy()
     position_scale = 0.5 if is_low_volume else 1.0
 
-    if daily_return <= -0.05 or limit_down_count > 500:
+    if daily_return <= -0.05 or limit_down_count > 500 or (breadth_ratio <= 0.28 and limit_down_count >= 120):
         state_type = MarketStateType.CRISIS
         position_scale = 0.3
         adjusted["fundamental"] += 0.10
         adjusted["trend"] -= 0.10
-    elif adx > 30 and atr_ratio < 0.012:
+        adjusted["event_sentiment"] -= 0.05
+        adjusted["mean_reversion"] += 0.05
+    elif adx > 30 and atr_ratio < 0.012 and breadth_ratio >= 0.52:
         state_type = MarketStateType.TREND
         adjusted["trend"] += 0.12
         adjusted["mean_reversion"] -= 0.08
@@ -102,6 +123,18 @@ def detect_market_state(trade_date: str) -> MarketState:
         adjusted["event_sentiment"] *= 0.5
         adjusted["fundamental"] *= 1.3
 
+    if breadth_is_weak:
+        position_scale *= 0.75
+        adjusted["trend"] -= 0.06
+        adjusted["event_sentiment"] -= 0.04
+        adjusted["fundamental"] += 0.06
+        adjusted["mean_reversion"] += 0.04
+    elif breadth_is_strong:
+        adjusted["trend"] += 0.04
+        adjusted["event_sentiment"] += 0.02
+        adjusted["fundamental"] -= 0.04
+        adjusted["mean_reversion"] -= 0.02
+
     if northbound_flow_days >= 3:
         adjusted["fundamental"] += 0.05
         adjusted["trend"] += 0.02
@@ -111,10 +144,13 @@ def detect_market_state(trade_date: str) -> MarketState:
         adjusted["event_sentiment"] += 0.02
         adjusted["mean_reversion"] += 0.03
 
+    position_scale = max(0.2, min(1.0, position_scale))
+
     return MarketState(
         state_type=state_type,
         adx=round(adx, 4),
         atr_price_ratio=round(atr_ratio, 6),
+        breadth_ratio=round(breadth_ratio, 6),
         limit_up_count=limit_up_count,
         limit_down_count=limit_down_count,
         limit_up_down_ratio=round(limit_ratio, 6),

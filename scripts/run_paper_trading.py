@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -83,6 +84,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-benchmark", action="store_true", help="Run a post-session cache benchmark and write benchmark artifacts into the output directory")
     parser.add_argument("--cache-benchmark-ticker", default=None, help="Ticker used for the post-session cache benchmark; defaults to the first tracked ticker")
     parser.add_argument("--cache-benchmark-clear-first", action="store_true", help="Clear the local cache before running the post-session benchmark; use with caution")
+    parser.add_argument("--analysts", default=None, help="Optional comma-separated analyst keys for a lower-cost replay subset")
+    parser.add_argument("--fast-analysts", default=None, help="Optional comma-separated analyst keys used only for the fast agent tier")
+    parser.add_argument("--short-trade-target-profile", default="default", help="Short-trade target profile for replay selection logic")
+    parser.add_argument("--short-trade-target-overrides", default=None, help="JSON object with short-trade target profile overrides")
+    parser.add_argument("--analysts-all", action="store_true", help="Use all analysts explicitly")
+    parser.add_argument("--analyst-concurrency-limit", type=int, default=None, help="Optional ANALYST_CONCURRENCY_LIMIT override for replay throughput control")
+    parser.add_argument("--disable-data-snapshots", action="store_true", help="Disable data snapshot exports for faster replay runs")
     parser.add_argument("--candidate-pool-shadow-focus-tickers", default=None, help="Comma-separated tickers pinned into shadow recall selection across all lanes")
     parser.add_argument("--candidate-pool-shadow-corridor-focus-tickers", default=None, help="Comma-separated tickers pinned into layer_a_liquidity_corridor shadow selection")
     parser.add_argument("--candidate-pool-shadow-rebucket-focus-tickers", default=None, help="Comma-separated tickers pinned into post_gate_liquidity_competition shadow selection")
@@ -102,18 +110,48 @@ def _resolve_model_route(model_name: str | None, model_provider: str | None) -> 
     return model_selection_module.resolve_model_selection(model_name, model_provider)
 
 
-def _run_paper_trading_session(**kwargs):
+def _resolve_selected_analysts(analysts: str | None, analysts_all: bool) -> list[str] | None:
+    analysts_module = importlib.import_module("src.utils.analysts")
+    if analysts_all:
+        return [value for _, value in analysts_module.ANALYST_ORDER]
+    if analysts:
+        return [item.strip() for item in analysts.split(",") if item.strip()]
+    return None
+
+
+def _resolve_short_trade_target_overrides(raw: str | None) -> dict[str, object] | None:
+    token = str(raw or "").strip()
+    if not token:
+        return None
+    parsed = json.loads(token)
+    if not isinstance(parsed, dict):
+        raise ValueError("--short-trade-target-overrides must be a JSON object")
+    return parsed
+
+
+def _run_paper_trading_session(*, disable_data_snapshots: bool = False, **kwargs):
     runtime_module = importlib.import_module("src.paper_trading.runtime")
+    if disable_data_snapshots:
+        os.environ["DATA_SNAPSHOT_ENABLED"] = "false"
+        snapshot_module = importlib.import_module("src.data.snapshot")
+        snapshot_module.DataSnapshotExporter._instance = None
     return runtime_module.run_paper_trading_session(**kwargs)
 
 
 def main() -> None:
     args = parse_args()
     tickers = [ticker.strip() for ticker in args.tickers.split(",") if ticker.strip()]
+    selected_analysts = _resolve_selected_analysts(args.analysts, args.analysts_all)
+    fast_selected_analysts = _resolve_selected_analysts(args.fast_analysts, False)
+    short_trade_target_profile = str(args.short_trade_target_profile or "default").strip() or "default"
+    short_trade_target_overrides = _resolve_short_trade_target_overrides(args.short_trade_target_overrides)
     output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir(args.start_date, args.end_date)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS", args.candidate_pool_shadow_focus_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", args.candidate_pool_shadow_corridor_focus_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS", args.candidate_pool_shadow_rebucket_focus_tickers)
+    _apply_optional_env_override("ANALYST_CONCURRENCY_LIMIT", args.analyst_concurrency_limit)
+    if args.disable_data_snapshots:
+        _apply_optional_env_override("DATA_SNAPSHOT_ENABLED", "false")
     _apply_optional_env_override(
         "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LIQUIDITY_CORRIDOR_SCORE_MIN",
         args.upstream_shadow_release_liquidity_corridor_score_min,
@@ -124,6 +162,7 @@ def main() -> None:
     )
     resolved_model_name, resolved_model_provider = _resolve_model_route(args.model_name, args.model_provider)
     artifacts = _run_paper_trading_session(
+        disable_data_snapshots=args.disable_data_snapshots,
         start_date=args.start_date,
         end_date=args.end_date,
         output_dir=output_dir,
@@ -131,6 +170,10 @@ def main() -> None:
         initial_capital=args.initial_capital,
         model_name=resolved_model_name,
         model_provider=resolved_model_provider,
+        selected_analysts=selected_analysts,
+        fast_selected_analysts=fast_selected_analysts,
+        short_trade_target_profile_name=short_trade_target_profile,
+        short_trade_target_profile_overrides=short_trade_target_overrides,
         frozen_plan_source=args.frozen_plan_source,
         selection_target=args.selection_target,
         cache_benchmark=args.cache_benchmark,
@@ -143,6 +186,16 @@ def main() -> None:
     print(f"paper_trading_timing_log={artifacts.timing_log_path}")
     print(f"paper_trading_summary={artifacts.summary_path}")
     print(f"paper_trading_selection_target={args.selection_target}")
+    print(f"paper_trading_short_trade_target_profile={short_trade_target_profile}")
+    if short_trade_target_overrides:
+        print(f"paper_trading_short_trade_target_overrides={json.dumps(short_trade_target_overrides, ensure_ascii=False, sort_keys=True)}")
+    print(f"paper_trading_selected_analysts={','.join(selected_analysts) if selected_analysts else 'all'}")
+    if fast_selected_analysts is not None:
+        print(f"paper_trading_fast_selected_analysts={','.join(fast_selected_analysts)}")
+    if args.analyst_concurrency_limit is not None:
+        print(f"paper_trading_analyst_concurrency_limit={args.analyst_concurrency_limit}")
+    if args.disable_data_snapshots:
+        print("paper_trading_data_snapshots=disabled")
     if args.selection_target != "research_only":
         followup_artifacts = generate_btst_followup_artifacts(output_dir, args.end_date)
         print(f"paper_trading_btst_brief_json={followup_artifacts['brief_json']}")

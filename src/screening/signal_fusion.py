@@ -237,6 +237,73 @@ def _signal_contribution(weight: float, signal: StrategySignal) -> float:
     return abs(weight * signal.direction * (signal.confidence / 100.0) * signal.completeness)
 
 
+def _apply_risk_off_short_term_demotion(
+    signals: dict[str, StrategySignal],
+    market_state: MarketState,
+    arbitration_applied: list[str],
+) -> None:
+    breadth_ratio = float(getattr(market_state, "breadth_ratio", 0.5) or 0.5)
+    position_scale = float(getattr(market_state, "position_scale", 1.0) or 1.0)
+    if breadth_ratio > 0.42 and position_scale > 0.75:
+        return
+
+    trend_signal = signals.get("trend")
+    event_signal = signals.get("event_sentiment")
+    fundamental_signal = signals.get("fundamental", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
+    if not trend_signal and not event_signal:
+        return
+
+    short_term_bullish = any(
+        signal is not None and signal.completeness > 0 and signal.direction > 0 and signal.confidence >= 60
+        for signal in (trend_signal, event_signal)
+    )
+    if not short_term_bullish:
+        return
+
+    strong_fundamental_support = (
+        fundamental_signal.completeness > 0
+        and fundamental_signal.direction > 0
+        and fundamental_signal.confidence >= 65
+    )
+    if strong_fundamental_support:
+        return
+
+    if trend_signal and trend_signal.direction > 0:
+        trend_signal.confidence *= 0.80
+    if event_signal and event_signal.direction > 0:
+        event_signal.confidence *= 0.70
+    arbitration_applied.append(ArbitrationAction.RISK_OFF.value)
+
+
+def _should_apply_consensus_bonus(
+    signals: dict[str, StrategySignal],
+    market_state: MarketState,
+) -> bool:
+    same_direction: dict[int, int] = {}
+    for signal in signals.values():
+        if signal.direction != 0 and signal.confidence > 60:
+            same_direction[signal.direction] = same_direction.get(signal.direction, 0) + 1
+
+    if not any(count >= 3 for count in same_direction.values()):
+        return False
+
+    bullish_consensus = same_direction.get(1, 0) >= 3
+    if not bullish_consensus:
+        return True
+
+    breadth_ratio = float(getattr(market_state, "breadth_ratio", 0.5) or 0.5)
+    position_scale = float(getattr(market_state, "position_scale", 1.0) or 1.0)
+    fundamental_signal = signals.get("fundamental", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
+    strong_fundamental_support = (
+        fundamental_signal.completeness > 0
+        and fundamental_signal.direction > 0
+        and fundamental_signal.confidence >= 65
+    )
+    if (breadth_ratio <= 0.42 or position_scale <= 0.75) and not strong_fundamental_support:
+        return False
+    return True
+
+
 def maybe_release_cooldown_early(ticker: str, trade_date: str, fundamental_signal: StrategySignal, min_hold_days: int = 5) -> bool:
     if fundamental_signal.direction <= 0:
         return False
@@ -301,6 +368,8 @@ def apply_arbitration_rules(
             arbitration_applied.append(ArbitrationAction.LONG_HOLD.value)
             hold_hint = ArbitrationAction.LONG_HOLD.value
 
+    _apply_risk_off_short_term_demotion(signals, market_state, arbitration_applied)
+
     trend_signal = signals.get("trend")
     mean_reversion_signal = signals.get("mean_reversion")
     if trend_signal and mean_reversion_signal and trend_signal.direction != 0 and mean_reversion_signal.direction != 0 and trend_signal.direction != mean_reversion_signal.direction:
@@ -319,11 +388,7 @@ def apply_arbitration_rules(
             mean_reversion_signal.confidence *= 0.5
             arbitration_applied.append(ArbitrationAction.BOTH_DEMOTE.value)
 
-    same_direction = {}
-    for signal in signals.values():
-        if signal.direction != 0 and signal.confidence > 60:
-            same_direction[signal.direction] = same_direction.get(signal.direction, 0) + 1
-    if any(count >= 3 for count in same_direction.values()):
+    if _should_apply_consensus_bonus(signals, market_state):
         arbitration_applied.append(ArbitrationAction.CONSENSUS_BONUS.value)
 
     return signals, arbitration_applied, hold_hint, forced_avoid

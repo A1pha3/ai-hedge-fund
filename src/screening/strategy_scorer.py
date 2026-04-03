@@ -158,6 +158,23 @@ def compute_event_decay(days_old: int) -> float:
     return math.exp(-0.35 * max(days_old, 0))
 
 
+def _event_weight_multiplier(days_old: int, strength: int) -> float:
+    multiplier = 1.0
+    if strength <= 0:
+        return 0.0
+    if strength == 1 and days_old > 2:
+        return 0.0
+    if strength == 1:
+        multiplier *= 0.55
+    if days_old > 3:
+        multiplier *= 0.75
+    if days_old > 5:
+        multiplier *= 0.55
+    if days_old > 10:
+        multiplier *= 0.25
+    return multiplier
+
+
 def derive_completeness(sub_factors: Iterable[SubFactor]) -> float:
     available = [factor for factor in sub_factors if factor.completeness > 0]
     if not available:
@@ -556,6 +573,35 @@ def _score_industry_pe(metrics: FinancialMetrics, industry_name: str, industry_p
     )
 
 
+def _apply_fundamental_quality_cap(signal: StrategySignal) -> StrategySignal:
+    if signal.direction <= 0 or signal.completeness <= 0:
+        return signal
+
+    profitability = signal.sub_factors.get("profitability", {})
+    financial_health = signal.sub_factors.get("financial_health", {})
+    if not isinstance(profitability, dict) or not isinstance(financial_health, dict):
+        return signal
+
+    profitability_direction = int(profitability.get("direction", 0) or 0)
+    financial_health_direction = int(financial_health.get("direction", 0) or 0)
+    if profitability_direction > 0 or financial_health_direction > 0:
+        return signal
+
+    capped_sub_factors = dict(signal.sub_factors)
+    capped_sub_factors["quality_cap"] = {
+        "applied": True,
+        "reason": "profitability_and_financial_health_not_bullish",
+        "original_direction": signal.direction,
+        "original_confidence": signal.confidence,
+    }
+    return StrategySignal(
+        direction=0,
+        confidence=min(signal.confidence, 45.0),
+        completeness=signal.completeness,
+        sub_factors=capped_sub_factors,
+    )
+
+
 def score_fundamental_strategy(
     ticker: str,
     trade_date: str,
@@ -574,7 +620,7 @@ def score_fundamental_strategy(
         _score_growth_valuation(latest),
         _score_industry_pe(latest, industry_name, industry_pe_medians),
     ]
-    return aggregate_sub_factors(sub_factors)
+    return _apply_fundamental_quality_cap(aggregate_sub_factors(sub_factors))
 
 
 def _score_news_sentiment(news_items: list[CompanyNews], trade_date: str) -> SubFactor:
@@ -585,6 +631,7 @@ def _score_news_sentiment(news_items: list[CompanyNews], trade_date: str) -> Sub
     weighted_score = 0.0
     total_weight = 0.0
     recent_count = 0
+    informative_count = 0
     metrics = []
     for item in news_items[:20]:
         item_dt = _safe_date(item.date)
@@ -602,23 +649,25 @@ def _score_news_sentiment(news_items: list[CompanyNews], trade_date: str) -> Sub
         else:
             direction = 0
             strength = 0
-        confidence = min(100.0, 45.0 + strength * 18.0)
-        weighted_score += direction * (confidence / 100.0) * decay
-        total_weight += decay
+        effective_weight = decay * _event_weight_multiplier(days_old, strength)
+        confidence = min(100.0, 45.0 + strength * 18.0) if strength > 0 else 0.0
+        weighted_score += direction * (confidence / 100.0) * effective_weight
+        total_weight += effective_weight
         recent_count += 1 if days_old <= 5 else 0
-        metrics.append({"title": item.title, "days_old": days_old, "decay": decay, "direction": direction, "confidence": confidence})
+        informative_count += 1 if effective_weight > 0 else 0
+        metrics.append({"title": item.title, "days_old": days_old, "decay": decay, "direction": direction, "confidence": confidence, "effective_weight": effective_weight})
 
     normalized_score = weighted_score / total_weight if total_weight > 0 else 0.0
     direction = 1 if normalized_score > 0.08 else -1 if normalized_score < -0.08 else 0
     confidence = min(100.0, abs(normalized_score) * 130.0)
-    completeness = min(1.0, len(news_items[:20]) / 5.0)
+    completeness = min(1.0, informative_count / 3.0)
     return _make_sub_factor(
         "news_sentiment",
         direction,
         confidence,
         EVENT_SUBFACTOR_WEIGHTS["news_sentiment"],
         completeness=completeness,
-        metrics={"weighted_score": normalized_score, "recent_articles": recent_count, "articles": metrics[:5]},
+        metrics={"weighted_score": normalized_score, "recent_articles": recent_count, "informative_articles": informative_count, "articles": metrics[:5]},
     )
 
 
@@ -648,14 +697,18 @@ def _score_event_freshness(news_items: list[CompanyNews], trade_date: str) -> Su
     text = f"{news_items[0].title or ''} {news_items[0].content or ''}".lower()
     pos_hits = sum(1 for word in POSITIVE_NEWS_KEYWORDS if word in text)
     neg_hits = sum(1 for word in NEGATIVE_NEWS_KEYWORDS if word in text)
+    strength = abs(pos_hits - neg_hits)
     direction = 1 if pos_hits > neg_hits else -1 if neg_hits > pos_hits else 0
-    confidence = decay * 100.0
+    freshness_weight = _event_weight_multiplier(days_old, strength)
+    if freshness_weight <= 0 or freshness_weight < 0.35 or strength < 2:
+        direction = 0
+    confidence = decay * freshness_weight * 100.0
     return _make_sub_factor(
         "event_freshness",
         direction,
         confidence,
         EVENT_SUBFACTOR_WEIGHTS["event_freshness"],
-        metrics={"days_old": days_old, "decay": decay, "positive_hits": pos_hits, "negative_hits": neg_hits},
+        metrics={"days_old": days_old, "decay": decay, "positive_hits": pos_hits, "negative_hits": neg_hits, "freshness_weight": freshness_weight},
     )
 
 

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing_extensions import Literal
 
 from src.graph.state import AgentState, show_agent_reasoning
+from src.agents.prompt_rules import with_fact_grounding_rules
 from src.tools.api import (
     get_company_news,
     get_insider_trades,
@@ -531,7 +532,8 @@ def generate_fisher_output(
         [
             (
                 "system",
-                """You are a Phil Fisher AI agent, making investment decisions using his principles:
+                with_fact_grounding_rules(
+                    """You are a Phil Fisher AI agent, making investment decisions using his principles:
   
               1. Emphasize long-term growth potential and quality of management.
               2. Focus on companies investing in R&D for future products/services.
@@ -555,7 +557,8 @@ def generate_fisher_output(
                 - "signal": "bullish" or "bearish" or "neutral"
                 - "confidence": a float between 0 and 100
                 - "reasoning": a detailed explanation
-              """,
+              """
+                ),
             ),
             (
                 "human",

@@ -2,9 +2,9 @@ import os
 import importlib
 from unittest.mock import patch
 
-from src.data.models import FinancialMetrics
+from src.data.models import CompanyNews, FinancialMetrics
 from src.screening.models import CandidateStock, StrategySignal
-from src.screening.strategy_scorer import _score_profitability, score_batch
+from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_profitability, score_batch, score_event_sentiment_strategy
 import src.screening.strategy_scorer as strategy_scorer_module
 
 
@@ -240,3 +240,76 @@ def test_profitability_zero_pass_can_be_excluded_for_analysis():
     assert factor.completeness == 0.0
     assert factor.metrics["positive_count"] == 0
     assert factor.metrics["zero_pass_mode"] == "inactive"
+
+
+def _news_item(title: str, date: str, content: str = "") -> CompanyNews:
+    return CompanyNews(
+        ticker="000001",
+        title=title,
+        author="test",
+        source="test",
+        date=date,
+        url="https://example.com",
+        content=content,
+    )
+
+
+def test_event_sentiment_ignores_stale_weak_single_keyword_news():
+    news = [_news_item("Company growth", "2026-02-26", "")]
+
+    with patch("src.screening.strategy_scorer.get_company_news", return_value=news), \
+         patch("src.screening.strategy_scorer.get_insider_trades", return_value=[]):
+        signal = score_event_sentiment_strategy("000001", "20260305")
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.sub_factors["news_sentiment"]["metrics"]["informative_articles"] == 0
+
+
+def test_event_sentiment_keeps_fresh_multi_keyword_news_actionable():
+    news = [_news_item("profit growth beat upgrade", "2026-03-05", "record order growth and profit beat")]
+
+    with patch("src.screening.strategy_scorer.get_company_news", return_value=news), \
+         patch("src.screening.strategy_scorer.get_insider_trades", return_value=[]):
+        signal = score_event_sentiment_strategy("000001", "20260305")
+
+    assert signal.direction == 1
+    assert signal.confidence > 0
+    assert signal.sub_factors["news_sentiment"]["metrics"]["informative_articles"] == 1
+
+
+def test_fundamental_quality_cap_neutralizes_bullish_signal_without_quality_confirmation():
+    signal = StrategySignal(
+        direction=1,
+        confidence=72.0,
+        completeness=1.0,
+        sub_factors={
+            "profitability": {"direction": 0, "confidence": 30.0, "metrics": {"positive_count": 1}},
+            "financial_health": {"direction": 0, "confidence": 25.0, "metrics": {}},
+            "growth": {"direction": 1, "confidence": 80.0, "metrics": {}},
+        },
+    )
+
+    capped = _apply_fundamental_quality_cap(signal)
+
+    assert capped.direction == 0
+    assert capped.confidence == 45.0
+    assert capped.sub_factors["quality_cap"]["applied"] is True
+
+
+def test_fundamental_quality_cap_keeps_signal_when_core_quality_is_bullish():
+    signal = StrategySignal(
+        direction=1,
+        confidence=72.0,
+        completeness=1.0,
+        sub_factors={
+            "profitability": {"direction": 1, "confidence": 70.0, "metrics": {"positive_count": 2}},
+            "financial_health": {"direction": 0, "confidence": 25.0, "metrics": {}},
+            "growth": {"direction": 1, "confidence": 80.0, "metrics": {}},
+        },
+    )
+
+    capped = _apply_fundamental_quality_cap(signal)
+
+    assert capped.direction == 1
+    assert capped.confidence == 72.0

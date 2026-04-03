@@ -169,6 +169,13 @@ def test_event_decay():
 
 def test_trend_market_weights():
     index_df = _make_index_frame(adx_close_move=15.0)
+    price_batch = pd.DataFrame([
+        {"pct_chg": 2.1},
+        {"pct_chg": 1.8},
+        {"pct_chg": 0.7},
+        {"pct_chg": 0.4},
+        {"pct_chg": -0.3},
+    ])
     limit_df = pd.DataFrame([
         {"limit": "U"}, {"limit": "U"}, {"limit": "U"}, {"limit": "D"}
     ])
@@ -182,6 +189,7 @@ def test_trend_market_weights():
         {"trade_date": "20260305", "north_money": 8},
     ])
     with patch("src.screening.market_state.get_index_daily", return_value=index_df), \
+         patch("src.screening.market_state.get_daily_price_batch", return_value=price_batch), \
          patch("src.screening.market_state.get_limit_list", return_value=limit_df), \
          patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic), \
          patch("src.screening.market_state.get_northbound_flow", return_value=northbound), \
@@ -200,12 +208,41 @@ def test_low_volume_position_scale():
         {"circ_mv": 200_000, "turnover_rate": 1.0},
     ])
     with patch("src.screening.market_state.get_index_daily", return_value=index_df), \
+         patch("src.screening.market_state.get_daily_price_batch", return_value=pd.DataFrame()), \
          patch("src.screening.market_state.get_limit_list", return_value=pd.DataFrame()), \
          patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic), \
          patch("src.screening.market_state.get_northbound_flow", return_value=pd.DataFrame()):
         state = detect_market_state("20260305")
     assert state.is_low_volume is True
     assert state.position_scale == 0.5
+
+
+def test_weak_breadth_reduces_position_scale_and_trend_weight():
+    index_df = _make_index_frame(adx_close_move=6.0)
+    price_batch = pd.DataFrame(
+        [
+            {"pct_chg": -2.1},
+            {"pct_chg": -1.8},
+            {"pct_chg": -0.7},
+            {"pct_chg": 0.2},
+            {"pct_chg": 0.4},
+        ]
+    )
+    daily_basic = pd.DataFrame([
+        {"circ_mv": 2_500_000_000, "turnover_rate": 2.2},
+        {"circ_mv": 2_000_000_000, "turnover_rate": 2.0},
+    ])
+
+    with patch("src.screening.market_state.get_index_daily", return_value=index_df), \
+         patch("src.screening.market_state.get_daily_price_batch", return_value=price_batch), \
+         patch("src.screening.market_state.get_limit_list", return_value=pd.DataFrame()), \
+         patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic), \
+         patch("src.screening.market_state.get_northbound_flow", return_value=pd.DataFrame()):
+        state = detect_market_state("20260305")
+
+    assert state.breadth_ratio < 0.42
+    assert state.position_scale == 0.75
+    assert state.adjusted_weights["fundamental"] > state.adjusted_weights["trend"]
 
 
 def test_safety_first_rule():
@@ -241,7 +278,7 @@ def test_hurst_arbitration():
 
 
 def test_consensus_bonus_and_score_range():
-    market_state = MarketState(adjusted_weights={"trend": 0.25, "mean_reversion": 0.25, "fundamental": 0.25, "event_sentiment": 0.25})
+    market_state = MarketState(breadth_ratio=0.62, adjusted_weights={"trend": 0.25, "mean_reversion": 0.25, "fundamental": 0.25, "event_sentiment": 0.25})
     signals = {
         "trend": _signal(1, 80),
         "mean_reversion": _signal(1, 70),
@@ -253,6 +290,28 @@ def test_consensus_bonus_and_score_range():
     assert "consensus_bonus" in fused.arbitration_applied
     assert fused.score_b > base_score
     assert -1.0 <= fused.score_b <= 1.0
+
+
+def test_risk_off_demotion_blocks_weak_breadth_bullish_consensus_bonus():
+    market_state = MarketState(
+        breadth_ratio=0.36,
+        position_scale=0.75,
+        adjusted_weights={"trend": 0.30, "mean_reversion": 0.20, "fundamental": 0.30, "event_sentiment": 0.20},
+    )
+    signals = {
+        "trend": _signal(1, 85),
+        "mean_reversion": _signal(1, 70),
+        "fundamental": _signal(0, 45),
+        "event_sentiment": _signal(1, 80),
+    }
+
+    fused = fuse_signals_for_ticker("000001", signals, market_state)
+
+    assert "risk_off" in fused.arbitration_applied
+    assert "consensus_bonus" not in fused.arbitration_applied
+    assert fused.strategy_signals["trend"].confidence == 68
+    assert fused.strategy_signals["event_sentiment"].confidence == 56
+    assert fused.decision != "strong_buy"
 
 
 def test_quality_first_guard_blocks_low_quality_candidates_despite_positive_momentum():

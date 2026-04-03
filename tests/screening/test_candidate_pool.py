@@ -66,6 +66,50 @@ class TestHelpers:
     def test_default_candidate_pool_size_is_300(self):
         assert candidate_pool_module.MAX_CANDIDATE_POOL_SIZE == 300
 
+    def test_btst_liquidity_sort_prefers_smaller_market_cap_within_same_liquidity_band(self):
+        large_cap = CandidateStock(
+            ticker="000001",
+            name="大市值",
+            industry_sw="银行",
+            avg_volume_20d=12000.0,
+            market_cap=300.0,
+            listing_date="20100101",
+        )
+        smaller_cap = CandidateStock(
+            ticker="000002",
+            name="小市值",
+            industry_sw="银行",
+            avg_volume_20d=11800.0,
+            market_cap=80.0,
+            listing_date="20100101",
+        )
+
+        ranked = sorted([large_cap, smaller_cap], key=candidate_pool_module._candidate_liquidity_sort_key, reverse=True)
+
+        assert [candidate.ticker for candidate in ranked] == ["000002", "000001"]
+
+    def test_btst_liquidity_sort_still_respects_higher_liquidity_band_first(self):
+        high_liquidity = CandidateStock(
+            ticker="000001",
+            name="高流动",
+            industry_sw="银行",
+            avg_volume_20d=16000.0,
+            market_cap=400.0,
+            listing_date="20100101",
+        )
+        lower_liquidity = CandidateStock(
+            ticker="000002",
+            name="低流动",
+            industry_sw="银行",
+            avg_volume_20d=11800.0,
+            market_cap=80.0,
+            listing_date="20100101",
+        )
+
+        ranked = sorted([high_liquidity, lower_liquidity], key=candidate_pool_module._candidate_liquidity_sort_key, reverse=True)
+
+        assert [candidate.ticker for candidate in ranked] == ["000001", "000002"]
+
     def test_estimate_trading_days(self):
         """上市日距今的交易日估算"""
         # 100 自然日 ≈ 70 交易日
@@ -470,6 +514,30 @@ class TestExcludeRules:
         assert shadow_summary["selected_count"] == 1
         assert shadow_summary["lane_counts"] == {}
         assert (snapshot_dir / "candidate_pool_20260305_top300_shadow.json").exists()
+
+    def test_candidate_pool_shadow_recall_uses_cached_main_pool_without_recompute_when_focus_is_empty(self):
+        snapshot_dir = Path(tempfile.mkdtemp())
+        cached_candidates = [
+            CandidateStock(
+                ticker="000001",
+                name="缓存主池",
+                industry_sw="银行",
+                avg_volume_20d=12345.0,
+                market_cap=100.0,
+                listing_date="20100101",
+            )
+        ]
+        snapshot_path = snapshot_dir / "candidate_pool_20260305_top300.json"
+        snapshot_path.write_text(json.dumps([candidate.model_dump() for candidate in cached_candidates], ensure_ascii=False, indent=2), encoding="utf-8")
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
+             patch("src.screening.candidate_pool._compute_candidate_pool_candidates") as mock_compute:
+            selected_candidates, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow("20260305", use_cache=True)
+
+        mock_compute.assert_not_called()
+        assert [candidate.ticker for candidate in selected_candidates] == ["000001"]
+        assert shadow_candidates == []
+        assert shadow_summary["selected_count"] == 1
 
     @patch("src.screening.candidate_pool.get_sw_industry_classification")
     @patch("src.screening.candidate_pool.get_daily_basic_batch")

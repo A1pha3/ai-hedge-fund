@@ -1213,6 +1213,8 @@ class DailyPipeline:
     exit_checker: ExitChecker = _default_exit_checker
     base_model_name: str = ""
     base_model_provider: str = ""
+    selected_analysts: list[str] | None = None
+    fast_selected_analysts: list[str] | None = None
     frozen_post_market_plans: dict[str, ExecutionPlan] | None = None
     frozen_plan_source: str | None = None
     target_mode: TargetMode = "research_only"
@@ -1255,35 +1257,50 @@ class DailyPipeline:
             return self.exit_checker(portfolio_snapshot, trade_date, logic_scores or {})
         return self.exit_checker(portfolio_snapshot, trade_date)
 
+    def _resolve_selected_analysts_for_tier(self, model_tier: str) -> list[str] | None:
+        if model_tier == "fast" and self.fast_selected_analysts is not None:
+            return list(self.fast_selected_analysts)
+        if self.selected_analysts is not None:
+            return list(self.selected_analysts)
+        return None
+
     def _run_agents_with_base_model(self, tickers: list[str], trade_date: str, model_tier: str) -> dict[str, dict[str, dict]]:
         from src.main import run_hedge_fund
 
         start_date = (datetime.strptime(trade_date, "%Y%m%d") - timedelta(days=365)).strftime("%Y-%m-%d")
         end_date = datetime.strptime(trade_date, "%Y%m%d").strftime("%Y-%m-%d")
         model_name, model_provider = _resolve_pipeline_model_config(model_tier, self.base_model_name, self.base_model_provider)
+        selected_analysts = self._resolve_selected_analysts_for_tier(model_tier)
+        llm_observability = {
+            "trade_date": trade_date,
+            "pipeline_stage": "daily_pipeline_post_market",
+            "model_tier": model_tier,
+        }
+        if selected_analysts is not None:
+            llm_observability["selected_analysts"] = list(selected_analysts)
         result = run_hedge_fund(
             tickers=tickers,
             start_date=start_date,
             end_date=end_date,
             portfolio={"cash": 1_000_000, "positions": {}, "margin_requirement": 0.0, "margin_used": 0.0, "realized_gains": {}},
             show_reasoning=False,
+            selected_analysts=selected_analysts or [],
             model_name=model_name,
             model_provider=model_provider,
-            llm_observability={
-                "trade_date": trade_date,
-                "pipeline_stage": "daily_pipeline_post_market",
-                "model_tier": model_tier,
-            },
+            llm_observability=llm_observability,
         )
         execution_plan_provenance = result.get("execution_plan_provenance")
         if isinstance(execution_plan_provenance, dict):
+            execution_observation = {
+                "trade_date": trade_date,
+                "model_tier": model_tier,
+                "tickers": list(tickers),
+                "execution_plan_provenance": execution_plan_provenance,
+            }
+            if selected_analysts is not None:
+                execution_observation["selected_analysts"] = list(selected_analysts)
             self.execution_plan_provenance_log.append(
-                {
-                    "trade_date": trade_date,
-                    "model_tier": model_tier,
-                    "tickers": list(tickers),
-                    "execution_plan_provenance": execution_plan_provenance,
-                }
+                execution_observation
             )
         return result.get("analyst_signals", {})
 

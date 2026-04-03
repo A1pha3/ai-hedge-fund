@@ -5,6 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from typing_extensions import Literal
 
+from src.agents.prompt_rules import with_fact_grounding_rules
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
     get_company_news,
@@ -770,7 +771,14 @@ def generate_munger_output(
     facts_bundle = make_munger_facts_bundle(analysis_data)
     template = ChatPromptTemplate.from_messages(
         [
-            ("system", "You are Charlie Munger. Decide bullish, bearish, or neutral using only the facts. " "Return JSON only. Keep reasoning under 120 characters. " "Use the provided confidence exactly; do not change it."),
+            (
+                "system",
+                with_fact_grounding_rules(
+                    "You are Charlie Munger. Decide bullish, bearish, or neutral using only the facts. "
+                    "Return JSON only. Keep reasoning under 120 characters. "
+                    "Use the provided confidence exactly; do not change it."
+                ),
+            ),
             (
                 "human",
                 "Ticker: {ticker}\n"
