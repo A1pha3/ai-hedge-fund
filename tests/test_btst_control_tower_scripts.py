@@ -5,7 +5,7 @@ from pathlib import Path
 
 from scripts.analyze_btst_governance_synthesis import analyze_btst_governance_synthesis
 from scripts.analyze_btst_replay_cohort import analyze_btst_replay_cohort
-from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
+from scripts.run_btst_nightly_control_tower import build_btst_nightly_control_tower_payload, generate_btst_nightly_control_tower_artifacts, render_btst_nightly_control_tower_markdown
 from scripts.validate_btst_governance_consistency import validate_btst_governance_consistency
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
@@ -1290,6 +1290,149 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert reading_paths["nightly_review"]["entry_ids"][0] == "btst_open_ready_delta_latest"
     assert reading_paths["nightly_review"]["entry_ids"][1] == "btst_latest_close_validation_latest"
     assert "btst_tplus1_tplus2_objective_monitor_latest" in reading_paths["nightly_review"]["entry_ids"]
+
+
+def test_btst_control_tower_overlays_latest_upstream_shadow_followup(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = _write_btst_followup_report(
+        reports_root,
+        report_name="paper_trading_20260331_20260331_live_m2_7_short_trade_only_shadow_followup",
+        selection_target="short_trade_only",
+        mode="live_pipeline",
+        trade_date="2026-03-31",
+        next_trade_date="2026-04-01",
+        summary_counts={
+            "selected_count": 0,
+            "near_miss_count": 1,
+            "blocked_count": 0,
+            "rejected_count": 1,
+            "opportunity_pool_count": 0,
+            "research_upside_radar_count": 0,
+        },
+        brief_payload={
+            "summary": {
+                "short_trade_selected_count": 0,
+                "short_trade_near_miss_count": 1,
+                "short_trade_blocked_count": 0,
+                "short_trade_rejected_count": 1,
+                "short_trade_opportunity_pool_count": 0,
+                "research_upside_radar_count": 0,
+            },
+            "recommendation": "转入 downstream followup。",
+            "upstream_shadow_recall_summary": {"top_focus_tickers": ["300720", "003036"]},
+            "priority_rows": [
+                {
+                    "ticker": "300720",
+                    "decision": "near_miss",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "positive_tags": ["upstream_shadow_catalyst_relief_applied"],
+                    "top_reasons": ["upstream_shadow_catalyst_relief"],
+                },
+                {
+                    "ticker": "003036",
+                    "decision": "rejected",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "top_reasons": ["profitability_hard_cliff"],
+                },
+            ],
+        },
+    )
+
+    synthesis_json = reports_root / "btst_governance_synthesis_latest.json"
+    validation_json = reports_root / "btst_governance_validation_latest.json"
+    independent_json = reports_root / "btst_independent_window_monitor_latest.json"
+    tplus_json = reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json"
+    replay_json = reports_root / "btst_replay_cohort_latest.json"
+    action_board_json = reports_root / "btst_no_candidate_entry_action_board_latest.json"
+    failure_dossier_json = reports_root / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_json = reports_root / "btst_watchlist_recall_dossier_latest.json"
+    candidate_pool_dossier_json = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
+
+    _write_json(synthesis_json, {"lane_matrix": [], "waiting_lane_count": 0, "ready_lane_count": 0, "recommendation": "聚焦 active upstream backlog。", "lane_status_counts": {}, "closed_frontiers": [], "next_actions": []})
+    _write_json(validation_json, {"overall_verdict": "pass", "warn_count": 0, "fail_count": 0})
+    _write_json(independent_json, {"report_dir_count": 0, "rows": [], "recommendation": "n/a"})
+    _write_json(tplus_json, {"tradeable_surface": {"verdict": "n/a"}})
+    _write_json(replay_json, {"report_count": 1, "selection_target_counts": {"short_trade_only": 1}, "cohort_summaries": [], "recommendation": "n/a"})
+    _write_json(action_board_json, {"priority_queue_count": 3, "top_priority_tickers": ["300720", "003036", "301292"], "recommendation": "历史 backlog 仍显示 upstream absence。"})
+    _write_json(
+        failure_dossier_json,
+        {
+            "priority_failure_class_counts": {"upstream_absent_from_replay_inputs": 3},
+            "priority_handoff_stage_counts": {"absent_from_watchlist": 3},
+            "top_absent_from_watchlist_tickers": ["300720", "003036", "301292"],
+            "top_upstream_absence_tickers": ["300720", "003036", "301292"],
+            "recommendation": "先查 absent_from_watchlist。",
+        },
+    )
+    _write_json(
+        watchlist_dossier_json,
+        {
+            "priority_recall_stage_counts": {"absent_from_candidate_pool": 3},
+            "top_absent_from_candidate_pool_tickers": ["300720", "003036", "301292"],
+            "recommendation": "先补 candidate pool recall。",
+        },
+    )
+    _write_json(
+        candidate_pool_dossier_json,
+        {
+            "priority_stage_counts": {"candidate_pool_truncated_after_filters": 3},
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["300720", "003036", "301292"]},
+            "upstream_handoff_board_status": "mixed_upstream_and_post_recall_followup",
+            "upstream_handoff_board_summary": {
+                "board_status": "mixed_upstream_and_post_recall_followup",
+                "focus_tickers": ["300720", "003036", "301292"],
+            },
+            "recommendation": "raw backlog 与最新 followup 需要分层展示。",
+        },
+    )
+
+    manifest = {
+        "reports_root": str(reports_root.resolve()),
+        "latest_btst_run": {
+            "report_dir_abs": str(report_dir.resolve()),
+            "report_dir": report_dir.name,
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-03-31",
+            "next_trade_date": "2026-04-01",
+        },
+        "btst_governance_synthesis_refresh": {"status": "refreshed", "output_json": str(synthesis_json.resolve())},
+        "btst_governance_validation_refresh": {"status": "refreshed", "output_json": str(validation_json.resolve())},
+        "btst_independent_window_monitor_refresh": {"status": "refreshed", "output_json": str(independent_json.resolve())},
+        "btst_tplus1_tplus2_objective_monitor_refresh": {"status": "refreshed", "output_json": str(tplus_json.resolve())},
+        "btst_replay_cohort_refresh": {"status": "refreshed", "output_json": str(replay_json.resolve())},
+        "candidate_entry_shadow_refresh": {
+            "status": "refreshed",
+            "no_candidate_entry_action_board_json": str(action_board_json.resolve()),
+            "no_candidate_entry_failure_dossier_json": str(failure_dossier_json.resolve()),
+            "watchlist_recall_dossier_json": str(watchlist_dossier_json.resolve()),
+            "candidate_pool_recall_dossier_json": str(candidate_pool_dossier_json.resolve()),
+            "candidate_pool_upstream_handoff_board_status": "mixed_upstream_and_post_recall_followup",
+            "candidate_pool_upstream_handoff_board_summary": {
+                "board_status": "mixed_upstream_and_post_recall_followup",
+                "focus_tickers": ["300720", "003036", "301292"],
+            },
+        },
+        "entries": [],
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+    control = payload["control_tower_snapshot"]
+
+    assert control["upstream_shadow_followup_validated_tickers"] == ["300720", "003036"]
+    assert control["upstream_shadow_followup_near_miss_tickers"] == ["300720"]
+    assert control["upstream_shadow_followup_rejected_profitability_tickers"] == ["003036"]
+    assert control["active_no_candidate_entry_priority_tickers"] == ["301292"]
+    assert control["active_no_candidate_entry_absent_from_watchlist_tickers"] == ["301292"]
+    assert control["active_watchlist_recall_absent_from_candidate_pool_tickers"] == ["301292"]
+    assert control["active_candidate_pool_upstream_handoff_focus_tickers"] == ["301292"]
+    assert "301292" in str(control["upstream_shadow_followup_recommendation"])
+
+    markdown = render_btst_nightly_control_tower_markdown(payload, output_parent=reports_root)
+    assert "## Latest Upstream Shadow Followup Overlay" in markdown
+    assert "validated_tickers: ['300720', '003036']" in markdown
+    assert "active_no_candidate_entry_priority_tickers: ['301292']" in markdown
+    assert "upstream_shadow_followup_overlay_recommendation:" in markdown
 
 
 def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_path: Path) -> None:

@@ -26,7 +26,7 @@ from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetSummary, TargetMode
 from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets, summarize_selection_targets
-from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry, evaluate_short_trade_rejected_target
+from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
 from src.llm.defaults import get_default_model_config
 from src.tools.tushare_api import get_daily_basic_batch
 
@@ -55,6 +55,11 @@ def _get_env_int(name: str, default: int) -> int:
         return default
 
 
+def _get_env_csv_set(name: str, default: str) -> set[str]:
+    raw_value = os.getenv(name, default)
+    return {item.strip() for item in str(raw_value or "").split(",") if item.strip()}
+
+
 FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD", 0.38)
 FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
@@ -68,6 +73,39 @@ SHORT_TRADE_BOUNDARY_TREND_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUN
 SHORT_TRADE_BOUNDARY_VOLUME_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_VOLUME_MIN", 0.15)
 SHORT_TRADE_BOUNDARY_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN", 0.12)
 UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS", 3)
+UPSTREAM_SHADOW_RELEASE_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_MAX_TICKERS", 2)
+UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN", 0.30)
+UPSTREAM_SHADOW_RELEASE_LANES = _get_env_csv_set(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LANES",
+    "layer_a_liquidity_corridor,post_gate_liquidity_competition",
+)
+UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS = {
+    "layer_a_liquidity_corridor": _get_env_float(
+        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LIQUIDITY_CORRIDOR_SCORE_MIN",
+        UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+    ),
+    "post_gate_liquidity_competition": _get_env_float(
+        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_POST_GATE_REBUCKET_SCORE_MIN",
+        UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+    ),
+}
+UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN", 0.47)
+UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN", 0.38)
+UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN", 0.80)
+UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN", 0.85)
+UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR", 1.0)
+UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD", 0.45)
+UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF = bool(
+    _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 1)
+)
+WATCHLIST_SHADOW_RELEASE_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_MAX_TICKERS", 2)
+WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN = _get_env_float("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN", FAST_AGENT_SCORE_THRESHOLD)
+WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN = _get_env_float("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN", 0.18)
+WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN = _get_env_float("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN", -0.08)
+WATCHLIST_SHADOW_RELEASE_CONFLICTS = _get_env_csv_set(
+    "DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_CONFLICTS",
+    "b_positive_c_strong_bearish",
+)
 CATALYST_THEME_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_CATALYST_THEME_MAX_TICKERS", 8)
 CATALYST_THEME_SHADOW_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_CATALYST_THEME_SHADOW_MAX_TICKERS", 8)
 CATALYST_THEME_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CANDIDATE_SCORE_MIN", 0.34)
@@ -218,6 +256,8 @@ def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], wat
     selected_tickers = {item.ticker for item in watchlist}
     entries: list[dict] = []
     selected_entries: list[dict] = []
+    released_shadow_entries: list[dict[str, Any]] = []
+    ranked_released_shadow_entries: list[tuple[float, float, dict[str, Any]]] = []
     for item in layer_c_results:
         payload = {
             "ticker": item.ticker,
@@ -238,10 +278,95 @@ def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], wat
             continue
         primary_reason, reasons = _classify_watchlist_filter(item)
         entries.append({**payload, "reason": primary_reason, "reasons": reasons})
+        should_release, release_reason = _should_release_watchlist_shadow_candidate(
+            item=item,
+            primary_reason=primary_reason,
+        )
+        if should_release and release_reason is not None:
+            ranked_released_shadow_entries.append(
+                (
+                    float(item.score_final),
+                    float(item.score_b),
+                    _build_watchlist_shadow_release_entry(
+                        item=item,
+                        reasons=reasons,
+                        release_reason=release_reason,
+                    ),
+                )
+            )
     summary = _build_filter_summary(entries)
+    ranked_released_shadow_entries.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
+    for rank, (_, _, entry) in enumerate(ranked_released_shadow_entries[:WATCHLIST_SHADOW_RELEASE_MAX_TICKERS], start=1):
+        entry["rank"] = rank
+        released_shadow_entries.append(entry)
     summary["selected_tickers"] = [item.ticker for item in watchlist]
     summary["selected_entries"] = selected_entries
+    summary["released_shadow_count"] = len(released_shadow_entries)
+    summary["released_shadow_tickers"] = [entry["ticker"] for entry in released_shadow_entries]
+    summary["released_shadow_entries"] = released_shadow_entries
+    summary["prefilter_thresholds"] = {
+        "score_b_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN, 4),
+        "score_final_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN, 4),
+        "score_c_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN, 4),
+        "conflicts": sorted(WATCHLIST_SHADOW_RELEASE_CONFLICTS),
+    }
     return summary
+
+
+def _should_release_watchlist_shadow_candidate(*, item: LayerCResult, primary_reason: str) -> tuple[bool, str | None]:
+    if primary_reason != "decision_avoid":
+        return False, None
+    if str(item.decision or "") != "avoid":
+        return False, None
+    if str(item.bc_conflict or "") not in WATCHLIST_SHADOW_RELEASE_CONFLICTS:
+        return False, None
+    if float(item.score_b) < WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN:
+        return False, None
+    if float(item.score_final) < WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN:
+        return False, None
+    if float(item.score_c) < WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN:
+        return False, None
+    return True, "watchlist_avoid_shadow_release_boundary_pass"
+
+
+def _build_watchlist_shadow_release_entry(*, item: LayerCResult, reasons: list[str], release_reason: str) -> dict[str, Any]:
+    resolved_reason_codes = [
+        "watchlist_avoid_shadow_release",
+        release_reason,
+        *[str(reason) for reason in list(reasons or []) if str(reason or "").strip()],
+    ]
+    deduped_reason_codes: list[str] = []
+    for code in resolved_reason_codes:
+        if code not in deduped_reason_codes:
+            deduped_reason_codes.append(code)
+
+    return {
+        "ticker": item.ticker,
+        "score_b": round(float(item.score_b), 4),
+        "score_c": round(float(item.score_c), 4),
+        "score_final": round(float(item.score_final), 4),
+        "quality_score": round(float(item.quality_score), 4),
+        "decision": str(item.decision or "avoid"),
+        "reason": "watchlist_avoid_shadow_release",
+        "reasons": deduped_reason_codes,
+        "candidate_source": "watchlist_avoid_shadow_release",
+        "candidate_reason_codes": deduped_reason_codes,
+        "bc_conflict": None,
+        "source_decision": str(item.decision or ""),
+        "source_bc_conflict": item.bc_conflict,
+        "shadow_release_reason": release_reason,
+        "shadow_release_thresholds": {
+            "score_b_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN, 4),
+            "score_final_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN, 4),
+            "score_c_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN, 4),
+        },
+        "strategy_signals": {
+            name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
+            for name, signal in dict(item.strategy_signals or {}).items()
+        },
+        "agent_contribution_summary": dict(item.agent_contribution_summary or {}),
+        "promotion_trigger": "主 watchlist veto 保持不变；仅把边界 avoid 样本送入 short-trade supplemental replay，验证是否属于 000960 式 false negative。",
+    }
 
 
 def _build_short_trade_boundary_entry(*, item, reason: str, rank: int, candidate_source: str = "short_trade_boundary", upstream_candidate_source: str = "layer_b_boundary", candidate_reason_codes: list[str] | None = None, candidate_pool_rank: int | None = None, candidate_pool_lane: str | None = None, candidate_pool_avg_amount_share_of_cutoff: float | None = None, candidate_pool_avg_amount_share_of_min_gate: float | None = None) -> dict:
@@ -315,6 +440,76 @@ def _build_upstream_shadow_observation_entry(*, candidate_entry: dict[str, Any],
     }
 
 
+def _should_release_upstream_shadow_candidate(*, candidate_entry: dict[str, Any], filter_reason: str, metrics_payload: dict[str, Any]) -> tuple[bool, str | None]:
+    candidate_pool_lane = str(candidate_entry.get("candidate_pool_lane") or "")
+    candidate_score = float(metrics_payload.get("candidate_score", 0.0) or 0.0)
+    lane_score_floor = float(UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.get(candidate_pool_lane, UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN))
+
+    if candidate_pool_lane not in UPSTREAM_SHADOW_RELEASE_LANES:
+        return False, None
+    if filter_reason in {"metric_data_fail", "structural_prefilter_fail"}:
+        return False, None
+    if candidate_score < lane_score_floor:
+        return False, None
+    return True, "upstream_shadow_release_score_floor_pass"
+
+
+def _build_upstream_shadow_catalyst_relief_config(*, filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
+    if filter_reason != "catalyst_freshness_below_short_trade_boundary_floor":
+        return {}
+
+    candidate_score = float(metrics_payload.get("candidate_score", 0.0) or 0.0)
+    breakout_freshness = float(metrics_payload.get("breakout_freshness", 0.0) or 0.0)
+    trend_acceleration = float(metrics_payload.get("trend_acceleration", 0.0) or 0.0)
+    close_strength = float(metrics_payload.get("close_strength", 0.0) or 0.0)
+    if candidate_score < UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN:
+        return {}
+    if breakout_freshness < UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN:
+        return {}
+    if trend_acceleration < UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN:
+        return {}
+    if close_strength < UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN:
+        return {}
+
+    return {
+        "enabled": True,
+        "reason": "upstream_shadow_catalyst_relief",
+        "catalyst_freshness_floor": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR, 4),
+        "near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
+        "breakout_freshness_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN, 4),
+        "trend_acceleration_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN, 4),
+        "close_strength_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN, 4),
+        "require_no_profitability_hard_cliff": UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+    }
+
+
+def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], filter_reason: str, metrics_payload: dict[str, Any], release_reason: str) -> dict[str, Any]:
+    candidate_score = round(float(metrics_payload.get("candidate_score", 0.0) or 0.0), 4)
+    candidate_pool_lane = str(candidate_entry.get("candidate_pool_lane") or "")
+    lane_score_floor = round(float(UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.get(candidate_pool_lane, UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN)), 4)
+    catalyst_relief_config = _build_upstream_shadow_catalyst_relief_config(filter_reason=filter_reason, metrics_payload=metrics_payload)
+    resolved_reason_codes = [
+        str(code)
+        for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or [])
+        if str(code or "").strip()
+    ]
+    for code in [filter_reason, release_reason, "upstream_shadow_release_candidate"]:
+        if code not in resolved_reason_codes:
+            resolved_reason_codes.append(code)
+    return {
+        **candidate_entry,
+        "reasons": resolved_reason_codes,
+        "candidate_reason_codes": resolved_reason_codes,
+        "short_trade_boundary_metrics": dict(metrics_payload),
+        "shadow_release_filter_reason": filter_reason,
+        "shadow_release_reason": release_reason,
+        "shadow_release_score_floor": lane_score_floor,
+        "shadow_release_candidate_score": candidate_score,
+        "promotion_trigger": "受控 upstream shadow release 样本，仅进入 short-trade supplemental replay，默认不直接进入正式买入名单。",
+        **({"short_trade_catalyst_relief": catalyst_relief_config} if catalyst_relief_config else {}),
+    }
+
+
 def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
     snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
     gate_status = dict(snapshot.get("gate_status") or {})
@@ -349,10 +544,12 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
     selected_tickers = {item.ticker for item in high_pool}
     entries: list[dict] = []
     shadow_observation_entries: list[dict] = []
+    released_shadow_entries: list[dict] = []
     reason_counts: dict[str, int] = {}
     filtered_reason_counts: dict[str, int] = {}
     ranked_candidates: list[tuple[float, float, dict]] = []
     ranked_shadow_observations: list[tuple[float, float, dict]] = []
+    ranked_released_shadow_entries: list[tuple[float, float, dict]] = []
     shadow_candidate_by_ticker = dict(shadow_candidate_by_ticker or {})
     upstream_candidates_by_ticker = {item.ticker: item for item in fused if item.ticker not in selected_tickers}
     for item in list(shadow_fused or []):
@@ -394,6 +591,24 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
         if not qualified:
             filtered_reason_counts[filter_reason] = filtered_reason_counts.get(filter_reason, 0) + 1
             if shadow_candidate is not None:
+                should_release, release_reason = _should_release_upstream_shadow_candidate(
+                    candidate_entry=candidate_entry,
+                    filter_reason=filter_reason,
+                    metrics_payload=metrics_payload,
+                )
+                if should_release and release_reason is not None:
+                    ranked_released_shadow_entries.append(
+                        (
+                            float(metrics_payload.get("candidate_score", 0.0) or 0.0),
+                            float(item.score_b),
+                            _build_upstream_shadow_release_entry(
+                                candidate_entry=candidate_entry,
+                                filter_reason=filter_reason,
+                                metrics_payload=metrics_payload,
+                                release_reason=release_reason,
+                            ),
+                        )
+                    )
                 ranked_shadow_observations.append(
                     (
                         float(metrics_payload.get("candidate_score", 0.0) or 0.0),
@@ -421,10 +636,16 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
         entry["rank"] = rank
         shadow_observation_entries.append(entry)
 
+    ranked_released_shadow_entries.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
+    for rank, (_, _, entry) in enumerate(ranked_released_shadow_entries[:UPSTREAM_SHADOW_RELEASE_MAX_TICKERS], start=1):
+        entry["rank"] = rank
+        released_shadow_entries.append(entry)
+
     return {
         "upstream_candidate_count": len(upstream_candidates),
         "candidate_count": len(entries),
         "shadow_observation_count": len(shadow_observation_entries),
+        "released_shadow_count": len(released_shadow_entries),
         "reason_counts": reason_counts,
         "filtered_reason_counts": filtered_reason_counts,
         "prefilter_thresholds": {
@@ -433,14 +654,28 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
             "trend_acceleration_min": round(SHORT_TRADE_BOUNDARY_TREND_MIN, 4),
             "volume_expansion_quality_min": round(SHORT_TRADE_BOUNDARY_VOLUME_MIN, 4),
             "catalyst_freshness_min": round(SHORT_TRADE_BOUNDARY_CATALYST_MIN, 4),
+            "upstream_shadow_release_candidate_score_min": round(UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN, 4),
+            "upstream_shadow_catalyst_relief_candidate_score_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN, 4),
+            "upstream_shadow_catalyst_relief_breakout_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN, 4),
+            "upstream_shadow_catalyst_relief_trend_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN, 4),
+            "upstream_shadow_catalyst_relief_close_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN, 4),
+            "upstream_shadow_catalyst_relief_catalyst_freshness_floor": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR, 4),
+            "upstream_shadow_catalyst_relief_near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
+            "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+            "upstream_shadow_release_lane_score_mins": {
+                lane: round(float(score_min), 4)
+                for lane, score_min in UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.items()
+            },
         },
         "selected_tickers": [entry["ticker"] for entry in entries],
         "shadow_observation_tickers": [entry["ticker"] for entry in shadow_observation_entries],
+        "released_shadow_tickers": [entry["ticker"] for entry in released_shadow_entries],
         "score_buffer": round(SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
         "minimum_score_b": round(FAST_AGENT_SCORE_THRESHOLD - SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
         "max_candidates": SHORT_TRADE_BOUNDARY_MAX_TICKERS,
         "tickers": entries,
         "shadow_observation_entries": shadow_observation_entries,
+        "released_shadow_entries": released_shadow_entries,
     }
 
 
@@ -843,14 +1078,22 @@ def _ensure_plan_target_shells(
 ) -> ExecutionPlan:
     selection_targets = dict(plan.selection_targets or {})
     summary = plan.dual_target_summary if isinstance(plan.dual_target_summary, DualTargetSummary) else DualTargetSummary.model_validate(plan.dual_target_summary or {})
-    rejected_entries = list((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("watchlist", {}).get("tickers", []) or [])
+    watchlist_filter_diagnostics = ((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("watchlist", {}) or {})
+    short_trade_candidate_diagnostics = ((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("short_trade_candidates", {}) or {})
+    rejected_entries = list(watchlist_filter_diagnostics.get("tickers", []) or [])
+    supplemental_short_trade_entries = [
+        *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
+        *list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []),
+        *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
+    ]
     buy_order_tickers = {order.ticker for order in list(plan.buy_orders or [])}
-    if not selection_targets and (plan.watchlist or rejected_entries):
+    if not selection_targets and (plan.watchlist or rejected_entries or supplemental_short_trade_entries):
         with use_short_trade_target_profile(profile_name=short_trade_target_profile_name, overrides=short_trade_target_profile_overrides):
             selection_targets, summary = build_selection_targets(
                 trade_date=plan.date,
                 watchlist=plan.watchlist,
                 rejected_entries=rejected_entries,
+                supplemental_short_trade_entries=supplemental_short_trade_entries,
                 buy_order_tickers=buy_order_tickers,
                 target_mode=target_mode,
             )
@@ -1198,6 +1441,8 @@ class DailyPipeline:
             "catalyst_theme_shadow_candidate_count": int((catalyst_theme_candidate_diagnostics or {}).get("shadow_candidate_count") or 0),
             "candidate_pool_shadow_candidate_count": len(shadow_candidates),
             "upstream_shadow_observation_count": int((short_trade_candidate_diagnostics or {}).get("shadow_observation_count") or 0),
+            "upstream_shadow_released_count": int((short_trade_candidate_diagnostics or {}).get("released_shadow_count") or 0),
+            "watchlist_shadow_released_count": int((watchlist_filter_diagnostics or {}).get("released_shadow_count") or 0),
             "fast_agent_ticker_count": len(high_pool),
             "precise_agent_ticker_count": len(top_20),
             "precise_stage_skipped": self._skip_precise_stage,
@@ -1241,7 +1486,11 @@ class DailyPipeline:
                 trade_date=trade_date,
                 watchlist=watchlist,
                 rejected_entries=list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
-                supplemental_short_trade_entries=list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
+                supplemental_short_trade_entries=[
+                    *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
+                    *list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
+                    *list((watchlist_filter_diagnostics or {}).get("released_shadow_entries", []) or []),
+                ],
                 buy_order_tickers={order.ticker for order in buy_orders},
                 target_mode=self.target_mode,
             )

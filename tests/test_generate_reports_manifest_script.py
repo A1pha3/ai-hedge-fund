@@ -854,6 +854,7 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert governance["watchlist_recall_dossier_summary"]["priority_recall_stage_counts"] == watchlist_recall["priority_recall_stage_counts"]
     assert governance["watchlist_recall_dossier_summary"]["top_absent_from_candidate_pool_tickers"] == watchlist_recall["top_absent_from_candidate_pool_tickers"]
     candidate_pool_recall = json.loads((reports_root / "btst_candidate_pool_recall_dossier_latest.json").read_text(encoding="utf-8"))
+    rebucket_shadow_pack = json.loads((reports_root / "btst_candidate_pool_rebucket_shadow_pack_latest.json").read_text(encoding="utf-8"))
     assert governance["candidate_pool_recall_dossier_summary"]["priority_stage_counts"] == candidate_pool_recall["priority_stage_counts"]
     assert governance["candidate_pool_recall_dossier_summary"]["dominant_stage"] == candidate_pool_recall["dominant_stage"]
     assert refresh["candidate_pool_recall_dominant_liquidity_gap_mode"] == "near_cutoff_liquidity_gap"
@@ -862,6 +863,8 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["candidate_pool_recall_priority_handoff_branch_diagnoses"] == candidate_pool_recall["priority_handoff_branch_diagnoses"][:3]
     assert refresh["candidate_pool_recall_priority_handoff_branch_mechanisms"] == candidate_pool_recall["priority_handoff_branch_mechanisms"][:3]
     assert refresh["candidate_pool_recall_priority_handoff_branch_experiment_queue"] == candidate_pool_recall["priority_handoff_branch_experiment_queue"][:3]
+    assert rebucket_shadow_pack["shadow_status"] == "skipped_no_rebucket_candidate"
+    assert rebucket_shadow_pack["experiment"] == {}
     assert refresh["candidate_pool_branch_priority_board_status"] == "refreshed"
     assert refresh["candidate_pool_branch_priority_board_rows"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
     assert refresh["candidate_pool_branch_priority_alignment_status"] == "aligned_top_lane"
@@ -872,6 +875,7 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["candidate_pool_corridor_shadow_pack_status"] in {"ready_for_primary_shadow_replay", "hold_for_more_corridor_evidence", "skipped_no_corridor_lane"}
     assert refresh["candidate_pool_corridor_shadow_pack_summary"]["shadow_status"] == refresh["candidate_pool_corridor_shadow_pack_status"]
     assert refresh["candidate_pool_rebucket_shadow_pack_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
+    assert refresh["candidate_pool_rebucket_shadow_pack_json"] == str((reports_root / "btst_candidate_pool_rebucket_shadow_pack_latest.json").resolve())
     assert refresh["candidate_pool_rebucket_objective_validation_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
     assert refresh["candidate_pool_rebucket_comparison_bundle_status"] in {"ready_for_parallel_comparison", "keep_shadow_first", "needs_more_closed_cycle_support", "hold_structure_only", "skipped_no_rebucket_lane"}
     assert refresh["candidate_pool_rebucket_comparison_bundle_summary"]["bundle_status"] == refresh["candidate_pool_rebucket_comparison_bundle_status"]

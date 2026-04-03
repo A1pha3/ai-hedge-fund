@@ -15,6 +15,7 @@ Layer A 候选池构建器 — 全市场快筛
 
 import json
 import os
+import hashlib
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -58,6 +59,11 @@ SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHA
 SHADOW_REBUCKET_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MIN_GATE_SHARE", "8.0"))
 SHADOW_REBUCKET_MIN_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MIN_CUTOFF_SHARE", "0.30"))
 SHADOW_REBUCKET_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MAX_CUTOFF_SHARE", "0.80"))
+SHADOW_FOCUS_TICKERS = {item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS", "").split(",") if item.strip()}
+SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS = {
+    item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", "").split(",") if item.strip()
+}
+SHADOW_FOCUS_REBUCKET_TICKERS = {item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS", "").split(",") if item.strip()}
 BEIJING_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("4", "8", "92")
 
 
@@ -72,7 +78,9 @@ def _candidate_pool_legacy_snapshot_path(trade_date: str) -> Path:
 
 def _candidate_pool_shadow_snapshot_path(trade_date: str, pool_size: Optional[int] = None) -> Path:
     resolved_pool_size = MAX_CANDIDATE_POOL_SIZE if pool_size is None else int(pool_size)
-    return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}_top{resolved_pool_size}_shadow.json"
+    focus_signature = _shadow_focus_signature()
+    focus_suffix = f"_focus_{focus_signature}" if focus_signature else ""
+    return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}_top{resolved_pool_size}_shadow{focus_suffix}.json"
 
 
 def _load_candidate_pool_snapshot(snapshot_path: Path) -> List[CandidateStock]:
@@ -116,6 +124,31 @@ def _candidate_liquidity_sort_key(candidate: CandidateStock) -> tuple[float, flo
     return (float(candidate.avg_volume_20d), float(candidate.market_cap), str(candidate.ticker))
 
 
+def _shadow_focus_payload() -> dict[str, list[str]]:
+    return {
+        "all": sorted(SHADOW_FOCUS_TICKERS),
+        "layer_a_liquidity_corridor": sorted(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS),
+        "post_gate_liquidity_competition": sorted(SHADOW_FOCUS_REBUCKET_TICKERS),
+    }
+
+
+def _shadow_focus_signature() -> str:
+    focus_payload = _shadow_focus_payload()
+    if not any(focus_payload.values()):
+        return ""
+    digest = hashlib.sha1(json.dumps(focus_payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return digest[:10]
+
+
+def _resolve_shadow_focus_tickers(*, lane: str) -> set[str]:
+    lane_specific_focus: set[str] = set()
+    if lane == "layer_a_liquidity_corridor":
+        lane_specific_focus = SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS
+    elif lane == "post_gate_liquidity_competition":
+        lane_specific_focus = SHADOW_FOCUS_REBUCKET_TICKERS
+    return set(SHADOW_FOCUS_TICKERS) | set(lane_specific_focus)
+
+
 def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, pool_size: int) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
     ranked_candidates = sorted(candidates, key=_candidate_liquidity_sort_key, reverse=True)
     selected_candidates = [candidate.model_copy(update={"candidate_pool_rank": rank}) for rank, candidate in enumerate(ranked_candidates[:pool_size], start=1)]
@@ -152,7 +185,29 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
     shadow_entries: list[dict[str, Any]] = []
 
     def append_shadow(rows: list[tuple[float, int, CandidateStock]], *, max_tickers: int, lane: str, reason: str, rank_key: str) -> None:
-        for score, rank, candidate in sorted(rows, key=lambda item: (item[0], -item[1], _candidate_liquidity_sort_key(item[2])), reverse=True)[:max_tickers]:
+        focus_tickers = _resolve_shadow_focus_tickers(lane=lane)
+        ranked_rows = sorted(rows, key=lambda item: (item[0], -item[1], _candidate_liquidity_sort_key(item[2])), reverse=True)
+        selected_rows: list[tuple[float, int, CandidateStock]] = []
+        selected_tickers: set[str] = set()
+
+        for score, rank, candidate in ranked_rows:
+            if candidate.ticker not in focus_tickers:
+                continue
+            selected_rows.append((score, rank, candidate))
+            selected_tickers.add(candidate.ticker)
+            if len(selected_rows) >= max_tickers:
+                break
+
+        if len(selected_rows) < max_tickers:
+            for score, rank, candidate in ranked_rows:
+                if candidate.ticker in selected_tickers:
+                    continue
+                selected_rows.append((score, rank, candidate))
+                selected_tickers.add(candidate.ticker)
+                if len(selected_rows) >= max_tickers:
+                    break
+
+        for score, rank, candidate in selected_rows:
             cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_avg_volume, 4)
             min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4)
             shadow_candidate = candidate.model_copy(
@@ -175,6 +230,7 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
                     "market_cap": round(float(shadow_candidate.market_cap), 4),
                     "avg_amount_share_of_cutoff": cutoff_share,
                     "avg_amount_share_of_min_gate": min_gate_share,
+                    "shadow_focus_selected": shadow_candidate.ticker in focus_tickers,
                     rank_key: round(float(score), 4),
                 }
             )
@@ -206,6 +262,8 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
         "selected_cutoff_avg_volume_20d": round(cutoff_avg_volume, 4),
         "lane_counts": lane_counts,
         "selected_tickers": [candidate.ticker for candidate in shadow_candidates],
+        "focus_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_focus_selected")}),
+        "focus_signature": _shadow_focus_signature(),
         "tickers": shadow_entries,
     }
 
@@ -219,6 +277,8 @@ def _build_shadow_summary_from_selected_candidates(selected_candidates: List[Can
         "selected_cutoff_avg_volume_20d": cutoff_avg_volume,
         "lane_counts": {},
         "selected_tickers": [],
+        "focus_tickers": [],
+        "focus_signature": _shadow_focus_signature(),
         "tickers": [],
     }
 
@@ -371,19 +431,21 @@ def build_candidate_pool_with_shadow(
     legacy_snapshot_path = _candidate_pool_legacy_snapshot_path(trade_date)
     shadow_snapshot_path = _candidate_pool_shadow_snapshot_path(trade_date)
     cached_selected_candidates: List[CandidateStock] = []
+    focus_signature = _shadow_focus_signature()
+    focus_label = f", focus={focus_signature}" if focus_signature else ""
 
     if use_cache and snapshot_path.exists() and shadow_snapshot_path.exists():
         try:
             shadow_payload = _load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
             _write_candidate_pool_snapshot(legacy_snapshot_path, shadow_payload["selected_candidates"])
             print(
-                f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE})"
+                f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE}{focus_label})"
             )
             return shadow_payload["selected_candidates"], shadow_payload["shadow_candidates"], shadow_payload["shadow_summary"]
         except Exception as e:
             print(f"[CandidatePool] shadow 缓存读取失败，重新计算: {e}")
     elif use_cache and snapshot_path.exists():
-        print(f"[CandidatePool] 发现仅主池缓存 {snapshot_path.name}，补算 shadow recall 快照")
+        print(f"[CandidatePool] 发现仅主池缓存 {snapshot_path.name}，补算 shadow recall 快照{focus_label}")
         try:
             cached_selected_candidates = _load_candidate_pool_snapshot(snapshot_path)
         except Exception as e:

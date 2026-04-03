@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_latest_close_validation import generate_btst_latest_close_validation_artifacts
+from scripts.btst_latest_followup_utils import load_latest_upstream_shadow_followup_summary
 from scripts.btst_report_utils import load_json as _load_json, looks_like_report_dir as _looks_like_report_dir, normalize_trade_date as _normalize_trade_date, safe_load_json as _safe_load_json
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
 
@@ -178,6 +179,59 @@ def _relative_link(target: str | Path | None, output_parent: Path) -> str | None
 
 def _entry_by_id(manifest: dict[str, Any], entry_id: str) -> dict[str, Any]:
     return next((dict(entry or {}) for entry in list(manifest.get("entries") or []) if entry.get("id") == entry_id), {})
+
+
+def _ordered_without(values: list[Any] | None, excluded: set[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in list(values or []):
+        token = str(value or "").strip()
+        if not token or token in excluded or token in seen:
+            continue
+        seen.add(token)
+        ordered.append(token)
+    return ordered
+
+
+def _build_upstream_shadow_followup_overlay(
+    reports_root: str | Path,
+    *,
+    no_candidate_entry_priority_tickers: list[Any] | None = None,
+    absent_from_watchlist_tickers: list[Any] | None = None,
+    watchlist_absent_from_candidate_pool_tickers: list[Any] | None = None,
+    upstream_handoff_focus_tickers: list[Any] | None = None,
+) -> dict[str, Any]:
+    summary = load_latest_upstream_shadow_followup_summary(reports_root)
+    validated_tickers = [str(value or "") for value in list(summary.get("validated_tickers") or []) if str(value or "").strip()]
+    validated_set = set(validated_tickers)
+
+    active_priority_tickers = _ordered_without(no_candidate_entry_priority_tickers, validated_set)
+    active_absent_from_watchlist_tickers = _ordered_without(absent_from_watchlist_tickers, validated_set)
+    active_watchlist_absent_from_candidate_pool_tickers = _ordered_without(watchlist_absent_from_candidate_pool_tickers, validated_set)
+    active_upstream_handoff_focus_tickers = _ordered_without(upstream_handoff_focus_tickers, validated_set)
+
+    recommendation = summary.get("recommendation")
+    if summary.get("status") == "validated_upstream_shadow_followup_available":
+        if active_priority_tickers:
+            recommendation = (
+                f"最新正式 upstream shadow followup 已把 {validated_tickers} 转入 downstream decision 分层；"
+                f"当前 upstream recall backlog 应收敛到 {active_priority_tickers}，避免对已验证票重复做 absent_from_watchlist / candidate_pool recall。"
+            )
+        else:
+            recommendation = (
+                f"最新正式 upstream shadow followup 已把 {validated_tickers} 全部转入 downstream decision 分层；"
+                "当前 control tower 不应再把这些票作为 upstream recall 主任务。"
+            )
+
+    return {
+        **summary,
+        "validated_tickers": validated_tickers,
+        "active_no_candidate_entry_priority_tickers": active_priority_tickers,
+        "active_absent_from_watchlist_tickers": active_absent_from_watchlist_tickers,
+        "active_watchlist_absent_from_candidate_pool_tickers": active_watchlist_absent_from_candidate_pool_tickers,
+        "active_upstream_handoff_focus_tickers": active_upstream_handoff_focus_tickers,
+        "recommendation": recommendation,
+    }
 
 
 def _extract_catalyst_theme_frontier_summary(frontier: dict[str, Any]) -> dict[str, Any]:
@@ -479,6 +533,17 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     no_candidate_entry_failure_dossier = _extract_no_candidate_entry_failure_dossier_summary(manifest)
     watchlist_recall_dossier = _extract_watchlist_recall_dossier_summary(manifest)
     candidate_pool_recall_dossier = _extract_candidate_pool_recall_dossier_summary(manifest)
+    no_candidate_entry_priority_tickers = list(no_candidate_entry_action_board.get("top_priority_tickers") or [])
+    absent_from_watchlist_tickers = list(no_candidate_entry_failure_dossier.get("top_absent_from_watchlist_tickers") or [])
+    watchlist_absent_from_candidate_pool_tickers = list(watchlist_recall_dossier.get("top_absent_from_candidate_pool_tickers") or [])
+    upstream_handoff_focus_tickers = list(dict(candidate_pool_recall_dossier.get("upstream_handoff_board_summary") or {}).get("focus_tickers") or [])
+    upstream_shadow_followup_overlay = _build_upstream_shadow_followup_overlay(
+        manifest.get("reports_root") or REPORTS_DIR,
+        no_candidate_entry_priority_tickers=no_candidate_entry_priority_tickers,
+        absent_from_watchlist_tickers=absent_from_watchlist_tickers,
+        watchlist_absent_from_candidate_pool_tickers=watchlist_absent_from_candidate_pool_tickers,
+        upstream_handoff_focus_tickers=upstream_handoff_focus_tickers,
+    )
     return {
         "synthesis": synthesis,
         "validation": validation,
@@ -508,15 +573,18 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "tradeable_opportunity_selected_or_near_miss_rate": tradeable_opportunity_pool.get("tradeable_pool_selected_or_near_miss_rate"),
         "tradeable_opportunity_top_kill_switches": tradeable_opportunity_pool.get("top_tradeable_kill_switch_labels"),
         "no_candidate_entry_priority_queue_count": no_candidate_entry_action_board.get("priority_queue_count"),
-        "no_candidate_entry_priority_tickers": no_candidate_entry_action_board.get("top_priority_tickers"),
+        "no_candidate_entry_priority_tickers": no_candidate_entry_priority_tickers,
+        "active_no_candidate_entry_priority_tickers": upstream_shadow_followup_overlay.get("active_no_candidate_entry_priority_tickers"),
         "no_candidate_entry_recall_probe_tickers": no_candidate_entry_replay_bundle.get("promising_priority_tickers"),
         "no_candidate_entry_failure_class_counts": no_candidate_entry_failure_dossier.get("priority_failure_class_counts"),
         "no_candidate_entry_handoff_stage_counts": no_candidate_entry_failure_dossier.get("priority_handoff_stage_counts"),
-        "no_candidate_entry_absent_from_watchlist_tickers": no_candidate_entry_failure_dossier.get("top_absent_from_watchlist_tickers"),
+        "no_candidate_entry_absent_from_watchlist_tickers": absent_from_watchlist_tickers,
+        "active_no_candidate_entry_absent_from_watchlist_tickers": upstream_shadow_followup_overlay.get("active_absent_from_watchlist_tickers"),
         "no_candidate_entry_watchlist_handoff_gap_tickers": no_candidate_entry_failure_dossier.get("top_watchlist_visible_but_not_candidate_entry_tickers"),
         "no_candidate_entry_upstream_absence_tickers": no_candidate_entry_failure_dossier.get("top_upstream_absence_tickers"),
         "watchlist_recall_stage_counts": watchlist_recall_dossier.get("priority_recall_stage_counts"),
-        "watchlist_recall_absent_from_candidate_pool_tickers": watchlist_recall_dossier.get("top_absent_from_candidate_pool_tickers"),
+        "watchlist_recall_absent_from_candidate_pool_tickers": watchlist_absent_from_candidate_pool_tickers,
+        "active_watchlist_recall_absent_from_candidate_pool_tickers": upstream_shadow_followup_overlay.get("active_watchlist_absent_from_candidate_pool_tickers"),
         "watchlist_recall_candidate_pool_layer_b_gap_tickers": watchlist_recall_dossier.get("top_candidate_pool_visible_but_missing_layer_b_tickers"),
         "watchlist_recall_layer_b_watchlist_gap_tickers": watchlist_recall_dossier.get("top_layer_b_visible_but_missing_watchlist_tickers"),
         "candidate_pool_recall_stage_counts": candidate_pool_recall_dossier.get("priority_stage_counts"),
@@ -550,8 +618,15 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "candidate_pool_lane_pair_board_summary": dict(candidate_pool_recall_dossier.get("lane_pair_board_summary") or {}),
         "candidate_pool_upstream_handoff_board_status": candidate_pool_recall_dossier.get("upstream_handoff_board_status"),
         "candidate_pool_upstream_handoff_board_summary": dict(candidate_pool_recall_dossier.get("upstream_handoff_board_summary") or {}),
+        "active_candidate_pool_upstream_handoff_focus_tickers": upstream_shadow_followup_overlay.get("active_upstream_handoff_focus_tickers"),
         "candidate_pool_corridor_uplift_runbook_status": candidate_pool_recall_dossier.get("corridor_uplift_runbook_status"),
         "candidate_pool_corridor_uplift_runbook_summary": dict(candidate_pool_recall_dossier.get("corridor_uplift_runbook_summary") or {}),
+        "upstream_shadow_followup_overlay": upstream_shadow_followup_overlay,
+        "upstream_shadow_followup_validated_tickers": upstream_shadow_followup_overlay.get("validated_tickers"),
+        "upstream_shadow_followup_decision_counts": upstream_shadow_followup_overlay.get("decision_counts"),
+        "upstream_shadow_followup_near_miss_tickers": upstream_shadow_followup_overlay.get("near_miss_tickers"),
+        "upstream_shadow_followup_rejected_profitability_tickers": upstream_shadow_followup_overlay.get("rejected_profitability_tickers"),
+        "upstream_shadow_followup_recommendation": upstream_shadow_followup_overlay.get("recommendation"),
         "overall_verdict": validation.get("overall_verdict"),
         "warn_count": validation.get("warn_count"),
         "fail_count": validation.get("fail_count"),
@@ -1524,6 +1599,7 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     no_candidate_entry_failure_dossier_summary = dict(control_tower_snapshot.get("no_candidate_entry_failure_dossier") or {})
     watchlist_recall_dossier_summary = dict(control_tower_snapshot.get("watchlist_recall_dossier") or {})
     candidate_pool_recall_dossier_summary = dict(control_tower_snapshot.get("candidate_pool_recall_dossier") or {})
+    upstream_shadow_followup_overlay = dict(control_tower_snapshot.get("upstream_shadow_followup_overlay") or {})
     llm_error_digest = dict(latest_btst_snapshot.get("llm_error_digest") or {})
     source_paths = dict(payload.get("source_paths") or {})
 
@@ -1550,15 +1626,18 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- tradeable_opportunity_selected_or_near_miss_rate: {control_tower_snapshot.get('tradeable_opportunity_selected_or_near_miss_rate')}")
     lines.append(f"- tradeable_opportunity_top_kill_switches: {control_tower_snapshot.get('tradeable_opportunity_top_kill_switches')}")
     lines.append(f"- no_candidate_entry_priority_queue_count: {control_tower_snapshot.get('no_candidate_entry_priority_queue_count')}")
-    lines.append(f"- no_candidate_entry_priority_tickers: {control_tower_snapshot.get('no_candidate_entry_priority_tickers')}")
+    lines.append(f"- no_candidate_entry_priority_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_priority_tickers')}")
+    lines.append(f"- no_candidate_entry_priority_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_priority_tickers')}")
     lines.append(f"- no_candidate_entry_recall_probe_tickers: {control_tower_snapshot.get('no_candidate_entry_recall_probe_tickers')}")
     lines.append(f"- no_candidate_entry_failure_class_counts: {control_tower_snapshot.get('no_candidate_entry_failure_class_counts')}")
     lines.append(f"- no_candidate_entry_handoff_stage_counts: {control_tower_snapshot.get('no_candidate_entry_handoff_stage_counts')}")
-    lines.append(f"- no_candidate_entry_absent_from_watchlist_tickers: {control_tower_snapshot.get('no_candidate_entry_absent_from_watchlist_tickers')}")
+    lines.append(f"- no_candidate_entry_absent_from_watchlist_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_absent_from_watchlist_tickers')}")
+    lines.append(f"- no_candidate_entry_absent_from_watchlist_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_absent_from_watchlist_tickers')}")
     lines.append(f"- no_candidate_entry_watchlist_handoff_gap_tickers: {control_tower_snapshot.get('no_candidate_entry_watchlist_handoff_gap_tickers')}")
     lines.append(f"- no_candidate_entry_upstream_absence_tickers: {control_tower_snapshot.get('no_candidate_entry_upstream_absence_tickers')}")
     lines.append(f"- watchlist_recall_stage_counts: {control_tower_snapshot.get('watchlist_recall_stage_counts')}")
-    lines.append(f"- watchlist_recall_absent_from_candidate_pool_tickers: {control_tower_snapshot.get('watchlist_recall_absent_from_candidate_pool_tickers')}")
+    lines.append(f"- watchlist_recall_absent_from_candidate_pool_tickers_historical: {control_tower_snapshot.get('watchlist_recall_absent_from_candidate_pool_tickers')}")
+    lines.append(f"- watchlist_recall_absent_from_candidate_pool_tickers_active: {control_tower_snapshot.get('active_watchlist_recall_absent_from_candidate_pool_tickers')}")
     lines.append(f"- watchlist_recall_candidate_pool_layer_b_gap_tickers: {control_tower_snapshot.get('watchlist_recall_candidate_pool_layer_b_gap_tickers')}")
     lines.append(f"- watchlist_recall_layer_b_watchlist_gap_tickers: {control_tower_snapshot.get('watchlist_recall_layer_b_watchlist_gap_tickers')}")
     lines.append(f"- candidate_pool_recall_stage_counts: {control_tower_snapshot.get('candidate_pool_recall_stage_counts')}")
@@ -1636,6 +1715,11 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
         lines.append(
             f"- candidate_pool_upstream_handoff_board_summary: board_status={upstream_handoff_summary.get('board_status')} focus_tickers={upstream_handoff_summary.get('focus_tickers')} first_broken_handoff_counts={upstream_handoff_summary.get('first_broken_handoff_counts')}"
         )
+    lines.append(f"- candidate_pool_upstream_handoff_focus_tickers_active: {control_tower_snapshot.get('active_candidate_pool_upstream_handoff_focus_tickers')}")
+    lines.append(f"- upstream_shadow_followup_validated_tickers: {control_tower_snapshot.get('upstream_shadow_followup_validated_tickers')}")
+    lines.append(f"- upstream_shadow_followup_decision_counts: {control_tower_snapshot.get('upstream_shadow_followup_decision_counts')}")
+    lines.append(f"- upstream_shadow_followup_near_miss_tickers: {control_tower_snapshot.get('upstream_shadow_followup_near_miss_tickers')}")
+    lines.append(f"- upstream_shadow_followup_rejected_profitability_tickers: {control_tower_snapshot.get('upstream_shadow_followup_rejected_profitability_tickers')}")
     lines.append(f"- candidate_pool_corridor_uplift_runbook_status: {control_tower_snapshot.get('candidate_pool_corridor_uplift_runbook_status')}")
     corridor_uplift_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_uplift_runbook_summary") or {})
     if corridor_uplift_summary:
@@ -1664,10 +1748,34 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- no_candidate_entry_failure_dossier_recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}")
     lines.append(f"- watchlist_recall_dossier_recommendation: {watchlist_recall_dossier_summary.get('recommendation')}")
     lines.append(f"- candidate_pool_recall_dossier_recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}")
+    lines.append(f"- upstream_shadow_followup_overlay_recommendation: {control_tower_snapshot.get('upstream_shadow_followup_recommendation')}")
+    if upstream_shadow_followup_overlay.get("validated_tickers"):
+        lines.append(
+            f"- upstream_backlog_interpretation_note: 以下 no-entry/watchlist/candidate-pool 建议仍是历史 backlog 画像；当前 active upstream recall 已收敛到 {upstream_shadow_followup_overlay.get('active_no_candidate_entry_priority_tickers')}。"
+        )
     lines.append(f"- candidate_pool_recall_dossier_truncation_frontier_summary: {candidate_pool_recall_dossier_summary.get('truncation_frontier_summary')}")
     lines.append(f"- catalyst_frontier_recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
     lines.append(f"- score_fail_frontier_recommendation: {score_fail_frontier_summary.get('recommendation')}")
     lines.append(f"- llm_recommendation: {llm_error_digest.get('recommendation')}")
+    lines.append("")
+
+    lines.append("## Latest Upstream Shadow Followup Overlay")
+    lines.append(f"- status: {upstream_shadow_followup_overlay.get('status')}")
+    lines.append(f"- report_dir: {upstream_shadow_followup_overlay.get('report_dir')}")
+    lines.append(f"- trade_date: {upstream_shadow_followup_overlay.get('trade_date')}")
+    lines.append(f"- validated_tickers: {upstream_shadow_followup_overlay.get('validated_tickers')}")
+    lines.append(f"- near_miss_tickers: {upstream_shadow_followup_overlay.get('near_miss_tickers')}")
+    lines.append(f"- rejected_profitability_tickers: {upstream_shadow_followup_overlay.get('rejected_profitability_tickers')}")
+    lines.append(f"- decision_counts: {upstream_shadow_followup_overlay.get('decision_counts')}")
+    lines.append(f"- active_no_candidate_entry_priority_tickers: {upstream_shadow_followup_overlay.get('active_no_candidate_entry_priority_tickers')}")
+    lines.append(f"- active_absent_from_watchlist_tickers: {upstream_shadow_followup_overlay.get('active_absent_from_watchlist_tickers')}")
+    lines.append(f"- active_watchlist_absent_from_candidate_pool_tickers: {upstream_shadow_followup_overlay.get('active_watchlist_absent_from_candidate_pool_tickers')}")
+    lines.append(f"- active_upstream_handoff_focus_tickers: {upstream_shadow_followup_overlay.get('active_upstream_handoff_focus_tickers')}")
+    lines.append(f"- recommendation: {upstream_shadow_followup_overlay.get('recommendation')}")
+    for row in list(upstream_shadow_followup_overlay.get("rows") or [])[:3]:
+        lines.append(
+            f"- followup_row: ticker={row.get('ticker')} decision={row.get('decision')} downstream_bottleneck={row.get('downstream_bottleneck')} top_reasons={row.get('top_reasons')}"
+        )
     lines.append("")
 
     lines.append("## Control Tower Snapshot")
@@ -1763,6 +1871,10 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append("")
 
     lines.append("## No Candidate Entry Action Board")
+    if upstream_shadow_followup_overlay.get("validated_tickers"):
+        lines.append(
+            f"- note: 本 section 保留历史 no-entry backlog 排名；当前 active upstream recall 已收敛到 {upstream_shadow_followup_overlay.get('active_no_candidate_entry_priority_tickers')}，已正式 followup 验证的票请转看上面的 Latest Upstream Shadow Followup Overlay。"
+        )
     if not no_candidate_entry_action_board_summary:
         lines.append("- unavailable")
     else:
@@ -1796,6 +1908,10 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append("")
 
     lines.append("## No Candidate Entry Failure Dossier")
+    if upstream_shadow_followup_overlay.get("validated_tickers"):
+        lines.append(
+            f"- note: 本 section 反映历史 failure dossier 断点；当前 active absent_from_watchlist 只剩 {upstream_shadow_followup_overlay.get('active_absent_from_watchlist_tickers')}。"
+        )
     if not no_candidate_entry_failure_dossier_summary:
         lines.append("- unavailable")
     else:
@@ -1819,6 +1935,10 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append("")
 
     lines.append("## Watchlist Recall Dossier")
+    if upstream_shadow_followup_overlay.get("validated_tickers"):
+        lines.append(
+            f"- note: 本 section 保留历史 watchlist recall backlog；当前 active absent_from_candidate_pool 只剩 {upstream_shadow_followup_overlay.get('active_watchlist_absent_from_candidate_pool_tickers')}。"
+        )
     if not watchlist_recall_dossier_summary:
         lines.append("- unavailable")
     else:
@@ -1836,6 +1956,10 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append("")
 
     lines.append("## Candidate Pool Recall Dossier")
+    if upstream_shadow_followup_overlay.get("validated_tickers"):
+        lines.append(
+            f"- note: 本 section 的 Layer A 截断画像保留为历史 lane 背景；当前 active upstream handoff focus 已收敛到 {upstream_shadow_followup_overlay.get('active_upstream_handoff_focus_tickers')}。"
+        )
     if not candidate_pool_recall_dossier_summary:
         lines.append("- unavailable")
     else:

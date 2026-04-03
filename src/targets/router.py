@@ -39,6 +39,16 @@ def _resolve_candidate_source(*, item: LayerCResult | None = None, entry: dict[s
     return source, reason_codes
 
 
+def _merge_reason_codes(*code_lists: list[str]) -> list[str]:
+    merged: list[str] = []
+    for code_list in code_lists:
+        for code in code_list:
+            normalized = str(code or "").strip()
+            if normalized and normalized not in merged:
+                merged.append(normalized)
+    return merged
+
+
 def summarize_selection_targets(*, selection_targets: dict[str, DualTargetEvaluation], target_mode: TargetMode) -> DualTargetSummary:
     summary = DualTargetSummary(target_mode=target_mode, selection_target_count=len(selection_targets))
     for evaluation in selection_targets.values():
@@ -123,6 +133,34 @@ def _build_rejected_evaluation(*, trade_date: str, entry: dict[str, Any], rank_h
     return evaluation
 
 
+def _build_rejected_with_supplemental_short_trade_evaluation(
+    *,
+    trade_date: str,
+    rejected_entry: dict[str, Any],
+    supplemental_entry: dict[str, Any],
+    rank_hint: int,
+) -> DualTargetEvaluation:
+    ticker = str(rejected_entry.get("ticker") or supplemental_entry.get("ticker") or "")
+    candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=rejected_entry, default="watchlist_filter_diagnostics")
+    _, supplemental_reason_codes = _resolve_candidate_source(entry=supplemental_entry, default="short_trade_boundary")
+    research_result = evaluate_research_rejected_target(trade_date=trade_date, entry=rejected_entry, rank_hint=rank_hint)
+    short_trade_result = evaluate_short_trade_rejected_target(trade_date=trade_date, entry=supplemental_entry, rank_hint=rank_hint)
+    evaluation = DualTargetEvaluation(
+        ticker=ticker,
+        trade_date=trade_date,
+        research=research_result,
+        short_trade=short_trade_result,
+        candidate_source=candidate_source,
+        candidate_reason_codes=_merge_reason_codes(candidate_reason_codes, supplemental_reason_codes),
+    )
+    evaluation.delta_classification = _classify_delta(evaluation)
+    if evaluation.delta_classification == "research_reject_short_pass":
+        evaluation.delta_summary = ["short trade target promoted a setup that research pipeline kept as near-miss"]
+    elif evaluation.delta_classification == "both_reject_but_reason_diverge":
+        evaluation.delta_summary = ["research target rejected by current pipeline filters while short trade target failed its own structural gates"]
+    return evaluation
+
+
 def _build_short_trade_only_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int) -> DualTargetEvaluation:
     ticker = str(entry.get("ticker") or "")
     candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=entry, default="short_trade_boundary")
@@ -153,6 +191,18 @@ def build_selection_targets(
 ) -> tuple[dict[str, DualTargetEvaluation], DualTargetSummary]:
     buy_order_tickers = set(buy_order_tickers or set())
     selection_targets: dict[str, DualTargetEvaluation] = {}
+    remaining_supplemental_short_trade_entries: dict[str, dict[str, Any]] = {}
+
+    if target_mode != "research_only":
+        sorted_supplemental_entries = sorted(
+            list(supplemental_short_trade_entries or []),
+            key=lambda current: float(current.get("score_final", current.get("score_b", 0.0)) or 0.0),
+            reverse=True,
+        )
+        for entry in sorted_supplemental_entries:
+            ticker = str(entry.get("ticker") or "")
+            if ticker and ticker not in remaining_supplemental_short_trade_entries:
+                remaining_supplemental_short_trade_entries[ticker] = entry
 
     for rank_hint, item in enumerate(sorted(watchlist, key=lambda current: current.score_final, reverse=True), start=1):
         selection_targets[item.ticker] = _build_selected_evaluation(
@@ -167,15 +217,24 @@ def build_selection_targets(
         ticker = str(entry.get("ticker") or "")
         if not ticker or ticker in selection_targets:
             continue
-        selection_targets[ticker] = _build_rejected_evaluation(
-            trade_date=trade_date,
-            entry=entry,
-            rank_hint=rank_hint,
-            target_mode=target_mode,
-        )
+        supplemental_entry = remaining_supplemental_short_trade_entries.pop(ticker, None) if target_mode != "research_only" else None
+        if supplemental_entry is not None:
+            selection_targets[ticker] = _build_rejected_with_supplemental_short_trade_evaluation(
+                trade_date=trade_date,
+                rejected_entry=entry,
+                supplemental_entry=supplemental_entry,
+                rank_hint=rank_hint,
+            )
+        else:
+            selection_targets[ticker] = _build_rejected_evaluation(
+                trade_date=trade_date,
+                entry=entry,
+                rank_hint=rank_hint,
+                target_mode=target_mode,
+            )
 
     if target_mode != "research_only":
-        for rank_hint, entry in enumerate(sorted(list(supplemental_short_trade_entries or []), key=lambda current: float(current.get("score_final", current.get("score_b", 0.0)) or 0.0), reverse=True), start=1):
+        for rank_hint, entry in enumerate(remaining_supplemental_short_trade_entries.values(), start=1):
             ticker = str(entry.get("ticker") or "")
             if not ticker or ticker in selection_targets:
                 continue

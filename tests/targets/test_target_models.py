@@ -106,6 +106,55 @@ def _make_profitability_relief_entry(*, sector_resonance_ready: bool = True, inc
     }
 
 
+def _make_upstream_shadow_catalyst_relief_entry(*, include_profitability_hard_cliff: bool = False) -> dict:
+    strategy_signals = {
+        "trend": _make_signal(
+            1,
+            95.0,
+            sub_factors={
+                "momentum": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                "adx_strength": {"direction": 1, "confidence": 85.0, "completeness": 1.0},
+                "ema_alignment": {"direction": 1, "confidence": 95.0, "completeness": 1.0},
+                "volatility": {"direction": 1, "confidence": 30.0, "completeness": 1.0},
+                "long_trend_alignment": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+            },
+        ).model_dump(mode="json"),
+        "event_sentiment": _make_signal(
+            1,
+            40.0,
+            sub_factors={
+                "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+            },
+        ).model_dump(mode="json"),
+        "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        "fundamental": (_make_profitability_hard_cliff_signal() if include_profitability_hard_cliff else _make_signal(1, 45.0)).model_dump(mode="json"),
+    }
+    return {
+        "ticker": "300720" if not include_profitability_hard_cliff else "003036",
+        "score_b": 0.20,
+        "score_c": -0.40,
+        "score_final": 0.05,
+        "quality_score": 0.58,
+        "decision": "watch",
+        "reason": "upstream_shadow_release_candidate",
+        "reasons": ["upstream_shadow_release_candidate"],
+        "candidate_reason_codes": ["upstream_shadow_release_candidate"],
+        "short_trade_catalyst_relief": {
+            "enabled": True,
+            "reason": "upstream_shadow_catalyst_relief",
+            "catalyst_freshness_floor": 1.0,
+            "near_miss_threshold": 0.45,
+            "breakout_freshness_min": 0.38,
+            "trend_acceleration_min": 0.80,
+            "close_strength_min": 0.85,
+            "require_no_profitability_hard_cliff": True,
+        },
+        "strategy_signals": strategy_signals,
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+    }
+
+
 def test_build_selection_targets_wraps_research_semantics_for_watchlist() -> None:
     watchlist = [
         LayerCResult(
@@ -271,6 +320,76 @@ def test_build_selection_targets_promotes_rejected_entry_for_short_trade_when_si
     assert summary.short_trade_selected_count == 1
     assert summary.short_trade_blocked_count == 0
     assert summary.delta_classification_counts == {"research_reject_short_pass": 1}
+
+
+def test_build_selection_targets_merges_rejected_and_supplemental_short_trade_for_same_ticker() -> None:
+    trend_signal = _make_signal(
+        1,
+        84.0,
+        sub_factors={
+            "momentum": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+            "adx_strength": {"direction": 1, "confidence": 81.0, "completeness": 1.0},
+            "ema_alignment": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+            "volatility": {"direction": 1, "confidence": 62.0, "completeness": 1.0},
+            "long_trend_alignment": {"direction": 1, "confidence": 32.0, "completeness": 1.0},
+        },
+    )
+    event_signal = _make_signal(
+        1,
+        75.0,
+        sub_factors={
+            "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+            "news_sentiment": {"direction": 1, "confidence": 68.0, "completeness": 1.0},
+        },
+    )
+
+    rejected_entry = {
+        "ticker": "000960",
+        "score_b": 0.4099,
+        "score_c": -0.0329,
+        "score_final": 0.1947,
+        "quality_score": 0.5,
+        "decision": "avoid",
+        "bc_conflict": "b_positive_c_strong_bearish",
+        "reason": "decision_avoid",
+        "reasons": ["decision_avoid", "score_final_below_watchlist_threshold"],
+        "candidate_source": "watchlist_filter_diagnostics",
+        "strategy_signals": {
+            "trend": trend_signal.model_dump(mode="json"),
+            "event_sentiment": event_signal.model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 8.0).model_dump(mode="json"),
+            "fundamental": _make_signal(1, 45.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0152, "investor": -0.0481}},
+    }
+    supplemental_entry = {
+        **rejected_entry,
+        "bc_conflict": None,
+        "reason": "watchlist_avoid_shadow_release",
+        "reasons": ["watchlist_avoid_shadow_release", "watchlist_avoid_shadow_release_boundary_pass", "decision_avoid"],
+        "candidate_source": "watchlist_avoid_shadow_release",
+        "candidate_reason_codes": ["watchlist_avoid_shadow_release", "watchlist_avoid_shadow_release_boundary_pass", "decision_avoid"],
+        "shadow_release_reason": "watchlist_avoid_shadow_release_boundary_pass",
+        "source_bc_conflict": "b_positive_c_strong_bearish",
+    }
+
+    selection_targets, summary = build_selection_targets(
+        trade_date="20260328",
+        watchlist=[],
+        rejected_entries=[rejected_entry],
+        supplemental_short_trade_entries=[supplemental_entry],
+        target_mode="dual_target",
+    )
+
+    assert selection_targets["000960"].research is not None
+    assert selection_targets["000960"].research.decision == "rejected"
+    assert selection_targets["000960"].short_trade is not None
+    assert selection_targets["000960"].short_trade.decision in {"selected", "near_miss"}
+    assert selection_targets["000960"].candidate_source == "watchlist_filter_diagnostics"
+    assert "watchlist_avoid_shadow_release" in selection_targets["000960"].candidate_reason_codes
+    assert summary.research_target_count == 1
+    assert summary.short_trade_target_count == 1
+    assert summary.short_trade_blocked_count == 0
 
 
 def test_build_selection_targets_adds_boundary_short_trade_candidate_outside_research_funnel() -> None:
@@ -591,3 +710,44 @@ def test_profitability_relief_does_not_trigger_without_profitability_hard_cliff(
     assert result.metrics_payload["profitability_relief_applied"] is False
     assert result.metrics_payload["layer_c_avoid_penalty"] == 0.12
     assert result.explainability_payload["profitability_relief"]["hard_cliff"] is False
+
+
+def test_upstream_shadow_catalyst_relief_promotes_strong_recalled_shadow_to_near_miss() -> None:
+    baseline_entry = _make_upstream_shadow_catalyst_relief_entry()
+    relief_entry = _make_upstream_shadow_catalyst_relief_entry()
+
+    baseline_entry.pop("short_trade_catalyst_relief", None)
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=baseline_entry,
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=relief_entry,
+    )
+
+    assert baseline_result.decision == "rejected"
+    assert round(baseline_result.score_target, 4) == 0.4362
+    assert baseline_result.metrics_payload["catalyst_freshness"] == 0.0
+    assert baseline_result.metrics_payload["effective_catalyst_freshness"] == 0.0
+    assert relief_result.decision == "near_miss"
+    assert round(relief_result.score_target, 4) == 0.5246
+    assert relief_result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is True
+    assert relief_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.45
+    assert relief_result.metrics_payload["effective_catalyst_freshness"] == 1.0
+    assert relief_result.explainability_payload["upstream_shadow_catalyst_relief"]["applied"] is True
+
+
+def test_upstream_shadow_catalyst_relief_keeps_profitability_hard_cliff_sample_rejected() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_upstream_shadow_catalyst_relief_entry(include_profitability_hard_cliff=True),
+    )
+
+    assert result.decision == "rejected"
+    assert round(result.score_target, 4) == 0.4362
+    assert result.metrics_payload["profitability_hard_cliff"] is True
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is False
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is False
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.46
+    assert "upstream_shadow_catalyst_relief_not_triggered" in result.negative_tags

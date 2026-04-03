@@ -14,6 +14,23 @@ DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_la
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_latest.md"
 
 
+def _build_refresh_commands(*, corridor_validation_pack_path: str | Path) -> list[str]:
+    resolved_validation_pack_path = Path(corridor_validation_pack_path).expanduser().resolve()
+    return [
+        "python scripts/run_btst_candidate_pool_corridor_validation_pack.py "
+        "--dossier-path data/reports/btst_candidate_pool_recall_dossier_latest.json "
+        "--lane-objective-support-path data/reports/btst_candidate_pool_lane_objective_support_latest.json "
+        "--branch-priority-board-path data/reports/btst_candidate_pool_branch_priority_board_latest.json "
+        "--objective-monitor-path data/reports/btst_tplus1_tplus2_objective_monitor_latest.json "
+        "--output-json data/reports/btst_candidate_pool_corridor_validation_pack_latest.json "
+        "--output-md data/reports/btst_candidate_pool_corridor_validation_pack_latest.md",
+        "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
+        f"--corridor-validation-pack-path {resolved_validation_pack_path} "
+        "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
+        "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md",
+    ]
+
+
 def _load_json(path: str | Path) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
     return json.loads(resolved.read_text(encoding="utf-8"))
@@ -91,6 +108,21 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
     else:
         recommendation = "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控。"
 
+    refresh_commands = _build_refresh_commands(corridor_validation_pack_path=corridor_validation_pack_path)
+    shadow_replay_commands: list[str] = []
+    if primary:
+        shadow_replay_commands.append(refresh_commands[-1])
+    for row in parallel:
+        ticker = str(row.get("ticker") or "").strip()
+        if ticker:
+            shadow_replay_commands.append(
+                "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
+                f"--corridor-validation-pack-path {Path(corridor_validation_pack_path).expanduser().resolve()} "
+                "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
+                "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md "
+                f"# parallel_watch={ticker}"
+            )
+
     return {
         "corridor_validation_pack_path": str(Path(corridor_validation_pack_path).expanduser().resolve()),
         "shadow_status": shadow_status,
@@ -100,6 +132,8 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         "lanes": lanes,
         "success_criteria": success_criteria,
         "guardrails": guardrails,
+        "refresh_commands": refresh_commands,
+        "shadow_replay_commands": shadow_replay_commands,
         "recommendation": recommendation,
         "next_step": f"先对 {primary.get('ticker') or 'primary corridor ticker'} 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
     }
@@ -129,6 +163,12 @@ def render_btst_candidate_pool_corridor_shadow_pack_markdown(analysis: dict[str,
     lines.append("## Guardrails")
     for item in list(analysis.get("guardrails") or []):
         lines.append(f"- {item}")
+    lines.append("")
+    lines.append("## Commands")
+    for item in list(analysis.get("refresh_commands") or []):
+        lines.append(f"- refresh_command: {item}")
+    for item in list(analysis.get("shadow_replay_commands") or []):
+        lines.append(f"- shadow_replay_command: {item}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis.get('recommendation')}")

@@ -54,10 +54,49 @@ def test_run_btst_candidate_pool_rebucket_shadow_pack_builds_target_pack(tmp_pat
 
     pack = run_btst_candidate_pool_rebucket_shadow_pack(dossier_path, output_dir=tmp_path)
 
+    assert pack["shadow_status"] == "ready_for_rebucket_shadow_replay"
     assert pack["experiment"]["priority_handoff"] == "post_gate_liquidity_competition"
+    assert pack["recommended_release_score_min"] == 0.28
     assert pack["target_rows"][0]["ticker"] == "301292"
     assert pack["target_rows"][0]["uplift_to_cutoff_multiple_mean"] == 2.25
     assert pack["target_rows"][0]["top300_lower_market_cap_hot_peer_examples"] == ["300265", "002173", "300189"]
     assert Path(pack["artifacts"]["json_path"]).exists()
     assert Path(pack["artifacts"]["markdown_path"]).exists()
     assert "rebucket shadow target" in pack["recommendation"]
+    paper_trading_commands = [command for command in pack["run_commands"] if "run_paper_trading.py" in command]
+    assert paper_trading_commands
+    assert "--candidate-pool-shadow-rebucket-focus-tickers 301292" in paper_trading_commands[0]
+    assert "--upstream-shadow-release-post-gate-rebucket-score-min 0.28" in paper_trading_commands[0]
+
+
+def test_run_btst_candidate_pool_rebucket_shadow_pack_writes_skipped_placeholder_when_no_candidate(tmp_path: Path) -> None:
+    dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    dossier_path.write_text(
+        json.dumps(
+            {
+                "priority_handoff_branch_experiment_queue": [],
+                "priority_ticker_dossiers": [
+                    {
+                        "ticker": "301292",
+                        "failure_reason": "cooldown_excluded",
+                        "next_step": "先核对 cooldown 规则。",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    pack = run_btst_candidate_pool_rebucket_shadow_pack(dossier_path, output_dir=tmp_path)
+
+    assert pack["shadow_status"] == "skipped_no_rebucket_candidate"
+    assert pack["experiment"] == {}
+    assert pack["target_rows"] == []
+    assert pack["run_commands"] == []
+    assert "只保留为空位监控" in pack["recommendation"]
+    markdown = Path(pack["artifacts"]["markdown_path"]).read_text(encoding="utf-8")
+    assert "shadow_status: skipped_no_rebucket_candidate" in markdown
+    assert "## Commands" in markdown
+    assert "- none" in markdown

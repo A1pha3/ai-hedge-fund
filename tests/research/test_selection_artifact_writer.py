@@ -330,6 +330,82 @@ def test_file_selection_artifact_writer_persists_short_trade_profile_metadata(tm
     assert '"name": "aggressive"' in replay_input_text
 
 
+def test_file_selection_artifact_writer_merges_released_shadow_entries_into_replay_input(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_shadow_release")
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "short_trade_candidates": {
+                        "tickers": [
+                            {
+                                "ticker": "000001",
+                                "candidate_source": "short_trade_boundary",
+                            }
+                        ],
+                        "released_shadow_entries": [
+                            {
+                                "ticker": "301292",
+                                "candidate_source": "post_gate_liquidity_competition_shadow",
+                                "candidate_pool_lane": "post_gate_liquidity_competition",
+                                "shadow_release_reason": "upstream_shadow_release_score_floor_pass",
+                            }
+                        ],
+                    }
+                }
+            }
+        },
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    replay_input_text = (tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8")
+    assert '"supplemental_short_trade_entry_count": 2' in replay_input_text
+    assert '"ticker": "301292"' in replay_input_text
+    assert '"shadow_release_reason": "upstream_shadow_release_score_floor_pass"' in replay_input_text
+
+
+def test_file_selection_artifact_writer_includes_watchlist_shadow_release_entries(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_watchlist_shadow_release")
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {
+                        "tickers": [
+                            {
+                                "ticker": "000960",
+                                "candidate_source": "watchlist_filter_diagnostics",
+                                "reason": "decision_avoid",
+                            }
+                        ],
+                        "released_shadow_entries": [
+                            {
+                                "ticker": "000960",
+                                "candidate_source": "watchlist_avoid_shadow_release",
+                                "shadow_release_reason": "watchlist_avoid_shadow_release_boundary_pass",
+                            }
+                        ],
+                    }
+                }
+            }
+        },
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    replay_input_text = (tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8")
+    assert '"supplemental_short_trade_entry_count": 1' in replay_input_text
+    assert '"candidate_source": "watchlist_avoid_shadow_release"' in replay_input_text
+    assert '"shadow_release_reason": "watchlist_avoid_shadow_release_boundary_pass"' in replay_input_text
+
+
 def test_file_selection_artifact_writer_builds_fallback_layer_b_factors_for_legacy_replay(tmp_path):
     writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_legacy")
     plan = ExecutionPlan(

@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import os
 from datetime import datetime
 from pathlib import Path
-
-from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
-from scripts.model_selection import resolve_model_selection
-from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
-from src.paper_trading.btst_reporting import (
-    generate_and_register_btst_followup_artifacts,
-)
-from src.paper_trading.runtime import run_paper_trading_session
 
 
 def _default_output_dir(start_date: str, end_date: str) -> Path:
@@ -20,7 +14,12 @@ def _default_output_dir(start_date: str, end_date: str) -> Path:
 
 def generate_btst_followup_artifacts(report_dir: Path, trade_date: str, next_trade_date: str | None = None) -> dict[str, str] | None:
     refresh_reports_manifest(report_dir)
-    result = generate_and_register_btst_followup_artifacts(report_dir=report_dir, trade_date=trade_date, next_trade_date=next_trade_date)
+    btst_reporting_module = importlib.import_module("src.paper_trading.btst_reporting")
+    result = btst_reporting_module.generate_and_register_btst_followup_artifacts(
+        report_dir=report_dir,
+        trade_date=trade_date,
+        next_trade_date=next_trade_date,
+    )
     return {
         "brief_json": result["brief_json"],
         "brief_markdown": result["brief_markdown"],
@@ -38,7 +37,8 @@ def refresh_reports_manifest(report_dir: Path) -> dict[str, str] | None:
     reports_root = resolved_report_dir.parent
     if reports_root.name != "reports":
         return None
-    result = generate_reports_manifest_artifacts(reports_root=reports_root)
+    manifest_module = importlib.import_module("scripts.generate_reports_manifest")
+    result = manifest_module.generate_reports_manifest_artifacts(reports_root=reports_root)
     return {
         "manifest_json": result["json_path"],
         "manifest_markdown": result["markdown_path"],
@@ -50,7 +50,8 @@ def refresh_btst_nightly_control_tower(report_dir: Path) -> dict[str, str] | Non
     reports_root = resolved_report_dir.parent
     if reports_root.name != "reports":
         return None
-    result = generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
+    control_tower_module = importlib.import_module("scripts.run_btst_nightly_control_tower")
+    result = control_tower_module.generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
     return {
         "open_ready_delta_json": result["delta_json_path"],
         "open_ready_delta_markdown": result["delta_markdown_path"],
@@ -82,15 +83,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-benchmark", action="store_true", help="Run a post-session cache benchmark and write benchmark artifacts into the output directory")
     parser.add_argument("--cache-benchmark-ticker", default=None, help="Ticker used for the post-session cache benchmark; defaults to the first tracked ticker")
     parser.add_argument("--cache-benchmark-clear-first", action="store_true", help="Clear the local cache before running the post-session benchmark; use with caution")
+    parser.add_argument("--candidate-pool-shadow-focus-tickers", default=None, help="Comma-separated tickers pinned into shadow recall selection across all lanes")
+    parser.add_argument("--candidate-pool-shadow-corridor-focus-tickers", default=None, help="Comma-separated tickers pinned into layer_a_liquidity_corridor shadow selection")
+    parser.add_argument("--candidate-pool-shadow-rebucket-focus-tickers", default=None, help="Comma-separated tickers pinned into post_gate_liquidity_competition shadow selection")
+    parser.add_argument("--upstream-shadow-release-liquidity-corridor-score-min", type=float, default=None, help="Optional lane-specific release score floor for layer_a_liquidity_corridor")
+    parser.add_argument("--upstream-shadow-release-post-gate-rebucket-score-min", type=float, default=None, help="Optional lane-specific release score floor for post_gate_liquidity_competition")
     return parser.parse_args()
+
+
+def _apply_optional_env_override(name: str, value: str | float | None) -> None:
+    if value is None:
+        return
+    os.environ[name] = str(value)
+
+
+def _resolve_model_route(model_name: str | None, model_provider: str | None) -> tuple[str | None, str | None]:
+    model_selection_module = importlib.import_module("scripts.model_selection")
+    return model_selection_module.resolve_model_selection(model_name, model_provider)
+
+
+def _run_paper_trading_session(**kwargs):
+    runtime_module = importlib.import_module("src.paper_trading.runtime")
+    return runtime_module.run_paper_trading_session(**kwargs)
 
 
 def main() -> None:
     args = parse_args()
     tickers = [ticker.strip() for ticker in args.tickers.split(",") if ticker.strip()]
     output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir(args.start_date, args.end_date)
-    resolved_model_name, resolved_model_provider = resolve_model_selection(args.model_name, args.model_provider)
-    artifacts = run_paper_trading_session(
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS", args.candidate_pool_shadow_focus_tickers)
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", args.candidate_pool_shadow_corridor_focus_tickers)
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS", args.candidate_pool_shadow_rebucket_focus_tickers)
+    _apply_optional_env_override(
+        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LIQUIDITY_CORRIDOR_SCORE_MIN",
+        args.upstream_shadow_release_liquidity_corridor_score_min,
+    )
+    _apply_optional_env_override(
+        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_POST_GATE_REBUCKET_SCORE_MIN",
+        args.upstream_shadow_release_post_gate_rebucket_score_min,
+    )
+    resolved_model_name, resolved_model_provider = _resolve_model_route(args.model_name, args.model_provider)
+    artifacts = _run_paper_trading_session(
         start_date=args.start_date,
         end_date=args.end_date,
         output_dir=output_dir,

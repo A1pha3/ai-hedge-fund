@@ -17,6 +17,42 @@ DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_corridor_uplift_runbook
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_corridor_uplift_runbook_latest.md"
 
 
+def _build_corridor_uplift_commands(
+    *,
+    candidate_pool_recall_dossier_path: str | Path,
+    corridor_shadow_pack_path: str | Path,
+    lane_pair_board_path: str | Path,
+    primary_shadow_replay: str | None,
+    parallel_watch_tickers: list[str] | None,
+) -> list[str]:
+    resolved_recall_dossier_path = Path(candidate_pool_recall_dossier_path).expanduser().resolve()
+    resolved_corridor_shadow_pack_path = Path(corridor_shadow_pack_path).expanduser().resolve()
+    resolved_lane_pair_board_path = Path(lane_pair_board_path).expanduser().resolve()
+    focus_tickers = [ticker for ticker in [primary_shadow_replay, *(parallel_watch_tickers or [])] if ticker]
+    focus_arg = f" --candidate-pool-shadow-focus-tickers {','.join(focus_tickers)}" if focus_tickers else ""
+    corridor_focus_arg = f" --candidate-pool-shadow-corridor-focus-tickers {','.join(focus_tickers)}" if focus_tickers else ""
+    return [
+        "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
+        "--corridor-validation-pack-path data/reports/btst_candidate_pool_corridor_validation_pack_latest.json "
+        "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
+        "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md",
+        "python scripts/run_btst_candidate_pool_lane_pair_board.py "
+        f"--corridor-shadow-pack-path {resolved_corridor_shadow_pack_path} "
+        "--rebucket-comparison-bundle-path data/reports/btst_candidate_pool_rebucket_comparison_bundle_latest.json "
+        "--output-json data/reports/btst_candidate_pool_lane_pair_board_latest.json "
+        "--output-md data/reports/btst_candidate_pool_lane_pair_board_latest.md",
+        "python scripts/run_btst_candidate_pool_corridor_uplift_runbook.py "
+        f"--candidate-pool-recall-dossier-path {resolved_recall_dossier_path} "
+        f"--corridor-shadow-pack-path {resolved_corridor_shadow_pack_path} "
+        f"--lane-pair-board-path {resolved_lane_pair_board_path} "
+        "--output-json data/reports/btst_candidate_pool_corridor_uplift_runbook_latest.json "
+        "--output-md data/reports/btst_candidate_pool_corridor_uplift_runbook_latest.md",
+        "python scripts/run_paper_trading.py --start-date YYYY-MM-DD --end-date YYYY-MM-DD "
+        "--selection-target short_trade_only --model-provider MiniMax --model-name MiniMax-M2.7"
+        f"{focus_arg}{corridor_focus_arg}",
+    ]
+
+
 def _load_json(path: str | Path) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
     return json.loads(resolved.read_text(encoding="utf-8"))
@@ -79,6 +115,13 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
         f"corridor uplift runbook 当前应围绕 {primary_shadow.get('ticker') or 'N/A'} 展开，"
         f"并保持 {board_leader.get('ticker') or 'N/A'} 的 lane pair leader 语义不变。"
     )
+    execution_commands = _build_corridor_uplift_commands(
+        candidate_pool_recall_dossier_path=candidate_pool_recall_dossier_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path or DEFAULT_CORRIDOR_SHADOW_PACK_PATH,
+        lane_pair_board_path=lane_pair_board_path or DEFAULT_LANE_PAIR_BOARD_PATH,
+        primary_shadow_replay=primary_shadow.get("ticker"),
+        parallel_watch_tickers=[str(row.get("ticker") or "") for row in parallel_watch if str(row.get("ticker") or "").strip()],
+    )
 
     return {
         "candidate_pool_recall_dossier_path": str(Path(candidate_pool_recall_dossier_path).expanduser().resolve()),
@@ -100,6 +143,7 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
         "evaluation_summary": corridor_experiment.get("evaluation_summary"),
         "why_now": corridor_experiment.get("why_now"),
         "execution_steps": execution_steps,
+        "execution_commands": execution_commands,
         "success_criteria": success_criteria,
         "guardrails": guardrails,
         "recommendation": recommendation,
@@ -131,6 +175,10 @@ def render_btst_candidate_pool_corridor_uplift_runbook_markdown(analysis: dict[s
     lines.append("")
     lines.append("## Execution Steps")
     for item in list(analysis.get("execution_steps") or []):
+        lines.append(f"- {item}")
+    lines.append("")
+    lines.append("## Commands")
+    for item in list(analysis.get("execution_commands") or []):
         lines.append(f"- {item}")
     lines.append("")
     lines.append("## Success Criteria")

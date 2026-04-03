@@ -422,7 +422,13 @@ def build_selection_target_replay_input(
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
     rejected_entries = list(dict(filters.get("watchlist", {}) or {}).get("tickers", []) or [])
-    supplemental_short_trade_entries = list(dict(filters.get("short_trade_candidates", {}) or {}).get("tickers", []) or [])
+    watchlist_filter = dict(filters.get("watchlist", {}) or {})
+    short_trade_candidate_filters = dict(filters.get("short_trade_candidates", {}) or {})
+    supplemental_short_trade_entries = [
+        *list(short_trade_candidate_filters.get("tickers", []) or []),
+        *list(short_trade_candidate_filters.get("released_shadow_entries", []) or []),
+        *list(watchlist_filter.get("released_shadow_entries", []) or []),
+    ]
     upstream_shadow_observation_entries = list(dict(filters.get("short_trade_candidates", {}) or {}).get("shadow_observation_entries", []) or [])
     supplemental_catalyst_theme_entries = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
     watchlist_entries = [

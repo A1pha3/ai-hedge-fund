@@ -1586,36 +1586,30 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 for row in list(candidate_pool_recall_dossier_analysis.get("priority_handoff_branch_experiment_queue") or [])
                 if str(row.get("prototype_type") or "") == "post_gate_competition_rebucket_probe"
             ]
+            rebucket_ticker = str(list(rebucket_candidates[0].get("tickers") or [None])[0] or "") or None if rebucket_candidates else None
+            candidate_pool_rebucket_shadow_pack_analysis = run_btst_candidate_pool_rebucket_shadow_pack(
+                candidate_pool_recall_dossier_json_path,
+                output_dir=resolved_reports_root,
+                ticker=rebucket_ticker,
+            )
+            candidate_pool_rebucket_shadow_pack_json_path.write_text(json.dumps(candidate_pool_rebucket_shadow_pack_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_rebucket_shadow_pack_md_path.write_text(render_btst_candidate_pool_rebucket_shadow_pack_markdown(candidate_pool_rebucket_shadow_pack_analysis), encoding="utf-8")
             if rebucket_candidates:
-                rebucket_ticker = str(list(rebucket_candidates[0].get("tickers") or [None])[0] or "") or None
-                candidate_pool_rebucket_shadow_pack_analysis = run_btst_candidate_pool_rebucket_shadow_pack(
-                    candidate_pool_recall_dossier_json_path,
-                    output_dir=resolved_reports_root,
-                    ticker=rebucket_ticker,
-                )
-                candidate_pool_rebucket_shadow_pack_json_path.write_text(json.dumps(candidate_pool_rebucket_shadow_pack_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                candidate_pool_rebucket_shadow_pack_md_path.write_text(render_btst_candidate_pool_rebucket_shadow_pack_markdown(candidate_pool_rebucket_shadow_pack_analysis), encoding="utf-8")
                 candidate_pool_rebucket_shadow_pack_status = "refreshed"
+            else:
+                candidate_pool_rebucket_shadow_pack_status = str(candidate_pool_rebucket_shadow_pack_analysis.get("shadow_status") or "skipped_no_rebucket_candidate")
 
-                candidate_pool_rebucket_objective_validation_analysis = analyze_btst_candidate_pool_rebucket_objective_validation(
-                    candidate_pool_recall_dossier_json_path,
-                    objective_monitor_path=objective_monitor_json_path if objective_monitor_json_path.exists() else None,
-                    lane_objective_support_path=candidate_pool_lane_objective_support_json_path if candidate_pool_lane_objective_support_analysis else None,
-                    ticker=rebucket_ticker,
-                )
-                candidate_pool_rebucket_objective_validation_json_path.write_text(json.dumps(candidate_pool_rebucket_objective_validation_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                candidate_pool_rebucket_objective_validation_md_path.write_text(render_btst_candidate_pool_rebucket_objective_validation_markdown(candidate_pool_rebucket_objective_validation_analysis), encoding="utf-8")
+            candidate_pool_rebucket_objective_validation_analysis = analyze_btst_candidate_pool_rebucket_objective_validation(
+                candidate_pool_recall_dossier_json_path,
+                objective_monitor_path=objective_monitor_json_path if objective_monitor_json_path.exists() else None,
+                lane_objective_support_path=candidate_pool_lane_objective_support_json_path if candidate_pool_lane_objective_support_analysis else None,
+                ticker=rebucket_ticker,
+            )
+            candidate_pool_rebucket_objective_validation_json_path.write_text(json.dumps(candidate_pool_rebucket_objective_validation_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_rebucket_objective_validation_md_path.write_text(render_btst_candidate_pool_rebucket_objective_validation_markdown(candidate_pool_rebucket_objective_validation_analysis), encoding="utf-8")
+            if rebucket_candidates:
                 candidate_pool_rebucket_objective_validation_status = "refreshed"
             else:
-                candidate_pool_rebucket_shadow_pack_status = "skipped_no_rebucket_candidate"
-                candidate_pool_rebucket_objective_validation_analysis = analyze_btst_candidate_pool_rebucket_objective_validation(
-                    candidate_pool_recall_dossier_json_path,
-                    objective_monitor_path=objective_monitor_json_path if objective_monitor_json_path.exists() else None,
-                    lane_objective_support_path=candidate_pool_lane_objective_support_json_path if candidate_pool_lane_objective_support_analysis else None,
-                    ticker=None,
-                )
-                candidate_pool_rebucket_objective_validation_json_path.write_text(json.dumps(candidate_pool_rebucket_objective_validation_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                candidate_pool_rebucket_objective_validation_md_path.write_text(render_btst_candidate_pool_rebucket_objective_validation_markdown(candidate_pool_rebucket_objective_validation_analysis), encoding="utf-8")
                 candidate_pool_rebucket_objective_validation_status = str(candidate_pool_rebucket_objective_validation_analysis.get("validation_status") or "skipped_no_rebucket_candidate")
 
             candidate_pool_rebucket_comparison_bundle_analysis = analyze_btst_candidate_pool_rebucket_comparison_bundle(

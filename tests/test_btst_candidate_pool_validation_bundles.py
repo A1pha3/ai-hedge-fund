@@ -199,6 +199,8 @@ def test_corridor_shadow_pack_promotes_primary_shadow_replay(tmp_path: Path) -> 
     assert analysis["shadow_status"] == "ready_for_primary_shadow_replay"
     assert analysis["primary_shadow_replay"]["ticker"] == "300720"
     assert [row["ticker"] for row in analysis["parallel_watch_lanes"]] == ["003036"]
+    assert any("run_btst_candidate_pool_corridor_shadow_pack.py" in command for command in analysis["refresh_commands"])
+    assert any("parallel_watch=003036" in command for command in analysis["shadow_replay_commands"])
 
 
 def test_lane_pair_board_keeps_corridor_primary_first(tmp_path: Path) -> None:
@@ -342,6 +344,159 @@ def test_upstream_handoff_board_prioritizes_watchlist_break_before_lane_probe(tm
     assert analysis["board_rows"][0]["ticker"] == "300720"
     assert analysis["board_rows"][0]["first_broken_handoff"] == "absent_from_watchlist"
     assert analysis["board_rows"][0]["prototype_task_id"] == "corridor_probe"
+    assert any("run_btst_candidate_pool_corridor_uplift_runbook.py" in command for command in analysis["board_rows"][0]["recommended_commands"])
+    assert any("run_btst_candidate_pool_rebucket_shadow_pack.py" in command for command in analysis["board_rows"][1]["recommended_commands"])
+
+
+def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_path: Path) -> None:
+    failure_dossier_path = tmp_path / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_path = tmp_path / "btst_watchlist_recall_dossier_latest.json"
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+
+    _write_json(
+        failure_dossier_path,
+        {
+            "top_upstream_absence_tickers": ["300720", "003036", "301292"],
+            "priority_ticker_dossiers": [
+                {
+                    "ticker": "300720",
+                    "primary_failure_class": "upstream_absent_from_replay_inputs",
+                    "handoff_stage": "absent_from_watchlist",
+                    "primary_report_dir": "report_a",
+                    "replay_input_visible_report_count": 0,
+                    "watchlist_visible_report_count": 0,
+                    "failure_reason": "missing before watchlist",
+                    "next_step": "trace replay input",
+                },
+                {
+                    "ticker": "003036",
+                    "primary_failure_class": "upstream_absent_from_replay_inputs",
+                    "handoff_stage": "absent_from_watchlist",
+                    "primary_report_dir": "report_b",
+                    "replay_input_visible_report_count": 0,
+                    "watchlist_visible_report_count": 0,
+                    "failure_reason": "missing before watchlist",
+                    "next_step": "trace replay input",
+                },
+                {
+                    "ticker": "301292",
+                    "primary_failure_class": "upstream_absent_from_replay_inputs",
+                    "handoff_stage": "absent_from_watchlist",
+                    "primary_report_dir": "report_c",
+                    "replay_input_visible_report_count": 0,
+                    "watchlist_visible_report_count": 0,
+                    "failure_reason": "missing before watchlist",
+                    "next_step": "trace replay input",
+                },
+            ],
+        },
+    )
+    _write_json(
+        watchlist_dossier_path,
+        {
+            "focus_tickers": ["300720", "003036", "301292"],
+            "priority_ticker_dossiers": [
+                {"ticker": "300720", "dominant_recall_stage": "absent_from_candidate_pool", "candidate_pool_visible_count": 0, "layer_b_visible_count": 0},
+                {"ticker": "003036", "dominant_recall_stage": "absent_from_candidate_pool", "candidate_pool_visible_count": 0, "layer_b_visible_count": 0},
+                {"ticker": "301292", "dominant_recall_stage": "absent_from_candidate_pool", "candidate_pool_visible_count": 0, "layer_b_visible_count": 0},
+            ],
+        },
+    )
+    _write_json(
+        recall_dossier_path,
+        {
+            "focus_tickers": ["300720", "003036", "301292"],
+            "action_queue": [
+                {
+                    "ticker": "300720",
+                    "dominant_blocking_stage": "candidate_pool_truncated_after_filters",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "min_rank_gap_to_cutoff": 878,
+                        "avg_amount_share_of_cutoff_mean": 0.1573,
+                        "avg_amount_share_of_min_gate_mean": 5.2437,
+                        "profile_summary": "corridor profile",
+                    },
+                },
+                {
+                    "ticker": "003036",
+                    "dominant_blocking_stage": "candidate_pool_truncated_after_filters",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "min_rank_gap_to_cutoff": 644,
+                        "avg_amount_share_of_cutoff_mean": 0.2214,
+                        "avg_amount_share_of_min_gate_mean": 4.8831,
+                        "profile_summary": "corridor profile",
+                    },
+                },
+                {
+                    "ticker": "301292",
+                    "dominant_blocking_stage": "candidate_pool_truncated_after_filters",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "post_gate_liquidity_competition",
+                        "min_rank_gap_to_cutoff": 309,
+                        "avg_amount_share_of_cutoff_mean": 0.4421,
+                        "avg_amount_share_of_min_gate_mean": 14.736,
+                        "profile_summary": "rebucket profile",
+                    },
+                },
+            ],
+            "priority_handoff_branch_experiment_queue": [
+                {"task_id": "corridor_probe", "tickers": ["300720", "003036"], "prototype_readiness": "shadow_ready_large_gap", "prototype_type": "upstream_base_liquidity_uplift_probe"},
+                {"task_id": "rebucket_probe", "tickers": ["301292"], "prototype_readiness": "shadow_ready_rebucket_signal", "prototype_type": "post_gate_competition_rebucket_probe"},
+            ],
+        },
+    )
+
+    followup_report_dir = tmp_path / "paper_trading_20260331_20260331_live_m2_7_short_trade_only_shadow_followup"
+    followup_report_dir.mkdir(parents=True, exist_ok=True)
+    followup_brief_path = followup_report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        followup_brief_path,
+        {
+            "upstream_shadow_recall_summary": {"top_focus_tickers": ["300720", "003036"]},
+            "priority_rows": [
+                {
+                    "ticker": "300720",
+                    "decision": "near_miss",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "positive_tags": ["upstream_shadow_catalyst_relief_applied"],
+                    "top_reasons": ["upstream_shadow_catalyst_relief"],
+                },
+                {
+                    "ticker": "003036",
+                    "decision": "rejected",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "top_reasons": ["profitability_hard_cliff"],
+                },
+            ],
+        },
+    )
+    _write_json(
+        followup_report_dir / "session_summary.json",
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "btst_followup": {
+                "trade_date": "2026-03-31",
+                "brief_json": str(followup_brief_path.resolve()),
+            },
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_upstream_handoff_board(
+        failure_dossier_path,
+        watchlist_recall_dossier_path=watchlist_dossier_path,
+        candidate_pool_recall_dossier_path=recall_dossier_path,
+    )
+
+    rows_by_ticker = {row["ticker"]: row for row in analysis["board_rows"]}
+    assert analysis["board_status"] == "mixed_upstream_and_post_recall_followup"
+    assert rows_by_ticker["300720"]["board_phase"] == "post_recall_downstream_followup"
+    assert rows_by_ticker["300720"]["first_broken_handoff"] == "downstream_validated_after_shadow_recall"
+    assert rows_by_ticker["300720"]["latest_followup_decision"] == "near_miss"
+    assert rows_by_ticker["003036"]["latest_followup_downstream_bottleneck"] == "profitability_hard_cliff"
+    assert rows_by_ticker["301292"]["first_broken_handoff"] == "absent_from_watchlist"
+    assert "301292" in analysis["recommendation"]
 
 
 def test_corridor_uplift_runbook_keeps_corridor_first_and_parallel_confirmatory(tmp_path: Path) -> None:
@@ -396,3 +551,8 @@ def test_corridor_uplift_runbook_keeps_corridor_first_and_parallel_confirmatory(
     assert analysis["primary_shadow_replay"] == "300720"
     assert analysis["parallel_watch_tickers"] == ["003036"]
     assert analysis["leader_lane_family"] == "corridor"
+    assert any("run_btst_candidate_pool_lane_pair_board.py" in command for command in analysis["execution_commands"])
+    paper_trading_commands = [command for command in analysis["execution_commands"] if "run_paper_trading.py" in command]
+    assert paper_trading_commands
+    assert "--candidate-pool-shadow-focus-tickers 300720,003036" in paper_trading_commands[0]
+    assert "--candidate-pool-shadow-corridor-focus-tickers 300720,003036" in paper_trading_commands[0]
