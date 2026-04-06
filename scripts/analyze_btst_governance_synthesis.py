@@ -104,14 +104,35 @@ def _select_latest_btst_candidate(reports_root: str | Path) -> dict[str, Any] | 
     return max(candidates, key=lambda candidate: candidate["rank"])
 
 
-def _extract_latest_btst_followup(reports_root: str | Path, latest_btst_report_dir: str | Path | None = None) -> dict[str, Any]:
-    candidate = _extract_latest_btst_candidate(Path(latest_btst_report_dir)) if latest_btst_report_dir else _select_latest_btst_candidate(reports_root)
-    if candidate is None:
-        return {}
+def _summarize_btst_followup_entry(bucket_name: str, entry: dict[str, Any]) -> dict[str, Any]:
+    historical_prior = dict(entry.get("historical_prior") or {})
+    top_reasons = [str(reason) for reason in list(entry.get("top_reasons") or []) if str(reason).strip()]
+    candidate_source = str(entry.get("candidate_source") or "").strip() or None
+    return {
+        "ticker": str(entry.get("ticker") or "").strip(),
+        "bucket": bucket_name,
+        "decision": entry.get("decision"),
+        "candidate_source": candidate_source,
+        "score_target": entry.get("score_target"),
+        "preferred_entry_mode": entry.get("preferred_entry_mode"),
+        "top_reasons": top_reasons,
+        "historical_bias_label": historical_prior.get("bias_label"),
+        "historical_sample_count": historical_prior.get("sample_count"),
+        "historical_next_close_positive_rate": historical_prior.get("next_close_positive_rate"),
+        "historical_next_close_return_mean": historical_prior.get("next_close_return_mean"),
+        "execution_priority": historical_prior.get("execution_priority"),
+        "monitor_priority": historical_prior.get("monitor_priority"),
+    }
 
+
+def _build_btst_followup_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     brief = _safe_load_json(candidate.get("brief_json_path"))
     priority_board = _safe_load_json(candidate.get("priority_board_json_path"))
     summary_block = dict(brief.get("summary") or {})
+    entries: list[dict[str, Any]] = []
+    for bucket_name in ("selected_entries", "near_miss_entries", "opportunity_pool_entries", "rejected_entries"):
+        for entry in list(brief.get(bucket_name) or []):
+            entries.append(_summarize_btst_followup_entry(bucket_name, dict(entry or {})))
 
     return {
         "report_dir": str(candidate["report_dir"]),
@@ -126,7 +147,112 @@ def _extract_latest_btst_followup(reports_root: str | Path, latest_btst_report_d
         "research_upside_radar_count": int(summary_block.get("research_upside_radar_count") or 0),
         "priority_board_headline": priority_board.get("headline"),
         "brief_recommendation": brief.get("recommendation"),
+        "entries": entries,
+        "rank": candidate.get("rank"),
     }
+
+
+def _extract_btst_followups(
+    reports_root: str | Path,
+    *,
+    latest_btst_report_dir: str | Path | None = None,
+    evidence_btst_report_dirs: list[str | Path] | None = None,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    if evidence_btst_report_dirs:
+        for report_dir in evidence_btst_report_dirs:
+            candidate = _extract_latest_btst_candidate(Path(report_dir))
+            if candidate is not None:
+                candidates.append(candidate)
+    elif latest_btst_report_dir:
+        candidate = _extract_latest_btst_candidate(Path(latest_btst_report_dir))
+        if candidate is not None:
+            candidates.append(candidate)
+    else:
+        candidate = _select_latest_btst_candidate(reports_root)
+        if candidate is not None:
+            candidates.append(candidate)
+
+    sorted_candidates = sorted(candidates, key=lambda candidate: candidate["rank"], reverse=True)
+    return [_build_btst_followup_payload(candidate) for candidate in sorted_candidates]
+
+
+def _extract_latest_btst_followup(
+    reports_root: str | Path,
+    latest_btst_report_dir: str | Path | None = None,
+    *,
+    evidence_btst_report_dirs: list[str | Path] | None = None,
+) -> dict[str, Any]:
+    followups = _extract_btst_followups(
+        reports_root,
+        latest_btst_report_dir=latest_btst_report_dir,
+        evidence_btst_report_dirs=evidence_btst_report_dirs,
+    )
+    if not followups:
+        return {}
+    return dict(followups[0])
+
+
+def _derive_execution_surface_constraints(btst_followups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    constraints: list[dict[str, Any]] = []
+    for followup in btst_followups:
+        entries = [dict(entry or {}) for entry in list(followup.get("entries") or [])]
+        if not entries:
+            continue
+
+        post_gate_near_miss = [
+            entry
+            for entry in entries
+            if entry.get("candidate_source") == "post_gate_liquidity_competition_shadow"
+            and entry.get("bucket") == "near_miss_entries"
+        ]
+        if post_gate_near_miss and int(followup.get("selected_count") or 0) <= 0:
+            constraints.append(
+                {
+                    "constraint_id": "post_gate_shadow_observation_only",
+                    "report_dir": followup.get("report_dir"),
+                    "trade_date": followup.get("trade_date"),
+                    "lane_id": "post_gate_liquidity_competition_shadow",
+                    "status": "continuation_only_confirm_then_review",
+                    "blocker": "no_selected_persistence_or_independent_edge",
+                    "focus_tickers": [entry.get("ticker") for entry in post_gate_near_miss if entry.get("ticker")],
+                    "evidence": {
+                        "selected_count": followup.get("selected_count"),
+                        "near_miss_count": followup.get("near_miss_count"),
+                        "opportunity_pool_count": followup.get("opportunity_pool_count"),
+                        "entries": post_gate_near_miss,
+                    },
+                    "recommendation": "Keep post-gate shadow names in observation / continuation review until a selected row persists across independent windows.",
+                }
+            )
+
+        shadow_profitability_cliff = [
+            entry
+            for entry in entries
+            if entry.get("candidate_source") in {"post_gate_liquidity_competition_shadow", "upstream_liquidity_corridor_shadow"}
+            and entry.get("bucket") in {"opportunity_pool_entries", "rejected_entries"}
+            and "profitability_hard_cliff" in list(entry.get("top_reasons") or [])
+        ]
+        if shadow_profitability_cliff:
+            constraints.append(
+                {
+                    "constraint_id": "shadow_profitability_cliff_execution_block",
+                    "report_dir": followup.get("report_dir"),
+                    "trade_date": followup.get("trade_date"),
+                    "lane_id": "shadow_recall_surface",
+                    "status": "shadow_recall_not_execution_ready",
+                    "blocker": "profitability_hard_cliff_and_score_gap",
+                    "focus_tickers": [entry.get("ticker") for entry in shadow_profitability_cliff if entry.get("ticker")],
+                    "evidence": {
+                        "rejected_count": followup.get("rejected_count"),
+                        "opportunity_pool_count": followup.get("opportunity_pool_count"),
+                        "entries": shadow_profitability_cliff,
+                    },
+                    "recommendation": "Do not promote shadow recall names with profitability hard-cliff evidence into execution lanes; keep them in replay-input / shadow-governance diagnostics.",
+                }
+            )
+
+    return constraints
 
 
 def _build_lane_matrix(
@@ -312,6 +438,7 @@ def analyze_btst_governance_synthesis(
     structural_shadow_runbook_path: str | Path,
     candidate_entry_governance_path: str | Path,
     latest_btst_report_dir: str | Path | None = None,
+    evidence_btst_report_dirs: list[str | Path] | None = None,
 ) -> dict[str, Any]:
     action_board = _load_json(action_board_path)
     rollout_governance = _load_json(rollout_governance_path)
@@ -320,7 +447,13 @@ def analyze_btst_governance_synthesis(
     primary_window_validation_runbook = _load_json(primary_window_validation_runbook_path)
     structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
     candidate_entry_governance = _load_json(candidate_entry_governance_path)
-    latest_btst_followup = _extract_latest_btst_followup(reports_root, latest_btst_report_dir=latest_btst_report_dir)
+    btst_followups = _extract_btst_followups(
+        reports_root,
+        latest_btst_report_dir=latest_btst_report_dir,
+        evidence_btst_report_dirs=evidence_btst_report_dirs,
+    )
+    latest_btst_followup = dict(btst_followups[0]) if btst_followups else {}
+    execution_surface_constraints = _derive_execution_surface_constraints(btst_followups)
     frontier_constraints, closed_frontiers = _collect_closed_frontiers(rollout_governance)
 
     lane_matrix = _build_lane_matrix(
@@ -367,11 +500,19 @@ def analyze_btst_governance_synthesis(
             )
         if latest_btst_followup.get("priority_board_headline"):
             recommendation_parts.append(str(latest_btst_followup.get("priority_board_headline")))
+    if execution_surface_constraints:
+        recommendation_parts.extend(
+            str(row.get("recommendation") or "").strip()
+            for row in execution_surface_constraints
+            if str(row.get("recommendation") or "").strip()
+        )
 
     return {
         "generated_on": action_board.get("generated_on") or rollout_governance.get("generated_on"),
         "reports_root": str(Path(reports_root).expanduser().resolve()),
         "latest_btst_followup": latest_btst_followup,
+        "evidence_btst_followups": btst_followups,
+        "execution_surface_constraints": execution_surface_constraints,
         "lane_status_counts": lane_status_counts,
         "ready_lane_count": ready_lane_count,
         "waiting_lane_count": waiting_lane_count,
@@ -423,6 +564,23 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
             "brief_recommendation",
         ):
             lines.append(f"- {key}: {latest_followup.get(key)}")
+    evidence_followups = list(analysis.get("evidence_btst_followups") or [])
+    if len(evidence_followups) > 1:
+        lines.append(f"- evidence_followup_count: {len(evidence_followups)}")
+    lines.append("")
+
+    lines.append("## Execution Surface Constraints")
+    execution_surface_constraints = list(analysis.get("execution_surface_constraints") or [])
+    if not execution_surface_constraints:
+        lines.append("- none")
+    else:
+        for row in execution_surface_constraints:
+            lines.append(
+                f"- constraint_id={row.get('constraint_id')} lane_id={row.get('lane_id')} status={row.get('status')} blocker={row.get('blocker')}"
+            )
+            lines.append(f"  trade_date: {row.get('trade_date')}")
+            lines.append(f"  focus_tickers: {row.get('focus_tickers')}")
+            lines.append(f"  recommendation: {row.get('recommendation')}")
     lines.append("")
 
     lines.append("## Lane Matrix")
@@ -486,10 +644,16 @@ def main() -> None:
     parser.add_argument("--structural-shadow-runbook", default=str(DEFAULT_STRUCTURAL_SHADOW_RUNBOOK_PATH))
     parser.add_argument("--candidate-entry-governance", default=str(DEFAULT_CANDIDATE_ENTRY_GOVERNANCE_PATH))
     parser.add_argument("--latest-btst-report-dir", default="")
+    parser.add_argument("--evidence-btst-report-dirs", default="")
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
 
+    evidence_btst_report_dirs = [
+        item.strip()
+        for item in str(args.evidence_btst_report_dirs or "").split(",")
+        if item.strip()
+    ]
     analysis = analyze_btst_governance_synthesis(
         args.reports_root,
         action_board_path=args.action_board,
@@ -500,6 +664,7 @@ def main() -> None:
         structural_shadow_runbook_path=args.structural_shadow_runbook,
         candidate_entry_governance_path=args.candidate_entry_governance,
         latest_btst_report_dir=args.latest_btst_report_dir or None,
+        evidence_btst_report_dirs=evidence_btst_report_dirs or None,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()

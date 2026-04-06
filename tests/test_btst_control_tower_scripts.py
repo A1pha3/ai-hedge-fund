@@ -595,6 +595,111 @@ def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_p
     assert candidate_check["details"]["expected_missing_window_count"] == 1
 
 
+def test_btst_governance_synthesis_derives_execution_surface_constraints_from_followup(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    latest_report = _write_btst_followup_report(
+        reports_root,
+        report_name="paper_trading_20260331_20260331_live_m2_7_short_trade_only_20260406_corridor_parallel",
+        selection_target="short_trade_only",
+        mode="live_pipeline",
+        trade_date="2026-03-31",
+        next_trade_date="2026-04-01",
+        summary_counts={
+            "selected_count": 0,
+            "near_miss_count": 1,
+            "blocked_count": 0,
+            "rejected_count": 1,
+            "opportunity_pool_count": 1,
+            "research_upside_radar_count": 0,
+        },
+        brief_payload={
+            "summary": {
+                "short_trade_selected_count": 0,
+                "short_trade_near_miss_count": 1,
+                "short_trade_blocked_count": 0,
+                "short_trade_rejected_count": 1,
+                "short_trade_opportunity_pool_count": 1,
+                "research_upside_radar_count": 0,
+            },
+            "near_miss_entries": [
+                {
+                    "ticker": "300720",
+                    "decision": "near_miss",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "score_target": 0.4574,
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "top_reasons": ["trend_acceleration=0.88", "upstream_shadow_catalyst_relief", "confirmed_breakout"],
+                    "historical_prior": {
+                        "bias_label": "weak",
+                        "sample_count": 1,
+                        "next_close_positive_rate": 0.0,
+                        "next_close_return_mean": -0.0246,
+                        "execution_priority": "medium",
+                        "monitor_priority": "low",
+                    },
+                }
+            ],
+            "opportunity_pool_entries": [
+                {
+                    "ticker": "301292",
+                    "decision": "rejected",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "score_target": 0.3534,
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "top_reasons": ["trend_acceleration=0.81", "profitability_hard_cliff", "confirmed_breakout"],
+                    "historical_prior": {
+                        "bias_label": "unknown",
+                        "sample_count": 0,
+                        "next_close_positive_rate": None,
+                        "next_close_return_mean": None,
+                        "execution_priority": "high",
+                        "monitor_priority": "medium",
+                    },
+                }
+            ],
+            "recommendation": "继续用 near-miss 与 opportunity_pool 做观察层。",
+        },
+        priority_board_payload={
+            "trade_date": "2026-03-31",
+            "next_trade_date": "2026-04-01",
+            "selection_target": "short_trade_only",
+            "headline": "当前没有主票，优先看 near-miss，其次看机会池。",
+        },
+    )
+
+    _write_json(reports_root / "p3_top3_post_execution_action_board_20260330.json", {"board_rows": [], "next_3_tasks": [], "recommendation": "保持主 lane 收敛。"})
+    _write_json(reports_root / "p5_btst_rollout_governance_board_20260330.json", {"governance_rows": [], "next_3_tasks": [], "recommendation": "执行面需要更严格治理。"})
+    _write_json(reports_root / "p6_primary_window_gap_001309_20260330.json", {"missing_window_count": 1})
+    _write_json(reports_root / "p6_recurring_shadow_runbook_20260330.json", {"close_candidate": {}, "intraday_control": {}, "global_validation_verdict": "await_new_recurring_window_evidence"})
+    _write_json(reports_root / "p7_primary_window_validation_runbook_001309_20260330.json", {"validation_verdict": "await_new_independent_window_data"})
+    _write_json(reports_root / "p8_structural_shadow_runbook_300724_20260330.json", {"lane_status": "structural_shadow_hold_only"})
+    _write_json(reports_root / "p9_candidate_entry_rollout_governance_20260330.json", {"lane_status": "shadow_only_until_second_window", "default_upgrade_status": "blocked_by_single_window_candidate_entry_signal"})
+
+    synthesis = analyze_btst_governance_synthesis(
+        reports_root,
+        action_board_path=reports_root / "p3_top3_post_execution_action_board_20260330.json",
+        rollout_governance_path=reports_root / "p5_btst_rollout_governance_board_20260330.json",
+        primary_window_gap_path=reports_root / "p6_primary_window_gap_001309_20260330.json",
+        recurring_shadow_runbook_path=reports_root / "p6_recurring_shadow_runbook_20260330.json",
+        primary_window_validation_runbook_path=reports_root / "p7_primary_window_validation_runbook_001309_20260330.json",
+        structural_shadow_runbook_path=reports_root / "p8_structural_shadow_runbook_300724_20260330.json",
+        candidate_entry_governance_path=reports_root / "p9_candidate_entry_rollout_governance_20260330.json",
+        latest_btst_report_dir=latest_report,
+    )
+
+    constraint_ids = {row["constraint_id"] for row in synthesis["execution_surface_constraints"]}
+    assert constraint_ids == {
+        "post_gate_shadow_observation_only",
+        "shadow_profitability_cliff_execution_block",
+    }
+    post_gate_constraint = next(row for row in synthesis["execution_surface_constraints"] if row["constraint_id"] == "post_gate_shadow_observation_only")
+    assert post_gate_constraint["focus_tickers"] == ["300720"]
+    assert post_gate_constraint["status"] == "continuation_only_confirm_then_review"
+    profitability_constraint = next(row for row in synthesis["execution_surface_constraints"] if row["constraint_id"] == "shadow_profitability_cliff_execution_block")
+    assert profitability_constraint["focus_tickers"] == ["301292"]
+    assert "profitability hard-cliff" in profitability_constraint["recommendation"]
+
+
 def test_validate_btst_governance_consistency_fails_on_closed_frontier_drift(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     reports_root.mkdir(parents=True, exist_ok=True)
