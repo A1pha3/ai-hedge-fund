@@ -8,6 +8,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Environment
 .env
@@ -21,7 +23,17 @@ __pycache__/
 # Logs and data
 logs/
 data/
+outputs/
 *.log
+
+# Frontend build artifacts
+app/frontend/node_modules/
+app/frontend/dist/
+
+# Session and coverage artifacts
+.coverage
+htmlcov/
+coverage/
 
 # OS specific
 .DS_Store
