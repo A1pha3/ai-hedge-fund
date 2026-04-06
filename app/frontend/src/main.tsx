@@ -6,19 +6,22 @@ import { NodeProvider } from './contexts/node-context';
 import { ThemeProvider } from './providers/theme-provider';
 import { AuthProvider } from './contexts/auth-context';
 import { AuthGuard } from './components/AuthGuard';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
-      <AuthProvider>
-        <AuthGuard>
-          <NodeProvider>
-            <App />
-          </NodeProvider>
-        </AuthGuard>
-      </AuthProvider>
+      <ErrorBoundary>
+        <AuthProvider>
+          <AuthGuard>
+            <NodeProvider>
+              <App />
+            </NodeProvider>
+          </AuthGuard>
+        </AuthProvider>
+      </ErrorBoundary>
     </ThemeProvider>
   </React.StrictMode>
 );
