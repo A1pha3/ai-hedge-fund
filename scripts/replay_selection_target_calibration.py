@@ -29,6 +29,14 @@ WATCHLIST_AVOID_WEAK_STRUCTURE_ENTRY_FILTER = {
     )
 }
 
+WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES: dict[str, float] = {
+    "watchlist_zero_catalyst_penalty": 0.12,
+    "watchlist_zero_catalyst_catalyst_freshness_max": 0.05,
+    "watchlist_zero_catalyst_close_strength_min": 0.92,
+    "watchlist_zero_catalyst_layer_c_alignment_min": 0.72,
+    "watchlist_zero_catalyst_sector_resonance_min": 0.35,
+}
+
 STRUCTURAL_VARIANTS: dict[str, dict[str, Any]] = {
     "baseline": {},
     "no_bearish_conflict_block": {
@@ -64,6 +72,14 @@ STRUCTURAL_VARIANTS: dict[str, dict[str, Any]] = {
         "stale_score_penalty_weight": 0.06,
         "overhead_score_penalty_weight": 0.05,
         "extension_score_penalty_weight": 0.04,
+    },
+    "no_bearish_conflict_softer_penalty_weights_watchlist_zero_catalyst_guard": {
+        "strong_bearish_conflicts": [],
+        "layer_c_avoid_penalty": 0.06,
+        "stale_score_penalty_weight": 0.06,
+        "overhead_score_penalty_weight": 0.05,
+        "extension_score_penalty_weight": 0.04,
+        "profile_overrides": dict(WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES),
     },
     "no_bearish_conflict_lower_avoid_penalty": {
         "strong_bearish_conflicts": [],
@@ -117,6 +133,10 @@ def _default_short_trade_target_profile():
 
 def _active_short_trade_target_profile():
     return get_active_short_trade_target_profile()
+
+
+def _resolve_structural_profile_overrides(structural_overrides: dict[str, Any]) -> dict[str, Any]:
+    return dict(structural_overrides.get("profile_overrides") or {})
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -360,6 +380,7 @@ def _apply_candidate_entry_filters(entries: list[dict[str, Any]], filter_rules: 
 def _override_short_trade_thresholds(
     *,
     profile_name: str = "default",
+    profile_overrides: dict[str, Any] | None = None,
     select_threshold: float | None = None,
     near_miss_threshold: float | None = None,
     breakout_freshness_weight: float | None = None,
@@ -378,7 +399,7 @@ def _override_short_trade_thresholds(
     overhead_score_penalty_weight: float | None = None,
     extension_score_penalty_weight: float | None = None,
 ) -> Iterator[None]:
-    overrides: dict[str, Any] = {}
+    overrides: dict[str, Any] = dict(profile_overrides or {})
     if select_threshold is not None:
         overrides["select_threshold"] = float(select_threshold)
     if near_miss_threshold is not None:
@@ -616,9 +637,11 @@ def analyze_selection_target_replay_inputs(
         effective_structural_overrides.update(dict(structural_overrides or {}))
     entry_filter_rules = list(effective_structural_overrides.get("exclude_candidate_entries") or [])
     focus_ticker_set = {ticker for ticker in (focus_tickers or []) if str(ticker).strip()}
+    structural_profile_overrides = _resolve_structural_profile_overrides(effective_structural_overrides)
 
     with _override_short_trade_thresholds(
         profile_name=profile_name,
+        profile_overrides=structural_profile_overrides or None,
         select_threshold=select_threshold,
         near_miss_threshold=near_miss_threshold,
         breakout_freshness_weight=effective_structural_overrides.get("breakout_freshness_weight"),

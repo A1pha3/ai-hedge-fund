@@ -199,6 +199,50 @@ def _cohort_penalty(agent_contribution_summary: dict[str, Any], cohort_name: str
     return clamp_unit_interval(max(0.0, -float(cohort_contributions.get(cohort_name, 0.0) or 0.0)))
 
 
+def _resolve_watchlist_zero_catalyst_penalty(
+    *,
+    input_data: TargetEvaluationInput,
+    catalyst_freshness: float,
+    close_strength: float,
+    sector_resonance: float,
+    layer_c_alignment: float,
+    profile: Any,
+) -> dict[str, Any]:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    penalty = clamp_unit_interval(float(profile.watchlist_zero_catalyst_penalty or 0.0))
+    default_result = {
+        "enabled": penalty > 0.0,
+        "eligible": False,
+        "applied": False,
+        "candidate_source": source,
+        "gate_hits": {},
+        "effective_penalty": 0.0,
+    }
+    if penalty <= 0.0 or source != "layer_c_watchlist":
+        return default_result
+
+    catalyst_freshness_max = clamp_unit_interval(float(profile.watchlist_zero_catalyst_catalyst_freshness_max or 0.0))
+    close_strength_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_close_strength_min or 0.0))
+    layer_c_alignment_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_layer_c_alignment_min or 0.0))
+    sector_resonance_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_sector_resonance_min or 0.0))
+    gate_hits = {
+        "candidate_source": source == "layer_c_watchlist",
+        "catalyst_freshness": catalyst_freshness <= catalyst_freshness_max,
+        "close_strength": close_strength >= close_strength_min,
+        "layer_c_alignment": layer_c_alignment >= layer_c_alignment_min,
+        "sector_resonance": sector_resonance >= sector_resonance_min,
+    }
+    eligible = all(gate_hits.values())
+    return {
+        "enabled": True,
+        "eligible": eligible,
+        "applied": eligible,
+        "candidate_source": source,
+        "gate_hits": gate_hits,
+        "effective_penalty": penalty if eligible else 0.0,
+    }
+
+
 def _build_target_input_from_item(*, trade_date: str, item: LayerCResult, included_in_buy_orders: bool) -> TargetEvaluationInput:
     return TargetEvaluationInput(
         trade_date=trade_date,
@@ -343,6 +387,15 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     catalyst_freshness = float(catalyst_relief["effective_catalyst_freshness"])
     effective_near_miss_threshold = float(catalyst_relief["effective_near_miss_threshold"])
     layer_c_avoid_penalty = float(profitability_relief["effective_avoid_penalty"])
+    watchlist_zero_catalyst_penalty = _resolve_watchlist_zero_catalyst_penalty(
+        input_data=input_data,
+        catalyst_freshness=raw_catalyst_freshness,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        layer_c_alignment=layer_c_alignment,
+        profile=profile,
+    )
+    effective_watchlist_zero_catalyst_penalty = float(watchlist_zero_catalyst_penalty["effective_penalty"])
 
     stale_trend_repair_penalty = clamp_unit_interval((0.45 * mean_reversion_strength) + (0.35 * long_trend_strength) + (0.20 * max(0.0, long_trend_strength - breakout_freshness)))
     overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.overhead_conflict_penalty_conflicts else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
@@ -362,6 +415,7 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "overhead_supply_penalty": round(profile.overhead_score_penalty_weight * overhead_supply_penalty, 4),
         "extension_without_room_penalty": round(profile.extension_score_penalty_weight * extension_without_room_penalty, 4),
         "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
+        "watchlist_zero_catalyst_penalty": round(effective_watchlist_zero_catalyst_penalty, 4),
     }
     total_positive_contribution = round(sum(weighted_positive_contributions.values()), 4)
     total_negative_contribution = round(sum(weighted_negative_contributions.values()), 4)
@@ -378,6 +432,7 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         - (profile.overhead_score_penalty_weight * overhead_supply_penalty)
         - (profile.extension_score_penalty_weight * extension_without_room_penalty)
         - layer_c_avoid_penalty
+        - effective_watchlist_zero_catalyst_penalty
     )
 
     positive_tags: list[str] = []
@@ -407,6 +462,8 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         positive_tags.append("upstream_shadow_catalyst_relief_applied")
     elif catalyst_relief["enabled"] and raw_catalyst_freshness < float(catalyst_relief["catalyst_freshness_floor"]):
         negative_tags.append("upstream_shadow_catalyst_relief_not_triggered")
+    if watchlist_zero_catalyst_penalty["applied"]:
+        negative_tags.append("watchlist_zero_catalyst_penalty_applied")
     if input_data.bc_conflict in profile.hard_block_bearish_conflicts:
         blockers.append("layer_c_bearish_conflict")
         gate_status["structural"] = "fail"
@@ -455,6 +512,8 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "profitability_relief_soft_penalty": profitability_relief["soft_penalty"],
         "base_layer_c_avoid_penalty": profitability_relief["base_layer_c_avoid_penalty"],
         "layer_c_avoid_penalty": layer_c_avoid_penalty,
+        "watchlist_zero_catalyst_guard": watchlist_zero_catalyst_penalty,
+        "watchlist_zero_catalyst_penalty": effective_watchlist_zero_catalyst_penalty,
         "upstream_shadow_catalyst_relief_enabled": catalyst_relief["enabled"],
         "upstream_shadow_catalyst_relief_gate_hits": catalyst_relief["gate_hits"],
         "upstream_shadow_catalyst_relief_eligible": catalyst_relief["eligible"],
@@ -523,6 +582,8 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     effective_near_miss_threshold = float(snapshot["effective_near_miss_threshold"])
     base_layer_c_avoid_penalty = float(snapshot["base_layer_c_avoid_penalty"])
     layer_c_avoid_penalty = float(snapshot["layer_c_avoid_penalty"])
+    watchlist_zero_catalyst_guard = dict(snapshot["watchlist_zero_catalyst_guard"])
+    effective_watchlist_zero_catalyst_penalty = float(snapshot["watchlist_zero_catalyst_penalty"])
     profitability_hard_cliff = bool(snapshot["profitability_hard_cliff"])
     profitability_positive_count = snapshot["profitability_positive_count"]
     profitability_confidence = float(snapshot["profitability_confidence"])
@@ -612,6 +673,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 _summarize_penalty("stale_trend_repair_penalty", stale_trend_repair_penalty),
                 _summarize_penalty("overhead_supply_penalty", overhead_supply_penalty),
                 _summarize_penalty("extension_without_room_penalty", extension_without_room_penalty),
+                "watchlist_zero_catalyst_penalty_applied" if watchlist_zero_catalyst_guard["applied"] else None,
                 f"score_short={score_target:.2f}",
             ]
             if reason is not None
@@ -692,6 +754,14 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "base_layer_c_avoid_penalty": round(base_layer_c_avoid_penalty, 4),
             "profitability_relief_soft_penalty": round(profitability_relief_soft_penalty, 4),
             "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
+            "watchlist_zero_catalyst_penalty": round(effective_watchlist_zero_catalyst_penalty, 4),
+            "watchlist_zero_catalyst_guard": {
+                "enabled": bool(watchlist_zero_catalyst_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_guard["gate_hits"]),
+            },
             "upstream_shadow_catalyst_relief_enabled": upstream_shadow_catalyst_relief_enabled,
             "upstream_shadow_catalyst_relief_gate_hits": upstream_shadow_catalyst_relief_gate_hits,
             "upstream_shadow_catalyst_relief_eligible": upstream_shadow_catalyst_relief_eligible,
@@ -737,6 +807,11 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "stale_score_penalty_weight": round(float(profile.stale_score_penalty_weight), 4),
                 "overhead_score_penalty_weight": round(float(profile.overhead_score_penalty_weight), 4),
                 "extension_score_penalty_weight": round(float(profile.extension_score_penalty_weight), 4),
+                "watchlist_zero_catalyst_penalty": round(float(profile.watchlist_zero_catalyst_penalty), 4),
+                "watchlist_zero_catalyst_catalyst_freshness_max": round(float(profile.watchlist_zero_catalyst_catalyst_freshness_max), 4),
+                "watchlist_zero_catalyst_close_strength_min": round(float(profile.watchlist_zero_catalyst_close_strength_min), 4),
+                "watchlist_zero_catalyst_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_layer_c_alignment_min), 4),
+                "watchlist_zero_catalyst_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_sector_resonance_min), 4),
                 "hard_block_bearish_conflicts": sorted(str(item) for item in profile.hard_block_bearish_conflicts),
                 "overhead_conflict_penalty_conflicts": sorted(str(item) for item in profile.overhead_conflict_penalty_conflicts),
                 "upstream_shadow_catalyst_relief_enabled": upstream_shadow_catalyst_relief_enabled,
@@ -777,6 +852,14 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "effective_near_miss_threshold": round(effective_near_miss_threshold, 4),
                 "near_miss_threshold_override": round(upstream_shadow_catalyst_relief_near_miss_threshold_override, 4),
                 "require_no_profitability_hard_cliff": upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+            },
+            "watchlist_zero_catalyst_guard": {
+                "enabled": bool(watchlist_zero_catalyst_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_guard["gate_hits"]),
+                "effective_penalty": round(effective_watchlist_zero_catalyst_penalty, 4),
             },
             "replay_context": dict(input_data.replay_context or {}),
         },

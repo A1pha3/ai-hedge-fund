@@ -1,6 +1,8 @@
 import json
 
 from scripts.replay_selection_target_calibration import (
+    WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,
+    _override_short_trade_thresholds,
     analyze_selection_target_candidate_entry_metric_grid,
     analyze_selection_target_combination_grid,
     analyze_selection_target_penalty_grid,
@@ -11,6 +13,7 @@ from scripts.replay_selection_target_calibration import (
 )
 from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
+from src.targets import get_active_short_trade_target_profile
 from src.targets.router import build_selection_targets
 
 
@@ -231,6 +234,25 @@ def _write_stage_breakout_replay_input(tmp_path):
     return replay_input_path
 
 
+def test_override_short_trade_thresholds_accepts_watchlist_zero_catalyst_profile_overrides():
+    with _override_short_trade_thresholds(
+        profile_name="default",
+        profile_overrides={
+            "watchlist_zero_catalyst_penalty": 0.12,
+            "watchlist_zero_catalyst_catalyst_freshness_max": 0.05,
+            "watchlist_zero_catalyst_close_strength_min": 0.92,
+            "watchlist_zero_catalyst_layer_c_alignment_min": 0.72,
+            "watchlist_zero_catalyst_sector_resonance_min": 0.35,
+        },
+    ):
+        profile = get_active_short_trade_target_profile()
+        assert profile.watchlist_zero_catalyst_penalty == 0.12
+        assert profile.watchlist_zero_catalyst_catalyst_freshness_max == 0.05
+        assert profile.watchlist_zero_catalyst_close_strength_min == 0.92
+        assert profile.watchlist_zero_catalyst_layer_c_alignment_min == 0.72
+        assert profile.watchlist_zero_catalyst_sector_resonance_min == 0.35
+
+
 def test_replay_selection_target_calibration_reproduces_stored_decisions(tmp_path):
     replay_input_path = _write_replay_input(tmp_path)
 
@@ -289,6 +311,22 @@ def test_replay_selection_target_calibration_emits_focused_score_diagnostics(tmp
     assert diagnostic["replayed_total_positive_contribution"] is not None
     assert diagnostic["replayed_total_negative_contribution"] is not None
     assert diagnostic["replayed_gap_to_near_miss"] <= 0
+
+
+def test_replay_selection_target_calibration_structural_variant_applies_watchlist_guard_profile_overrides(tmp_path):
+    replay_input_path = _write_replay_input(tmp_path)
+
+    analysis = analyze_selection_target_replay_inputs(
+        replay_input_path,
+        structural_variant="no_bearish_conflict_softer_penalty_weights_watchlist_zero_catalyst_guard",
+        focus_tickers=["000001"],
+    )
+
+    diagnostic = analysis["focused_score_diagnostics"][0]
+    assert analysis["structural_overrides"]["profile_overrides"] == WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["watchlist_zero_catalyst_penalty"] == 0.12
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["watchlist_zero_catalyst_close_strength_min"] == 0.92
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["watchlist_zero_catalyst_sector_resonance_min"] == 0.35
 
 
 def test_replay_selection_target_calibration_accepts_profile_name(tmp_path):

@@ -1,6 +1,6 @@
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.screening.models import StrategySignal
-from src.targets import get_short_trade_target_profile
+from src.targets import get_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets
 from src.targets.short_trade_target import evaluate_short_trade_rejected_target
 
@@ -320,6 +320,45 @@ def test_build_selection_targets_promotes_rejected_entry_for_short_trade_when_si
     assert summary.short_trade_selected_count == 1
     assert summary.short_trade_blocked_count == 0
     assert summary.delta_classification_counts == {"research_reject_short_pass": 1}
+
+
+def test_watchlist_zero_catalyst_penalty_applies_only_to_layer_c_watchlist() -> None:
+    entry = {
+        **_make_prepared_breakout_entry(),
+        "candidate_source": "layer_c_watchlist",
+    }
+    entry["strategy_signals"]["event_sentiment"] = _make_signal(
+        0,
+        0.0,
+        sub_factors={
+            "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+            "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+        },
+    ).model_dump(mode="json")
+    baseline_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    with use_short_trade_target_profile(
+        overrides={
+            "watchlist_zero_catalyst_penalty": 0.12,
+            "watchlist_zero_catalyst_catalyst_freshness_max": 0.05,
+            "watchlist_zero_catalyst_close_strength_min": 0.45,
+            "watchlist_zero_catalyst_layer_c_alignment_min": 0.70,
+            "watchlist_zero_catalyst_sector_resonance_min": 0.35,
+        }
+    ):
+        guarded_watchlist_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+        guarded_boundary_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry={**entry, "candidate_source": "short_trade_boundary"},
+            rank_hint=1,
+        )
+
+    assert guarded_watchlist_result.metrics_payload["watchlist_zero_catalyst_penalty"] == 0.12
+    assert guarded_watchlist_result.metrics_payload["watchlist_zero_catalyst_guard"]["applied"] is True
+    assert "watchlist_zero_catalyst_penalty_applied" in guarded_watchlist_result.negative_tags
+    assert guarded_watchlist_result.score_target < baseline_result.score_target
+    assert guarded_boundary_result.metrics_payload["watchlist_zero_catalyst_penalty"] == 0.0
+    assert guarded_boundary_result.metrics_payload["watchlist_zero_catalyst_guard"]["applied"] is False
 
 
 def test_build_selection_targets_merges_rejected_and_supplemental_short_trade_for_same_ticker() -> None:

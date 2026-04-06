@@ -34,6 +34,11 @@ class ShortTradeTargetProfile:
     stale_score_penalty_weight: float = 0.12
     overhead_score_penalty_weight: float = 0.10
     extension_score_penalty_weight: float = 0.08
+    watchlist_zero_catalyst_penalty: float = 0.0
+    watchlist_zero_catalyst_catalyst_freshness_max: float = 0.0
+    watchlist_zero_catalyst_close_strength_min: float = 1.0
+    watchlist_zero_catalyst_layer_c_alignment_min: float = 1.0
+    watchlist_zero_catalyst_sector_resonance_min: float = 1.0
     hard_block_bearish_conflicts: frozenset[str] = frozenset({"b_positive_c_strong_bearish", "b_strong_buy_c_negative"})
     overhead_conflict_penalty_conflicts: frozenset[str] = frozenset({"b_positive_c_strong_bearish", "b_strong_buy_c_negative"})
 

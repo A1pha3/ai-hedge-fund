@@ -43,6 +43,11 @@ def _serialize_profile(profile: Any) -> dict[str, Any]:
         "sector_resonance_weight": round(float(profile.sector_resonance_weight), 4),
         "catalyst_freshness_weight": round(float(profile.catalyst_freshness_weight), 4),
         "layer_c_alignment_weight": round(float(profile.layer_c_alignment_weight), 4),
+        "watchlist_zero_catalyst_penalty": round(float(profile.watchlist_zero_catalyst_penalty), 4),
+        "watchlist_zero_catalyst_catalyst_freshness_max": round(float(profile.watchlist_zero_catalyst_catalyst_freshness_max), 4),
+        "watchlist_zero_catalyst_close_strength_min": round(float(profile.watchlist_zero_catalyst_close_strength_min), 4),
+        "watchlist_zero_catalyst_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_layer_c_alignment_min), 4),
+        "watchlist_zero_catalyst_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_sector_resonance_min), 4),
         "stale_penalty_block_threshold": round(float(profile.stale_penalty_block_threshold), 4),
         "overhead_penalty_block_threshold": round(float(profile.overhead_penalty_block_threshold), 4),
         "extension_penalty_block_threshold": round(float(profile.extension_penalty_block_threshold), 4),
@@ -80,9 +85,11 @@ def analyze_btst_profile_replay_window(
     if structural_overrides:
         effective_structural_overrides.update(dict(structural_overrides or {}))
     entry_filter_rules = list(effective_structural_overrides.get("exclude_candidate_entries") or [])
+    structural_profile_overrides = dict(effective_structural_overrides.get("profile_overrides") or {})
     effective_profile_overrides = {
         key: value
         for key, value in {
+            **structural_profile_overrides,
             **dict(profile_overrides or {}),
             "select_threshold": select_threshold,
             "near_miss_threshold": near_miss_threshold,
@@ -104,6 +111,7 @@ def analyze_btst_profile_replay_window(
 
     with _override_short_trade_thresholds(
         profile_name=profile_name,
+        profile_overrides=effective_profile_overrides,
         select_threshold=effective_profile_overrides.get("select_threshold"),
         near_miss_threshold=effective_profile_overrides.get("near_miss_threshold"),
         breakout_freshness_weight=effective_profile_overrides.get("breakout_freshness_weight"),
