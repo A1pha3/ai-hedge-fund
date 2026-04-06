@@ -142,12 +142,32 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
 
 def summarize_distribution(values: list[float]) -> dict[str, float | int | None]:
     if not values:
-        return {"count": 0, "min": None, "max": None, "mean": None}
+        return {"count": 0, "min": None, "max": None, "mean": None, "median": None, "p10": None, "p25": None, "p75": None, "p90": None}
+    sorted_values = sorted(float(value) for value in values)
+    max_index = len(sorted_values) - 1
+
+    def _percentile(percent: float) -> float:
+        if max_index <= 0:
+            return round(sorted_values[0], 4)
+        scaled_index = max(0.0, min(1.0, percent)) * max_index
+        lower_index = int(scaled_index)
+        upper_index = min(max_index, lower_index + 1)
+        if lower_index == upper_index:
+            return round(sorted_values[lower_index], 4)
+        weight = scaled_index - lower_index
+        interpolated = sorted_values[lower_index] + ((sorted_values[upper_index] - sorted_values[lower_index]) * weight)
+        return round(interpolated, 4)
+
     return {
-        "count": len(values),
-        "min": round(min(values), 4),
-        "max": round(max(values), 4),
-        "mean": round(mean(values), 4),
+        "count": len(sorted_values),
+        "min": round(sorted_values[0], 4),
+        "max": round(sorted_values[-1], 4),
+        "mean": round(mean(sorted_values), 4),
+        "median": _percentile(0.50),
+        "p10": _percentile(0.10),
+        "p25": _percentile(0.25),
+        "p75": _percentile(0.75),
+        "p90": _percentile(0.90),
     }
 
 
@@ -324,9 +344,25 @@ def compare_reports(
                 dict(baseline_tradeable.get("next_close_return_distribution") or {}).get("mean"),
                 dict(variant_tradeable.get("next_close_return_distribution") or {}).get("mean"),
             ),
+            "next_close_return_median": _delta(
+                dict(baseline_tradeable.get("next_close_return_distribution") or {}).get("median"),
+                dict(variant_tradeable.get("next_close_return_distribution") or {}).get("median"),
+            ),
+            "next_close_return_p10": _delta(
+                dict(baseline_tradeable.get("next_close_return_distribution") or {}).get("p10"),
+                dict(variant_tradeable.get("next_close_return_distribution") or {}).get("p10"),
+            ),
             "t_plus_2_close_return_mean": _delta(
                 dict(baseline_tradeable.get("t_plus_2_close_return_distribution") or {}).get("mean"),
                 dict(variant_tradeable.get("t_plus_2_close_return_distribution") or {}).get("mean"),
+            ),
+            "t_plus_2_close_return_median": _delta(
+                dict(baseline_tradeable.get("t_plus_2_close_return_distribution") or {}).get("median"),
+                dict(variant_tradeable.get("t_plus_2_close_return_distribution") or {}).get("median"),
+            ),
+            "t_plus_2_close_return_p10": _delta(
+                dict(baseline_tradeable.get("t_plus_2_close_return_distribution") or {}).get("p10"),
+                dict(variant_tradeable.get("t_plus_2_close_return_distribution") or {}).get("p10"),
             ),
         },
         "false_negative_proxy_delta": {

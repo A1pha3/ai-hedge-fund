@@ -6,7 +6,10 @@ import pandas as pd
 
 from scripts.analyze_btst_score_construction_frontier import analyze_btst_score_construction_frontier
 from scripts.btst_profile_replay_utils import analyze_btst_profile_replay_window
-from scripts.replay_selection_target_calibration import WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES
+from scripts.replay_selection_target_calibration import (
+    WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,
+    WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES,
+)
 from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
@@ -153,6 +156,38 @@ def test_analyze_btst_score_construction_frontier_accepts_watchlist_zero_catalys
     assert variant["profile_overrides"]["watchlist_zero_catalyst_sector_resonance_min"] == 0.35
 
 
+def test_analyze_btst_score_construction_frontier_accepts_watchlist_zero_catalyst_guard_relief(tmp_path, monkeypatch):
+    replay_input_path = _write_score_frontier_replay_input(tmp_path)
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str):
+        assert ticker == "300620"
+        return pd.DataFrame(
+            [
+                {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                {"date": "2026-03-23", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
+                {"date": "2026-03-24", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.3},
+            ]
+        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
+
+    analysis = analyze_btst_score_construction_frontier(
+        replay_input_path,
+        baseline_profile="default",
+        variant_names=["watchlist_zero_catalyst_guard_relief"],
+        next_high_hit_threshold=0.02,
+    )
+
+    variant = analysis["variants"][0]
+    assert variant["label"] == "watchlist_zero_catalyst_guard_relief"
+    assert variant["profile_overrides"]["select_threshold"] == 0.40
+    assert variant["profile_overrides"]["near_miss_threshold"] == 0.40
+    assert variant["profile_overrides"]["watchlist_zero_catalyst_penalty"] == 0.12
+    assert variant["profile_overrides"]["watchlist_zero_catalyst_flat_trend_penalty"] == 0.03
+    assert variant["profile_overrides"]["t_plus_2_continuation_enabled"] is True
+    assert variant["profile_overrides"]["t_plus_2_continuation_trend_acceleration_max"] == 0.60
+
+
 def test_btst_profile_replay_window_merges_structural_profile_overrides(tmp_path, monkeypatch):
     replay_input_path = _write_score_frontier_replay_input(tmp_path)
 
@@ -177,3 +212,30 @@ def test_btst_profile_replay_window_merges_structural_profile_overrides(tmp_path
 
     assert analysis["profile_overrides"]["watchlist_zero_catalyst_penalty"] == 0.12
     assert analysis["profile_config"]["watchlist_zero_catalyst_close_strength_min"] == 0.92
+
+
+def test_btst_profile_replay_window_preserves_structural_preset_thresholds(tmp_path, monkeypatch):
+    replay_input_path = _write_score_frontier_replay_input(tmp_path)
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str):
+        assert ticker == "300620"
+        return pd.DataFrame(
+            [
+                {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                {"date": "2026-03-23", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
+                {"date": "2026-03-24", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.3},
+            ]
+        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
+
+    analysis = analyze_btst_profile_replay_window(
+        replay_input_path,
+        profile_name="default",
+        label="structural-relief-preset-probe",
+        structural_overrides={"profile_overrides": dict(WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES)},
+    )
+
+    assert analysis["profile_overrides"]["select_threshold"] == 0.40
+    assert analysis["profile_overrides"]["near_miss_threshold"] == 0.40
+    assert analysis["profile_config"]["watchlist_zero_catalyst_penalty"] == 0.12

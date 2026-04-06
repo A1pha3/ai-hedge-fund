@@ -2,6 +2,7 @@ import json
 
 from scripts.replay_selection_target_calibration import (
     WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,
+    WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES,
     _override_short_trade_thresholds,
     analyze_selection_target_candidate_entry_metric_grid,
     analyze_selection_target_combination_grid,
@@ -327,6 +328,24 @@ def test_replay_selection_target_calibration_structural_variant_applies_watchlis
     assert diagnostic["replayed_metrics_payload"]["thresholds"]["watchlist_zero_catalyst_penalty"] == 0.12
     assert diagnostic["replayed_metrics_payload"]["thresholds"]["watchlist_zero_catalyst_close_strength_min"] == 0.92
     assert diagnostic["replayed_metrics_payload"]["thresholds"]["watchlist_zero_catalyst_sector_resonance_min"] == 0.35
+
+
+def test_replay_selection_target_calibration_structural_variant_relief_preset_applies_thresholds(tmp_path):
+    replay_input_path = _write_replay_input(tmp_path)
+
+    analysis = analyze_selection_target_replay_inputs(
+        replay_input_path,
+        structural_variant="no_bearish_conflict_softer_penalty_weights_watchlist_zero_catalyst_guard_relief",
+        focus_tickers=["000001"],
+    )
+
+    diagnostic = analysis["focused_score_diagnostics"][0]
+    assert analysis["structural_overrides"]["profile_overrides"] == WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["select_threshold"] == 0.40
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["near_miss_threshold"] == 0.40
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["watchlist_zero_catalyst_penalty"] == 0.12
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["t_plus_2_continuation_enabled"] is True
+    assert diagnostic["replayed_metrics_payload"]["thresholds"]["t_plus_2_continuation_trend_acceleration_max"] == 0.6
 
 
 def test_replay_selection_target_calibration_accepts_profile_name(tmp_path):

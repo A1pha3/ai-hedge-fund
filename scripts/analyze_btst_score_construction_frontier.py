@@ -9,7 +9,10 @@ from scripts.btst_analysis_utils import compare_reports as _compare_reports, res
 from scripts.btst_profile_replay_utils import (
     analyze_btst_profile_replay_window,
 )
-from scripts.replay_selection_target_calibration import WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES
+from scripts.replay_selection_target_calibration import (
+    WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,
+    WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES,
+)
 
 
 SCORE_CONSTRUCTION_VARIANTS: dict[str, dict[str, Any]] = {
@@ -41,6 +44,7 @@ SCORE_CONSTRUCTION_VARIANTS: dict[str, dict[str, Any]] = {
         "layer_c_alignment_weight": 0.16,
     },
     "watchlist_zero_catalyst_guard": dict(WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES),
+    "watchlist_zero_catalyst_guard_relief": dict(WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES),
 }
 
 DEFAULT_GUARDRAIL_NEXT_HIGH_HIT_RATE = 0.5217

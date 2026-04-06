@@ -29,12 +29,37 @@ WATCHLIST_AVOID_WEAK_STRUCTURE_ENTRY_FILTER = {
     )
 }
 
-WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES: dict[str, float] = {
+WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES: dict[str, Any] = {
     "watchlist_zero_catalyst_penalty": 0.12,
     "watchlist_zero_catalyst_catalyst_freshness_max": 0.05,
     "watchlist_zero_catalyst_close_strength_min": 0.92,
     "watchlist_zero_catalyst_layer_c_alignment_min": 0.72,
     "watchlist_zero_catalyst_sector_resonance_min": 0.35,
+}
+WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES: dict[str, Any] = {
+    **WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,
+    "select_threshold": 0.40,
+    "near_miss_threshold": 0.40,
+    "watchlist_zero_catalyst_crowded_penalty": 0.06,
+    "watchlist_zero_catalyst_crowded_catalyst_freshness_max": 0.05,
+    "watchlist_zero_catalyst_crowded_close_strength_min": 0.938,
+    "watchlist_zero_catalyst_crowded_layer_c_alignment_min": 0.78,
+    "watchlist_zero_catalyst_crowded_sector_resonance_min": 0.42,
+    "watchlist_zero_catalyst_flat_trend_penalty": 0.03,
+    "watchlist_zero_catalyst_flat_trend_catalyst_freshness_max": 0.05,
+    "watchlist_zero_catalyst_flat_trend_close_strength_min": 0.945,
+    "watchlist_zero_catalyst_flat_trend_layer_c_alignment_min": 0.75,
+    "watchlist_zero_catalyst_flat_trend_sector_resonance_min": 0.388,
+    "watchlist_zero_catalyst_flat_trend_trend_acceleration_max": 0.66,
+    "t_plus_2_continuation_enabled": True,
+    "t_plus_2_continuation_catalyst_freshness_max": 0.08,
+    "t_plus_2_continuation_breakout_freshness_min": 0.30,
+    "t_plus_2_continuation_trend_acceleration_min": 0.38,
+    "t_plus_2_continuation_trend_acceleration_max": 0.60,
+    "t_plus_2_continuation_layer_c_alignment_min": 0.45,
+    "t_plus_2_continuation_layer_c_alignment_max": 0.60,
+    "t_plus_2_continuation_close_strength_max": 0.90,
+    "t_plus_2_continuation_sector_resonance_max": 0.20,
 }
 
 STRUCTURAL_VARIANTS: dict[str, dict[str, Any]] = {
@@ -80,6 +105,14 @@ STRUCTURAL_VARIANTS: dict[str, dict[str, Any]] = {
         "overhead_score_penalty_weight": 0.05,
         "extension_score_penalty_weight": 0.04,
         "profile_overrides": dict(WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES),
+    },
+    "no_bearish_conflict_softer_penalty_weights_watchlist_zero_catalyst_guard_relief": {
+        "strong_bearish_conflicts": [],
+        "layer_c_avoid_penalty": 0.06,
+        "stale_score_penalty_weight": 0.06,
+        "overhead_score_penalty_weight": 0.05,
+        "extension_score_penalty_weight": 0.04,
+        "profile_overrides": dict(WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES),
     },
     "no_bearish_conflict_lower_avoid_penalty": {
         "strong_bearish_conflicts": [],

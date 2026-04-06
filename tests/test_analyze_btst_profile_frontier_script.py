@@ -245,3 +245,34 @@ def test_analyze_btst_profile_frontier_finds_profitability_relief_surface(tmp_pa
     assert comparison["guardrail_status"] == "passes_closed_tradeable_guardrails"
     assert "从 0 提升到 1" in comparison["comparison_note"]
     assert analysis["best_variant"]["profile_name"] == "staged_breakout_profitability_relief"
+
+
+def test_analyze_btst_profile_frontier_accepts_watchlist_zero_catalyst_guard_relief(tmp_path, monkeypatch):
+    replay_input_path = _write_profitability_relief_replay_input(tmp_path)
+
+    def fake_get_price_data(ticker: str, start_date: str, end_date: str):
+        assert ticker == "300987"
+        return pd.DataFrame(
+            [
+                {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                {"date": "2026-03-23", "open": 10.0, "high": 10.4, "low": 9.95, "close": 10.2},
+                {"date": "2026-03-24", "open": 10.2, "high": 10.3, "low": 10.05, "close": 10.18},
+            ]
+        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+
+    monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
+
+    analysis = analyze_btst_profile_frontier(
+        replay_input_path,
+        baseline_profile="default",
+        variant_profiles=["watchlist_zero_catalyst_guard_relief"],
+        next_high_hit_threshold=0.02,
+    )
+
+    variant = analysis["variants"][0]
+    assert variant["profile_name"] == "watchlist_zero_catalyst_guard_relief"
+    assert variant["profile_config"]["watchlist_zero_catalyst_penalty"] == 0.12
+    assert variant["profile_config"]["watchlist_zero_catalyst_flat_trend_penalty"] == 0.03
+    assert variant["profile_config"]["t_plus_2_continuation_enabled"] is True
+    assert variant["profile_config"]["t_plus_2_continuation_close_strength_max"] == 0.90
+    assert variant["profile_config"]["select_threshold"] == 0.40
