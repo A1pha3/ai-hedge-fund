@@ -16,6 +16,11 @@ DEFAULT_WATCHLIST_VALIDATION_PATH = REPORTS_DIR / "btst_tplus2_near_cluster_doss
 DEFAULT_VALIDATION_QUEUE_PATH = REPORTS_DIR / "btst_tplus2_continuation_validation_queue_latest.json"
 DEFAULT_PROMOTION_REVIEW_PATH = REPORTS_DIR / "btst_tplus2_continuation_promotion_review_latest.json"
 DEFAULT_PROMOTION_GATE_PATH = REPORTS_DIR / "btst_tplus2_continuation_promotion_gate_latest.json"
+DEFAULT_WATCHLIST_EXECUTION_PATH = REPORTS_DIR / "btst_tplus2_continuation_watchlist_execution_latest.json"
+DEFAULT_ELIGIBLE_GATE_PATH = REPORTS_DIR / "btst_tplus2_continuation_eligible_gate_latest.json"
+DEFAULT_ELIGIBLE_EXECUTION_PATH = REPORTS_DIR / "btst_tplus2_continuation_eligible_execution_latest.json"
+DEFAULT_EXECUTION_GATE_PATH = REPORTS_DIR / "btst_tplus2_continuation_execution_gate_latest.json"
+DEFAULT_EXECUTION_OVERLAY_PATH = REPORTS_DIR / "btst_tplus2_continuation_execution_overlay_latest.json"
 
 
 def _load_optional_json(path: str | Path | None) -> dict[str, Any]:
@@ -37,6 +42,11 @@ def generate_btst_tplus2_continuation_watchboard(
     validation_queue_path: str | Path | None = DEFAULT_VALIDATION_QUEUE_PATH,
     promotion_review_path: str | Path | None = DEFAULT_PROMOTION_REVIEW_PATH,
     promotion_gate_path: str | Path | None = DEFAULT_PROMOTION_GATE_PATH,
+    watchlist_execution_path: str | Path | None = DEFAULT_WATCHLIST_EXECUTION_PATH,
+    eligible_gate_path: str | Path | None = DEFAULT_ELIGIBLE_GATE_PATH,
+    eligible_execution_path: str | Path | None = DEFAULT_ELIGIBLE_EXECUTION_PATH,
+    execution_gate_path: str | Path | None = DEFAULT_EXECUTION_GATE_PATH,
+    execution_overlay_path: str | Path | None = DEFAULT_EXECUTION_OVERLAY_PATH,
 ) -> dict[str, Any]:
     governance_board = generate_btst_tplus2_continuation_governance_board(
         observation_pool_path,
@@ -45,13 +55,31 @@ def generate_btst_tplus2_continuation_watchboard(
         watchlist_validation_path=watchlist_validation_path,
         promotion_review_path=promotion_review_path,
         promotion_gate_path=promotion_gate_path,
+        watchlist_execution_path=watchlist_execution_path,
+        eligible_gate_path=eligible_gate_path,
+        eligible_execution_path=eligible_execution_path,
+        execution_gate_path=execution_gate_path,
+        execution_overlay_path=execution_overlay_path,
     )
     rollup = analyze_btst_tplus2_continuation_peer_rollup(reports_root)
     watchlist_validation = _load_optional_json(watchlist_validation_path)
     validation_queue = _load_optional_json(validation_queue_path)
     promotion_review = _load_optional_json(promotion_review_path)
     promotion_gate = _load_optional_json(promotion_gate_path)
+    watchlist_execution = _load_optional_json(watchlist_execution_path)
+    eligible_gate = _load_optional_json(eligible_gate_path)
+    eligible_execution = _load_optional_json(eligible_execution_path)
+    execution_gate = _load_optional_json(execution_gate_path)
+    execution_overlay = _load_optional_json(execution_overlay_path)
     watch_rows = list(governance_board.get("board_rows") or [])
+    eligible_rows = [
+        row
+        for row in watch_rows
+        if str(row.get("entry_type") or "") in {"anchor_cluster", "same_cluster_peer", "promoted_watch_eligible"}
+    ]
+    execution_rows = [
+        row for row in watch_rows if str(row.get("entry_type") or "") in {"paper_execution_candidate"}
+    ]
     risk_flags = list(rollup.get("risk_flags") or [])
     top_candidate = dict(rollup.get("top_candidate") or {})
     if top_candidate and str(top_candidate.get("ticker") or "") == str(watchlist_validation.get("candidate_ticker") or ""):
@@ -74,16 +102,23 @@ def generate_btst_tplus2_continuation_watchboard(
         "focus_validation_candidate": validation_queue.get("focus_candidate"),
         "focus_promotion_review": promotion_review,
         "focus_promotion_gate": promotion_gate,
+        "focus_watchlist_execution": watchlist_execution,
+        "focus_eligible_gate": eligible_gate,
+        "focus_eligible_execution": eligible_execution,
+        "focus_execution_gate": execution_gate,
+        "focus_execution_overlay": execution_overlay,
         "validation_queue_rows": validation_queue.get("queue_rows"),
         "risk_flags": risk_flags,
         "watch_rows": watch_rows,
+        "eligible_rows": eligible_rows,
+        "execution_rows": execution_rows,
         "recommendation": (
             f"Watchboard status: governance={governance_board.get('governance_status')}, rollup={rollup.get('rollup_verdict')}. "
             f"Watchlist validation={governance_board.get('watchlist_validation_status')} with recent_support="
             f"{governance_board.get('recent_supporting_window_count')}/{governance_board.get('recent_window_count')}. "
             f"Focus validation candidate={dict(validation_queue.get('focus_candidate') or {}).get('ticker')} "
             f"review={promotion_review.get('promotion_review_verdict')} "
-            f"gate={promotion_gate.get('gate_verdict')}. "
+            f"gate={promotion_gate.get('gate_verdict')} eligible_gate={eligible_gate.get('gate_verdict')} execution_gate={execution_gate.get('gate_verdict')}. "
             "Keep anchor lane isolated, validate watchlist names separately, and do not widen default BTST."
         ),
     }
@@ -107,6 +142,11 @@ def render_btst_tplus2_continuation_watchboard_markdown(analysis: dict[str, Any]
     lines.append(f"- focus_validation_candidate: {analysis.get('focus_validation_candidate')}")
     lines.append(f"- focus_promotion_review: {analysis.get('focus_promotion_review')}")
     lines.append(f"- focus_promotion_gate: {analysis.get('focus_promotion_gate')}")
+    lines.append(f"- focus_watchlist_execution: {analysis.get('focus_watchlist_execution')}")
+    lines.append(f"- focus_eligible_gate: {analysis.get('focus_eligible_gate')}")
+    lines.append(f"- focus_eligible_execution: {analysis.get('focus_eligible_execution')}")
+    lines.append(f"- focus_execution_gate: {analysis.get('focus_execution_gate')}")
+    lines.append(f"- focus_execution_overlay: {analysis.get('focus_execution_overlay')}")
     lines.append("")
     lines.append("## Watch Rows")
     for row in list(analysis.get("watch_rows") or []):
@@ -116,6 +156,26 @@ def render_btst_tplus2_continuation_watchboard_markdown(analysis: dict[str, Any]
             f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}"
         )
     if not list(analysis.get("watch_rows") or []):
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Eligible Rows")
+    for row in list(analysis.get("eligible_rows") or []):
+        lines.append(
+            f"- ticker={row['ticker']} entry_type={row['entry_type']} lane_stage={row['lane_stage']} "
+            f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']} "
+            f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}"
+        )
+    if not list(analysis.get("eligible_rows") or []):
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Execution Rows")
+    for row in list(analysis.get("execution_rows") or []):
+        lines.append(
+            f"- ticker={row['ticker']} entry_type={row['entry_type']} lane_stage={row['lane_stage']} "
+            f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']} "
+            f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}"
+        )
+    if not list(analysis.get("execution_rows") or []):
         lines.append("- none")
     lines.append("")
     lines.append("## Validation Queue")
@@ -151,6 +211,11 @@ def main() -> None:
     parser.add_argument("--validation-queue", default=str(DEFAULT_VALIDATION_QUEUE_PATH))
     parser.add_argument("--promotion-review", default=str(DEFAULT_PROMOTION_REVIEW_PATH))
     parser.add_argument("--promotion-gate", default=str(DEFAULT_PROMOTION_GATE_PATH))
+    parser.add_argument("--watchlist-execution", default=str(DEFAULT_WATCHLIST_EXECUTION_PATH))
+    parser.add_argument("--eligible-gate", default=str(DEFAULT_ELIGIBLE_GATE_PATH))
+    parser.add_argument("--eligible-execution", default=str(DEFAULT_ELIGIBLE_EXECUTION_PATH))
+    parser.add_argument("--execution-gate", default=str(DEFAULT_EXECUTION_GATE_PATH))
+    parser.add_argument("--execution-overlay", default=str(DEFAULT_EXECUTION_OVERLAY_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -164,6 +229,11 @@ def main() -> None:
         validation_queue_path=args.validation_queue,
         promotion_review_path=args.promotion_review,
         promotion_gate_path=args.promotion_gate,
+        watchlist_execution_path=args.watchlist_execution,
+        eligible_gate_path=args.eligible_gate,
+        eligible_execution_path=args.eligible_execution,
+        execution_gate_path=args.execution_gate,
+        execution_overlay_path=args.execution_overlay,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()

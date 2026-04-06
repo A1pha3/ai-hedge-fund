@@ -23,7 +23,7 @@ from src.screening.models import CandidateStock
 from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
-from src.targets.models import DualTargetSummary, TargetMode
+from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
 from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets, summarize_selection_targets
 from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
@@ -65,6 +65,10 @@ FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
 WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.20)
 EXIT_REENTRY_CONFIRM_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_CONFIRM_SCORE_MIN", STANDARD_EXECUTION_SCORE)
+EXIT_REENTRY_WEAK_CONFIRMATION_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_WEAK_CONFIRMATION_SCORE_MIN", 0.30)
+CONTINUATION_EXECUTION_ENABLED = bool(_get_env_int("PIPELINE_CONTINUATION_EXECUTION_ENABLED", 1))
+CONTINUATION_WATCHLIST_MIN_SCORE = _get_env_float("PIPELINE_CONTINUATION_WATCHLIST_MIN_SCORE", 0.21)
+CONTINUATION_WATCHLIST_EDGE_EXECUTION_RATIO = _get_env_float("PIPELINE_CONTINUATION_WATCHLIST_EDGE_EXECUTION_RATIO", 0.3)
 SHORT_TRADE_BOUNDARY_SCORE_BUFFER = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_SCORE_BUFFER", 0.08)
 SHORT_TRADE_BOUNDARY_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_MAX_TICKERS", 6)
 SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN", 0.24)
@@ -95,9 +99,20 @@ UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN = _get_env_float("DAILY_PIPELINE_UPSTR
 UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN", 0.85)
 UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR", 1.0)
 UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD", 0.45)
-UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF = bool(
+UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT = bool(
     _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 1)
 )
+UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_BY_LANE = {
+    "layer_a_liquidity_corridor": bool(
+        _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_LIQUIDITY_CORRIDOR_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 0)
+    ),
+    "post_gate_liquidity_competition": bool(
+        _get_env_int(
+            "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_REBUCKET_REQUIRE_NO_PROFITABILITY_HARD_CLIFF",
+            int(UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT),
+        )
+    ),
+}
 WATCHLIST_SHADOW_RELEASE_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_MAX_TICKERS", 2)
 WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN = _get_env_float("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN", FAST_AGENT_SCORE_THRESHOLD)
 WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN = _get_env_float("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN", 0.18)
@@ -115,6 +130,18 @@ CATALYST_THEME_SECTOR_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SECTOR
 CATALYST_THEME_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CATALYST_MIN", 0.45)
 _ORIGINAL_BUILD_CANDIDATE_POOL = build_candidate_pool
 _ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW = build_candidate_pool_with_shadow
+WEAK_CONFIRMATION_REENTRY_NEGATIVE_TAGS = frozenset(
+    {
+        "watchlist_zero_catalyst_penalty_applied",
+        "watchlist_zero_catalyst_crowded_penalty_applied",
+        "watchlist_zero_catalyst_flat_trend_penalty_applied",
+    }
+)
+WEAK_CONFIRMATION_REENTRY_GUARD_KEYS = (
+    "watchlist_zero_catalyst_guard",
+    "watchlist_zero_catalyst_crowded_guard",
+    "watchlist_zero_catalyst_flat_trend_guard",
+)
 
 
 def _load_candidate_pool_bundle(trade_date: str) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
@@ -454,7 +481,16 @@ def _should_release_upstream_shadow_candidate(*, candidate_entry: dict[str, Any]
     return True, "upstream_shadow_release_score_floor_pass"
 
 
-def _build_upstream_shadow_catalyst_relief_config(*, filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
+def _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(candidate_pool_lane: str) -> bool:
+    return bool(
+        UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_BY_LANE.get(
+            candidate_pool_lane,
+            UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
+        )
+    )
+
+
+def _build_upstream_shadow_catalyst_relief_config(*, candidate_pool_lane: str, filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
     if filter_reason != "catalyst_freshness_below_short_trade_boundary_floor":
         return {}
 
@@ -471,6 +507,7 @@ def _build_upstream_shadow_catalyst_relief_config(*, filter_reason: str, metrics
     if close_strength < UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN:
         return {}
 
+    require_no_profitability_hard_cliff = _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(candidate_pool_lane)
     return {
         "enabled": True,
         "reason": "upstream_shadow_catalyst_relief",
@@ -479,7 +516,7 @@ def _build_upstream_shadow_catalyst_relief_config(*, filter_reason: str, metrics
         "breakout_freshness_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN, 4),
         "trend_acceleration_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN, 4),
         "close_strength_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN, 4),
-        "require_no_profitability_hard_cliff": UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+        "require_no_profitability_hard_cliff": require_no_profitability_hard_cliff,
     }
 
 
@@ -487,7 +524,11 @@ def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], fil
     candidate_score = round(float(metrics_payload.get("candidate_score", 0.0) or 0.0), 4)
     candidate_pool_lane = str(candidate_entry.get("candidate_pool_lane") or "")
     lane_score_floor = round(float(UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.get(candidate_pool_lane, UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN)), 4)
-    catalyst_relief_config = _build_upstream_shadow_catalyst_relief_config(filter_reason=filter_reason, metrics_payload=metrics_payload)
+    catalyst_relief_config = _build_upstream_shadow_catalyst_relief_config(
+        candidate_pool_lane=candidate_pool_lane,
+        filter_reason=filter_reason,
+        metrics_payload=metrics_payload,
+    )
     resolved_reason_codes = [
         str(code)
         for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or [])
@@ -661,7 +702,11 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
             "upstream_shadow_catalyst_relief_close_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN, 4),
             "upstream_shadow_catalyst_relief_catalyst_freshness_floor": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR, 4),
             "upstream_shadow_catalyst_relief_near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
-            "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+            "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
+            "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane": {
+                lane: _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(lane)
+                for lane in sorted(UPSTREAM_SHADOW_RELEASE_LANES)
+            },
             "upstream_shadow_release_lane_score_mins": {
                 lane: round(float(score_min), 4)
                 for lane, score_min in UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.items()
@@ -959,7 +1004,36 @@ def _normalize_blocked_buy_tickers(blocked_buy_tickers: dict[str, dict] | None) 
     return normalized
 
 
-def _build_reentry_filter_payload(ticker: str, score_final: float, cooldown_payload: dict, trade_date: str) -> dict | None:
+def _selection_target_has_weak_confirmation_reentry_risk(selection_target: DualTargetEvaluation | None) -> bool:
+    short_trade = selection_target.short_trade if selection_target is not None else None
+    if short_trade is None:
+        return False
+    negative_tags = {str(tag) for tag in short_trade.negative_tags}
+    if negative_tags & WEAK_CONFIRMATION_REENTRY_NEGATIVE_TAGS:
+        return True
+    metrics_payload = dict(short_trade.metrics_payload or {})
+    for metric_key in WEAK_CONFIRMATION_REENTRY_GUARD_KEYS:
+        metric_value = metrics_payload.get(metric_key)
+        if isinstance(metric_value, dict) and bool(metric_value.get("applied")):
+            return True
+    return False
+
+
+def _resolve_reentry_required_score(cooldown_payload: dict, selection_target: DualTargetEvaluation | None) -> tuple[float, bool]:
+    required_score = float(cooldown_payload.get("reentry_min_score", EXIT_REENTRY_CONFIRM_SCORE_MIN))
+    weak_confirmation_reentry_guard = _selection_target_has_weak_confirmation_reentry_risk(selection_target)
+    if weak_confirmation_reentry_guard:
+        required_score = max(required_score, EXIT_REENTRY_WEAK_CONFIRMATION_SCORE_MIN)
+    return required_score, weak_confirmation_reentry_guard
+
+
+def _build_reentry_filter_payload(
+    ticker: str,
+    score_final: float,
+    cooldown_payload: dict,
+    trade_date: str,
+    selection_target: DualTargetEvaluation | None = None,
+) -> dict | None:
     normalized_ticker = str(ticker)
     blocked_until = str(cooldown_payload.get("blocked_until") or "")
     trigger_reason = str(cooldown_payload.get("trigger_reason") or "")
@@ -975,13 +1049,14 @@ def _build_reentry_filter_payload(ticker: str, score_final: float, cooldown_payl
         }
 
     reentry_review_until = str(cooldown_payload.get("reentry_review_until") or "")
-    required_score = float(cooldown_payload.get("reentry_min_score", EXIT_REENTRY_CONFIRM_SCORE_MIN))
+    required_score, weak_confirmation_reentry_guard = _resolve_reentry_required_score(cooldown_payload, selection_target)
     if reentry_review_until and trade_date and trade_date <= reentry_review_until and score_final < required_score:
         return {
             "ticker": normalized_ticker,
             "reason": "blocked_by_reentry_score_confirmation",
             "score_final": round(score_final, 4),
             "required_score": round(required_score, 4),
+            "weak_confirmation_reentry_guard": weak_confirmation_reentry_guard,
             "reentry_review_until": reentry_review_until,
             "trigger_reason": trigger_reason,
             "exit_trade_date": exit_trade_date,
@@ -990,8 +1065,13 @@ def _build_reentry_filter_payload(ticker: str, score_final: float, cooldown_payl
     return None
 
 
-def _build_reentry_filter_entry(item: LayerCResult, cooldown_payload: dict, trade_date: str) -> dict | None:
-    return _build_reentry_filter_payload(item.ticker, item.score_final, cooldown_payload, trade_date)
+def _build_reentry_filter_entry(
+    item: LayerCResult,
+    cooldown_payload: dict,
+    trade_date: str,
+    selection_target: DualTargetEvaluation | None = None,
+) -> dict | None:
+    return _build_reentry_filter_payload(item.ticker, item.score_final, cooldown_payload, trade_date, selection_target=selection_target)
 
 
 def _to_ts_code_for_price_lookup(ticker: str) -> str:
@@ -1117,6 +1197,7 @@ def build_buy_orders_with_diagnostics(
     candidate_by_ticker: dict[str, CandidateStock] | None = None,
     price_map: dict[str, float] | None = None,
     blocked_buy_tickers: dict[str, dict] | None = None,
+    selection_targets: dict[str, DualTargetEvaluation] | None = None,
 ) -> tuple[list, dict]:
     cash = float(portfolio_snapshot.get("cash", 0.0))
     nav = cash + sum(
@@ -1145,10 +1226,16 @@ def build_buy_orders_with_diagnostics(
     per_name_cash = cash / max(1, min(3, len(watchlist)))
     candidate_plans = []
     filtered_entries: list[dict] = []
+    selection_targets = selection_targets or {}
     for item in watchlist:
         cooldown_payload = blocked_buy_tickers.get(item.ticker)
         if cooldown_payload is not None:
-            reentry_filter_entry = _build_reentry_filter_entry(item, cooldown_payload, trade_date)
+            reentry_filter_entry = _build_reentry_filter_entry(
+                item,
+                cooldown_payload,
+                trade_date,
+                selection_target=selection_targets.get(item.ticker),
+            )
             if reentry_filter_entry is not None:
                 filtered_entries.append(reentry_filter_entry)
                 continue
@@ -1159,6 +1246,7 @@ def build_buy_orders_with_diagnostics(
         existing_position = portfolio_snapshot.get("positions", {}).get(item.ticker, {})
         existing_long_shares = float(existing_position.get("long", 0.0))
         existing_position_ratio = ((existing_long_shares * current_price) / nav) if nav > 0 else 0.0
+        continuation_overrides = _resolve_continuation_execution_overrides(item=item, selection_target=selection_targets.get(item.ticker))
         plan = calculate_position(
             ticker=item.ticker,
             current_price=current_price,
@@ -1169,6 +1257,8 @@ def build_buy_orders_with_diagnostics(
             industry_remaining_quota=industry_quota,
             quality_score=item.quality_score,
             existing_position_ratio=existing_position_ratio,
+            watchlist_min_score_override=continuation_overrides.get("watchlist_min_score_override"),
+            watchlist_edge_execution_ratio_override=continuation_overrides.get("watchlist_edge_execution_ratio_override"),
         )
         if plan.shares > 0:
             candidate_plans.append(plan)
@@ -1182,6 +1272,7 @@ def build_buy_orders_with_diagnostics(
                 "amount": round(plan.amount, 4),
                 "execution_ratio": plan.execution_ratio,
                 "quality_score": round(plan.quality_score, 4),
+                "continuation_execution_override": bool(continuation_overrides.get("applied")),
             }
         )
 
@@ -1205,6 +1296,25 @@ def build_buy_orders_with_diagnostics(
     summary = _build_filter_summary(filtered_entries)
     summary["selected_tickers"] = [plan.ticker for plan in buy_orders]
     return buy_orders, summary
+
+
+def _resolve_continuation_execution_overrides(*, item: LayerCResult, selection_target: DualTargetEvaluation | None) -> dict[str, Any]:
+    if not CONTINUATION_EXECUTION_ENABLED or selection_target is None or selection_target.short_trade is None:
+        return {}
+
+    short_trade = selection_target.short_trade
+    positive_tags = {str(tag).strip() for tag in list(short_trade.positive_tags or []) if str(tag or "").strip()}
+    continuation_payload = dict((short_trade.metrics_payload or {}).get("t_plus_2_continuation_candidate") or {})
+    if "t_plus_2_continuation_candidate" not in positive_tags or not bool(continuation_payload.get("applied")):
+        return {}
+
+    return {
+        "applied": True,
+        "watchlist_min_score_override": CONTINUATION_WATCHLIST_MIN_SCORE,
+        "watchlist_edge_execution_ratio_override": CONTINUATION_WATCHLIST_EDGE_EXECUTION_RATIO,
+        "candidate_source": str(continuation_payload.get("candidate_source") or ""),
+        "ticker": item.ticker,
+    }
 
 
 @dataclass
@@ -1316,6 +1426,7 @@ class DailyPipeline:
             return plan
 
         watchlist_by_ticker = {item.ticker: item for item in plan.watchlist}
+        selection_targets = dict(plan.selection_targets or {})
         retained_orders = []
         filtered_entries: list[dict] = []
         for order in plan.buy_orders:
@@ -1326,7 +1437,13 @@ class DailyPipeline:
 
             watch_item = watchlist_by_ticker.get(order.ticker)
             score_final = float(watch_item.score_final if watch_item is not None else order.score_final)
-            filter_entry = _build_reentry_filter_payload(order.ticker, score_final, cooldown_payload, trade_date)
+            filter_entry = _build_reentry_filter_payload(
+                order.ticker,
+                score_final,
+                cooldown_payload,
+                trade_date,
+                selection_target=selection_targets.get(order.ticker),
+            )
             if filter_entry is None:
                 retained_orders.append(order)
                 continue
@@ -1430,6 +1547,15 @@ class DailyPipeline:
 
         candidate_by_ticker = {candidate.ticker: candidate for candidate in candidates}
         price_map = build_watchlist_price_map(trade_date, [item.ticker for item in watchlist])
+        with use_short_trade_target_profile(profile_name=self.short_trade_target_profile_name, overrides=self.short_trade_target_profile_overrides):
+            prebuy_selection_targets, _ = build_selection_targets(
+                trade_date=trade_date,
+                watchlist=watchlist,
+                rejected_entries=[],
+                supplemental_short_trade_entries=[],
+                buy_order_tickers=set(),
+                target_mode=self.target_mode,
+            )
 
         stage_started_at = perf_counter()
         buy_orders, buy_order_filter_diagnostics = self._build_buy_orders_with_diagnostics(
@@ -1439,6 +1565,7 @@ class DailyPipeline:
             candidate_by_ticker=candidate_by_ticker,
             price_map=price_map,
             blocked_buy_tickers=blocked_buy_tickers,
+            selection_targets=prebuy_selection_targets,
         )
         build_buy_orders_seconds = perf_counter() - stage_started_at
 
@@ -1596,6 +1723,7 @@ class DailyPipeline:
         candidate_by_ticker: dict[str, CandidateStock] | None = None,
         price_map: dict[str, float] | None = None,
         blocked_buy_tickers: dict[str, dict] | None = None,
+        selection_targets: dict[str, DualTargetEvaluation] | None = None,
     ) -> tuple[list, dict]:
         return build_buy_orders_with_diagnostics(
             watchlist,
@@ -1604,4 +1732,5 @@ class DailyPipeline:
             candidate_by_ticker=candidate_by_ticker,
             price_map=price_map,
             blocked_buy_tickers=blocked_buy_tickers,
+            selection_targets=selection_targets,
         )

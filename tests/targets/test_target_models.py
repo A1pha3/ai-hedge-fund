@@ -1008,3 +1008,20 @@ def test_upstream_shadow_catalyst_relief_keeps_profitability_hard_cliff_sample_r
     assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is False
     assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.46
     assert "upstream_shadow_catalyst_relief_not_triggered" in result.negative_tags
+
+
+def test_upstream_shadow_catalyst_relief_can_promote_corridor_profitability_hard_cliff_sample_when_gate_relaxed() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry(include_profitability_hard_cliff=True)
+    entry["short_trade_catalyst_relief"]["require_no_profitability_hard_cliff"] = False
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "near_miss"
+    assert round(result.score_target, 4) == 0.5246
+    assert result.metrics_payload["profitability_hard_cliff"] is True
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is True
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is True
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.45

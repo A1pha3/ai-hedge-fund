@@ -23,6 +23,7 @@ from src.execution.t1_confirmation import confirm_buy_signal
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.portfolio.models import PositionPlan
 from src.screening.models import CandidateStock, FusedScore, MarketState, MarketStateType, StrategySignal
+from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
 
 
 def _fused(ticker: str, score_b: float) -> FusedScore:
@@ -929,9 +930,13 @@ def test_run_post_market_attaches_upstream_shadow_catalyst_relief_for_catalyst_b
         "breakout_freshness_min": 0.38,
         "trend_acceleration_min": 0.8,
         "close_strength_min": 0.85,
-        "require_no_profitability_hard_cliff": True,
+        "require_no_profitability_hard_cliff": False,
     }
     assert diagnostics["filters"]["short_trade_candidates"]["prefilter_thresholds"]["upstream_shadow_catalyst_relief_near_miss_threshold"] == 0.45
+    assert diagnostics["filters"]["short_trade_candidates"]["prefilter_thresholds"]["upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane"] == {
+        "layer_a_liquidity_corridor": False,
+        "post_gate_liquidity_competition": True,
+    }
 
 def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [], target_mode="short_trade_only")
@@ -1350,6 +1355,86 @@ def test_build_buy_orders_allows_edge_watchlist_name_when_execution_score_floor_
     assert diagnostics["reason_counts"] == {}
 
 
+def test_build_buy_orders_allows_continuation_edge_without_global_floor_change():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")
+    ]
+    candidate_by_ticker = {
+        "600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")
+    }
+    selection_targets = {
+        "600988": DualTargetEvaluation(
+            ticker="600988",
+            trade_date="2026-03-05",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="near_miss",
+                positive_tags=["t_plus_2_continuation_candidate"],
+                metrics_payload={
+                    "t_plus_2_continuation_candidate": {
+                        "enabled": True,
+                        "eligible": True,
+                        "applied": True,
+                        "candidate_source": "layer_c_watchlist",
+                    }
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 100_000, "positions": {}},
+        trade_date="2026-03-05",
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={"600988": 20.0},
+        selection_targets=selection_targets,
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "600988"
+    assert buy_orders[0].constraint_binding == "single_name"
+    assert buy_orders[0].shares == 100
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_build_buy_orders_keeps_edge_name_blocked_without_continuation_tag():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")
+    ]
+    candidate_by_ticker = {
+        "600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")
+    }
+    selection_targets = {
+        "600988": DualTargetEvaluation(
+            ticker="600988",
+            trade_date="2026-03-05",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="near_miss",
+                positive_tags=[],
+                metrics_payload={},
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 100_000, "positions": {}},
+        trade_date="2026-03-05",
+        candidate_by_ticker=candidate_by_ticker,
+        price_map={"600988": 20.0},
+        selection_targets=selection_targets,
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"position_blocked_score": 1}
+    assert diagnostics["tickers"][0]["ticker"] == "600988"
+    assert diagnostics["tickers"][0]["constraint_binding"] == "score"
+
+
 def test_build_buy_orders_uses_real_price_map_for_high_price_ticker_position_sizing():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     watchlist = [
@@ -1445,6 +1530,53 @@ def test_build_buy_orders_requires_stronger_score_after_exit_cooldown_expires():
     assert diagnostics["tickers"][0]["required_score"] == 0.25
 
 
+def test_build_buy_orders_requires_stronger_score_for_weak_confirmation_reentry():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=0.2, score_final=0.26, score_b=0.6, decision="watch")
+    ]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="near_miss",
+                negative_tags=["watchlist_zero_catalyst_flat_trend_penalty_applied"],
+                metrics_payload={
+                    "watchlist_zero_catalyst_flat_trend_guard": {
+                        "enabled": True,
+                        "eligible": True,
+                        "applied": True,
+                        "candidate_source": "layer_c_watchlist",
+                    }
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        blocked_buy_tickers={
+            "300724": {
+                "trigger_reason": "hard_stop_loss",
+                "exit_trade_date": "20260305",
+                "blocked_until": "20260312",
+                "reentry_review_until": "20260318",
+            }
+        },
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_reentry_score_confirmation": 1}
+    assert diagnostics["tickers"][0]["required_score"] == 0.3
+    assert diagnostics["tickers"][0]["weak_confirmation_reentry_guard"] is True
+
+
 def test_build_buy_orders_allows_stronger_score_after_exit_cooldown_expires():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
     watchlist = [
@@ -1463,6 +1595,52 @@ def test_build_buy_orders_allows_stronger_score_after_exit_cooldown_expires():
                 "reentry_review_until": "20260318",
             }
         },
+        price_map={"300724": 142.71},
+    )
+
+    assert len(buy_orders) == 1
+    assert buy_orders[0].ticker == "300724"
+    assert diagnostics["reason_counts"] == {}
+
+
+def test_build_buy_orders_allows_reentry_once_weak_confirmation_score_is_strong_enough():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, decision="watch")
+    ]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="near_miss",
+                negative_tags=["watchlist_zero_catalyst_penalty_applied"],
+                metrics_payload={
+                    "watchlist_zero_catalyst_guard": {
+                        "enabled": True,
+                        "eligible": True,
+                        "applied": True,
+                        "candidate_source": "layer_c_watchlist",
+                    }
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        blocked_buy_tickers={
+            "300724": {
+                "trigger_reason": "hard_stop_loss",
+                "exit_trade_date": "20260305",
+                "blocked_until": "20260312",
+                "reentry_review_until": "20260318",
+            }
+        },
+        selection_targets=selection_targets,
         price_map={"300724": 142.71},
     )
 
@@ -2006,7 +2184,12 @@ def test_daily_pipeline_applies_reentry_filter_to_frozen_buy_orders():
             },
         },
     )
-    pipeline = DailyPipeline(frozen_post_market_plans={"20260310": frozen_plan}, frozen_plan_source="/tmp/frozen.jsonl")
+    pipeline = DailyPipeline(
+        frozen_post_market_plans={"20260310": frozen_plan},
+        frozen_plan_source="/tmp/frozen.jsonl",
+        base_model_name="gpt-4.1",
+        base_model_provider="OpenAI",
+    )
 
     replayed = pipeline.run_post_market(
         "20260310",
@@ -2025,6 +2208,66 @@ def test_daily_pipeline_applies_reentry_filter_to_frozen_buy_orders():
     assert replayed.risk_metrics["counts"]["buy_order_count"] == 0
     assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["reason_counts"] == {"blocked_by_reentry_score_confirmation": 1}
     assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["selected_tickers"] == []
+
+
+def test_daily_pipeline_applies_stronger_weak_confirmation_reentry_filter_to_frozen_buy_orders():
+    frozen_plan = ExecutionPlan(
+        date="20260310",
+        buy_orders=[PositionPlan(ticker="300724", shares=100, amount=12000.0, score_final=0.26, execution_ratio=0.3)],
+        watchlist=[LayerCResult(ticker="300724", score_c=-0.05, score_final=0.26, score_b=0.43, decision="watch")],
+        selection_targets={
+            "300724": DualTargetEvaluation(
+                ticker="300724",
+                trade_date="20260310",
+                short_trade=TargetEvaluationResult(
+                    target_type="short_trade",
+                    decision="near_miss",
+                    negative_tags=["watchlist_zero_catalyst_crowded_penalty_applied"],
+                    metrics_payload={
+                        "watchlist_zero_catalyst_crowded_guard": {
+                            "enabled": True,
+                            "eligible": True,
+                            "applied": True,
+                            "candidate_source": "layer_c_watchlist",
+                        }
+                    },
+                ),
+            )
+        },
+        portfolio_snapshot={"cash": 500000.0, "positions": {}},
+        risk_metrics={
+            "counts": {"watchlist_count": 1, "buy_order_count": 1},
+            "funnel_diagnostics": {
+                "filters": {
+                    "buy_orders": {"filtered_count": 0, "reason_counts": {}, "tickers": [], "selected_tickers": ["300724"]}
+                }
+            },
+        },
+    )
+    pipeline = DailyPipeline(
+        frozen_post_market_plans={"20260310": frozen_plan},
+        frozen_plan_source="/tmp/frozen.jsonl",
+        base_model_name="gpt-4.1",
+        base_model_provider="OpenAI",
+    )
+
+    replayed = pipeline.run_post_market(
+        "20260310",
+        portfolio_snapshot={"cash": 1.0, "positions": {}},
+        blocked_buy_tickers={
+            "300724": {
+                "trigger_reason": "hard_stop_loss",
+                "exit_trade_date": "20260303",
+                "blocked_until": "20260306",
+                "reentry_review_until": "20260312",
+            }
+        },
+    )
+
+    assert replayed.buy_orders == []
+    assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["reason_counts"] == {"blocked_by_reentry_score_confirmation": 1}
+    assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["tickers"][0]["required_score"] == 0.3
+    assert replayed.risk_metrics["funnel_diagnostics"]["filters"]["buy_orders"]["tickers"][0]["weak_confirmation_reentry_guard"] is True
 
 
 def test_recovery_protocol():

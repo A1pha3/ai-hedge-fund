@@ -74,8 +74,14 @@ def calculate_position(
     vol_adjusted_ratio: float = 0.10,
     existing_position_ratio: float = 0.0,
     allow_extended_limit: bool = False,
+    watchlist_min_score_override: float | None = None,
+    watchlist_edge_execution_ratio_override: float | None = None,
 ) -> PositionPlan:
     watchlist_min_score, full_execution_score, standard_execution_score, watchlist_edge_execution_ratio = _get_execution_thresholds()
+    if watchlist_min_score_override is not None:
+        watchlist_min_score = float(watchlist_min_score_override)
+    if watchlist_edge_execution_ratio_override is not None:
+        watchlist_edge_execution_ratio = float(watchlist_edge_execution_ratio_override)
 
     if current_price <= 0 or portfolio_nav <= 0 or score_final < watchlist_min_score:
         return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=score_final, execution_ratio=0.0, quality_score=quality_score)
@@ -179,4 +185,3 @@ def evaluate_portfolio_risk_guardrails(
         "cvar_95": cvar_95,
         "portfolio_beta": portfolio_beta,
     }
-

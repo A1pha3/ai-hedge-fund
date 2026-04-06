@@ -153,6 +153,24 @@ def test_watchlist_min_score_can_be_lowered_via_env(monkeypatch: pytest.MonkeyPa
     assert plan.amount == 2000.0
 
 
+def test_watchlist_min_score_can_be_lowered_via_explicit_override():
+    plan = calculate_position(
+        ticker="600988",
+        current_price=20.0,
+        score_final=0.217,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=10_000_000,
+        industry_remaining_quota=25_000,
+        watchlist_min_score_override=0.21,
+    )
+
+    assert plan.constraint_binding == "single_name"
+    assert plan.execution_ratio == 0.3
+    assert plan.shares == 100
+    assert plan.amount == 2000.0
+
+
 def test_industry_limit():
     holdings = [
         HoldingState(ticker="000001", entry_price=10, entry_date="20260201", shares=10_000, cost_basis=100_000, industry_sw="银行"),
