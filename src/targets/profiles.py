@@ -39,6 +39,26 @@ class ShortTradeTargetProfile:
     watchlist_zero_catalyst_close_strength_min: float = 1.0
     watchlist_zero_catalyst_layer_c_alignment_min: float = 1.0
     watchlist_zero_catalyst_sector_resonance_min: float = 1.0
+    watchlist_zero_catalyst_crowded_penalty: float = 0.0
+    watchlist_zero_catalyst_crowded_catalyst_freshness_max: float = 0.0
+    watchlist_zero_catalyst_crowded_close_strength_min: float = 1.0
+    watchlist_zero_catalyst_crowded_layer_c_alignment_min: float = 1.0
+    watchlist_zero_catalyst_crowded_sector_resonance_min: float = 1.0
+    watchlist_zero_catalyst_flat_trend_penalty: float = 0.0
+    watchlist_zero_catalyst_flat_trend_catalyst_freshness_max: float = 0.0
+    watchlist_zero_catalyst_flat_trend_close_strength_min: float = 1.0
+    watchlist_zero_catalyst_flat_trend_layer_c_alignment_min: float = 1.0
+    watchlist_zero_catalyst_flat_trend_sector_resonance_min: float = 1.0
+    watchlist_zero_catalyst_flat_trend_trend_acceleration_max: float = 1.0
+    t_plus_2_continuation_enabled: bool = False
+    t_plus_2_continuation_catalyst_freshness_max: float = 0.0
+    t_plus_2_continuation_breakout_freshness_min: float = 1.0
+    t_plus_2_continuation_trend_acceleration_min: float = 1.0
+    t_plus_2_continuation_trend_acceleration_max: float = 1.0
+    t_plus_2_continuation_layer_c_alignment_min: float = 1.0
+    t_plus_2_continuation_layer_c_alignment_max: float = 0.0
+    t_plus_2_continuation_close_strength_max: float = 1.0
+    t_plus_2_continuation_sector_resonance_max: float = 0.0
     hard_block_bearish_conflicts: frozenset[str] = frozenset({"b_positive_c_strong_bearish", "b_strong_buy_c_negative"})
     overhead_conflict_penalty_conflicts: frozenset[str] = frozenset({"b_positive_c_strong_bearish", "b_strong_buy_c_negative"})
 
@@ -103,6 +123,42 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         profitability_relief_catalyst_freshness_min=0.45,
         profitability_relief_sector_resonance_min=0.45,
         profitability_relief_avoid_penalty=0.04,
+    ),
+    "watchlist_zero_catalyst_guard_relief": ShortTradeTargetProfile(
+        name="watchlist_zero_catalyst_guard_relief",
+        select_threshold=0.40,
+        near_miss_threshold=0.40,
+        layer_c_avoid_penalty=0.06,
+        stale_score_penalty_weight=0.06,
+        overhead_score_penalty_weight=0.05,
+        extension_score_penalty_weight=0.04,
+        watchlist_zero_catalyst_penalty=0.12,
+        watchlist_zero_catalyst_catalyst_freshness_max=0.05,
+        watchlist_zero_catalyst_close_strength_min=0.92,
+        watchlist_zero_catalyst_layer_c_alignment_min=0.72,
+        watchlist_zero_catalyst_sector_resonance_min=0.35,
+        watchlist_zero_catalyst_crowded_penalty=0.06,
+        watchlist_zero_catalyst_crowded_catalyst_freshness_max=0.05,
+        watchlist_zero_catalyst_crowded_close_strength_min=0.938,
+        watchlist_zero_catalyst_crowded_layer_c_alignment_min=0.78,
+        watchlist_zero_catalyst_crowded_sector_resonance_min=0.42,
+        watchlist_zero_catalyst_flat_trend_penalty=0.03,
+        watchlist_zero_catalyst_flat_trend_catalyst_freshness_max=0.05,
+        watchlist_zero_catalyst_flat_trend_close_strength_min=0.945,
+        watchlist_zero_catalyst_flat_trend_layer_c_alignment_min=0.75,
+        watchlist_zero_catalyst_flat_trend_sector_resonance_min=0.388,
+        watchlist_zero_catalyst_flat_trend_trend_acceleration_max=0.66,
+        t_plus_2_continuation_enabled=True,
+        t_plus_2_continuation_catalyst_freshness_max=0.08,
+        t_plus_2_continuation_breakout_freshness_min=0.30,
+        t_plus_2_continuation_trend_acceleration_min=0.38,
+        t_plus_2_continuation_trend_acceleration_max=0.60,
+        t_plus_2_continuation_layer_c_alignment_min=0.45,
+        t_plus_2_continuation_layer_c_alignment_max=0.60,
+        t_plus_2_continuation_close_strength_max=0.90,
+        t_plus_2_continuation_sector_resonance_max=0.20,
+        hard_block_bearish_conflicts=frozenset(),
+        overhead_conflict_penalty_conflicts=frozenset(),
     ),
 }
 

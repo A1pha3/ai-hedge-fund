@@ -361,6 +361,212 @@ def test_watchlist_zero_catalyst_penalty_applies_only_to_layer_c_watchlist() -> 
     assert guarded_boundary_result.metrics_payload["watchlist_zero_catalyst_guard"]["applied"] is False
 
 
+def test_watchlist_zero_catalyst_crowded_penalty_targets_crowded_zero_catalyst_watchlist_case() -> None:
+    crowded_entry = {
+        "ticker": "300724",
+        "score_b": 0.60,
+        "score_c": 0.60,
+        "score_final": 0.44,
+        "quality_score": 0.66,
+        "decision": "watch",
+        "reason": "watchlist_selected",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                95.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 95.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 80.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 40.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 18.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                0,
+                0.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.60, "investor": 0.40}},
+        "candidate_source": "layer_c_watchlist",
+    }
+
+    baseline_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=crowded_entry, rank_hint=1)
+
+    with use_short_trade_target_profile(
+        overrides={
+            "watchlist_zero_catalyst_crowded_penalty": 0.06,
+            "watchlist_zero_catalyst_crowded_catalyst_freshness_max": 0.05,
+            "watchlist_zero_catalyst_crowded_close_strength_min": 0.94,
+            "watchlist_zero_catalyst_crowded_layer_c_alignment_min": 0.78,
+            "watchlist_zero_catalyst_crowded_sector_resonance_min": 0.42,
+        }
+    ):
+        crowded_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=crowded_entry, rank_hint=1)
+
+    assert crowded_result.metrics_payload["watchlist_zero_catalyst_crowded_penalty"] == 0.06
+    assert crowded_result.metrics_payload["watchlist_zero_catalyst_crowded_guard"]["applied"] is True
+    assert "watchlist_zero_catalyst_crowded_penalty_applied" in crowded_result.negative_tags
+    assert crowded_result.score_target < baseline_result.score_target
+
+
+def test_watchlist_zero_catalyst_flat_trend_penalty_targets_low_trend_zero_catalyst_watchlist_case() -> None:
+    low_trend_entry = {
+        "ticker": "300724",
+        "score_b": 1.0,
+        "score_c": 0.8,
+        "score_final": 0.44,
+        "quality_score": 0.66,
+        "decision": "watch",
+        "reason": "watchlist_selected",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                78.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 25.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 40.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 18.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                0,
+                0.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.60, "investor": 0.40}},
+        "candidate_source": "layer_c_watchlist",
+    }
+    high_trend_control_entry = {
+        **low_trend_entry,
+        "ticker": "000792",
+        "strategy_signals": {
+            **low_trend_entry["strategy_signals"],
+            "trend": _make_signal(
+                1,
+                78.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 40.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 18.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+        },
+    }
+
+    with use_short_trade_target_profile(
+        overrides={
+            "watchlist_zero_catalyst_flat_trend_penalty": 0.03,
+            "watchlist_zero_catalyst_flat_trend_catalyst_freshness_max": 0.05,
+            "watchlist_zero_catalyst_flat_trend_close_strength_min": 0.945,
+            "watchlist_zero_catalyst_flat_trend_layer_c_alignment_min": 0.75,
+            "watchlist_zero_catalyst_flat_trend_sector_resonance_min": 0.388,
+            "watchlist_zero_catalyst_flat_trend_trend_acceleration_max": 0.66,
+        }
+    ):
+        low_trend_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=low_trend_entry, rank_hint=1)
+        high_trend_control_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=high_trend_control_entry, rank_hint=1)
+
+    assert low_trend_result.metrics_payload["watchlist_zero_catalyst_flat_trend_penalty"] == 0.03
+    assert low_trend_result.metrics_payload["watchlist_zero_catalyst_flat_trend_guard"]["applied"] is True
+    assert "watchlist_zero_catalyst_flat_trend_penalty_applied" in low_trend_result.negative_tags
+    assert low_trend_result.metrics_payload["trend_acceleration"] <= 0.66
+    assert high_trend_control_result.metrics_payload["watchlist_zero_catalyst_flat_trend_penalty"] == 0.0
+    assert high_trend_control_result.metrics_payload["watchlist_zero_catalyst_flat_trend_guard"]["applied"] is False
+    assert high_trend_control_result.metrics_payload["trend_acceleration"] > 0.66
+
+
+def test_t_plus_2_continuation_candidate_tags_mid_alignment_low_catalyst_watchlist_case() -> None:
+    continuation_entry = {
+        "ticker": "600988",
+        "score_b": 0.7668,
+        "score_c": -0.054,
+        "score_final": 0.3657,
+        "quality_score": 0.58,
+        "decision": "watch",
+        "reason": "watchlist_selected",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                72.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 35.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 92.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 38.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 15.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                30.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 8.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 6.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.12, "investor": 0.02}},
+        "candidate_source": "layer_c_watchlist",
+    }
+    crowded_control_entry = {
+        **continuation_entry,
+        "ticker": "300724",
+        "score_c": 0.8,
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.60, "investor": 0.40}},
+    }
+    high_close_control_entry = {
+        **continuation_entry,
+        "ticker": "002001",
+        "score_b": 0.99,
+        "score_c": 0.12,
+        "strategy_signals": {
+            **continuation_entry["strategy_signals"],
+            "trend": _make_signal(
+                1,
+                86.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 92.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 96.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 38.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 15.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.14, "investor": 0.03}},
+    }
+
+    with use_short_trade_target_profile(profile_name="watchlist_zero_catalyst_guard_relief"):
+        continuation_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=continuation_entry, rank_hint=1)
+        crowded_control_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=crowded_control_entry, rank_hint=1)
+        high_close_control_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=high_close_control_entry, rank_hint=1)
+
+    assert continuation_result.metrics_payload["t_plus_2_continuation_candidate"]["applied"] is True
+    assert "t_plus_2_continuation_candidate" in continuation_result.positive_tags
+    assert continuation_result.metrics_payload["watchlist_zero_catalyst_penalty"] == 0.0
+    assert continuation_result.metrics_payload["thresholds"]["t_plus_2_continuation_enabled"] is True
+    assert continuation_result.metrics_payload["thresholds"]["t_plus_2_continuation_trend_acceleration_max"] == 0.6
+    assert continuation_result.metrics_payload["thresholds"]["t_plus_2_continuation_close_strength_max"] == 0.9
+    assert crowded_control_result.metrics_payload["t_plus_2_continuation_candidate"]["applied"] is False
+    assert high_close_control_result.metrics_payload["t_plus_2_continuation_candidate"]["applied"] is False
+
+
 def test_build_selection_targets_merges_rejected_and_supplemental_short_trade_for_same_ticker() -> None:
     trend_signal = _make_signal(
         1,
@@ -547,10 +753,22 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     default_profile = get_short_trade_target_profile("default")
     conservative_profile = get_short_trade_target_profile("conservative")
     aggressive_profile = get_short_trade_target_profile("aggressive")
+    guard_relief_profile = get_short_trade_target_profile("watchlist_zero_catalyst_guard_relief")
 
     assert conservative_profile.select_threshold > default_profile.select_threshold > aggressive_profile.select_threshold
     assert conservative_profile.layer_c_avoid_penalty > default_profile.layer_c_avoid_penalty > aggressive_profile.layer_c_avoid_penalty
     assert conservative_profile.stale_score_penalty_weight > default_profile.stale_score_penalty_weight > aggressive_profile.stale_score_penalty_weight
+    assert guard_relief_profile.select_threshold < aggressive_profile.select_threshold
+    assert guard_relief_profile.watchlist_zero_catalyst_penalty == 0.12
+    assert guard_relief_profile.watchlist_zero_catalyst_crowded_penalty == 0.06
+    assert guard_relief_profile.watchlist_zero_catalyst_crowded_close_strength_min == 0.938
+    assert guard_relief_profile.watchlist_zero_catalyst_flat_trend_penalty == 0.03
+    assert guard_relief_profile.watchlist_zero_catalyst_flat_trend_trend_acceleration_max == 0.66
+    assert guard_relief_profile.t_plus_2_continuation_enabled is True
+    assert guard_relief_profile.t_plus_2_continuation_trend_acceleration_max == 0.60
+    assert guard_relief_profile.t_plus_2_continuation_close_strength_max == 0.90
+    assert guard_relief_profile.t_plus_2_continuation_sector_resonance_max == 0.20
+    assert guard_relief_profile.hard_block_bearish_conflicts == frozenset()
 
 
 def test_short_trade_target_reports_profile_metadata_and_override_thresholds() -> None:

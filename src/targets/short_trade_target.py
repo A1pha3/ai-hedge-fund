@@ -243,6 +243,149 @@ def _resolve_watchlist_zero_catalyst_penalty(
     }
 
 
+def _resolve_watchlist_zero_catalyst_crowded_penalty(
+    *,
+    input_data: TargetEvaluationInput,
+    catalyst_freshness: float,
+    close_strength: float,
+    sector_resonance: float,
+    layer_c_alignment: float,
+    profile: Any,
+) -> dict[str, Any]:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    penalty = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_penalty or 0.0))
+    default_result = {
+        "enabled": penalty > 0.0,
+        "eligible": False,
+        "applied": False,
+        "candidate_source": source,
+        "gate_hits": {},
+        "effective_penalty": 0.0,
+    }
+    if penalty <= 0.0 or source != "layer_c_watchlist":
+        return default_result
+
+    catalyst_freshness_max = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_catalyst_freshness_max or 0.0))
+    close_strength_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_close_strength_min or 0.0))
+    layer_c_alignment_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_layer_c_alignment_min or 0.0))
+    sector_resonance_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_sector_resonance_min or 0.0))
+    gate_hits = {
+        "candidate_source": source == "layer_c_watchlist",
+        "catalyst_freshness": catalyst_freshness <= catalyst_freshness_max,
+        "close_strength": close_strength >= close_strength_min,
+        "layer_c_alignment": layer_c_alignment >= layer_c_alignment_min,
+        "sector_resonance": sector_resonance >= sector_resonance_min,
+    }
+    eligible = all(gate_hits.values())
+    return {
+        "enabled": True,
+        "eligible": eligible,
+        "applied": eligible,
+        "candidate_source": source,
+        "gate_hits": gate_hits,
+        "effective_penalty": penalty if eligible else 0.0,
+    }
+
+
+def _resolve_watchlist_zero_catalyst_flat_trend_penalty(
+    *,
+    input_data: TargetEvaluationInput,
+    catalyst_freshness: float,
+    close_strength: float,
+    sector_resonance: float,
+    layer_c_alignment: float,
+    trend_acceleration: float,
+    profile: Any,
+) -> dict[str, Any]:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    penalty = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_penalty or 0.0))
+    default_result = {
+        "enabled": penalty > 0.0,
+        "eligible": False,
+        "applied": False,
+        "candidate_source": source,
+        "gate_hits": {},
+        "effective_penalty": 0.0,
+    }
+    if penalty <= 0.0 or source != "layer_c_watchlist":
+        return default_result
+
+    catalyst_freshness_max = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_catalyst_freshness_max or 0.0))
+    close_strength_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_close_strength_min or 0.0))
+    layer_c_alignment_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_layer_c_alignment_min or 0.0))
+    sector_resonance_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_sector_resonance_min or 0.0))
+    trend_acceleration_max = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_trend_acceleration_max or 0.0))
+    gate_hits = {
+        "candidate_source": source == "layer_c_watchlist",
+        "catalyst_freshness": catalyst_freshness <= catalyst_freshness_max,
+        "close_strength": close_strength >= close_strength_min,
+        "layer_c_alignment": layer_c_alignment >= layer_c_alignment_min,
+        "sector_resonance": sector_resonance >= sector_resonance_min,
+        "trend_acceleration": trend_acceleration <= trend_acceleration_max,
+    }
+    eligible = all(gate_hits.values())
+    return {
+        "enabled": True,
+        "eligible": eligible,
+        "applied": eligible,
+        "candidate_source": source,
+        "gate_hits": gate_hits,
+        "effective_penalty": penalty if eligible else 0.0,
+    }
+
+
+def _resolve_t_plus_2_continuation_candidate(
+    *,
+    input_data: TargetEvaluationInput,
+    raw_catalyst_freshness: float,
+    breakout_freshness: float,
+    trend_acceleration: float,
+    close_strength: float,
+    sector_resonance: float,
+    layer_c_alignment: float,
+    profile: Any,
+) -> dict[str, Any]:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    enabled = bool(profile.t_plus_2_continuation_enabled)
+    default_result = {
+        "enabled": enabled,
+        "eligible": False,
+        "applied": False,
+        "candidate_source": source,
+        "gate_hits": {},
+    }
+    if not enabled or source != "layer_c_watchlist":
+        return default_result
+
+    catalyst_freshness_max = clamp_unit_interval(float(profile.t_plus_2_continuation_catalyst_freshness_max or 0.0))
+    breakout_freshness_min = clamp_unit_interval(float(profile.t_plus_2_continuation_breakout_freshness_min or 0.0))
+    trend_acceleration_min = clamp_unit_interval(float(profile.t_plus_2_continuation_trend_acceleration_min or 0.0))
+    trend_acceleration_max = clamp_unit_interval(float(profile.t_plus_2_continuation_trend_acceleration_max or 0.0))
+    layer_c_alignment_min = clamp_unit_interval(float(profile.t_plus_2_continuation_layer_c_alignment_min or 0.0))
+    layer_c_alignment_max = clamp_unit_interval(float(profile.t_plus_2_continuation_layer_c_alignment_max or 0.0))
+    close_strength_max = clamp_unit_interval(float(profile.t_plus_2_continuation_close_strength_max or 0.0))
+    sector_resonance_max = clamp_unit_interval(float(profile.t_plus_2_continuation_sector_resonance_max or 0.0))
+    gate_hits = {
+        "candidate_source": source == "layer_c_watchlist",
+        "catalyst_freshness": raw_catalyst_freshness <= catalyst_freshness_max,
+        "breakout_freshness": breakout_freshness >= breakout_freshness_min,
+        "trend_acceleration": trend_acceleration >= trend_acceleration_min,
+        "trend_acceleration_cap": trend_acceleration <= trend_acceleration_max,
+        "layer_c_alignment_min": layer_c_alignment >= layer_c_alignment_min,
+        "layer_c_alignment_max": layer_c_alignment <= layer_c_alignment_max,
+        "close_strength": close_strength <= close_strength_max,
+        "sector_resonance": sector_resonance <= sector_resonance_max,
+    }
+    eligible = all(gate_hits.values())
+    return {
+        "enabled": True,
+        "eligible": eligible,
+        "applied": eligible,
+        "candidate_source": source,
+        "gate_hits": gate_hits,
+    }
+
+
 def _build_target_input_from_item(*, trade_date: str, item: LayerCResult, included_in_buy_orders: bool) -> TargetEvaluationInput:
     return TargetEvaluationInput(
         trade_date=trade_date,
@@ -396,6 +539,35 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         profile=profile,
     )
     effective_watchlist_zero_catalyst_penalty = float(watchlist_zero_catalyst_penalty["effective_penalty"])
+    watchlist_zero_catalyst_crowded_penalty = _resolve_watchlist_zero_catalyst_crowded_penalty(
+        input_data=input_data,
+        catalyst_freshness=raw_catalyst_freshness,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        layer_c_alignment=layer_c_alignment,
+        profile=profile,
+    )
+    effective_watchlist_zero_catalyst_crowded_penalty = float(watchlist_zero_catalyst_crowded_penalty["effective_penalty"])
+    watchlist_zero_catalyst_flat_trend_penalty = _resolve_watchlist_zero_catalyst_flat_trend_penalty(
+        input_data=input_data,
+        catalyst_freshness=raw_catalyst_freshness,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        layer_c_alignment=layer_c_alignment,
+        trend_acceleration=trend_acceleration,
+        profile=profile,
+    )
+    effective_watchlist_zero_catalyst_flat_trend_penalty = float(watchlist_zero_catalyst_flat_trend_penalty["effective_penalty"])
+    t_plus_2_continuation_candidate = _resolve_t_plus_2_continuation_candidate(
+        input_data=input_data,
+        raw_catalyst_freshness=raw_catalyst_freshness,
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        layer_c_alignment=layer_c_alignment,
+        profile=profile,
+    )
 
     stale_trend_repair_penalty = clamp_unit_interval((0.45 * mean_reversion_strength) + (0.35 * long_trend_strength) + (0.20 * max(0.0, long_trend_strength - breakout_freshness)))
     overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.overhead_conflict_penalty_conflicts else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
@@ -416,6 +588,8 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "extension_without_room_penalty": round(profile.extension_score_penalty_weight * extension_without_room_penalty, 4),
         "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
         "watchlist_zero_catalyst_penalty": round(effective_watchlist_zero_catalyst_penalty, 4),
+        "watchlist_zero_catalyst_crowded_penalty": round(effective_watchlist_zero_catalyst_crowded_penalty, 4),
+        "watchlist_zero_catalyst_flat_trend_penalty": round(effective_watchlist_zero_catalyst_flat_trend_penalty, 4),
     }
     total_positive_contribution = round(sum(weighted_positive_contributions.values()), 4)
     total_negative_contribution = round(sum(weighted_negative_contributions.values()), 4)
@@ -433,6 +607,8 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         - (profile.extension_score_penalty_weight * extension_without_room_penalty)
         - layer_c_avoid_penalty
         - effective_watchlist_zero_catalyst_penalty
+        - effective_watchlist_zero_catalyst_crowded_penalty
+        - effective_watchlist_zero_catalyst_flat_trend_penalty
     )
 
     positive_tags: list[str] = []
@@ -464,6 +640,12 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         negative_tags.append("upstream_shadow_catalyst_relief_not_triggered")
     if watchlist_zero_catalyst_penalty["applied"]:
         negative_tags.append("watchlist_zero_catalyst_penalty_applied")
+    if watchlist_zero_catalyst_crowded_penalty["applied"]:
+        negative_tags.append("watchlist_zero_catalyst_crowded_penalty_applied")
+    if watchlist_zero_catalyst_flat_trend_penalty["applied"]:
+        negative_tags.append("watchlist_zero_catalyst_flat_trend_penalty_applied")
+    if t_plus_2_continuation_candidate["applied"]:
+        positive_tags.append("t_plus_2_continuation_candidate")
     if input_data.bc_conflict in profile.hard_block_bearish_conflicts:
         blockers.append("layer_c_bearish_conflict")
         gate_status["structural"] = "fail"
@@ -514,6 +696,11 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "layer_c_avoid_penalty": layer_c_avoid_penalty,
         "watchlist_zero_catalyst_guard": watchlist_zero_catalyst_penalty,
         "watchlist_zero_catalyst_penalty": effective_watchlist_zero_catalyst_penalty,
+        "watchlist_zero_catalyst_crowded_guard": watchlist_zero_catalyst_crowded_penalty,
+        "watchlist_zero_catalyst_crowded_penalty": effective_watchlist_zero_catalyst_crowded_penalty,
+        "watchlist_zero_catalyst_flat_trend_guard": watchlist_zero_catalyst_flat_trend_penalty,
+        "watchlist_zero_catalyst_flat_trend_penalty": effective_watchlist_zero_catalyst_flat_trend_penalty,
+        "t_plus_2_continuation_candidate": t_plus_2_continuation_candidate,
         "upstream_shadow_catalyst_relief_enabled": catalyst_relief["enabled"],
         "upstream_shadow_catalyst_relief_gate_hits": catalyst_relief["gate_hits"],
         "upstream_shadow_catalyst_relief_eligible": catalyst_relief["eligible"],
@@ -584,6 +771,11 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     layer_c_avoid_penalty = float(snapshot["layer_c_avoid_penalty"])
     watchlist_zero_catalyst_guard = dict(snapshot["watchlist_zero_catalyst_guard"])
     effective_watchlist_zero_catalyst_penalty = float(snapshot["watchlist_zero_catalyst_penalty"])
+    watchlist_zero_catalyst_crowded_guard = dict(snapshot["watchlist_zero_catalyst_crowded_guard"])
+    effective_watchlist_zero_catalyst_crowded_penalty = float(snapshot["watchlist_zero_catalyst_crowded_penalty"])
+    watchlist_zero_catalyst_flat_trend_guard = dict(snapshot["watchlist_zero_catalyst_flat_trend_guard"])
+    effective_watchlist_zero_catalyst_flat_trend_penalty = float(snapshot["watchlist_zero_catalyst_flat_trend_penalty"])
+    t_plus_2_continuation_candidate = dict(snapshot["t_plus_2_continuation_candidate"])
     profitability_hard_cliff = bool(snapshot["profitability_hard_cliff"])
     profitability_positive_count = snapshot["profitability_positive_count"]
     profitability_confidence = float(snapshot["profitability_confidence"])
@@ -674,6 +866,9 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 _summarize_penalty("overhead_supply_penalty", overhead_supply_penalty),
                 _summarize_penalty("extension_without_room_penalty", extension_without_room_penalty),
                 "watchlist_zero_catalyst_penalty_applied" if watchlist_zero_catalyst_guard["applied"] else None,
+                "watchlist_zero_catalyst_crowded_penalty_applied" if watchlist_zero_catalyst_crowded_guard["applied"] else None,
+                "watchlist_zero_catalyst_flat_trend_penalty_applied" if watchlist_zero_catalyst_flat_trend_guard["applied"] else None,
+                "t_plus_2_continuation_candidate" if t_plus_2_continuation_candidate["applied"] else None,
                 f"score_short={score_target:.2f}",
             ]
             if reason is not None
@@ -755,12 +950,35 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "profitability_relief_soft_penalty": round(profitability_relief_soft_penalty, 4),
             "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
             "watchlist_zero_catalyst_penalty": round(effective_watchlist_zero_catalyst_penalty, 4),
+            "watchlist_zero_catalyst_crowded_penalty": round(effective_watchlist_zero_catalyst_crowded_penalty, 4),
+            "watchlist_zero_catalyst_flat_trend_penalty": round(effective_watchlist_zero_catalyst_flat_trend_penalty, 4),
+            "t_plus_2_continuation_candidate": {
+                "enabled": bool(t_plus_2_continuation_candidate["enabled"]),
+                "eligible": bool(t_plus_2_continuation_candidate["eligible"]),
+                "applied": bool(t_plus_2_continuation_candidate["applied"]),
+                "candidate_source": str(t_plus_2_continuation_candidate["candidate_source"]),
+                "gate_hits": dict(t_plus_2_continuation_candidate["gate_hits"]),
+            },
             "watchlist_zero_catalyst_guard": {
                 "enabled": bool(watchlist_zero_catalyst_guard["enabled"]),
                 "eligible": bool(watchlist_zero_catalyst_guard["eligible"]),
                 "applied": bool(watchlist_zero_catalyst_guard["applied"]),
                 "candidate_source": str(watchlist_zero_catalyst_guard["candidate_source"]),
                 "gate_hits": dict(watchlist_zero_catalyst_guard["gate_hits"]),
+            },
+            "watchlist_zero_catalyst_crowded_guard": {
+                "enabled": bool(watchlist_zero_catalyst_crowded_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_crowded_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_crowded_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_crowded_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_crowded_guard["gate_hits"]),
+            },
+            "watchlist_zero_catalyst_flat_trend_guard": {
+                "enabled": bool(watchlist_zero_catalyst_flat_trend_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_flat_trend_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_flat_trend_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_flat_trend_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_flat_trend_guard["gate_hits"]),
             },
             "upstream_shadow_catalyst_relief_enabled": upstream_shadow_catalyst_relief_enabled,
             "upstream_shadow_catalyst_relief_gate_hits": upstream_shadow_catalyst_relief_gate_hits,
@@ -812,6 +1030,26 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "watchlist_zero_catalyst_close_strength_min": round(float(profile.watchlist_zero_catalyst_close_strength_min), 4),
                 "watchlist_zero_catalyst_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_layer_c_alignment_min), 4),
                 "watchlist_zero_catalyst_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_sector_resonance_min), 4),
+                "watchlist_zero_catalyst_crowded_penalty": round(float(profile.watchlist_zero_catalyst_crowded_penalty), 4),
+                "watchlist_zero_catalyst_crowded_catalyst_freshness_max": round(float(profile.watchlist_zero_catalyst_crowded_catalyst_freshness_max), 4),
+                "watchlist_zero_catalyst_crowded_close_strength_min": round(float(profile.watchlist_zero_catalyst_crowded_close_strength_min), 4),
+                "watchlist_zero_catalyst_crowded_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_crowded_layer_c_alignment_min), 4),
+                "watchlist_zero_catalyst_crowded_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_crowded_sector_resonance_min), 4),
+                "watchlist_zero_catalyst_flat_trend_penalty": round(float(profile.watchlist_zero_catalyst_flat_trend_penalty), 4),
+                "watchlist_zero_catalyst_flat_trend_catalyst_freshness_max": round(float(profile.watchlist_zero_catalyst_flat_trend_catalyst_freshness_max), 4),
+                "watchlist_zero_catalyst_flat_trend_close_strength_min": round(float(profile.watchlist_zero_catalyst_flat_trend_close_strength_min), 4),
+                "watchlist_zero_catalyst_flat_trend_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_flat_trend_layer_c_alignment_min), 4),
+                "watchlist_zero_catalyst_flat_trend_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_flat_trend_sector_resonance_min), 4),
+                "watchlist_zero_catalyst_flat_trend_trend_acceleration_max": round(float(profile.watchlist_zero_catalyst_flat_trend_trend_acceleration_max), 4),
+                "t_plus_2_continuation_enabled": bool(profile.t_plus_2_continuation_enabled),
+                "t_plus_2_continuation_catalyst_freshness_max": round(float(profile.t_plus_2_continuation_catalyst_freshness_max), 4),
+                "t_plus_2_continuation_breakout_freshness_min": round(float(profile.t_plus_2_continuation_breakout_freshness_min), 4),
+                "t_plus_2_continuation_trend_acceleration_min": round(float(profile.t_plus_2_continuation_trend_acceleration_min), 4),
+                "t_plus_2_continuation_trend_acceleration_max": round(float(profile.t_plus_2_continuation_trend_acceleration_max), 4),
+                "t_plus_2_continuation_layer_c_alignment_min": round(float(profile.t_plus_2_continuation_layer_c_alignment_min), 4),
+                "t_plus_2_continuation_layer_c_alignment_max": round(float(profile.t_plus_2_continuation_layer_c_alignment_max), 4),
+                "t_plus_2_continuation_close_strength_max": round(float(profile.t_plus_2_continuation_close_strength_max), 4),
+                "t_plus_2_continuation_sector_resonance_max": round(float(profile.t_plus_2_continuation_sector_resonance_max), 4),
                 "hard_block_bearish_conflicts": sorted(str(item) for item in profile.hard_block_bearish_conflicts),
                 "overhead_conflict_penalty_conflicts": sorted(str(item) for item in profile.overhead_conflict_penalty_conflicts),
                 "upstream_shadow_catalyst_relief_enabled": upstream_shadow_catalyst_relief_enabled,
@@ -860,6 +1098,29 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "candidate_source": str(watchlist_zero_catalyst_guard["candidate_source"]),
                 "gate_hits": dict(watchlist_zero_catalyst_guard["gate_hits"]),
                 "effective_penalty": round(effective_watchlist_zero_catalyst_penalty, 4),
+            },
+            "watchlist_zero_catalyst_crowded_guard": {
+                "enabled": bool(watchlist_zero_catalyst_crowded_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_crowded_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_crowded_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_crowded_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_crowded_guard["gate_hits"]),
+                "effective_penalty": round(effective_watchlist_zero_catalyst_crowded_penalty, 4),
+            },
+            "watchlist_zero_catalyst_flat_trend_guard": {
+                "enabled": bool(watchlist_zero_catalyst_flat_trend_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_flat_trend_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_flat_trend_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_flat_trend_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_flat_trend_guard["gate_hits"]),
+                "effective_penalty": round(effective_watchlist_zero_catalyst_flat_trend_penalty, 4),
+            },
+            "t_plus_2_continuation_candidate": {
+                "enabled": bool(t_plus_2_continuation_candidate["enabled"]),
+                "eligible": bool(t_plus_2_continuation_candidate["eligible"]),
+                "applied": bool(t_plus_2_continuation_candidate["applied"]),
+                "candidate_source": str(t_plus_2_continuation_candidate["candidate_source"]),
+                "gate_hits": dict(t_plus_2_continuation_candidate["gate_hits"]),
             },
             "replay_context": dict(input_data.replay_context or {}),
         },
