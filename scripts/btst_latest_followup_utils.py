@@ -55,6 +55,7 @@ def _extract_btst_candidate(report_dir: Path) -> dict[str, Any] | None:
 
     compact_trade_date = _compact_trade_date(followup.get("trade_date") or session_summary.get("end_date"))
     selection_target_rank = 2 if selection_target == "short_trade_only" else 1
+    report_mtime_ns = report_dir.stat().st_mtime_ns
     return {
         "report_dir": report_dir.resolve().as_posix(),
         "report_dir_name": report_dir.name,
@@ -62,12 +63,14 @@ def _extract_btst_candidate(report_dir: Path) -> dict[str, Any] | None:
         "trade_date": compact_trade_date,
         "brief_json": brief_json,
         "brief_json_path": str(Path(brief_json_path).expanduser().resolve()) if brief_json_path else None,
+        "selection_target_rank": selection_target_rank,
+        "report_mtime_ns": report_mtime_ns,
         "rank": (
             len(list(followup_summary.get("rows") or [])),
             1 if upstream_shadow_summary else 0,
             selection_target_rank,
             compact_trade_date,
-            report_dir.stat().st_mtime_ns,
+            report_mtime_ns,
             report_dir.name,
         ),
     }
@@ -180,6 +183,8 @@ def build_upstream_shadow_followup_summary(
             {
                 **row,
                 "ticker": ticker,
+                "report_dir": report_dir,
+                "trade_date": trade_date,
                 "top_reasons": top_reasons,
                 "rejection_reasons": rejection_reasons,
                 "positive_tags": positive_tags,
@@ -269,9 +274,56 @@ def load_latest_upstream_shadow_followup_summary(reports_root: str | Path) -> di
 
 
 def load_latest_upstream_shadow_followup_by_ticker(reports_root: str | Path) -> dict[str, dict[str, Any]]:
-    summary = load_latest_upstream_shadow_followup_summary(reports_root)
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    candidates = [candidate for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root)) if candidate]
+    rows_by_ticker: dict[str, dict[str, Any]] = {}
+    ranks_by_ticker: dict[str, tuple[Any, ...]] = {}
+    for candidate in candidates:
+        summary = build_upstream_shadow_followup_summary(
+            dict(candidate.get("brief_json") or {}),
+            report_dir=candidate.get("report_dir"),
+            trade_date=candidate.get("trade_date"),
+        )
+        candidate_rank = (
+            str(candidate.get("trade_date") or ""),
+            int(candidate.get("selection_target_rank") or 0),
+            int(candidate.get("report_mtime_ns") or 0),
+            str(candidate.get("report_dir_name") or ""),
+        )
+        for row in list(summary.get("rows") or []):
+            ticker = str(row.get("ticker") or "").strip()
+            if not ticker:
+                continue
+            current_rank = ranks_by_ticker.get(ticker)
+            if current_rank is None or candidate_rank > current_rank:
+                rows_by_ticker[ticker] = dict(row)
+                ranks_by_ticker[ticker] = candidate_rank
+    return rows_by_ticker
+
+
+def load_upstream_shadow_followup_history_by_ticker(reports_root: str | Path) -> dict[str, list[dict[str, Any]]]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    candidates = [candidate for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root)) if candidate]
+    grouped: dict[str, list[tuple[tuple[Any, ...], dict[str, Any]]]] = {}
+    for candidate in candidates:
+        summary = build_upstream_shadow_followup_summary(
+            dict(candidate.get("brief_json") or {}),
+            report_dir=candidate.get("report_dir"),
+            trade_date=candidate.get("trade_date"),
+        )
+        candidate_rank = (
+            str(candidate.get("trade_date") or ""),
+            int(candidate.get("selection_target_rank") or 0),
+            int(candidate.get("report_mtime_ns") or 0),
+            str(candidate.get("report_dir_name") or ""),
+        )
+        for row in list(summary.get("rows") or []):
+            ticker = str(row.get("ticker") or "").strip()
+            if not ticker:
+                continue
+            grouped.setdefault(ticker, []).append((candidate_rank, dict(row)))
+
     return {
-        str(row.get("ticker") or ""): dict(row)
-        for row in list(summary.get("rows") or [])
-        if str(row.get("ticker") or "").strip()
+        ticker: [row for _rank, row in sorted(items, key=lambda item: item[0], reverse=True)]
+        for ticker, items in grouped.items()
     }

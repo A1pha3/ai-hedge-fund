@@ -38,16 +38,26 @@ def _build_promotion_review(queue: dict[str, Any], focus_dossier: dict[str, Any]
     )
 
     blockers: list[str] = []
-    if str(focus_dossier.get("candidate_tier_focus") or "") != "observation_candidate":
+    candidate_tier_focus = str(focus_dossier.get("candidate_tier_focus") or "")
+    governance_objective_support = dict(focus_dossier.get("governance_objective_support") or {})
+    if candidate_tier_focus == "governance_followup":
+        blockers.append("governance_followup_needs_multiwindow_payoff")
+    elif candidate_tier_focus != "observation_candidate":
         blockers.append("focus_not_observation_candidate")
     if focus_recent_tier_verdict != "recent_tier_confirmed":
-        blockers.append("recent_tier_not_confirmed")
+        if focus_recent_tier_verdict == "governance_followup_pending_evidence":
+            blockers.append("recent_payoff_windows_missing")
+        else:
+            blockers.append("recent_tier_not_confirmed")
     if focus_recent_tier_window_count < 3:
         blockers.append("insufficient_recent_windows")
-    if focus_next_close_positive_rate < 0.5:
+    has_historical_objective_support = bool(governance_objective_support)
+    if candidate_tier_focus != "governance_followup" and focus_next_close_positive_rate < 0.5:
         blockers.append("weak_next_close_follow_through")
-    if focus_t_plus_2_positive_rate < 0.5 or focus_t_plus_2_mean <= 0.0:
+    if candidate_tier_focus != "governance_followup" and (focus_t_plus_2_positive_rate < 0.5 or focus_t_plus_2_mean <= 0.0):
         blockers.append("weak_t_plus_2_follow_through")
+    if candidate_tier_focus == "governance_followup" and not has_historical_objective_support:
+        blockers.append("historical_objective_support_missing")
 
     if blockers:
         promotion_review_verdict = "hold_validation_queue"

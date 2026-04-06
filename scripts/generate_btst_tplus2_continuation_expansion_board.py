@@ -9,12 +9,14 @@ from scripts.analyze_btst_tplus2_continuation_peer_scan import analyze_btst_tplu
 
 
 REPORTS_DIR = Path("data/reports")
+DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH = REPORTS_DIR / "btst_candidate_pool_upstream_handoff_board_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_tplus2_continuation_expansion_board_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_tplus2_continuation_expansion_board_latest.md"
 TIER_PRIORITY = {
-    "strict_peer": 0,
-    "near_cluster_peer": 1,
-    "observation_candidate": 2,
+    "governance_followup": 0,
+    "strict_peer": 1,
+    "near_cluster_peer": 2,
+    "observation_candidate": 3,
 }
 RECENT_TIER_PRIORITY = {
     "recent_tier_confirmed": 0,
@@ -30,12 +32,54 @@ def _surface_metric(summary: dict[str, Any], key: str) -> float:
     return float(value) if value is not None else -999.0
 
 
+def _maybe_load_json(path: str | Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        return {}
+    return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _build_governance_followup_rows(upstream_handoff_board: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in list(upstream_handoff_board.get("board_rows") or []):
+        row = dict(item or {})
+        if str(row.get("downstream_followup_lane") or "") != "t_plus_2_continuation_review":
+            continue
+        rows.append(
+            {
+                "ticker": row.get("ticker"),
+                "tier": "governance_followup",
+                "distinct_report_count": 1,
+                "observation_count": 1,
+                "mean_similarity_score": None,
+                "recent_window_count": 1,
+                "recent_tier_window_count": 1,
+                "recent_tier_ratio": 1.0,
+                "recent_tier_verdict": "recent_tier_confirmed",
+                "next_close_positive_rate": None,
+                "t_plus_2_close_positive_rate": None,
+                "t_plus_2_close_return_mean": None,
+                "next_step": (
+                    f"Prioritize immediate continuation validation for {row.get('ticker')} from post-recall followup; "
+                    "keep it outside the default BTST lane until continuation review confirms payoff."
+                ),
+                "governance_source_lane": row.get("downstream_followup_lane"),
+                "governance_status": row.get("downstream_followup_status"),
+                "governance_blocker": row.get("downstream_followup_blocker"),
+            }
+        )
+    return rows
+
+
 def generate_btst_tplus2_continuation_expansion_board(
     reports_root: str | Path,
     *,
     anchor_ticker: str = "600988",
     profile_name: str = "watchlist_zero_catalyst_guard_relief",
     report_name_contains: str = "btst_",
+    upstream_handoff_board_path: str | Path | None = None,
 ) -> dict[str, Any]:
     scan = analyze_btst_tplus2_continuation_peer_scan(
         reports_root,
@@ -43,8 +87,10 @@ def generate_btst_tplus2_continuation_expansion_board(
         profile_name=profile_name,
         report_name_contains=report_name_contains,
     )
+    upstream_handoff_board = _maybe_load_json(upstream_handoff_board_path or DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH)
 
     board_rows: list[dict[str, Any]] = []
+    board_rows.extend(_build_governance_followup_rows(upstream_handoff_board))
     for tier_key, items in (
         ("strict_peer", list(scan.get("peer_summaries") or [])),
         ("near_cluster_peer", list(scan.get("near_peer_summaries") or [])),
@@ -126,6 +172,7 @@ def generate_btst_tplus2_continuation_expansion_board(
     for index, row in enumerate(board_rows, start=1):
         row["priority_rank"] = index
 
+    focus_candidate = dict(board_rows[0]) if board_rows else None
     next_validation_candidates = [
         {
             "ticker": row.get("ticker"),
@@ -158,9 +205,12 @@ def generate_btst_tplus2_continuation_expansion_board(
     return {
         "reports_root": str(Path(reports_root).expanduser().resolve()),
         "anchor_ticker": anchor_ticker,
+        "upstream_handoff_board_path": str(Path(upstream_handoff_board_path or DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH).expanduser().resolve()),
+        "governance_followup_count": len([row for row in board_rows if str(row.get("tier") or "") == "governance_followup"]),
         "strict_peer_count": int(scan.get("peer_count") or 0),
         "near_cluster_count": int(scan.get("near_cluster_count") or 0),
         "observation_candidate_count": int(scan.get("observation_candidate_count") or 0),
+        "focus_candidate": focus_candidate,
         "board_rows": board_rows,
         "next_validation_candidates": next_validation_candidates,
         "recommendation": recommendation,
@@ -173,9 +223,11 @@ def render_btst_tplus2_continuation_expansion_board_markdown(analysis: dict[str,
     lines.append("")
     lines.append("## Overview")
     lines.append(f"- anchor_ticker: {analysis['anchor_ticker']}")
+    lines.append(f"- governance_followup_count: {analysis.get('governance_followup_count')}")
     lines.append(f"- strict_peer_count: {analysis['strict_peer_count']}")
     lines.append(f"- near_cluster_count: {analysis['near_cluster_count']}")
     lines.append(f"- observation_candidate_count: {analysis['observation_candidate_count']}")
+    lines.append(f"- focus_candidate: {analysis.get('focus_candidate')}")
     lines.append("")
     lines.append("## Board")
     for row in list(analysis.get("board_rows") or []):
@@ -187,6 +239,10 @@ def render_btst_tplus2_continuation_expansion_board_markdown(analysis: dict[str,
             f"next_close_positive_rate={row['next_close_positive_rate']} "
             f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']}"
         )
+        if row.get("governance_status"):
+            lines.append(
+                f"  governance: source_lane={row.get('governance_source_lane')} status={row.get('governance_status')} blocker={row.get('governance_blocker')}"
+            )
         lines.append(f"  next_step: {row['next_step']}")
     if not list(analysis.get("board_rows") or []):
         lines.append("- none")
@@ -213,6 +269,7 @@ def main() -> None:
     parser.add_argument("--anchor-ticker", default="600988")
     parser.add_argument("--profile-name", default="watchlist_zero_catalyst_guard_relief")
     parser.add_argument("--report-name-contains", default="btst_")
+    parser.add_argument("--upstream-handoff-board-path", default=str(DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -222,6 +279,7 @@ def main() -> None:
         anchor_ticker=str(args.anchor_ticker or "600988"),
         profile_name=str(args.profile_name or "watchlist_zero_catalyst_guard_relief"),
         report_name_contains=str(args.report_name_contains or "btst_"),
+        upstream_handoff_board_path=args.upstream_handoff_board_path,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_md = Path(args.output_md).expanduser().resolve()

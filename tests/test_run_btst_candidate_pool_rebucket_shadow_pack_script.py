@@ -100,3 +100,72 @@ def test_run_btst_candidate_pool_rebucket_shadow_pack_writes_skipped_placeholder
     assert "shadow_status: skipped_no_rebucket_candidate" in markdown
     assert "## Commands" in markdown
     assert "- none" in markdown
+
+
+def test_run_btst_candidate_pool_rebucket_shadow_pack_downgrades_transient_probe_to_persistence_only(tmp_path: Path) -> None:
+    dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    upstream_handoff_board_path = tmp_path / "btst_candidate_pool_upstream_handoff_board_latest.json"
+    dossier_path.write_text(
+        json.dumps(
+            {
+                "priority_handoff_branch_experiment_queue": [
+                    {
+                        "task_id": "post_gate_liquidity_competition_post_gate_competition_rebucket_probe",
+                        "priority_handoff": "post_gate_liquidity_competition",
+                        "tickers": ["301292"],
+                        "prototype_type": "post_gate_competition_rebucket_probe",
+                        "prototype_readiness": "shadow_ready_rebucket_signal",
+                        "evaluation_summary": "hot peers dominate the cutoff set.",
+                        "guardrail_summary": "do not relax default gates.",
+                    }
+                ],
+                "priority_ticker_dossiers": [
+                    {
+                        "ticker": "301292",
+                        "failure_reason": "transient rebucket probe",
+                        "next_step": "repair persistence first",
+                        "occurrence_evidence": [
+                            {
+                                "blocking_stage": "candidate_pool_truncated_after_filters",
+                                "pre_truncation_avg_amount_share_of_cutoff": 0.5,
+                                "top300_lower_market_cap_hot_peer_count": 2,
+                                "estimated_rank_gap_after_rebucket": 338,
+                                "top300_lower_market_cap_hot_peer_examples": ["300265", "002173"],
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    upstream_handoff_board_path.write_text(
+        json.dumps(
+            {
+                "board_rows": [
+                    {
+                        "ticker": "301292",
+                        "board_phase": "historical_shadow_probe_gap",
+                        "downstream_followup_status": "transient_probe_only",
+                        "downstream_followup_blocker": "shadow_recall_not_persistent",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    pack = run_btst_candidate_pool_rebucket_shadow_pack(
+        dossier_path,
+        output_dir=tmp_path,
+        upstream_handoff_board_path=upstream_handoff_board_path,
+    )
+
+    assert pack["shadow_status"] == "persistence_diagnostics_only"
+    assert pack["handoff_context"]["ticker"] == "301292"
+    assert pack["target_rows"][0]["ticker"] == "301292"
+    assert "historical shadow probe" in pack["recommendation"]

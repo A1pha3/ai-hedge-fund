@@ -206,6 +206,7 @@ def test_corridor_shadow_pack_promotes_primary_shadow_replay(tmp_path: Path) -> 
 def test_lane_pair_board_keeps_corridor_primary_first(tmp_path: Path) -> None:
     corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
     rebucket_comparison_bundle_path = tmp_path / "btst_candidate_pool_rebucket_comparison_bundle_latest.json"
+    governance_synthesis_path = tmp_path / "btst_governance_synthesis_latest.json"
     _write_json(
         corridor_shadow_pack_path,
         {
@@ -245,15 +246,82 @@ def test_lane_pair_board_keeps_corridor_primary_first(tmp_path: Path) -> None:
             },
         },
     )
+    _write_json(
+        governance_synthesis_path,
+        {
+            "execution_surface_constraints": [
+                {
+                    "constraint_id": "post_gate_shadow_observation_only",
+                    "focus_tickers": ["300720"],
+                    "status": "continuation_only_confirm_then_review",
+                    "blocker": "no_selected_persistence_or_independent_edge",
+                    "recommendation": "Keep post-gate shadow names in observation / continuation review until a selected row persists across independent windows.",
+                },
+                {
+                    "constraint_id": "shadow_profitability_cliff_execution_block",
+                    "focus_tickers": ["301292"],
+                    "status": "shadow_recall_not_execution_ready",
+                    "blocker": "profitability_hard_cliff_and_score_gap",
+                    "recommendation": "Do not promote shadow recall names with profitability hard-cliff evidence into execution lanes; keep them in replay-input / shadow-governance diagnostics.",
+                },
+            ],
+            "evidence_btst_followups": [
+                {
+                    "entries": [
+                        {
+                            "ticker": "300720",
+                            "decision": "near_miss",
+                            "candidate_source": "post_gate_liquidity_competition_shadow",
+                            "top_reasons": [
+                                "trend_acceleration=0.88",
+                                "confirmed_breakout",
+                            ],
+                            "historical_next_close_positive_rate": 0.0,
+                        },
+                        {
+                            "ticker": "003036",
+                            "decision": "near_miss",
+                            "candidate_source": "upstream_liquidity_corridor_shadow",
+                            "top_reasons": [
+                                "trend_acceleration=0.86",
+                                "profitability_hard_cliff",
+                            ],
+                            "historical_sample_count": 8,
+                            "historical_next_close_positive_rate": 0.125,
+                            "historical_next_close_return_mean": -0.0313,
+                        },
+                        {
+                            "ticker": "301292",
+                            "decision": "rejected",
+                            "candidate_source": "post_gate_liquidity_competition_shadow",
+                            "top_reasons": [
+                                "trend_acceleration=0.81",
+                                "profitability_hard_cliff",
+                            ],
+                            "historical_next_close_positive_rate": None,
+                        },
+                    ]
+                }
+            ],
+        },
+    )
 
     analysis = analyze_btst_candidate_pool_lane_pair_board(
         corridor_shadow_pack_path,
         rebucket_comparison_bundle_path,
+        governance_synthesis_path=governance_synthesis_path,
     )
 
     assert analysis["pair_status"] == "ready_for_ranked_comparison"
     assert analysis["board_leader"]["ticker"] == "300720"
     assert analysis["board_leader"]["lane_family"] == "corridor"
+    rows_by_ticker = {row["ticker"]: row for row in analysis["candidates"]}
+    assert rows_by_ticker["300720"]["governance_status"] == "continuation_only_confirm_then_review"
+    assert rows_by_ticker["003036"]["governance_status"] == "parallel_watch_only_not_default_ready"
+    assert "samples=8" in rows_by_ticker["003036"]["governance_summary"]
+    assert "next_close_positive_rate=0.125" in rows_by_ticker["003036"]["governance_summary"]
+    assert rows_by_ticker["301292"]["lane_family"] == "rebucket"
+    assert rows_by_ticker["301292"]["governance_status"] == "shadow_recall_not_execution_ready"
 
 
 def test_upstream_handoff_board_prioritizes_watchlist_break_before_lane_probe(tmp_path: Path) -> None:
@@ -483,6 +551,35 @@ def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_p
         },
     )
 
+    rebucket_report_dir = tmp_path / "paper_trading_20260324_20260326_live_m2_7_short_trade_only_rebucket_shadow_301292"
+    rebucket_report_dir.mkdir(parents=True, exist_ok=True)
+    rebucket_brief_path = rebucket_report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        rebucket_brief_path,
+        {
+            "upstream_shadow_recall_summary": {"top_focus_tickers": ["301292"]},
+            "priority_rows": [
+                {
+                    "ticker": "301292",
+                    "decision": "rejected",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "positive_tags": ["upstream_shadow_release_candidate"],
+                    "top_reasons": ["profitability_hard_cliff", "score_short_below_threshold"],
+                }
+            ],
+        },
+    )
+    _write_json(
+        rebucket_report_dir / "session_summary.json",
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "btst_followup": {
+                "trade_date": "2026-03-24",
+                "brief_json": str(rebucket_brief_path.resolve()),
+            },
+        },
+    )
+
     analysis = analyze_btst_candidate_pool_upstream_handoff_board(
         failure_dossier_path,
         watchlist_recall_dossier_path=watchlist_dossier_path,
@@ -494,8 +591,16 @@ def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_p
     assert rows_by_ticker["300720"]["board_phase"] == "post_recall_downstream_followup"
     assert rows_by_ticker["300720"]["first_broken_handoff"] == "downstream_validated_after_shadow_recall"
     assert rows_by_ticker["300720"]["latest_followup_decision"] == "near_miss"
+    assert rows_by_ticker["300720"]["downstream_followup_lane"] == "t_plus_2_continuation_review"
+    assert rows_by_ticker["300720"]["downstream_followup_status"] == "continuation_confirm_then_review"
     assert rows_by_ticker["003036"]["latest_followup_downstream_bottleneck"] == "profitability_hard_cliff"
-    assert rows_by_ticker["301292"]["first_broken_handoff"] == "absent_from_watchlist"
+    assert rows_by_ticker["003036"]["downstream_followup_lane"] == "shadow_profitability_diagnostics"
+    assert rows_by_ticker["301292"]["board_phase"] == "historical_shadow_probe_gap"
+    assert rows_by_ticker["301292"]["first_broken_handoff"] == "transient_shadow_recall_without_persistence"
+    assert rows_by_ticker["301292"]["latest_followup_decision"] == "rejected"
+    assert rows_by_ticker["301292"]["downstream_followup_lane"] == "rebucket_persistence_diagnostics"
+    assert rows_by_ticker["301292"]["downstream_followup_status"] == "transient_probe_only"
+    assert rows_by_ticker["301292"]["downstream_followup_blocker"] == "shadow_recall_not_persistent"
     assert "301292" in analysis["recommendation"]
 
 

@@ -56,7 +56,10 @@ def test_generate_btst_tplus2_continuation_observation_pool_prioritizes_anchor_c
         },
     )
 
-    analysis = observation_pool.generate_btst_tplus2_continuation_observation_pool(reports_root)
+    analysis = observation_pool.generate_btst_tplus2_continuation_observation_pool(
+        reports_root,
+        upstream_handoff_board_path=tmp_path / "missing_upstream_handoff_board.json",
+    )
 
     assert analysis["entry_count"] == 2
     assert analysis["entries"][0]["ticker"] == "600988"
@@ -70,3 +73,58 @@ def test_generate_btst_tplus2_continuation_observation_pool_prioritizes_anchor_c
     markdown = observation_pool.render_btst_tplus2_continuation_observation_pool_markdown(analysis)
     assert "# BTST T+2 Continuation Observation Pool" in markdown
     assert "600988" in markdown
+
+
+def test_generate_btst_tplus2_continuation_observation_pool_includes_governance_followup(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    upstream_handoff_board_path = tmp_path / "btst_candidate_pool_upstream_handoff_board_latest.json"
+    upstream_handoff_board_path.write_text(
+        """
+        {
+          "board_rows": [
+            {
+              "ticker": "300720",
+              "board_rank": 2,
+              "downstream_followup_lane": "t_plus_2_continuation_review",
+              "downstream_followup_status": "continuation_confirm_then_review",
+              "downstream_followup_blocker": "no_selected_persistence_or_independent_edge",
+              "downstream_followup_summary": "300720 should enter continuation validation watch."
+            }
+          ]
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        observation_pool,
+        "analyze_btst_tplus2_continuation_clusters",
+        lambda *_args, **_kwargs: {
+            "continuation_row_count": 0,
+            "ticker_count": 0,
+            "recurring_cluster_count": 0,
+            "ticker_summaries": [],
+        },
+    )
+    monkeypatch.setattr(
+        observation_pool,
+        "analyze_btst_tplus2_continuation_peer_scan",
+        lambda *_args, **_kwargs: {
+            "peer_count": 0,
+            "near_cluster_count": 0,
+            "peer_summaries": [],
+            "near_peer_summaries": [],
+            "recommendation": "none",
+        },
+    )
+
+    analysis = observation_pool.generate_btst_tplus2_continuation_observation_pool(
+        reports_root,
+        upstream_handoff_board_path=upstream_handoff_board_path,
+    )
+
+    assert analysis["governance_followup_count"] == 1
+    assert analysis["entries"][0]["ticker"] == "300720"
+    assert analysis["entries"][0]["entry_type"] == "governance_followup"
+    assert analysis["entries"][0]["governance_status"] == "continuation_confirm_then_review"

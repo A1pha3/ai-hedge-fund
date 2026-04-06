@@ -7,6 +7,7 @@ from typing import Any
 
 
 REBUCKET_SHADOW_RELEASE_SCORE_MIN = 0.28
+DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH = Path("data/reports/btst_candidate_pool_upstream_handoff_board_latest.json")
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -99,6 +100,70 @@ def _build_skipped_rebucket_shadow_pack(*, dossier_path: str | Path) -> dict[str
     }
 
 
+def _find_handoff_row(upstream_handoff_board: dict[str, Any], ticker: str) -> dict[str, Any]:
+    normalized_ticker = str(ticker or "").strip()
+    return next(
+        (
+            dict(row or {})
+            for row in list(upstream_handoff_board.get("board_rows") or [])
+            if str((row or {}).get("ticker") or "") == normalized_ticker
+        ),
+        {},
+    )
+
+
+def _build_persistence_only_pack(
+    *,
+    dossier_path: str | Path,
+    experiment: dict[str, Any],
+    target_rows: list[dict[str, Any]],
+    handoff_row: dict[str, Any],
+    ticker: str | None,
+) -> dict[str, Any]:
+    focus_ticker = ticker or ",".join(str(value) for value in list(experiment.get("tickers") or []) if str(value or "").strip())
+    return {
+        "source_dossier": str(Path(dossier_path).expanduser().resolve()),
+        "shadow_status": "persistence_diagnostics_only",
+        "experiment": experiment,
+        "recommended_release_score_min": REBUCKET_SHADOW_RELEASE_SCORE_MIN,
+        "target_rows": target_rows,
+        "handoff_context": handoff_row,
+        "runbook": [
+            "不要把单次 rebucket shadow 命中误当成 active replay lane；先确认该票是否能跨独立报告持续再出现。",
+            "优先比较 historical shadow probe 与最新 active followup 的可见性差异，定位是 cooldown、召回入口还是下游 score cliff 导致留存失败。",
+            "在 persistence 没确认前，不要继续增加真实 replay 频次，也不要讨论放宽默认 gate。",
+        ],
+        "run_commands": [
+            "python scripts/run_btst_candidate_pool_upstream_handoff_board.py "
+            "--failure-dossier-path data/reports/btst_no_candidate_entry_failure_dossier_latest.json "
+            "--watchlist-recall-dossier-path data/reports/btst_watchlist_recall_dossier_latest.json "
+            "--candidate-pool-recall-dossier-path data/reports/btst_candidate_pool_recall_dossier_latest.json "
+            "--output-json data/reports/btst_candidate_pool_upstream_handoff_board_latest.json "
+            "--output-md data/reports/btst_candidate_pool_upstream_handoff_board_latest.md",
+            "python scripts/run_btst_candidate_pool_rebucket_shadow_pack.py "
+            f"--dossier-path {Path(dossier_path).expanduser().resolve()} --ticker {focus_ticker} "
+            "--upstream-handoff-board-path data/reports/btst_candidate_pool_upstream_handoff_board_latest.json --output-dir data/reports",
+        ],
+        "recommendation": (
+            f"{focus_ticker or '目标票'} 当前只具备 historical shadow probe 证据，"
+            "应先做 persistence diagnostics，而不是继续当成 ready-for-replay 的 rebucket lane。"
+        ),
+    }
+
+
+def _resolve_upstream_handoff_board_path(dossier_path: str | Path, upstream_handoff_board_path: str | Path | None) -> Path | None:
+    if upstream_handoff_board_path:
+        resolved = Path(upstream_handoff_board_path).expanduser().resolve()
+        return resolved if resolved.exists() else None
+    sibling_path = Path(dossier_path).expanduser().resolve().parent / DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH.name
+    if sibling_path.exists():
+        return sibling_path
+    default_path = DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH.expanduser().resolve()
+    if default_path.exists() and sibling_path.parent == default_path.parent:
+        return default_path
+    return None
+
+
 def _build_target_rows(dossier: dict[str, Any], tickers: list[str]) -> list[dict[str, Any]]:
     dossier_by_ticker = {str(row.get("ticker") or ""): dict(row) for row in list(dossier.get("priority_ticker_dossiers") or [])}
     rows: list[dict[str, Any]] = []
@@ -186,9 +251,12 @@ def run_btst_candidate_pool_rebucket_shadow_pack(
     *,
     output_dir: str | Path,
     ticker: str | None = None,
+    upstream_handoff_board_path: str | Path | None = None,
 ) -> dict[str, Any]:
     dossier = _load_json(dossier_path)
     experiment = _select_rebucket_experiment(dossier, ticker=ticker)
+    resolved_upstream_handoff_board_path = _resolve_upstream_handoff_board_path(dossier_path, upstream_handoff_board_path)
+    upstream_handoff_board = _load_json(resolved_upstream_handoff_board_path) if resolved_upstream_handoff_board_path else {}
     output_root = Path(output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -203,6 +271,21 @@ def run_btst_candidate_pool_rebucket_shadow_pack(
 
     tickers = [str(value) for value in list(experiment.get("tickers") or []) if str(value or "").strip()]
     target_rows = _build_target_rows(dossier, tickers)
+    focus_handoff_row = _find_handoff_row(upstream_handoff_board, ticker or (tickers[0] if tickers else ""))
+    if str(focus_handoff_row.get("downstream_followup_status") or "") == "transient_probe_only":
+        pack = _build_persistence_only_pack(
+            dossier_path=dossier_path,
+            experiment=experiment,
+            target_rows=target_rows,
+            handoff_row=focus_handoff_row,
+            ticker=ticker or (tickers[0] if tickers else None),
+        )
+        json_path = _write_json(output_root / "btst_candidate_pool_rebucket_shadow_pack_latest.json", pack)
+        md_path = _write_markdown(output_root / "btst_candidate_pool_rebucket_shadow_pack_latest.md", render_btst_candidate_pool_rebucket_shadow_pack_markdown(pack))
+        pack["artifacts"] = {"json_path": json_path, "markdown_path": md_path}
+        _write_json(Path(json_path), pack)
+        _write_markdown(Path(md_path), render_btst_candidate_pool_rebucket_shadow_pack_markdown(pack))
+        return pack
 
     runbook = [
         "保持 MIN_AVG_AMOUNT_20D 不变，只观察 smaller-cap hot-peer rebucket 的影子效果。",
@@ -238,12 +321,14 @@ def main() -> None:
     parser.add_argument("--dossier-path", default="data/reports/btst_candidate_pool_recall_dossier_latest.json")
     parser.add_argument("--output-dir", default="data/reports")
     parser.add_argument("--ticker", default=None)
+    parser.add_argument("--upstream-handoff-board-path", default=str(DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH))
     args = parser.parse_args()
 
     pack = run_btst_candidate_pool_rebucket_shadow_pack(
         args.dossier_path,
         output_dir=args.output_dir,
         ticker=args.ticker,
+        upstream_handoff_board_path=args.upstream_handoff_board_path,
     )
     print(json.dumps(pack, ensure_ascii=False, indent=2))
 

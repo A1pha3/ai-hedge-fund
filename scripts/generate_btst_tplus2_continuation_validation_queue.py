@@ -30,7 +30,27 @@ def generate_btst_tplus2_continuation_validation_queue(
         profile_name=profile_name,
         report_name_contains=report_name_contains,
     )
-    queue_seed = list(expansion_board.get("next_validation_candidates") or [])[: max(int(max_candidates), 0)]
+    max_candidates = max(int(max_candidates), 0)
+    queue_seed = list(expansion_board.get("next_validation_candidates") or [])[:max_candidates]
+    expansion_board_rows = [dict(row or {}) for row in list(expansion_board.get("board_rows") or [])]
+
+    resolved_focus_ticker = str(
+        focus_ticker
+        or dict(expansion_board.get("focus_candidate") or {}).get("ticker")
+        or (queue_seed[0].get("ticker") if queue_seed else "")
+        or ""
+    )
+    if resolved_focus_ticker and resolved_focus_ticker not in {str(row.get("ticker") or "") for row in queue_seed}:
+        focus_row = next((row for row in expansion_board_rows if str(row.get("ticker") or "") == resolved_focus_ticker), None)
+        if focus_row is not None:
+            queue_seed = [
+                {
+                    "ticker": focus_row.get("ticker"),
+                    "tier": focus_row.get("tier"),
+                    "priority_rank": focus_row.get("priority_rank"),
+                },
+                *queue_seed[: max(max_candidates - 1, 0)],
+            ]
 
     queue_rows: list[dict[str, Any]] = []
     for seed in queue_seed:
@@ -66,7 +86,6 @@ def generate_btst_tplus2_continuation_validation_queue(
             }
         )
 
-    resolved_focus_ticker = str(focus_ticker or (queue_rows[0]["ticker"] if queue_rows else ""))
     focus_candidate = next((row for row in queue_rows if str(row.get("ticker") or "") == resolved_focus_ticker), None)
     promotion_review = None
     if focus_candidate:
