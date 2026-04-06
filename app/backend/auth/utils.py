@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 _PRODUCTION_ENV_VALUES = {"prod", "production"}
 _DEV_SECRET_KEY = secrets.token_urlsafe(32)
 _dev_secret_warning_emitted = False
+_DEV_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_DEV_ADMIN_DEFAULT_PASSWORD = "Hedge@2026!"
 
 
 def is_production_environment() -> bool:
@@ -40,6 +42,47 @@ def get_secret_key() -> str:
         _dev_secret_warning_emitted = True
 
     return _DEV_SECRET_KEY
+
+
+def should_show_reset_token(configured_value: str | None = None) -> bool:
+    """Return whether reset tokens may be included in API responses."""
+    value = configured_value if configured_value is not None else os.getenv("AUTH_SHOW_RESET_TOKEN")
+    if value is None:
+        return not is_production_environment()
+
+    enabled = value.strip().lower() == "true"
+    if enabled and is_production_environment():
+        logger.warning("AUTH_SHOW_RESET_TOKEN=true ignored in production")
+        return False
+    return enabled
+
+
+def should_auto_init_admin(configured_value: str | None = None) -> bool:
+    """Return whether the backend may auto-create the bootstrap admin user."""
+    value = configured_value if configured_value is not None else os.getenv("AUTH_AUTO_INIT_ADMIN")
+    if value is None:
+        return not is_production_environment()
+    return value.strip().lower() == "true"
+
+
+def resolve_admin_bootstrap_password(configured_value: str | None = None) -> str | None:
+    """Return the password to use for bootstrap admin creation, if allowed."""
+    password = configured_value if configured_value is not None else os.getenv("AUTH_ADMIN_DEFAULT_PASSWORD")
+    if password:
+        return password
+    if is_production_environment():
+        return None
+    return _DEV_ADMIN_DEFAULT_PASSWORD
+
+
+def get_cors_origins(configured_value: str | None = None) -> list[str]:
+    """Return allowed CORS origins for the backend."""
+    value = configured_value if configured_value is not None else os.getenv("BACKEND_CORS_ORIGINS")
+    if value is None:
+        return [] if is_production_environment() else list(_DEV_CORS_ORIGINS)
+
+    origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+    return origins
 
 
 ALGORITHM = "HS256"

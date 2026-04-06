@@ -11,6 +11,7 @@ env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__
 load_dotenv(dotenv_path=env_path)
 
 from app.backend.routes import api_router
+from app.backend.auth.utils import get_cors_origins, resolve_admin_bootstrap_password, should_auto_init_admin
 from app.backend.database.connection import engine, SessionLocal
 from app.backend.database.models import Base
 from app.backend.models.user import User, InvitationCode  # noqa: F401 — register auth models with Base
@@ -28,6 +29,15 @@ Base.metadata.create_all(bind=engine)
 # Auto-initialize admin user if not exists
 def _auto_init_admin():
     """Create admin user on first startup if it doesn't exist."""
+    if not should_auto_init_admin():
+        logger.info("Skipping admin auto-initialization because AUTH_AUTO_INIT_ADMIN is disabled")
+        return
+
+    default_password = resolve_admin_bootstrap_password()
+    if not default_password:
+        logger.warning("Skipping admin auto-initialization because no bootstrap admin password is configured")
+        return
+
     db = None
     try:
         from app.backend.auth.utils import hash_password
@@ -35,7 +45,6 @@ def _auto_init_admin():
         db = SessionLocal()
         existing = db.query(User).filter(User.username == ADMIN_USERNAME).first()
         if not existing:
-            default_password = os.getenv("AUTH_ADMIN_DEFAULT_PASSWORD", "Hedge@2026!")
             admin = User(username=ADMIN_USERNAME, password_hash=hash_password(default_password), role="admin", is_active=True)
             db.add(admin)
             db.commit()
@@ -51,7 +60,7 @@ _auto_init_admin()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Frontend URLs
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

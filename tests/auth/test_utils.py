@@ -12,6 +12,10 @@ from app.backend.auth.utils import (
     create_reset_token,
     decode_token,
     generate_invitation_code,
+    get_cors_origins,
+    resolve_admin_bootstrap_password,
+    should_auto_init_admin,
+    should_show_reset_token,
 )
 
 
@@ -134,6 +138,49 @@ class TestJWTTokens:
 
         with pytest.raises(RuntimeError, match="AUTH_SECRET_KEY"):
             create_access_token({"sub": "prod-user"})
+
+
+class TestEnvironmentGuards:
+    """Tests for production-sensitive auth helper decisions."""
+
+    def test_should_show_reset_token_defaults_to_true_in_dev(self, monkeypatch):
+        monkeypatch.delenv("AUTH_SHOW_RESET_TOKEN", raising=False)
+        monkeypatch.delenv("APP_ENV", raising=False)
+        assert should_show_reset_token() is True
+
+    def test_should_show_reset_token_defaults_to_false_in_production(self, monkeypatch):
+        monkeypatch.delenv("AUTH_SHOW_RESET_TOKEN", raising=False)
+        monkeypatch.setenv("APP_ENV", "production")
+        assert should_show_reset_token() is False
+
+    def test_should_show_reset_token_ignores_true_in_production(self, monkeypatch):
+        monkeypatch.setenv("AUTH_SHOW_RESET_TOKEN", "true")
+        monkeypatch.setenv("APP_ENV", "production")
+        assert should_show_reset_token() is False
+
+    def test_should_auto_init_admin_defaults_to_false_in_production(self, monkeypatch):
+        monkeypatch.delenv("AUTH_AUTO_INIT_ADMIN", raising=False)
+        monkeypatch.setenv("APP_ENV", "production")
+        assert should_auto_init_admin() is False
+
+    def test_resolve_admin_bootstrap_password_requires_explicit_prod_value(self, monkeypatch):
+        monkeypatch.delenv("AUTH_ADMIN_DEFAULT_PASSWORD", raising=False)
+        monkeypatch.setenv("APP_ENV", "production")
+        assert resolve_admin_bootstrap_password() is None
+
+    def test_get_cors_origins_defaults_to_local_dev_origins(self, monkeypatch):
+        monkeypatch.delenv("BACKEND_CORS_ORIGINS", raising=False)
+        monkeypatch.delenv("APP_ENV", raising=False)
+        assert get_cors_origins() == ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    def test_get_cors_origins_defaults_to_empty_in_production(self, monkeypatch):
+        monkeypatch.delenv("BACKEND_CORS_ORIGINS", raising=False)
+        monkeypatch.setenv("APP_ENV", "production")
+        assert get_cors_origins() == []
+
+    def test_get_cors_origins_parses_explicit_list(self, monkeypatch):
+        monkeypatch.setenv("BACKEND_CORS_ORIGINS", "https://app.example.com, https://admin.example.com ")
+        assert get_cors_origins() == ["https://app.example.com", "https://admin.example.com"]
 
 
 # ---- Invitation Code Generation ----

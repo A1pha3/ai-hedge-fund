@@ -1,7 +1,5 @@
 """Authentication API routes — login, register, password management."""
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -16,11 +14,8 @@ from app.backend.auth.constants import (
     ForbiddenError, InvalidTokenError, WeakPasswordError,
     PASSWORD_MIN_LENGTH,
 )
+from app.backend.auth.utils import should_show_reset_token
 from app.backend.models.user import User
-
-# Dev mode: return reset token in response (no email system).
-# Set AUTH_SHOW_RESET_TOKEN=false in production.
-SHOW_RESET_TOKEN = os.getenv("AUTH_SHOW_RESET_TOKEN", "true").lower() == "true"
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -180,7 +175,7 @@ async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(
     # Always return the same message text to prevent user enumeration
     return {
         "message": "如果用户名和邮箱匹配，已生成密码重置令牌",
-        "reset_token": reset_token if SHOW_RESET_TOKEN else None,
+        "reset_token": reset_token if should_show_reset_token() else None,
     }
 
 

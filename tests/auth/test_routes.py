@@ -307,6 +307,19 @@ class TestForgotPasswordRoute:
         })
         assert valid.json()["message"] == invalid.json()["message"]
 
+    def test_forgot_password_hides_reset_token_in_production(self, client, monkeypatch):
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("AUTH_SECRET_KEY", "prod-test-secret")
+        monkeypatch.delenv("AUTH_SHOW_RESET_TOKEN", raising=False)
+
+        resp = client.post("/auth/forgot-password", json={
+            "username": "testuser",
+            "email": "test@example.com",
+        })
+
+        assert resp.status_code == 200
+        assert resp.json()["reset_token"] is None
+
 
 # ---- POST /auth/reset-password ----
 
