@@ -732,7 +732,13 @@ def _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff
     )
 
 
-def _build_upstream_shadow_catalyst_relief_config(*, candidate_pool_lane: str, filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
+def _build_upstream_shadow_catalyst_relief_config(
+    *,
+    candidate_pool_lane: str,
+    filter_reason: str,
+    metrics_payload: dict[str, Any],
+    shadow_visibility_gap_selected: bool = False,
+) -> dict[str, Any]:
     if filter_reason != "catalyst_freshness_below_short_trade_boundary_floor":
         return {}
 
@@ -750,6 +756,9 @@ def _build_upstream_shadow_catalyst_relief_config(*, candidate_pool_lane: str, f
         return {}
 
     require_no_profitability_hard_cliff = _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(candidate_pool_lane)
+    selected_threshold_override_enabled = candidate_pool_lane == "post_gate_liquidity_competition" or (
+        candidate_pool_lane == "layer_a_liquidity_corridor" and shadow_visibility_gap_selected
+    )
     return {
         "enabled": True,
         "reason": "upstream_shadow_catalyst_relief",
@@ -757,7 +766,7 @@ def _build_upstream_shadow_catalyst_relief_config(*, candidate_pool_lane: str, f
         "near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
         **(
             {"selected_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD, 4)}
-            if candidate_pool_lane == "post_gate_liquidity_competition"
+            if selected_threshold_override_enabled
             else {}
         ),
         "breakout_freshness_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN, 4),
@@ -775,6 +784,7 @@ def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], fil
         candidate_pool_lane=candidate_pool_lane,
         filter_reason=filter_reason,
         metrics_payload=metrics_payload,
+        shadow_visibility_gap_selected=bool(candidate_entry.get("shadow_visibility_gap_selected")),
     )
     resolved_reason_codes = [
         str(code)
@@ -953,6 +963,7 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
             "upstream_shadow_catalyst_relief_catalyst_freshness_floor": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR, 4),
             "upstream_shadow_catalyst_relief_near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
             "upstream_shadow_catalyst_relief_post_gate_selected_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD, 4),
+            "upstream_shadow_catalyst_relief_visibility_gap_corridor_selected_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD, 4),
             "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
             "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane": {
                 lane: _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(lane)

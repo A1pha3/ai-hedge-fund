@@ -84,6 +84,7 @@ def test_generate_btst_tplus2_continuation_eligible_execution_keeps_merge_review
         eligible_gate_path=eligible_gate_path,
     )
 
-    assert analysis["adopted_eligible_row"]["promotion_blocker"] == "default_btst_merge_review_pending"
-    assert "default BTST merge review is pending" in analysis["adopted_eligible_row"]["next_step"]
-    assert "default BTST merge review is pending" in analysis["recommendation"]
+    assert analysis["adopted_eligible_row"]["promotion_blocker"] == "default_btst_merge_approved_execution_active"
+    assert analysis["adopted_eligible_row"]["merge_approved_daily_pipeline_active"] is True
+    assert "merge-approved daily-pipeline uplift is already active" in analysis["adopted_eligible_row"]["next_step"]
+    assert "merge-approved daily-pipeline uplift is already active" in analysis["recommendation"]

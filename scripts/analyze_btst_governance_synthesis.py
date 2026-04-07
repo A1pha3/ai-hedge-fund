@@ -122,6 +122,9 @@ def _summarize_btst_followup_entry(bucket_name: str, entry: dict[str, Any]) -> d
         "historical_next_close_return_mean": historical_prior.get("next_close_return_mean"),
         "execution_priority": historical_prior.get("execution_priority"),
         "monitor_priority": historical_prior.get("monitor_priority"),
+        "historical_execution_quality_label": historical_prior.get("execution_quality_label"),
+        "historical_entry_timing_bias": historical_prior.get("entry_timing_bias"),
+        "historical_execution_note": historical_prior.get("execution_note"),
     }
 
 
@@ -306,6 +309,35 @@ def _derive_execution_surface_constraints(btst_followups: list[dict[str, Any]]) 
                         "Keep post-gate shadow names in continuation review until a selected row persists across independent windows."
                         if has_selected_post_gate
                         else "Keep post-gate shadow names in observation / continuation review until a selected row persists across independent windows."
+                    ),
+                }
+            )
+
+        upstream_intraday_only_selected = [
+            entry
+            for entry in entries
+            if entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
+            and entry.get("bucket") == "selected_entries"
+            and entry.get("historical_execution_quality_label") in {"intraday_only", "gap_chase_risk"}
+        ]
+        if upstream_intraday_only_selected:
+            focus_tickers = [entry.get("ticker") for entry in upstream_intraday_only_selected if entry.get("ticker")]
+            constraints.append(
+                {
+                    "constraint_id": "upstream_shadow_selected_intraday_bias",
+                    "report_dir": followup.get("report_dir"),
+                    "trade_date": followup.get("trade_date"),
+                    "lane_id": "upstream_liquidity_corridor_shadow",
+                    "status": "continuation_confirm_only_intraday_bias",
+                    "blocker": "weak_overnight_follow_through_after_shadow_recall",
+                    "focus_tickers": focus_tickers,
+                    "evidence": {
+                        "selected_count": len(upstream_intraday_only_selected),
+                        "entries": upstream_intraday_only_selected,
+                    },
+                    "recommendation": (
+                        "Keep upstream shadow selected names in confirmation-only execution when historical follow-through is intraday-only; "
+                        "do not treat them as standard overnight BTST holds without fresh same-day strength."
                     ),
                 }
             )

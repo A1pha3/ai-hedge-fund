@@ -5,6 +5,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.execution.merge_approved_loader import (
+    DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE,
+    is_merge_approved_execution_blocker,
+)
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ELIGIBLE_EXECUTION_PATH = REPORTS_DIR / "btst_tplus2_continuation_eligible_execution_latest.json"
@@ -22,7 +27,7 @@ def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate:
     focus_ticker = str(execution_gate.get("focus_ticker") or eligible_execution.get("focus_ticker") or "")
     adopted_eligible_row = dict(eligible_execution.get("adopted_eligible_row") or {})
     gate_verdict = str(execution_gate.get("gate_verdict") or "")
-    merge_review_ready = str(adopted_eligible_row.get("promotion_blocker") or "") == "default_btst_merge_review_pending"
+    merge_review_ready = is_merge_approved_execution_blocker(adopted_eligible_row.get("promotion_blocker"))
 
     if gate_verdict == "approve_execution_candidate" and focus_ticker:
         execution_verdict = "execution_candidate_applied"
@@ -41,7 +46,8 @@ def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate:
             "priority_score": adopted_eligible_row.get("priority_score"),
             "lane_stage": adopted_eligible_row.get("lane_stage"),
             "capital_mode": "paper_only",
-            "promotion_blocker": "default_btst_merge_review_pending" if merge_review_ready else "no_selected_persistence_or_independent_edge",
+            "promotion_blocker": DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE if merge_review_ready else "no_selected_persistence_or_independent_edge",
+            "merge_approved_daily_pipeline_active": merge_review_ready,
             "watchlist_validation_status": adopted_eligible_row.get("watchlist_validation_status"),
             "recent_supporting_window_count": adopted_eligible_row.get("recent_supporting_window_count"),
             "recent_window_count": adopted_eligible_row.get("recent_window_count"),
@@ -54,7 +60,7 @@ def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate:
             "governance_payoff_ready": execution_gate.get("governance_payoff_ready"),
             "t_plus_2_mean_gap_vs_watch": execution_gate.get("focus_t_plus_2_mean_gap_vs_watch"),
             "next_step": (
-                "Keep this paper execution candidate visible while default BTST merge review is pending; if governance approves, promote it through the default BTST merge path."
+                "Keep this paper execution candidate visible because merge-approved daily-pipeline uplift is already active; if governance completes the review, promote it through the default BTST merge path."
                 if merge_review_ready
                 else "Use only as an isolated paper execution candidate; require selected persistence across independent windows "
                 "plus a repeatable edge versus default BTST before merging into default selected/near_miss."
@@ -67,7 +73,7 @@ def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate:
 
     recommendation = (
         (
-            f"Keep {focus_ticker} as a paper execution candidate while default BTST merge review is pending."
+            f"Keep {focus_ticker} as a paper execution candidate because merge-approved daily-pipeline uplift is already active while governance finalizes the merge review."
         )
         if execution_verdict == "execution_candidate_applied" and merge_review_ready
         else (

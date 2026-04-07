@@ -9,6 +9,7 @@ from scripts.analyze_btst_tplus2_near_cluster_dossier import governance_followup
 
 
 REPORTS_DIR = Path("data/reports")
+DEFAULT_MANIFEST_PATH = REPORTS_DIR / "report_manifest_latest.json"
 DEFAULT_QUEUE_PATH = REPORTS_DIR / "btst_tplus2_continuation_validation_queue_latest.json"
 DEFAULT_FOCUS_DOSSIER_FALLBACK_PATH = REPORTS_DIR / "btst_tplus2_candidate_dossier_300505_latest.json"
 DEFAULT_WATCH_DOSSIER_PATH = REPORTS_DIR / "btst_tplus2_near_cluster_dossier_latest.json"
@@ -83,18 +84,13 @@ def _build_promotion_review(queue: dict[str, Any], focus_dossier: dict[str, Any]
     if candidate_tier_focus == "governance_followup" and not has_historical_objective_support:
         blockers.append("historical_objective_support_missing")
 
-    manifest_merge_ready = (
-        focus_promotion_readiness_verdict == "merge_review_ready"
-        or focus_promotion_path_status == "merge_review_ready"
-        or focus_promotion_merge_review_verdict == "ready_for_default_btst_merge_review"
-    )
-
-    if blockers:
+    if focus_promotion_merge_review_verdict == "ready_for_default_btst_merge_review":
+        blockers = []
+        promotion_review_verdict = "ready_for_default_btst_merge_review"
+        recommendation = "Focus candidate has already satisfied the continuation merge-review prerequisites; escalate it into default BTST merge review under explicit governance approval."
+    elif blockers:
         promotion_review_verdict = "hold_validation_queue"
         recommendation = "Keep the focus candidate in validation queue until blockers clear; do not promote it into near_cluster_watch."
-    elif manifest_merge_ready:
-        promotion_review_verdict = "ready_for_default_btst_merge_review"
-        recommendation = "Focus candidate has satisfied the continuation lane merge criteria and should escalate into default BTST merge review under explicit governance approval."
     else:
         promotion_review_verdict = "watch_review_ready"
         recommendation = "Focus candidate is ready for near-cluster watch review, but do not auto-promote it into watchlist_tickers without explicit governance approval."

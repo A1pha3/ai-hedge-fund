@@ -210,6 +210,12 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
             "promoted_to_selected_count": 1,
             "promoted_to_near_miss_count": 1,
             "relief_applied_count": 2,
+            "relief_actionable_applied_count": 1,
+            "relief_already_selected_count": 1,
+            "relief_positive_promotion_precision": 0.5,
+            "relief_actionable_positive_promotion_precision": 1.0,
+            "relief_no_promotion_ratio": 0.5,
+            "relief_actionable_no_promotion_ratio": 0.0,
             "recommended_next_lever": "execution_signal",
             "recommended_signal_levers": ["trend_acceleration", "breakout_freshness"],
         },
@@ -248,6 +254,51 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
         },
     )
     (reports_root / "btst_prepared_breakout_residual_surface_latest.md").write_text("# prepared breakout residual surface\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json",
+        {
+            "focus_ticker": "300720",
+            "verdict": "await_second_independent_selected_window",
+            "next_confirmation_requirement": "300720 still needs 1 independent selected sample.",
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text("# corridor persistence dossier\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_window_command_board_latest.json",
+        {
+            "focus_ticker": "300720",
+            "verdict": "collect_one_more_selected_window",
+            "next_target_trade_dates": ["2026-04-06", "2026-03-27"],
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_window_command_board_latest.md").write_text("# corridor window command board\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_window_diagnostics_latest.json",
+        {
+            "focus_ticker": "300720",
+            "near_miss_upgrade_window": {
+                "trade_date": "2026-04-06",
+                "verdict": "narrow_selected_gap_candidate",
+            },
+            "visibility_gap_window": {
+                "trade_dates": ["2026-03-27"],
+                "verdict": "recoverable_current_plan_visibility_gap",
+                "recoverable_report_dir_count": 5,
+            },
+            "recommendation": "Prioritize 2026-04-06; treat 2026-03-27 as visibility audit.",
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_window_diagnostics_latest.md").write_text("# corridor window diagnostics\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.json",
+        {
+            "focus_ticker": "300720",
+            "verdict": "lane_specific_select_threshold_override_gap",
+            "threshold_override_gap_vs_anchor": 0.13,
+            "target_gap_to_selected": 0.1245,
+        },
+    )
+    (reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.md").write_text("# corridor narrow probe\n", encoding="utf-8")
 
     manifest = generate_reports_manifest(reports_root=reports_root)
 
@@ -264,6 +315,10 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     assert manifest["continuation_merge_candidate_ranking_summary"]["top_candidate"]["ticker"] == "300720"
     assert manifest["default_merge_strict_counterfactual_summary"]["strict_counterfactual_verdict"] == "strict_merge_uplift_positive"
     assert manifest["merge_replay_validation_summary"]["overall_verdict"] == "merge_replay_promotes_selected"
+    assert manifest["merge_replay_validation_summary"]["relief_actionable_applied_count"] == 1
+    assert manifest["merge_replay_validation_summary"]["relief_already_selected_count"] == 1
+    assert manifest["merge_replay_validation_summary"]["relief_actionable_positive_promotion_precision"] == 1.0
+    assert manifest["merge_replay_validation_summary"]["relief_actionable_no_promotion_ratio"] == 0.0
     assert manifest["merge_replay_validation_summary"]["recommended_signal_levers"] == ["trend_acceleration", "breakout_freshness"]
     assert manifest["prepared_breakout_relief_validation_summary"]["focus_ticker"] == "300505"
     assert manifest["prepared_breakout_relief_validation_summary"]["verdict"] == "prepared_breakout_selected_relief_supported"
@@ -271,6 +326,13 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     assert manifest["prepared_breakout_cohort_summary"]["next_candidate"]["ticker"] == "000792"
     assert manifest["prepared_breakout_residual_surface_summary"]["focus_ticker"] == "600988"
     assert manifest["prepared_breakout_residual_surface_summary"]["verdict"] == "non_actionable_score_surface"
+    assert manifest["candidate_pool_corridor_persistence_dossier_summary"]["focus_ticker"] == "300720"
+    assert manifest["candidate_pool_corridor_persistence_dossier_summary"]["verdict"] == "await_second_independent_selected_window"
+    assert manifest["candidate_pool_corridor_window_command_board_summary"]["focus_ticker"] == "300720"
+    assert manifest["candidate_pool_corridor_window_command_board_summary"]["verdict"] == "collect_one_more_selected_window"
+    assert manifest["candidate_pool_corridor_window_diagnostics_summary"]["focus_ticker"] == "300720"
+    assert manifest["candidate_pool_corridor_window_diagnostics_summary"]["near_miss_upgrade_window"]["verdict"] == "narrow_selected_gap_candidate"
+    assert manifest["candidate_pool_corridor_narrow_probe_summary"]["verdict"] == "lane_specific_select_threshold_override_gap"
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
     assert "btst_default_merge_review_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_default_merge_historical_counterfactual_latest" in reading_paths["btst_control_tower"]["entry_ids"]
@@ -280,11 +342,19 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     assert "btst_prepared_breakout_relief_validation_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_prepared_breakout_cohort_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_prepared_breakout_residual_surface_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_candidate_pool_corridor_persistence_dossier_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_candidate_pool_corridor_window_command_board_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_candidate_pool_corridor_window_diagnostics_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_candidate_pool_corridor_narrow_probe_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_default_merge_review_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_default_merge_historical_counterfactual_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_continuation_merge_candidate_ranking_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_prepared_breakout_cohort_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_prepared_breakout_residual_surface_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_candidate_pool_corridor_persistence_dossier_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_candidate_pool_corridor_window_command_board_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_candidate_pool_corridor_window_diagnostics_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_candidate_pool_corridor_narrow_probe_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_default_merge_strict_counterfactual_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_merge_replay_validation_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_prepared_breakout_relief_validation_latest" in reading_paths["nightly_review"]["entry_ids"]
@@ -1121,6 +1191,8 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["candidate_pool_lane_pair_board_status"] in {"ready_for_ranked_comparison", "await_corridor_shadow_pack", "await_rebucket_bundle", "insufficient_lane_evidence", "skipped_missing_candidates"}
     assert refresh["candidate_pool_lane_pair_board_summary"]["pair_status"] == refresh["candidate_pool_lane_pair_board_status"]
     assert "leader_governance_status" in refresh["candidate_pool_lane_pair_board_summary"]
+    assert "leader_governance_execution_quality" in refresh["candidate_pool_lane_pair_board_summary"]
+    assert "leader_governance_entry_timing_bias" in refresh["candidate_pool_lane_pair_board_summary"]
     assert "parallel_watch_same_source_sample_count" in refresh["candidate_pool_lane_pair_board_summary"]
     assert refresh["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
     assert refresh["candidate_pool_upstream_handoff_board_summary"]["board_status"] == refresh["candidate_pool_upstream_handoff_board_status"]
@@ -1318,21 +1390,22 @@ def test_build_continuation_promotion_ready_summary_quantifies_gap_vs_default_bt
     summary = _build_continuation_promotion_ready_summary(reports_root)
 
     assert summary["focus_ticker"] == "300720"
-    assert summary["promotion_path_status"] == "one_qualifying_window_away"
+    assert summary["promotion_path_status"] == "collect_more_independent_windows"
     assert summary["blockers_remaining_count"] == 1
     assert summary["unresolved_requirements"] == ["new_independent_trade_date"]
-    assert summary["observed_independent_window_count"] == 1
-    assert summary["missing_independent_window_count"] == 1
+    assert summary["observed_independent_window_count"] == 0
+    assert summary["missing_independent_window_count"] == 2
     assert summary["provisional_default_btst_edge_verdict"] == "provisionally_outperforming_default_btst"
     assert summary["edge_threshold_verdict"] == "edge_threshold_satisfied"
     assert summary["promotion_merge_review_verdict"] == "await_additional_independent_window_persistence"
-    assert summary["ready_after_next_qualifying_window"] is True
-    assert summary["next_window_requirement"] == "capture_one_new_independent_trade_date_with_edge_thresholds_still_satisfied"
+    assert summary["ready_after_next_qualifying_window"] is False
+    assert summary["next_window_requirement"] == "collect_additional_independent_window_and_recheck_edge_thresholds"
     assert summary["next_window_duplicate_trade_date_verdict"] == "independent_window_count_unchanged"
-    assert summary["next_window_quality_requirement"] == "must land in selected_entries_or_near_miss_entries"
+    assert summary["next_window_quality_requirement"] == "must land in selected_entries"
     assert summary["next_window_disqualified_bucket_verdict"] == "await_higher_quality_window_bucket"
     assert summary["qualifying_window_buckets"] == ["near_miss_entries"]
-    assert summary["next_window_qualified_merge_review_verdict"] == "ready_for_default_btst_merge_review"
+    assert summary["merge_ready_window_buckets"] == []
+    assert summary["next_window_qualified_merge_review_verdict"] == "await_additional_independent_window_persistence"
 
 
 def test_build_continuation_promotion_ready_summary_duplicate_trade_dates_do_not_count_as_independent_windows(tmp_path: Path) -> None:
@@ -1378,9 +1451,10 @@ def test_build_continuation_promotion_ready_summary_duplicate_trade_dates_do_not
 
     summary = _build_continuation_promotion_ready_summary(reports_root)
 
-    assert summary["observed_independent_window_count"] == 1
-    assert summary["missing_independent_window_count"] == 1
+    assert summary["observed_independent_window_count"] == 0
+    assert summary["missing_independent_window_count"] == 2
     assert summary["evidence_trade_dates"] == ["2026-03-31"]
+    assert summary["merge_ready_evidence_trade_dates"] == []
     assert summary["next_window_trade_date_rule"] == "must be a new trade_date outside ['2026-03-31']"
     assert summary["next_window_duplicate_trade_date_verdict"] == "independent_window_count_unchanged"
 
@@ -1475,12 +1549,12 @@ def test_build_continuation_promotion_ready_summary_dossier_same_day_variants_do
                 "current_plan_visibility_gap_trade_date_count": 1,
             },
             "recent_window_summaries": [
-                {"report_label": "20260331", "supporting_window": True, "report_dir": "/tmp/reports/a"},
-                {"report_label": "20260331", "supporting_window": True, "report_dir": "/tmp/reports/b"},
-                {"report_label": "20260331", "supporting_window": True, "report_dir": "/tmp/reports/c"},
-                {"report_label": "20260331", "supporting_window": False, "report_dir": "/tmp/reports/d"},
-            ],
-        },
+                    {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/a"},
+                    {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/b"},
+                    {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/c"},
+                    {"report_label": "20260331", "supporting_window": False, "report_dir": "/tmp/reports/d"},
+                ],
+            },
     )
     _write_json(
         reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
@@ -1495,8 +1569,9 @@ def test_build_continuation_promotion_ready_summary_dossier_same_day_variants_do
     summary = _build_continuation_promotion_ready_summary(reports_root)
 
     assert summary["observed_independent_window_count"] == 1
-    assert summary["combined_evidence_trade_dates"] == ["2026-03-31"]
+    assert summary["combined_merge_ready_evidence_trade_dates"] == ["2026-03-31"]
     assert summary["candidate_dossier_support_trade_date_count"] == 1
+    assert summary["candidate_dossier_selected_support_trade_date_count"] == 1
     assert summary["candidate_dossier_supporting_window_variant_count"] == 3
     assert summary["candidate_dossier_same_trade_date_variant_count"] == 2
     assert summary["candidate_dossier_same_trade_date_variant_credit"] == 0.5
@@ -1543,11 +1618,11 @@ def test_build_continuation_promotion_ready_summary_dossier_second_trade_date_ad
             "recent_validation_verdict": "governance_followup_payoff_confirmed",
             "recent_tier_verdict": "governance_followup_payoff_confirmed",
             "recent_window_summaries": [
-                {"report_label": "20260331", "supporting_window": True, "report_dir": "/tmp/reports/a"},
-                {"report_label": "20260401", "supporting_window": True, "report_dir": "/tmp/reports/b"},
-            ],
-        },
-    )
+                    {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/a"},
+                    {"report_label": "20260401", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/b"},
+                ],
+            },
+        )
     _write_json(
         reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
         {
@@ -1561,7 +1636,8 @@ def test_build_continuation_promotion_ready_summary_dossier_second_trade_date_ad
     summary = _build_continuation_promotion_ready_summary(reports_root)
 
     assert summary["candidate_dossier_support_trade_date_count"] == 2
-    assert summary["combined_evidence_trade_dates"] == ["2026-03-31", "2026-04-01"]
+    assert summary["candidate_dossier_selected_support_trade_date_count"] == 2
+    assert summary["combined_merge_ready_evidence_trade_dates"] == ["2026-03-31", "2026-04-01"]
     assert summary["observed_independent_window_count"] == 2
     assert summary["weighted_observed_window_credit"] == 2.0
     assert summary["weighted_missing_window_credit"] == 0.0
@@ -1590,7 +1666,7 @@ def test_build_continuation_promotion_ready_summary_rejected_second_window_does_
                 {
                     "trade_date": "2026-03-31",
                     "report_dir": "/tmp/reports/continuation_300720_a",
-                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                    "entries": [{"ticker": "300720", "bucket": "selected_entries"}],
                 },
                 {
                     "trade_date": "2026-04-01",
@@ -1617,7 +1693,7 @@ def test_build_continuation_promotion_ready_summary_rejected_second_window_does_
     assert summary["promotion_path_status"] == "one_qualifying_window_away"
     assert summary["disqualified_window_trade_dates"] == ["2026-04-01"]
     assert summary["disqualified_window_buckets"] == ["rejected_entries"]
-    assert summary["next_window_quality_requirement"] == "must land in selected_entries_or_near_miss_entries"
+    assert summary["next_window_quality_requirement"] == "must land in selected_entries"
     assert summary["next_window_disqualified_bucket_verdict"] == "await_higher_quality_window_bucket"
 
 
@@ -1642,12 +1718,12 @@ def test_build_continuation_promotion_ready_summary_two_windows_with_weak_edge_s
                 {
                     "trade_date": "2026-03-31",
                     "report_dir": "/tmp/reports/continuation_300720_a",
-                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                    "entries": [{"ticker": "300720", "bucket": "selected_entries"}],
                 },
                 {
                     "trade_date": "2026-04-01",
                     "report_dir": "/tmp/reports/continuation_300720_b",
-                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                    "entries": [{"ticker": "300720", "bucket": "selected_entries"}],
                 },
             ]
         },

@@ -5,6 +5,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.execution.merge_approved_loader import (
+    DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE,
+    is_merge_approved_execution_blocker,
+)
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_LANE_RULEPACK_PATH = REPORTS_DIR / "btst_tplus2_continuation_lane_rulepack_latest.json"
@@ -25,7 +30,7 @@ def _build_eligible_execution(lane_rulepack: dict[str, Any], watchlist_execution
     focus_ticker = str(eligible_gate.get("focus_ticker") or watchlist_execution.get("focus_ticker") or "")
     adopted_watch_row = dict(watchlist_execution.get("adopted_watch_row") or {})
     gate_verdict = str(eligible_gate.get("gate_verdict") or "")
-    merge_review_ready = str(adopted_watch_row.get("promotion_blocker") or "") == "default_btst_merge_review_pending"
+    merge_review_ready = is_merge_approved_execution_blocker(adopted_watch_row.get("promotion_blocker"))
 
     if gate_verdict == "approve_eligible_promotion" and focus_ticker and focus_ticker not in raw_eligible_tickers:
         execution_verdict = "eligible_extension_applied"
@@ -48,13 +53,14 @@ def _build_eligible_execution(lane_rulepack: dict[str, Any], watchlist_execution
             "priority_score": adopted_watch_row.get("priority_score"),
             "lane_stage": lane_rules.get("lane_stage", lane_rulepack.get("lane_stage")),
             "capital_mode": lane_rules.get("capital_mode", lane_rulepack.get("capital_mode")),
-            "promotion_blocker": "default_btst_merge_review_pending" if merge_review_ready else "governance_review_pending",
+            "promotion_blocker": DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE if merge_review_ready else "governance_review_pending",
+            "merge_approved_daily_pipeline_active": merge_review_ready,
             "watchlist_validation_status": adopted_watch_row.get("watchlist_validation_status"),
             "recent_supporting_window_count": adopted_watch_row.get("recent_supporting_window_count"),
             "recent_window_count": adopted_watch_row.get("recent_window_count"),
             "recent_support_ratio": adopted_watch_row.get("recent_support_ratio"),
             "next_step": (
-                "Keep this ticker in the effective eligible continuation set while default BTST merge review is pending."
+                "Keep this ticker in the effective eligible continuation set because merge-approved daily-pipeline uplift is already active."
                 if merge_review_ready
                 else "Treat this as an effective eligible continuation name while keeping capital_mode=paper_only until broader lane governance changes."
             ),
@@ -65,7 +71,7 @@ def _build_eligible_execution(lane_rulepack: dict[str, Any], watchlist_execution
 
     recommendation = (
         (
-            f"Keep {focus_ticker} in the effective eligible continuation set while default BTST merge review is pending; leave the base rulepack unchanged until approval lands."
+            f"Keep {focus_ticker} in the effective eligible continuation set because merge-approved daily-pipeline uplift is already active; leave the base rulepack unchanged while governance finishes the merge review."
         )
         if execution_verdict == "eligible_extension_applied" and merge_review_ready
         else (

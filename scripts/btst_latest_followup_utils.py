@@ -147,6 +147,15 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
         historical_next_close_return_mean = historical_prior.get("next_close_return_mean")
         if historical_next_close_return_mean not in (None, "", [], {}):
             current["historical_next_close_return_mean"] = historical_next_close_return_mean
+        historical_execution_quality_label = historical_prior.get("execution_quality_label")
+        if historical_execution_quality_label not in (None, "", [], {}):
+            current["historical_execution_quality_label"] = historical_execution_quality_label
+        historical_entry_timing_bias = historical_prior.get("entry_timing_bias")
+        if historical_entry_timing_bias not in (None, "", [], {}):
+            current["historical_entry_timing_bias"] = historical_entry_timing_bias
+        historical_execution_note = historical_prior.get("execution_note")
+        if historical_execution_note not in (None, "", [], {}):
+            current["historical_execution_note"] = historical_execution_note
         for key in ("gate_status", "metrics"):
             value = row.get(key)
             if isinstance(value, dict) and value:
@@ -216,6 +225,9 @@ def build_upstream_shadow_followup_summary(
                 "positive_tags": positive_tags,
                 "validated_by_upstream_shadow_recall": True,
                 "downstream_bottleneck": downstream_bottleneck,
+                "historical_execution_quality_label": row.get("historical_execution_quality_label"),
+                "historical_entry_timing_bias": row.get("historical_entry_timing_bias"),
+                "historical_execution_note": row.get("historical_execution_note"),
             }
         )
 

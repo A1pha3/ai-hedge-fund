@@ -79,6 +79,7 @@ def test_generate_btst_tplus2_continuation_execution_overlay_keeps_merge_review_
         execution_gate_path=execution_gate_path,
     )
 
-    assert analysis["adopted_execution_row"]["promotion_blocker"] == "default_btst_merge_review_pending"
-    assert "default BTST merge review is pending" in analysis["adopted_execution_row"]["next_step"]
-    assert "default BTST merge review is pending" in analysis["recommendation"]
+    assert analysis["adopted_execution_row"]["promotion_blocker"] == "default_btst_merge_approved_execution_active"
+    assert analysis["adopted_execution_row"]["merge_approved_daily_pipeline_active"] is True
+    assert "merge-approved daily-pipeline uplift is already active" in analysis["adopted_execution_row"]["next_step"]
+    assert "merge-approved daily-pipeline uplift is already active" in analysis["recommendation"]

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.execution.merge_approved_loader import DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE
 from scripts.generate_btst_tplus2_continuation_promotion_review import READY_PROMOTION_REVIEW_VERDICTS
 
 
@@ -58,10 +59,11 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
             "lane_stage": lane_rules.get("lane_stage", lane_rulepack.get("lane_stage")),
             "capital_mode": lane_rules.get("capital_mode", lane_rulepack.get("capital_mode")),
             "promotion_blocker": (
-                "default_btst_merge_review_pending"
+                DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE
                 if merge_review_ready
                 else ("governance_approved_continuation_watch" if governance_ready_watch else "near_cluster_only")
             ),
+            "merge_approved_daily_pipeline_active": merge_review_ready,
             "watchlist_validation_status": (
                 str(focus_candidate.get("recent_tier_verdict") or "governance_followup_payoff_confirmed")
                 if governance_ready_watch
@@ -71,7 +73,7 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
             "recent_window_count": focus_candidate.get("recent_window_count"),
             "recent_support_ratio": focus_candidate.get("recent_tier_ratio"),
             "next_step": (
-                "Keep this continuation watch candidate visible while default BTST merge review is pending; do not demote it back to near-cluster-only handling."
+                "Keep this continuation watch candidate visible because merge-approved daily-pipeline uplift is already active; do not demote it back to near-cluster-only handling while governance review completes."
                 if merge_review_ready
                 else (
                 "Track this governance-approved continuation watch candidate under isolated paper-only controls; do not merge it into default BTST."
@@ -87,8 +89,8 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
     if execution_verdict == "watchlist_extension_applied":
         recommendation = (
             (
-                f"Treat {focus_ticker} as a formal continuation watchlist ticker while default BTST merge review is pending; "
-                f"keep eligible_tickers={eligible_tickers} unchanged until governance approves the merge."
+                f"Treat {focus_ticker} as a formal continuation watchlist ticker because merge-approved daily-pipeline uplift is already active; "
+                f"keep eligible_tickers={eligible_tickers} unchanged while governance completes the merge review."
             )
             if merge_review_ready
             else (

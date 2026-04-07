@@ -97,6 +97,17 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
     corridor_ticker_rows = _find_corridor_rows(branch_priority_board, lane_support)
     primary_ticker_row = dict(corridor_ticker_rows[0]) if corridor_ticker_rows else {}
     parallel_watch_rows = [dict(row) for row in corridor_ticker_rows[1:3]]
+    focus_ticker = str(primary_ticker_row.get("ticker") or "").strip() or None
+    leader_gap_to_target = (
+        round(1.0 - float(primary_ticker_row.get("objective_fit_score")), 4)
+        if isinstance(primary_ticker_row.get("objective_fit_score"), (int, float))
+        else None
+    )
+    promotion_readiness_status = (
+        "corridor_shadow_probe_ready"
+        if str(primary_ticker_row.get("tractability_tier") or "") in {"second_shadow_probe", "parallel_probe", "primary"}
+        else "corridor_shadow_probe_pending"
+    )
 
     if not corridor_objective_row:
         pack_status = "skipped_no_corridor_lane"
@@ -123,6 +134,9 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         "lane_objective_support_path": str(Path(lane_objective_support_path).expanduser().resolve()) if lane_objective_support_path else None,
         "branch_priority_board_path": str(Path(branch_priority_board_path).expanduser().resolve()) if branch_priority_board_path else None,
         "pack_status": pack_status,
+        "focus_ticker": focus_ticker,
+        "leader_gap_to_target": leader_gap_to_target,
+        "promotion_readiness_status": promotion_readiness_status,
         "corridor_objective_row": corridor_objective_row,
         "corridor_branch_row": corridor_branch_row,
         "corridor_ticker_rows": corridor_ticker_rows,

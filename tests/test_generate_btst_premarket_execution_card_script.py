@@ -194,3 +194,57 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert "candidate_source: upstream_liquidity_corridor_shadow" in markdown
     assert "execution_quality_label" in markdown
     assert "002002" in markdown
+
+
+def test_generate_btst_premarket_execution_card_uses_execution_quality_specific_watch_rules(tmp_path):
+    result = generate_btst_premarket_execution_card_artifacts(
+        input_path={
+            "trade_date": "2026-04-06",
+            "next_trade_date": "2026-04-07",
+            "summary": {},
+            "selected_entries": [],
+            "near_miss_entries": [
+                {
+                    "ticker": "300720",
+                    "preferred_entry_mode": "intraday_confirmation_only",
+                    "top_reasons": ["historical_intraday_only_selected_demoted"],
+                    "historical_prior": {
+                        "summary": "同票历史 4 例，next_close 正收益率=0.0000。",
+                        "execution_quality_label": "intraday_only",
+                        "execution_note": "历史上更多是盘中给空间、收盘回落。",
+                    },
+                }
+            ],
+            "opportunity_pool_entries": [
+                {
+                    "ticker": "300757",
+                    "preferred_entry_mode": "avoid_open_chase_confirmation",
+                    "promotion_trigger": "若盘中回踩后重新走强可再确认。",
+                    "top_reasons": ["historical_gap_chase_risk"],
+                    "rejection_reasons": ["score_short_below_threshold"],
+                    "historical_prior": {
+                        "summary": "同票历史 6 例，next_close 正收益率=0.6667。",
+                        "execution_quality_label": "gap_chase_risk",
+                        "execution_note": "历史上更像高开后回落，避免开盘直接追价。",
+                    },
+                }
+            ],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {"shadow_candidate_count": 0, "promotable_count": 0, "lane_counts": {}, "decision_counts": {}, "top_focus_tickers": []},
+        },
+        output_dir=tmp_path,
+        trade_date="2026-04-06",
+        next_trade_date="2026-04-07",
+    )
+
+    payload = json.loads((tmp_path / "btst_premarket_execution_card_20260406_for_20260407.json").read_text(encoding="utf-8"))
+
+    assert result["analysis"]["primary_action"] is None
+    assert payload["watch_actions"][0]["execution_quality_label"] == "intraday_only"
+    assert any("intraday" in rule for rule in payload["watch_actions"][0]["trigger_rules"])
+    assert payload["opportunity_actions"][0]["execution_quality_label"] == "gap_chase_risk"
+    assert any("避免开盘直接追价" in rule for rule in payload["opportunity_actions"][0]["trigger_rules"])

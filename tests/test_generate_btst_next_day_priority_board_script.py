@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-
 from src.paper_trading.btst_reporting import generate_btst_next_day_priority_board_artifacts
 
 
@@ -303,3 +302,52 @@ def test_generate_btst_next_day_priority_board_places_demoted_weak_near_miss_in_
     assert "### 1. 603778" in markdown
     assert "lane: opportunity_pool" in markdown
     assert "historical_zero_follow_through_demoted" in markdown
+
+
+def test_generate_btst_next_day_priority_board_uses_execution_quality_specific_suggested_actions(tmp_path):
+    generate_btst_next_day_priority_board_artifacts(
+        input_path={
+            "trade_date": "2026-04-06",
+            "next_trade_date": "2026-04-07",
+            "summary": {},
+            "selected_entries": [],
+            "near_miss_entries": [
+                {
+                    "ticker": "300720",
+                    "preferred_entry_mode": "intraday_confirmation_only",
+                    "top_reasons": ["historical_intraday_only_selected_demoted"],
+                    "historical_prior": {
+                        "execution_quality_label": "intraday_only",
+                        "summary": "同票历史 4 例，next_close 正收益率=0.0000。",
+                        "execution_note": "历史上更多是盘中给空间、收盘回落。",
+                    },
+                }
+            ],
+            "opportunity_pool_entries": [
+                {
+                    "ticker": "300757",
+                    "preferred_entry_mode": "avoid_open_chase_confirmation",
+                    "promotion_trigger": "若盘中回踩后重新走强可再确认。",
+                    "top_reasons": ["historical_gap_chase_risk"],
+                    "historical_prior": {
+                        "execution_quality_label": "gap_chase_risk",
+                        "summary": "同票历史 6 例，next_close 正收益率=0.6667。",
+                        "execution_note": "历史上更像高开后回落，避免开盘直接追价。",
+                    },
+                }
+            ],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+        },
+        output_dir=tmp_path,
+    )
+
+    payload = json.loads((tmp_path / "btst_next_day_priority_board_20260407.json").read_text(encoding="utf-8"))
+
+    assert [row["ticker"] for row in payload["priority_rows"]] == ["300720", "300757"]
+    assert payload["priority_rows"][0]["lane"] == "near_miss_watch"
+    assert "intraday" in payload["priority_rows"][0]["suggested_action"]
+    assert payload["priority_rows"][1]["lane"] == "opportunity_pool"
+    assert "避免开盘直接追价" in payload["priority_rows"][1]["suggested_action"]

@@ -9,10 +9,19 @@ DEFAULT_MERGE_REVIEW_PATH = REPO_ROOT / "data/reports/btst_default_merge_review_
 DEFAULT_MERGE_RANKING_PATH = REPO_ROOT / "data/reports/btst_continuation_merge_candidate_ranking_latest.json"
 READY_FOR_DEFAULT_BTST_MERGE_REVIEW = "ready_for_default_btst_merge_review"
 MERGE_REVIEW_READY = "merge_review_ready"
+LEGACY_DEFAULT_BTST_MERGE_REVIEW_PENDING = "default_btst_merge_review_pending"
+DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE = "default_btst_merge_approved_execution_active"
 
 
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def is_merge_approved_execution_blocker(value: str | None) -> bool:
+    return str(value or "").strip() in {
+        LEGACY_DEFAULT_BTST_MERGE_REVIEW_PENDING,
+        DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE,
+    }
 
 
 def load_merge_approved_tickers(

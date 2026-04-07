@@ -567,6 +567,81 @@ def _build_opportunity_pool_promotion_trigger(metrics_payload: dict[str, Any]) -
     return "只有盘中新增强度确认时，才允许从机会池升级。"
 
 
+def _apply_execution_quality_entry_mode(entry: dict[str, Any]) -> dict[str, Any]:
+    historical_prior = dict(entry.get("historical_prior") or {})
+    execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    updated_entry = dict(entry)
+    updated_entry["historical_prior"] = historical_prior
+
+    top_reasons = [str(reason) for reason in list(updated_entry.get("top_reasons") or []) if str(reason or "").strip()]
+
+    if execution_quality_label == "intraday_only":
+        updated_entry["preferred_entry_mode"] = "intraday_confirmation_only"
+        updated_entry["promotion_trigger"] = "历史更像盘中确认后的 intraday 机会，不把默认隔夜持有当成升级方向。"
+        if "historical_intraday_only_execution" not in top_reasons:
+            top_reasons.append("historical_intraday_only_execution")
+    elif execution_quality_label == "gap_chase_risk":
+        updated_entry["preferred_entry_mode"] = "avoid_open_chase_confirmation"
+        updated_entry["promotion_trigger"] = "若盘中回踩后重新走强可再确认，避免把开盘追价当成默认动作。"
+        if "historical_gap_chase_risk" not in top_reasons:
+            top_reasons.append("historical_gap_chase_risk")
+    elif execution_quality_label == "zero_follow_through":
+        updated_entry["preferred_entry_mode"] = "strong_reconfirmation_only"
+        updated_entry["promotion_trigger"] = "历史同层兑现极弱，只有出现新的强确认时才允许重新升级。"
+        if "historical_zero_follow_through" not in top_reasons:
+            top_reasons.append("historical_zero_follow_through")
+
+    updated_entry["top_reasons"] = top_reasons
+    return updated_entry
+
+
+def _reclassify_selected_execution_quality_entries(
+    selected_entries: list[dict[str, Any]],
+    near_miss_entries: list[dict[str, Any]],
+    opportunity_pool_entries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    retained_selected_entries: list[dict[str, Any]] = []
+    updated_near_miss_entries = list(near_miss_entries)
+    updated_opportunity_pool_entries = list(opportunity_pool_entries)
+
+    for entry in selected_entries:
+        updated_entry = dict(entry)
+        historical_prior = dict(updated_entry.get("historical_prior") or {})
+        execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+        evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+        next_close_positive_rate = _as_float(historical_prior.get("next_close_positive_rate"))
+
+        if execution_quality_label == "zero_follow_through" and evaluable_count >= WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT:
+            demoted_entry = dict(updated_entry)
+            demoted_entry["demoted_from_decision"] = "selected"
+            demoted_entry["reporting_bucket"] = "selected_execution_demoted"
+            demoted_entry["reporting_decision"] = "opportunity_pool"
+            demoted_entry["promotion_trigger"] = "历史兑现几乎为 0，先降为机会池；只有盘中新强确认时再考虑回到观察层。"
+            top_reasons = [str(reason) for reason in list(demoted_entry.get("top_reasons") or []) if str(reason or "").strip()]
+            if "historical_zero_follow_through_selected_demoted" not in top_reasons:
+                top_reasons.append("historical_zero_follow_through_selected_demoted")
+            demoted_entry["top_reasons"] = top_reasons
+            updated_opportunity_pool_entries.append(demoted_entry)
+            continue
+
+        if execution_quality_label == "intraday_only" and evaluable_count >= WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT and next_close_positive_rate <= 0.0:
+            demoted_entry = dict(updated_entry)
+            demoted_entry["demoted_from_decision"] = "selected"
+            demoted_entry["reporting_bucket"] = "selected_execution_demoted"
+            demoted_entry["reporting_decision"] = "near_miss"
+            demoted_entry["promotion_trigger"] = "历史更偏向盘中兑现而非收盘延续，先降为确认型观察票，不把隔夜持有当默认动作。"
+            top_reasons = [str(reason) for reason in list(demoted_entry.get("top_reasons") or []) if str(reason or "").strip()]
+            if "historical_intraday_only_selected_demoted" not in top_reasons:
+                top_reasons.append("historical_intraday_only_selected_demoted")
+            demoted_entry["top_reasons"] = top_reasons
+            updated_near_miss_entries.append(demoted_entry)
+            continue
+
+        retained_selected_entries.append(updated_entry)
+
+    return retained_selected_entries, updated_near_miss_entries, updated_opportunity_pool_entries
+
+
 def _extract_short_trade_opportunity_entry(selection_entry: dict[str, Any]) -> dict[str, Any] | None:
     if (selection_entry.get("research") or {}).get("decision") == "selected":
         return None
@@ -1044,6 +1119,40 @@ def _demote_weak_near_miss_entries(
     return retained_entries, updated_opportunity_pool_entries
 
 
+def _entry_mode_action_guidance(preferred_entry_mode: str | None, *, default_action: str) -> tuple[str, str]:
+    if preferred_entry_mode == "intraday_confirmation_only":
+        return "confirm_then_reduce", "只做盘中确认后的 intraday 机会，不把默认隔夜持有当成执行目标。"
+    if preferred_entry_mode == "avoid_open_chase_confirmation":
+        return "avoid_open_chase", "避免开盘直接追价，等待回踩或二次确认后再决定是否参与。"
+    if preferred_entry_mode == "strong_reconfirmation_only":
+        return "reconfirm_only", "历史兑现极弱，只有出现新的强确认时才允许重新评估。"
+    return "standard_confirmation", default_action
+
+
+def _opportunity_pool_execution_sort_key(entry: dict[str, Any]) -> tuple[Any, ...]:
+    historical_prior = dict(entry.get("historical_prior") or {})
+    execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    execution_quality_rank = {
+        "close_continuation": 0,
+        "balanced_confirmation": 1,
+        "gap_chase_risk": 2,
+        "intraday_only": 3,
+        "unknown": 4,
+        "zero_follow_through": 5,
+    }.get(execution_quality_label, 4)
+    next_close_positive_rate = _as_float(historical_prior.get("next_close_positive_rate"))
+    next_high_hit_rate = _as_float(historical_prior.get("next_high_hit_rate_at_threshold"))
+    return (
+        execution_quality_rank,
+        -next_close_positive_rate,
+        -next_high_hit_rate,
+        entry.get("score_gap_to_near_miss") if entry.get("score_gap_to_near_miss") is not None else 999.0,
+        -(entry.get("score_target") or 0.0),
+        -_as_float((entry.get("metrics") or {}).get("catalyst_freshness")),
+        entry.get("ticker") or "",
+    )
+
+
 def _summarize_historical_opportunity_rows(
     rows: list[dict[str, Any]],
     price_cache: dict[tuple[str, str], pd.DataFrame],
@@ -1453,6 +1562,14 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
                 price_cache,
                 family="catalyst_theme",
             )
+        selected_entries = [_apply_execution_quality_entry_mode(entry) for entry in selected_entries]
+        near_miss_entries = [_apply_execution_quality_entry_mode(entry) for entry in near_miss_entries]
+        opportunity_pool_entries = [_apply_execution_quality_entry_mode(entry) for entry in opportunity_pool_entries]
+        selected_entries, near_miss_entries, opportunity_pool_entries = _reclassify_selected_execution_quality_entries(
+            selected_entries,
+            near_miss_entries,
+            opportunity_pool_entries,
+        )
         near_miss_entries, opportunity_pool_entries = _demote_weak_near_miss_entries(
             near_miss_entries,
             opportunity_pool_entries,
@@ -1476,14 +1593,7 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
             )
         )
         opportunity_pool_entries.sort(
-            key=lambda entry: (
-                _execution_priority_rank((entry.get("historical_prior") or {}).get("execution_priority")),
-                _monitor_priority_rank((entry.get("historical_prior") or {}).get("monitor_priority")),
-                entry.get("score_gap_to_near_miss") if entry.get("score_gap_to_near_miss") is not None else 999.0,
-                -(entry.get("score_target") or 0.0),
-                -_as_float((entry.get("metrics") or {}).get("catalyst_freshness")),
-                entry.get("ticker") or "",
-            )
+            key=_opportunity_pool_execution_sort_key,
         )
         research_upside_radar_entries.sort(
             key=lambda entry: (
@@ -2055,6 +2165,30 @@ def _selected_action_posture(preferred_entry_mode: str | None) -> tuple[str, lis
                 "若盘中强度无法延续或突破失败，则直接放弃当日入场。",
             ],
         )
+    if preferred_entry_mode == "intraday_confirmation_only":
+        return (
+            "confirm_then_reduce",
+            [
+                "只做盘中确认后的 intraday 机会，不把默认隔夜持有当成执行目标。",
+                "若盘中给出空间后回落，应优先减仓或放弃隔夜持有。",
+            ],
+        )
+    if preferred_entry_mode == "avoid_open_chase_confirmation":
+        return (
+            "avoid_open_chase",
+            [
+                "避免开盘直接追价，等待回踩或二次确认后再决定是否参与。",
+                "若高开后强度迅速衰减，则直接放弃当日入场。",
+            ],
+        )
+    if preferred_entry_mode == "strong_reconfirmation_only":
+        return (
+            "reconfirm_only",
+            [
+                "历史兑现极弱，只有出现新的强确认时才允许重新评估。",
+                "没有新增强度时，不把它当成可执行 BTST 对象。",
+            ],
+        )
     return (
         "manual_review",
         [
@@ -2097,8 +2231,12 @@ def analyze_btst_premarket_execution_card(input_path: str | Path | dict[str, Any
     watch_actions = []
     for entry in brief.get("near_miss_entries") or []:
         historical_prior = dict(entry.get("historical_prior") or {})
+        _, primary_watch_rule = _entry_mode_action_guidance(
+            entry.get("preferred_entry_mode"),
+            default_action="仅做盘中强度跟踪，不预设主买入动作。",
+        )
         trigger_rules = [
-            "仅做盘中强度跟踪，不预设主买入动作。",
+            primary_watch_rule,
             "若当日需要转为可执行对象，应先回看 short-trade score 与盘中确认信号。",
         ]
         if historical_prior.get("summary"):
@@ -2125,8 +2263,12 @@ def analyze_btst_premarket_execution_card(input_path: str | Path | dict[str, Any
     opportunity_actions = []
     for entry in brief.get("opportunity_pool_entries") or []:
         historical_prior = dict(entry.get("historical_prior") or {})
+        _, primary_watch_rule = _entry_mode_action_guidance(
+            entry.get("preferred_entry_mode"),
+            default_action=str(entry.get("promotion_trigger") or "只有盘中新增强度确认时，才允许从机会池升级。"),
+        )
         trigger_rules = [
-            str(entry.get("promotion_trigger") or "只有盘中新增强度确认时，才允许从机会池升级。"),
+            primary_watch_rule,
             "默认不在开盘前直接升级为主票或近似主票。",
         ]
         if historical_prior.get("summary"):
@@ -2476,6 +2618,10 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
 
     for entry in brief.get("near_miss_entries") or []:
         historical_prior = dict(entry.get("historical_prior") or {})
+        _, opening_plan = _entry_mode_action_guidance(
+            entry.get("preferred_entry_mode"),
+            default_action="只观察，不预设与主票同级的买入动作。",
+        )
         focus_items.append(
             {
                 "ticker": entry.get("ticker"),
@@ -2485,7 +2631,7 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
                 "score_target": entry.get("score_target"),
                 "preferred_entry_mode": entry.get("preferred_entry_mode"),
                 "why_now": ", ".join(entry.get("top_reasons") or []) or "当前接近 near-miss 边界。",
-                "opening_plan": "只观察，不预设与主票同级的买入动作。",
+                "opening_plan": opening_plan,
                 "historical_summary": historical_prior.get("summary"),
                 "execution_note": historical_prior.get("execution_note"),
             }
@@ -2493,6 +2639,10 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
 
     for entry in brief.get("opportunity_pool_entries") or []:
         historical_prior = dict(entry.get("historical_prior") or {})
+        _, opening_plan = _entry_mode_action_guidance(
+            entry.get("preferred_entry_mode"),
+            default_action=str(entry.get("promotion_trigger") or "只有盘中新增强度确认时，才允许从机会池升级。"),
+        )
         focus_items.append(
             {
                 "ticker": entry.get("ticker"),
@@ -2502,7 +2652,7 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
                 "score_target": entry.get("score_target"),
                 "preferred_entry_mode": entry.get("preferred_entry_mode"),
                 "why_now": ", ".join(entry.get("top_reasons") or []) or "结构未坏，但暂未进入正式 short-trade 名单。",
-                "opening_plan": str(entry.get("promotion_trigger") or "只有盘中新增强度确认时，才允许从机会池升级。"),
+                "opening_plan": opening_plan,
                 "historical_summary": historical_prior.get("summary"),
                 "execution_note": historical_prior.get("execution_note"),
             }
@@ -2788,6 +2938,10 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
 
     for entry in brief.get("near_miss_entries") or []:
         historical_prior = dict(entry.get("historical_prior") or {})
+        _, suggested_action = _entry_mode_action_guidance(
+            entry.get("preferred_entry_mode"),
+            default_action="仅做盘中跟踪，不预设主买入动作。",
+        )
         priority_rows.append(
             {
                 "ticker": entry.get("ticker"),
@@ -2799,7 +2953,7 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
                 "score_target": entry.get("score_target"),
                 "preferred_entry_mode": entry.get("preferred_entry_mode"),
                 "why_now": ", ".join(entry.get("top_reasons") or []) or "当前接近 near-miss 边界。",
-                "suggested_action": "仅做盘中跟踪，不预设主买入动作。",
+                "suggested_action": suggested_action,
                 "historical_summary": historical_prior.get("summary"),
                 "execution_note": historical_prior.get("execution_note"),
             }
@@ -2807,6 +2961,10 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
 
     for entry in brief.get("opportunity_pool_entries") or []:
         historical_prior = dict(entry.get("historical_prior") or {})
+        _, suggested_action = _entry_mode_action_guidance(
+            entry.get("preferred_entry_mode"),
+            default_action=str(entry.get("promotion_trigger") or "只有盘中新强度确认时才升级。"),
+        )
         priority_rows.append(
             {
                 "ticker": entry.get("ticker"),
@@ -2818,7 +2976,7 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
                 "score_target": entry.get("score_target"),
                 "preferred_entry_mode": entry.get("preferred_entry_mode"),
                 "why_now": ", ".join(entry.get("top_reasons") or []) or "结构未坏但仍在机会池。",
-                "suggested_action": str(entry.get("promotion_trigger") or "只有盘中新强度确认时才升级。"),
+                "suggested_action": suggested_action,
                 "historical_summary": historical_prior.get("summary"),
                 "execution_note": historical_prior.get("execution_note"),
             }

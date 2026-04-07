@@ -219,6 +219,8 @@ def test_corridor_validation_pack_reports_parallel_probe_ready(tmp_path: Path) -
     )
 
     assert analysis["pack_status"] == "parallel_probe_ready"
+    assert analysis["focus_ticker"] == "300720"
+    assert analysis["promotion_readiness_status"] == "corridor_shadow_probe_ready"
     assert analysis["primary_validation_ticker"]["ticker"] == "300720"
     assert [row["ticker"] for row in analysis["parallel_watch_tickers"]] == ["003036"]
 
@@ -336,13 +338,15 @@ def test_lane_pair_board_keeps_corridor_primary_first(tmp_path: Path) -> None:
                     "entries": [
                         {
                             "ticker": "300720",
-                            "decision": "near_miss",
-                            "candidate_source": "post_gate_liquidity_competition_shadow",
+                            "decision": "selected",
+                            "candidate_source": "upstream_liquidity_corridor_shadow",
                             "top_reasons": [
                                 "trend_acceleration=0.88",
                                 "confirmed_breakout",
                             ],
                             "historical_next_close_positive_rate": 0.0,
+                            "historical_execution_quality_label": "intraday_only",
+                            "historical_entry_timing_bias": "confirm_then_reduce",
                         },
                         {
                             "ticker": "003036",
@@ -382,7 +386,10 @@ def test_lane_pair_board_keeps_corridor_primary_first(tmp_path: Path) -> None:
     assert analysis["board_leader"]["ticker"] == "300720"
     assert analysis["board_leader"]["lane_family"] == "corridor"
     rows_by_ticker = {row["ticker"]: row for row in analysis["candidates"]}
-    assert rows_by_ticker["300720"]["governance_status"] == "continuation_only_confirm_then_review"
+    assert rows_by_ticker["300720"]["governance_status"] == "continuation_confirm_only_intraday_bias"
+    assert rows_by_ticker["300720"]["governance_blocker"] == "weak_overnight_follow_through_after_shadow_recall"
+    assert rows_by_ticker["300720"]["governance_execution_quality_label"] == "intraday_only"
+    assert rows_by_ticker["300720"]["governance_entry_timing_bias"] == "confirm_then_reduce"
     assert rows_by_ticker["003036"]["governance_status"] == "parallel_watch_only_not_default_ready"
     assert "samples=8" in rows_by_ticker["003036"]["governance_summary"]
     assert "next_close_positive_rate=0.125" in rows_by_ticker["003036"]["governance_summary"]
@@ -472,11 +479,13 @@ def test_lane_pair_board_uses_upstream_handoff_overlay_when_governance_synthesis
             "board_rows": [
                 {
                     "ticker": "300720",
-                    "latest_followup_decision": "near_miss",
-                    "latest_followup_candidate_source": "post_gate_liquidity_competition_shadow",
-                    "downstream_followup_status": "continuation_only_confirm_then_review",
-                    "downstream_followup_blocker": "no_selected_persistence_or_independent_edge",
-                    "downstream_followup_summary": "300720 已完成 shadow recall，并进入 continuation review。",
+                    "latest_followup_decision": "selected",
+                    "latest_followup_candidate_source": "upstream_liquidity_corridor_shadow",
+                    "latest_followup_historical_execution_quality_label": "intraday_only",
+                    "latest_followup_historical_entry_timing_bias": "confirm_then_reduce",
+                    "downstream_followup_status": "continuation_confirm_only_intraday_bias",
+                    "downstream_followup_blocker": "weak_overnight_follow_through_after_shadow_recall",
+                    "downstream_followup_summary": "300720 只适合作为 confirmation-only 的 intraday 机会，不应直接当成标准隔夜 BTST 持有。",
                 },
                 {
                     "ticker": "003036",
@@ -501,7 +510,9 @@ def test_lane_pair_board_uses_upstream_handoff_overlay_when_governance_synthesis
     )
 
     rows_by_ticker = {row["ticker"]: row for row in analysis["candidates"]}
-    assert rows_by_ticker["300720"]["governance_status"] == "continuation_only_confirm_then_review"
+    assert rows_by_ticker["300720"]["governance_status"] == "continuation_confirm_only_intraday_bias"
+    assert rows_by_ticker["300720"]["governance_execution_quality_label"] == "intraday_only"
+    assert rows_by_ticker["300720"]["governance_entry_timing_bias"] == "confirm_then_reduce"
     assert rows_by_ticker["003036"]["governance_status"] == "parallel_watch_only_not_default_ready"
     assert "samples=8" in rows_by_ticker["003036"]["governance_summary"]
     assert "next_close_positive_rate=0.125" in rows_by_ticker["003036"]["governance_summary"]

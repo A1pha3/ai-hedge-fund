@@ -90,6 +90,70 @@ def _build_merge_boundary_replay_report(report_dir: Path) -> None:
     _write_json(report_dir / "selection_artifacts" / "2026-03-28" / "selection_target_replay_input.json", replay_input)
 
 
+def _build_merge_already_selected_replay_report(report_dir: Path) -> None:
+    watch_item = LayerCResult(
+        ticker="300720",
+        score_b=0.72,
+        score_c=0.24,
+        score_final=0.68,
+        quality_score=0.72,
+        decision="selected",
+        candidate_source="layer_c_watchlist",
+        strategy_signals={
+            "trend": _make_signal(
+                1,
+                74.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 74.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 64.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 1, "confidence": 35.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                66.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 76.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 58.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(-1, 18.0).model_dump(mode="json"),
+        },
+        agent_contribution_summary={"cohort_contributions": {"analyst": 0.12, "investor": 0.08}},
+    )
+    selection_targets, summary = build_selection_targets(
+        trade_date="20260406",
+        watchlist=[watch_item],
+        rejected_entries=[],
+        supplemental_short_trade_entries=[],
+        buy_order_tickers=set(),
+        target_mode="dual_target",
+    )
+    replay_input = {
+        "artifact_version": "v1",
+        "run_id": "merge_replay_validation_selected",
+        "trade_date": "2026-04-06",
+        "market": "CN",
+        "target_mode": "dual_target",
+        "pipeline_config_snapshot": {},
+        "source_summary": {
+            "watchlist_count": 1,
+            "rejected_entry_count": 0,
+            "supplemental_short_trade_entry_count": 0,
+            "buy_order_ticker_count": 0,
+        },
+        "watchlist": [watch_item.model_dump(mode="json")],
+        "rejected_entries": [],
+        "supplemental_short_trade_entries": [],
+        "buy_order_tickers": [],
+        "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
+        "target_summary": summary.model_dump(mode="json"),
+    }
+    _write_json(report_dir / "selection_artifacts" / "2026-04-06" / "selection_target_replay_input.json", replay_input)
+
+
 def _build_upstream_gap_replay_report(report_dir: Path) -> None:
     watch_item = LayerCResult(
         ticker="300505",
@@ -208,6 +272,25 @@ def test_generate_btst_merge_replay_validation_promotes_merge_approved_boundary_
 
     assert analysis["overall_verdict"] == "merge_replay_promotes_selected"
     assert analysis["promoted_to_selected_count"] == 1
+    assert analysis["decision_deteriorated_count"] == 0
+    assert analysis["relief_promoted_to_selected_count"] == 1
+    assert analysis["relief_promoted_to_near_miss_count"] == 0
+    assert analysis["relief_positive_promotion_count"] == 1
+    assert analysis["relief_without_decision_promotion_count"] == 0
+    assert analysis["relief_decision_deteriorated_count"] == 0
+    assert analysis["relief_actionable_applied_count"] == 1
+    assert analysis["relief_already_selected_count"] == 0
+    assert analysis["relief_already_selected_score_shift_only_count"] == 0
+    assert analysis["relief_positive_promotion_precision"] == 1.0
+    assert analysis["relief_selected_promotion_precision"] == 1.0
+    assert analysis["relief_no_promotion_ratio"] == 0.0
+    assert analysis["relief_actionable_promoted_to_selected_count"] == 1
+    assert analysis["relief_actionable_promoted_to_near_miss_count"] == 0
+    assert analysis["relief_actionable_positive_promotion_count"] == 1
+    assert analysis["relief_actionable_without_decision_promotion_count"] == 0
+    assert analysis["relief_actionable_positive_promotion_precision"] == 1.0
+    assert analysis["relief_actionable_selected_promotion_precision"] == 1.0
+    assert analysis["relief_actionable_no_promotion_ratio"] == 0.0
     assert analysis["breakout_signal_uplift_applied_count"] == 1
     assert analysis["volume_signal_uplift_applied_count"] == 0
     assert analysis["layer_c_alignment_uplift_applied_count"] == 0
@@ -221,6 +304,25 @@ def test_generate_btst_merge_replay_validation_promotes_merge_approved_boundary_
     summary = analysis["candidate_summaries"][0]
     assert summary["focus_ticker"] == "300720"
     assert summary["promoted_to_selected_count"] == 1
+    assert summary["decision_deteriorated_count"] == 0
+    assert summary["relief_promoted_to_selected_count"] == 1
+    assert summary["relief_promoted_to_near_miss_count"] == 0
+    assert summary["relief_positive_promotion_count"] == 1
+    assert summary["relief_without_decision_promotion_count"] == 0
+    assert summary["relief_decision_deteriorated_count"] == 0
+    assert summary["relief_actionable_applied_count"] == 1
+    assert summary["relief_already_selected_count"] == 0
+    assert summary["relief_already_selected_score_shift_only_count"] == 0
+    assert summary["relief_positive_promotion_precision"] == 1.0
+    assert summary["relief_selected_promotion_precision"] == 1.0
+    assert summary["relief_no_promotion_ratio"] == 0.0
+    assert summary["relief_actionable_promoted_to_selected_count"] == 1
+    assert summary["relief_actionable_promoted_to_near_miss_count"] == 0
+    assert summary["relief_actionable_positive_promotion_count"] == 1
+    assert summary["relief_actionable_without_decision_promotion_count"] == 0
+    assert summary["relief_actionable_positive_promotion_precision"] == 1.0
+    assert summary["relief_actionable_selected_promotion_precision"] == 1.0
+    assert summary["relief_actionable_no_promotion_ratio"] == 0.0
     assert summary["breakout_signal_uplift_applied_count"] == 1
     assert summary["volume_signal_uplift_applied_count"] == 0
     assert summary["layer_c_alignment_uplift_applied_count"] == 0
@@ -285,6 +387,73 @@ def test_generate_btst_merge_replay_validation_promotes_merge_approved_boundary_
     assert "prepared_breakout_volume_relief_applied_count" in markdown
     assert "prepared_breakout_continuation_relief_applied_count" in markdown
     assert "prepared_breakout_selected_catalyst_relief_applied_count" in markdown
+    assert "relief_positive_promotion_precision" in markdown
+    assert "relief_no_promotion_ratio" in markdown
+    assert "relief_actionable_positive_promotion_precision" in markdown
+    assert "relief_actionable_no_promotion_ratio" in markdown
+
+
+def test_generate_btst_merge_replay_validation_separates_already_selected_relief_from_actionable_precision(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260406_20260406_merge_validation_selected_case"
+    _build_merge_already_selected_replay_report(report_dir)
+
+    _write_json(
+        reports_root / "btst_default_merge_review_latest.json",
+        {
+            "focus_ticker": "300720",
+            "merge_review_verdict": "ready_for_default_btst_merge_review",
+        },
+    )
+    _write_json(
+        reports_root / "btst_continuation_merge_candidate_ranking_latest.json",
+        {
+            "ranked_candidates": [
+                {"ticker": "300720", "merge_candidate_rank": 1},
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus2_candidate_dossier_300720_latest.json",
+        {
+            "candidate_ticker": "300720",
+            "recent_window_summaries": [
+                {
+                    "report_label": "20260406",
+                    "report_dir": str(report_dir),
+                    "decision": "selected",
+                }
+            ],
+        },
+    )
+
+    analysis = generate_btst_merge_replay_validation(reports_root=reports_root)
+
+    assert analysis["overall_verdict"] == "merge_replay_relief_confirms_selected"
+    assert analysis["promoted_to_selected_count"] == 0
+    assert analysis["relief_applied_count"] == 1
+    assert analysis["relief_actionable_applied_count"] == 0
+    assert analysis["relief_already_selected_count"] == 1
+    assert analysis["relief_already_selected_score_shift_only_count"] == 1
+    assert analysis["relief_positive_promotion_count"] == 0
+    assert analysis["relief_without_decision_promotion_count"] == 1
+    assert analysis["relief_positive_promotion_precision"] == 0.0
+    assert analysis["relief_no_promotion_ratio"] == 1.0
+    assert analysis["relief_actionable_positive_promotion_precision"] is None
+    assert analysis["relief_actionable_selected_promotion_precision"] is None
+    assert analysis["relief_actionable_no_promotion_ratio"] is None
+    summary = analysis["candidate_summaries"][0]
+    assert summary["candidate_recommendation"] == "relief_confirms_already_selected"
+    assert summary["relief_actionable_applied_count"] == 0
+    assert summary["relief_already_selected_count"] == 1
+    assert summary["relief_already_selected_score_shift_only_count"] == 1
+    assert summary["relief_actionable_positive_promotion_precision"] is None
+    assert summary["relief_actionable_no_promotion_ratio"] is None
+    row = summary["rows"][0]
+    assert row["baseline_replayed_decision"] == "selected"
+    assert row["merge_replayed_decision"] == "selected"
+    assert row["decision_uplift_classification"] == "score_shift_only"
+    assert row["merge_relief_applied"] is True
 
 
 def test_generate_btst_merge_replay_validation_recovers_report_dir_from_report_label(tmp_path: Path) -> None:
@@ -324,12 +493,38 @@ def test_generate_btst_merge_replay_validation_recovers_report_dir_from_report_l
 
     assert analysis["candidate_count"] == 1
     assert analysis["recommended_next_lever"] == "none"
+    assert analysis["decision_deteriorated_count"] == 0
+    assert analysis["relief_positive_promotion_count"] == 0
+    assert analysis["relief_without_decision_promotion_count"] == 0
+    assert analysis["relief_decision_deteriorated_count"] == 0
+    assert analysis["relief_actionable_applied_count"] == 0
+    assert analysis["relief_already_selected_count"] == 0
+    assert analysis["relief_already_selected_score_shift_only_count"] == 0
+    assert analysis["relief_positive_promotion_precision"] is None
+    assert analysis["relief_selected_promotion_precision"] is None
+    assert analysis["relief_no_promotion_ratio"] is None
+    assert analysis["relief_actionable_positive_promotion_precision"] is None
+    assert analysis["relief_actionable_selected_promotion_precision"] is None
+    assert analysis["relief_actionable_no_promotion_ratio"] is None
     summary = analysis["candidate_summaries"][0]
     assert summary["focus_ticker"] == "300505"
     assert summary["report_dir_count"] == 1
     assert summary["trade_date_count"] == 1
     assert summary["candidate_recommendation"] == "no_incremental_merge_approved_replay_uplift_observed"
     assert summary["recommended_primary_lever"] == "none"
+    assert summary["decision_deteriorated_count"] == 0
+    assert summary["relief_positive_promotion_count"] == 0
+    assert summary["relief_without_decision_promotion_count"] == 0
+    assert summary["relief_decision_deteriorated_count"] == 0
+    assert summary["relief_actionable_applied_count"] == 0
+    assert summary["relief_already_selected_count"] == 0
+    assert summary["relief_already_selected_score_shift_only_count"] == 0
+    assert summary["relief_positive_promotion_precision"] is None
+    assert summary["relief_selected_promotion_precision"] is None
+    assert summary["relief_no_promotion_ratio"] is None
+    assert summary["relief_actionable_positive_promotion_precision"] is None
+    assert summary["relief_actionable_selected_promotion_precision"] is None
+    assert summary["relief_actionable_no_promotion_ratio"] is None
     assert summary["recommended_signal_levers"][:2] == ["catalyst_freshness", "volume_expansion_quality"]
     assert summary["prepared_breakout_penalty_relief_applied_count"] == 1
     assert summary["prepared_breakout_catalyst_relief_applied_count"] == 1

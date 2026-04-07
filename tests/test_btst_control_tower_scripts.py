@@ -155,6 +155,10 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
             {"id": "btst_prepared_breakout_relief_validation_latest", "report_path": "data/reports/btst_prepared_breakout_relief_validation_latest.md", "question": "prepared-breakout", "absolute_path": "/tmp/reports/btst_prepared_breakout_relief_validation_latest.md"},
             {"id": "btst_prepared_breakout_cohort_latest", "report_path": "data/reports/btst_prepared_breakout_cohort_latest.md", "question": "prepared-breakout-cohort", "absolute_path": "/tmp/reports/btst_prepared_breakout_cohort_latest.md"},
             {"id": "btst_prepared_breakout_residual_surface_latest", "report_path": "data/reports/btst_prepared_breakout_residual_surface_latest.md", "question": "prepared-breakout-residual", "absolute_path": "/tmp/reports/btst_prepared_breakout_residual_surface_latest.md"},
+            {"id": "btst_candidate_pool_corridor_persistence_dossier_latest", "report_path": "data/reports/btst_candidate_pool_corridor_persistence_dossier_latest.md", "question": "corridor-persistence", "absolute_path": "/tmp/reports/btst_candidate_pool_corridor_persistence_dossier_latest.md"},
+            {"id": "btst_candidate_pool_corridor_window_command_board_latest", "report_path": "data/reports/btst_candidate_pool_corridor_window_command_board_latest.md", "question": "corridor-window-command", "absolute_path": "/tmp/reports/btst_candidate_pool_corridor_window_command_board_latest.md"},
+            {"id": "btst_candidate_pool_corridor_window_diagnostics_latest", "report_path": "data/reports/btst_candidate_pool_corridor_window_diagnostics_latest.md", "question": "corridor-window-diagnostics", "absolute_path": "/tmp/reports/btst_candidate_pool_corridor_window_diagnostics_latest.md"},
+            {"id": "btst_candidate_pool_corridor_narrow_probe_latest", "report_path": "data/reports/btst_candidate_pool_corridor_narrow_probe_latest.md", "question": "corridor-narrow-probe", "absolute_path": "/tmp/reports/btst_candidate_pool_corridor_narrow_probe_latest.md"},
         ],
         "default_merge_review_summary": {
             "focus_ticker": "300720",
@@ -203,6 +207,12 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
             "promoted_to_selected_count": 1,
             "promoted_to_near_miss_count": 1,
             "relief_applied_count": 2,
+            "relief_actionable_applied_count": 1,
+            "relief_already_selected_count": 1,
+            "relief_positive_promotion_precision": 0.5,
+            "relief_actionable_positive_promotion_precision": 1.0,
+            "relief_no_promotion_ratio": 0.5,
+            "relief_actionable_no_promotion_ratio": 0.0,
             "recommended_next_lever": "execution_signal",
             "recommended_signal_levers": ["trend_acceleration", "breakout_freshness"],
         },
@@ -224,6 +234,28 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
             "verdict": "non_actionable_score_surface",
             "focus_report_dir_count": 5,
         },
+        "candidate_pool_corridor_persistence_dossier_summary": {
+            "focus_ticker": "300720",
+            "verdict": "await_second_independent_selected_window",
+            "next_confirmation_requirement": "300720 still needs 1 independent selected sample.",
+        },
+        "candidate_pool_corridor_window_command_board_summary": {
+            "focus_ticker": "300720",
+            "verdict": "collect_one_more_selected_window",
+            "next_target_trade_dates": ["2026-04-06", "2026-03-27"],
+        },
+        "candidate_pool_corridor_window_diagnostics_summary": {
+            "focus_ticker": "300720",
+            "near_miss_upgrade_window": {"trade_date": "2026-04-06", "verdict": "narrow_selected_gap_candidate"},
+            "visibility_gap_window": {"verdict": "recoverable_current_plan_visibility_gap", "recoverable_report_dir_count": 5},
+            "recommendation": "Prioritize 2026-04-06; treat 2026-03-27 as visibility audit.",
+        },
+        "candidate_pool_corridor_narrow_probe_summary": {
+            "focus_ticker": "300720",
+            "verdict": "lane_specific_select_threshold_override_gap",
+            "threshold_override_gap_vs_anchor": 0.13,
+            "target_gap_to_selected": 0.1245,
+        },
     }
 
     payload = build_btst_nightly_control_tower_payload(manifest)
@@ -236,23 +268,41 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
     assert payload["recommended_reading_order"][8]["entry_id"] == "btst_prepared_breakout_relief_validation_latest"
     assert payload["recommended_reading_order"][9]["entry_id"] == "btst_prepared_breakout_cohort_latest"
     assert payload["recommended_reading_order"][10]["entry_id"] == "btst_prepared_breakout_residual_surface_latest"
+    assert payload["recommended_reading_order"][11]["entry_id"] == "btst_candidate_pool_corridor_persistence_dossier_latest"
+    assert payload["recommended_reading_order"][12]["entry_id"] == "btst_candidate_pool_corridor_window_command_board_latest"
+    assert payload["recommended_reading_order"][13]["entry_id"] == "btst_candidate_pool_corridor_window_diagnostics_latest"
+    assert payload["recommended_reading_order"][14]["entry_id"] == "btst_candidate_pool_corridor_narrow_probe_latest"
     assert payload["control_tower_snapshot"]["default_merge_review_summary"]["focus_ticker"] == "300720"
     assert payload["control_tower_snapshot"]["default_merge_review_summary"]["counterfactual_validation"]["counterfactual_verdict"] == "supports_default_btst_merge"
     assert payload["control_tower_snapshot"]["default_merge_historical_counterfactual_summary"]["counterfactual_verdict"] == "merged_default_btst_uplift_positive"
     assert payload["control_tower_snapshot"]["continuation_merge_candidate_ranking_summary"]["top_candidate"]["ticker"] == "300720"
     assert payload["control_tower_snapshot"]["default_merge_strict_counterfactual_summary"]["strict_counterfactual_verdict"] == "strict_merge_uplift_positive"
     assert payload["control_tower_snapshot"]["merge_replay_validation_summary"]["overall_verdict"] == "merge_replay_promotes_selected"
+    assert payload["control_tower_snapshot"]["merge_replay_validation_summary"]["relief_actionable_applied_count"] == 1
+    assert payload["control_tower_snapshot"]["merge_replay_validation_summary"]["relief_already_selected_count"] == 1
+    assert payload["control_tower_snapshot"]["merge_replay_validation_summary"]["relief_actionable_positive_promotion_precision"] == 1.0
+    assert payload["control_tower_snapshot"]["merge_replay_validation_summary"]["relief_actionable_no_promotion_ratio"] == 0.0
     assert payload["control_tower_snapshot"]["merge_replay_validation_summary"]["recommended_next_lever"] == "execution_signal"
     assert payload["control_tower_snapshot"]["merge_replay_validation_summary"]["recommended_signal_levers"] == ["trend_acceleration", "breakout_freshness"]
     assert payload["control_tower_snapshot"]["prepared_breakout_relief_validation_summary"]["focus_ticker"] == "300505"
     assert payload["control_tower_snapshot"]["prepared_breakout_relief_validation_summary"]["verdict"] == "prepared_breakout_selected_relief_supported"
     assert payload["control_tower_snapshot"]["prepared_breakout_cohort_summary"]["next_candidate"]["ticker"] == "000792"
     assert payload["control_tower_snapshot"]["prepared_breakout_residual_surface_summary"]["focus_ticker"] == "600988"
+    assert payload["control_tower_snapshot"]["candidate_pool_corridor_persistence_dossier_summary"]["focus_ticker"] == "300720"
+    assert payload["control_tower_snapshot"]["candidate_pool_corridor_window_command_board_summary"]["focus_ticker"] == "300720"
+    assert payload["control_tower_snapshot"]["candidate_pool_corridor_window_diagnostics_summary"]["focus_ticker"] == "300720"
+    assert payload["control_tower_snapshot"]["candidate_pool_corridor_narrow_probe_summary"]["verdict"] == "lane_specific_select_threshold_override_gap"
     assert payload["merge_replay_validation_summary"]["overall_verdict"] == "merge_replay_promotes_selected"
+    assert payload["merge_replay_validation_summary"]["relief_actionable_applied_count"] == 1
+    assert payload["merge_replay_validation_summary"]["relief_already_selected_count"] == 1
     assert payload["merge_replay_validation_summary"]["recommended_signal_levers"] == ["trend_acceleration", "breakout_freshness"]
     assert payload["prepared_breakout_relief_validation_summary"]["selected_relief_alignment_rate"] == 1.0
     assert payload["prepared_breakout_cohort_summary"]["selected_frontier_candidate_count"] == 1
     assert payload["prepared_breakout_residual_surface_summary"]["verdict"] == "non_actionable_score_surface"
+    assert payload["candidate_pool_corridor_persistence_dossier_summary"]["verdict"] == "await_second_independent_selected_window"
+    assert payload["candidate_pool_corridor_window_command_board_summary"]["verdict"] == "collect_one_more_selected_window"
+    assert payload["candidate_pool_corridor_window_diagnostics_summary"]["visibility_gap_window"]["verdict"] == "recoverable_current_plan_visibility_gap"
+    assert payload["candidate_pool_corridor_narrow_probe_summary"]["threshold_override_gap_vs_anchor"] == 0.13
     assert payload["latest_priority_board_snapshot"]["brief_recommendation"] == "Promote 300720 into explicit default BTST merge review."
     assert payload["source_paths"]["default_merge_review_markdown"] == "/tmp/reports/btst_default_merge_review_latest.md"
     assert payload["source_paths"]["default_merge_historical_counterfactual_markdown"] == "/tmp/reports/btst_default_merge_historical_counterfactual_latest.md"
@@ -262,6 +312,10 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
     assert payload["source_paths"]["prepared_breakout_relief_validation_markdown"] == "/tmp/reports/btst_prepared_breakout_relief_validation_latest.md"
     assert payload["source_paths"]["prepared_breakout_cohort_markdown"] == "/tmp/reports/btst_prepared_breakout_cohort_latest.md"
     assert payload["source_paths"]["prepared_breakout_residual_surface_markdown"] == "/tmp/reports/btst_prepared_breakout_residual_surface_latest.md"
+    assert payload["source_paths"]["candidate_pool_corridor_persistence_dossier_markdown"] == "/tmp/reports/btst_candidate_pool_corridor_persistence_dossier_latest.md"
+    assert payload["source_paths"]["candidate_pool_corridor_window_command_board_markdown"] == "/tmp/reports/btst_candidate_pool_corridor_window_command_board_latest.md"
+    assert payload["source_paths"]["candidate_pool_corridor_window_diagnostics_markdown"] == "/tmp/reports/btst_candidate_pool_corridor_window_diagnostics_latest.md"
+    assert payload["source_paths"]["candidate_pool_corridor_narrow_probe_markdown"] == "/tmp/reports/btst_candidate_pool_corridor_narrow_probe_latest.md"
 
 
 def _write_btst_followup_report(
@@ -890,9 +944,14 @@ def test_btst_governance_synthesis_merges_same_trade_date_followups_to_strongest
                 {
                     "ticker": "300720",
                     "decision": "selected",
-                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
                     "score_target": 0.4584,
                     "top_reasons": ["upstream_shadow_catalyst_relief", "confirmed_breakout"],
+                    "historical_prior": {
+                        "execution_quality_label": "intraday_only",
+                        "entry_timing_bias": "confirm_then_reduce",
+                        "execution_note": "历史上更多是盘中给空间、收盘回落，更适合作为 intraday 机会而不是隔夜延续。",
+                    },
                 }
             ],
         },
@@ -927,11 +986,17 @@ def test_btst_governance_synthesis_merges_same_trade_date_followups_to_strongest
     assert merged_followup["report_dir"] == str(new_report.resolve())
     assert merged_followup["entries"][0]["ticker"] == "300720"
     assert merged_followup["entries"][0]["bucket"] == "selected_entries"
+    assert merged_followup["entries"][0]["historical_execution_quality_label"] == "intraday_only"
+    assert merged_followup["entries"][0]["historical_entry_timing_bias"] == "confirm_then_reduce"
 
-    post_gate_constraint = next(row for row in synthesis["execution_surface_constraints"] if row["constraint_id"] == "post_gate_shadow_observation_only")
-    assert post_gate_constraint["focus_tickers"] == ["300720"]
-    assert post_gate_constraint["evidence"]["selected_count"] == 1
-    assert post_gate_constraint["evidence"]["entries"][0]["bucket"] == "selected_entries"
+    upstream_intraday_constraint = next(
+        row for row in synthesis["execution_surface_constraints"] if row["constraint_id"] == "upstream_shadow_selected_intraday_bias"
+    )
+    assert upstream_intraday_constraint["status"] == "continuation_confirm_only_intraday_bias"
+    assert upstream_intraday_constraint["blocker"] == "weak_overnight_follow_through_after_shadow_recall"
+    assert upstream_intraday_constraint["focus_tickers"] == ["300720"]
+    assert upstream_intraday_constraint["evidence"]["selected_count"] == 1
+    assert upstream_intraday_constraint["evidence"]["entries"][0]["bucket"] == "selected_entries"
 
 
 def test_validate_btst_governance_consistency_fails_on_closed_frontier_drift(tmp_path: Path) -> None:
@@ -1583,6 +1648,8 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["control_tower_snapshot"]["candidate_pool_rebucket_comparison_bundle_status"] in {"ready_for_parallel_comparison", "keep_shadow_first", "needs_more_closed_cycle_support", "hold_structure_only", "skipped_no_rebucket_lane"}
     assert payload["control_tower_snapshot"]["candidate_pool_lane_pair_board_status"] in {"ready_for_ranked_comparison", "await_corridor_shadow_pack", "await_rebucket_bundle", "insufficient_lane_evidence", "skipped_missing_candidates"}
     assert "leader_governance_status" in payload["control_tower_snapshot"]["candidate_pool_lane_pair_board_summary"]
+    assert "leader_governance_execution_quality" in payload["control_tower_snapshot"]["candidate_pool_lane_pair_board_summary"]
+    assert "leader_governance_entry_timing_bias" in payload["control_tower_snapshot"]["candidate_pool_lane_pair_board_summary"]
     assert "parallel_watch_same_source_sample_count" in payload["control_tower_snapshot"]["candidate_pool_lane_pair_board_summary"]
     assert payload["control_tower_snapshot"]["continuation_focus_summary"]["focus_ticker"] == "300720"
     assert payload["control_tower_snapshot"]["continuation_focus_summary"]["promotion_gate_verdict"] == "approve_watchlist_promotion"
@@ -1598,7 +1665,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["edge_threshold_verdict"] == "insufficient_default_btst_edge_data"
     assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["ready_after_next_qualifying_window"] is False
     assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["next_window_duplicate_trade_date_verdict"] == "independent_window_count_unchanged"
-    assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["next_window_quality_requirement"] == "must land in selected_entries_or_near_miss_entries"
+    assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["next_window_quality_requirement"] == "must land in selected_entries"
     assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["next_window_disqualified_bucket_verdict"] == "await_higher_quality_window_bucket"
     assert payload["control_tower_snapshot"]["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
     assert "historical_shadow_probe_tickers" in payload["control_tower_snapshot"]["candidate_pool_upstream_handoff_board_summary"]
@@ -1886,7 +1953,7 @@ def test_control_tower_surfaces_transient_probe_summary_from_manifest_refresh() 
                 "ready_after_next_qualifying_window": True,
                 "next_window_requirement": "capture_one_new_independent_trade_date_with_edge_thresholds_still_satisfied",
                 "next_window_duplicate_trade_date_verdict": "independent_window_count_unchanged",
-                "next_window_quality_requirement": "must land in selected_entries_or_near_miss_entries",
+                "next_window_quality_requirement": "must land in selected_entries",
                 "next_window_disqualified_bucket_verdict": "await_higher_quality_window_bucket",
                 "next_window_qualified_merge_review_verdict": "ready_for_default_btst_merge_review",
             },
@@ -1916,7 +1983,7 @@ def test_control_tower_surfaces_transient_probe_summary_from_manifest_refresh() 
     assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["weighted_observed_window_credit"] == 1.5
     assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["candidate_dossier_same_trade_date_variant_credit"] == 0.5
     assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["ready_after_next_qualifying_window"] is True
-    assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["next_window_quality_requirement"] == "must land in selected_entries_or_near_miss_entries"
+    assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["next_window_quality_requirement"] == "must land in selected_entries"
     assert payload["control_tower_snapshot"]["continuation_promotion_ready_summary"]["next_window_qualified_merge_review_verdict"] == "ready_for_default_btst_merge_review"
     assert payload["control_tower_snapshot"]["execution_constraint_rollup"]["constraint_count"] == 2
 

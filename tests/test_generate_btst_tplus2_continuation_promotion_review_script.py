@@ -168,7 +168,7 @@ def test_generate_btst_tplus2_continuation_promotion_review_allows_strong_govern
     assert analysis["comparison_summary"]["governance_payoff_ready"] is True
 
 
-def test_generate_btst_tplus2_continuation_promotion_review_escalates_merge_ready_focus(tmp_path: Path) -> None:
+def test_generate_btst_tplus2_continuation_promotion_review_promotes_merge_ready_focus(tmp_path: Path) -> None:
     queue_path = tmp_path / "queue.json"
     focus_dossier_path = tmp_path / "focus.json"
     watch_dossier_path = tmp_path / "watch.json"

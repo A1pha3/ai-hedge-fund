@@ -56,10 +56,7 @@ def generate_btst_default_merge_review(
     promotion_review_verdict = str(promotion_review.get("promotion_review_verdict") or "").strip()
     governance_status = str(governance_board.get("governance_status") or "").strip()
     summary_verdict = str(continuation_summary.get("promotion_merge_review_verdict") or "").strip()
-    ready = any(
-        verdict == "ready_for_default_btst_merge_review"
-        for verdict in (promotion_review_verdict, governance_status, summary_verdict)
-    )
+    ready = summary_verdict == "ready_for_default_btst_merge_review"
 
     blockers = [
         *[str(item) for item in list(continuation_summary.get("unresolved_requirements") or []) if str(item).strip()],

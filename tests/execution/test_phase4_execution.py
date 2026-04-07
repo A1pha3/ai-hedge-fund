@@ -427,6 +427,115 @@ def test_run_post_market_merge_approved_ticker_gets_breakout_signal_uplift(monke
     assert merge_context["by_ticker"]["300720"]["confidence_delta"]["volatility_confidence"] == pytest.approx(0.0, abs=1e-6)
 
 
+def test_run_post_market_merge_approved_ticker_flows_into_short_trade_selected(monkeypatch: pytest.MonkeyPatch):
+    candidate = CandidateStock(ticker="300720", name="富春股份", industry_sw="传媒", avg_volume_20d=10000, market_cap=100, listing_date="20120319")
+
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "_load_candidate_pool_bundle",
+        lambda trade_date: (
+            [candidate],
+            [],
+            {"pool_size": 1, "selected_count": 1, "overflow_count": 0, "selected_cutoff_avg_volume_20d": 10000.0, "lane_counts": {}, "selected_tickers": ["300720"], "tickers": ["300720"]},
+        ),
+    )
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "detect_market_state",
+        lambda trade_date: MarketState(
+            state_type=MarketStateType.TREND,
+            adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+        ),
+    )
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "score_batch",
+        lambda candidates, trade_date: {
+            "300720": {
+                "trend": StrategySignal(
+                    direction=1,
+                    confidence=82.0,
+                    completeness=1.0,
+                    sub_factors={
+                        "momentum": {"direction": 1, "confidence": 85.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 76.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                        "volatility": {"direction": 1, "confidence": 68.0, "completeness": 1.0},
+                        "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                    },
+                ),
+                "mean_reversion": StrategySignal(direction=-1, confidence=20.0, completeness=1.0, sub_factors={}),
+                "fundamental": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={}),
+                "event_sentiment": StrategySignal(
+                    direction=1,
+                    confidence=74.0,
+                    completeness=1.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 1, "confidence": 66.0, "completeness": 1.0},
+                    },
+                ),
+            }
+        },
+    )
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "fuse_batch",
+        lambda scored, market_state, trade_date: [
+            FusedScore(
+                ticker="300720",
+                score_b=0.66,
+                strategy_signals=scored["300720"],
+                arbitration_applied=[],
+                market_state=market_state,
+                weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+                decision="strong_buy",
+            )
+        ],
+    )
+
+    def fake_aggregate_layer_c_results(high_pool: list[FusedScore], agent_results: dict) -> list[LayerCResult]:
+        return [
+            LayerCResult(
+                ticker="300720",
+                score_b=high_pool[0].score_b,
+                score_c=0.31,
+                score_final=0.55,
+                quality_score=0.67,
+                strategy_signals=high_pool[0].strategy_signals,
+                agent_signals={},
+                agent_contribution_summary={"cohort_contributions": {"analyst": 0.22, "investor": 0.11}},
+                decision="watch",
+            )
+        ]
+
+    monkeypatch.setattr(daily_pipeline_module, "aggregate_layer_c_results", fake_aggregate_layer_c_results)
+    monkeypatch.setattr(daily_pipeline_module, "build_watchlist_price_map", lambda trade_date, tickers: {ticker: 10.0 for ticker in tickers})
+
+    pipeline = DailyPipeline(
+        agent_runner=lambda tickers, trade_date, model: {
+            "technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}
+        },
+        exit_checker=lambda portfolio, trade_date: [],
+        merge_approved_tickers={"300720"},
+        base_model_name="gpt-4.1",
+        base_model_provider="OpenAI",
+        target_mode="short_trade_only",
+    )
+    pipeline._build_buy_orders_with_diagnostics = lambda *args, **kwargs: ([], {"tickers": [], "selected_tickers": []})
+
+    plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0.0, "positions": {}})
+
+    assert [item.ticker for item in plan.watchlist] == ["300720"]
+    assert plan.selection_targets["300720"].candidate_source == "layer_c_watchlist_merge_approved"
+    assert "merge_approved_continuation" in plan.selection_targets["300720"].candidate_reason_codes
+    assert plan.selection_targets["300720"].short_trade is not None
+    assert plan.selection_targets["300720"].short_trade.decision == "selected"
+    assert "merge_approved_continuation_relief_applied" in plan.selection_targets["300720"].short_trade.positive_tags
+    assert plan.selection_targets["300720"].short_trade.metrics_payload["merge_approved_continuation_relief"]["applied"] is True
+    assert plan.selection_targets["300720"].short_trade.explainability_payload["merge_approved_continuation_relief"]["effective_select_threshold"] == pytest.approx(0.56, abs=1e-6)
+
+
 def test_merge_approved_breakout_uplift_supports_event_carryover_when_event_signal_missing():
     signals = {
         "trend": StrategySignal(

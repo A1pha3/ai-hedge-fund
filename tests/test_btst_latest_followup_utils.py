@@ -64,7 +64,16 @@ def test_select_latest_btst_followup_candidate_prefers_selected_over_larger_near
         brief_payload={
             "upstream_shadow_summary": {"top_focus_tickers": ["300720"]},
             "selected_entries": [
-                {"ticker": "300720", "decision": "selected", "candidate_source": "post_gate_liquidity_competition_shadow"},
+                {
+                    "ticker": "300720",
+                    "decision": "selected",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "historical_prior": {
+                        "execution_quality_label": "balanced_confirmation",
+                        "entry_timing_bias": "confirm_then_review",
+                        "execution_note": "历史表现相对均衡，仍应坚持盘中确认后再决定是否持有。",
+                    },
+                },
             ],
         },
         mtime=100,
@@ -79,3 +88,5 @@ def test_select_latest_btst_followup_candidate_prefers_selected_over_larger_near
     assert latest_summary["selected_tickers"] == ["300720"]
     assert latest_by_ticker["300720"]["decision"] == "selected"
     assert latest_by_ticker["300720"]["report_dir"].endswith("paper_trading_20260331_new_selected")
+    assert latest_by_ticker["300720"]["historical_execution_quality_label"] == "balanced_confirmation"
+    assert latest_by_ticker["300720"]["historical_entry_timing_bias"] == "confirm_then_review"

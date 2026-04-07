@@ -54,33 +54,84 @@ def _load_artifact_metadata(report_dir: Path, trade_date_compact: str) -> tuple[
     return metadata, selected_analysts, pipeline_stub
 
 
-def _refresh_released_shadow_entries(filters: dict[str, Any], filter_key: str) -> None:
+def _load_raw_current_plans(daily_events_path: Path) -> dict[str, dict[str, Any]]:
+    raw_plans: dict[str, dict[str, Any]] = {}
+    for raw_line in daily_events_path.read_text(encoding="utf-8").splitlines():
+        if not raw_line.strip():
+            continue
+        payload = json.loads(raw_line)
+        if str(payload.get("event") or "") != "paper_trading_day":
+            continue
+        trade_date_compact = _normalize_trade_date_compact(payload.get("trade_date"))
+        current_plan = payload.get("current_plan")
+        if trade_date_compact and isinstance(current_plan, dict):
+            raw_plans[trade_date_compact] = dict(current_plan)
+    return raw_plans
+
+
+def _build_candidate_pool_shadow_lookup(raw_current_plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    risk_metrics = dict(raw_current_plan.get("risk_metrics") or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics") or {})
+    filters = dict(funnel_diagnostics.get("filters") or {})
+    candidate_pool_shadow = dict(filters.get("candidate_pool_shadow") or raw_current_plan.get("candidate_pool_shadow") or {})
+    lookup: dict[str, dict[str, Any]] = {}
+    for raw_entry in list(candidate_pool_shadow.get("tickers") or []):
+        entry = dict(raw_entry or {})
+        ticker = str(entry.get("ticker") or "").strip()
+        if ticker:
+            lookup[ticker] = entry
+    return lookup
+
+
+def _merge_shadow_metadata(entry: dict[str, Any], shadow_lookup: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    ticker = str(entry.get("ticker") or "").strip()
+    shadow_entry = dict(shadow_lookup.get(ticker) or {})
+    if not shadow_entry:
+        return entry
+    merged = dict(entry)
+    for key in (
+        "candidate_pool_shadow_reason",
+        "shadow_visibility_gap_selected",
+        "shadow_visibility_gap_relaxed_band",
+        "candidate_pool_rank",
+        "candidate_pool_avg_amount_share_of_cutoff",
+        "candidate_pool_avg_amount_share_of_min_gate",
+    ):
+        if key not in merged or merged.get(key) in ("", None, False):
+            value = shadow_entry.get(key)
+            if value not in ("", None):
+                merged[key] = value
+    return merged
+
+
+def _refresh_released_shadow_entries(filters: dict[str, Any], filter_key: str, shadow_lookup: dict[str, dict[str, Any]]) -> None:
     filter_payload = dict(filters.get(filter_key) or {})
     refreshed_entries: list[dict[str, Any]] = []
     for raw_entry in list(filter_payload.get("released_shadow_entries") or []):
-        entry = dict(raw_entry or {})
-        if entry.get("short_trade_catalyst_relief"):
-            refreshed_entries.append(entry)
-            continue
+        entry = _merge_shadow_metadata(dict(raw_entry or {}), shadow_lookup)
+        existing_relief = dict(entry.get("short_trade_catalyst_relief") or {})
         relief = _build_upstream_shadow_catalyst_relief_config(
             candidate_pool_lane=str(entry.get("candidate_pool_lane") or ""),
             filter_reason=str(entry.get("shadow_release_filter_reason") or ""),
             metrics_payload=dict(entry.get("short_trade_boundary_metrics") or {}),
+            shadow_visibility_gap_selected=bool(entry.get("shadow_visibility_gap_selected")),
         )
-        if relief:
-            entry["short_trade_catalyst_relief"] = relief
+        merged_relief = {**existing_relief, **relief} if relief else existing_relief
+        if merged_relief:
+            entry["short_trade_catalyst_relief"] = merged_relief
         refreshed_entries.append(entry)
     filter_payload["released_shadow_entries"] = refreshed_entries
     filters[filter_key] = filter_payload
 
 
-def rebuild_selection_targets_for_plan(plan: ExecutionPlan, trade_date_compact: str) -> ExecutionPlan:
+def rebuild_selection_targets_for_plan(plan: ExecutionPlan, trade_date_compact: str, shadow_lookup: dict[str, dict[str, Any]] | None = None) -> ExecutionPlan:
     risk_metrics = dict(plan.risk_metrics or {})
     funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics") or {})
     filters = dict(funnel_diagnostics.get("filters") or {})
+    shadow_lookup = dict(shadow_lookup or {})
 
-    _refresh_released_shadow_entries(filters, "short_trade_candidates")
-    _refresh_released_shadow_entries(filters, "watchlist")
+    _refresh_released_shadow_entries(filters, "short_trade_candidates", shadow_lookup)
+    _refresh_released_shadow_entries(filters, "watchlist", shadow_lookup)
 
     short_trade_candidate_filters = dict(filters.get("short_trade_candidates") or {})
     watchlist_filter = dict(filters.get("watchlist") or {})
@@ -109,6 +160,7 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
     resolved_report_dir = Path(report_dir).expanduser().resolve()
     daily_events_path = resolved_report_dir / "daily_events.jsonl"
     plans_by_date = load_frozen_post_market_plans(daily_events_path)
+    raw_plans_by_date = _load_raw_current_plans(daily_events_path)
     requested_trade_date = _normalize_trade_date_compact(trade_date)
     target_trade_dates = [requested_trade_date] if requested_trade_date else sorted(plans_by_date.keys())
     if requested_trade_date and requested_trade_date not in plans_by_date:
@@ -117,7 +169,8 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
     refreshed_results: list[dict[str, Any]] = []
     for trade_date_compact in target_trade_dates:
         plan = ExecutionPlan.model_validate(plans_by_date[trade_date_compact].model_dump(mode="json"))
-        refreshed_plan = rebuild_selection_targets_for_plan(plan, trade_date_compact)
+        shadow_lookup = _build_candidate_pool_shadow_lookup(raw_plans_by_date.get(trade_date_compact) or {})
+        refreshed_plan = rebuild_selection_targets_for_plan(plan, trade_date_compact, shadow_lookup)
         metadata, selected_analysts, pipeline_stub = _load_artifact_metadata(resolved_report_dir, trade_date_compact)
         writer = FileSelectionArtifactWriter(
             artifact_root=resolved_report_dir / "selection_artifacts",

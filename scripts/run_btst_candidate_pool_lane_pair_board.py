@@ -50,6 +50,8 @@ def _candidate_row(
     governance_same_source_sample_count: int | None = None,
     governance_same_source_next_close_positive_rate: float | None = None,
     governance_same_source_next_close_return_mean: float | None = None,
+    governance_execution_quality_label: str | None = None,
+    governance_entry_timing_bias: str | None = None,
 ) -> dict[str, Any]:
     return {
         "ticker": ticker,
@@ -68,6 +70,8 @@ def _candidate_row(
         "governance_same_source_sample_count": governance_same_source_sample_count,
         "governance_same_source_next_close_positive_rate": governance_same_source_next_close_positive_rate,
         "governance_same_source_next_close_return_mean": governance_same_source_next_close_return_mean,
+        "governance_execution_quality_label": governance_execution_quality_label,
+        "governance_entry_timing_bias": governance_entry_timing_bias,
     }
 
 
@@ -98,6 +102,26 @@ def _build_governance_overlays(governance_synthesis: dict[str, Any]) -> dict[str
             overlay = raw_overlays.setdefault(ticker, {})
             overlay.setdefault("current_decision", entry.get("decision"))
             overlay.setdefault("current_candidate_source", entry.get("candidate_source"))
+            if entry.get("historical_execution_quality_label") not in (None, "", [], {}):
+                overlay.setdefault("governance_execution_quality_label", entry.get("historical_execution_quality_label"))
+            if entry.get("historical_entry_timing_bias") not in (None, "", [], {}):
+                overlay.setdefault("governance_entry_timing_bias", entry.get("historical_entry_timing_bias"))
+            if (
+                entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
+                and entry.get("decision") == "selected"
+                and entry.get("historical_execution_quality_label") in {"intraday_only", "gap_chase_risk"}
+            ):
+                overlay.update(
+                    {
+                        "governance_status": "continuation_confirm_only_intraday_bias",
+                        "governance_blocker": "weak_overnight_follow_through_after_shadow_recall",
+                        "governance_summary": (
+                            "Latest upstream shadow selected row still behaves like a confirmation-only setup; "
+                            "historical payoff is stronger intraday than overnight, so keep it out of standard BTST hold assumptions."
+                        ),
+                    }
+                )
+                continue
 
             if overlay.get("governance_status"):
                 continue
@@ -190,6 +214,8 @@ def _build_upstream_handoff_overlays(upstream_handoff_board: dict[str, Any]) -> 
                 "governance_same_source_sample_count": row.get("latest_followup_historical_sample_count"),
                 "governance_same_source_next_close_positive_rate": row.get("latest_followup_historical_next_close_positive_rate"),
                 "governance_same_source_next_close_return_mean": row.get("latest_followup_historical_next_close_return_mean"),
+                "governance_execution_quality_label": row.get("latest_followup_historical_execution_quality_label"),
+                "governance_entry_timing_bias": row.get("latest_followup_historical_entry_timing_bias"),
             }
     return overlays
 
@@ -330,7 +356,10 @@ def analyze_btst_candidate_pool_lane_pair_board(
         else "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再恢复并行收益对照。"
     )
     if governance_overlays.get("300720", {}).get("governance_status"):
-        next_actions.append("300720 继续保持 continuation / observation-only，等待 selected persistence 或独立窗口 edge。")
+        if governance_overlays.get("300720", {}).get("governance_status") == "continuation_confirm_only_intraday_bias":
+            next_actions.append("300720 继续保持 confirmation-only；盘中确认后可做 intraday 机会，但不要默认当成标准隔夜 BTST 持有。")
+        else:
+            next_actions.append("300720 继续保持 continuation / observation-only，等待 selected persistence 或独立窗口 edge。")
     if governance_overlays.get("003036", {}).get("governance_status"):
         next_actions.append("003036 保持 profitability-cliff parallel watch，不把单窗口 near-miss uplift 当成默认 BTST 放行证据。")
     if governance_overlays.get("301292", {}).get("governance_status"):
@@ -367,6 +396,10 @@ def render_btst_candidate_pool_lane_pair_board_markdown(analysis: dict[str, Any]
         lines.append(
             f"- board_rank={row.get('board_rank')} ticker={row.get('ticker')} lane_family={row.get('lane_family')} role={row.get('role')} objective_fit_score={row.get('objective_fit_score')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')} tractability_tier={row.get('tractability_tier')} current_decision={row.get('current_decision')} governance_status={row.get('governance_status')} governance_blocker={row.get('governance_blocker')}"
         )
+        if row.get("governance_execution_quality_label"):
+            lines.append(f"  - governance_execution_quality_label: {row.get('governance_execution_quality_label')}")
+        if row.get("governance_entry_timing_bias"):
+            lines.append(f"  - governance_entry_timing_bias: {row.get('governance_entry_timing_bias')}")
         if row.get("governance_summary"):
             lines.append(f"  - governance_summary: {row.get('governance_summary')}")
     if not list(analysis.get("candidates") or []):

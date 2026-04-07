@@ -249,9 +249,13 @@ def _qualify_continuation_window_focus_entries(entries: list[dict[str, Any]], fo
     focus_entries = [dict(entry or {}) for entry in entries if str(dict(entry or {}).get("ticker") or "").strip() == focus_ticker]
     focus_buckets = sorted({str(entry.get("bucket") or "").strip() for entry in focus_entries if str(entry.get("bucket") or "").strip()})
     qualifying_bucket_allowlist = ["near_miss_entries", "selected_entries"]
+    merge_review_bucket_allowlist = ["selected_entries"]
     has_bucket_data = bool(focus_buckets)
     qualifies = bool(focus_entries) and (
         not has_bucket_data or any(bucket in qualifying_bucket_allowlist for bucket in focus_buckets)
+    )
+    merge_review_qualifies = bool(focus_entries) and (
+        not has_bucket_data or any(bucket in merge_review_bucket_allowlist for bucket in focus_buckets)
     )
     return {
         "focus_entries": focus_entries,
@@ -259,7 +263,18 @@ def _qualify_continuation_window_focus_entries(entries: list[dict[str, Any]], fo
         "has_bucket_data": has_bucket_data,
         "qualifies": qualifies,
         "qualifying_bucket_allowlist": qualifying_bucket_allowlist,
+        "merge_review_qualifies": merge_review_qualifies,
+        "merge_review_bucket_allowlist": merge_review_bucket_allowlist,
     }
+
+
+def _window_supports_selected_merge_review(window: dict[str, Any]) -> bool:
+    entry = dict(window or {})
+    decision = str(entry.get("decision") or "").strip()
+    if decision == "selected":
+        return True
+    tier_set = {str(item).strip() for item in list(entry.get("tier_set") or []) if str(item).strip()}
+    return "governance_followup_selected" in tier_set or "selected_entries" in tier_set
 
 
 def _extract_candidate_dossier_support_trade_dates(reports_root: Path, focus_ticker: str) -> dict[str, Any]:
@@ -280,6 +295,13 @@ def _extract_candidate_dossier_support_trade_dates(reports_root: Path, focus_tic
         if report_label:
             supporting_trade_dates.append(report_label)
     distinct_trade_dates = sorted(set(supporting_trade_dates))
+    selected_supporting_windows = [item for item in supporting_windows if _window_supports_selected_merge_review(item)]
+    selected_support_trade_dates: list[str] = []
+    for item in selected_supporting_windows:
+        report_label = _normalize_trade_date(item.get("report_label"))
+        if report_label:
+            selected_support_trade_dates.append(report_label)
+    distinct_selected_trade_dates = sorted(set(selected_support_trade_dates))
     same_trade_date_variant_count = max(len(supporting_windows) - len(distinct_trade_dates), 0)
     same_trade_date_variant_credit = round(min(0.75, same_trade_date_variant_count * 0.25), 4)
     return {
@@ -289,6 +311,8 @@ def _extract_candidate_dossier_support_trade_dates(reports_root: Path, focus_tic
         "recent_tier_verdict": str(dossier.get("recent_tier_verdict") or "").strip() or None,
         "supporting_trade_dates": distinct_trade_dates,
         "supporting_trade_date_count": len(distinct_trade_dates),
+        "selected_support_trade_dates": distinct_selected_trade_dates,
+        "selected_support_trade_date_count": len(distinct_selected_trade_dates),
         "supporting_window_variant_count": len(supporting_windows),
         "same_trade_date_variant_count": same_trade_date_variant_count,
         "same_trade_date_variant_credit": same_trade_date_variant_credit,
@@ -362,10 +386,14 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
 
     evidence_trade_dates: list[str] = []
     evidence_report_dirs: list[str] = []
+    merge_review_evidence_trade_dates: list[str] = []
+    merge_review_evidence_report_dirs: list[str] = []
     disqualified_trade_dates: list[str] = []
     qualifying_window_buckets: list[str] = []
+    merge_review_window_buckets: list[str] = []
     disqualified_window_buckets: list[str] = []
     qualifying_bucket_allowlist: list[str] = ["near_miss_entries", "selected_entries"]
+    merge_review_bucket_allowlist: list[str] = ["selected_entries"]
     collapsed_followups = _collapse_same_trade_date_followups_for_focus(list(governance_synthesis.get("evidence_btst_followups") or []), focus_ticker)
     for followup in collapsed_followups:
         row = dict(followup or {})
@@ -377,12 +405,19 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
             report_dir = str(row.get("report_dir") or "").strip()
             focus_buckets = list(qualification.get("focus_buckets") or [])
             qualifying_bucket_allowlist = list(qualification.get("qualifying_bucket_allowlist") or qualifying_bucket_allowlist)
+            merge_review_bucket_allowlist = list(qualification.get("merge_review_bucket_allowlist") or merge_review_bucket_allowlist)
             if qualification.get("qualifies"):
                 qualifying_window_buckets.extend(focus_buckets)
                 if trade_date:
                     evidence_trade_dates.append(trade_date)
                 if report_dir:
                     evidence_report_dirs.append(report_dir)
+            if qualification.get("merge_review_qualifies"):
+                merge_review_window_buckets.extend(focus_buckets)
+                if trade_date:
+                    merge_review_evidence_trade_dates.append(trade_date)
+                if report_dir:
+                    merge_review_evidence_report_dirs.append(report_dir)
             else:
                 disqualified_window_buckets.extend(focus_buckets)
                 if trade_date:
@@ -390,15 +425,20 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
 
     distinct_trade_dates = sorted(set(evidence_trade_dates))
     distinct_report_dirs = sorted(set(evidence_report_dirs))
+    distinct_merge_review_trade_dates = sorted(set(merge_review_evidence_trade_dates))
+    distinct_merge_review_report_dirs = sorted(set(merge_review_evidence_report_dirs))
     distinct_disqualified_trade_dates = sorted(set(disqualified_trade_dates))
     candidate_dossier_support = _extract_candidate_dossier_support_trade_dates(reports_root, focus_ticker)
     candidate_dossier_support_trade_dates = list(candidate_dossier_support.get("supporting_trade_dates") or [])
+    candidate_dossier_selected_support_trade_dates = list(candidate_dossier_support.get("selected_support_trade_dates") or [])
     candidate_dossier_support_trade_date_count = int(candidate_dossier_support.get("supporting_trade_date_count") or 0)
     combined_trade_dates = sorted(set(distinct_trade_dates) | set(candidate_dossier_support_trade_dates))
+    combined_merge_review_trade_dates = sorted(set(distinct_merge_review_trade_dates) | set(candidate_dossier_selected_support_trade_dates))
     target_window_count = 2
     required_positive_rate_delta = 0.1
     required_mean_return_delta = 0.02
-    observed_window_count = len(combined_trade_dates) or len(distinct_report_dirs)
+    exploratory_window_count = len(combined_trade_dates) or len(distinct_report_dirs)
+    observed_window_count = len(combined_merge_review_trade_dates) or len(distinct_merge_review_report_dirs)
     candidate_dossier_same_trade_date_variant_credit = float(candidate_dossier_support.get("same_trade_date_variant_credit") or 0.0)
     current_plan_visibility_summary = dict(candidate_dossier_support.get("current_plan_visibility_summary") or {})
     weighted_observed_window_credit = round(min(float(target_window_count), observed_window_count + candidate_dossier_same_trade_date_variant_credit), 4)
@@ -489,7 +529,7 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
         else "must be a newly observed independent continuation trade_date"
     )
     next_window_duplicate_trade_date_verdict = "independent_window_count_unchanged"
-    next_window_quality_requirement = "must land in selected_entries_or_near_miss_entries"
+    next_window_quality_requirement = "must land in selected_entries"
     next_window_disqualified_bucket_verdict = "await_higher_quality_window_bucket"
     next_window_edge_regression_merge_review_verdict = "await_stronger_edge_vs_default_btst"
     next_window_qualified_merge_review_verdict = (
@@ -515,16 +555,23 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
     return {
         "focus_ticker": focus_ticker,
         "observed_independent_window_count": observed_window_count,
+        "exploratory_window_count": exploratory_window_count,
         "target_independent_window_count": target_window_count,
         "missing_independent_window_count": missing_window_count,
         "evidence_trade_dates": distinct_trade_dates,
         "combined_evidence_trade_dates": combined_trade_dates,
+        "merge_ready_evidence_trade_dates": distinct_merge_review_trade_dates,
+        "combined_merge_ready_evidence_trade_dates": combined_merge_review_trade_dates,
         "qualifying_bucket_allowlist": qualifying_bucket_allowlist,
         "qualifying_window_buckets": sorted(set(qualifying_window_buckets)),
+        "merge_review_bucket_allowlist": merge_review_bucket_allowlist,
+        "merge_ready_window_buckets": sorted(set(merge_review_window_buckets)),
         "disqualified_window_trade_dates": distinct_disqualified_trade_dates,
         "disqualified_window_buckets": sorted(set(disqualified_window_buckets)),
         "candidate_dossier_support_trade_dates": candidate_dossier_support_trade_dates,
         "candidate_dossier_support_trade_date_count": candidate_dossier_support_trade_date_count,
+        "candidate_dossier_selected_support_trade_dates": candidate_dossier_selected_support_trade_dates,
+        "candidate_dossier_selected_support_trade_date_count": int(candidate_dossier_support.get("selected_support_trade_date_count") or 0),
         "candidate_dossier_supporting_window_variant_count": int(candidate_dossier_support.get("supporting_window_variant_count") or 0),
         "candidate_dossier_same_trade_date_variant_count": int(candidate_dossier_support.get("same_trade_date_variant_count") or 0),
         "candidate_dossier_same_trade_date_variant_credit": candidate_dossier_same_trade_date_variant_credit,
@@ -599,6 +646,22 @@ def _build_prepared_breakout_cohort_summary(reports_root: Path) -> dict[str, Any
 
 def _build_prepared_breakout_residual_surface_summary(reports_root: Path) -> dict[str, Any]:
     return _optional_report_json(reports_root / "btst_prepared_breakout_residual_surface_latest.json")
+
+
+def _build_candidate_pool_corridor_persistence_dossier_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json")
+
+
+def _build_candidate_pool_corridor_window_command_board_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_candidate_pool_corridor_window_command_board_latest.json")
+
+
+def _build_candidate_pool_corridor_window_diagnostics_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_candidate_pool_corridor_window_diagnostics_latest.json")
+
+
+def _build_candidate_pool_corridor_narrow_probe_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.json")
 
 
 def _collect_governance_synthesis_evidence_dirs(reports_root: Path, latest_btst_run: dict[str, Any] | None = None) -> list[str]:
@@ -1215,6 +1278,58 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "source_kind": "generated_governance_artifact",
     },
     {
+        "id": "btst_candidate_pool_corridor_persistence_dossier_latest",
+        "path": "data/reports/btst_candidate_pool_corridor_persistence_dossier_latest.md",
+        "report_type": "btst_candidate_pool_corridor_persistence_dossier",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "300720 为什么还不能 merge-ready，当前 corridor primary 还差什么",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_corridor_window_command_board_latest",
+        "path": "data/reports/btst_candidate_pool_corridor_window_command_board_latest.md",
+        "report_type": "btst_candidate_pool_corridor_window_command_board",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "300720 下一步最该追哪几个独立窗口，如何补第二个 selected 样本",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_corridor_window_diagnostics_latest",
+        "path": "data/reports/btst_candidate_pool_corridor_window_diagnostics_latest.md",
+        "report_type": "btst_candidate_pool_corridor_window_diagnostics",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "300720 的 near-miss 窄缺口与 visibility gap 哪个更该先追",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
+        "id": "btst_candidate_pool_corridor_narrow_probe_latest",
+        "path": "data/reports/btst_candidate_pool_corridor_narrow_probe_latest.md",
+        "report_type": "btst_candidate_pool_corridor_narrow_probe",
+        "topic": "btst_governance",
+        "usage": "btst_governance",
+        "priority": 10,
+        "is_latest": True,
+        "question": "2026-04-06 的 300720 到底差的是全局 edge，还是 lane-specific select threshold override",
+        "view_order": 10,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_governance_artifact",
+    },
+    {
         "id": "btst_tradeable_opportunity_pool_march",
         "path": "data/reports/btst_tradeable_opportunity_pool_march.md",
         "report_type": "btst_tradeable_opportunity_pool",
@@ -1497,6 +1612,10 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_candidate_pool_lane_pair_board_latest",
             "btst_candidate_pool_upstream_handoff_board_latest",
             "btst_candidate_pool_corridor_uplift_runbook_latest",
+            "btst_candidate_pool_corridor_persistence_dossier_latest",
+            "btst_candidate_pool_corridor_window_command_board_latest",
+            "btst_candidate_pool_corridor_window_diagnostics_latest",
+            "btst_candidate_pool_corridor_narrow_probe_latest",
             "btst_tradeable_opportunity_pool_march",
             "btst_no_candidate_entry_action_board_latest",
             "btst_no_candidate_entry_replay_bundle_latest",
@@ -1545,6 +1664,10 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
             "btst_candidate_pool_lane_pair_board_latest",
             "btst_candidate_pool_upstream_handoff_board_latest",
             "btst_candidate_pool_corridor_uplift_runbook_latest",
+            "btst_candidate_pool_corridor_persistence_dossier_latest",
+            "btst_candidate_pool_corridor_window_command_board_latest",
+            "btst_candidate_pool_corridor_window_diagnostics_latest",
+            "btst_candidate_pool_corridor_narrow_probe_latest",
             "btst_tradeable_opportunity_pool_march",
             "btst_no_candidate_entry_action_board_latest",
             "btst_no_candidate_entry_replay_bundle_latest",
@@ -2307,7 +2430,10 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "candidate_pool_corridor_validation_pack_json": candidate_pool_corridor_validation_pack_json_path.as_posix() if candidate_pool_corridor_validation_pack_analysis else None,
             "candidate_pool_corridor_validation_pack_summary": {
                 "pack_status": candidate_pool_corridor_validation_pack_analysis.get("pack_status"),
+                "focus_ticker": candidate_pool_corridor_validation_pack_analysis.get("focus_ticker"),
                 "primary_validation_ticker": dict(candidate_pool_corridor_validation_pack_analysis.get("primary_validation_ticker") or {}).get("ticker"),
+                "leader_gap_to_target": candidate_pool_corridor_validation_pack_analysis.get("leader_gap_to_target"),
+                "promotion_readiness_status": candidate_pool_corridor_validation_pack_analysis.get("promotion_readiness_status"),
                 "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_validation_pack_analysis.get("parallel_watch_tickers") or [])[:3] if str(row.get("ticker") or "").strip()],
             },
             "candidate_pool_corridor_shadow_pack_status": candidate_pool_corridor_shadow_pack_status,
@@ -2338,6 +2464,8 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
                 "rebucket_ticker": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("ticker")
                 or (list(dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("tickers") or [])[:1] or [None])[0],
+                "objective_fit_gap_vs_corridor": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("comparison") or {}).get("objective_fit_gap_vs_corridor"),
+                "mean_t_plus_2_return_gap_vs_corridor": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("comparison") or {}).get("mean_t_plus_2_return_gap_vs_corridor"),
             },
             "candidate_pool_lane_pair_board_status": candidate_pool_lane_pair_board_status,
             "candidate_pool_lane_pair_board_json": candidate_pool_lane_pair_board_json_path.as_posix() if candidate_pool_lane_pair_board_analysis else None,
@@ -2347,6 +2475,8 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "leader_lane_family": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("lane_family"),
                 "leader_governance_status": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_status"),
                 "leader_governance_blocker": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_blocker"),
+                "leader_governance_execution_quality": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_execution_quality_label"),
+                "leader_governance_entry_timing_bias": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_entry_timing_bias"),
                 "leader_current_decision": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("current_decision"),
                 "parallel_watch_ticker": next(
                     (row.get("ticker") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
@@ -2561,11 +2691,14 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
         "candidate_pool_branch_priority_alignment_summary": candidate_pool_branch_priority_board_analysis.get("alignment_summary"),
         "candidate_pool_corridor_validation_pack_status": candidate_pool_corridor_validation_pack_status,
         "candidate_pool_corridor_validation_pack_json": candidate_pool_corridor_validation_pack_json_path.as_posix() if candidate_pool_corridor_validation_pack_analysis else None,
-        "candidate_pool_corridor_validation_pack_summary": {
-            "pack_status": candidate_pool_corridor_validation_pack_analysis.get("pack_status"),
-            "primary_validation_ticker": dict(candidate_pool_corridor_validation_pack_analysis.get("primary_validation_ticker") or {}).get("ticker"),
-            "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_validation_pack_analysis.get("parallel_watch_tickers") or [])[:3] if str(row.get("ticker") or "").strip()],
-        },
+            "candidate_pool_corridor_validation_pack_summary": {
+                "pack_status": candidate_pool_corridor_validation_pack_analysis.get("pack_status"),
+                "focus_ticker": candidate_pool_corridor_validation_pack_analysis.get("focus_ticker"),
+                "primary_validation_ticker": dict(candidate_pool_corridor_validation_pack_analysis.get("primary_validation_ticker") or {}).get("ticker"),
+                "leader_gap_to_target": candidate_pool_corridor_validation_pack_analysis.get("leader_gap_to_target"),
+                "promotion_readiness_status": candidate_pool_corridor_validation_pack_analysis.get("promotion_readiness_status"),
+                "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(candidate_pool_corridor_validation_pack_analysis.get("parallel_watch_tickers") or [])[:3] if str(row.get("ticker") or "").strip()],
+            },
         "candidate_pool_corridor_shadow_pack_status": candidate_pool_corridor_shadow_pack_status,
         "candidate_pool_corridor_shadow_pack_json": candidate_pool_corridor_shadow_pack_json_path.as_posix() if candidate_pool_corridor_shadow_pack_analysis else None,
         "candidate_pool_corridor_shadow_pack_summary": {
@@ -2588,13 +2721,15 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
         },
         "candidate_pool_rebucket_comparison_bundle_status": candidate_pool_rebucket_comparison_bundle_status,
         "candidate_pool_rebucket_comparison_bundle_json": candidate_pool_rebucket_comparison_bundle_json_path.as_posix() if candidate_pool_rebucket_comparison_bundle_analysis else None,
-        "candidate_pool_rebucket_comparison_bundle_summary": {
-            "bundle_status": candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status"),
-            "structural_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("structural_leader") or {}).get("priority_handoff"),
-            "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
-            "rebucket_ticker": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("ticker")
-            or (list(dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("tickers") or [])[:1] or [None])[0],
-        },
+            "candidate_pool_rebucket_comparison_bundle_summary": {
+                "bundle_status": candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status"),
+                "structural_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("structural_leader") or {}).get("priority_handoff"),
+                "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
+                "rebucket_ticker": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("ticker")
+                or (list(dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("tickers") or [])[:1] or [None])[0],
+                "objective_fit_gap_vs_corridor": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("comparison") or {}).get("objective_fit_gap_vs_corridor"),
+                "mean_t_plus_2_return_gap_vs_corridor": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("comparison") or {}).get("mean_t_plus_2_return_gap_vs_corridor"),
+            },
         "candidate_pool_lane_pair_board_status": candidate_pool_lane_pair_board_status,
         "candidate_pool_lane_pair_board_json": candidate_pool_lane_pair_board_json_path.as_posix() if candidate_pool_lane_pair_board_analysis else None,
         "candidate_pool_lane_pair_board_summary": {
@@ -2603,6 +2738,8 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "leader_lane_family": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("lane_family"),
             "leader_governance_status": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_status"),
             "leader_governance_blocker": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_blocker"),
+            "leader_governance_execution_quality": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_execution_quality_label"),
+            "leader_governance_entry_timing_bias": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_entry_timing_bias"),
             "leader_current_decision": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("current_decision"),
             "parallel_watch_ticker": next(
                 (row.get("ticker") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
@@ -2654,6 +2791,10 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
         "prepared_breakout_relief_validation_summary": _build_prepared_breakout_relief_validation_summary(resolved_reports_root),
         "prepared_breakout_cohort_summary": _build_prepared_breakout_cohort_summary(resolved_reports_root),
         "prepared_breakout_residual_surface_summary": _build_prepared_breakout_residual_surface_summary(resolved_reports_root),
+        "candidate_pool_corridor_persistence_dossier_summary": _build_candidate_pool_corridor_persistence_dossier_summary(resolved_reports_root),
+        "candidate_pool_corridor_window_command_board_summary": _build_candidate_pool_corridor_window_command_board_summary(resolved_reports_root),
+        "candidate_pool_corridor_window_diagnostics_summary": _build_candidate_pool_corridor_window_diagnostics_summary(resolved_reports_root),
+        "candidate_pool_corridor_narrow_probe_summary": _build_candidate_pool_corridor_narrow_probe_summary(resolved_reports_root),
         "transient_probe_summary": _build_transient_probe_summary(resolved_reports_root),
         "execution_constraint_rollup": _build_execution_constraint_rollup(resolved_reports_root),
         "candidate_pool_recall_action_queue_task_ids": [
@@ -3297,6 +3438,10 @@ def generate_reports_manifest(
         "prepared_breakout_relief_validation_summary": _build_prepared_breakout_relief_validation_summary(resolved_reports_root),
         "prepared_breakout_cohort_summary": _build_prepared_breakout_cohort_summary(resolved_reports_root),
         "prepared_breakout_residual_surface_summary": _build_prepared_breakout_residual_surface_summary(resolved_reports_root),
+        "candidate_pool_corridor_persistence_dossier_summary": _build_candidate_pool_corridor_persistence_dossier_summary(resolved_reports_root),
+        "candidate_pool_corridor_window_command_board_summary": _build_candidate_pool_corridor_window_command_board_summary(resolved_reports_root),
+        "candidate_pool_corridor_window_diagnostics_summary": _build_candidate_pool_corridor_window_diagnostics_summary(resolved_reports_root),
+        "candidate_pool_corridor_narrow_probe_summary": _build_candidate_pool_corridor_narrow_probe_summary(resolved_reports_root),
         "transient_probe_summary": _build_transient_probe_summary(resolved_reports_root),
         "execution_constraint_rollup": _build_execution_constraint_rollup(resolved_reports_root),
         "latest_btst_run": None,
@@ -3464,7 +3609,7 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         if candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_summary"):
             summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_summary") or {})
             lines.append(
-                f"- candidate_entry_shadow_candidate_pool_lane_pair_board_summary: pair_status={summary.get('pair_status')} board_leader={summary.get('board_leader')} leader_lane_family={summary.get('leader_lane_family')} leader_governance_status={summary.get('leader_governance_status')} parallel_watch_ticker={summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={summary.get('parallel_watch_next_close_return_mean')}"
+                f"- candidate_entry_shadow_candidate_pool_lane_pair_board_summary: pair_status={summary.get('pair_status')} board_leader={summary.get('board_leader')} leader_lane_family={summary.get('leader_lane_family')} leader_governance_status={summary.get('leader_governance_status')} leader_governance_execution_quality={summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={summary.get('parallel_watch_next_close_return_mean')}"
             )
         if candidate_entry_shadow_refresh.get("candidate_pool_upstream_handoff_board_status") is not None:
             lines.append(f"- candidate_entry_shadow_candidate_pool_upstream_handoff_board_status: {candidate_entry_shadow_refresh.get('candidate_pool_upstream_handoff_board_status')}")
@@ -3518,7 +3663,7 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
     if manifest.get("merge_replay_validation_summary"):
         summary = dict(manifest.get("merge_replay_validation_summary") or {})
         lines.append(
-            f"- merge_replay_validation_summary: overall_verdict={summary.get('overall_verdict')} focus_tickers={summary.get('focus_tickers')} promoted_to_selected_count={summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={summary.get('promoted_to_near_miss_count')} relief_applied_count={summary.get('relief_applied_count')} recommended_next_lever={summary.get('recommended_next_lever')} recommended_signal_levers={summary.get('recommended_signal_levers')}"
+            f"- merge_replay_validation_summary: overall_verdict={summary.get('overall_verdict')} focus_tickers={summary.get('focus_tickers')} promoted_to_selected_count={summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={summary.get('promoted_to_near_miss_count')} relief_applied_count={summary.get('relief_applied_count')} relief_actionable_applied_count={summary.get('relief_actionable_applied_count')} relief_already_selected_count={summary.get('relief_already_selected_count')} relief_positive_promotion_precision={summary.get('relief_positive_promotion_precision')} relief_actionable_positive_promotion_precision={summary.get('relief_actionable_positive_promotion_precision')} relief_no_promotion_ratio={summary.get('relief_no_promotion_ratio')} relief_actionable_no_promotion_ratio={summary.get('relief_actionable_no_promotion_ratio')} relief_decision_deteriorated_count={summary.get('relief_decision_deteriorated_count')} recommended_next_lever={summary.get('recommended_next_lever')} recommended_signal_levers={summary.get('recommended_signal_levers')}"
         )
     if manifest.get("prepared_breakout_relief_validation_summary"):
         summary = dict(manifest.get("prepared_breakout_relief_validation_summary") or {})
@@ -3536,6 +3681,28 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         summary = dict(manifest.get("prepared_breakout_residual_surface_summary") or {})
         lines.append(
             f"- prepared_breakout_residual_surface_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} focus_report_dir_count={summary.get('focus_report_dir_count')}"
+        )
+    if manifest.get("candidate_pool_corridor_persistence_dossier_summary"):
+        summary = dict(manifest.get("candidate_pool_corridor_persistence_dossier_summary") or {})
+        lines.append(
+            f"- candidate_pool_corridor_persistence_dossier_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} next_confirmation_requirement={summary.get('next_confirmation_requirement')}"
+        )
+    if manifest.get("candidate_pool_corridor_window_command_board_summary"):
+        summary = dict(manifest.get("candidate_pool_corridor_window_command_board_summary") or {})
+        lines.append(
+            f"- candidate_pool_corridor_window_command_board_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} next_target_trade_dates={summary.get('next_target_trade_dates')}"
+        )
+    if manifest.get("candidate_pool_corridor_window_diagnostics_summary"):
+        summary = dict(manifest.get("candidate_pool_corridor_window_diagnostics_summary") or {})
+        near_miss_window = dict(summary.get("near_miss_upgrade_window") or {})
+        visibility_gap_window = dict(summary.get("visibility_gap_window") or {})
+        lines.append(
+            f"- candidate_pool_corridor_window_diagnostics_summary: focus_ticker={summary.get('focus_ticker')} near_miss_verdict={near_miss_window.get('verdict')} visibility_gap_verdict={visibility_gap_window.get('verdict')} recommendation={summary.get('recommendation')}"
+        )
+    if manifest.get("candidate_pool_corridor_narrow_probe_summary"):
+        summary = dict(manifest.get("candidate_pool_corridor_narrow_probe_summary") or {})
+        lines.append(
+            f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} threshold_override_gap_vs_anchor={summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={summary.get('target_gap_to_selected')}"
         )
     if manifest.get("transient_probe_summary"):
         summary = dict(manifest.get("transient_probe_summary") or {})
