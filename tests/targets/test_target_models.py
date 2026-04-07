@@ -211,6 +211,102 @@ def _make_upstream_shadow_catalyst_relief_entry(*, include_profitability_hard_cl
     }
 
 
+def _make_historical_execution_relief_entry() -> dict:
+    entry = _make_upstream_shadow_catalyst_relief_entry(include_profitability_hard_cliff=True)
+    entry.pop("short_trade_catalyst_relief", None)
+    entry["ticker"] = "300757"
+    entry["candidate_source"] = "short_trade_boundary"
+    entry["reason"] = "short_trade_candidate_score_ranked"
+    entry["reasons"] = ["short_trade_candidate_score_ranked", "short_trade_prequalified"]
+    entry["candidate_reason_codes"] = ["short_trade_candidate_score_ranked", "short_trade_prequalified"]
+    entry["historical_prior"] = {
+        "execution_quality_label": "gap_chase_risk",
+        "entry_timing_bias": "avoid_open_chase",
+        "evaluable_count": 6,
+        "next_high_hit_rate_at_threshold": 0.6667,
+        "next_close_positive_rate": 0.6667,
+        "execution_note": "历史上更像高开后回落，避免开盘直接追价。",
+    }
+    return entry
+
+
+def _make_balanced_confirmation_relief_entry() -> dict:
+    entry = _make_historical_execution_relief_entry()
+    entry["ticker"] = "300620"
+    entry["historical_prior"] = {
+        "execution_quality_label": "balanced_confirmation",
+        "entry_timing_bias": "confirm_then_review",
+        "evaluable_count": 6,
+        "next_high_hit_rate_at_threshold": 0.6667,
+        "next_close_positive_rate": 0.6667,
+        "execution_note": "历史表现相对均衡，仍应坚持盘中确认后再决定是否持有。",
+    }
+    return entry
+
+
+def _make_close_continuation_relief_entry() -> dict:
+    entry = _make_historical_execution_relief_entry()
+    entry["ticker"] = "003036"
+    entry["historical_prior"] = {
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
+        "evaluable_count": 2,
+        "next_high_hit_rate_at_threshold": 1.0,
+        "next_close_positive_rate": 1.0,
+        "next_open_to_close_return_mean": 0.0457,
+        "execution_note": "历史上更偏向次日收盘延续，确认后可保留 follow-through 预期。",
+    }
+    return entry
+
+
+def _make_strong_close_continuation_selected_frontier_entry() -> dict:
+    return {
+        "ticker": "601869",
+        "score_b": 0.20,
+        "score_c": -0.40,
+        "score_final": 0.05,
+        "quality_score": 0.60,
+        "decision": "watch",
+        "reason": "short_trade_candidate_score_ranked",
+        "reasons": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+        "candidate_source": "short_trade_boundary",
+        "candidate_reason_codes": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                70.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 73.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 64.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 60.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 56.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                60.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 52.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(-1, 20.0).model_dump(mode="json"),
+            "fundamental": _make_profitability_hard_cliff_signal().model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 4,
+            "next_high_hit_rate_at_threshold": 1.0,
+            "next_close_positive_rate": 1.0,
+            "next_open_to_close_return_mean": 0.0917,
+            "execution_note": "历史上确认后继续收盘延续，属于强 continuation 子桶。",
+        },
+    }
+
+
 def test_build_selection_targets_wraps_research_semantics_for_watchlist() -> None:
     watchlist = [
         LayerCResult(
@@ -1271,6 +1367,91 @@ def test_profitability_relief_does_not_trigger_without_profitability_hard_cliff(
     assert result.metrics_payload["profitability_relief_applied"] is False
     assert result.metrics_payload["layer_c_avoid_penalty"] == 0.12
     assert result.explainability_payload["profitability_relief"]["hard_cliff"] is False
+
+
+def test_historical_execution_relief_promotes_positive_gap_chase_boundary_to_near_miss() -> None:
+    baseline_entry = _make_historical_execution_relief_entry()
+    relieved_entry = _make_historical_execution_relief_entry()
+    baseline_entry.pop("historical_prior", None)
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=baseline_entry,
+        rank_hint=1,
+    )
+    relieved_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=relieved_entry,
+        rank_hint=1,
+    )
+
+    assert baseline_result.decision == "rejected"
+    assert relieved_result.decision == "near_miss"
+    assert relieved_result.preferred_entry_mode == "avoid_open_chase_confirmation"
+    assert relieved_result.metrics_payload["historical_execution_relief"]["applied"] is True
+    assert relieved_result.metrics_payload["historical_execution_relief"]["effective_near_miss_threshold"] == 0.39
+    assert relieved_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.39
+    assert relieved_result.explainability_payload["historical_execution_relief"]["applied"] is True
+
+
+def test_historical_execution_relief_does_not_promote_balanced_confirmation_boundary() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_balanced_confirmation_relief_entry(),
+        rank_hint=1,
+    )
+
+    assert result.decision == "rejected"
+    assert result.preferred_entry_mode == "next_day_breakout_confirmation"
+    assert result.metrics_payload["historical_execution_relief"]["applied"] is False
+    assert result.metrics_payload["historical_execution_relief"]["gate_hits"]["execution_quality_support"] is False
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.46
+
+
+def test_historical_execution_relief_promotes_strong_close_continuation_boundary_to_near_miss() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_close_continuation_relief_entry(),
+        rank_hint=1,
+    )
+
+    assert result.decision == "near_miss"
+    assert result.preferred_entry_mode == "confirm_then_hold_breakout"
+    assert result.metrics_payload["historical_execution_relief"]["applied"] is True
+    assert result.metrics_payload["historical_execution_relief"]["strong_close_continuation"] is True
+    assert result.metrics_payload["historical_execution_relief"]["effective_near_miss_threshold"] == 0.39
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.39
+
+
+def test_historical_execution_relief_promotes_strong_close_continuation_frontier_to_selected() -> None:
+    baseline_entry = _make_strong_close_continuation_selected_frontier_entry()
+    relief_entry = _make_strong_close_continuation_selected_frontier_entry()
+
+    baseline_entry["historical_prior"]["next_open_to_close_return_mean"] = 0.01
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=baseline_entry,
+        rank_hint=1,
+        profile_overrides={"select_threshold": 0.90, "near_miss_threshold": 0.80},
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=relief_entry,
+        rank_hint=1,
+        profile_overrides={"select_threshold": 0.90, "near_miss_threshold": 0.80},
+    )
+
+    assert round(relief_result.score_target, 4) == 0.5653
+    assert baseline_result.decision == "near_miss"
+    assert baseline_result.metrics_payload["historical_execution_relief"]["strong_close_continuation"] is False
+    assert baseline_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.90
+    assert relief_result.decision == "selected"
+    assert relief_result.preferred_entry_mode == "confirm_then_hold_breakout"
+    assert relief_result.metrics_payload["historical_execution_relief"]["applied"] is True
+    assert relief_result.metrics_payload["historical_execution_relief"]["strong_close_continuation"] is True
+    assert relief_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.56
+    assert relief_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.56
+    assert relief_result.explainability_payload["historical_execution_relief"]["effective_select_threshold"] == 0.56
 
 
 def test_upstream_shadow_catalyst_relief_promotes_strong_recalled_shadow_to_near_miss() -> None:

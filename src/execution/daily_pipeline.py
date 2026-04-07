@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import signature
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Optional
 import os
 
+from scripts.btst_latest_followup_utils import load_latest_btst_followup_by_ticker
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.execution.merge_approved_loader import load_merge_approved_tickers
@@ -141,6 +143,7 @@ CATALYST_THEME_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_BREA
 CATALYST_THEME_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CLOSE_MIN", 0.20)
 CATALYST_THEME_SECTOR_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SECTOR_MIN", 0.25)
 CATALYST_THEME_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CATALYST_MIN", 0.45)
+BTST_REPORTS_ROOT = Path(os.getenv("DAILY_PIPELINE_BTST_REPORTS_ROOT", "data/reports")).expanduser()
 MERGE_APPROVED_TICKERS = _get_env_csv_set("DAILY_PIPELINE_MERGE_APPROVED_TICKERS", "")
 MERGE_APPROVED_MERGE_REVIEW_PATH = os.getenv("DAILY_PIPELINE_MERGE_APPROVED_MERGE_REVIEW_PATH", "")
 MERGE_APPROVED_RANKING_PATH = os.getenv("DAILY_PIPELINE_MERGE_APPROVED_RANKING_PATH", "")
@@ -261,6 +264,27 @@ def _build_filter_summary(entries: list[dict]) -> dict:
         "reason_counts": reason_counts,
         "tickers": entries,
     }
+
+
+def _load_latest_btst_historical_prior_by_ticker() -> dict[str, dict[str, Any]]:
+    rows_by_ticker = load_latest_btst_followup_by_ticker(BTST_REPORTS_ROOT)
+    return {
+        ticker: dict(row.get("historical_prior") or {})
+        for ticker, row in rows_by_ticker.items()
+        if dict(row.get("historical_prior") or {})
+    }
+
+
+def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_by_ticker: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    attached_entries: list[dict[str, Any]] = []
+    for entry in entries:
+        updated_entry = dict(entry)
+        ticker = str(updated_entry.get("ticker") or "")
+        historical_prior = dict(updated_entry.get("historical_prior") or prior_by_ticker.get(ticker) or {})
+        if historical_prior:
+            updated_entry["historical_prior"] = historical_prior
+        attached_entries.append(updated_entry)
+    return attached_entries
 
 
 def _build_layer_b_filter_diagnostics(fused: list, high_pool: list) -> dict:
@@ -1422,12 +1446,19 @@ def _ensure_plan_target_shells(
     summary = plan.dual_target_summary if isinstance(plan.dual_target_summary, DualTargetSummary) else DualTargetSummary.model_validate(plan.dual_target_summary or {})
     watchlist_filter_diagnostics = ((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("watchlist", {}) or {})
     short_trade_candidate_diagnostics = ((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("short_trade_candidates", {}) or {})
-    rejected_entries = list(watchlist_filter_diagnostics.get("tickers", []) or [])
-    supplemental_short_trade_entries = [
+    historical_prior_by_ticker = _load_latest_btst_historical_prior_by_ticker()
+    rejected_entries = _attach_historical_prior_to_entries(
+        list(watchlist_filter_diagnostics.get("tickers", []) or []),
+        prior_by_ticker=historical_prior_by_ticker,
+    )
+    supplemental_short_trade_entries = _attach_historical_prior_to_entries(
+        [
         *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
         *list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []),
         *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
-    ]
+        ],
+        prior_by_ticker=historical_prior_by_ticker,
+    )
     buy_order_tickers = {order.ticker for order in list(plan.buy_orders or [])}
     if not selection_targets and (plan.watchlist or rejected_entries or supplemental_short_trade_entries):
         with use_short_trade_target_profile(profile_name=short_trade_target_profile_name, overrides=short_trade_target_profile_overrides):
@@ -1916,15 +1947,22 @@ class DailyPipeline:
             "total_post_market": round(perf_counter() - total_started_at, 3),
         }
         with use_short_trade_target_profile(profile_name=self.short_trade_target_profile_name, overrides=self.short_trade_target_profile_overrides):
+            historical_prior_by_ticker = _load_latest_btst_historical_prior_by_ticker()
             selection_targets, dual_target_summary = build_selection_targets(
                 trade_date=trade_date,
                 watchlist=watchlist,
-                rejected_entries=list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
-                supplemental_short_trade_entries=[
-                    *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
-                    *list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
-                    *list((watchlist_filter_diagnostics or {}).get("released_shadow_entries", []) or []),
-                ],
+                rejected_entries=_attach_historical_prior_to_entries(
+                    list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
+                    prior_by_ticker=historical_prior_by_ticker,
+                ),
+                supplemental_short_trade_entries=_attach_historical_prior_to_entries(
+                    [
+                        *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
+                        *list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
+                        *list((watchlist_filter_diagnostics or {}).get("released_shadow_entries", []) or []),
+                    ],
+                    prior_by_ticker=historical_prior_by_ticker,
+                ),
                 buy_order_tickers={order.ticker for order in buy_orders},
                 target_mode=self.target_mode,
             )

@@ -585,6 +585,11 @@ def _apply_execution_quality_entry_mode(entry: dict[str, Any]) -> dict[str, Any]
         updated_entry["promotion_trigger"] = "若盘中回踩后重新走强可再确认，避免把开盘追价当成默认动作。"
         if "historical_gap_chase_risk" not in top_reasons:
             top_reasons.append("historical_gap_chase_risk")
+    elif execution_quality_label == "close_continuation":
+        updated_entry["preferred_entry_mode"] = "confirm_then_hold_breakout"
+        updated_entry["promotion_trigger"] = "若盘中 continuation 确认后量价延续良好，可升级为 confirm-then-hold，而不是默认快进快出。"
+        if "historical_close_continuation" not in top_reasons:
+            top_reasons.append("historical_close_continuation")
     elif execution_quality_label == "zero_follow_through":
         updated_entry["preferred_entry_mode"] = "strong_reconfirmation_only"
         updated_entry["promotion_trigger"] = "历史同层兑现极弱，只有出现新的强确认时才允许重新升级。"
@@ -1124,6 +1129,8 @@ def _entry_mode_action_guidance(preferred_entry_mode: str | None, *, default_act
         return "confirm_then_reduce", "只做盘中确认后的 intraday 机会，不把默认隔夜持有当成执行目标。"
     if preferred_entry_mode == "avoid_open_chase_confirmation":
         return "avoid_open_chase", "避免开盘直接追价，等待回踩或二次确认后再决定是否参与。"
+    if preferred_entry_mode == "confirm_then_hold_breakout":
+        return "confirm_then_hold", "先等盘中 continuation 确认，再决定是否入场；若确认质量足够，允许把 follow-through 持有到收盘而不是机械快进快出。"
     if preferred_entry_mode == "strong_reconfirmation_only":
         return "reconfirm_only", "历史兑现极弱，只有出现新的强确认时才允许重新评估。"
     return "standard_confirmation", default_action
@@ -2181,6 +2188,14 @@ def _selected_action_posture(preferred_entry_mode: str | None) -> tuple[str, lis
                 "若高开后强度迅速衰减，则直接放弃当日入场。",
             ],
         )
+    if preferred_entry_mode == "confirm_then_hold_breakout":
+        return (
+            "confirm_then_hold",
+            [
+                "先等盘中 continuation 确认，再决定是否执行，不做无确认开盘追价。",
+                "若确认后量价延续良好，可把 follow-through 持有到收盘，而不是默认盘中快速减仓。",
+            ],
+        )
     if preferred_entry_mode == "strong_reconfirmation_only":
         return (
             "reconfirm_only",
@@ -2596,8 +2611,15 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
     focus_items: list[dict[str, Any]] = []
     catalyst_theme_frontier_priority = dict(brief.get("catalyst_theme_frontier_priority") or {})
     catalyst_theme_shadow_watch = _build_catalyst_theme_shadow_watch_rows(list(brief.get("catalyst_theme_shadow_entries") or []))
+    selected_entries = [_apply_execution_quality_entry_mode(entry) for entry in list(brief.get("selected_entries") or [])]
+    near_miss_entries = [_apply_execution_quality_entry_mode(entry) for entry in list(brief.get("near_miss_entries") or [])]
+    opportunity_pool_entries = [_apply_execution_quality_entry_mode(entry) for entry in list(brief.get("opportunity_pool_entries") or [])]
 
-    primary_entry = brief.get("primary_entry")
+    primary_entry = dict(brief.get("primary_entry") or {})
+    if not primary_entry and selected_entries:
+        primary_entry = dict(selected_entries[0])
+    elif primary_entry:
+        primary_entry = _apply_execution_quality_entry_mode(primary_entry)
     if primary_entry:
         posture, trigger_rules = _selected_action_posture(primary_entry.get("preferred_entry_mode"))
         historical_prior = dict(primary_entry.get("historical_prior") or {})
@@ -2616,7 +2638,7 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
             }
         )
 
-    for entry in brief.get("near_miss_entries") or []:
+    for entry in near_miss_entries:
         historical_prior = dict(entry.get("historical_prior") or {})
         _, opening_plan = _entry_mode_action_guidance(
             entry.get("preferred_entry_mode"),
@@ -2637,7 +2659,7 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
             }
         )
 
-    for entry in brief.get("opportunity_pool_entries") or []:
+    for entry in opportunity_pool_entries:
         historical_prior = dict(entry.get("historical_prior") or {})
         _, opening_plan = _entry_mode_action_guidance(
             entry.get("preferred_entry_mode"),
@@ -2915,8 +2937,11 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
     priority_rows: list[dict[str, Any]] = []
     catalyst_theme_frontier_priority = dict(brief.get("catalyst_theme_frontier_priority") or {})
     catalyst_theme_shadow_watch = _build_catalyst_theme_shadow_watch_rows(list(brief.get("catalyst_theme_shadow_entries") or []))
+    selected_entries = [_apply_execution_quality_entry_mode(entry) for entry in list(brief.get("selected_entries") or [])]
+    near_miss_entries = [_apply_execution_quality_entry_mode(entry) for entry in list(brief.get("near_miss_entries") or [])]
+    opportunity_pool_entries = [_apply_execution_quality_entry_mode(entry) for entry in list(brief.get("opportunity_pool_entries") or [])]
 
-    for index, entry in enumerate(brief.get("selected_entries") or []):
+    for index, entry in enumerate(selected_entries):
         historical_prior = dict(entry.get("historical_prior") or {})
         posture, trigger_rules = _selected_action_posture(entry.get("preferred_entry_mode"))
         priority_rows.append(
@@ -2936,7 +2961,7 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
             }
         )
 
-    for entry in brief.get("near_miss_entries") or []:
+    for entry in near_miss_entries:
         historical_prior = dict(entry.get("historical_prior") or {})
         _, suggested_action = _entry_mode_action_guidance(
             entry.get("preferred_entry_mode"),
@@ -2959,7 +2984,7 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
             }
         )
 
-    for entry in brief.get("opportunity_pool_entries") or []:
+    for entry in opportunity_pool_entries:
         historical_prior = dict(entry.get("historical_prior") or {})
         _, suggested_action = _entry_mode_action_guidance(
             entry.get("preferred_entry_mode"),

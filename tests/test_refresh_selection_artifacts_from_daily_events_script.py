@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+import scripts.refresh_selection_artifacts_from_daily_events as refresh_module
 from scripts.refresh_selection_artifacts_from_daily_events import refresh_selection_artifacts_for_report
 from src.execution.models import ExecutionPlan
 from src.screening.models import StrategySignal
@@ -305,3 +308,140 @@ def test_refresh_selection_artifacts_from_daily_events_keeps_plain_corridor_shad
     short_trade = selection_snapshot["selection_targets"]["300720"]["short_trade"]
     assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.58
     assert selection_snapshot["selection_targets"]["300720"]["short_trade"]["decision"] == "near_miss"
+
+
+def test_refresh_selection_artifacts_from_daily_events_injects_historical_prior_into_boundary_candidate(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    report_dir = tmp_path / "paper_trading_20260406_20260406_refresh_boundary"
+    (report_dir / "selection_artifacts").mkdir(parents=True)
+    trade_date = "20260406"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {
+                        "tickers": [
+                            {
+                                "ticker": "300757",
+                                "score_b": 0.2,
+                                "score_c": -0.4,
+                                "score_final": 0.05,
+                                "quality_score": 0.58,
+                                "decision": "watch",
+                                "reason": "short_trade_candidate_score_ranked",
+                                "reasons": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+                                "candidate_source": "short_trade_boundary",
+                                "candidate_reason_codes": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+                                "strategy_signals": {
+                                    "trend": _make_signal(
+                                        1,
+                                        95.0,
+                                        sub_factors={
+                                            "momentum": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                                            "adx_strength": {"direction": 1, "confidence": 85.0, "completeness": 1.0},
+                                            "ema_alignment": {"direction": 1, "confidence": 95.0, "completeness": 1.0},
+                                            "volatility": {"direction": 1, "confidence": 30.0, "completeness": 1.0},
+                                            "long_trend_alignment": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                                        },
+                                    ).model_dump(mode="json"),
+                                    "event_sentiment": _make_signal(
+                                        1,
+                                        40.0,
+                                        sub_factors={
+                                            "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                                            "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                                        },
+                                    ).model_dump(mode="json"),
+                                    "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+                                    "fundamental": _make_signal(
+                                        -1,
+                                        68.0,
+                                        sub_factors={
+                                            "profitability": {
+                                                "direction": -1,
+                                                "confidence": 72.0,
+                                                "completeness": 1.0,
+                                                "metrics": {"positive_count": 0},
+                                            }
+                                        },
+                                    ).model_dump(mode="json"),
+                                },
+                                "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+                            }
+                        ],
+                        "released_shadow_entries": [],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "btst_next_day_trade_brief_latest.json").write_text(
+        json.dumps(
+            {
+                "opportunity_pool_entries": [
+                    {
+                        "ticker": "300757",
+                        "decision": "rejected",
+                        "candidate_source": "short_trade_boundary",
+                        "historical_prior": {
+                            "execution_quality_label": "gap_chase_risk",
+                            "entry_timing_bias": "avoid_open_chase",
+                            "evaluable_count": 6,
+                            "next_high_hit_rate_at_threshold": 0.6667,
+                            "next_close_positive_rate": 0.6667,
+                            "execution_note": "历史上更像高开后回落，避免开盘直接追价。",
+                        },
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text(
+        json.dumps(
+            {
+                "end_date": "2026-04-06",
+                "plan_generation": {"selection_target": "short_trade_only"},
+                "btst_followup": {
+                    "trade_date": "2026-04-06",
+                    "brief_json": str((report_dir / "btst_next_day_trade_brief_latest.json").resolve()),
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-06")
+
+    replay_input = json.loads((report_dir / "selection_artifacts" / "2026-04-06" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    supplemental_entry = next(entry for entry in replay_input["supplemental_short_trade_entries"] if entry["ticker"] == "300757")
+    assert supplemental_entry["historical_prior"]["execution_quality_label"] == "gap_chase_risk"
+    assert supplemental_entry["historical_prior"]["entry_timing_bias"] == "avoid_open_chase"
+
+    selection_snapshot = json.loads((report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    short_trade = selection_snapshot["selection_targets"]["300757"]["short_trade"]
+    assert short_trade["decision"] in {"selected", "near_miss"}
+    assert short_trade["preferred_entry_mode"] == "avoid_open_chase_confirmation"
+    assert short_trade["metrics_payload"]["historical_execution_relief"]["applied"] is True
+    assert short_trade["metrics_payload"]["historical_execution_relief"]["execution_quality_label"] == "gap_chase_risk"

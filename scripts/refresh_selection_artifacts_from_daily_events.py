@@ -9,6 +9,7 @@ from typing import Any
 from scripts.btst_report_utils import discover_report_dirs, normalize_trade_date, safe_load_json
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
 from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
+from scripts.btst_latest_followup_utils import load_btst_followup_by_ticker_for_report, load_latest_btst_followup_by_ticker
 from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config
 from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
@@ -124,30 +125,82 @@ def _refresh_released_shadow_entries(filters: dict[str, Any], filter_key: str, s
     filters[filter_key] = filter_payload
 
 
-def rebuild_selection_targets_for_plan(plan: ExecutionPlan, trade_date_compact: str, shadow_lookup: dict[str, dict[str, Any]] | None = None) -> ExecutionPlan:
+def _load_latest_historical_prior_by_ticker(report_dir: Path) -> dict[str, dict[str, Any]]:
+    rows_by_ticker = load_btst_followup_by_ticker_for_report(report_dir)
+    if not rows_by_ticker:
+        rows_by_ticker = load_latest_btst_followup_by_ticker(report_dir.parent)
+    return {
+        ticker: dict(row.get("historical_prior") or {})
+        for ticker, row in rows_by_ticker.items()
+        if dict(row.get("historical_prior") or {})
+    }
+
+
+def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_by_ticker: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    attached_entries: list[dict[str, Any]] = []
+    for entry in entries:
+        updated_entry = dict(entry or {})
+        ticker = str(updated_entry.get("ticker") or "").strip()
+        historical_prior = dict(updated_entry.get("historical_prior") or prior_by_ticker.get(ticker) or {})
+        if historical_prior:
+            updated_entry["historical_prior"] = historical_prior
+        attached_entries.append(updated_entry)
+    return attached_entries
+
+
+def rebuild_selection_targets_for_plan(
+    plan: ExecutionPlan,
+    trade_date_compact: str,
+    shadow_lookup: dict[str, dict[str, Any]] | None = None,
+    *,
+    historical_prior_by_ticker: dict[str, dict[str, Any]] | None = None,
+) -> ExecutionPlan:
     risk_metrics = dict(plan.risk_metrics or {})
     funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics") or {})
     filters = dict(funnel_diagnostics.get("filters") or {})
     shadow_lookup = dict(shadow_lookup or {})
+    historical_prior_by_ticker = dict(historical_prior_by_ticker or {})
 
     _refresh_released_shadow_entries(filters, "short_trade_candidates", shadow_lookup)
     _refresh_released_shadow_entries(filters, "watchlist", shadow_lookup)
 
     short_trade_candidate_filters = dict(filters.get("short_trade_candidates") or {})
     watchlist_filter = dict(filters.get("watchlist") or {})
+    refreshed_rejected_entries = _attach_historical_prior_to_entries(
+        list(watchlist_filter.get("tickers") or []),
+        prior_by_ticker=historical_prior_by_ticker,
+    )
+    refreshed_short_trade_tickers = _attach_historical_prior_to_entries(
+        list(short_trade_candidate_filters.get("tickers") or []),
+        prior_by_ticker=historical_prior_by_ticker,
+    )
+    refreshed_short_trade_released_shadow_entries = _attach_historical_prior_to_entries(
+        list(short_trade_candidate_filters.get("released_shadow_entries") or []),
+        prior_by_ticker=historical_prior_by_ticker,
+    )
+    refreshed_watchlist_released_shadow_entries = _attach_historical_prior_to_entries(
+        list(watchlist_filter.get("released_shadow_entries") or []),
+        prior_by_ticker=historical_prior_by_ticker,
+    )
     selection_targets, dual_target_summary = build_selection_targets(
         trade_date=trade_date_compact,
         watchlist=list(plan.watchlist or []),
-        rejected_entries=list(watchlist_filter.get("tickers") or []),
+        rejected_entries=refreshed_rejected_entries,
         supplemental_short_trade_entries=[
-            *list(short_trade_candidate_filters.get("tickers") or []),
-            *list(short_trade_candidate_filters.get("released_shadow_entries") or []),
-            *list(watchlist_filter.get("released_shadow_entries") or []),
+            *refreshed_short_trade_tickers,
+            *refreshed_short_trade_released_shadow_entries,
+            *refreshed_watchlist_released_shadow_entries,
         ],
         buy_order_tickers={str(order.ticker) for order in list(plan.buy_orders or [])},
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
     )
 
+    watchlist_filter["tickers"] = refreshed_rejected_entries
+    watchlist_filter["released_shadow_entries"] = refreshed_watchlist_released_shadow_entries
+    short_trade_candidate_filters["tickers"] = refreshed_short_trade_tickers
+    short_trade_candidate_filters["released_shadow_entries"] = refreshed_short_trade_released_shadow_entries
+    filters["watchlist"] = watchlist_filter
+    filters["short_trade_candidates"] = short_trade_candidate_filters
     funnel_diagnostics["filters"] = filters
     risk_metrics["funnel_diagnostics"] = funnel_diagnostics
     plan.risk_metrics = risk_metrics
@@ -170,7 +223,12 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
     for trade_date_compact in target_trade_dates:
         plan = ExecutionPlan.model_validate(plans_by_date[trade_date_compact].model_dump(mode="json"))
         shadow_lookup = _build_candidate_pool_shadow_lookup(raw_plans_by_date.get(trade_date_compact) or {})
-        refreshed_plan = rebuild_selection_targets_for_plan(plan, trade_date_compact, shadow_lookup)
+        refreshed_plan = rebuild_selection_targets_for_plan(
+            plan,
+            trade_date_compact,
+            shadow_lookup,
+            historical_prior_by_ticker=_load_latest_historical_prior_by_ticker(resolved_report_dir),
+        )
         metadata, selected_analysts, pipeline_stub = _load_artifact_metadata(resolved_report_dir, trade_date_compact)
         writer = FileSelectionArtifactWriter(
             artifact_root=resolved_report_dir / "selection_artifacts",

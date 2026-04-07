@@ -92,6 +92,16 @@ def _extract_btst_candidate(report_dir: Path) -> dict[str, Any] | None:
     }
 
 
+def load_btst_followup_by_ticker_for_report(report_dir: str | Path) -> dict[str, dict[str, Any]]:
+    candidate = _extract_btst_candidate(Path(report_dir).expanduser().resolve())
+    if not candidate:
+        return {}
+    brief_json = dict(candidate.get("brief_json") or {})
+    if not brief_json:
+        return {}
+    return _merge_ticker_rows(brief_json)
+
+
 def select_latest_btst_followup_candidate(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     candidates = [candidate for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root)) if candidate]
@@ -121,6 +131,8 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
             continue
         current = dict(merged.get(ticker) or {"ticker": ticker})
         historical_prior = dict(row.get("historical_prior") or {})
+        if historical_prior:
+            current["historical_prior"] = historical_prior
         for key in (
             "decision",
             "candidate_source",
@@ -164,6 +176,16 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
             current[key] = _unique_strings(list(current.get(key) or []) + [str(value) for value in list(row.get(key) or []) if str(value or "").strip()])
         merged[ticker] = current
     return merged
+
+
+def load_latest_btst_followup_by_ticker(reports_root: str | Path) -> dict[str, dict[str, Any]]:
+    latest_candidate = select_latest_btst_followup_candidate(reports_root)
+    if not latest_candidate:
+        return {}
+    brief_json = dict(latest_candidate.get("brief_json") or {})
+    if not brief_json:
+        return {}
+    return _merge_ticker_rows(brief_json)
 
 
 def _is_upstream_shadow_followup_row(ticker: str, row: dict[str, Any], *, focus_tickers: list[str]) -> bool:

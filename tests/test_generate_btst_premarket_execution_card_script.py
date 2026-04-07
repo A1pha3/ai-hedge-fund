@@ -248,3 +248,47 @@ def test_generate_btst_premarket_execution_card_uses_execution_quality_specific_
     assert any("intraday" in rule for rule in payload["watch_actions"][0]["trigger_rules"])
     assert payload["opportunity_actions"][0]["execution_quality_label"] == "gap_chase_risk"
     assert any("避免开盘直接追价" in rule for rule in payload["opportunity_actions"][0]["trigger_rules"])
+
+
+def test_generate_btst_premarket_execution_card_supports_confirm_then_hold_breakout_mode(tmp_path):
+    primary_entry = {
+        "ticker": "601869",
+        "preferred_entry_mode": "confirm_then_hold_breakout",
+        "score_target": 0.5632,
+        "top_reasons": ["historical_execution_relief_applied", "close_continuation_follow_through"],
+        "positive_tags": ["historical_execution_relief_applied"],
+        "metrics": {"score_target": 0.5632},
+        "historical_prior": {
+            "summary": "同票历史 4 例，next_close 正收益率=1.0000。",
+            "execution_quality_label": "close_continuation",
+            "execution_note": "确认后若量价延续良好，可保留收盘 follow-through。",
+        },
+    }
+    generate_btst_premarket_execution_card_artifacts(
+        input_path={
+            "trade_date": "2026-03-31",
+            "next_trade_date": "2026-04-01",
+            "summary": {},
+            "primary_entry": primary_entry,
+            "selected_entries": [primary_entry],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {"shadow_candidate_count": 0, "promotable_count": 0, "lane_counts": {}, "decision_counts": {}, "top_focus_tickers": []},
+        },
+        output_dir=tmp_path,
+        trade_date="2026-03-31",
+        next_trade_date="2026-04-01",
+    )
+
+    payload = json.loads((tmp_path / "btst_premarket_execution_card_20260331_for_20260401.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "btst_premarket_execution_card_20260331_for_20260401.md").read_text(encoding="utf-8")
+
+    assert payload["primary_action"]["preferred_entry_mode"] == "confirm_then_hold_breakout"
+    assert payload["primary_action"]["execution_posture"] == "confirm_then_hold"
+    assert any("持有到收盘" in rule for rule in payload["primary_action"]["trigger_rules"])
+    assert "confirm_then_hold" in markdown

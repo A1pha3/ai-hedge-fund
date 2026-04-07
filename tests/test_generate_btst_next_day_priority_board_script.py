@@ -351,3 +351,37 @@ def test_generate_btst_next_day_priority_board_uses_execution_quality_specific_s
     assert "intraday" in payload["priority_rows"][0]["suggested_action"]
     assert payload["priority_rows"][1]["lane"] == "opportunity_pool"
     assert "避免开盘直接追价" in payload["priority_rows"][1]["suggested_action"]
+
+
+def test_generate_btst_next_day_priority_board_backfills_confirm_then_hold_mode_from_close_continuation(tmp_path):
+    generate_btst_next_day_priority_board_artifacts(
+        input_path={
+            "trade_date": "2026-03-31",
+            "next_trade_date": "2026-04-01",
+            "summary": {},
+            "selected_entries": [],
+            "near_miss_entries": [
+                {
+                    "ticker": "601869",
+                    "top_reasons": ["historical_execution_relief_applied"],
+                    "historical_prior": {
+                        "execution_quality_label": "close_continuation",
+                        "summary": "同票历史 4 例，next_close 正收益率=1.0000。",
+                        "execution_note": "确认后若量价延续良好，可保留收盘 follow-through。",
+                    },
+                }
+            ],
+            "opportunity_pool_entries": [],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+        },
+        output_dir=tmp_path,
+    )
+
+    payload = json.loads((tmp_path / "btst_next_day_priority_board_20260401.json").read_text(encoding="utf-8"))
+
+    assert payload["priority_rows"][0]["preferred_entry_mode"] == "confirm_then_hold_breakout"
+    assert "continuation 确认" in payload["priority_rows"][0]["suggested_action"]
+    assert "持有到收盘" in payload["priority_rows"][0]["suggested_action"]

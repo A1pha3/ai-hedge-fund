@@ -4,6 +4,8 @@ import json
 import os
 
 from scripts.btst_latest_followup_utils import (
+    load_btst_followup_by_ticker_for_report,
+    load_latest_btst_followup_by_ticker,
     load_latest_upstream_shadow_followup_by_ticker,
     load_latest_upstream_shadow_followup_summary,
     select_latest_btst_followup_candidate,
@@ -90,3 +92,72 @@ def test_select_latest_btst_followup_candidate_prefers_selected_over_larger_near
     assert latest_by_ticker["300720"]["report_dir"].endswith("paper_trading_20260331_new_selected")
     assert latest_by_ticker["300720"]["historical_execution_quality_label"] == "balanced_confirmation"
     assert latest_by_ticker["300720"]["historical_entry_timing_bias"] == "confirm_then_review"
+
+
+def test_load_latest_btst_followup_by_ticker_keeps_generic_historical_prior_rows(tmp_path):
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260406_short_trade"
+
+    _write_followup_report(
+        report_dir,
+        trade_date="2026-04-06",
+        selection_target="short_trade_only",
+        brief_payload={
+            "opportunity_pool_entries": [
+                {
+                    "ticker": "300757",
+                    "decision": "rejected",
+                    "candidate_source": "short_trade_boundary",
+                    "historical_prior": {
+                        "execution_quality_label": "gap_chase_risk",
+                        "entry_timing_bias": "avoid_open_chase",
+                        "evaluable_count": 6,
+                        "next_high_hit_rate_at_threshold": 0.6667,
+                        "next_close_positive_rate": 0.6667,
+                        "execution_note": "历史上更像高开后回落，避免开盘直接追价。",
+                    },
+                }
+            ]
+        },
+        mtime=200,
+    )
+
+    latest_by_ticker = load_latest_btst_followup_by_ticker(reports_root)
+
+    assert latest_by_ticker["300757"]["candidate_source"] == "short_trade_boundary"
+    assert latest_by_ticker["300757"]["historical_prior"]["execution_quality_label"] == "gap_chase_risk"
+    assert latest_by_ticker["300757"]["historical_prior"]["next_close_positive_rate"] == 0.6667
+
+
+def test_load_btst_followup_by_ticker_for_report_reads_current_report_rows(tmp_path):
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260406_short_trade"
+
+    _write_followup_report(
+        report_dir,
+        trade_date="2026-04-06",
+        selection_target="short_trade_only",
+        brief_payload={
+            "opportunity_pool_entries": [
+                {
+                    "ticker": "600522",
+                    "decision": "rejected",
+                    "candidate_source": "short_trade_boundary",
+                    "historical_prior": {
+                        "execution_quality_label": "intraday_only",
+                        "entry_timing_bias": "confirm_then_reduce",
+                        "evaluable_count": 18,
+                        "next_high_hit_rate_at_threshold": 1.0,
+                        "next_close_positive_rate": 0.3889,
+                        "execution_note": "历史上更多是盘中给空间、收盘回落。",
+                    },
+                }
+            ]
+        },
+        mtime=200,
+    )
+
+    rows_by_ticker = load_btst_followup_by_ticker_for_report(report_dir)
+
+    assert rows_by_ticker["600522"]["historical_prior"]["execution_quality_label"] == "intraday_only"
+    assert rows_by_ticker["600522"]["historical_prior"]["next_close_positive_rate"] == 0.3889

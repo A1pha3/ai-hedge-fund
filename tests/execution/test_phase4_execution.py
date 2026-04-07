@@ -1515,6 +1515,80 @@ def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
     }
 
 
+def test_ensure_plan_target_shells_injects_latest_historical_prior_into_supplemental_entries(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "_load_latest_btst_historical_prior_by_ticker",
+        lambda: {
+            "300757": {
+                "execution_quality_label": "gap_chase_risk",
+                "entry_timing_bias": "avoid_open_chase",
+                "evaluable_count": 6,
+                "next_high_hit_rate_at_threshold": 0.6667,
+                "next_close_positive_rate": 0.6667,
+                "execution_note": "历史上更像高开后回落，避免开盘直接追价。",
+            }
+        },
+    )
+
+    plan = ExecutionPlan(
+        date="20260328",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {
+                        "tickers": [
+                            {
+                                "ticker": "300757",
+                                "score_b": 0.2,
+                                "score_c": -0.4,
+                                "score_final": 0.05,
+                                "quality_score": 0.58,
+                                "decision": "watch",
+                                "reason": "short_trade_candidate_score_ranked",
+                                "reasons": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+                                "candidate_source": "short_trade_boundary",
+                                "candidate_reason_codes": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+                                "strategy_signals": {
+                                    **_shadow_candidate_signals(),
+                                    "fundamental": StrategySignal(
+                                        direction=-1,
+                                        confidence=68,
+                                        completeness=1.0,
+                                        sub_factors={
+                                            "profitability": {
+                                                "direction": -1,
+                                                "confidence": 72.0,
+                                                "completeness": 1.0,
+                                                "metrics": {"positive_count": 0},
+                                            }
+                                        },
+                                    ).model_dump(mode="json"),
+                                },
+                                "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+                            }
+                        ],
+                        "released_shadow_entries": [],
+                    },
+                }
+            }
+        },
+    )
+
+    updated_plan = daily_pipeline_module._ensure_plan_target_shells(
+        plan,
+        "short_trade_only",
+        short_trade_target_profile_name="default",
+    )
+
+    short_trade_result = updated_plan.selection_targets["300757"].short_trade
+    assert short_trade_result is not None
+    assert short_trade_result.decision in {"selected", "near_miss"}
+    assert short_trade_result.preferred_entry_mode == "avoid_open_chase_confirmation"
+    assert short_trade_result.metrics_payload["historical_execution_relief"]["applied"] is True
+
+
 def test_run_post_market_promotes_strong_short_trade_boundary_candidate_even_below_old_score_buffer():
     calls = []
 
