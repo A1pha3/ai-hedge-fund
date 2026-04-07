@@ -147,6 +147,479 @@ from scripts.validate_btst_governance_consistency import (
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "report_manifest_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "report_manifest_latest.md"
+
+
+def _optional_report_json(path: str | Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        return {}
+    payload = _load_json(resolved)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _build_continuation_focus_summary(reports_root: Path) -> dict[str, Any]:
+    promotion_review = _optional_report_json(reports_root / "btst_tplus2_continuation_promotion_review_latest.json")
+    promotion_gate = _optional_report_json(reports_root / "btst_tplus2_continuation_promotion_gate_latest.json")
+    watchlist_execution = _optional_report_json(reports_root / "btst_tplus2_continuation_watchlist_execution_latest.json")
+    eligible_gate = _optional_report_json(reports_root / "btst_tplus2_continuation_eligible_gate_latest.json")
+    execution_gate = _optional_report_json(reports_root / "btst_tplus2_continuation_execution_gate_latest.json")
+    execution_overlay = _optional_report_json(reports_root / "btst_tplus2_continuation_execution_overlay_latest.json")
+    governance_board = _optional_report_json(reports_root / "btst_tplus2_continuation_governance_board_latest.json")
+    watchboard = _optional_report_json(reports_root / "btst_tplus2_continuation_watchboard_latest.json")
+    focus_ticker = str(
+        promotion_review.get("focus_ticker")
+        or promotion_gate.get("focus_ticker")
+        or watchlist_execution.get("focus_ticker")
+        or governance_board.get("focus_promotion_ticker")
+        or ""
+    ).strip()
+    if not focus_ticker:
+        return {}
+    adopted_watch_row = dict(watchlist_execution.get("adopted_watch_row") or {})
+    adopted_execution_row = dict(execution_overlay.get("adopted_execution_row") or {})
+    return {
+        "focus_ticker": focus_ticker,
+        "promotion_review_verdict": promotion_review.get("promotion_review_verdict"),
+        "promotion_gate_verdict": promotion_gate.get("gate_verdict"),
+        "watchlist_execution_verdict": watchlist_execution.get("execution_verdict"),
+        "focus_watch_validation_status": adopted_watch_row.get("watchlist_validation_status"),
+        "focus_watch_recent_supporting_window_count": adopted_watch_row.get("recent_supporting_window_count"),
+        "focus_watch_recent_window_count": adopted_watch_row.get("recent_window_count"),
+        "focus_watch_recent_support_ratio": adopted_watch_row.get("recent_support_ratio"),
+        "eligible_gate_verdict": eligible_gate.get("gate_verdict"),
+        "execution_gate_verdict": execution_gate.get("gate_verdict"),
+        "execution_gate_blockers": execution_gate.get("gate_blockers"),
+        "execution_overlay_verdict": execution_overlay.get("execution_verdict"),
+        "execution_overlay_promotion_blocker": adopted_execution_row.get("promotion_blocker"),
+        "execution_overlay_persistence_requirement": adopted_execution_row.get("persistence_requirement"),
+        "execution_overlay_independent_edge_requirement": adopted_execution_row.get("independent_edge_requirement"),
+        "execution_overlay_lane_support_ratio": adopted_execution_row.get("lane_support_ratio"),
+        "execution_overlay_t_plus_2_mean_gap_vs_watch": adopted_execution_row.get("t_plus_2_mean_gap_vs_watch"),
+        "execution_overlay_next_step": adopted_execution_row.get("next_step"),
+        "governance_status": governance_board.get("governance_status"),
+        "watchboard_status": watchboard.get("governance_status"),
+    }
+
+
+def _build_transient_probe_summary(reports_root: Path) -> dict[str, Any]:
+    upstream_handoff = _optional_report_json(reports_root / "btst_candidate_pool_upstream_handoff_board_latest.json")
+    board_rows = list(upstream_handoff.get("board_rows") or [])
+    transient_rows = [dict(row or {}) for row in board_rows if str(row.get("board_phase") or "") == "historical_shadow_probe_gap"]
+    if not transient_rows:
+        return {}
+    focus_row = transient_rows[0]
+    return {
+        "ticker": focus_row.get("ticker"),
+        "status": focus_row.get("downstream_followup_status"),
+        "blocker": focus_row.get("downstream_followup_blocker"),
+        "candidate_source": focus_row.get("latest_followup_candidate_source"),
+        "score_state": dict(focus_row.get("latest_followup_gate_status") or {}).get("score"),
+        "downstream_bottleneck": focus_row.get("latest_followup_downstream_bottleneck"),
+        "historical_sample_count": focus_row.get("latest_followup_historical_sample_count"),
+        "historical_next_close_positive_rate": focus_row.get("latest_followup_historical_next_close_positive_rate"),
+        "historical_next_close_return_mean": focus_row.get("latest_followup_historical_next_close_return_mean"),
+        "next_step": focus_row.get("next_step"),
+    }
+
+
+def _build_execution_constraint_rollup(reports_root: Path) -> dict[str, Any]:
+    governance_synthesis = _optional_report_json(reports_root / "btst_governance_synthesis_latest.json")
+    constraints = [dict(row or {}) for row in list(governance_synthesis.get("execution_surface_constraints") or [])]
+    if not constraints:
+        return {}
+    continuation_constraints = [
+        row for row in constraints if str(row.get("status") or "").strip() == "continuation_only_confirm_then_review"
+    ]
+    shadow_constraints = [
+        row for row in constraints if str(row.get("status") or "").strip() == "shadow_recall_not_execution_ready"
+    ]
+    return {
+        "constraint_count": len(constraints),
+        "continuation_focus_tickers": [ticker for row in continuation_constraints for ticker in list(row.get("focus_tickers") or [])[:3]][:3],
+        "continuation_blockers": [str(row.get("blocker") or "") for row in continuation_constraints if str(row.get("blocker") or "").strip()][:3],
+        "shadow_focus_tickers": [ticker for row in shadow_constraints for ticker in list(row.get("focus_tickers") or [])[:3]][:3],
+        "shadow_blockers": [str(row.get("blocker") or "") for row in shadow_constraints if str(row.get("blocker") or "").strip()][:3],
+        "top_recommendations": [str(row.get("recommendation") or "") for row in constraints if str(row.get("recommendation") or "").strip()][:3],
+    }
+
+
+def _qualify_continuation_window_focus_entries(entries: list[dict[str, Any]], focus_ticker: str) -> dict[str, Any]:
+    focus_entries = [dict(entry or {}) for entry in entries if str(dict(entry or {}).get("ticker") or "").strip() == focus_ticker]
+    focus_buckets = sorted({str(entry.get("bucket") or "").strip() for entry in focus_entries if str(entry.get("bucket") or "").strip()})
+    qualifying_bucket_allowlist = ["near_miss_entries", "selected_entries"]
+    has_bucket_data = bool(focus_buckets)
+    qualifies = bool(focus_entries) and (
+        not has_bucket_data or any(bucket in qualifying_bucket_allowlist for bucket in focus_buckets)
+    )
+    return {
+        "focus_entries": focus_entries,
+        "focus_buckets": focus_buckets,
+        "has_bucket_data": has_bucket_data,
+        "qualifies": qualifies,
+        "qualifying_bucket_allowlist": qualifying_bucket_allowlist,
+    }
+
+
+def _extract_candidate_dossier_support_trade_dates(reports_root: Path, focus_ticker: str) -> dict[str, Any]:
+    if not focus_ticker:
+        return {}
+    dossier = _optional_report_json(reports_root / f"btst_tplus2_candidate_dossier_{focus_ticker}_latest.json")
+    if not dossier:
+        return {}
+
+    supporting_windows = [
+        dict(item or {})
+        for item in list(dossier.get("recent_window_summaries") or dossier.get("per_window_summaries") or [])
+        if bool(dict(item or {}).get("supporting_window"))
+    ]
+    supporting_trade_dates: list[str] = []
+    for item in supporting_windows:
+        report_label = _normalize_trade_date(item.get("report_label"))
+        if report_label:
+            supporting_trade_dates.append(report_label)
+    distinct_trade_dates = sorted(set(supporting_trade_dates))
+    same_trade_date_variant_count = max(len(supporting_windows) - len(distinct_trade_dates), 0)
+    same_trade_date_variant_credit = round(min(0.75, same_trade_date_variant_count * 0.25), 4)
+    return {
+        "recent_supporting_window_count": int(dossier.get("recent_supporting_window_count") or 0),
+        "recent_window_count": int(dossier.get("recent_window_count") or 0),
+        "recent_validation_verdict": str(dossier.get("recent_validation_verdict") or "").strip() or None,
+        "recent_tier_verdict": str(dossier.get("recent_tier_verdict") or "").strip() or None,
+        "supporting_trade_dates": distinct_trade_dates,
+        "supporting_trade_date_count": len(distinct_trade_dates),
+        "supporting_window_variant_count": len(supporting_windows),
+        "same_trade_date_variant_count": same_trade_date_variant_count,
+        "same_trade_date_variant_credit": same_trade_date_variant_credit,
+        "current_plan_visibility_summary": dict(dossier.get("current_plan_visibility_summary") or {}),
+    }
+
+
+def _continuation_bucket_rank(bucket_name: str | None) -> int:
+    return {
+        "selected_entries": 3,
+        "near_miss_entries": 2,
+        "opportunity_pool_entries": 1,
+        "rejected_entries": 0,
+    }.get(str(bucket_name or "").strip(), -1)
+
+
+def _collapse_same_trade_date_followups_for_focus(followups: list[dict[str, Any]], focus_ticker: str) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for followup in followups:
+        row = dict(followup or {})
+        group_key = str(row.get("trade_date") or row.get("report_dir") or "").strip()
+        grouped.setdefault(group_key, []).append(row)
+
+    collapsed: list[dict[str, Any]] = []
+    for group_key, rows in grouped.items():
+        best_row: dict[str, Any] | None = None
+        best_entry: dict[str, Any] | None = None
+        best_rank: tuple[Any, ...] | None = None
+        for row in rows:
+            entries = [dict(entry or {}) for entry in list(row.get("entries") or [])]
+            focus_entries = [entry for entry in entries if str(entry.get("ticker") or "").strip() == focus_ticker]
+            if not focus_entries:
+                continue
+            entry = max(
+                focus_entries,
+                key=lambda candidate: (
+                    _continuation_bucket_rank(candidate.get("bucket")),
+                    float(candidate.get("score_target") or -999.0),
+                ),
+            )
+            rank = (
+                _continuation_bucket_rank(entry.get("bucket")),
+                float(entry.get("score_target") or -999.0),
+                str(row.get("report_dir") or ""),
+            )
+            if best_rank is None or rank > best_rank:
+                best_rank = rank
+                best_row = row
+                best_entry = entry
+        if best_row is None or best_entry is None:
+            continue
+        collapsed.append(
+            {
+                "trade_date": best_row.get("trade_date"),
+                "report_dir": best_row.get("report_dir"),
+                "entries": [best_entry],
+            }
+        )
+    collapsed.sort(key=lambda row: (str(row.get("trade_date") or ""), str(row.get("report_dir") or "")))
+    return collapsed
+
+
+def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str, Any]:
+    execution_overlay = _optional_report_json(reports_root / "btst_tplus2_continuation_execution_overlay_latest.json")
+    governance_synthesis = _optional_report_json(reports_root / "btst_governance_synthesis_latest.json")
+    objective_monitor = _optional_report_json(reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json")
+    adopted_execution_row = dict(execution_overlay.get("adopted_execution_row") or {})
+    focus_ticker = str(execution_overlay.get("focus_ticker") or adopted_execution_row.get("ticker") or "").strip()
+    if not focus_ticker:
+        return {}
+
+    evidence_trade_dates: list[str] = []
+    evidence_report_dirs: list[str] = []
+    disqualified_trade_dates: list[str] = []
+    qualifying_window_buckets: list[str] = []
+    disqualified_window_buckets: list[str] = []
+    qualifying_bucket_allowlist: list[str] = ["near_miss_entries", "selected_entries"]
+    collapsed_followups = _collapse_same_trade_date_followups_for_focus(list(governance_synthesis.get("evidence_btst_followups") or []), focus_ticker)
+    for followup in collapsed_followups:
+        row = dict(followup or {})
+        entries = [dict(entry or {}) for entry in list(row.get("entries") or [])]
+        qualification = _qualify_continuation_window_focus_entries(entries, focus_ticker)
+        focus_entries = list(qualification.get("focus_entries") or [])
+        if focus_entries:
+            trade_date = str(row.get("trade_date") or "").strip()
+            report_dir = str(row.get("report_dir") or "").strip()
+            focus_buckets = list(qualification.get("focus_buckets") or [])
+            qualifying_bucket_allowlist = list(qualification.get("qualifying_bucket_allowlist") or qualifying_bucket_allowlist)
+            if qualification.get("qualifies"):
+                qualifying_window_buckets.extend(focus_buckets)
+                if trade_date:
+                    evidence_trade_dates.append(trade_date)
+                if report_dir:
+                    evidence_report_dirs.append(report_dir)
+            else:
+                disqualified_window_buckets.extend(focus_buckets)
+                if trade_date:
+                    disqualified_trade_dates.append(trade_date)
+
+    distinct_trade_dates = sorted(set(evidence_trade_dates))
+    distinct_report_dirs = sorted(set(evidence_report_dirs))
+    distinct_disqualified_trade_dates = sorted(set(disqualified_trade_dates))
+    candidate_dossier_support = _extract_candidate_dossier_support_trade_dates(reports_root, focus_ticker)
+    candidate_dossier_support_trade_dates = list(candidate_dossier_support.get("supporting_trade_dates") or [])
+    candidate_dossier_support_trade_date_count = int(candidate_dossier_support.get("supporting_trade_date_count") or 0)
+    combined_trade_dates = sorted(set(distinct_trade_dates) | set(candidate_dossier_support_trade_dates))
+    target_window_count = 2
+    required_positive_rate_delta = 0.1
+    required_mean_return_delta = 0.02
+    observed_window_count = len(combined_trade_dates) or len(distinct_report_dirs)
+    candidate_dossier_same_trade_date_variant_credit = float(candidate_dossier_support.get("same_trade_date_variant_credit") or 0.0)
+    current_plan_visibility_summary = dict(candidate_dossier_support.get("current_plan_visibility_summary") or {})
+    weighted_observed_window_credit = round(min(float(target_window_count), observed_window_count + candidate_dossier_same_trade_date_variant_credit), 4)
+    weighted_missing_window_credit = round(max(0.0, float(target_window_count) - weighted_observed_window_credit), 4)
+    missing_window_count = max(target_window_count - observed_window_count, 0)
+    persistence_verdict = (
+        "independent_window_requirement_satisfied"
+        if observed_window_count >= target_window_count
+        else "await_additional_independent_window_persistence"
+    )
+
+    tradeable_surface = dict(objective_monitor.get("tradeable_surface") or {})
+    focus_positive_rate = adopted_execution_row.get("t_plus_2_close_positive_rate")
+    default_positive_rate = tradeable_surface.get("t_plus_2_positive_rate")
+    focus_mean_return = adopted_execution_row.get("t_plus_2_close_return_mean")
+    default_mean_return = tradeable_surface.get("mean_t_plus_2_return")
+    positive_rate_delta = (
+        round(float(focus_positive_rate) - float(default_positive_rate), 4)
+        if focus_positive_rate is not None and default_positive_rate is not None
+        else None
+    )
+    mean_return_delta = (
+        round(float(focus_mean_return) - float(default_mean_return), 4)
+        if focus_mean_return is not None and default_mean_return is not None
+        else None
+    )
+    if positive_rate_delta is None or mean_return_delta is None:
+        edge_verdict = "insufficient_default_btst_edge_data"
+    elif positive_rate_delta > 0 and mean_return_delta > 0:
+        edge_verdict = "provisionally_outperforming_default_btst"
+    elif positive_rate_delta > 0 or mean_return_delta > 0:
+        edge_verdict = "mixed_edge_vs_default_btst"
+    else:
+        edge_verdict = "not_outperforming_default_btst"
+    positive_rate_delta_gap_to_threshold = (
+        round(required_positive_rate_delta - float(positive_rate_delta), 4) if positive_rate_delta is not None else None
+    )
+    mean_return_delta_gap_to_threshold = (
+        round(required_mean_return_delta - float(mean_return_delta), 4) if mean_return_delta is not None else None
+    )
+    if positive_rate_delta is None or mean_return_delta is None:
+        edge_threshold_verdict = "insufficient_default_btst_edge_data"
+    elif positive_rate_delta >= required_positive_rate_delta and mean_return_delta >= required_mean_return_delta:
+        edge_threshold_verdict = "edge_threshold_satisfied"
+    elif positive_rate_delta >= required_positive_rate_delta:
+        edge_threshold_verdict = "mean_return_delta_below_threshold"
+    elif mean_return_delta >= required_mean_return_delta:
+        edge_threshold_verdict = "positive_rate_delta_below_threshold"
+    else:
+        edge_threshold_verdict = "edge_threshold_not_satisfied"
+
+    if persistence_verdict != "independent_window_requirement_satisfied":
+        promotion_merge_review_verdict = "await_additional_independent_window_persistence"
+    elif edge_threshold_verdict != "edge_threshold_satisfied":
+        promotion_merge_review_verdict = "await_stronger_edge_vs_default_btst"
+    else:
+        promotion_merge_review_verdict = "ready_for_default_btst_merge_review"
+    unresolved_requirements: list[str] = []
+    if missing_window_count > 0:
+        unresolved_requirements.append("new_independent_trade_date")
+    if edge_threshold_verdict != "edge_threshold_satisfied":
+        unresolved_requirements.append("edge_threshold_vs_default_btst")
+    blockers_remaining_count = len(unresolved_requirements)
+    ready_after_next_qualifying_window = bool(
+        missing_window_count == 1 and edge_threshold_verdict == "edge_threshold_satisfied"
+    )
+    promotion_path_status = (
+        "merge_review_ready"
+        if promotion_merge_review_verdict == "ready_for_default_btst_merge_review"
+        else (
+            "one_qualifying_window_away"
+            if ready_after_next_qualifying_window
+            else (
+                "collect_more_independent_windows"
+                if missing_window_count > 0
+                else "repair_edge_threshold"
+            )
+        )
+    )
+    next_window_requirement = (
+        "capture_one_new_independent_trade_date_with_edge_thresholds_still_satisfied"
+        if ready_after_next_qualifying_window
+        else "collect_additional_independent_window_and_recheck_edge_thresholds"
+    )
+    next_window_trade_date_rule = (
+        f"must be a new trade_date outside {distinct_trade_dates}"
+        if distinct_trade_dates
+        else "must be a newly observed independent continuation trade_date"
+    )
+    next_window_duplicate_trade_date_verdict = "independent_window_count_unchanged"
+    next_window_quality_requirement = "must land in selected_entries_or_near_miss_entries"
+    next_window_disqualified_bucket_verdict = "await_higher_quality_window_bucket"
+    next_window_edge_regression_merge_review_verdict = "await_stronger_edge_vs_default_btst"
+    next_window_qualified_merge_review_verdict = (
+        "ready_for_default_btst_merge_review"
+        if ready_after_next_qualifying_window
+        else (
+            "await_additional_independent_window_persistence"
+            if missing_window_count > 1
+            else promotion_merge_review_verdict
+        )
+    )
+
+    next_step = (
+        "Wait for one more independent continuation window before governance can evaluate merge readiness."
+        if promotion_merge_review_verdict == "await_additional_independent_window_persistence"
+        else (
+            "Independent-window requirement is satisfied; keep the lane isolated until its edge exceeds the default BTST merge thresholds."
+            if promotion_merge_review_verdict == "await_stronger_edge_vs_default_btst"
+            else "Independent-window and edge thresholds are satisfied; governance can review whether the continuation lane is ready to merge into default BTST."
+        )
+    )
+
+    return {
+        "focus_ticker": focus_ticker,
+        "observed_independent_window_count": observed_window_count,
+        "target_independent_window_count": target_window_count,
+        "missing_independent_window_count": missing_window_count,
+        "evidence_trade_dates": distinct_trade_dates,
+        "combined_evidence_trade_dates": combined_trade_dates,
+        "qualifying_bucket_allowlist": qualifying_bucket_allowlist,
+        "qualifying_window_buckets": sorted(set(qualifying_window_buckets)),
+        "disqualified_window_trade_dates": distinct_disqualified_trade_dates,
+        "disqualified_window_buckets": sorted(set(disqualified_window_buckets)),
+        "candidate_dossier_support_trade_dates": candidate_dossier_support_trade_dates,
+        "candidate_dossier_support_trade_date_count": candidate_dossier_support_trade_date_count,
+        "candidate_dossier_supporting_window_variant_count": int(candidate_dossier_support.get("supporting_window_variant_count") or 0),
+        "candidate_dossier_same_trade_date_variant_count": int(candidate_dossier_support.get("same_trade_date_variant_count") or 0),
+        "candidate_dossier_same_trade_date_variant_credit": candidate_dossier_same_trade_date_variant_credit,
+        "candidate_dossier_current_plan_visible_trade_dates": list(current_plan_visibility_summary.get("current_plan_visible_trade_dates") or []),
+        "candidate_dossier_current_plan_visible_trade_date_count": int(current_plan_visibility_summary.get("current_plan_visible_trade_date_count") or 0),
+        "candidate_dossier_current_plan_visibility_gap_trade_dates": list(current_plan_visibility_summary.get("current_plan_visibility_gap_trade_dates") or []),
+        "candidate_dossier_current_plan_visibility_gap_trade_date_count": int(current_plan_visibility_summary.get("current_plan_visibility_gap_trade_date_count") or 0),
+        "candidate_dossier_raw_daily_events_trade_dates": list(current_plan_visibility_summary.get("raw_daily_events_trade_dates") or []),
+        "candidate_dossier_raw_daily_events_trade_date_count": int(current_plan_visibility_summary.get("raw_daily_events_trade_date_count") or 0),
+        "candidate_dossier_recent_supporting_window_count": int(candidate_dossier_support.get("recent_supporting_window_count") or 0),
+        "candidate_dossier_recent_window_count": int(candidate_dossier_support.get("recent_window_count") or 0),
+        "candidate_dossier_recent_validation_verdict": candidate_dossier_support.get("recent_validation_verdict"),
+        "candidate_dossier_recent_tier_verdict": candidate_dossier_support.get("recent_tier_verdict"),
+        "weighted_observed_window_credit": weighted_observed_window_credit,
+        "weighted_missing_window_credit": weighted_missing_window_credit,
+        "promotion_path_status": promotion_path_status,
+        "blockers_remaining_count": blockers_remaining_count,
+        "unresolved_requirements": unresolved_requirements,
+        "persistence_verdict": persistence_verdict,
+        "provisional_default_btst_edge_verdict": edge_verdict,
+        "required_positive_rate_delta_vs_default_btst": required_positive_rate_delta,
+        "required_mean_return_delta_vs_default_btst": required_mean_return_delta,
+        "focus_t_plus_2_positive_rate": focus_positive_rate,
+        "default_btst_t_plus_2_positive_rate": default_positive_rate,
+        "t_plus_2_positive_rate_delta_vs_default_btst": positive_rate_delta,
+        "t_plus_2_positive_rate_delta_gap_to_threshold": positive_rate_delta_gap_to_threshold,
+        "focus_t_plus_2_mean_return": focus_mean_return,
+        "default_btst_t_plus_2_mean_return": default_mean_return,
+        "t_plus_2_mean_return_delta_vs_default_btst": mean_return_delta,
+        "t_plus_2_mean_return_delta_gap_to_threshold": mean_return_delta_gap_to_threshold,
+        "edge_threshold_verdict": edge_threshold_verdict,
+        "promotion_merge_review_verdict": promotion_merge_review_verdict,
+        "ready_after_next_qualifying_window": ready_after_next_qualifying_window,
+        "next_window_requirement": next_window_requirement,
+        "next_window_trade_date_rule": next_window_trade_date_rule,
+        "next_window_duplicate_trade_date_verdict": next_window_duplicate_trade_date_verdict,
+        "next_window_quality_requirement": next_window_quality_requirement,
+        "next_window_disqualified_bucket_verdict": next_window_disqualified_bucket_verdict,
+        "next_window_edge_regression_merge_review_verdict": next_window_edge_regression_merge_review_verdict,
+        "next_window_qualified_merge_review_verdict": next_window_qualified_merge_review_verdict,
+        "next_step": next_step,
+    }
+
+
+def _build_default_merge_review_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_default_merge_review_latest.json")
+
+
+def _build_default_merge_historical_counterfactual_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_default_merge_historical_counterfactual_latest.json")
+
+
+def _build_continuation_merge_candidate_ranking_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_continuation_merge_candidate_ranking_latest.json")
+
+
+def _build_default_merge_strict_counterfactual_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_default_merge_strict_counterfactual_latest.json")
+
+
+def _build_merge_replay_validation_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_merge_replay_validation_latest.json")
+
+
+def _build_prepared_breakout_relief_validation_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_prepared_breakout_relief_validation_latest.json")
+
+
+def _build_prepared_breakout_cohort_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_prepared_breakout_cohort_latest.json")
+
+
+def _build_prepared_breakout_residual_surface_summary(reports_root: Path) -> dict[str, Any]:
+    return _optional_report_json(reports_root / "btst_prepared_breakout_residual_surface_latest.json")
+
+
+def _collect_governance_synthesis_evidence_dirs(reports_root: Path, latest_btst_run: dict[str, Any] | None = None) -> list[str]:
+    evidence_dirs: list[str] = []
+    if latest_btst_run:
+        latest_report_dir = str(latest_btst_run.get("report_dir") or "").strip()
+        if latest_report_dir:
+            evidence_dirs.append(latest_report_dir)
+    upstream_handoff = _optional_report_json(reports_root / "btst_candidate_pool_upstream_handoff_board_latest.json")
+    for row in list(upstream_handoff.get("board_rows") or []):
+        report_dir = str(dict(row or {}).get("latest_followup_report_dir") or "").strip()
+        if report_dir:
+            evidence_dirs.append(report_dir)
+    deduped_dirs: list[str] = []
+    seen: set[str] = set()
+    for report_dir in evidence_dirs:
+        if report_dir in seen:
+            continue
+        seen.add(report_dir)
+        deduped_dirs.append(report_dir)
+    return deduped_dirs
 CANDIDATE_ENTRY_FRONTIER_JSON = "btst_candidate_entry_frontier_20260330.json"
 CANDIDATE_ENTRY_STRUCTURAL_VALIDATION_JSON = "selection_target_structural_variants_candidate_entry_current_window_20260330.json"
 CANDIDATE_ENTRY_SCORE_FRONTIER_JSON = "btst_score_construction_frontier_20260330.json"
@@ -283,6 +756,110 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "is_latest": True,
         "question": "今天收盘到底验证了什么，明天该如何理解当前 BTST 结论",
         "view_order": 2,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_default_merge_review_latest",
+        "path": "data/reports/btst_default_merge_review_latest.md",
+        "report_type": "btst_default_merge_review",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "当前哪个 continuation 焦点票已经 ready for default BTST merge review",
+        "view_order": 3,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_default_merge_historical_counterfactual_latest",
+        "path": "data/reports/btst_default_merge_historical_counterfactual_latest.md",
+        "report_type": "btst_default_merge_historical_counterfactual",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "如果把 merge-review-ready continuation edge 并入 default BTST，历史胜率和收益会怎样变化",
+        "view_order": 4,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_continuation_merge_candidate_ranking_latest",
+        "path": "data/reports/btst_continuation_merge_candidate_ranking_latest.md",
+        "report_type": "btst_continuation_merge_candidate_ranking",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "当前 continuation 候选里，哪只票最值得沿 default BTST merge 路径继续推进",
+        "view_order": 5,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_default_merge_strict_counterfactual_latest",
+        "path": "data/reports/btst_default_merge_strict_counterfactual_latest.md",
+        "report_type": "btst_default_merge_strict_counterfactual",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "在去重重叠样本后，merge-review-ready continuation edge 并入 default BTST 是否仍有明显 uplift",
+        "view_order": 6,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_merge_replay_validation_latest",
+        "path": "data/reports/btst_merge_replay_validation_latest.md",
+        "report_type": "btst_merge_replay_validation",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "当前 merge-approved continuation edge 在历史 replay 输入上，能否把焦点票从 baseline 提升到 near_miss 或 selected",
+        "view_order": 7,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_prepared_breakout_relief_validation_latest",
+        "path": "data/reports/btst_prepared_breakout_relief_validation_latest.md",
+        "report_type": "btst_prepared_breakout_relief_validation",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "prepared-breakout relief 在多窗口上是否稳定支撑当前焦点票",
+        "view_order": 8,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_prepared_breakout_cohort_latest",
+        "path": "data/reports/btst_prepared_breakout_cohort_latest.md",
+        "report_type": "btst_prepared_breakout_cohort",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "当前 profile 下哪些 prepared-breakout ticker 与 300505 最像、下一只该验证谁",
+        "view_order": 9,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_prepared_breakout_residual_surface_latest",
+        "path": "data/reports/btst_prepared_breakout_residual_surface_latest.md",
+        "report_type": "btst_prepared_breakout_residual_surface",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "为什么 600988 这类 prepared-breakout residual surface 不能直接继承 300505 uplift",
+        "view_order": 10,
         "time_scope": {"label": "rolling"},
         "source_kind": "generated_runtime_artifact",
     },
@@ -900,6 +1477,14 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "entry_ids": [
             "btst_open_ready_delta_latest",
             "btst_latest_close_validation_latest",
+            "btst_default_merge_review_latest",
+            "btst_default_merge_historical_counterfactual_latest",
+            "btst_continuation_merge_candidate_ranking_latest",
+            "btst_default_merge_strict_counterfactual_latest",
+            "btst_merge_replay_validation_latest",
+            "btst_prepared_breakout_relief_validation_latest",
+            "btst_prepared_breakout_cohort_latest",
+            "btst_prepared_breakout_residual_surface_latest",
             "btst_nightly_control_tower_latest",
             "btst_governance_synthesis_latest",
             "btst_tplus1_tplus2_objective_monitor_latest",
@@ -943,6 +1528,14 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "entry_ids": [
             "btst_open_ready_delta_latest",
             "btst_latest_close_validation_latest",
+            "btst_default_merge_review_latest",
+            "btst_default_merge_historical_counterfactual_latest",
+            "btst_continuation_merge_candidate_ranking_latest",
+            "btst_default_merge_strict_counterfactual_latest",
+            "btst_merge_replay_validation_latest",
+            "btst_prepared_breakout_relief_validation_latest",
+            "btst_prepared_breakout_cohort_latest",
+            "btst_prepared_breakout_residual_surface_latest",
             "btst_tplus1_tplus2_objective_monitor_latest",
             "btst_candidate_pool_lane_objective_support_latest",
             "btst_candidate_pool_rebucket_objective_validation_latest",
@@ -1594,10 +2187,7 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             )
             candidate_pool_rebucket_shadow_pack_json_path.write_text(json.dumps(candidate_pool_rebucket_shadow_pack_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             candidate_pool_rebucket_shadow_pack_md_path.write_text(render_btst_candidate_pool_rebucket_shadow_pack_markdown(candidate_pool_rebucket_shadow_pack_analysis), encoding="utf-8")
-            if rebucket_candidates:
-                candidate_pool_rebucket_shadow_pack_status = "refreshed"
-            else:
-                candidate_pool_rebucket_shadow_pack_status = str(candidate_pool_rebucket_shadow_pack_analysis.get("shadow_status") or "skipped_no_rebucket_candidate")
+            candidate_pool_rebucket_shadow_pack_status = str(candidate_pool_rebucket_shadow_pack_analysis.get("shadow_status") or "skipped_no_rebucket_candidate")
 
             candidate_pool_rebucket_objective_validation_analysis = analyze_btst_candidate_pool_rebucket_objective_validation(
                 candidate_pool_recall_dossier_json_path,
@@ -1624,14 +2214,6 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             candidate_pool_rebucket_comparison_bundle_md_path.write_text(render_btst_candidate_pool_rebucket_comparison_bundle_markdown(candidate_pool_rebucket_comparison_bundle_analysis), encoding="utf-8")
             candidate_pool_rebucket_comparison_bundle_status = str(candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status") or "refreshed")
 
-            candidate_pool_lane_pair_board_analysis = analyze_btst_candidate_pool_lane_pair_board(
-                candidate_pool_corridor_shadow_pack_json_path,
-                candidate_pool_rebucket_comparison_bundle_json_path,
-            )
-            candidate_pool_lane_pair_board_json_path.write_text(json.dumps(candidate_pool_lane_pair_board_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            candidate_pool_lane_pair_board_md_path.write_text(render_btst_candidate_pool_lane_pair_board_markdown(candidate_pool_lane_pair_board_analysis), encoding="utf-8")
-            candidate_pool_lane_pair_board_status = str(candidate_pool_lane_pair_board_analysis.get("pair_status") or "refreshed")
-
             candidate_pool_upstream_handoff_board_analysis = analyze_btst_candidate_pool_upstream_handoff_board(
                 no_candidate_entry_failure_dossier_json_path,
                 watchlist_recall_dossier_path=watchlist_recall_dossier_json_path,
@@ -1640,6 +2222,15 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             candidate_pool_upstream_handoff_board_json_path.write_text(json.dumps(candidate_pool_upstream_handoff_board_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             candidate_pool_upstream_handoff_board_md_path.write_text(render_btst_candidate_pool_upstream_handoff_board_markdown(candidate_pool_upstream_handoff_board_analysis), encoding="utf-8")
             candidate_pool_upstream_handoff_board_status = str(candidate_pool_upstream_handoff_board_analysis.get("board_status") or "refreshed")
+
+            candidate_pool_lane_pair_board_analysis = analyze_btst_candidate_pool_lane_pair_board(
+                candidate_pool_corridor_shadow_pack_json_path,
+                candidate_pool_rebucket_comparison_bundle_json_path,
+                upstream_handoff_board_path=candidate_pool_upstream_handoff_board_json_path,
+            )
+            candidate_pool_lane_pair_board_json_path.write_text(json.dumps(candidate_pool_lane_pair_board_analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            candidate_pool_lane_pair_board_md_path.write_text(render_btst_candidate_pool_lane_pair_board_markdown(candidate_pool_lane_pair_board_analysis), encoding="utf-8")
+            candidate_pool_lane_pair_board_status = str(candidate_pool_lane_pair_board_analysis.get("pair_status") or "refreshed")
 
             candidate_pool_corridor_uplift_runbook_analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
                 candidate_pool_recall_dossier_json_path,
@@ -1745,6 +2336,8 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "bundle_status": candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status"),
                 "structural_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("structural_leader") or {}).get("priority_handoff"),
                 "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
+                "rebucket_ticker": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("ticker")
+                or (list(dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("tickers") or [])[:1] or [None])[0],
             },
             "candidate_pool_lane_pair_board_status": candidate_pool_lane_pair_board_status,
             "candidate_pool_lane_pair_board_json": candidate_pool_lane_pair_board_json_path.as_posix() if candidate_pool_lane_pair_board_analysis else None,
@@ -1752,6 +2345,29 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "pair_status": candidate_pool_lane_pair_board_analysis.get("pair_status"),
                 "board_leader": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("ticker"),
                 "leader_lane_family": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("lane_family"),
+                "leader_governance_status": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_status"),
+                "leader_governance_blocker": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_blocker"),
+                "leader_current_decision": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("current_decision"),
+                "parallel_watch_ticker": next(
+                    (row.get("ticker") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                    None,
+                ),
+                "parallel_watch_governance_blocker": next(
+                    (row.get("governance_blocker") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                    None,
+                ),
+                "parallel_watch_same_source_sample_count": next(
+                    (row.get("governance_same_source_sample_count") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                    None,
+                ),
+                "parallel_watch_next_close_positive_rate": next(
+                    (row.get("governance_same_source_next_close_positive_rate") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                    None,
+                ),
+                "parallel_watch_next_close_return_mean": next(
+                    (row.get("governance_same_source_next_close_return_mean") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                    None,
+                ),
             },
             "candidate_pool_upstream_handoff_board_status": candidate_pool_upstream_handoff_board_status,
             "candidate_pool_upstream_handoff_board_json": candidate_pool_upstream_handoff_board_json_path.as_posix() if candidate_pool_upstream_handoff_board_analysis else None,
@@ -1759,6 +2375,11 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "board_status": candidate_pool_upstream_handoff_board_analysis.get("board_status"),
                 "focus_tickers": list(candidate_pool_upstream_handoff_board_analysis.get("focus_tickers") or [])[:3],
                 "first_broken_handoff_counts": dict(dict(candidate_pool_upstream_handoff_board_analysis.get("stage_summary") or {}).get("first_broken_handoff_counts") or {}),
+                "historical_shadow_probe_tickers": [
+                    str(row.get("ticker") or "")
+                    for row in list(candidate_pool_upstream_handoff_board_analysis.get("board_rows") or [])
+                    if str(row.get("board_phase") or "") == "historical_shadow_probe_gap" and str(row.get("ticker") or "").strip()
+                ][:3],
             },
             "candidate_pool_corridor_uplift_runbook_status": candidate_pool_corridor_uplift_runbook_status,
             "candidate_pool_corridor_uplift_runbook_json": candidate_pool_corridor_uplift_runbook_json_path.as_posix() if candidate_pool_corridor_uplift_runbook_analysis else None,
@@ -1767,6 +2388,15 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "primary_shadow_replay": candidate_pool_corridor_uplift_runbook_analysis.get("primary_shadow_replay"),
                 "parallel_watch_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("parallel_watch_tickers") or [])[:3],
             },
+            "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
+            "continuation_promotion_ready_summary": _build_continuation_promotion_ready_summary(resolved_reports_root),
+            "default_merge_review_summary": _build_default_merge_review_summary(resolved_reports_root),
+            "default_merge_historical_counterfactual_summary": _build_default_merge_historical_counterfactual_summary(resolved_reports_root),
+            "continuation_merge_candidate_ranking_summary": _build_continuation_merge_candidate_ranking_summary(resolved_reports_root),
+            "default_merge_strict_counterfactual_summary": _build_default_merge_strict_counterfactual_summary(resolved_reports_root),
+            "merge_replay_validation_summary": _build_merge_replay_validation_summary(resolved_reports_root),
+            "transient_probe_summary": _build_transient_probe_summary(resolved_reports_root),
+            "execution_constraint_rollup": _build_execution_constraint_rollup(resolved_reports_root),
             "candidate_pool_recall_action_queue_task_ids": [
                 str(row.get("task_id") or "")
                 for row in list(candidate_pool_recall_dossier_analysis.get("action_queue") or [])[:3]
@@ -1962,6 +2592,8 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "bundle_status": candidate_pool_rebucket_comparison_bundle_analysis.get("bundle_status"),
             "structural_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("structural_leader") or {}).get("priority_handoff"),
             "objective_leader": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("objective_leader") or {}).get("priority_handoff"),
+            "rebucket_ticker": dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("ticker")
+            or (list(dict(candidate_pool_rebucket_comparison_bundle_analysis.get("rebucket_objective_row") or {}).get("tickers") or [])[:1] or [None])[0],
         },
         "candidate_pool_lane_pair_board_status": candidate_pool_lane_pair_board_status,
         "candidate_pool_lane_pair_board_json": candidate_pool_lane_pair_board_json_path.as_posix() if candidate_pool_lane_pair_board_analysis else None,
@@ -1969,6 +2601,29 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "pair_status": candidate_pool_lane_pair_board_analysis.get("pair_status"),
             "board_leader": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("ticker"),
             "leader_lane_family": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("lane_family"),
+            "leader_governance_status": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_status"),
+            "leader_governance_blocker": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("governance_blocker"),
+            "leader_current_decision": dict(candidate_pool_lane_pair_board_analysis.get("board_leader") or {}).get("current_decision"),
+            "parallel_watch_ticker": next(
+                (row.get("ticker") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                None,
+            ),
+            "parallel_watch_governance_blocker": next(
+                (row.get("governance_blocker") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                None,
+            ),
+            "parallel_watch_same_source_sample_count": next(
+                (row.get("governance_same_source_sample_count") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                None,
+            ),
+            "parallel_watch_next_close_positive_rate": next(
+                (row.get("governance_same_source_next_close_positive_rate") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                None,
+            ),
+            "parallel_watch_next_close_return_mean": next(
+                (row.get("governance_same_source_next_close_return_mean") for row in list(candidate_pool_lane_pair_board_analysis.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"),
+                None,
+            ),
         },
         "candidate_pool_upstream_handoff_board_status": candidate_pool_upstream_handoff_board_status,
         "candidate_pool_upstream_handoff_board_json": candidate_pool_upstream_handoff_board_json_path.as_posix() if candidate_pool_upstream_handoff_board_analysis else None,
@@ -1976,6 +2631,11 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "board_status": candidate_pool_upstream_handoff_board_analysis.get("board_status"),
             "focus_tickers": list(candidate_pool_upstream_handoff_board_analysis.get("focus_tickers") or [])[:3],
             "first_broken_handoff_counts": dict(dict(candidate_pool_upstream_handoff_board_analysis.get("stage_summary") or {}).get("first_broken_handoff_counts") or {}),
+            "historical_shadow_probe_tickers": [
+                str(row.get("ticker") or "")
+                for row in list(candidate_pool_upstream_handoff_board_analysis.get("board_rows") or [])
+                if str(row.get("board_phase") or "") == "historical_shadow_probe_gap" and str(row.get("ticker") or "").strip()
+            ][:3],
         },
         "candidate_pool_corridor_uplift_runbook_status": candidate_pool_corridor_uplift_runbook_status,
         "candidate_pool_corridor_uplift_runbook_json": candidate_pool_corridor_uplift_runbook_json_path.as_posix() if candidate_pool_corridor_uplift_runbook_analysis else None,
@@ -1984,6 +2644,18 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "primary_shadow_replay": candidate_pool_corridor_uplift_runbook_analysis.get("primary_shadow_replay"),
             "parallel_watch_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("parallel_watch_tickers") or [])[:3],
         },
+        "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
+        "continuation_promotion_ready_summary": _build_continuation_promotion_ready_summary(resolved_reports_root),
+        "default_merge_review_summary": _build_default_merge_review_summary(resolved_reports_root),
+        "default_merge_historical_counterfactual_summary": _build_default_merge_historical_counterfactual_summary(resolved_reports_root),
+        "continuation_merge_candidate_ranking_summary": _build_continuation_merge_candidate_ranking_summary(resolved_reports_root),
+        "default_merge_strict_counterfactual_summary": _build_default_merge_strict_counterfactual_summary(resolved_reports_root),
+        "merge_replay_validation_summary": _build_merge_replay_validation_summary(resolved_reports_root),
+        "prepared_breakout_relief_validation_summary": _build_prepared_breakout_relief_validation_summary(resolved_reports_root),
+        "prepared_breakout_cohort_summary": _build_prepared_breakout_cohort_summary(resolved_reports_root),
+        "prepared_breakout_residual_surface_summary": _build_prepared_breakout_residual_surface_summary(resolved_reports_root),
+        "transient_probe_summary": _build_transient_probe_summary(resolved_reports_root),
+        "execution_constraint_rollup": _build_execution_constraint_rollup(resolved_reports_root),
         "candidate_pool_recall_action_queue_task_ids": [
             str(row.get("task_id") or "")
             for row in list(candidate_pool_recall_dossier_analysis.get("action_queue") or [])[:3]
@@ -2317,6 +2989,7 @@ def refresh_btst_governance_synthesis_artifacts(
 
     output_json_path = resolved_reports_root / BTST_GOVERNANCE_SYNTHESIS_JSON
     output_md_path = resolved_reports_root / BTST_GOVERNANCE_SYNTHESIS_MD
+    evidence_btst_report_dirs = _collect_governance_synthesis_evidence_dirs(resolved_reports_root, latest_btst_run=latest_btst_run)
     try:
         analysis = analyze_btst_governance_synthesis(
             resolved_reports_root,
@@ -2328,6 +3001,7 @@ def refresh_btst_governance_synthesis_artifacts(
             structural_shadow_runbook_path=required_inputs["structural_shadow_runbook"],
             candidate_entry_governance_path=required_inputs["candidate_entry_governance"],
             latest_btst_report_dir=latest_btst_run.get("report_dir") if latest_btst_run else None,
+            evidence_btst_report_dirs=evidence_btst_report_dirs or None,
         )
         output_json_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         output_md_path.write_text(render_btst_governance_synthesis_markdown(analysis), encoding="utf-8")
@@ -2346,6 +3020,7 @@ def refresh_btst_governance_synthesis_artifacts(
         "waiting_lane_count": analysis.get("waiting_lane_count"),
         "latest_trade_date": latest_followup.get("trade_date"),
         "latest_selected_count": latest_followup.get("selected_count"),
+        "evidence_btst_report_dir_count": len(evidence_btst_report_dirs),
         "output_json": output_json_path.as_posix(),
     }
 
@@ -2612,6 +3287,18 @@ def generate_reports_manifest(
         "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
         "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
+        "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
+        "continuation_promotion_ready_summary": _build_continuation_promotion_ready_summary(resolved_reports_root),
+        "default_merge_review_summary": _build_default_merge_review_summary(resolved_reports_root),
+        "default_merge_historical_counterfactual_summary": _build_default_merge_historical_counterfactual_summary(resolved_reports_root),
+        "continuation_merge_candidate_ranking_summary": _build_continuation_merge_candidate_ranking_summary(resolved_reports_root),
+        "default_merge_strict_counterfactual_summary": _build_default_merge_strict_counterfactual_summary(resolved_reports_root),
+        "merge_replay_validation_summary": _build_merge_replay_validation_summary(resolved_reports_root),
+        "prepared_breakout_relief_validation_summary": _build_prepared_breakout_relief_validation_summary(resolved_reports_root),
+        "prepared_breakout_cohort_summary": _build_prepared_breakout_cohort_summary(resolved_reports_root),
+        "prepared_breakout_residual_surface_summary": _build_prepared_breakout_residual_surface_summary(resolved_reports_root),
+        "transient_probe_summary": _build_transient_probe_summary(resolved_reports_root),
+        "execution_constraint_rollup": _build_execution_constraint_rollup(resolved_reports_root),
         "latest_btst_run": None,
         "reading_paths": reading_paths,
         "entries": entries,
@@ -2777,7 +3464,7 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         if candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_summary"):
             summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_summary") or {})
             lines.append(
-                f"- candidate_entry_shadow_candidate_pool_lane_pair_board_summary: pair_status={summary.get('pair_status')} board_leader={summary.get('board_leader')} leader_lane_family={summary.get('leader_lane_family')}"
+                f"- candidate_entry_shadow_candidate_pool_lane_pair_board_summary: pair_status={summary.get('pair_status')} board_leader={summary.get('board_leader')} leader_lane_family={summary.get('leader_lane_family')} leader_governance_status={summary.get('leader_governance_status')} parallel_watch_ticker={summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={summary.get('parallel_watch_next_close_return_mean')}"
             )
         if candidate_entry_shadow_refresh.get("candidate_pool_upstream_handoff_board_status") is not None:
             lines.append(f"- candidate_entry_shadow_candidate_pool_upstream_handoff_board_status: {candidate_entry_shadow_refresh.get('candidate_pool_upstream_handoff_board_status')}")
@@ -2793,6 +3480,73 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
             lines.append(
                 f"- candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_summary: runbook_status={summary.get('runbook_status')} primary_shadow_replay={summary.get('primary_shadow_replay')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}"
             )
+    if manifest.get("continuation_focus_summary"):
+        summary = dict(manifest.get("continuation_focus_summary") or {})
+        lines.append(
+            f"- continuation_focus_summary: focus_ticker={summary.get('focus_ticker')} promotion_review_verdict={summary.get('promotion_review_verdict')} promotion_gate_verdict={summary.get('promotion_gate_verdict')} watchlist_execution_verdict={summary.get('watchlist_execution_verdict')} focus_watch_validation_status={summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={summary.get('eligible_gate_verdict')} execution_gate_verdict={summary.get('execution_gate_verdict')} execution_gate_blockers={summary.get('execution_gate_blockers')} execution_overlay_verdict={summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={summary.get('execution_overlay_lane_support_ratio')} governance_status={summary.get('governance_status')}"
+        )
+    if manifest.get("continuation_promotion_ready_summary"):
+        summary = dict(manifest.get("continuation_promotion_ready_summary") or {})
+        lines.append(
+            f"- continuation_promotion_ready_summary: focus_ticker={summary.get('focus_ticker')} promotion_path_status={summary.get('promotion_path_status')} blockers_remaining_count={summary.get('blockers_remaining_count')} observed_independent_window_count={summary.get('observed_independent_window_count')} weighted_observed_window_credit={summary.get('weighted_observed_window_credit')} missing_independent_window_count={summary.get('missing_independent_window_count')} weighted_missing_window_credit={summary.get('weighted_missing_window_credit')} candidate_dossier_support_trade_date_count={summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={summary.get('candidate_dossier_same_trade_date_variant_count')} candidate_dossier_same_trade_date_variant_credit={summary.get('candidate_dossier_same_trade_date_variant_credit')} persistence_verdict={summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={summary.get('ready_after_next_qualifying_window')} next_window_requirement={summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')}"
+        )
+    if manifest.get("default_merge_review_summary"):
+        summary = dict(manifest.get("default_merge_review_summary") or {})
+        counterfactual = dict(summary.get("counterfactual_validation") or {})
+        lines.append(
+            f"- default_merge_review_summary: focus_ticker={summary.get('focus_ticker')} merge_review_verdict={summary.get('merge_review_verdict')} operator_action={summary.get('operator_action')} counterfactual_verdict={counterfactual.get('counterfactual_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_positive_rate_margin_vs_threshold={counterfactual.get('t_plus_2_positive_rate_margin_vs_threshold')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')} t_plus_2_mean_return_margin_vs_threshold={counterfactual.get('t_plus_2_mean_return_margin_vs_threshold')}"
+        )
+    if manifest.get("default_merge_historical_counterfactual_summary"):
+        summary = dict(manifest.get("default_merge_historical_counterfactual_summary") or {})
+        uplift = dict(summary.get("uplift_vs_default_btst") or {})
+        lines.append(
+            f"- default_merge_historical_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} counterfactual_verdict={summary.get('counterfactual_verdict')} merged_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} merged_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}"
+        )
+    if manifest.get("continuation_merge_candidate_ranking_summary"):
+        summary = dict(manifest.get("continuation_merge_candidate_ranking_summary") or {})
+        top_candidate = dict(summary.get("top_candidate") or {})
+        lines.append(
+            f"- continuation_merge_candidate_ranking_summary: candidate_count={summary.get('candidate_count')} top_ticker={top_candidate.get('ticker')} top_stage={top_candidate.get('promotion_path_status') or top_candidate.get('promotion_readiness_verdict')} top_positive_rate_delta={top_candidate.get('t_plus_2_positive_rate_delta_vs_default_btst')} top_mean_return_delta={top_candidate.get('mean_t_plus_2_return_delta_vs_default_btst')}"
+        )
+    if manifest.get("default_merge_strict_counterfactual_summary"):
+        summary = dict(manifest.get("default_merge_strict_counterfactual_summary") or {})
+        uplift = dict(summary.get("strict_uplift_vs_default_btst") or {})
+        overlap = dict(summary.get("overlap_diagnostics") or {})
+        lines.append(
+            f"- default_merge_strict_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} strict_counterfactual_verdict={summary.get('strict_counterfactual_verdict')} overlap_case_count={overlap.get('overlap_case_count')} strict_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} strict_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}"
+        )
+    if manifest.get("merge_replay_validation_summary"):
+        summary = dict(manifest.get("merge_replay_validation_summary") or {})
+        lines.append(
+            f"- merge_replay_validation_summary: overall_verdict={summary.get('overall_verdict')} focus_tickers={summary.get('focus_tickers')} promoted_to_selected_count={summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={summary.get('promoted_to_near_miss_count')} relief_applied_count={summary.get('relief_applied_count')} recommended_next_lever={summary.get('recommended_next_lever')} recommended_signal_levers={summary.get('recommended_signal_levers')}"
+        )
+    if manifest.get("prepared_breakout_relief_validation_summary"):
+        summary = dict(manifest.get("prepared_breakout_relief_validation_summary") or {})
+        outcome_support = dict(summary.get("outcome_support") or {})
+        lines.append(
+            f"- prepared_breakout_relief_validation_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} selected_relief_window_count={summary.get('selected_relief_window_count')} selected_relief_alignment_rate={summary.get('selected_relief_alignment_rate')} outcome_support={outcome_support.get('evidence_status')}"
+        )
+    if manifest.get("prepared_breakout_cohort_summary"):
+        summary = dict(manifest.get("prepared_breakout_cohort_summary") or {})
+        next_candidate = dict(summary.get("next_candidate") or {})
+        lines.append(
+            f"- prepared_breakout_cohort_summary: verdict={summary.get('verdict')} candidate_count={summary.get('candidate_count')} selected_frontier_candidate_count={summary.get('selected_frontier_candidate_count')} next_candidate={next_candidate.get('ticker')}"
+        )
+    if manifest.get("prepared_breakout_residual_surface_summary"):
+        summary = dict(manifest.get("prepared_breakout_residual_surface_summary") or {})
+        lines.append(
+            f"- prepared_breakout_residual_surface_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} focus_report_dir_count={summary.get('focus_report_dir_count')}"
+        )
+    if manifest.get("transient_probe_summary"):
+        summary = dict(manifest.get("transient_probe_summary") or {})
+        lines.append(
+            f"- transient_probe_summary: ticker={summary.get('ticker')} status={summary.get('status')} blocker={summary.get('blocker')} candidate_source={summary.get('candidate_source')} score_state={summary.get('score_state')} downstream_bottleneck={summary.get('downstream_bottleneck')} historical_sample_count={summary.get('historical_sample_count')} historical_next_close_positive_rate={summary.get('historical_next_close_positive_rate')}"
+        )
+    if manifest.get("execution_constraint_rollup"):
+        summary = dict(manifest.get("execution_constraint_rollup") or {})
+        lines.append(
+            f"- execution_constraint_rollup: constraint_count={summary.get('constraint_count')} continuation_focus_tickers={summary.get('continuation_focus_tickers')} continuation_blockers={summary.get('continuation_blockers')} shadow_focus_tickers={summary.get('shadow_focus_tickers')} shadow_blockers={summary.get('shadow_blockers')}"
+        )
     btst_score_fail_frontier_refresh = manifest.get("btst_score_fail_frontier_refresh") or {}
     if btst_score_fail_frontier_refresh:
         lines.append(f"- btst_score_fail_frontier_refresh_status: {btst_score_fail_frontier_refresh.get('status')}")

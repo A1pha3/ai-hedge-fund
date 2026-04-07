@@ -253,6 +253,13 @@ def _build_replay_input_from_selection_snapshot(snapshot_payload: dict[str, Any]
     }
 
 
+def _merge_replay_short_trade_entries(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    supplemental_entries = [dict(entry or {}) for entry in list(payload.get("supplemental_short_trade_entries") or [])]
+    upstream_shadow_observation_entries = [dict(entry or {}) for entry in list(payload.get("upstream_shadow_observation_entries") or [])]
+    replay_entries = supplemental_entries + upstream_shadow_observation_entries
+    return replay_entries, upstream_shadow_observation_entries
+
+
 def _iter_replay_input_sources(input_path: str | Path) -> list[tuple[Path, dict[str, Any]]]:
     path = Path(input_path)
     if not path.exists():
@@ -536,14 +543,25 @@ def _build_score_diagnostic_row(
     stored_snapshot: dict[str, Any],
     replayed_snapshot: dict[str, Any],
     replay_input_path: Path,
+    replay_entry: dict[str, Any] | None = None,
     filtered_entry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     replayed_metrics = dict(replayed_snapshot.get("metrics_payload") or {})
+    replay_entry_payload = dict(replay_entry or {})
+    candidate_source = (
+        stored_evaluation.get("candidate_source")
+        or replay_entry_payload.get("candidate_source")
+        or replay_entry_payload.get("source")
+    )
+    candidate_reason_codes = list(stored_evaluation.get("candidate_reason_codes") or replay_entry_payload.get("candidate_reason_codes") or replay_entry_payload.get("reasons") or [])
     return {
         "trade_date": trade_date,
         "ticker": ticker,
-        "candidate_source": stored_evaluation.get("candidate_source"),
-        "candidate_reason_codes": list(stored_evaluation.get("candidate_reason_codes") or []),
+        "candidate_source": candidate_source,
+        "candidate_reason_codes": candidate_reason_codes,
+        "merge_approved_breakout_signal_uplift": dict(replay_entry_payload.get("merge_approved_breakout_signal_uplift") or {}),
+        "merge_approved_layer_c_alignment_uplift": dict(replay_entry_payload.get("merge_approved_layer_c_alignment_uplift") or {}),
+        "merge_approved_sector_resonance_uplift": dict(replay_entry_payload.get("merge_approved_sector_resonance_uplift") or {}),
         "delta_classification": stored_evaluation.get("delta_classification"),
         "delta_summary": list(stored_evaluation.get("delta_summary") or []),
         "stored_decision": stored_snapshot.get("decision"),
@@ -640,8 +658,12 @@ def _build_replay_summary_row(analysis: dict[str, Any], *, structural_variant: s
     return row
 
 
-def analyze_selection_target_replay_inputs(
-    input_path: str | Path,
+def load_selection_target_replay_sources(input_path: str | Path) -> list[tuple[Path, dict[str, Any]]]:
+    return _iter_replay_input_sources(input_path)
+
+
+def analyze_selection_target_replay_sources(
+    replay_input_sources: list[tuple[Path, dict[str, Any]]],
     *,
     profile_name: str = "default",
     select_threshold: float | None = None,
@@ -650,9 +672,8 @@ def analyze_selection_target_replay_inputs(
     structural_overrides: dict[str, Any] | None = None,
     focus_tickers: list[str] | None = None,
 ) -> dict[str, Any]:
-    replay_input_sources = _iter_replay_input_sources(input_path)
     if not replay_input_sources:
-        raise FileNotFoundError(f"No {REPLAY_INPUT_FILENAME} or {SELECTION_SNAPSHOT_FILENAME} files found under: {input_path}")
+        raise FileNotFoundError("No replay input sources provided.")
 
     stored_decision_counts: Counter[str] = Counter()
     replayed_decision_counts: Counter[str] = Counter()
@@ -697,6 +718,7 @@ def analyze_selection_target_replay_inputs(
             trade_date = str(payload.get("trade_date") or "")
             target_mode = str(payload.get("target_mode") or "research_only")
             watchlist_entries = list(payload.get("watchlist") or [])
+            replay_short_trade_entries, upstream_shadow_observation_entries = _merge_replay_short_trade_entries(payload)
             rejected_filter_observability = _summarize_candidate_entry_filter_observability(
                 list(payload.get("rejected_entries") or []),
                 entry_filter_rules,
@@ -704,7 +726,7 @@ def analyze_selection_target_replay_inputs(
                 default_candidate_source="watchlist_filter_diagnostics",
             )
             supplemental_filter_observability = _summarize_candidate_entry_filter_observability(
-                list(payload.get("supplemental_short_trade_entries") or []),
+                replay_short_trade_entries,
                 entry_filter_rules,
                 trade_date=trade_date,
                 default_candidate_source="layer_b_boundary",
@@ -716,13 +738,18 @@ def analyze_selection_target_replay_inputs(
                 default_candidate_source="watchlist_filter_diagnostics",
             )
             supplemental_entries, filtered_supplemental_entries = _apply_candidate_entry_filters(
-                list(payload.get("supplemental_short_trade_entries") or []),
+                replay_short_trade_entries,
                 entry_filter_rules,
                 trade_date=trade_date,
                 default_candidate_source="layer_b_boundary",
             )
             filtered_entry_index = {
                 str(entry.get("ticker") or ""): entry for entry in filtered_rejected_entries + filtered_supplemental_entries if str(entry.get("ticker") or "").strip()
+            }
+            replay_entry_index = {
+                str(entry.get("ticker") or ""): entry
+                for entry in list(watchlist_entries) + rejected_entries + supplemental_entries
+                if str(entry.get("ticker") or "").strip()
             }
             buy_order_tickers = {str(ticker) for ticker in list(payload.get("buy_order_tickers") or []) if str(ticker or "").strip()}
             watchlist = _coerce_watchlist_entries(watchlist_entries)
@@ -800,6 +827,7 @@ def analyze_selection_target_replay_inputs(
                             stored_snapshot=dict(stored_snapshots.get(ticker) or {}),
                             replayed_snapshot=dict(replayed_snapshots.get(ticker) or {}),
                             replay_input_path=replay_input_path,
+                            replay_entry=replay_entry_index.get(ticker),
                             filtered_entry=filtered_entry_index.get(ticker),
                         )
                     )
@@ -819,6 +847,7 @@ def analyze_selection_target_replay_inputs(
                     "decision_transition_counts": dict(day_transition_counts.most_common()),
                     "decision_mismatch_count": day_mismatch_count,
                     "source_summary": dict(payload.get("source_summary") or {}),
+                    "upstream_shadow_observation_entry_count": len(upstream_shadow_observation_entries),
                     "candidate_entry_filter_observability": {
                         rule_name: {key: int(value) for key, value in counters.items()}
                         for rule_name, counters in sorted(day_candidate_entry_filter_observability.items())
@@ -855,6 +884,28 @@ def analyze_selection_target_replay_inputs(
         "focus_tickers": sorted(focus_ticker_set),
         "focused_score_diagnostics": sorted(focused_score_diagnostics, key=lambda row: (row["trade_date"], row["ticker"])),
     }
+
+
+def analyze_selection_target_replay_inputs(
+    input_path: str | Path,
+    *,
+    profile_name: str = "default",
+    select_threshold: float | None = None,
+    near_miss_threshold: float | None = None,
+    structural_variant: str = "baseline",
+    structural_overrides: dict[str, Any] | None = None,
+    focus_tickers: list[str] | None = None,
+) -> dict[str, Any]:
+    replay_input_sources = load_selection_target_replay_sources(input_path)
+    return analyze_selection_target_replay_sources(
+        replay_input_sources,
+        profile_name=profile_name,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        structural_variant=structural_variant,
+        structural_overrides=structural_overrides,
+        focus_tickers=focus_tickers,
+    )
 
 
 def analyze_selection_target_threshold_grid(

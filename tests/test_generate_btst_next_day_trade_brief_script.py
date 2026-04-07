@@ -472,6 +472,112 @@ def test_generate_btst_next_day_trade_brief_includes_replay_only_upstream_shadow
     assert "301292" in analysis["recommendation"]
 
 
+def test_generate_btst_next_day_trade_brief_demotes_weak_historical_near_miss_into_opportunity_pool(tmp_path, monkeypatch):
+    report_dir = tmp_path / "report"
+    trade_dir = report_dir / "selection_artifacts" / "2026-04-06"
+    trade_dir.mkdir(parents=True)
+
+    (report_dir / "session_summary.json").write_text(
+        json.dumps({"plan_generation": {"selection_target": "short_trade_only"}}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_catalyst_theme_frontier(report_dir, promoted_tickers=[])
+    (trade_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260406",
+                "target_mode": "short_trade_only",
+                "selection_targets": {
+                    "603778": {
+                        "ticker": "603778",
+                        "short_trade": {
+                            "decision": "near_miss",
+                            "score_target": 0.4512,
+                            "confidence": 0.79,
+                            "preferred_entry_mode": "next_day_breakout_confirmation",
+                            "positive_tags": ["fresh_breakout_candidate"],
+                            "top_reasons": ["trend_acceleration=0.79"],
+                            "gate_status": {"score": "near_miss", "structural": "pass"},
+                            "metrics_payload": {
+                                "breakout_freshness": 0.73,
+                                "trend_acceleration": 0.79,
+                                "volume_expansion_quality": 0.31,
+                                "close_strength": 0.86,
+                                "catalyst_freshness": 0.42,
+                            },
+                            "explainability_payload": {
+                                "candidate_source": "post_gate_liquidity_competition_shadow",
+                            },
+                        },
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        lambda report_dir, actual_trade_date: {
+            "rows": [
+                {
+                    "ticker": "603778",
+                    "trade_date": "2026-03-31",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "watch_candidate_family": "near_miss",
+                    "score_bucket": "0.45_0.50",
+                    "catalyst_bucket": "0.40_0.50",
+                },
+                {
+                    "ticker": "603778",
+                    "trade_date": "2026-04-01",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "watch_candidate_family": "near_miss",
+                    "score_bucket": "0.45_0.50",
+                    "catalyst_bucket": "0.40_0.50",
+                },
+                {
+                    "ticker": "603778",
+                    "trade_date": "2026-04-02",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "watch_candidate_family": "near_miss",
+                    "score_bucket": "0.45_0.50",
+                    "catalyst_bucket": "0.40_0.50",
+                },
+            ],
+            "historical_report_dirs": [],
+            "contributing_report_count": 3,
+            "family_counts": {"near_miss": 3, "opportunity_pool": 0, "selected": 0},
+        },
+    )
+    monkeypatch.setattr(
+        "src.paper_trading.btst_reporting._extract_next_day_outcome",
+        lambda ticker, trade_date, price_cache: {
+            "data_status": "ok",
+            "next_trade_date": "2026-04-07",
+            "next_open_return": -0.01,
+            "next_high_return": 0.0,
+            "next_close_return": -0.02,
+            "next_open_to_close_return": -0.01,
+        },
+    )
+
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-04-06", next_trade_date="2026-04-07")
+
+    assert analysis["summary"]["short_trade_near_miss_count"] == 0
+    assert analysis["summary"]["short_trade_opportunity_pool_count"] == 1
+    assert analysis["near_miss_entries"] == []
+    assert [entry["ticker"] for entry in analysis["opportunity_pool_entries"]] == ["603778"]
+    assert analysis["opportunity_pool_entries"][0]["decision"] == "near_miss"
+    assert analysis["opportunity_pool_entries"][0]["reporting_decision"] == "opportunity_pool"
+    assert analysis["opportunity_pool_entries"][0]["historical_prior"]["demoted_from_near_miss"] is True
+    assert analysis["opportunity_pool_entries"][0]["historical_prior"]["demotion_reason"] == "historical_zero_follow_through"
+    assert analysis["opportunity_pool_entries"][0]["historical_prior"]["execution_quality_label"] == "zero_follow_through"
+    assert analysis["opportunity_pool_entries"][0]["historical_prior"]["execution_priority"] == "low"
+
+
 def test_render_btst_next_day_trade_brief_markdown_mentions_selected_and_excluded_research(tmp_path):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-03-27"

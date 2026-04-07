@@ -15,11 +15,14 @@ from scripts.analyze_btst_tplus2_continuation_peer_scan import (
 )
 from scripts.btst_analysis_utils import build_surface_summary
 from scripts.btst_latest_followup_utils import load_upstream_shadow_followup_history_by_ticker
+from scripts.btst_report_utils import normalize_trade_date
+from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH = REPORTS_DIR / "btst_candidate_pool_upstream_handoff_board_latest.json"
 DEFAULT_LANE_OBJECTIVE_SUPPORT_PATH = REPORTS_DIR / "btst_candidate_pool_lane_objective_support_latest.json"
+DEFAULT_REPORT_MANIFEST_PATH = REPORTS_DIR / "report_manifest_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_tplus2_near_cluster_dossier_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_tplus2_near_cluster_dossier_latest.md"
 TIER_PRIORITY = {
@@ -29,6 +32,113 @@ TIER_PRIORITY = {
     "observation_candidate": 2,
     "unclassified": 3,
 }
+
+
+def _is_continuation_governance_followup(row: dict[str, Any]) -> bool:
+    payload = dict(row or {})
+    latest_followup_decision = str(payload.get("latest_followup_decision") or "").strip()
+    downstream_followup_lane = str(payload.get("downstream_followup_lane") or "").strip()
+    downstream_followup_status = str(payload.get("downstream_followup_status") or "").strip()
+    board_phase = str(payload.get("board_phase") or "").strip()
+    blocker = str(payload.get("downstream_followup_blocker") or "").strip()
+    if downstream_followup_lane == "t_plus_2_continuation_review":
+        return True
+    if downstream_followup_status in {"continuation_confirm_then_review", "continuation_only_confirm_then_review"}:
+        return True
+    if latest_followup_decision and latest_followup_decision not in {"near_miss", "selected"}:
+        return False
+    return board_phase == "post_recall_downstream_followup" and blocker == "no_selected_persistence_or_independent_edge"
+
+
+def governance_followup_payoff_confirmed(
+    governance_objective_support: dict[str, Any],
+    *,
+    recent_tier_window_count: int,
+    recent_window_count: int,
+) -> bool:
+    return (
+        recent_tier_window_count >= 3
+        and recent_window_count >= 3
+        and int(governance_objective_support.get("closed_cycle_count") or 0) >= 10
+        and float(governance_objective_support.get("next_close_positive_rate") or 0.0) >= 0.75
+        and float(governance_objective_support.get("t_plus_2_positive_rate") or 0.0) >= 0.75
+        and float(governance_objective_support.get("t_plus_2_return_hit_rate_at_target") or 0.0) >= 0.75
+        and float(governance_objective_support.get("mean_t_plus_2_return") or 0.0) >= 0.03
+    )
+
+
+def _plan_contains_focus_ticker(plan_payload: dict[str, Any], candidate_ticker: str) -> bool:
+    filters = dict(dict(dict(plan_payload.get("risk_metrics") or {}).get("funnel_diagnostics") or {}).get("filters") or {})
+    for filter_key in ("short_trade_candidates", "watchlist"):
+        filter_payload = dict(filters.get(filter_key) or {})
+        tickers = list(filter_payload.get("tickers") or [])
+        if any(str(item) == candidate_ticker or (isinstance(item, dict) and str(item.get("ticker") or "") == candidate_ticker) for item in tickers):
+            return True
+        released_shadow_entries = list(filter_payload.get("released_shadow_entries") or [])
+        if any(str(dict(item or {}).get("ticker") or "") == candidate_ticker for item in released_shadow_entries):
+            return True
+    return False
+
+
+def _extract_current_plan_visibility_summary(reports_root: str | Path, candidate_ticker: str) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    raw_daily_events_trade_dates: set[str] = set()
+    current_plan_visible_trade_dates: set[str] = set()
+    current_plan_visibility_gap_trade_dates: set[str] = set()
+    current_plan_visible_report_dirs: set[str] = set()
+    current_plan_visibility_gap_report_dirs: set[str] = set()
+
+    for daily_events_path in sorted(resolved_reports_root.rglob("daily_events.jsonl")):
+        try:
+            raw_text = daily_events_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if candidate_ticker not in raw_text:
+            continue
+        try:
+            plans_by_date = load_frozen_post_market_plans(daily_events_path)
+        except ValueError:
+            continue
+        for trade_date, plan in plans_by_date.items():
+            normalized_trade_date = normalize_trade_date(trade_date)
+            if normalized_trade_date is None:
+                continue
+            raw_daily_events_trade_dates.add(normalized_trade_date)
+            report_dir = str(daily_events_path.parent.resolve())
+            if _plan_contains_focus_ticker(plan.model_dump(mode="json"), candidate_ticker):
+                current_plan_visible_trade_dates.add(normalized_trade_date)
+                current_plan_visible_report_dirs.add(report_dir)
+            else:
+                current_plan_visibility_gap_trade_dates.add(normalized_trade_date)
+                current_plan_visibility_gap_report_dirs.add(report_dir)
+
+    return {
+        "raw_daily_events_trade_dates": sorted(raw_daily_events_trade_dates),
+        "raw_daily_events_trade_date_count": len(raw_daily_events_trade_dates),
+        "current_plan_visible_trade_dates": sorted(current_plan_visible_trade_dates),
+        "current_plan_visible_trade_date_count": len(current_plan_visible_trade_dates),
+        "current_plan_visible_report_dirs": sorted(current_plan_visible_report_dirs),
+        "current_plan_visible_report_count": len(current_plan_visible_report_dirs),
+        "current_plan_visibility_gap_trade_dates": sorted(current_plan_visibility_gap_trade_dates - current_plan_visible_trade_dates),
+        "current_plan_visibility_gap_trade_date_count": len(current_plan_visibility_gap_trade_dates - current_plan_visible_trade_dates),
+        "current_plan_visibility_gap_report_dirs": sorted(current_plan_visibility_gap_report_dirs - current_plan_visible_report_dirs),
+        "current_plan_visibility_gap_report_count": len(current_plan_visibility_gap_report_dirs - current_plan_visible_report_dirs),
+    }
+
+
+def _load_continuation_promotion_ready_summary(reports_root: str | Path, candidate_ticker: str) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    manifest_path = resolved_reports_root / DEFAULT_REPORT_MANIFEST_PATH.name
+    if not manifest_path.exists():
+        return {}
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    summary = dict(payload.get("continuation_promotion_ready_summary") or {})
+    if str(summary.get("focus_ticker") or "").strip() != str(candidate_ticker or "").strip():
+        return {}
+    return summary
 
 
 def analyze_btst_tplus2_near_cluster_dossier(
@@ -53,6 +163,8 @@ def analyze_btst_tplus2_near_cluster_dossier(
         next_high_hit_threshold=next_high_hit_threshold,
     )
     anchor_profile = _build_anchor_profile(rows, anchor_ticker=anchor_ticker)
+    current_plan_visibility_summary = _extract_current_plan_visibility_summary(reports_root, candidate_ticker)
+    continuation_promotion_ready_summary = _load_continuation_promotion_ready_summary(reports_root, candidate_ticker)
 
     candidate_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -148,7 +260,7 @@ def analyze_btst_tplus2_near_cluster_dossier(
                 dict(row or {})
                 for row in list(upstream_handoff_board.get("board_rows") or [])
                 if str((row or {}).get("ticker") or "") == candidate_ticker
-                and str((row or {}).get("downstream_followup_lane") or "") == "t_plus_2_continuation_review"
+                and _is_continuation_governance_followup(dict(row or {}))
             ),
             {},
         )
@@ -217,9 +329,15 @@ def analyze_btst_tplus2_near_cluster_dossier(
     else:
         recent_validation_verdict = "recent_support_mixed"
 
+    governance_payoff_ready = governance_followup_payoff_confirmed(
+        governance_objective_support,
+        recent_tier_window_count=recent_tier_window_count,
+        recent_window_count=len(recent_window_summaries),
+    )
+
     if verdict == "governance_followup_candidate":
         candidate_tier_focus = "governance_followup"
-        recent_tier_verdict = "governance_followup_pending_evidence"
+        recent_tier_verdict = "governance_followup_payoff_confirmed" if governance_payoff_ready else "governance_followup_pending_evidence"
     else:
         recent_tier_verdict = _classify_recent_tier_verdict(
             recent_tier_window_count,
@@ -234,12 +352,21 @@ def analyze_btst_tplus2_near_cluster_dossier(
         promotion_readiness_verdict = "validation_queue_ready"
     elif candidate_tier_focus == "observation_candidate" and recent_tier_verdict in {"recent_tier_mixed", "recent_tier_thin"}:
         promotion_readiness_verdict = "validation_queue_watch"
+    elif candidate_tier_focus == "governance_followup" and recent_tier_verdict == "governance_followup_payoff_confirmed":
+        promotion_readiness_verdict = "watch_review_ready"
     elif candidate_tier_focus == "governance_followup":
         promotion_readiness_verdict = "governance_validation_required"
     elif verdict == "candidate_not_found":
         promotion_readiness_verdict = "candidate_not_found"
     else:
         promotion_readiness_verdict = "low_priority"
+
+    promotion_merge_review_verdict = str(continuation_promotion_ready_summary.get("promotion_merge_review_verdict") or "").strip()
+    if promotion_merge_review_verdict == "ready_for_default_btst_merge_review":
+        promotion_readiness_verdict = "merge_review_ready"
+
+    latest_followup_decision = str(governance_followup.get("latest_followup_decision") or "").strip() or None
+    downstream_followup_status = str(governance_followup.get("downstream_followup_status") or "").strip() or None
 
     if candidate_tier_focus == "governance_followup" and governance_objective_support:
         tier_focus_surface_summary = {
@@ -265,6 +392,15 @@ def analyze_btst_tplus2_near_cluster_dossier(
         "governance_followup": governance_followup,
         "governance_objective_support": governance_objective_support,
         "governance_recent_followup_rows": governance_recent_followup_rows,
+        "current_plan_visibility_summary": current_plan_visibility_summary,
+        "continuation_promotion_ready_summary": continuation_promotion_ready_summary,
+        "latest_followup_decision": latest_followup_decision,
+        "downstream_followup_status": downstream_followup_status,
+        "current_plan_visible_trade_dates": list(current_plan_visibility_summary.get("current_plan_visible_trade_dates") or []),
+        "current_plan_visibility_gap_trade_dates": list(current_plan_visibility_summary.get("current_plan_visibility_gap_trade_dates") or []),
+        "qualifying_window_buckets": list(continuation_promotion_ready_summary.get("qualifying_window_buckets") or []),
+        "promotion_path_status": continuation_promotion_ready_summary.get("promotion_path_status"),
+        "promotion_merge_review_verdict": continuation_promotion_ready_summary.get("promotion_merge_review_verdict"),
         "tier_focus_row_count": len(tier_focus_rows),
         "recent_window_limit": recent_window_limit,
         "recent_window_count": len(recent_window_summaries),
@@ -300,6 +436,15 @@ def render_btst_tplus2_near_cluster_dossier_markdown(analysis: dict[str, Any]) -
     lines.append(f"- governance_followup: {analysis.get('governance_followup')}")
     lines.append(f"- governance_objective_support: {analysis.get('governance_objective_support')}")
     lines.append(f"- governance_recent_followup_rows: {analysis.get('governance_recent_followup_rows')}")
+    lines.append(f"- current_plan_visibility_summary: {analysis.get('current_plan_visibility_summary')}")
+    lines.append(f"- continuation_promotion_ready_summary: {analysis.get('continuation_promotion_ready_summary')}")
+    lines.append(f"- latest_followup_decision: {analysis.get('latest_followup_decision')}")
+    lines.append(f"- downstream_followup_status: {analysis.get('downstream_followup_status')}")
+    lines.append(f"- current_plan_visible_trade_dates: {analysis.get('current_plan_visible_trade_dates')}")
+    lines.append(f"- current_plan_visibility_gap_trade_dates: {analysis.get('current_plan_visibility_gap_trade_dates')}")
+    lines.append(f"- qualifying_window_buckets: {analysis.get('qualifying_window_buckets')}")
+    lines.append(f"- promotion_path_status: {analysis.get('promotion_path_status')}")
+    lines.append(f"- promotion_merge_review_verdict: {analysis.get('promotion_merge_review_verdict')}")
     lines.append(f"- tier_focus_row_count: {analysis['tier_focus_row_count']}")
     lines.append(f"- recent_window_limit: {analysis['recent_window_limit']}")
     lines.append(f"- recent_window_count: {analysis['recent_window_count']}")

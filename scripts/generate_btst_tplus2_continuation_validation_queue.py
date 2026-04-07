@@ -64,24 +64,38 @@ def generate_btst_tplus2_continuation_validation_queue(
             profile_name=profile_name,
             report_name_contains=report_name_contains,
         )
+        promotion_readiness_verdict = str(dossier.get("promotion_readiness_verdict") or "")
+        candidate_tier_focus = str(dossier.get("candidate_tier_focus") or "")
         queue_rows.append(
             {
                 "ticker": ticker,
                 "seed_tier": seed.get("tier"),
                 "priority_rank": seed.get("priority_rank"),
-                "candidate_tier_focus": dossier.get("candidate_tier_focus"),
+                "candidate_tier_focus": candidate_tier_focus,
                 "recent_tier_verdict": dossier.get("recent_tier_verdict"),
                 "recent_tier_window_count": dossier.get("recent_tier_window_count"),
                 "recent_window_count": dossier.get("recent_window_count"),
                 "recent_tier_ratio": dossier.get("recent_tier_ratio"),
-                "promotion_readiness_verdict": dossier.get("promotion_readiness_verdict"),
+                "promotion_readiness_verdict": promotion_readiness_verdict,
                 "next_close_positive_rate": dict(dossier.get("tier_focus_surface_summary") or {}).get("next_close_positive_rate"),
                 "t_plus_2_close_positive_rate": dict(dossier.get("tier_focus_surface_summary") or {}).get("t_plus_2_close_positive_rate"),
                 "t_plus_2_close_return_mean": dict(dict(dossier.get("tier_focus_surface_summary") or {}).get("t_plus_2_close_return_distribution") or {}).get("mean"),
                 "next_step": (
+                    "Escalate into default BTST merge review under explicit governance approval."
+                    if candidate_tier_focus == "governance_followup" and promotion_readiness_verdict == "merge_review_ready"
+                    else (
+                    "Promote into near-cluster watch review under the governance-approved continuation lane."
+                    if candidate_tier_focus == "governance_followup" and promotion_readiness_verdict == "watch_review_ready"
+                    else (
                     "Promote into near-cluster watch review if another confirming window appears."
-                    if str(dossier.get("promotion_readiness_verdict") or "") == "validation_queue_ready"
-                    else "Keep on queue watch until recent tier confirmation strengthens."
+                    if promotion_readiness_verdict == "validation_queue_ready"
+                    else (
+                        "Keep on queue watch until recent governance followup converts into payoff-confirmed continuation evidence."
+                        if candidate_tier_focus == "governance_followup"
+                        else "Keep on queue watch until recent tier confirmation strengthens."
+                    )
+                    )
+                    )
                 ),
             }
         )

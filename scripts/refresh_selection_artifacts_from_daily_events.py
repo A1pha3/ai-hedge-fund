@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from scripts.btst_report_utils import discover_report_dirs, normalize_trade_date, safe_load_json
+from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
+from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
+from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config
+from src.execution.models import ExecutionPlan
+from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
+from src.paper_trading.frozen_replay import load_frozen_post_market_plans
+from src.research.artifacts import FileSelectionArtifactWriter
+from src.targets.router import build_selection_targets
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Refresh selection_artifacts from historical daily_events current_plan records using current target rules.")
+    parser.add_argument("input_paths", nargs="+", help="One or more paper trading report directories or report roots")
+    parser.add_argument("--trade-date", default=None, help="Optional trade date in YYYY-MM-DD or YYYYMMDD format")
+    parser.add_argument("--report-name-contains", default="paper_trading", help="When scanning a root directory, only include report directories whose names contain this fragment")
+    parser.add_argument("--refresh-followup", action="store_true", help="Regenerate BTST followup artifacts after refreshing selection_artifacts")
+    parser.add_argument("--refresh-manifest", action="store_true", help="Regenerate report_manifest_latest.json after refreshing")
+    parser.add_argument("--refresh-control-tower", action="store_true", help="Regenerate btst_nightly_control_tower_latest.json after refreshing")
+    return parser.parse_args()
+
+
+def _normalize_trade_date_compact(value: str | None) -> str | None:
+    digits = "".join(ch for ch in str(value or "").strip() if ch.isdigit())
+    return digits if len(digits) == 8 else None
+
+
+def _load_artifact_metadata(report_dir: Path, trade_date_compact: str) -> tuple[dict[str, Any], list[str], Any]:
+    trade_date = normalize_trade_date(trade_date_compact)
+    snapshot_path = report_dir / "selection_artifacts" / str(trade_date or "") / "selection_snapshot.json"
+    snapshot = safe_load_json(snapshot_path)
+    pipeline_config_snapshot = dict(snapshot.get("pipeline_config_snapshot") or {})
+    selected_analysts = [str(item) for item in list(pipeline_config_snapshot.get("selected_analysts") or []) if str(item or "").strip()]
+    pipeline_stub = SimpleNamespace(
+        base_model_provider=str(pipeline_config_snapshot.get("model_provider") or ""),
+        base_model_name=str(pipeline_config_snapshot.get("model_name") or ""),
+        frozen_post_market_plans=True,
+        frozen_plan_source=str((report_dir / "daily_events.jsonl").resolve()),
+    )
+    metadata = {
+        "run_id": str(snapshot.get("run_id") or report_dir.name),
+        "experiment_id": snapshot.get("experiment_id"),
+        "market": str(snapshot.get("market") or "CN"),
+        "artifact_version": str(snapshot.get("artifact_version") or "v1"),
+    }
+    return metadata, selected_analysts, pipeline_stub
+
+
+def _refresh_released_shadow_entries(filters: dict[str, Any], filter_key: str) -> None:
+    filter_payload = dict(filters.get(filter_key) or {})
+    refreshed_entries: list[dict[str, Any]] = []
+    for raw_entry in list(filter_payload.get("released_shadow_entries") or []):
+        entry = dict(raw_entry or {})
+        if entry.get("short_trade_catalyst_relief"):
+            refreshed_entries.append(entry)
+            continue
+        relief = _build_upstream_shadow_catalyst_relief_config(
+            candidate_pool_lane=str(entry.get("candidate_pool_lane") or ""),
+            filter_reason=str(entry.get("shadow_release_filter_reason") or ""),
+            metrics_payload=dict(entry.get("short_trade_boundary_metrics") or {}),
+        )
+        if relief:
+            entry["short_trade_catalyst_relief"] = relief
+        refreshed_entries.append(entry)
+    filter_payload["released_shadow_entries"] = refreshed_entries
+    filters[filter_key] = filter_payload
+
+
+def rebuild_selection_targets_for_plan(plan: ExecutionPlan, trade_date_compact: str) -> ExecutionPlan:
+    risk_metrics = dict(plan.risk_metrics or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics") or {})
+    filters = dict(funnel_diagnostics.get("filters") or {})
+
+    _refresh_released_shadow_entries(filters, "short_trade_candidates")
+    _refresh_released_shadow_entries(filters, "watchlist")
+
+    short_trade_candidate_filters = dict(filters.get("short_trade_candidates") or {})
+    watchlist_filter = dict(filters.get("watchlist") or {})
+    selection_targets, dual_target_summary = build_selection_targets(
+        trade_date=trade_date_compact,
+        watchlist=list(plan.watchlist or []),
+        rejected_entries=list(watchlist_filter.get("tickers") or []),
+        supplemental_short_trade_entries=[
+            *list(short_trade_candidate_filters.get("tickers") or []),
+            *list(short_trade_candidate_filters.get("released_shadow_entries") or []),
+            *list(watchlist_filter.get("released_shadow_entries") or []),
+        ],
+        buy_order_tickers={str(order.ticker) for order in list(plan.buy_orders or [])},
+        target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
+    )
+
+    funnel_diagnostics["filters"] = filters
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    plan.risk_metrics = risk_metrics
+    plan.selection_targets = selection_targets
+    plan.dual_target_summary = dual_target_summary
+    return plan
+
+
+def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: str | None = None) -> dict[str, Any]:
+    resolved_report_dir = Path(report_dir).expanduser().resolve()
+    daily_events_path = resolved_report_dir / "daily_events.jsonl"
+    plans_by_date = load_frozen_post_market_plans(daily_events_path)
+    requested_trade_date = _normalize_trade_date_compact(trade_date)
+    target_trade_dates = [requested_trade_date] if requested_trade_date else sorted(plans_by_date.keys())
+    if requested_trade_date and requested_trade_date not in plans_by_date:
+        raise ValueError(f"Missing current_plan in daily_events for trade_date={requested_trade_date}")
+
+    refreshed_results: list[dict[str, Any]] = []
+    for trade_date_compact in target_trade_dates:
+        plan = ExecutionPlan.model_validate(plans_by_date[trade_date_compact].model_dump(mode="json"))
+        refreshed_plan = rebuild_selection_targets_for_plan(plan, trade_date_compact)
+        metadata, selected_analysts, pipeline_stub = _load_artifact_metadata(resolved_report_dir, trade_date_compact)
+        writer = FileSelectionArtifactWriter(
+            artifact_root=resolved_report_dir / "selection_artifacts",
+            run_id=str(metadata["run_id"]),
+            experiment_id=metadata["experiment_id"],
+            market=str(metadata["market"]),
+            artifact_version=str(metadata["artifact_version"]),
+        )
+        write_result = writer.write_for_plan(
+            plan=refreshed_plan,
+            trade_date=trade_date_compact,
+            pipeline=pipeline_stub,
+            selected_analysts=selected_analysts,
+        )
+        trade_date_display = normalize_trade_date(trade_date_compact) or trade_date_compact
+        refreshed_results.append(
+            {
+                "trade_date": trade_date_display,
+                "snapshot_path": write_result.snapshot_path,
+                "replay_input_path": write_result.replay_input_path,
+                "write_status": write_result.write_status,
+                "selection_target_count": len(refreshed_plan.selection_targets),
+                "short_trade_selected_symbols": list(refreshed_plan.dual_target_summary.short_trade_selected_count and sorted(
+                    ticker
+                    for ticker, evaluation in refreshed_plan.selection_targets.items()
+                    if getattr(getattr(evaluation, "short_trade", None), "decision", "") == "selected"
+                ) or []),
+            }
+        )
+
+    session_summary_path = resolved_report_dir / "session_summary.json"
+    session_summary = safe_load_json(session_summary_path)
+    session_summary["selection_artifact_refresh"] = {
+        "refreshed_trade_dates": [row["trade_date"] for row in refreshed_results],
+        "result_count": len(refreshed_results),
+        "source": str(daily_events_path),
+    }
+    session_summary_path.write_text(json.dumps(session_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "report_dir": str(resolved_report_dir),
+        "daily_events_path": str(daily_events_path),
+        "results": refreshed_results,
+    }
+
+
+def main() -> None:
+    args = parse_args()
+    report_dirs: list[Path] = []
+    for raw_input in args.input_paths:
+        report_dirs.extend(discover_report_dirs(raw_input, report_name_contains=args.report_name_contains))
+
+    seen: set[Path] = set()
+    unique_report_dirs = [path for path in report_dirs if not (path in seen or seen.add(path))]
+    if not unique_report_dirs:
+        raise SystemExit("No report directories found for selection artifact refresh.")
+
+    reports_roots_to_refresh_manifest: set[Path] = set()
+    reports_roots_to_refresh_control_tower: set[Path] = set()
+    for report_dir in unique_report_dirs:
+        result = refresh_selection_artifacts_for_report(report_dir, trade_date=args.trade_date)
+        print(f"report_dir={result['report_dir']}")
+        print(f"daily_events_path={result['daily_events_path']}")
+        for trade_result in result["results"]:
+            print(f"trade_date={trade_result['trade_date']}")
+            print(f"write_status={trade_result['write_status']}")
+            print(f"snapshot_path={trade_result['snapshot_path']}")
+            print(f"replay_input_path={trade_result['replay_input_path']}")
+            print(f"short_trade_selected_symbols={','.join(trade_result['short_trade_selected_symbols'])}")
+            if args.refresh_followup:
+                followup = generate_and_register_btst_followup_artifacts(
+                    report_dir=report_dir,
+                    trade_date=trade_result["trade_date"],
+                )
+                print(f"btst_brief_json={followup['brief_json']}")
+                print(f"btst_execution_card_json={followup['execution_card_json']}")
+        reports_root = report_dir.parent
+        if reports_root.name == "reports":
+            if args.refresh_manifest:
+                reports_roots_to_refresh_manifest.add(reports_root)
+            if args.refresh_control_tower:
+                reports_roots_to_refresh_control_tower.add(reports_root)
+
+    for reports_root in sorted(reports_roots_to_refresh_manifest):
+        manifest = generate_reports_manifest_artifacts(reports_root=reports_root)
+        print(f"manifest_json={manifest['json_path']}")
+
+    for reports_root in sorted(reports_roots_to_refresh_control_tower):
+        control_tower = generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
+        print(f"nightly_control_tower_json={control_tower['json_path']}")
+
+
+if __name__ == "__main__":
+    main()

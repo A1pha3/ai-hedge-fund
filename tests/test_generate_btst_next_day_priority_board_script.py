@@ -258,7 +258,48 @@ def test_generate_btst_next_day_priority_board_orders_trade_watch_opportunity_an
     assert "### 4. 002001" in markdown
     assert "## Catalyst Theme Frontier Priority" in markdown
     assert "## Catalyst Theme Shadow Watch" in markdown
-    assert "### 1. 301001" in markdown
-    assert "lane: catalyst_theme_frontier_priority" in markdown
-    assert "filter_reason: candidate_score_below_catalyst_theme_floor" in markdown
-    assert "non_trade_learning_only" in markdown
+
+
+def test_generate_btst_next_day_priority_board_places_demoted_weak_near_miss_in_opportunity_pool_lane(tmp_path):
+    board = generate_btst_next_day_priority_board_artifacts(
+        input_path={
+            "trade_date": "2026-04-06",
+            "next_trade_date": "2026-04-07",
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [
+                {
+                    "ticker": "603778",
+                    "score_target": 0.4512,
+                    "decision": "near_miss",
+                    "reporting_decision": "opportunity_pool",
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "top_reasons": ["trend_acceleration=0.79", "historical_zero_follow_through_demoted"],
+                    "promotion_trigger": "历史同层兑现极弱，先降为机会池；只有盘中新强度确认时再考虑回到观察层。",
+                    "historical_prior": {
+                        "monitor_priority": "low",
+                        "execution_priority": "low",
+                        "execution_quality_label": "zero_follow_through",
+                        "summary": "同层同源历史 3 例，next_high>=2.0% 命中率=0.0，next_close 正收益率=0.0。 历史同层兑现为 0，降级到机会池等待新增强度。",
+                        "execution_note": "历史同层样本几乎不给盘中空间，也没有收盘正收益，除非出现新的强确认，否则不应进入高优先级执行面。",
+                        "demoted_from_near_miss": True,
+                    },
+                }
+            ],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_priority": {},
+        },
+        output_dir=tmp_path,
+    )
+
+    payload = json.loads((tmp_path / "btst_next_day_priority_board_20260407.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "btst_next_day_priority_board_20260407.md").read_text(encoding="utf-8")
+
+    assert [row["ticker"] for row in payload["priority_rows"]] == ["603778"]
+    assert payload["priority_rows"][0]["lane"] == "opportunity_pool"
+    assert payload["priority_rows"][0]["actionability"] == "upgrade_only"
+    assert payload["priority_rows"][0]["execution_quality_label"] == "zero_follow_through"
+    assert "### 1. 603778" in markdown
+    assert "lane: opportunity_pool" in markdown
+    assert "historical_zero_follow_through_demoted" in markdown

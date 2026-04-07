@@ -125,6 +125,78 @@ def _summarize_btst_followup_entry(bucket_name: str, entry: dict[str, Any]) -> d
     }
 
 
+def _followup_bucket_rank(bucket_name: str | None) -> int:
+    return {
+        "selected_entries": 3,
+        "near_miss_entries": 2,
+        "opportunity_pool_entries": 1,
+        "rejected_entries": 0,
+    }.get(str(bucket_name or "").strip(), -1)
+
+
+def _merge_btst_followup_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    best_by_ticker: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+    for raw_entry in entries:
+        entry = dict(raw_entry or {})
+        ticker = str(entry.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        rank = (
+            _followup_bucket_rank(entry.get("bucket")),
+            float(entry.get("score_target") or -999.0),
+            str(entry.get("preferred_entry_mode") or ""),
+            ticker,
+        )
+        current = best_by_ticker.get(ticker)
+        if current is None or rank > current[0]:
+            best_by_ticker[ticker] = (rank, entry)
+
+    merged_entries = [entry for _rank, entry in best_by_ticker.values()]
+    merged_entries.sort(
+        key=lambda entry: (
+            _followup_bucket_rank(entry.get("bucket")),
+            float(entry.get("score_target") or -999.0),
+            str(entry.get("ticker") or ""),
+        ),
+        reverse=True,
+    )
+    return merged_entries
+
+
+def _merge_btst_followup_payloads(followups: list[dict[str, Any]]) -> dict[str, Any]:
+    if not followups:
+        return {}
+    primary_followup = dict(sorted(followups, key=lambda followup: followup.get("rank"), reverse=True)[0])
+    merged_entries = _merge_btst_followup_entries(
+        [dict(entry or {}) for followup in followups for entry in list(dict(followup or {}).get("entries") or [])]
+    )
+    if merged_entries:
+        selected_count = sum(1 for entry in merged_entries if str(entry.get("bucket") or "") == "selected_entries")
+        near_miss_count = sum(1 for entry in merged_entries if str(entry.get("bucket") or "") == "near_miss_entries")
+        opportunity_pool_count = sum(1 for entry in merged_entries if str(entry.get("bucket") or "") == "opportunity_pool_entries")
+        rejected_count = sum(1 for entry in merged_entries if str(entry.get("bucket") or "") == "rejected_entries")
+    else:
+        selected_count = int(primary_followup.get("selected_count") or 0)
+        near_miss_count = int(primary_followup.get("near_miss_count") or 0)
+        opportunity_pool_count = int(primary_followup.get("opportunity_pool_count") or 0)
+        rejected_count = int(primary_followup.get("rejected_count") or 0)
+    primary_followup.update(
+        {
+            "selected_count": selected_count,
+            "near_miss_count": near_miss_count,
+            "opportunity_pool_count": opportunity_pool_count,
+            "rejected_count": rejected_count,
+            "entries": merged_entries,
+            "evidence_report_dirs": [
+                str(dict(followup or {}).get("report_dir") or "").strip()
+                for followup in followups
+                if str(dict(followup or {}).get("report_dir") or "").strip()
+            ],
+        }
+    )
+    return primary_followup
+
+
 def _build_btst_followup_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     brief = _safe_load_json(candidate.get("brief_json_path"))
     priority_board = _safe_load_json(candidate.get("priority_board_json_path"))
@@ -174,7 +246,13 @@ def _extract_btst_followups(
             candidates.append(candidate)
 
     sorted_candidates = sorted(candidates, key=lambda candidate: candidate["rank"], reverse=True)
-    return [_build_btst_followup_payload(candidate) for candidate in sorted_candidates]
+    grouped_by_trade_date: dict[str, list[dict[str, Any]]] = {}
+    for candidate in sorted_candidates:
+        payload = _build_btst_followup_payload(candidate)
+        group_key = str(payload.get("trade_date") or payload.get("report_dir") or "").strip()
+        grouped_by_trade_date.setdefault(group_key, []).append(payload)
+    merged_followups = [_merge_btst_followup_payloads(grouped_by_trade_date[key]) for key in grouped_by_trade_date]
+    return sorted(merged_followups, key=lambda followup: followup.get("rank"), reverse=True)
 
 
 def _extract_latest_btst_followup(
@@ -200,13 +278,15 @@ def _derive_execution_surface_constraints(btst_followups: list[dict[str, Any]]) 
         if not entries:
             continue
 
-        post_gate_near_miss = [
+        post_gate_continuation_entries = [
             entry
             for entry in entries
             if entry.get("candidate_source") == "post_gate_liquidity_competition_shadow"
-            and entry.get("bucket") == "near_miss_entries"
+            and entry.get("bucket") in {"selected_entries", "near_miss_entries"}
         ]
-        if post_gate_near_miss and int(followup.get("selected_count") or 0) <= 0:
+        if post_gate_continuation_entries:
+            continuation_focus_tickers = [entry.get("ticker") for entry in post_gate_continuation_entries if entry.get("ticker")]
+            has_selected_post_gate = any(str(entry.get("bucket") or "") == "selected_entries" for entry in post_gate_continuation_entries)
             constraints.append(
                 {
                     "constraint_id": "post_gate_shadow_observation_only",
@@ -215,14 +295,18 @@ def _derive_execution_surface_constraints(btst_followups: list[dict[str, Any]]) 
                     "lane_id": "post_gate_liquidity_competition_shadow",
                     "status": "continuation_only_confirm_then_review",
                     "blocker": "no_selected_persistence_or_independent_edge",
-                    "focus_tickers": [entry.get("ticker") for entry in post_gate_near_miss if entry.get("ticker")],
+                    "focus_tickers": continuation_focus_tickers,
                     "evidence": {
                         "selected_count": followup.get("selected_count"),
                         "near_miss_count": followup.get("near_miss_count"),
                         "opportunity_pool_count": followup.get("opportunity_pool_count"),
-                        "entries": post_gate_near_miss,
+                        "entries": post_gate_continuation_entries,
                     },
-                    "recommendation": "Keep post-gate shadow names in observation / continuation review until a selected row persists across independent windows.",
+                    "recommendation": (
+                        "Keep post-gate shadow names in continuation review until a selected row persists across independent windows."
+                        if has_selected_post_gate
+                        else "Keep post-gate shadow names in observation / continuation review until a selected row persists across independent windows."
+                    ),
                 }
             )
 

@@ -77,13 +77,13 @@ def test_generate_btst_tplus2_continuation_validation_queue_includes_governance_
         lambda *_args, **kwargs: {
             "candidate_ticker": kwargs["candidate_ticker"],
             "candidate_tier_focus": "governance_followup" if kwargs["candidate_ticker"] == "300720" else "observation_candidate",
-            "recent_tier_verdict": "recent_tier_confirmed",
-            "recent_tier_window_count": 2,
-            "recent_window_count": 2,
+            "recent_tier_verdict": "governance_followup_payoff_confirmed" if kwargs["candidate_ticker"] == "300720" else "recent_tier_confirmed",
+            "recent_tier_window_count": 4 if kwargs["candidate_ticker"] == "300720" else 2,
+            "recent_window_count": 4 if kwargs["candidate_ticker"] == "300720" else 2,
             "recent_tier_ratio": 1.0,
-            "promotion_readiness_verdict": "validation_queue_ready",
+            "promotion_readiness_verdict": "watch_review_ready" if kwargs["candidate_ticker"] == "300720" else "validation_queue_ready",
             "tier_focus_surface_summary": {
-                "next_close_positive_rate": 0.5,
+                "next_close_positive_rate": 0.8 if kwargs["candidate_ticker"] == "300720" else 0.5,
                 "t_plus_2_close_positive_rate": 1.0,
                 "t_plus_2_close_return_distribution": {"mean": 0.02},
             },
@@ -95,3 +95,43 @@ def test_generate_btst_tplus2_continuation_validation_queue_includes_governance_
     assert analysis["focus_ticker"] == "300720"
     assert analysis["focus_candidate"]["ticker"] == "300720"
     assert analysis["queue_rows"][0]["ticker"] == "300720"
+    assert analysis["queue_rows"][0]["next_step"] == "Promote into near-cluster watch review under the governance-approved continuation lane."
+
+
+def test_generate_btst_tplus2_continuation_validation_queue_escalates_merge_ready_focus(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+
+    monkeypatch.setattr(
+        validation_queue,
+        "generate_btst_tplus2_continuation_expansion_board",
+        lambda *_args, **_kwargs: {
+            "focus_candidate": {"ticker": "300720"},
+            "board_rows": [
+                {"ticker": "300720", "tier": "governance_followup", "priority_rank": 1},
+            ],
+            "next_validation_candidates": [],
+        },
+    )
+    monkeypatch.setattr(
+        validation_queue,
+        "analyze_btst_tplus2_near_cluster_dossier",
+        lambda *_args, **kwargs: {
+            "candidate_ticker": kwargs["candidate_ticker"],
+            "candidate_tier_focus": "governance_followup",
+            "recent_tier_verdict": "governance_followup_payoff_confirmed",
+            "recent_tier_window_count": 4,
+            "recent_window_count": 4,
+            "recent_tier_ratio": 1.0,
+            "promotion_readiness_verdict": "merge_review_ready",
+            "tier_focus_surface_summary": {
+                "next_close_positive_rate": 0.8,
+                "t_plus_2_close_positive_rate": 1.0,
+                "t_plus_2_close_return_distribution": {"mean": 0.02},
+            },
+        },
+    )
+
+    analysis = validation_queue.generate_btst_tplus2_continuation_validation_queue(reports_root)
+
+    assert analysis["queue_rows"][0]["next_step"] == "Escalate into default BTST merge review under explicit governance approval."

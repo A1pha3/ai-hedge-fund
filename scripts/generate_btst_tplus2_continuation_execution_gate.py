@@ -35,6 +35,11 @@ def _build_execution_gate(
     support_count = sum(1 for item in windows if str(item.get("window_verdict") or "") == "supports_tplus2_lane")
     window_count = len(windows)
     support_ratio = round(support_count / window_count, 4) if window_count else 0.0
+    governance_payoff_ready = bool(comparison_summary.get("governance_payoff_ready"))
+    focus_recent_support_ratio = float(adopted_eligible_row.get("recent_support_ratio") or 0.0)
+    focus_recent_supporting_window_count = int(adopted_eligible_row.get("recent_supporting_window_count") or 0)
+    focus_next_close_positive_rate = float(adopted_eligible_row.get("next_close_positive_rate") or 0.0)
+    focus_t_plus_2_close_positive_rate = float(adopted_eligible_row.get("t_plus_2_close_positive_rate") or 0.0)
 
     gate_blockers: list[str] = []
     if not focus_ticker:
@@ -47,20 +52,22 @@ def _build_execution_gate(
         gate_blockers.append("insufficient_lane_support_windows")
     if support_ratio < 0.85:
         gate_blockers.append("lane_support_ratio_too_low")
-    if float(adopted_eligible_row.get("recent_support_ratio") or 0.0) < 1.0:
+    if focus_recent_support_ratio < 1.0:
         gate_blockers.append("focus_recent_support_not_perfect")
-    if int(adopted_eligible_row.get("recent_supporting_window_count") or 0) < 4:
+    if focus_recent_supporting_window_count < 4:
         gate_blockers.append("focus_recent_window_count_too_low")
-    if float(adopted_eligible_row.get("next_close_positive_rate") or 0.0) < 1.0:
-        gate_blockers.append("focus_next_close_not_perfect")
-    if float(adopted_eligible_row.get("t_plus_2_close_positive_rate") or 0.0) < 1.0:
-        gate_blockers.append("focus_t_plus_2_positive_rate_not_perfect")
+    if focus_next_close_positive_rate < 0.75:
+        gate_blockers.append("focus_next_close_below_execution_floor")
+    if focus_t_plus_2_close_positive_rate < 0.8:
+        gate_blockers.append("focus_t_plus_2_positive_rate_below_execution_floor")
     focus_mean = float(adopted_eligible_row.get("t_plus_2_close_return_mean") or 0.0)
     lane_mean = float(dict(aggregate_surface_summary.get("t_plus_2_close_return_distribution") or {}).get("mean") or 0.0)
     if focus_mean < lane_mean:
         gate_blockers.append("focus_t_plus_2_mean_below_lane")
     if float(comparison_summary.get("t_plus_2_mean_gap_vs_watch") or 0.0) <= 0.0:
         gate_blockers.append("focus_not_outperforming_watch")
+    if not governance_payoff_ready:
+        gate_blockers.append("focus_governance_payoff_not_confirmed")
     if str(lane_rules.get("capital_mode") or lane_rulepack.get("capital_mode") or "") != "paper_only":
         gate_blockers.append("capital_mode_not_paper_only")
 
@@ -74,7 +81,7 @@ def _build_execution_gate(
     recommendation = (
         f"Approve {focus_ticker} as an effective paper execution candidate for the isolated continuation lane."
         if gate_verdict == "approve_execution_candidate"
-        else "Hold execution-candidate promotion until the continuation lane retains stronger support and perfect focus follow-through."
+        else "Hold execution-candidate promotion until the continuation lane retains stronger support and the focus ticker clears the controlled execution floor."
     )
 
     return {
@@ -91,6 +98,7 @@ def _build_execution_gate(
         "focus_t_plus_2_close_return_mean": adopted_eligible_row.get("t_plus_2_close_return_mean"),
         "lane_t_plus_2_close_return_mean": lane_mean,
         "focus_t_plus_2_mean_gap_vs_watch": comparison_summary.get("t_plus_2_mean_gap_vs_watch"),
+        "governance_payoff_ready": governance_payoff_ready,
         "operator_action": operator_action,
         "execution_mode": "paper_overlay_only",
         "recommendation": recommendation,

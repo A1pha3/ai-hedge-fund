@@ -16,6 +16,8 @@ class LayerCResult(BaseModel):
     score_final: float = 0.0
     score_b: float = 0.0
     quality_score: float = Field(ge=0, le=1, default=0.5)
+    candidate_source: str = "layer_c_watchlist"
+    candidate_reason_codes: list[str] = Field(default_factory=list)
     strategy_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     agent_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     agent_contribution_summary: dict = Field(default_factory=dict)

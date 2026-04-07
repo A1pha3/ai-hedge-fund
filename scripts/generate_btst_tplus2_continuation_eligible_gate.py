@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.generate_btst_tplus2_continuation_promotion_review import READY_PROMOTION_REVIEW_VERDICTS
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_LANE_RULEPACK_PATH = REPORTS_DIR / "btst_tplus2_continuation_lane_rulepack_latest.json"
@@ -41,7 +43,7 @@ def _build_eligible_gate(
         gate_blockers.append("missing_focus_ticker")
     if str(watchlist_execution.get("execution_verdict") or "") not in {"watchlist_extension_applied", "watchlist_extension_already_applied"}:
         gate_blockers.append("watchlist_execution_not_ready")
-    if str(promotion_review.get("promotion_review_verdict") or "") != "watch_review_ready":
+    if str(promotion_review.get("promotion_review_verdict") or "") not in READY_PROMOTION_REVIEW_VERDICTS:
         gate_blockers.append("promotion_review_not_ready")
     if not adopted_watch_row:
         gate_blockers.append("missing_adopted_watch_row")

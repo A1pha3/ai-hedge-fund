@@ -96,6 +96,17 @@ def _classify_downstream_followup_lane(ticker: str, followup_row: dict[str, Any]
             ),
         }
 
+    if decision == "selected" and candidate_source == "post_gate_liquidity_competition_shadow":
+        return {
+            "downstream_followup_lane": "t_plus_2_continuation_review",
+            "downstream_followup_status": "continuation_only_confirm_then_review",
+            "downstream_followup_blocker": "no_selected_persistence_or_independent_edge",
+            "downstream_followup_summary": (
+                f"{ticker} 已完成 shadow recall，并晋级为 selected；但在形成第二个独立 trade_date 之前，"
+                "仍只允许 continuation-only confirm-then-review，不可直接视作默认 BTST merge-ready。"
+            ),
+        }
+
     if decision == "near_miss" and candidate_source == "upstream_liquidity_corridor_shadow" and "profitability_hard_cliff" in top_reasons:
         return {
             "downstream_followup_lane": "corridor_parallel_watch",
@@ -319,11 +330,15 @@ def analyze_btst_candidate_pool_upstream_handoff_board(
                 "failure_reason": failure_reason,
                 "next_step": next_step,
                 "latest_followup_decision": latest_followup_row.get("decision"),
+                "latest_followup_candidate_source": latest_followup_row.get("candidate_source"),
                 "latest_followup_trade_date": latest_followup_row.get("trade_date"),
                 "latest_followup_report_dir": latest_followup_row.get("report_dir"),
                 "latest_followup_top_reasons": list(latest_followup_row.get("top_reasons") or []),
                 "latest_followup_positive_tags": list(latest_followup_row.get("positive_tags") or []),
                 "latest_followup_gate_status": dict(latest_followup_row.get("gate_status") or {}),
+                "latest_followup_historical_sample_count": latest_followup_row.get("historical_sample_count"),
+                "latest_followup_historical_next_close_positive_rate": latest_followup_row.get("historical_next_close_positive_rate"),
+                "latest_followup_historical_next_close_return_mean": latest_followup_row.get("historical_next_close_return_mean"),
                 "latest_followup_downstream_bottleneck": latest_followup_row.get("downstream_bottleneck"),
                 "downstream_followup_lane": downstream_followup_classification.get("downstream_followup_lane"),
                 "downstream_followup_status": downstream_followup_classification.get("downstream_followup_status"),

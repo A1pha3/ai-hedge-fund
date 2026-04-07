@@ -6,6 +6,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 
 def _default_output_dir(start_date: str, end_date: str) -> Path:
@@ -129,6 +130,108 @@ def _resolve_short_trade_target_overrides(raw: str | None) -> dict[str, object] 
     return parsed
 
 
+def _parse_csv_tokens(raw: str | None) -> list[str]:
+    return [token.strip() for token in str(raw or "").split(",") if token.strip()]
+
+
+def _join_csv_tokens(tokens: list[str]) -> str | None:
+    unique_tokens = sorted(dict.fromkeys(token for token in tokens if token))
+    return ",".join(unique_tokens) if unique_tokens else None
+
+
+def _resolve_reports_root_from_output_dir(output_dir: Path) -> Path | None:
+    resolved_output_dir = output_dir.expanduser().resolve()
+    reports_root = resolved_output_dir.parent
+    if reports_root.name != "reports":
+        return None
+    return reports_root
+
+
+def _load_json_if_exists(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _derive_shadow_focus_tickers_from_reports(reports_root: Path | None) -> dict[str, list[str]]:
+    derived_focus = {
+        "all": [],
+        "layer_a_liquidity_corridor": [],
+        "post_gate_liquidity_competition": [],
+        "visibility_gap_all": [],
+        "visibility_gap_layer_a_liquidity_corridor": [],
+        "visibility_gap_post_gate_liquidity_competition": [],
+    }
+    if reports_root is None or not reports_root.exists():
+        return derived_focus
+
+    all_focus: set[str] = set()
+    corridor_focus: set[str] = set()
+    rebucket_focus: set[str] = set()
+    visibility_gap_all_focus: set[str] = set()
+    visibility_gap_corridor_focus: set[str] = set()
+    visibility_gap_rebucket_focus: set[str] = set()
+
+    for dossier_path in sorted(reports_root.glob("btst_tplus2_candidate_dossier_*_latest.json")):
+        dossier = _load_json_if_exists(dossier_path)
+        ticker = str(dossier.get("candidate_ticker") or "").strip()
+        governance_followup = dict(dossier.get("governance_followup") or {})
+        latest_followup_decision = str(governance_followup.get("latest_followup_decision") or "").strip()
+        downstream_followup_status = str(governance_followup.get("downstream_followup_status") or "").strip()
+        current_plan_visibility_summary = dict(dossier.get("current_plan_visibility_summary") or {})
+        has_visibility_gap = int(current_plan_visibility_summary.get("current_plan_visibility_gap_trade_date_count") or 0) > 0
+        if (
+            not ticker
+            or latest_followup_decision not in {"near_miss", "selected"}
+            or downstream_followup_status not in {"continuation_confirm_then_review", "continuation_only_confirm_then_review"}
+        ):
+            continue
+
+        all_focus.add(ticker)
+
+        priority_handoff = str(governance_followup.get("priority_handoff") or "").strip()
+        if priority_handoff == "layer_a_liquidity_corridor":
+            corridor_focus.add(ticker)
+            if latest_followup_decision == "selected" and has_visibility_gap:
+                visibility_gap_all_focus.add(ticker)
+                visibility_gap_corridor_focus.add(ticker)
+        elif priority_handoff == "post_gate_liquidity_competition":
+            rebucket_focus.add(ticker)
+            if latest_followup_decision == "selected" and has_visibility_gap:
+                visibility_gap_all_focus.add(ticker)
+                visibility_gap_rebucket_focus.add(ticker)
+
+        for row in list(dossier.get("governance_recent_followup_rows") or []):
+            row_payload = dict(row or {})
+            if str(row_payload.get("ticker") or "").strip() != ticker:
+                continue
+            if str(row_payload.get("decision") or "").strip() not in {"near_miss", "selected"}:
+                continue
+            lane = str(row_payload.get("candidate_pool_lane") or "").strip()
+            if lane == "layer_a_liquidity_corridor":
+                corridor_focus.add(ticker)
+                if latest_followup_decision == "selected" and has_visibility_gap:
+                    visibility_gap_all_focus.add(ticker)
+                    visibility_gap_corridor_focus.add(ticker)
+            elif lane == "post_gate_liquidity_competition":
+                rebucket_focus.add(ticker)
+                if latest_followup_decision == "selected" and has_visibility_gap:
+                    visibility_gap_all_focus.add(ticker)
+                    visibility_gap_rebucket_focus.add(ticker)
+
+    derived_focus["all"] = sorted(all_focus)
+    derived_focus["layer_a_liquidity_corridor"] = sorted(corridor_focus)
+    derived_focus["post_gate_liquidity_competition"] = sorted(rebucket_focus)
+    derived_focus["visibility_gap_all"] = sorted(visibility_gap_all_focus)
+    derived_focus["visibility_gap_layer_a_liquidity_corridor"] = sorted(visibility_gap_corridor_focus)
+    derived_focus["visibility_gap_post_gate_liquidity_competition"] = sorted(visibility_gap_rebucket_focus)
+    return derived_focus
+
+
 def _run_paper_trading_session(*, disable_data_snapshots: bool = False, **kwargs):
     runtime_module = importlib.import_module("src.paper_trading.runtime")
     if disable_data_snapshots:
@@ -140,15 +243,33 @@ def _run_paper_trading_session(*, disable_data_snapshots: bool = False, **kwargs
 
 def main() -> None:
     args = parse_args()
-    tickers = [ticker.strip() for ticker in args.tickers.split(",") if ticker.strip()]
+    tickers = _parse_csv_tokens(args.tickers)
     selected_analysts = _resolve_selected_analysts(args.analysts, args.analysts_all)
     fast_selected_analysts = _resolve_selected_analysts(args.fast_analysts, False)
     short_trade_target_profile = str(args.short_trade_target_profile or "default").strip() or "default"
     short_trade_target_overrides = _resolve_short_trade_target_overrides(args.short_trade_target_overrides)
     output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir(args.start_date, args.end_date)
-    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS", args.candidate_pool_shadow_focus_tickers)
-    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", args.candidate_pool_shadow_corridor_focus_tickers)
-    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS", args.candidate_pool_shadow_rebucket_focus_tickers)
+    auto_shadow_focus = _derive_shadow_focus_tickers_from_reports(_resolve_reports_root_from_output_dir(output_dir))
+    resolved_shadow_focus_tickers = _join_csv_tokens(_parse_csv_tokens(args.candidate_pool_shadow_focus_tickers) + list(auto_shadow_focus["all"]))
+    resolved_shadow_corridor_focus_tickers = _join_csv_tokens(
+        _parse_csv_tokens(args.candidate_pool_shadow_corridor_focus_tickers) + list(auto_shadow_focus["layer_a_liquidity_corridor"])
+    )
+    resolved_shadow_rebucket_focus_tickers = _join_csv_tokens(
+        _parse_csv_tokens(args.candidate_pool_shadow_rebucket_focus_tickers) + list(auto_shadow_focus["post_gate_liquidity_competition"])
+    )
+    resolved_shadow_visibility_gap_tickers = _join_csv_tokens(_parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_TICKERS")) + list(auto_shadow_focus["visibility_gap_all"]))
+    resolved_shadow_visibility_gap_corridor_tickers = _join_csv_tokens(
+        _parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS")) + list(auto_shadow_focus["visibility_gap_layer_a_liquidity_corridor"])
+    )
+    resolved_shadow_visibility_gap_rebucket_tickers = _join_csv_tokens(
+        _parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS")) + list(auto_shadow_focus["visibility_gap_post_gate_liquidity_competition"])
+    )
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS", resolved_shadow_focus_tickers)
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", resolved_shadow_corridor_focus_tickers)
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS", resolved_shadow_rebucket_focus_tickers)
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_TICKERS", resolved_shadow_visibility_gap_tickers)
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS", resolved_shadow_visibility_gap_corridor_tickers)
+    _apply_optional_env_override("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", resolved_shadow_visibility_gap_rebucket_tickers)
     _apply_optional_env_override("ANALYST_CONCURRENCY_LIMIT", args.analyst_concurrency_limit)
     if args.disable_data_snapshots:
         _apply_optional_env_override("DATA_SNAPSHOT_ENABLED", "false")
@@ -189,6 +310,20 @@ def main() -> None:
     print(f"paper_trading_short_trade_target_profile={short_trade_target_profile}")
     if short_trade_target_overrides:
         print(f"paper_trading_short_trade_target_overrides={json.dumps(short_trade_target_overrides, ensure_ascii=False, sort_keys=True)}")
+    if auto_shadow_focus["all"] or auto_shadow_focus["layer_a_liquidity_corridor"] or auto_shadow_focus["post_gate_liquidity_competition"]:
+        print(f"paper_trading_auto_shadow_focus={json.dumps(auto_shadow_focus, ensure_ascii=False, sort_keys=True)}")
+    if resolved_shadow_focus_tickers:
+        print(f"paper_trading_shadow_focus_tickers={resolved_shadow_focus_tickers}")
+    if resolved_shadow_corridor_focus_tickers:
+        print(f"paper_trading_shadow_corridor_focus_tickers={resolved_shadow_corridor_focus_tickers}")
+    if resolved_shadow_rebucket_focus_tickers:
+        print(f"paper_trading_shadow_rebucket_focus_tickers={resolved_shadow_rebucket_focus_tickers}")
+    if resolved_shadow_visibility_gap_tickers:
+        print(f"paper_trading_shadow_visibility_gap_tickers={resolved_shadow_visibility_gap_tickers}")
+    if resolved_shadow_visibility_gap_corridor_tickers:
+        print(f"paper_trading_shadow_visibility_gap_corridor_tickers={resolved_shadow_visibility_gap_corridor_tickers}")
+    if resolved_shadow_visibility_gap_rebucket_tickers:
+        print(f"paper_trading_shadow_visibility_gap_rebucket_tickers={resolved_shadow_visibility_gap_rebucket_tickers}")
     print(f"paper_trading_selected_analysts={','.join(selected_analysts) if selected_analysts else 'all'}")
     if fast_selected_analysts is not None:
         print(f"paper_trading_fast_selected_analysts={','.join(fast_selected_analysts)}")

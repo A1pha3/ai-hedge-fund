@@ -31,6 +31,15 @@ def _compact_trade_date(value: Any) -> str:
     return "".join(ch for ch in str(value or "") if ch.isdigit())[:8]
 
 
+def _decision_rank(decision: str | None) -> int:
+    normalized = str(decision or "").strip()
+    return {
+        "selected": 2,
+        "near_miss": 1,
+        "rejected": 0,
+    }.get(normalized, -1)
+
+
 def _discover_report_dirs(reports_root: Path) -> list[Path]:
     if not reports_root.exists():
         return []
@@ -56,6 +65,10 @@ def _extract_btst_candidate(report_dir: Path) -> dict[str, Any] | None:
     compact_trade_date = _compact_trade_date(followup.get("trade_date") or session_summary.get("end_date"))
     selection_target_rank = 2 if selection_target == "short_trade_only" else 1
     report_mtime_ns = report_dir.stat().st_mtime_ns
+    selected_count = int(followup_summary.get("decision_counts", {}).get("selected") or 0)
+    near_miss_count = int(followup_summary.get("decision_counts", {}).get("near_miss") or 0)
+    rejected_count = int(followup_summary.get("decision_counts", {}).get("rejected") or 0)
+    max_decision_rank = max((_decision_rank(row.get("decision")) for row in list(followup_summary.get("rows") or [])), default=-1)
     return {
         "report_dir": report_dir.resolve().as_posix(),
         "report_dir_name": report_dir.name,
@@ -66,10 +79,13 @@ def _extract_btst_candidate(report_dir: Path) -> dict[str, Any] | None:
         "selection_target_rank": selection_target_rank,
         "report_mtime_ns": report_mtime_ns,
         "rank": (
-            len(list(followup_summary.get("rows") or [])),
-            1 if upstream_shadow_summary else 0,
+            max_decision_rank,
+            selected_count,
+            near_miss_count,
+            -rejected_count,
             selection_target_rank,
             compact_trade_date,
+            1 if upstream_shadow_summary else 0,
             report_mtime_ns,
             report_dir.name,
         ),
@@ -104,6 +120,7 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if not ticker:
             continue
         current = dict(merged.get(ticker) or {"ticker": ticker})
+        historical_prior = dict(row.get("historical_prior") or {})
         for key in (
             "decision",
             "candidate_source",
@@ -121,6 +138,15 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
             value = row.get(key)
             if value not in (None, "", [], {}):
                 current[key] = value
+        historical_sample_count = historical_prior.get("sample_count")
+        if historical_sample_count not in (None, "", [], {}):
+            current["historical_sample_count"] = historical_sample_count
+        historical_next_close_positive_rate = historical_prior.get("next_close_positive_rate")
+        if historical_next_close_positive_rate not in (None, "", [], {}):
+            current["historical_next_close_positive_rate"] = historical_next_close_positive_rate
+        historical_next_close_return_mean = historical_prior.get("next_close_return_mean")
+        if historical_next_close_return_mean not in (None, "", [], {}):
+            current["historical_next_close_return_mean"] = historical_next_close_return_mean
         for key in ("gate_status", "metrics"):
             value = row.get(key)
             if isinstance(value, dict) and value:
@@ -284,16 +310,17 @@ def load_latest_upstream_shadow_followup_by_ticker(reports_root: str | Path) -> 
             report_dir=candidate.get("report_dir"),
             trade_date=candidate.get("trade_date"),
         )
-        candidate_rank = (
-            str(candidate.get("trade_date") or ""),
-            int(candidate.get("selection_target_rank") or 0),
-            int(candidate.get("report_mtime_ns") or 0),
-            str(candidate.get("report_dir_name") or ""),
-        )
         for row in list(summary.get("rows") or []):
             ticker = str(row.get("ticker") or "").strip()
             if not ticker:
                 continue
+            candidate_rank = (
+                _decision_rank(row.get("decision")),
+                str(candidate.get("trade_date") or ""),
+                int(candidate.get("selection_target_rank") or 0),
+                int(candidate.get("report_mtime_ns") or 0),
+                str(candidate.get("report_dir_name") or ""),
+            )
             current_rank = ranks_by_ticker.get(ticker)
             if current_rank is None or candidate_rank > current_rank:
                 rows_by_ticker[ticker] = dict(row)
@@ -311,16 +338,17 @@ def load_upstream_shadow_followup_history_by_ticker(reports_root: str | Path) ->
             report_dir=candidate.get("report_dir"),
             trade_date=candidate.get("trade_date"),
         )
-        candidate_rank = (
-            str(candidate.get("trade_date") or ""),
-            int(candidate.get("selection_target_rank") or 0),
-            int(candidate.get("report_mtime_ns") or 0),
-            str(candidate.get("report_dir_name") or ""),
-        )
         for row in list(summary.get("rows") or []):
             ticker = str(row.get("ticker") or "").strip()
             if not ticker:
                 continue
+            candidate_rank = (
+                _decision_rank(row.get("decision")),
+                str(candidate.get("trade_date") or ""),
+                int(candidate.get("selection_target_rank") or 0),
+                int(candidate.get("report_mtime_ns") or 0),
+                str(candidate.get("report_dir_name") or ""),
+            )
             grouped.setdefault(ticker, []).append((candidate_rank, dict(row)))
 
     return {

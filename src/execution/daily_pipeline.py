@@ -11,6 +11,13 @@ import os
 
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
+from src.execution.merge_approved_loader import load_merge_approved_tickers
+from src.execution.merge_approved_breakout_uplift import (
+    apply_merge_approved_breakout_uplift_to_signal_map,
+    apply_merge_approved_layer_c_alignment_uplift,
+    apply_merge_approved_sector_resonance_uplift,
+    summarize_merge_approved_breakout_uplift_config,
+)
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.plan_generator import generate_execution_plan
 from src.execution.signal_decay import apply_signal_decay
@@ -64,6 +71,8 @@ FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD
 FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
 WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.20)
+MERGE_APPROVED_SCORE_BOOST = _get_env_float("DAILY_PIPELINE_MERGE_APPROVED_SCORE_BOOST", 0.08)
+MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION = _get_env_float("DAILY_PIPELINE_MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION", 0.05)
 EXIT_REENTRY_CONFIRM_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_CONFIRM_SCORE_MIN", STANDARD_EXECUTION_SCORE)
 EXIT_REENTRY_WEAK_CONFIRMATION_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_WEAK_CONFIRMATION_SCORE_MIN", 0.30)
 CONTINUATION_EXECUTION_ENABLED = bool(_get_env_int("PIPELINE_CONTINUATION_EXECUTION_ENABLED", 1))
@@ -99,6 +108,10 @@ UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN = _get_env_float("DAILY_PIPELINE_UPSTR
 UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN", 0.85)
 UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR", 1.0)
 UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD", 0.45)
+UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD",
+    0.45,
+)
 UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT = bool(
     _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 1)
 )
@@ -128,6 +141,9 @@ CATALYST_THEME_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_BREA
 CATALYST_THEME_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CLOSE_MIN", 0.20)
 CATALYST_THEME_SECTOR_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SECTOR_MIN", 0.25)
 CATALYST_THEME_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CATALYST_MIN", 0.45)
+MERGE_APPROVED_TICKERS = _get_env_csv_set("DAILY_PIPELINE_MERGE_APPROVED_TICKERS", "")
+MERGE_APPROVED_MERGE_REVIEW_PATH = os.getenv("DAILY_PIPELINE_MERGE_APPROVED_MERGE_REVIEW_PATH", "")
+MERGE_APPROVED_RANKING_PATH = os.getenv("DAILY_PIPELINE_MERGE_APPROVED_RANKING_PATH", "")
 _ORIGINAL_BUILD_CANDIDATE_POOL = build_candidate_pool
 _ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW = build_candidate_pool_with_shadow
 WEAK_CONFIRMATION_REENTRY_NEGATIVE_TAGS = frozenset(
@@ -279,7 +295,13 @@ def _classify_watchlist_filter(item: LayerCResult) -> tuple[str, list[str]]:
     return reasons[0], reasons
 
 
-def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], watchlist: list[LayerCResult]) -> dict:
+def _build_watchlist_filter_diagnostics(
+    layer_c_results: list[LayerCResult],
+    watchlist: list[LayerCResult],
+    *,
+    merge_approved_tickers: set[str],
+    threshold_relaxation: float,
+) -> dict:
     selected_tickers = {item.ticker for item in watchlist}
     entries: list[dict] = []
     selected_entries: list[dict] = []
@@ -294,6 +316,11 @@ def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], wat
             "quality_score": round(item.quality_score, 4),
             "decision": item.decision,
             "bc_conflict": item.bc_conflict,
+            "merge_approved_ticker": item.ticker in merge_approved_tickers,
+            "required_score_final_threshold": round(
+                _watchlist_threshold_for_ticker(item.ticker, merge_approved_tickers, threshold_relaxation),
+                4,
+            ),
             "strategy_signals": {
                 name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
                 for name, signal in dict(item.strategy_signals or {}).items()
@@ -337,7 +364,204 @@ def _build_watchlist_filter_diagnostics(layer_c_results: list[LayerCResult], wat
         "score_c_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN, 4),
         "conflicts": sorted(WATCHLIST_SHADOW_RELEASE_CONFLICTS),
     }
+    summary["selection_thresholds"] = {
+        "default_score_final_min": round(WATCHLIST_SCORE_THRESHOLD, 4),
+        "merge_approved_score_final_min": round(max(0.0, WATCHLIST_SCORE_THRESHOLD - threshold_relaxation), 4),
+        "merge_approved_tickers": sorted(merge_approved_tickers),
+        "merge_approved_threshold_relaxation": round(threshold_relaxation, 4),
+    }
     return summary
+
+
+def _watchlist_threshold_for_ticker(ticker: str, merge_approved_tickers: set[str], threshold_relaxation: float) -> float:
+    if ticker in merge_approved_tickers and threshold_relaxation > 0:
+        return max(0.0, WATCHLIST_SCORE_THRESHOLD - threshold_relaxation)
+    return WATCHLIST_SCORE_THRESHOLD
+
+
+def _build_merge_approved_watchlist(
+    layer_c_results: list[LayerCResult],
+    merge_approved_tickers: set[str],
+    threshold_relaxation: float,
+) -> list[LayerCResult]:
+    return [
+        item
+        for item in layer_c_results
+        if item.decision != "avoid" and item.score_final >= _watchlist_threshold_for_ticker(item.ticker, merge_approved_tickers, threshold_relaxation)
+    ]
+
+
+def _apply_merge_approved_fused_boost(
+    fused: list,
+    merge_approved_tickers: set[str],
+    score_boost: float,
+) -> list:
+    if not merge_approved_tickers or score_boost <= 0:
+        return fused
+    boosted: list = []
+    for item in fused:
+        if item.ticker not in merge_approved_tickers:
+            boosted.append(item)
+            continue
+        boosted_score_b = min(1.0, float(item.score_b) + score_boost)
+        arbitration_applied = list(item.arbitration_applied or [])
+        if "merge_approved_score_boost_applied" not in arbitration_applied:
+            arbitration_applied.append("merge_approved_score_boost_applied")
+        boosted.append(
+            item.model_copy(
+                update={
+                    "score_b": boosted_score_b,
+                    "decision": item.classify_decision(boosted_score_b),
+                    "arbitration_applied": arbitration_applied,
+                }
+            )
+        )
+    return boosted
+
+
+def _apply_merge_approved_breakout_signal_uplift(
+    fused: list,
+    merge_approved_tickers: set[str],
+) -> tuple[list, dict[str, Any]]:
+    if not merge_approved_tickers:
+        return fused, {"applied_tickers": [], "eligible_tickers": [], "by_ticker": {}, "config": summarize_merge_approved_breakout_uplift_config()}
+    uplifted: list = []
+    by_ticker: dict[str, Any] = {}
+    applied_tickers: list[str] = []
+    eligible_tickers: list[str] = []
+    for item in fused:
+        if item.ticker not in merge_approved_tickers:
+            uplifted.append(item)
+            continue
+        updated_signals, diagnostics = apply_merge_approved_breakout_uplift_to_signal_map(
+            item.strategy_signals,
+            score_b=float(item.score_b),
+        )
+        by_ticker[item.ticker] = diagnostics
+        if diagnostics.get("eligible"):
+            eligible_tickers.append(item.ticker)
+        if diagnostics.get("applied"):
+            applied_tickers.append(item.ticker)
+            arbitration_applied = list(item.arbitration_applied or [])
+            if "merge_approved_breakout_signal_uplift_applied" not in arbitration_applied:
+                arbitration_applied.append("merge_approved_breakout_signal_uplift_applied")
+            uplifted.append(
+                item.model_copy(
+                    update={
+                        "strategy_signals": updated_signals,
+                        "arbitration_applied": arbitration_applied,
+                    }
+                )
+            )
+            continue
+        uplifted.append(item)
+    return uplifted, {
+        "config": summarize_merge_approved_breakout_uplift_config(),
+        "eligible_tickers": sorted(eligible_tickers),
+        "applied_tickers": sorted(applied_tickers),
+        "by_ticker": by_ticker,
+    }
+
+
+def _apply_merge_approved_layer_c_alignment_uplift(
+    layer_c_results: list[LayerCResult],
+    merge_approved_tickers: set[str],
+    breakout_signal_uplift: dict[str, Any],
+) -> tuple[list[LayerCResult], dict[str, Any]]:
+    if not merge_approved_tickers:
+        return layer_c_results, {"applied_tickers": [], "eligible_tickers": [], "by_ticker": {}}
+    uplifted: list[LayerCResult] = []
+    by_ticker: dict[str, Any] = {}
+    applied_tickers: list[str] = []
+    eligible_tickers: list[str] = []
+    breakout_by_ticker = dict(breakout_signal_uplift.get("by_ticker") or {})
+    for item in layer_c_results:
+        if item.ticker not in merge_approved_tickers:
+            uplifted.append(item)
+            continue
+        updated_payload, diagnostics = apply_merge_approved_layer_c_alignment_uplift(
+            item.model_dump(mode="json"),
+            breakout_diagnostics=dict(breakout_by_ticker.get(item.ticker) or {}),
+        )
+        by_ticker[item.ticker] = diagnostics
+        if diagnostics.get("eligible"):
+            eligible_tickers.append(item.ticker)
+        if diagnostics.get("applied"):
+            applied_tickers.append(item.ticker)
+            uplifted.append(
+                item.model_copy(
+                    update={
+                        "score_c": updated_payload["score_c"],
+                        "score_final": updated_payload["score_final"],
+                        "decision": updated_payload["decision"],
+                        "agent_contribution_summary": updated_payload["agent_contribution_summary"],
+                    }
+                )
+            )
+            continue
+        uplifted.append(item)
+    return uplifted, {
+        "eligible_tickers": sorted(eligible_tickers),
+        "applied_tickers": sorted(applied_tickers),
+        "by_ticker": by_ticker,
+    }
+
+
+def _apply_merge_approved_sector_resonance_uplift(
+    layer_c_results: list[LayerCResult],
+    merge_approved_tickers: set[str],
+    layer_c_alignment_uplift: dict[str, Any],
+) -> tuple[list[LayerCResult], dict[str, Any]]:
+    if not merge_approved_tickers:
+        return layer_c_results, {"applied_tickers": [], "eligible_tickers": [], "by_ticker": {}}
+    uplifted: list[LayerCResult] = []
+    by_ticker: dict[str, Any] = {}
+    applied_tickers: list[str] = []
+    eligible_tickers: list[str] = []
+    alignment_by_ticker = dict(layer_c_alignment_uplift.get("by_ticker") or {})
+    for item in layer_c_results:
+        if item.ticker not in merge_approved_tickers:
+            uplifted.append(item)
+            continue
+        updated_payload, diagnostics = apply_merge_approved_sector_resonance_uplift(
+            item.model_dump(mode="json"),
+            alignment_diagnostics=dict(alignment_by_ticker.get(item.ticker) or {}),
+        )
+        by_ticker[item.ticker] = diagnostics
+        if diagnostics.get("eligible"):
+            eligible_tickers.append(item.ticker)
+        if diagnostics.get("applied"):
+            applied_tickers.append(item.ticker)
+            uplifted.append(item.model_copy(update={"agent_contribution_summary": updated_payload["agent_contribution_summary"]}))
+            continue
+        uplifted.append(item)
+    return uplifted, {
+        "eligible_tickers": sorted(eligible_tickers),
+        "applied_tickers": sorted(applied_tickers),
+        "by_ticker": by_ticker,
+    }
+
+
+def _tag_merge_approved_layer_c_results(layer_c_results: list[LayerCResult], merge_approved_tickers: set[str]) -> list[LayerCResult]:
+    if not merge_approved_tickers:
+        return layer_c_results
+    tagged_results: list[LayerCResult] = []
+    for item in layer_c_results:
+        if item.ticker not in merge_approved_tickers:
+            tagged_results.append(item)
+            continue
+        candidate_reason_codes = [str(code) for code in list(item.candidate_reason_codes or []) if str(code or "").strip()]
+        if "merge_approved_continuation" not in candidate_reason_codes:
+            candidate_reason_codes.append("merge_approved_continuation")
+        tagged_results.append(
+            item.model_copy(
+                update={
+                    "candidate_source": "layer_c_watchlist_merge_approved",
+                    "candidate_reason_codes": candidate_reason_codes,
+                }
+            )
+        )
+    return tagged_results
 
 
 def _should_release_watchlist_shadow_candidate(*, item: LayerCResult, primary_reason: str) -> tuple[bool, str | None]:
@@ -396,7 +620,22 @@ def _build_watchlist_shadow_release_entry(*, item: LayerCResult, reasons: list[s
     }
 
 
-def _build_short_trade_boundary_entry(*, item, reason: str, rank: int, candidate_source: str = "short_trade_boundary", upstream_candidate_source: str = "layer_b_boundary", candidate_reason_codes: list[str] | None = None, candidate_pool_rank: int | None = None, candidate_pool_lane: str | None = None, candidate_pool_avg_amount_share_of_cutoff: float | None = None, candidate_pool_avg_amount_share_of_min_gate: float | None = None) -> dict:
+def _build_short_trade_boundary_entry(
+    *,
+    item,
+    reason: str,
+    rank: int,
+    candidate_source: str = "short_trade_boundary",
+    upstream_candidate_source: str = "layer_b_boundary",
+    candidate_reason_codes: list[str] | None = None,
+    candidate_pool_rank: int | None = None,
+    candidate_pool_lane: str | None = None,
+    candidate_pool_shadow_reason: str | None = None,
+    candidate_pool_avg_amount_share_of_cutoff: float | None = None,
+    candidate_pool_avg_amount_share_of_min_gate: float | None = None,
+    shadow_visibility_gap_selected: bool = False,
+    shadow_visibility_gap_relaxed_band: bool = False,
+) -> dict:
     resolved_reason_codes = [str(code) for code in list(candidate_reason_codes or [reason, "short_trade_prequalified"]) if str(code or "").strip()]
     if reason not in resolved_reason_codes:
         resolved_reason_codes.insert(0, reason)
@@ -420,8 +659,11 @@ def _build_short_trade_boundary_entry(*, item, reason: str, rank: int, candidate
         "rank": rank,
         "candidate_pool_rank": candidate_pool_rank,
         "candidate_pool_lane": candidate_pool_lane,
+        "candidate_pool_shadow_reason": candidate_pool_shadow_reason,
         "candidate_pool_avg_amount_share_of_cutoff": candidate_pool_avg_amount_share_of_cutoff,
         "candidate_pool_avg_amount_share_of_min_gate": candidate_pool_avg_amount_share_of_min_gate,
+        "shadow_visibility_gap_selected": shadow_visibility_gap_selected,
+        "shadow_visibility_gap_relaxed_band": shadow_visibility_gap_relaxed_band,
     }
 
 
@@ -513,6 +755,11 @@ def _build_upstream_shadow_catalyst_relief_config(*, candidate_pool_lane: str, f
         "reason": "upstream_shadow_catalyst_relief",
         "catalyst_freshness_floor": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR, 4),
         "near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
+        **(
+            {"selected_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD, 4)}
+            if candidate_pool_lane == "post_gate_liquidity_competition"
+            else {}
+        ),
         "breakout_freshness_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN, 4),
         "trend_acceleration_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN, 4),
         "close_strength_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN, 4),
@@ -625,8 +872,11 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
             candidate_reason_codes=candidate_reason_codes,
             candidate_pool_rank=int(shadow_candidate.candidate_pool_rank or 0) if shadow_candidate else None,
             candidate_pool_lane=str(shadow_candidate.candidate_pool_lane or "") if shadow_candidate else None,
+            candidate_pool_shadow_reason=str(shadow_candidate.candidate_pool_shadow_reason or "") if shadow_candidate else None,
             candidate_pool_avg_amount_share_of_cutoff=round(float(shadow_candidate.candidate_pool_avg_amount_share_of_cutoff), 4) if shadow_candidate else None,
             candidate_pool_avg_amount_share_of_min_gate=round(float(shadow_candidate.candidate_pool_avg_amount_share_of_min_gate), 4) if shadow_candidate else None,
+            shadow_visibility_gap_selected=bool(shadow_candidate.shadow_visibility_gap_selected) if shadow_candidate else False,
+            shadow_visibility_gap_relaxed_band=bool(shadow_candidate.shadow_visibility_gap_relaxed_band) if shadow_candidate else False,
         )
         qualified, filter_reason, metrics_payload = _qualifies_short_trade_boundary_candidate(trade_date=trade_date, entry=candidate_entry)
         if not qualified:
@@ -702,6 +952,7 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
             "upstream_shadow_catalyst_relief_close_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN, 4),
             "upstream_shadow_catalyst_relief_catalyst_freshness_floor": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR, 4),
             "upstream_shadow_catalyst_relief_near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
+            "upstream_shadow_catalyst_relief_post_gate_selected_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD, 4),
             "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
             "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane": {
                 lane: _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(lane)
@@ -1330,6 +1581,7 @@ class DailyPipeline:
     target_mode: TargetMode = "research_only"
     short_trade_target_profile_name: str = "default"
     short_trade_target_profile_overrides: dict[str, object] = field(default_factory=dict)
+    merge_approved_tickers: set[str] = field(default_factory=set)
     execution_plan_provenance_log: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -1347,6 +1599,11 @@ class DailyPipeline:
         self._exit_checker_accepts_logic_scores = len(signature(self.exit_checker).parameters) >= 3
         self.short_trade_target_profile_name = str(self.short_trade_target_profile_name or "default")
         self.short_trade_target_profile_overrides = dict(self.short_trade_target_profile_overrides or {})
+        self.merge_approved_tickers = load_merge_approved_tickers(
+            explicit_tickers=set(self.merge_approved_tickers or set()).union(MERGE_APPROVED_TICKERS),
+            merge_review_path=MERGE_APPROVED_MERGE_REVIEW_PATH or None,
+            merge_ranking_path=MERGE_APPROVED_RANKING_PATH or None,
+        )
         self._short_trade_target_profile = build_short_trade_target_profile(
             self.short_trade_target_profile_name,
             self.short_trade_target_profile_overrides,
@@ -1500,6 +1757,8 @@ class DailyPipeline:
 
         stage_started_at = perf_counter()
         fused = fuse_batch(scored, market_state, trade_date)
+        fused = _apply_merge_approved_fused_boost(fused, self.merge_approved_tickers, MERGE_APPROVED_SCORE_BOOST)
+        fused, merge_approved_breakout_signal_uplift = _apply_merge_approved_breakout_signal_uplift(fused, self.merge_approved_tickers)
         fuse_batch_seconds = perf_counter() - stage_started_at
         stage_started_at = perf_counter()
         shadow_fused = fuse_batch(shadow_scored, market_state, trade_date) if shadow_scored else []
@@ -1526,11 +1785,31 @@ class DailyPipeline:
 
         stage_started_at = perf_counter()
         layer_c_results = aggregate_layer_c_results(high_pool, agent_results)
+        layer_c_results, merge_approved_layer_c_alignment_uplift = _apply_merge_approved_layer_c_alignment_uplift(
+            layer_c_results,
+            self.merge_approved_tickers,
+            merge_approved_breakout_signal_uplift,
+        )
+        layer_c_results, merge_approved_sector_resonance_uplift = _apply_merge_approved_sector_resonance_uplift(
+            layer_c_results,
+            self.merge_approved_tickers,
+            merge_approved_layer_c_alignment_uplift,
+        )
+        layer_c_results = _tag_merge_approved_layer_c_results(layer_c_results, self.merge_approved_tickers)
         aggregate_layer_c_seconds = perf_counter() - stage_started_at
         logic_scores = _build_logic_score_map(layer_c_results)
-        watchlist = [item for item in layer_c_results if item.score_final >= WATCHLIST_SCORE_THRESHOLD and item.decision != "avoid"]
+        watchlist = _build_merge_approved_watchlist(
+            layer_c_results,
+            self.merge_approved_tickers,
+            MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
+        )
         layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(fused, high_pool)
-        watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(layer_c_results, watchlist)
+        watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(
+            layer_c_results,
+            watchlist,
+            merge_approved_tickers=self.merge_approved_tickers,
+            threshold_relaxation=MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
+        )
         short_trade_candidate_diagnostics = _build_short_trade_candidate_diagnostics(
             fused,
             high_pool,
@@ -1651,6 +1930,14 @@ class DailyPipeline:
                 "timing_seconds": timing_seconds,
                 "counts": counts,
                 "funnel_diagnostics": funnel_diagnostics,
+                "merge_approved_context": {
+                    "tickers": sorted(self.merge_approved_tickers),
+                    "score_boost": round(MERGE_APPROVED_SCORE_BOOST, 4),
+                    "watchlist_threshold_relaxation": round(MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION, 4),
+                    "breakout_signal_uplift": merge_approved_breakout_signal_uplift,
+                    "layer_c_alignment_uplift": merge_approved_layer_c_alignment_uplift,
+                    "sector_resonance_uplift": merge_approved_sector_resonance_uplift,
+                },
             },
             layer_a_count=len(candidates),
             layer_b_count=len(high_pool),

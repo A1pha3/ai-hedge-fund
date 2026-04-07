@@ -244,6 +244,8 @@ def test_generate_btst_tplus2_continuation_watchboard_combines_governance_and_ro
     assert analysis["focus_promotion_review"]["promotion_review_verdict"] == "watch_review_ready"
     assert analysis["focus_promotion_gate"]["gate_verdict"] == "approve_watchlist_promotion"
     assert analysis["focus_watchlist_execution"]["execution_verdict"] == "watchlist_extension_applied"
+    assert analysis["focus_watch_validation_status"] == "promoted_from_validation_queue"
+    assert analysis["focus_watch_recent_supporting_window_count"] == 4
     assert analysis["focus_eligible_gate"]["gate_verdict"] == "approve_eligible_promotion"
     assert analysis["focus_eligible_execution"]["execution_verdict"] == "eligible_extension_applied"
     assert analysis["focus_execution_gate"]["gate_verdict"] == "approve_execution_candidate"
@@ -259,6 +261,7 @@ def test_generate_btst_tplus2_continuation_watchboard_combines_governance_and_ro
     assert "300505" in markdown
     assert "approve_watchlist_promotion" in markdown
     assert "watchlist_extension_applied" in markdown
+    assert "focus_watch_validation_status" in markdown
     assert "approve_eligible_promotion" in markdown
     assert "eligible_extension_applied" in markdown
     assert "approve_execution_candidate" in markdown

@@ -13,6 +13,7 @@ REPORTS_DIR = Path("data/reports")
 DEFAULT_CORRIDOR_SHADOW_PACK_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_latest.json"
 DEFAULT_REBUCKET_COMPARISON_BUNDLE_PATH = REPORTS_DIR / "btst_candidate_pool_rebucket_comparison_bundle_latest.json"
 DEFAULT_GOVERNANCE_SYNTHESIS_PATH = REPORTS_DIR / "btst_governance_synthesis_latest.json"
+DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH = REPORTS_DIR / "btst_candidate_pool_upstream_handoff_board_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_lane_pair_board_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_lane_pair_board_latest.md"
 
@@ -46,6 +47,9 @@ def _candidate_row(
     governance_status: str | None = None,
     governance_blocker: str | None = None,
     governance_summary: str | None = None,
+    governance_same_source_sample_count: int | None = None,
+    governance_same_source_next_close_positive_rate: float | None = None,
+    governance_same_source_next_close_return_mean: float | None = None,
 ) -> dict[str, Any]:
     return {
         "ticker": ticker,
@@ -61,6 +65,9 @@ def _candidate_row(
         "governance_status": governance_status,
         "governance_blocker": governance_blocker,
         "governance_summary": governance_summary,
+        "governance_same_source_sample_count": governance_same_source_sample_count,
+        "governance_same_source_next_close_positive_rate": governance_same_source_next_close_positive_rate,
+        "governance_same_source_next_close_return_mean": governance_same_source_next_close_return_mean,
     }
 
 
@@ -139,10 +146,59 @@ def _build_governance_overlays(governance_synthesis: dict[str, Any]) -> dict[str
     }
 
 
+def _resolve_upstream_handoff_board_path(
+    corridor_shadow_pack_path: str | Path,
+    upstream_handoff_board_path: str | Path | None = None,
+) -> Path | None:
+    if upstream_handoff_board_path:
+        resolved = Path(upstream_handoff_board_path).expanduser().resolve()
+        return resolved if resolved.exists() else None
+    sibling = Path(corridor_shadow_pack_path).expanduser().resolve().parent / DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH.name
+    return sibling if sibling.exists() else None
+
+
+def _build_upstream_handoff_overlays(upstream_handoff_board: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    overlays: dict[str, dict[str, Any]] = {}
+    for row in [dict(item or {}) for item in list(upstream_handoff_board.get("board_rows") or [])]:
+        ticker = str(row.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        governance_status = row.get("downstream_followup_status")
+        governance_blocker = row.get("downstream_followup_blocker")
+        governance_summary = row.get("downstream_followup_summary")
+        if (
+            governance_blocker == "profitability_hard_cliff_and_weak_same_source_payoff"
+            and (
+                row.get("latest_followup_historical_sample_count") is not None
+                or row.get("latest_followup_historical_next_close_positive_rate") is not None
+                or row.get("latest_followup_historical_next_close_return_mean") is not None
+            )
+        ):
+            governance_summary = (
+                f"{governance_summary} Historical same-source near-miss payoff remains weak"
+                f" (samples={row.get('latest_followup_historical_sample_count')},"
+                f" next_close_positive_rate={row.get('latest_followup_historical_next_close_positive_rate')},"
+                f" next_close_return_mean={row.get('latest_followup_historical_next_close_return_mean')})."
+            )
+        if governance_status or governance_blocker or governance_summary:
+            overlays[ticker] = {
+                "current_decision": row.get("latest_followup_decision"),
+                "current_candidate_source": row.get("latest_followup_candidate_source"),
+                "governance_status": governance_status,
+                "governance_blocker": governance_blocker,
+                "governance_summary": governance_summary,
+                "governance_same_source_sample_count": row.get("latest_followup_historical_sample_count"),
+                "governance_same_source_next_close_positive_rate": row.get("latest_followup_historical_next_close_positive_rate"),
+                "governance_same_source_next_close_return_mean": row.get("latest_followup_historical_next_close_return_mean"),
+            }
+    return overlays
+
+
 def analyze_btst_candidate_pool_lane_pair_board(
     corridor_shadow_pack_path: str | Path,
     rebucket_comparison_bundle_path: str | Path,
     governance_synthesis_path: str | Path | None = None,
+    upstream_handoff_board_path: str | Path | None = None,
 ) -> dict[str, Any]:
     corridor_pack = _maybe_load_json(corridor_shadow_pack_path)
     if not corridor_pack:
@@ -154,6 +210,10 @@ def analyze_btst_candidate_pool_lane_pair_board(
 
     governance_synthesis = _maybe_load_json(governance_synthesis_path or DEFAULT_GOVERNANCE_SYNTHESIS_PATH)
     governance_overlays = _build_governance_overlays(governance_synthesis)
+    resolved_upstream_handoff_board_path = _resolve_upstream_handoff_board_path(corridor_shadow_pack_path, upstream_handoff_board_path)
+    upstream_handoff_board = _maybe_load_json(resolved_upstream_handoff_board_path)
+    for ticker, overlay in _build_upstream_handoff_overlays(upstream_handoff_board).items():
+        governance_overlays.setdefault(ticker, {}).update({key: value for key, value in overlay.items() if value is not None})
     primary = dict(corridor_pack.get("primary_shadow_replay") or {})
     parallel = [dict(row) for row in list(corridor_pack.get("parallel_watch_lanes") or [])]
     rebucket = dict(rebucket_bundle.get("rebucket_objective_row") or {})
@@ -241,11 +301,16 @@ def analyze_btst_candidate_pool_lane_pair_board(
         "alignment_status": rebucket_bundle.get("priority_alignment_status"),
         "governance_overlay_count": len(governance_overlays),
     }
+    has_active_rebucket_challenger = bool(comparison.get("rebucket_ticker"))
 
     if board_leader.get("lane_family") == "corridor":
         recommendation = (
             f"lane pair board 当前仍应由 corridor 主导，首选 ticker={board_leader.get('ticker')}。"
-            f" rebucket ticker={comparison.get('rebucket_ticker')} 保留为结构 challenger，用于并行收益对照。"
+            + (
+                f" rebucket ticker={comparison.get('rebucket_ticker')} 保留为结构 challenger，用于并行收益对照。"
+                if has_active_rebucket_challenger
+                else " 当前没有 active rebucket challenger，不应分散主槽位注意力。"
+            )
         )
     elif board_leader:
         recommendation = (
@@ -257,9 +322,13 @@ def analyze_btst_candidate_pool_lane_pair_board(
 
     next_actions = [
         f"保持 corridor primary ticker {primary.get('ticker') or 'N/A'} 为第一 replay 槽位。",
-        f"保持 rebucket ticker {comparison.get('rebucket_ticker') or 'N/A'} 为结构 challenger，对照 corridor 主槽位表现。",
         "parallel_watch 只承担 confirmatory evidence，不允许直接替换 primary replay 优先级。",
     ]
+    next_actions.append(
+        f"保持 rebucket ticker {comparison.get('rebucket_ticker')} 为结构 challenger，对照 corridor 主槽位表现。"
+        if has_active_rebucket_challenger
+        else "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再恢复并行收益对照。"
+    )
     if governance_overlays.get("300720", {}).get("governance_status"):
         next_actions.append("300720 继续保持 continuation / observation-only，等待 selected persistence 或独立窗口 edge。")
     if governance_overlays.get("003036", {}).get("governance_status"):
@@ -271,6 +340,7 @@ def analyze_btst_candidate_pool_lane_pair_board(
         "corridor_shadow_pack_path": str(Path(corridor_shadow_pack_path).expanduser().resolve()),
         "rebucket_comparison_bundle_path": str(Path(rebucket_comparison_bundle_path).expanduser().resolve()),
         "governance_synthesis_path": str(Path(governance_synthesis_path or DEFAULT_GOVERNANCE_SYNTHESIS_PATH).expanduser().resolve()),
+        "upstream_handoff_board_path": str(resolved_upstream_handoff_board_path) if resolved_upstream_handoff_board_path else None,
         "pair_status": pair_status,
         "board_leader": board_leader,
         "candidates": candidates,
@@ -318,6 +388,7 @@ if __name__ == "__main__":
     parser.add_argument("--corridor-shadow-pack-path", default=str(DEFAULT_CORRIDOR_SHADOW_PACK_PATH))
     parser.add_argument("--rebucket-comparison-bundle-path", default=str(DEFAULT_REBUCKET_COMPARISON_BUNDLE_PATH))
     parser.add_argument("--governance-synthesis-path", default=str(DEFAULT_GOVERNANCE_SYNTHESIS_PATH))
+    parser.add_argument("--upstream-handoff-board-path", default=None)
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -326,6 +397,7 @@ if __name__ == "__main__":
         args.corridor_shadow_pack_path,
         args.rebucket_comparison_bundle_path,
         governance_synthesis_path=args.governance_synthesis_path,
+        upstream_handoff_board_path=args.upstream_handoff_board_path,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

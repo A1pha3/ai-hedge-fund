@@ -36,6 +36,28 @@ def _load_optional_json(path: str | Path | None) -> dict[str, Any]:
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
+def _resolve_watchlist_validation(
+    watchlist_validation_path: str | Path | None,
+    *,
+    promotion_review_path: str | Path | None,
+    watchlist_execution_path: str | Path | None,
+) -> tuple[Path | None, dict[str, Any]]:
+    initial_path = Path(watchlist_validation_path or DEFAULT_WATCHLIST_VALIDATION_PATH).expanduser().resolve()
+    initial_payload = _load_optional_json(initial_path)
+    promotion_review = _load_optional_json(promotion_review_path)
+    watchlist_execution = _load_optional_json(watchlist_execution_path)
+    focus_ticker = str(promotion_review.get("focus_ticker") or watchlist_execution.get("focus_ticker") or "").strip()
+    if not focus_ticker:
+        return (initial_path if initial_path.exists() else None), initial_payload
+    if str(initial_payload.get("candidate_ticker") or "").strip() == focus_ticker:
+        return (initial_path if initial_path.exists() else None), initial_payload
+    candidate_path = initial_path.parent / f"btst_tplus2_candidate_dossier_{focus_ticker}_latest.json"
+    candidate_payload = _load_optional_json(candidate_path)
+    if candidate_payload:
+        return candidate_path, candidate_payload
+    return (initial_path if initial_path.exists() else None), initial_payload
+
+
 def generate_btst_tplus2_continuation_governance_board(
     observation_pool_path: str | Path,
     *,
@@ -53,7 +75,11 @@ def generate_btst_tplus2_continuation_governance_board(
     observation_pool = _load_json(observation_pool_path)
     lane_rulepack = _load_json(lane_rulepack_path)
     lane_validation = _load_json(lane_validation_path)
-    watchlist_validation = _load_optional_json(watchlist_validation_path)
+    resolved_watchlist_validation_path, watchlist_validation = _resolve_watchlist_validation(
+        watchlist_validation_path,
+        promotion_review_path=promotion_review_path,
+        watchlist_execution_path=watchlist_execution_path,
+    )
     promotion_review = _load_optional_json(promotion_review_path)
     promotion_gate = _load_optional_json(promotion_gate_path)
     watchlist_execution = _load_optional_json(watchlist_execution_path)
@@ -64,6 +90,15 @@ def generate_btst_tplus2_continuation_governance_board(
     lane_rules = dict(lane_rulepack.get("lane_rules") or {})
     lane_stage = lane_rules.get("lane_stage", lane_rulepack.get("lane_stage"))
     capital_mode = lane_rules.get("capital_mode", lane_rulepack.get("capital_mode"))
+    focus_ticker = str(
+        promotion_review.get("focus_ticker")
+        or watchlist_execution.get("focus_ticker")
+        or eligible_execution.get("focus_ticker")
+        or execution_overlay.get("focus_ticker")
+        or ""
+    ).strip()
+    focus_promotion_review_verdict = str(promotion_review.get("promotion_review_verdict") or "").strip()
+    merge_review_ready = focus_promotion_review_verdict == "ready_for_default_btst_merge_review"
 
     entries = list(observation_pool.get("entries") or [])
     rulepack_eligible_tickers = list(lane_rulepack.get("eligible_tickers") or lane_validation.get("eligible_tickers") or [])
@@ -73,12 +108,27 @@ def generate_btst_tplus2_continuation_governance_board(
     validation_windows = list(lane_validation.get("per_window_summaries") or [])
     support_count = sum(1 for item in validation_windows if str(item.get("window_verdict") or "") == "supports_tplus2_lane")
     mixed_count = len(validation_windows) - support_count
-    watchlist_validation_status = str(watchlist_validation.get("recent_validation_verdict") or "watchlist_validation_missing")
-    recent_supporting_window_count = int(watchlist_validation.get("recent_supporting_window_count") or 0)
+    watchlist_validation_status = str(
+        watchlist_validation.get("recent_validation_verdict")
+        or watchlist_validation.get("recent_tier_verdict")
+        or "watchlist_validation_missing"
+    )
+    recent_supporting_window_count = int(
+        watchlist_validation.get("recent_supporting_window_count")
+        or watchlist_validation.get("recent_tier_window_count")
+        or 0
+    )
     recent_window_count = int(watchlist_validation.get("recent_window_count") or 0)
-    recent_support_ratio = float(watchlist_validation.get("recent_support_ratio") or 0.0)
+    recent_support_ratio = float(
+        watchlist_validation.get("recent_support_ratio")
+        or watchlist_validation.get("recent_tier_ratio")
+        or 0.0
+    )
 
-    if len(rulepack_eligible_tickers) <= 1 and watchlist_tickers:
+    if merge_review_ready:
+        governance_status = "ready_for_default_btst_merge_review"
+        promotion_blocker = "default_btst_merge_review_pending"
+    elif len(rulepack_eligible_tickers) <= 1 and watchlist_tickers:
         governance_status = "single_ticker_with_validation_watch"
         if watchlist_validation_status in {"recent_support_absent", "no_recent_windows", "watchlist_validation_missing"}:
             promotion_blocker = "recent_validation_pending"
@@ -112,12 +162,16 @@ def generate_btst_tplus2_continuation_governance_board(
                 "recent_window_count": recent_window_count if str(entry.get("entry_type") or "") == "near_cluster_watch" else None,
                 "recent_support_ratio": recent_support_ratio if str(entry.get("entry_type") or "") == "near_cluster_watch" else None,
                 "next_step": (
+                    "Escalate this focus ticker into default BTST merge review under explicit governance approval."
+                    if merge_review_ready and ticker == focus_ticker
+                    else (
                     "Validate this near-cluster watch candidate across fresh windows before promoting it into lane eligibility."
                     if str(entry.get("entry_type") or "") == "near_cluster_watch" and promotion_blocker != "near_cluster_only"
                     else (
                         "Keep this near-cluster watch candidate outside eligible_tickers until a strict-peer upgrade appears."
                         if str(entry.get("entry_type") or "") == "near_cluster_watch"
                         else "Accumulate more windows and a second same-cluster peer before considering any paper execution promotion."
+                    )
                     )
                 ),
                 "t_plus_2_close_positive_rate": entry.get("t_plus_2_close_positive_rate"),
@@ -149,7 +203,12 @@ def generate_btst_tplus2_continuation_governance_board(
         f"Keep the lane at {lane_stage} / {capital_mode} with effective_eligible_tickers={eligible_tickers}. "
         f"Validation support windows={support_count}, mixed windows={mixed_count}, "
         f"watchlist_validation_status={watchlist_validation_status}, recent_support={recent_supporting_window_count}/{recent_window_count}; "
-        f"focus promotion gate={promotion_gate.get('gate_verdict')} eligible_gate={eligible_gate.get('gate_verdict')} execution_gate={execution_gate.get('gate_verdict')}; do not merge this lane into default BTST."
+        f"focus promotion gate={promotion_gate.get('gate_verdict')} eligible_gate={eligible_gate.get('gate_verdict')} execution_gate={execution_gate.get('gate_verdict')}; "
+        + (
+            "escalate the focus ticker into default BTST merge review under explicit governance approval."
+            if merge_review_ready
+            else "do not merge this lane into default BTST."
+        )
     )
 
     return {
@@ -157,7 +216,7 @@ def generate_btst_tplus2_continuation_governance_board(
             "observation_pool": str(Path(observation_pool_path).expanduser().resolve()),
             "lane_rulepack": str(Path(lane_rulepack_path).expanduser().resolve()),
             "lane_validation": str(Path(lane_validation_path).expanduser().resolve()),
-            "watchlist_validation": str(Path(watchlist_validation_path).expanduser().resolve()) if watchlist_validation_path is not None else None,
+            "watchlist_validation": str(resolved_watchlist_validation_path) if resolved_watchlist_validation_path is not None else None,
             "promotion_gate": str(Path(promotion_gate_path).expanduser().resolve()) if promotion_gate_path is not None else None,
             "watchlist_execution": str(Path(watchlist_execution_path).expanduser().resolve()) if watchlist_execution_path is not None else None,
             "eligible_gate": str(Path(eligible_gate_path).expanduser().resolve()) if eligible_gate_path is not None else None,
@@ -165,6 +224,7 @@ def generate_btst_tplus2_continuation_governance_board(
             "execution_gate": str(Path(execution_gate_path).expanduser().resolve()) if execution_gate_path is not None else None,
             "execution_overlay": str(Path(execution_overlay_path).expanduser().resolve()) if execution_overlay_path is not None else None,
         },
+        "focus_ticker": focus_ticker or None,
         "governance_status": governance_status,
         "promotion_blocker": promotion_blocker,
         "eligible_tickers": eligible_tickers,

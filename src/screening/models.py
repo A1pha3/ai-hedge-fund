@@ -20,6 +20,8 @@ class CandidateStock(BaseModel):
     candidate_pool_shadow_reason: str = ""
     candidate_pool_avg_amount_share_of_cutoff: float = 0.0
     candidate_pool_avg_amount_share_of_min_gate: float = 0.0
+    shadow_visibility_gap_selected: bool = False
+    shadow_visibility_gap_relaxed_band: bool = False
 
 
 class MarketStateType(str, Enum):

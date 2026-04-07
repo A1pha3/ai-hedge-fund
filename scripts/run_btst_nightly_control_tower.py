@@ -459,10 +459,14 @@ def _extract_candidate_pool_recall_dossier_summary(manifest: dict[str, Any]) -> 
         "rebucket_comparison_bundle_summary": dict(refresh.get("candidate_pool_rebucket_comparison_bundle_summary") or {}),
         "lane_pair_board_status": refresh.get("candidate_pool_lane_pair_board_status"),
         "lane_pair_board_summary": dict(refresh.get("candidate_pool_lane_pair_board_summary") or {}),
+        "continuation_focus_summary": dict(refresh.get("continuation_focus_summary") or {}),
+        "continuation_promotion_ready_summary": dict(refresh.get("continuation_promotion_ready_summary") or {}),
+        "transient_probe_summary": dict(refresh.get("transient_probe_summary") or {}),
         "upstream_handoff_board_status": refresh.get("candidate_pool_upstream_handoff_board_status"),
         "upstream_handoff_board_summary": dict(refresh.get("candidate_pool_upstream_handoff_board_summary") or {}),
         "corridor_uplift_runbook_status": refresh.get("candidate_pool_corridor_uplift_runbook_status"),
         "corridor_uplift_runbook_summary": dict(refresh.get("candidate_pool_corridor_uplift_runbook_summary") or {}),
+        "execution_constraint_rollup": dict(refresh.get("execution_constraint_rollup") or {}),
         "action_queue": list(analysis.get("action_queue") or [])[:3],
         "next_actions": list(analysis.get("next_actions") or [])[:4],
         "recommendation": analysis.get("recommendation"),
@@ -522,6 +526,86 @@ def _extract_latest_btst_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _extract_default_merge_review_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("default_merge_review_summary") or {})
+    if summary:
+        return summary
+    entry = _entry_by_id(manifest, "btst_default_merge_review_latest")
+    if not entry:
+        return {}
+    return _safe_load_json(entry.get("absolute_path"))
+
+
+def _extract_default_merge_historical_counterfactual_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("default_merge_historical_counterfactual_summary") or {})
+    if summary:
+        return summary
+    entry = _entry_by_id(manifest, "btst_default_merge_historical_counterfactual_latest")
+    if not entry:
+        return {}
+    return _safe_load_json(entry.get("absolute_path"))
+
+
+def _extract_continuation_merge_candidate_ranking_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("continuation_merge_candidate_ranking_summary") or {})
+    if summary:
+        return summary
+    entry = _entry_by_id(manifest, "btst_continuation_merge_candidate_ranking_latest")
+    if not entry:
+        return {}
+    return _safe_load_json(entry.get("absolute_path"))
+
+
+def _extract_default_merge_strict_counterfactual_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("default_merge_strict_counterfactual_summary") or {})
+    if summary:
+        return summary
+    entry = _entry_by_id(manifest, "btst_default_merge_strict_counterfactual_latest")
+    if not entry:
+        return {}
+    return _safe_load_json(entry.get("absolute_path"))
+
+
+def _extract_merge_replay_validation_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("merge_replay_validation_summary") or {})
+    if summary:
+        return summary
+    entry = _entry_by_id(manifest, "btst_merge_replay_validation_latest")
+    if not entry:
+        return {}
+    return _safe_load_json(entry.get("absolute_path"))
+
+
+def _extract_prepared_breakout_relief_validation_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("prepared_breakout_relief_validation_summary") or {})
+    if summary:
+        return summary
+    entry = _entry_by_id(manifest, "btst_prepared_breakout_relief_validation_latest")
+    if not entry:
+        return {}
+    return _safe_load_json(entry.get("absolute_path"))
+
+
+def _extract_prepared_breakout_cohort_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("prepared_breakout_cohort_summary") or {})
+    if summary:
+        return summary
+    entry = _entry_by_id(manifest, "btst_prepared_breakout_cohort_latest")
+    if not entry:
+        return {}
+    return _safe_load_json(entry.get("absolute_path"))
+
+
+def _extract_prepared_breakout_residual_surface_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("prepared_breakout_residual_surface_summary") or {})
+    if summary:
+        return summary
+    entry = _entry_by_id(manifest, "btst_prepared_breakout_residual_surface_latest")
+    if not entry:
+        return {}
+    return _safe_load_json(entry.get("absolute_path"))
+
+
 def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     synthesis = _safe_load_json(dict(manifest.get("btst_governance_synthesis_refresh") or {}).get("output_json"))
     validation = _safe_load_json(dict(manifest.get("btst_governance_validation_refresh") or {}).get("output_json"))
@@ -533,6 +617,14 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     no_candidate_entry_failure_dossier = _extract_no_candidate_entry_failure_dossier_summary(manifest)
     watchlist_recall_dossier = _extract_watchlist_recall_dossier_summary(manifest)
     candidate_pool_recall_dossier = _extract_candidate_pool_recall_dossier_summary(manifest)
+    default_merge_review_summary = _extract_default_merge_review_summary(manifest)
+    default_merge_historical_counterfactual_summary = _extract_default_merge_historical_counterfactual_summary(manifest)
+    continuation_merge_candidate_ranking_summary = _extract_continuation_merge_candidate_ranking_summary(manifest)
+    default_merge_strict_counterfactual_summary = _extract_default_merge_strict_counterfactual_summary(manifest)
+    merge_replay_validation_summary = _extract_merge_replay_validation_summary(manifest)
+    prepared_breakout_relief_validation_summary = _extract_prepared_breakout_relief_validation_summary(manifest)
+    prepared_breakout_cohort_summary = _extract_prepared_breakout_cohort_summary(manifest)
+    prepared_breakout_residual_surface_summary = _extract_prepared_breakout_residual_surface_summary(manifest)
     no_candidate_entry_priority_tickers = list(no_candidate_entry_action_board.get("top_priority_tickers") or [])
     absent_from_watchlist_tickers = list(no_candidate_entry_failure_dossier.get("top_absent_from_watchlist_tickers") or [])
     watchlist_absent_from_candidate_pool_tickers = list(watchlist_recall_dossier.get("top_absent_from_candidate_pool_tickers") or [])
@@ -616,11 +708,23 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "candidate_pool_rebucket_comparison_bundle_summary": dict(candidate_pool_recall_dossier.get("rebucket_comparison_bundle_summary") or {}),
         "candidate_pool_lane_pair_board_status": candidate_pool_recall_dossier.get("lane_pair_board_status"),
         "candidate_pool_lane_pair_board_summary": dict(candidate_pool_recall_dossier.get("lane_pair_board_summary") or {}),
+        "continuation_focus_summary": dict(candidate_pool_recall_dossier.get("continuation_focus_summary") or {}),
         "candidate_pool_upstream_handoff_board_status": candidate_pool_recall_dossier.get("upstream_handoff_board_status"),
         "candidate_pool_upstream_handoff_board_summary": dict(candidate_pool_recall_dossier.get("upstream_handoff_board_summary") or {}),
         "active_candidate_pool_upstream_handoff_focus_tickers": upstream_shadow_followup_overlay.get("active_upstream_handoff_focus_tickers"),
         "candidate_pool_corridor_uplift_runbook_status": candidate_pool_recall_dossier.get("corridor_uplift_runbook_status"),
         "candidate_pool_corridor_uplift_runbook_summary": dict(candidate_pool_recall_dossier.get("corridor_uplift_runbook_summary") or {}),
+        "continuation_promotion_ready_summary": dict(candidate_pool_recall_dossier.get("continuation_promotion_ready_summary") or {}),
+        "default_merge_review_summary": default_merge_review_summary,
+        "default_merge_historical_counterfactual_summary": default_merge_historical_counterfactual_summary,
+        "continuation_merge_candidate_ranking_summary": continuation_merge_candidate_ranking_summary,
+        "default_merge_strict_counterfactual_summary": default_merge_strict_counterfactual_summary,
+        "merge_replay_validation_summary": merge_replay_validation_summary,
+        "prepared_breakout_relief_validation_summary": prepared_breakout_relief_validation_summary,
+        "prepared_breakout_cohort_summary": prepared_breakout_cohort_summary,
+        "prepared_breakout_residual_surface_summary": prepared_breakout_residual_surface_summary,
+        "execution_constraint_rollup": dict(candidate_pool_recall_dossier.get("execution_constraint_rollup") or {}),
+        "transient_probe_summary": dict(candidate_pool_recall_dossier.get("transient_probe_summary") or {}),
         "upstream_shadow_followup_overlay": upstream_shadow_followup_overlay,
         "upstream_shadow_followup_validated_tickers": upstream_shadow_followup_overlay.get("validated_tickers"),
         "upstream_shadow_followup_decision_counts": upstream_shadow_followup_overlay.get("decision_counts"),
@@ -1501,12 +1605,29 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
     control_tower_snapshot = _extract_control_tower_snapshot(manifest)
     replay_cohort_snapshot = _extract_replay_cohort_snapshot(manifest)
     priority_board = dict(latest_btst_snapshot.get("priority_board") or {})
+    default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
+    default_merge_review_ready = (
+        str(default_merge_review_summary.get("merge_review_verdict") or "").strip() == "ready_for_default_btst_merge_review"
+    )
+    effective_brief_recommendation = (
+        default_merge_review_summary.get("recommendation")
+        if default_merge_review_ready and default_merge_review_summary.get("recommendation")
+        else latest_btst_snapshot.get("brief_recommendation") or default_merge_review_summary.get("recommendation")
+    )
 
     recommended_reading_order: list[dict[str, Any]] = []
     for entry_id in (
         "btst_governance_synthesis_latest",
         "btst_tplus1_tplus2_objective_monitor_latest",
         "btst_independent_window_monitor_latest",
+        "btst_default_merge_review_latest",
+        "btst_default_merge_historical_counterfactual_latest",
+        "btst_continuation_merge_candidate_ranking_latest",
+        "btst_default_merge_strict_counterfactual_latest",
+        "btst_merge_replay_validation_latest",
+        "btst_prepared_breakout_relief_validation_latest",
+        "btst_prepared_breakout_cohort_latest",
+        "btst_prepared_breakout_residual_surface_latest",
         "btst_tradeable_opportunity_pool_march",
         "btst_no_candidate_entry_action_board_latest",
         "btst_no_candidate_entry_replay_bundle_latest",
@@ -1547,12 +1668,16 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "btst_tradeable_opportunity_pool_refresh": dict(manifest.get("btst_tradeable_opportunity_pool_refresh") or {}).get("status"),
         },
         "control_tower_snapshot": control_tower_snapshot,
+        "merge_replay_validation_summary": dict(control_tower_snapshot.get("merge_replay_validation_summary") or {}),
+        "prepared_breakout_relief_validation_summary": dict(control_tower_snapshot.get("prepared_breakout_relief_validation_summary") or {}),
+        "prepared_breakout_cohort_summary": dict(control_tower_snapshot.get("prepared_breakout_cohort_summary") or {}),
+        "prepared_breakout_residual_surface_summary": dict(control_tower_snapshot.get("prepared_breakout_residual_surface_summary") or {}),
         "latest_priority_board_snapshot": {
             "headline": priority_board.get("headline"),
             "summary": priority_board.get("summary"),
             "priority_rows": list(priority_board.get("priority_rows") or [])[:3],
             "global_guardrails": list(priority_board.get("global_guardrails") or []),
-            "brief_recommendation": latest_btst_snapshot.get("brief_recommendation"),
+            "brief_recommendation": effective_brief_recommendation,
         },
         "replay_cohort_snapshot": replay_cohort_snapshot,
         "latest_btst_snapshot": latest_btst_snapshot,
@@ -1562,6 +1687,14 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "report_manifest_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "report_manifest_latest.md").expanduser().resolve()),
             "governance_synthesis_markdown": _entry_by_id(manifest, "btst_governance_synthesis_latest").get("absolute_path"),
             "governance_validation_markdown": _entry_by_id(manifest, "btst_governance_validation_latest").get("absolute_path"),
+            "default_merge_review_markdown": _entry_by_id(manifest, "btst_default_merge_review_latest").get("absolute_path"),
+            "default_merge_historical_counterfactual_markdown": _entry_by_id(manifest, "btst_default_merge_historical_counterfactual_latest").get("absolute_path"),
+            "continuation_merge_candidate_ranking_markdown": _entry_by_id(manifest, "btst_continuation_merge_candidate_ranking_latest").get("absolute_path"),
+            "default_merge_strict_counterfactual_markdown": _entry_by_id(manifest, "btst_default_merge_strict_counterfactual_latest").get("absolute_path"),
+            "merge_replay_validation_markdown": _entry_by_id(manifest, "btst_merge_replay_validation_latest").get("absolute_path"),
+            "prepared_breakout_relief_validation_markdown": _entry_by_id(manifest, "btst_prepared_breakout_relief_validation_latest").get("absolute_path"),
+            "prepared_breakout_cohort_markdown": _entry_by_id(manifest, "btst_prepared_breakout_cohort_latest").get("absolute_path"),
+            "prepared_breakout_residual_surface_markdown": _entry_by_id(manifest, "btst_prepared_breakout_residual_surface_latest").get("absolute_path"),
             "priority_board_markdown": latest_btst_snapshot.get("priority_board_markdown_path"),
             "brief_markdown": latest_btst_snapshot.get("brief_markdown_path"),
             "execution_card_markdown": latest_btst_snapshot.get("execution_card_markdown_path"),
@@ -1707,7 +1840,57 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lane_pair_board_summary = dict(control_tower_snapshot.get("candidate_pool_lane_pair_board_summary") or {})
     if lane_pair_board_summary:
         lines.append(
-            f"- candidate_pool_lane_pair_board_summary: pair_status={lane_pair_board_summary.get('pair_status')} board_leader={lane_pair_board_summary.get('board_leader')} leader_lane_family={lane_pair_board_summary.get('leader_lane_family')}"
+            f"- candidate_pool_lane_pair_board_summary: pair_status={lane_pair_board_summary.get('pair_status')} board_leader={lane_pair_board_summary.get('board_leader')} leader_lane_family={lane_pair_board_summary.get('leader_lane_family')} leader_governance_status={lane_pair_board_summary.get('leader_governance_status')} parallel_watch_ticker={lane_pair_board_summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={lane_pair_board_summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={lane_pair_board_summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={lane_pair_board_summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={lane_pair_board_summary.get('parallel_watch_next_close_return_mean')}"
+        )
+    continuation_focus_summary = dict(control_tower_snapshot.get("continuation_focus_summary") or {})
+    if continuation_focus_summary:
+        lines.append(
+            f"- continuation_focus_summary: focus_ticker={continuation_focus_summary.get('focus_ticker')} promotion_review_verdict={continuation_focus_summary.get('promotion_review_verdict')} promotion_gate_verdict={continuation_focus_summary.get('promotion_gate_verdict')} watchlist_execution_verdict={continuation_focus_summary.get('watchlist_execution_verdict')} focus_watch_validation_status={continuation_focus_summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={continuation_focus_summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={continuation_focus_summary.get('eligible_gate_verdict')} execution_gate_verdict={continuation_focus_summary.get('execution_gate_verdict')} execution_gate_blockers={continuation_focus_summary.get('execution_gate_blockers')} execution_overlay_verdict={continuation_focus_summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={continuation_focus_summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={continuation_focus_summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={continuation_focus_summary.get('execution_overlay_lane_support_ratio')} governance_status={continuation_focus_summary.get('governance_status')}"
+        )
+    continuation_promotion_ready_summary = dict(control_tower_snapshot.get("continuation_promotion_ready_summary") or {})
+    if continuation_promotion_ready_summary:
+        lines.append(
+            f"- continuation_promotion_ready_summary: focus_ticker={continuation_promotion_ready_summary.get('focus_ticker')} promotion_path_status={continuation_promotion_ready_summary.get('promotion_path_status')} blockers_remaining_count={continuation_promotion_ready_summary.get('blockers_remaining_count')} observed_independent_window_count={continuation_promotion_ready_summary.get('observed_independent_window_count')} missing_independent_window_count={continuation_promotion_ready_summary.get('missing_independent_window_count')} candidate_dossier_support_trade_date_count={continuation_promotion_ready_summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={continuation_promotion_ready_summary.get('candidate_dossier_same_trade_date_variant_count')} persistence_verdict={continuation_promotion_ready_summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={continuation_promotion_ready_summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={continuation_promotion_ready_summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={continuation_promotion_ready_summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={continuation_promotion_ready_summary.get('ready_after_next_qualifying_window')} next_window_requirement={continuation_promotion_ready_summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={continuation_promotion_ready_summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={continuation_promotion_ready_summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={continuation_promotion_ready_summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={continuation_promotion_ready_summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_mean_return_delta_vs_default_btst')}"
+        )
+    default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
+    if default_merge_review_summary:
+        counterfactual = dict(default_merge_review_summary.get("counterfactual_validation") or {})
+        lines.append(
+            f"- default_merge_review_summary: focus_ticker={default_merge_review_summary.get('focus_ticker')} merge_review_verdict={default_merge_review_summary.get('merge_review_verdict')} operator_action={default_merge_review_summary.get('operator_action')} counterfactual_verdict={counterfactual.get('counterfactual_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={default_merge_review_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_positive_rate_margin_vs_threshold={counterfactual.get('t_plus_2_positive_rate_margin_vs_threshold')} t_plus_2_mean_return_delta_vs_default_btst={default_merge_review_summary.get('t_plus_2_mean_return_delta_vs_default_btst')} t_plus_2_mean_return_margin_vs_threshold={counterfactual.get('t_plus_2_mean_return_margin_vs_threshold')}"
+        )
+    default_merge_historical_counterfactual_summary = dict(control_tower_snapshot.get("default_merge_historical_counterfactual_summary") or {})
+    if default_merge_historical_counterfactual_summary:
+        uplift = dict(default_merge_historical_counterfactual_summary.get("uplift_vs_default_btst") or {})
+        lines.append(
+            f"- default_merge_historical_counterfactual_summary: focus_ticker={default_merge_historical_counterfactual_summary.get('focus_ticker')} counterfactual_verdict={default_merge_historical_counterfactual_summary.get('counterfactual_verdict')} merged_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} merged_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}"
+        )
+    continuation_merge_candidate_ranking_summary = dict(control_tower_snapshot.get("continuation_merge_candidate_ranking_summary") or {})
+    if continuation_merge_candidate_ranking_summary:
+        top_candidate = dict(continuation_merge_candidate_ranking_summary.get("top_candidate") or {})
+        lines.append(
+            f"- continuation_merge_candidate_ranking_summary: candidate_count={continuation_merge_candidate_ranking_summary.get('candidate_count')} top_ticker={top_candidate.get('ticker')} top_stage={top_candidate.get('promotion_path_status') or top_candidate.get('promotion_readiness_verdict')} top_positive_rate_delta={top_candidate.get('t_plus_2_positive_rate_delta_vs_default_btst')} top_mean_return_delta={top_candidate.get('mean_t_plus_2_return_delta_vs_default_btst')}"
+        )
+    default_merge_strict_counterfactual_summary = dict(control_tower_snapshot.get("default_merge_strict_counterfactual_summary") or {})
+    if default_merge_strict_counterfactual_summary:
+        uplift = dict(default_merge_strict_counterfactual_summary.get("strict_uplift_vs_default_btst") or {})
+        overlap = dict(default_merge_strict_counterfactual_summary.get("overlap_diagnostics") or {})
+        lines.append(
+            f"- default_merge_strict_counterfactual_summary: focus_ticker={default_merge_strict_counterfactual_summary.get('focus_ticker')} strict_counterfactual_verdict={default_merge_strict_counterfactual_summary.get('strict_counterfactual_verdict')} overlap_case_count={overlap.get('overlap_case_count')} strict_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} strict_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}"
+        )
+    merge_replay_validation_summary = dict(control_tower_snapshot.get("merge_replay_validation_summary") or {})
+    if merge_replay_validation_summary:
+        lines.append(
+            f"- merge_replay_validation_summary: overall_verdict={merge_replay_validation_summary.get('overall_verdict')} focus_tickers={merge_replay_validation_summary.get('focus_tickers')} promoted_to_selected_count={merge_replay_validation_summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={merge_replay_validation_summary.get('promoted_to_near_miss_count')} relief_applied_count={merge_replay_validation_summary.get('relief_applied_count')} recommended_next_lever={merge_replay_validation_summary.get('recommended_next_lever')} recommended_signal_levers={merge_replay_validation_summary.get('recommended_signal_levers')}"
+        )
+    transient_probe_summary = dict(control_tower_snapshot.get("transient_probe_summary") or {})
+    if transient_probe_summary:
+        lines.append(
+            f"- transient_probe_summary: ticker={transient_probe_summary.get('ticker')} status={transient_probe_summary.get('status')} blocker={transient_probe_summary.get('blocker')} candidate_source={transient_probe_summary.get('candidate_source')} score_state={transient_probe_summary.get('score_state')} downstream_bottleneck={transient_probe_summary.get('downstream_bottleneck')} historical_sample_count={transient_probe_summary.get('historical_sample_count')} historical_next_close_positive_rate={transient_probe_summary.get('historical_next_close_positive_rate')}"
+        )
+    execution_constraint_rollup = dict(control_tower_snapshot.get("execution_constraint_rollup") or {})
+    if execution_constraint_rollup:
+        lines.append(
+            f"- execution_constraint_rollup: constraint_count={execution_constraint_rollup.get('constraint_count')} continuation_focus_tickers={execution_constraint_rollup.get('continuation_focus_tickers')} continuation_blockers={execution_constraint_rollup.get('continuation_blockers')} shadow_focus_tickers={execution_constraint_rollup.get('shadow_focus_tickers')} shadow_blockers={execution_constraint_rollup.get('shadow_blockers')}"
         )
     lines.append(f"- candidate_pool_upstream_handoff_board_status: {control_tower_snapshot.get('candidate_pool_upstream_handoff_board_status')}")
     upstream_handoff_summary = dict(control_tower_snapshot.get("candidate_pool_upstream_handoff_board_summary") or {})
@@ -2026,7 +2209,27 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
         lane_pair_summary = dict(candidate_pool_recall_dossier_summary.get("lane_pair_board_summary") or {})
         if lane_pair_summary:
             lines.append(
-                f"- lane_pair_board_summary: pair_status={lane_pair_summary.get('pair_status')} board_leader={lane_pair_summary.get('board_leader')} leader_lane_family={lane_pair_summary.get('leader_lane_family')}"
+                f"- lane_pair_board_summary: pair_status={lane_pair_summary.get('pair_status')} board_leader={lane_pair_summary.get('board_leader')} leader_lane_family={lane_pair_summary.get('leader_lane_family')} leader_governance_status={lane_pair_summary.get('leader_governance_status')} parallel_watch_ticker={lane_pair_summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={lane_pair_summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={lane_pair_summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={lane_pair_summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={lane_pair_summary.get('parallel_watch_next_close_return_mean')}"
+            )
+        continuation_focus_summary = dict(candidate_pool_recall_dossier_summary.get("continuation_focus_summary") or {})
+        if continuation_focus_summary:
+            lines.append(
+                f"- continuation_focus_summary: focus_ticker={continuation_focus_summary.get('focus_ticker')} promotion_review_verdict={continuation_focus_summary.get('promotion_review_verdict')} promotion_gate_verdict={continuation_focus_summary.get('promotion_gate_verdict')} watchlist_execution_verdict={continuation_focus_summary.get('watchlist_execution_verdict')} focus_watch_validation_status={continuation_focus_summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={continuation_focus_summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={continuation_focus_summary.get('eligible_gate_verdict')} execution_gate_verdict={continuation_focus_summary.get('execution_gate_verdict')} execution_gate_blockers={continuation_focus_summary.get('execution_gate_blockers')} execution_overlay_verdict={continuation_focus_summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={continuation_focus_summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={continuation_focus_summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={continuation_focus_summary.get('execution_overlay_lane_support_ratio')} governance_status={continuation_focus_summary.get('governance_status')}"
+            )
+        continuation_promotion_ready_summary = dict(candidate_pool_recall_dossier_summary.get("continuation_promotion_ready_summary") or {})
+        if continuation_promotion_ready_summary:
+            lines.append(
+                f"- continuation_promotion_ready_summary: focus_ticker={continuation_promotion_ready_summary.get('focus_ticker')} promotion_path_status={continuation_promotion_ready_summary.get('promotion_path_status')} blockers_remaining_count={continuation_promotion_ready_summary.get('blockers_remaining_count')} observed_independent_window_count={continuation_promotion_ready_summary.get('observed_independent_window_count')} missing_independent_window_count={continuation_promotion_ready_summary.get('missing_independent_window_count')} candidate_dossier_support_trade_date_count={continuation_promotion_ready_summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={continuation_promotion_ready_summary.get('candidate_dossier_same_trade_date_variant_count')} persistence_verdict={continuation_promotion_ready_summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={continuation_promotion_ready_summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={continuation_promotion_ready_summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={continuation_promotion_ready_summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={continuation_promotion_ready_summary.get('ready_after_next_qualifying_window')} next_window_requirement={continuation_promotion_ready_summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={continuation_promotion_ready_summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={continuation_promotion_ready_summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={continuation_promotion_ready_summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={continuation_promotion_ready_summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_mean_return_delta_vs_default_btst')}"
+            )
+        transient_probe_summary = dict(candidate_pool_recall_dossier_summary.get("transient_probe_summary") or {})
+        if transient_probe_summary:
+            lines.append(
+                f"- transient_probe_summary: ticker={transient_probe_summary.get('ticker')} status={transient_probe_summary.get('status')} blocker={transient_probe_summary.get('blocker')} candidate_source={transient_probe_summary.get('candidate_source')} score_state={transient_probe_summary.get('score_state')} downstream_bottleneck={transient_probe_summary.get('downstream_bottleneck')} historical_sample_count={transient_probe_summary.get('historical_sample_count')} historical_next_close_positive_rate={transient_probe_summary.get('historical_next_close_positive_rate')}"
+            )
+        execution_constraint_rollup = dict(candidate_pool_recall_dossier_summary.get("execution_constraint_rollup") or {})
+        if execution_constraint_rollup:
+            lines.append(
+                f"- execution_constraint_rollup: constraint_count={execution_constraint_rollup.get('constraint_count')} continuation_focus_tickers={execution_constraint_rollup.get('continuation_focus_tickers')} continuation_blockers={execution_constraint_rollup.get('continuation_blockers')} shadow_focus_tickers={execution_constraint_rollup.get('shadow_focus_tickers')} shadow_blockers={execution_constraint_rollup.get('shadow_blockers')}"
             )
         lines.append(f"- upstream_handoff_board_status: {candidate_pool_recall_dossier_summary.get('upstream_handoff_board_status')}")
         upstream_handoff_summary = dict(candidate_pool_recall_dossier_summary.get("upstream_handoff_board_summary") or {})
@@ -2187,9 +2390,23 @@ def generate_btst_nightly_control_tower_artifacts(
     resolved_history_dir = Path(history_dir).expanduser().resolve() if history_dir else (resolved_reports_root / DEFAULT_HISTORY_DIR.relative_to(REPORTS_DIR)).resolve()
 
     pre_manifest_result = generate_reports_manifest_artifacts(reports_root=resolved_reports_root)
-    payload = build_btst_nightly_control_tower_payload(pre_manifest_result["manifest"])
+    bootstrap_payload = build_btst_nightly_control_tower_payload(pre_manifest_result["manifest"])
     historical_payload_candidates = _load_archived_nightly_payloads(resolved_history_dir)
     previous_payload, previous_payload_path = historical_payload_candidates[0] if historical_payload_candidates else ({}, None)
+    bootstrap_delta_payload = build_btst_open_ready_delta_payload(
+        bootstrap_payload,
+        reports_root=resolved_reports_root,
+        current_nightly_json_path=resolved_output_json,
+        previous_payload=previous_payload,
+        previous_payload_path=previous_payload_path,
+        historical_payload_candidates=historical_payload_candidates,
+    )
+    resolved_delta_output_json.write_text(json.dumps(bootstrap_delta_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    resolved_delta_output_md.write_text(render_btst_open_ready_delta_markdown(bootstrap_delta_payload, output_parent=resolved_delta_output_md.parent), encoding="utf-8")
+    resolved_output_json.write_text(json.dumps(bootstrap_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    resolved_output_md.write_text(render_btst_nightly_control_tower_markdown(bootstrap_payload, output_parent=resolved_output_md.parent), encoding="utf-8")
+    post_manifest_result = generate_reports_manifest_artifacts(reports_root=resolved_reports_root)
+    payload = build_btst_nightly_control_tower_payload(post_manifest_result["manifest"])
     delta_payload = build_btst_open_ready_delta_payload(
         payload,
         reports_root=resolved_reports_root,
@@ -2211,7 +2428,7 @@ def generate_btst_nightly_control_tower_artifacts(
         output_md=resolved_close_validation_output_md,
     )
     history_json_path = _archive_nightly_payload(payload, resolved_history_dir)
-    post_manifest_result = generate_reports_manifest_artifacts(reports_root=resolved_reports_root)
+    final_manifest_result = generate_reports_manifest_artifacts(reports_root=resolved_reports_root)
 
     return {
         "payload": payload,
@@ -2225,8 +2442,8 @@ def generate_btst_nightly_control_tower_artifacts(
         "history_json_path": history_json_path,
         "catalyst_theme_frontier_json": dict(payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_json_path"),
         "catalyst_theme_frontier_markdown": dict(payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_markdown_path"),
-        "manifest_json": post_manifest_result["json_path"],
-        "manifest_markdown": post_manifest_result["markdown_path"],
+        "manifest_json": final_manifest_result["json_path"],
+        "manifest_markdown": final_manifest_result["markdown_path"],
     }
 
 

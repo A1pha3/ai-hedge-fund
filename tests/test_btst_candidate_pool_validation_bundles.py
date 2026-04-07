@@ -99,6 +99,72 @@ def test_rebucket_comparison_bundle_reports_parallel_ready(tmp_path: Path) -> No
     assert analysis["objective_leader"]["priority_handoff"] == "layer_a_liquidity_corridor"
 
 
+def test_rebucket_comparison_bundle_skips_inactive_rebucket_lane(tmp_path: Path) -> None:
+    dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    lane_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
+    branch_priority_path = tmp_path / "btst_candidate_pool_branch_priority_board_latest.json"
+    rebucket_shadow_pack_path = tmp_path / "btst_candidate_pool_rebucket_shadow_pack_latest.json"
+    rebucket_validation_path = tmp_path / "btst_candidate_pool_rebucket_objective_validation_latest.json"
+
+    _write_json(dossier_path, {"priority_stage_counts": {"candidate_pool_truncated_after_filters": 1}})
+    _write_json(
+        lane_support_path,
+        {
+            "branch_rows": [
+                {
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "objective_priority_rank": 1,
+                    "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                    "objective_fit_score": 0.9961,
+                    "mean_t_plus_2_return": 0.0804,
+                },
+                {
+                    "priority_handoff": "post_gate_liquidity_competition",
+                    "objective_priority_rank": 2,
+                    "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                    "objective_fit_score": 0.9827,
+                    "mean_t_plus_2_return": 0.1098,
+                },
+            ]
+        },
+    )
+    _write_json(
+        branch_priority_path,
+        {
+            "priority_alignment_status": "divergent_top_lane",
+            "branch_rows": [
+                {"priority_handoff": "post_gate_liquidity_competition", "execution_priority_rank": 1, "prototype_readiness": "ready_for_shadow"},
+                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 2, "prototype_readiness": "parallel_probe"},
+            ],
+        },
+    )
+    _write_json(rebucket_shadow_pack_path, {"shadow_status": "persistence_diagnostics_only", "experiment": {"tickers": ["301292"]}})
+    _write_json(
+        rebucket_validation_path,
+        {
+            "validation_status": "advance_shadow_replay_comparison",
+            "branch_objective_row": {
+                "priority_handoff": "post_gate_liquidity_competition",
+                "ticker": "301292",
+                "objective_fit_score": 0.9827,
+                "mean_t_plus_2_return": 0.1098,
+            },
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_rebucket_comparison_bundle(
+        dossier_path,
+        lane_objective_support_path=lane_support_path,
+        branch_priority_board_path=branch_priority_path,
+        rebucket_shadow_pack_path=rebucket_shadow_pack_path,
+        rebucket_objective_validation_path=rebucket_validation_path,
+    )
+
+    assert analysis["bundle_status"] == "skipped_no_rebucket_lane"
+    assert analysis["rebucket_objective_row"] == {}
+    assert analysis["next_step"].startswith("当前没有 active rebucket challenger")
+
+
 def test_corridor_validation_pack_reports_parallel_probe_ready(tmp_path: Path) -> None:
     dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
     lane_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
@@ -324,6 +390,123 @@ def test_lane_pair_board_keeps_corridor_primary_first(tmp_path: Path) -> None:
     assert rows_by_ticker["301292"]["governance_status"] == "shadow_recall_not_execution_ready"
 
 
+def test_lane_pair_board_avoids_fake_rebucket_challenger_when_inactive(tmp_path: Path) -> None:
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    rebucket_comparison_bundle_path = tmp_path / "btst_candidate_pool_rebucket_comparison_bundle_latest.json"
+    governance_synthesis_path = tmp_path / "btst_governance_synthesis_latest.json"
+    _write_json(
+        corridor_shadow_pack_path,
+        {
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": {
+                "ticker": "300720",
+                "mean_t_plus_2_return": 0.0787,
+                "objective_fit_score": 1.0,
+                "t_plus_2_return_hit_rate_at_target": 0.8,
+                "t_plus_2_positive_rate": 0.8667,
+                "tractability_tier": "second_shadow_probe",
+            },
+            "parallel_watch_lanes": [],
+        },
+    )
+    _write_json(
+        rebucket_comparison_bundle_path,
+        {
+            "priority_alignment_status": "aligned_top_lane",
+            "rebucket_objective_row": {},
+        },
+    )
+    _write_json(governance_synthesis_path, {"execution_surface_constraints": [], "evidence_btst_followups": []})
+
+    analysis = analyze_btst_candidate_pool_lane_pair_board(
+        corridor_shadow_pack_path,
+        rebucket_comparison_bundle_path,
+        governance_synthesis_path=governance_synthesis_path,
+    )
+
+    assert analysis["comparison"]["rebucket_ticker"] is None
+    assert "没有 active rebucket challenger" in analysis["recommendation"]
+    assert any("没有 active rebucket challenger" in item for item in analysis["next_actions"])
+
+
+def test_lane_pair_board_uses_upstream_handoff_overlay_when_governance_synthesis_is_unrelated(tmp_path: Path) -> None:
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    rebucket_comparison_bundle_path = tmp_path / "btst_candidate_pool_rebucket_comparison_bundle_latest.json"
+    governance_synthesis_path = tmp_path / "btst_governance_synthesis_latest.json"
+    upstream_handoff_board_path = tmp_path / "btst_candidate_pool_upstream_handoff_board_latest.json"
+    _write_json(
+        corridor_shadow_pack_path,
+        {
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": {
+                "ticker": "300720",
+                "mean_t_plus_2_return": 0.0787,
+                "objective_fit_score": 1.0,
+                "t_plus_2_return_hit_rate_at_target": 0.8,
+                "t_plus_2_positive_rate": 0.8667,
+                "tractability_tier": "second_shadow_probe",
+            },
+            "parallel_watch_lanes": [
+                {
+                    "ticker": "003036",
+                    "mean_t_plus_2_return": 0.0823,
+                    "objective_fit_score": 0.992,
+                    "t_plus_2_return_hit_rate_at_target": 0.7857,
+                    "t_plus_2_positive_rate": 1.0,
+                    "tractability_tier": "second_shadow_probe",
+                }
+            ],
+        },
+    )
+    _write_json(
+        rebucket_comparison_bundle_path,
+        {
+            "priority_alignment_status": "aligned_top_lane",
+            "rebucket_objective_row": {},
+        },
+    )
+    _write_json(governance_synthesis_path, {"execution_surface_constraints": [], "evidence_btst_followups": []})
+    _write_json(
+        upstream_handoff_board_path,
+        {
+            "board_rows": [
+                {
+                    "ticker": "300720",
+                    "latest_followup_decision": "near_miss",
+                    "latest_followup_candidate_source": "post_gate_liquidity_competition_shadow",
+                    "downstream_followup_status": "continuation_only_confirm_then_review",
+                    "downstream_followup_blocker": "no_selected_persistence_or_independent_edge",
+                    "downstream_followup_summary": "300720 已完成 shadow recall，并进入 continuation review。",
+                },
+                {
+                    "ticker": "003036",
+                    "latest_followup_decision": "near_miss",
+                    "latest_followup_candidate_source": "upstream_liquidity_corridor_shadow",
+                    "latest_followup_historical_sample_count": 8,
+                    "latest_followup_historical_next_close_positive_rate": 0.125,
+                    "latest_followup_historical_next_close_return_mean": -0.0313,
+                    "downstream_followup_status": "parallel_watch_only_not_default_ready",
+                    "downstream_followup_blocker": "profitability_hard_cliff_and_weak_same_source_payoff",
+                    "downstream_followup_summary": "003036 只适合作为 corridor parallel watch，不应升格为默认 BTST promotion 语义。",
+                },
+            ]
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_lane_pair_board(
+        corridor_shadow_pack_path,
+        rebucket_comparison_bundle_path,
+        governance_synthesis_path=governance_synthesis_path,
+        upstream_handoff_board_path=upstream_handoff_board_path,
+    )
+
+    rows_by_ticker = {row["ticker"]: row for row in analysis["candidates"]}
+    assert rows_by_ticker["300720"]["governance_status"] == "continuation_only_confirm_then_review"
+    assert rows_by_ticker["003036"]["governance_status"] == "parallel_watch_only_not_default_ready"
+    assert "samples=8" in rows_by_ticker["003036"]["governance_summary"]
+    assert "next_close_positive_rate=0.125" in rows_by_ticker["003036"]["governance_summary"]
+
+
 def test_upstream_handoff_board_prioritizes_watchlist_break_before_lane_probe(tmp_path: Path) -> None:
     failure_dossier_path = tmp_path / "btst_no_candidate_entry_failure_dossier_latest.json"
     watchlist_dossier_path = tmp_path / "btst_watchlist_recall_dossier_latest.json"
@@ -536,6 +719,11 @@ def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_p
                     "decision": "rejected",
                     "candidate_source": "upstream_liquidity_corridor_shadow",
                     "top_reasons": ["profitability_hard_cliff"],
+                    "historical_prior": {
+                        "sample_count": 8,
+                        "next_close_positive_rate": 0.125,
+                        "next_close_return_mean": -0.0313,
+                    },
                 },
             ],
         },
@@ -594,6 +782,9 @@ def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_p
     assert rows_by_ticker["300720"]["downstream_followup_lane"] == "t_plus_2_continuation_review"
     assert rows_by_ticker["300720"]["downstream_followup_status"] == "continuation_confirm_then_review"
     assert rows_by_ticker["003036"]["latest_followup_downstream_bottleneck"] == "profitability_hard_cliff"
+    assert rows_by_ticker["003036"]["latest_followup_historical_sample_count"] == 8
+    assert rows_by_ticker["003036"]["latest_followup_historical_next_close_positive_rate"] == 0.125
+    assert rows_by_ticker["003036"]["latest_followup_historical_next_close_return_mean"] == -0.0313
     assert rows_by_ticker["003036"]["downstream_followup_lane"] == "shadow_profitability_diagnostics"
     assert rows_by_ticker["301292"]["board_phase"] == "historical_shadow_probe_gap"
     assert rows_by_ticker["301292"]["first_broken_handoff"] == "transient_shadow_recall_without_persistence"
@@ -602,6 +793,79 @@ def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_p
     assert rows_by_ticker["301292"]["downstream_followup_status"] == "transient_probe_only"
     assert rows_by_ticker["301292"]["downstream_followup_blocker"] == "shadow_recall_not_persistent"
     assert "301292" in analysis["recommendation"]
+
+
+def test_analyze_btst_candidate_pool_upstream_handoff_board_keeps_selected_post_recall_followup_in_continuation_lane(tmp_path: Path) -> None:
+    failure_dossier_path = tmp_path / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_path = tmp_path / "btst_watchlist_recall_dossier_latest.json"
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    _write_json(
+        failure_dossier_path,
+        {
+            "focus_tickers": ["300720"],
+            "failure_rows": [
+                {
+                    "ticker": "300720",
+                    "first_broken_handoff": "absent_from_watchlist",
+                    "watchlist_recall_stage": "absent_from_candidate_pool",
+                    "candidate_pool_blocking_stage": "candidate_pool_truncated_after_filters",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "primary_report_dir": "paper_trading_20260302_20260313_btst_research_replay",
+                    "candidate_pool_rank_gap_min": 878,
+                    "avg_amount_share_of_cutoff_mean": 0.1573,
+                    "avg_amount_share_of_min_gate_mean": 5.2437,
+                    "profile_summary": "corridor profile",
+                }
+            ],
+            "priority_handoff_branch_experiment_queue": [],
+        },
+    )
+    _write_json(watchlist_dossier_path, {"reports_root": str(tmp_path), "focus_tickers": ["300720"], "recall_rows": []})
+    _write_json(recall_dossier_path, {"reports_root": str(tmp_path), "focus_tickers": ["300720"], "recall_rows": []})
+
+    report_dir = tmp_path / "paper_trading_20260331_20260331_live_m2_7_short_trade_only_selected_300720"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        brief_path,
+        {
+            "upstream_shadow_recall_summary": {"top_focus_tickers": ["300720"]},
+            "priority_rows": [
+                {
+                    "ticker": "300720",
+                    "decision": "selected",
+                    "candidate_source": "post_gate_liquidity_competition_shadow",
+                    "top_reasons": ["upstream_shadow_catalyst_relief", "confirmed_breakout"],
+                    "score_target": 0.4584,
+                }
+            ],
+        },
+    )
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "btst_followup": {
+                "trade_date": "2026-03-31",
+                "brief_json": str(brief_path.resolve()),
+            },
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_upstream_handoff_board(
+        failure_dossier_path,
+        watchlist_recall_dossier_path=watchlist_dossier_path,
+        candidate_pool_recall_dossier_path=recall_dossier_path,
+    )
+
+    row = next(item for item in analysis["board_rows"] if item["ticker"] == "300720")
+    assert row["latest_followup_decision"] == "selected"
+    assert row["downstream_followup_lane"] == "t_plus_2_continuation_review"
+    assert row["downstream_followup_status"] == "continuation_only_confirm_then_review"
+    assert row["downstream_followup_blocker"] == "no_selected_persistence_or_independent_edge"
 
 
 def test_corridor_uplift_runbook_keeps_corridor_first_and_parallel_confirmatory(tmp_path: Path) -> None:

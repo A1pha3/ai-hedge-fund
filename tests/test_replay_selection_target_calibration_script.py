@@ -235,6 +235,56 @@ def _write_stage_breakout_replay_input(tmp_path):
     return replay_input_path
 
 
+def _write_replay_input_with_upstream_shadow_observation(tmp_path):
+    replay_input_path = _write_replay_input(tmp_path)
+    payload = json.loads(replay_input_path.read_text(encoding="utf-8"))
+    payload["source_summary"]["upstream_shadow_observation_entry_count"] = 1
+    payload["upstream_shadow_observation_entries"] = [
+        {
+            "ticker": "300720",
+            "score_b": 0.40,
+            "score_c": -0.40,
+            "score_final": 0.05,
+            "quality_score": 0.58,
+            "decision": "observation",
+            "reason": "post_gate_liquidity_competition_shadow",
+            "reasons": ["post_gate_liquidity_competition_shadow"],
+            "candidate_source": "post_gate_liquidity_competition_shadow",
+            "candidate_reason_codes": ["post_gate_liquidity_competition_shadow"],
+            "candidate_pool_lane": "post_gate_liquidity_competition",
+            "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow_visibility_gap_relaxed_band",
+            "shadow_visibility_gap_selected": True,
+            "shadow_visibility_gap_relaxed_band": True,
+            "strategy_signals": {
+                "trend": _make_signal(
+                    1,
+                    95.0,
+                    sub_factors={
+                        "momentum": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 85.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 95.0, "completeness": 1.0},
+                        "volatility": {"direction": 1, "confidence": 30.0, "completeness": 1.0},
+                        "long_trend_alignment": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "event_sentiment": _make_signal(
+                    1,
+                    40.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+                "fundamental": _make_signal(1, 45.0).model_dump(mode="json"),
+            },
+            "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+        }
+    ]
+    replay_input_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay_input_path
+
+
 def test_override_short_trade_thresholds_accepts_watchlist_zero_catalyst_profile_overrides():
     with _override_short_trade_thresholds(
         profile_name="default",
@@ -312,6 +362,21 @@ def test_replay_selection_target_calibration_emits_focused_score_diagnostics(tmp
     assert diagnostic["replayed_total_positive_contribution"] is not None
     assert diagnostic["replayed_total_negative_contribution"] is not None
     assert diagnostic["replayed_gap_to_near_miss"] <= 0
+
+
+def test_replay_selection_target_calibration_includes_upstream_shadow_observation_entries(tmp_path):
+    replay_input_path = _write_replay_input_with_upstream_shadow_observation(tmp_path)
+
+    analysis = analyze_selection_target_replay_inputs(replay_input_path, focus_tickers=["300720"])
+
+    assert analysis["candidate_source_counts"]["post_gate_liquidity_competition_shadow"] == 1
+    assert len(analysis["focused_score_diagnostics"]) == 1
+    diagnostic = analysis["focused_score_diagnostics"][0]
+    assert diagnostic["ticker"] == "300720"
+    assert diagnostic["candidate_source"] == "post_gate_liquidity_competition_shadow"
+    assert diagnostic["stored_decision"] is None
+    assert diagnostic["replayed_decision"] == "near_miss"
+    assert diagnostic["replayed_metrics_payload"]["visibility_gap_continuation_relief"]["applied"] is True
 
 
 def test_replay_selection_target_calibration_structural_variant_applies_watchlist_guard_profile_overrides(tmp_path):

@@ -90,3 +90,41 @@ def test_generate_btst_tplus2_continuation_promotion_gate_holds_when_review_is_n
     assert "promotion_review_not_ready" in analysis["gate_blockers"]
     assert "recent_tier_not_confirmed" in analysis["gate_blockers"]
     assert analysis["proposed_watchlist_tickers"] == ["600989"]
+
+
+def test_generate_btst_tplus2_continuation_promotion_gate_accepts_merge_review_ready(tmp_path: Path) -> None:
+    lane_rulepack_path = tmp_path / "lane_rulepack.json"
+    promotion_review_path = tmp_path / "promotion_review.json"
+
+    lane_rulepack_path.write_text(
+        json.dumps(
+            {
+                "eligible_tickers": ["600988"],
+                "watchlist_tickers": ["600989"],
+                "lane_rules": {
+                    "lane_stage": "observation_only",
+                    "capital_mode": "paper_only",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    promotion_review_path.write_text(
+        json.dumps(
+            {
+                "focus_ticker": "300720",
+                "promotion_review_verdict": "ready_for_default_btst_merge_review",
+                "promotion_blockers": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    analysis = generate_btst_tplus2_continuation_promotion_gate(
+        lane_rulepack_path=lane_rulepack_path,
+        promotion_review_path=promotion_review_path,
+    )
+
+    assert analysis["gate_verdict"] == "approve_watchlist_promotion"
+    assert "promotion_review_not_ready" not in analysis["gate_blockers"]
+    assert analysis["proposed_watchlist_tickers"] == ["600989", "300720"]

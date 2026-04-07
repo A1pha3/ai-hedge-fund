@@ -255,3 +255,124 @@ def test_generate_btst_tplus2_continuation_governance_board_single_ticker_observ
     assert "eligible_extension_applied" in markdown
     assert "approve_execution_candidate" in markdown
     assert "execution_candidate_applied" in markdown
+
+
+def test_generate_btst_tplus2_continuation_governance_board_resolves_focus_dossier_from_promotion_review(tmp_path: Path) -> None:
+    observation_pool_path = tmp_path / "observation_pool.json"
+    lane_rulepack_path = tmp_path / "lane_rulepack.json"
+    lane_validation_path = tmp_path / "lane_validation.json"
+    watchlist_validation_path = tmp_path / "btst_tplus2_near_cluster_dossier_latest.json"
+    focus_watchlist_validation_path = tmp_path / "btst_tplus2_candidate_dossier_300720_latest.json"
+    promotion_review_path = tmp_path / "promotion_review.json"
+    watchlist_execution_path = tmp_path / "watchlist_execution.json"
+
+    observation_pool_path.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    lane_rulepack_path.write_text(
+        json.dumps({"eligible_tickers": ["600988"], "watchlist_tickers": ["600989"], "lane_rules": {"lane_stage": "observation_only", "capital_mode": "paper_only"}}),
+        encoding="utf-8",
+    )
+    lane_validation_path.write_text(json.dumps({"eligible_tickers": ["600988"], "per_window_summaries": []}), encoding="utf-8")
+    watchlist_validation_path.write_text(
+        json.dumps({"candidate_ticker": "300505", "recent_validation_verdict": "recent_support_confirmed"}),
+        encoding="utf-8",
+    )
+    focus_watchlist_validation_path.write_text(
+        json.dumps(
+            {
+                "candidate_ticker": "300720",
+                "recent_tier_verdict": "governance_followup_payoff_confirmed",
+                "recent_tier_window_count": 4,
+                "recent_window_count": 4,
+                "recent_tier_ratio": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    promotion_review_path.write_text(
+        json.dumps({"focus_ticker": "300720", "promotion_review_verdict": "watch_review_ready", "promotion_blockers": []}),
+        encoding="utf-8",
+    )
+    watchlist_execution_path.write_text(
+        json.dumps({"focus_ticker": "300720", "execution_verdict": "watchlist_extension_applied", "effective_watchlist_tickers": ["600989", "300720"]}),
+        encoding="utf-8",
+    )
+
+    analysis = generate_btst_tplus2_continuation_governance_board(
+        observation_pool_path,
+        lane_rulepack_path=lane_rulepack_path,
+        lane_validation_path=lane_validation_path,
+        watchlist_validation_path=watchlist_validation_path,
+        promotion_review_path=promotion_review_path,
+        watchlist_execution_path=watchlist_execution_path,
+    )
+
+    assert analysis["watchlist_validation_status"] == "governance_followup_payoff_confirmed"
+    assert analysis["recent_supporting_window_count"] == 4
+    assert analysis["recent_support_ratio"] == 1.0
+    assert analysis["source_reports"]["watchlist_validation"] == str(focus_watchlist_validation_path.resolve())
+
+
+def test_generate_btst_tplus2_continuation_governance_board_surfaces_merge_review_ready(tmp_path: Path) -> None:
+    observation_pool_path = tmp_path / "observation_pool.json"
+    lane_rulepack_path = tmp_path / "lane_rulepack.json"
+    lane_validation_path = tmp_path / "lane_validation.json"
+    watchlist_validation_path = tmp_path / "btst_tplus2_candidate_dossier_300720_latest.json"
+    promotion_review_path = tmp_path / "promotion_review.json"
+    promotion_gate_path = tmp_path / "promotion_gate.json"
+    watchlist_execution_path = tmp_path / "watchlist_execution.json"
+    eligible_gate_path = tmp_path / "eligible_gate.json"
+    eligible_execution_path = tmp_path / "eligible_execution.json"
+    execution_gate_path = tmp_path / "execution_gate.json"
+    execution_overlay_path = tmp_path / "execution_overlay.json"
+
+    observation_pool_path.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    lane_rulepack_path.write_text(
+        json.dumps({"eligible_tickers": ["600988"], "watchlist_tickers": ["600989"], "lane_rules": {"lane_stage": "observation_only", "capital_mode": "paper_only"}}),
+        encoding="utf-8",
+    )
+    lane_validation_path.write_text(
+        json.dumps({"eligible_tickers": ["600988"], "per_window_summaries": [{"window_verdict": "supports_tplus2_lane"}]}),
+        encoding="utf-8",
+    )
+    watchlist_validation_path.write_text(
+        json.dumps(
+            {
+                "candidate_ticker": "300720",
+                "recent_tier_verdict": "governance_followup_payoff_confirmed",
+                "recent_tier_window_count": 5,
+                "recent_window_count": 5,
+                "recent_tier_ratio": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    promotion_review_path.write_text(
+        json.dumps({"focus_ticker": "300720", "promotion_review_verdict": "ready_for_default_btst_merge_review", "promotion_blockers": []}),
+        encoding="utf-8",
+    )
+    promotion_gate_path.write_text(json.dumps({"gate_verdict": "approve_watchlist_promotion"}), encoding="utf-8")
+    watchlist_execution_path.write_text(json.dumps({"focus_ticker": "300720", "effective_watchlist_tickers": ["600989", "300720"]}), encoding="utf-8")
+    eligible_gate_path.write_text(json.dumps({"gate_verdict": "approve_eligible_promotion"}), encoding="utf-8")
+    eligible_execution_path.write_text(json.dumps({"focus_ticker": "300720", "effective_eligible_tickers": ["600988", "300720"]}), encoding="utf-8")
+    execution_gate_path.write_text(json.dumps({"gate_verdict": "approve_execution_candidate"}), encoding="utf-8")
+    execution_overlay_path.write_text(json.dumps({}), encoding="utf-8")
+
+    analysis = generate_btst_tplus2_continuation_governance_board(
+        observation_pool_path,
+        lane_rulepack_path=lane_rulepack_path,
+        lane_validation_path=lane_validation_path,
+        watchlist_validation_path=watchlist_validation_path,
+        promotion_review_path=promotion_review_path,
+        promotion_gate_path=promotion_gate_path,
+        watchlist_execution_path=watchlist_execution_path,
+        eligible_gate_path=eligible_gate_path,
+        eligible_execution_path=eligible_execution_path,
+        execution_gate_path=execution_gate_path,
+        execution_overlay_path=execution_overlay_path,
+    )
+
+    assert analysis["focus_ticker"] == "300720"
+    assert analysis["governance_status"] == "ready_for_default_btst_merge_review"
+    assert analysis["promotion_blocker"] == "default_btst_merge_review_pending"
+    assert analysis["focus_promotion_review_verdict"] == "ready_for_default_btst_merge_review"
+    assert "escalate the focus ticker into default BTST merge review" in analysis["recommendation"]

@@ -22,6 +22,7 @@ def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate:
     focus_ticker = str(execution_gate.get("focus_ticker") or eligible_execution.get("focus_ticker") or "")
     adopted_eligible_row = dict(eligible_execution.get("adopted_eligible_row") or {})
     gate_verdict = str(execution_gate.get("gate_verdict") or "")
+    merge_review_ready = str(adopted_eligible_row.get("promotion_blocker") or "") == "default_btst_merge_review_pending"
 
     if gate_verdict == "approve_execution_candidate" and focus_ticker:
         execution_verdict = "execution_candidate_applied"
@@ -40,21 +41,40 @@ def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate:
             "priority_score": adopted_eligible_row.get("priority_score"),
             "lane_stage": adopted_eligible_row.get("lane_stage"),
             "capital_mode": "paper_only",
-            "promotion_blocker": "default_btst_blocked",
+            "promotion_blocker": "default_btst_merge_review_pending" if merge_review_ready else "no_selected_persistence_or_independent_edge",
             "watchlist_validation_status": adopted_eligible_row.get("watchlist_validation_status"),
             "recent_supporting_window_count": adopted_eligible_row.get("recent_supporting_window_count"),
             "recent_window_count": adopted_eligible_row.get("recent_window_count"),
             "recent_support_ratio": adopted_eligible_row.get("recent_support_ratio"),
-            "next_step": "Use only as an isolated paper execution candidate; do not merge into default BTST selected/near_miss.",
+            "persistence_requirement": "selected_persistence_across_independent_windows",
+            "independent_edge_requirement": "outperform_default_btst_on_independent_windows",
+            "lane_support_window_count": execution_gate.get("lane_support_window_count"),
+            "lane_window_count": execution_gate.get("lane_window_count"),
+            "lane_support_ratio": execution_gate.get("lane_support_ratio"),
+            "governance_payoff_ready": execution_gate.get("governance_payoff_ready"),
+            "t_plus_2_mean_gap_vs_watch": execution_gate.get("focus_t_plus_2_mean_gap_vs_watch"),
+            "next_step": (
+                "Keep this paper execution candidate visible while default BTST merge review is pending; if governance approves, promote it through the default BTST merge path."
+                if merge_review_ready
+                else "Use only as an isolated paper execution candidate; require selected persistence across independent windows "
+                "plus a repeatable edge versus default BTST before merging into default selected/near_miss."
+            ),
             "t_plus_2_close_positive_rate": adopted_eligible_row.get("t_plus_2_close_positive_rate"),
             "t_plus_2_close_return_mean": adopted_eligible_row.get("t_plus_2_close_return_mean"),
             "next_close_positive_rate": adopted_eligible_row.get("next_close_positive_rate"),
+            "lane_t_plus_2_close_return_mean": execution_gate.get("lane_t_plus_2_close_return_mean"),
         }
 
     recommendation = (
+        (
+            f"Keep {focus_ticker} as a paper execution candidate while default BTST merge review is pending."
+        )
+        if execution_verdict == "execution_candidate_applied" and merge_review_ready
+        else (
         f"Treat {focus_ticker} as an isolated paper execution candidate while keeping the continuation lane outside default BTST."
         if execution_verdict == "execution_candidate_applied"
         else "Keep the execution overlay empty until the stricter execution gate approves a candidate."
+        )
     )
 
     return {

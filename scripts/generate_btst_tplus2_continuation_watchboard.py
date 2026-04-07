@@ -32,6 +32,23 @@ def _load_optional_json(path: str | Path | None) -> dict[str, Any]:
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
+def _extract_focus_watch_validation(governance_board: dict[str, Any], watchlist_execution: dict[str, Any]) -> dict[str, Any]:
+    adopted_watch_row = dict(watchlist_execution.get("adopted_watch_row") or {})
+    if adopted_watch_row:
+        return {
+            "focus_watch_validation_status": adopted_watch_row.get("watchlist_validation_status"),
+            "focus_watch_recent_supporting_window_count": adopted_watch_row.get("recent_supporting_window_count"),
+            "focus_watch_recent_window_count": adopted_watch_row.get("recent_window_count"),
+            "focus_watch_recent_support_ratio": adopted_watch_row.get("recent_support_ratio"),
+        }
+    return {
+        "focus_watch_validation_status": governance_board.get("watchlist_validation_status"),
+        "focus_watch_recent_supporting_window_count": governance_board.get("recent_supporting_window_count"),
+        "focus_watch_recent_window_count": governance_board.get("recent_window_count"),
+        "focus_watch_recent_support_ratio": governance_board.get("recent_support_ratio"),
+    }
+
+
 def generate_btst_tplus2_continuation_watchboard(
     reports_root: str | Path,
     *,
@@ -87,6 +104,7 @@ def generate_btst_tplus2_continuation_watchboard(
         top_candidate["recent_supporting_window_count"] = watchlist_validation.get("recent_supporting_window_count")
         top_candidate["recent_window_count"] = watchlist_validation.get("recent_window_count")
         top_candidate["recent_support_ratio"] = watchlist_validation.get("recent_support_ratio")
+    focus_watch_validation = _extract_focus_watch_validation(governance_board, watchlist_execution)
 
     return {
         "governance_status": governance_board.get("governance_status"),
@@ -103,6 +121,7 @@ def generate_btst_tplus2_continuation_watchboard(
         "focus_promotion_review": promotion_review,
         "focus_promotion_gate": promotion_gate,
         "focus_watchlist_execution": watchlist_execution,
+        **focus_watch_validation,
         "focus_eligible_gate": eligible_gate,
         "focus_eligible_execution": eligible_execution,
         "focus_execution_gate": execution_gate,
@@ -114,11 +133,12 @@ def generate_btst_tplus2_continuation_watchboard(
         "execution_rows": execution_rows,
         "recommendation": (
             f"Watchboard status: governance={governance_board.get('governance_status')}, rollup={rollup.get('rollup_verdict')}. "
-            f"Watchlist validation={governance_board.get('watchlist_validation_status')} with recent_support="
-            f"{governance_board.get('recent_supporting_window_count')}/{governance_board.get('recent_window_count')}. "
+            f"Focus watch validation={focus_watch_validation.get('focus_watch_validation_status')} with recent_support="
+            f"{focus_watch_validation.get('focus_watch_recent_supporting_window_count')}/{focus_watch_validation.get('focus_watch_recent_window_count')}. "
             f"Focus validation candidate={dict(validation_queue.get('focus_candidate') or {}).get('ticker')} "
             f"review={promotion_review.get('promotion_review_verdict')} "
-            f"gate={promotion_gate.get('gate_verdict')} eligible_gate={eligible_gate.get('gate_verdict')} execution_gate={execution_gate.get('gate_verdict')}. "
+            f"gate={promotion_gate.get('gate_verdict')} eligible_gate={eligible_gate.get('gate_verdict')} execution_gate={execution_gate.get('gate_verdict')} "
+            f"execution_blockers={execution_gate.get('gate_blockers')}. "
             "Keep anchor lane isolated, validate watchlist names separately, and do not widen default BTST."
         ),
     }
@@ -143,6 +163,10 @@ def render_btst_tplus2_continuation_watchboard_markdown(analysis: dict[str, Any]
     lines.append(f"- focus_promotion_review: {analysis.get('focus_promotion_review')}")
     lines.append(f"- focus_promotion_gate: {analysis.get('focus_promotion_gate')}")
     lines.append(f"- focus_watchlist_execution: {analysis.get('focus_watchlist_execution')}")
+    lines.append(f"- focus_watch_validation_status: {analysis.get('focus_watch_validation_status')}")
+    lines.append(f"- focus_watch_recent_supporting_window_count: {analysis.get('focus_watch_recent_supporting_window_count')}")
+    lines.append(f"- focus_watch_recent_window_count: {analysis.get('focus_watch_recent_window_count')}")
+    lines.append(f"- focus_watch_recent_support_ratio: {analysis.get('focus_watch_recent_support_ratio')}")
     lines.append(f"- focus_eligible_gate: {analysis.get('focus_eligible_gate')}")
     lines.append(f"- focus_eligible_execution: {analysis.get('focus_eligible_execution')}")
     lines.append(f"- focus_execution_gate: {analysis.get('focus_execution_gate')}")

@@ -23,6 +23,7 @@ OPPORTUNITY_POOL_MAX_ENTRIES = 3
 OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS = 24
 OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD = 0.02
 OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES = 2
+WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT = 3
 WATCH_CANDIDATE_HISTORICAL_SCORE_BUCKET_SIZE = 0.05
 RESEARCH_UPSIDE_RADAR_MAX_ENTRIES = 3
 CATALYST_THEME_MAX_ENTRIES = 5
@@ -532,6 +533,7 @@ def _extract_short_trade_entry(selection_entry: dict[str, Any]) -> dict[str, Any
     return {
         "ticker": selection_entry.get("ticker"),
         "decision": decision,
+        "reporting_decision": decision,
         "score_target": short_trade_entry.get("score_target"),
         "confidence": short_trade_entry.get("confidence"),
         "rank_hint": short_trade_entry.get("rank_hint"),
@@ -602,6 +604,7 @@ def _extract_short_trade_opportunity_entry(selection_entry: dict[str, Any]) -> d
     return {
         "ticker": selection_entry.get("ticker"),
         "decision": short_trade_entry.get("decision"),
+        "reporting_decision": "opportunity_pool",
         "score_target": short_trade_entry.get("score_target"),
         "confidence": short_trade_entry.get("confidence"),
         "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
@@ -923,6 +926,8 @@ def _classify_execution_quality_prior(
     next_open_to_close_return_mean: float | None,
     next_high_return_mean: float | None,
     next_close_return_mean: float | None,
+    next_high_hit_rate: float | None,
+    next_close_positive_rate: float | None,
     evaluable_count: int,
 ) -> dict[str, str]:
     if evaluable_count <= 0:
@@ -937,6 +942,16 @@ def _classify_execution_quality_prior(
     open_to_close_mean = next_open_to_close_return_mean or 0.0
     high_mean = next_high_return_mean or 0.0
     close_mean = next_close_return_mean or 0.0
+    high_hit_rate = next_high_hit_rate or 0.0
+    close_positive_hit_rate = next_close_positive_rate or 0.0
+
+    if evaluable_count >= WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT and high_hit_rate <= 0.0 and close_positive_hit_rate <= 0.0:
+        return {
+            "execution_quality_label": "zero_follow_through",
+            "execution_priority": "low",
+            "entry_timing_bias": "avoid_without_new_strength",
+            "execution_note": "历史同层样本几乎不给盘中空间，也没有收盘正收益，除非出现新的强确认，否则不应进入高优先级执行面。",
+        }
 
     if open_mean >= 0.02 and open_to_close_mean < 0:
         return {
@@ -983,6 +998,50 @@ def _build_historical_prior_summary(
         f"{resolved_scope_label}历史 {evaluable_count} 例，next_high>={threshold_pct:.1f}% 命中率={_format_float(hit_rate)}, "
         f"next_close 正收益率={_format_float(close_positive_rate)}。"
     )
+
+
+def _should_demote_weak_near_miss(historical_prior: dict[str, Any] | None) -> bool:
+    prior = dict(historical_prior or {})
+    evaluable_count = int(prior.get("evaluable_count") or 0)
+    if evaluable_count < WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT:
+        return False
+    next_high_hit_rate = _as_float(prior.get("next_high_hit_rate_at_threshold"))
+    next_close_positive_rate = _as_float(prior.get("next_close_positive_rate"))
+    return next_high_hit_rate <= 0.0 and next_close_positive_rate <= 0.0
+
+
+def _demote_weak_near_miss_entries(
+    near_miss_entries: list[dict[str, Any]],
+    opportunity_pool_entries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    retained_entries: list[dict[str, Any]] = []
+    updated_opportunity_pool_entries = list(opportunity_pool_entries)
+    for entry in near_miss_entries:
+        historical_prior = dict(entry.get("historical_prior") or {})
+        if not _should_demote_weak_near_miss(historical_prior):
+            retained_entries.append(entry)
+            continue
+
+        demoted_entry = dict(entry)
+        demoted_prior = dict(historical_prior)
+        demoted_prior["demoted_from_near_miss"] = True
+        demoted_prior["demotion_reason"] = "historical_zero_follow_through"
+        demoted_prior["summary"] = (
+            (demoted_prior.get("summary") or "")
+            + (" " if demoted_prior.get("summary") else "")
+            + "历史同层兑现为 0，降级到机会池等待新增强度。"
+        )
+        demoted_entry["historical_prior"] = demoted_prior
+        demoted_entry["demoted_from_decision"] = "near_miss"
+        demoted_entry["reporting_bucket"] = "opportunity_pool_demoted"
+        demoted_entry["reporting_decision"] = "opportunity_pool"
+        demoted_entry["promotion_trigger"] = "历史同层兑现极弱，先降为机会池；只有盘中新强度确认时再考虑回到观察层。"
+        top_reasons = [str(reason) for reason in list(demoted_entry.get("top_reasons") or []) if str(reason or "").strip()]
+        if "historical_zero_follow_through_demoted" not in top_reasons:
+            top_reasons.append("historical_zero_follow_through_demoted")
+        demoted_entry["top_reasons"] = top_reasons
+        updated_opportunity_pool_entries.append(demoted_entry)
+    return retained_entries, updated_opportunity_pool_entries
 
 
 def _summarize_historical_opportunity_rows(
@@ -1085,6 +1144,8 @@ def _build_opportunity_pool_historical_prior(
         stats.get("next_open_to_close_return_mean"),
         stats.get("next_high_return_mean"),
         stats.get("next_close_return_mean"),
+        stats.get("next_high_hit_rate_at_threshold"),
+        stats.get("next_close_positive_rate"),
         int(stats.get("evaluable_count") or 0),
     )
     return {
@@ -1161,6 +1222,8 @@ def _build_watch_candidate_historical_prior(
         stats.get("next_open_to_close_return_mean"),
         stats.get("next_high_return_mean"),
         stats.get("next_close_return_mean"),
+        stats.get("next_high_hit_rate_at_threshold"),
+        stats.get("next_close_positive_rate"),
         int(stats.get("evaluable_count") or 0),
     )
     return {
@@ -1390,6 +1453,10 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
                 price_cache,
                 family="catalyst_theme",
             )
+        near_miss_entries, opportunity_pool_entries = _demote_weak_near_miss_entries(
+            near_miss_entries,
+            opportunity_pool_entries,
+        )
         selected_entries.sort(
             key=lambda entry: (
                 _execution_priority_rank((entry.get("historical_prior") or {}).get("execution_priority")),
@@ -1554,8 +1621,8 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
         "selection_target": (session_summary.get("plan_generation") or {}).get("selection_target") or snapshot.get("target_mode"),
         "summary": {
             "selection_target_count": _summary_value(dual_target_summary, "selection_target_count", len(selection_targets)),
-            "short_trade_selected_count": _summary_value(dual_target_summary, "short_trade_selected_count", len(selected_entries)),
-            "short_trade_near_miss_count": _summary_value(dual_target_summary, "short_trade_near_miss_count", len(near_miss_entries)),
+            "short_trade_selected_count": len(selected_entries),
+            "short_trade_near_miss_count": len(near_miss_entries),
             "short_trade_blocked_count": _summary_value(dual_target_summary, "short_trade_blocked_count", blocked_count),
             "short_trade_rejected_count": _summary_value(dual_target_summary, "short_trade_rejected_count", rejected_count),
             "short_trade_opportunity_pool_count": len(opportunity_pool_entries),

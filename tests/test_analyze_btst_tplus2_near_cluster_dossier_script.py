@@ -162,6 +162,7 @@ def test_analyze_btst_tplus2_near_cluster_dossier_marks_governance_followup_cand
     )
     followup_report_dir = reports_root / "paper_trading_20260331_20260331_live_m2_7_short_trade_only_300720_followup"
     followup_report_dir.mkdir(parents=True, exist_ok=True)
+    (followup_report_dir / "daily_events.jsonl").write_text('{"trade_date":"20260331","current_plan":{"date":"20260331"},"focus":"300720"}\n', encoding="utf-8")
     followup_brief_path = followup_report_dir / "btst_next_day_trade_brief_latest.json"
     followup_brief_path.write_text(
         json.dumps(
@@ -192,6 +193,54 @@ def test_analyze_btst_tplus2_near_cluster_dossier_marks_governance_followup_cand
             }
         ),
         encoding="utf-8",
+    )
+    gap_report_dir = reports_root / "paper_trading_20260327_20260327_live_m2_7_short_trade_only_300720_gap"
+    gap_report_dir.mkdir(parents=True, exist_ok=True)
+    (gap_report_dir / "daily_events.jsonl").write_text('{"trade_date":"20260327","current_plan":{"date":"20260327"},"focus":"300720"}\n', encoding="utf-8")
+
+    class _FakePlan:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def model_dump(self, mode: str = "json") -> dict[str, object]:
+            return dict(self._payload)
+
+    monkeypatch.setattr(
+        dossier,
+        "load_frozen_post_market_plans",
+        lambda path: (
+            {
+                "20260331": _FakePlan(
+                    {
+                        "risk_metrics": {
+                            "funnel_diagnostics": {
+                                "filters": {
+                                    "short_trade_candidates": {
+                                        "released_shadow_entries": [{"ticker": "300720"}],
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+            if Path(path).parent.name == followup_report_dir.name
+            else {
+                "20260327": _FakePlan(
+                    {
+                        "risk_metrics": {
+                            "funnel_diagnostics": {
+                                "filters": {
+                                    "short_trade_candidates": {
+                                        "released_shadow_entries": [],
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+        ),
     )
 
     monkeypatch.setattr(
@@ -235,3 +284,149 @@ def test_analyze_btst_tplus2_near_cluster_dossier_marks_governance_followup_cand
     assert analysis["governance_recent_followup_rows"][0]["decision"] == "near_miss"
     assert analysis["recent_window_summaries"][0]["supporting_window"] is True
     assert analysis["tier_focus_surface_summary"]["t_plus_2_close_return_distribution"]["mean"] == 0.0787
+    assert analysis["current_plan_visibility_summary"]["current_plan_visible_trade_dates"] == ["2026-03-31"]
+    assert analysis["current_plan_visibility_summary"]["current_plan_visibility_gap_trade_dates"] == ["2026-03-27"]
+
+
+def test_analyze_btst_tplus2_near_cluster_dossier_marks_strong_governance_followup_payoff_confirmed(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    upstream_handoff_board_path = tmp_path / "btst_candidate_pool_upstream_handoff_board_latest.json"
+    lane_objective_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
+    upstream_handoff_board_path.write_text(
+        json.dumps(
+            {
+                "board_rows": [
+                    {
+                        "ticker": "300720",
+                        "downstream_followup_lane": "t_plus_2_continuation_review",
+                        "downstream_followup_status": "continuation_confirm_then_review",
+                        "downstream_followup_blocker": "no_selected_persistence_or_independent_edge",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    lane_objective_support_path.write_text(
+        json.dumps(
+            {
+                "ticker_rows": [
+                    {
+                        "ticker": "300720",
+                        "next_close_positive_rate": 0.8,
+                        "t_plus_2_positive_rate": 0.8667,
+                        "t_plus_2_return_hit_rate_at_target": 0.8,
+                        "mean_t_plus_2_return": 0.0787,
+                        "next_high_hit_rate_at_threshold": 0.8667,
+                        "closed_cycle_count": 15,
+                        "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        dossier,
+        "_collect_rows",
+        lambda *_args, **_kwargs: [
+            {
+                "report_label": "window_anchor",
+                "ticker": "600988",
+                "candidate_source": "layer_c_watchlist",
+                "metrics_payload": {
+                    "breakout_freshness": 0.35,
+                    "trend_acceleration": 0.48,
+                    "catalyst_freshness": 0.01,
+                    "layer_c_alignment": 0.49,
+                    "sector_resonance": 0.13,
+                    "close_strength": 0.64,
+                    "t_plus_2_continuation_candidate": {"applied": True},
+                },
+                "next_high_return": 0.05,
+                "next_close_return": -0.01,
+                "t_plus_2_close_return": 0.03,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        dossier,
+        "load_upstream_shadow_followup_history_by_ticker",
+        lambda *_args, **_kwargs: {
+            "300720": [
+                {"ticker": "300720", "trade_date": "20260331", "report_dir": "report_a", "decision": "near_miss"},
+                {"ticker": "300720", "trade_date": "20260328", "report_dir": "report_b", "decision": "near_miss"},
+                {"ticker": "300720", "trade_date": "20260325", "report_dir": "report_c", "decision": "near_miss"},
+            ]
+        },
+    )
+
+    analysis = dossier.analyze_btst_tplus2_near_cluster_dossier(
+        reports_root,
+        candidate_ticker="300720",
+        upstream_handoff_board_path=upstream_handoff_board_path,
+        lane_objective_support_path=lane_objective_support_path,
+    )
+
+    assert analysis["recent_tier_verdict"] == "governance_followup_payoff_confirmed"
+    assert analysis["promotion_readiness_verdict"] == "watch_review_ready"
+
+
+def test_analyze_btst_tplus2_near_cluster_dossier_surfaces_manifest_merge_review_ready(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    upstream_handoff_board_path = tmp_path / "btst_candidate_pool_upstream_handoff_board_latest.json"
+    lane_objective_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
+    upstream_handoff_board_path.write_text(
+        json.dumps(
+            {
+                "board_rows": [
+                    {
+                        "ticker": "300720",
+                        "latest_followup_decision": "selected",
+                        "downstream_followup_lane": "t_plus_2_continuation_review",
+                        "downstream_followup_status": "continuation_only_confirm_then_review",
+                        "downstream_followup_blocker": "no_selected_persistence_or_independent_edge",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    lane_objective_support_path.write_text(json.dumps({"ticker_rows": [{"ticker": "300720"}]}), encoding="utf-8")
+    (reports_root / "report_manifest_latest.json").write_text(
+        json.dumps(
+            {
+                "continuation_promotion_ready_summary": {
+                    "focus_ticker": "300720",
+                    "promotion_path_status": "merge_review_ready",
+                    "promotion_merge_review_verdict": "ready_for_default_btst_merge_review",
+                    "qualifying_window_buckets": ["near_miss_entries", "selected_entries"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dossier, "_collect_rows", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(dossier, "_build_anchor_profile", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(dossier, "load_upstream_shadow_followup_history_by_ticker", lambda *_args, **_kwargs: {"300720": []})
+    monkeypatch.setattr(
+        dossier,
+        "load_frozen_post_market_plans",
+        lambda *_args, **_kwargs: {},
+    )
+
+    analysis = dossier.analyze_btst_tplus2_near_cluster_dossier(
+        reports_root,
+        candidate_ticker="300720",
+        upstream_handoff_board_path=upstream_handoff_board_path,
+        lane_objective_support_path=lane_objective_support_path,
+    )
+
+    assert analysis["promotion_readiness_verdict"] == "merge_review_ready"
+    assert analysis["promotion_path_status"] == "merge_review_ready"
+    assert analysis["promotion_merge_review_verdict"] == "ready_for_default_btst_merge_review"
+    assert analysis["latest_followup_decision"] == "selected"
+    assert analysis["downstream_followup_status"] == "continuation_only_confirm_then_review"
+    assert analysis["qualifying_window_buckets"] == ["near_miss_entries", "selected_entries"]

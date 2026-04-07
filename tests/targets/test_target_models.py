@@ -2,7 +2,7 @@ from src.execution.models import ExecutionPlan, LayerCResult
 from src.screening.models import StrategySignal
 from src.targets import get_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets
-from src.targets.short_trade_target import evaluate_short_trade_rejected_target
+from src.targets.short_trade_target import evaluate_short_trade_rejected_target, evaluate_short_trade_selected_target
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -46,6 +46,62 @@ def _make_prepared_breakout_entry() -> dict:
             "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
         },
         "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.40, "investor": 0.20}},
+    }
+
+
+def _make_prepared_breakout_penalty_relief_entry() -> dict:
+    return {
+        "ticker": "300505",
+        "score_b": 0.3899,
+        "score_c": 0.375,
+        "score_final": 0.3832,
+        "quality_score": 0.75,
+        "decision": "watch",
+        "candidate_source": "layer_c_watchlist",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                39.9193,
+                sub_factors={
+                    "momentum": {
+                        "direction": 0,
+                        "confidence": 50.0,
+                        "completeness": 1.0,
+                        "metrics": {
+                            "momentum_1m": -0.1924,
+                            "momentum_3m": 0.3893,
+                            "momentum_6m": 0.4729,
+                            "volume_momentum": 0.5695,
+                        },
+                    },
+                    "adx_strength": {"direction": 1, "confidence": 31.1053, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                    "volatility": {
+                        "direction": 0,
+                        "confidence": 50.0,
+                        "completeness": 1.0,
+                        "metrics": {
+                            "historical_volatility": 0.8423,
+                            "volatility_regime": 1.2639,
+                            "volatility_z_score": 0.6055,
+                            "atr_ratio": 0.0988,
+                        },
+                    },
+                    "long_trend_alignment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                0,
+                0.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 0.0},
+                },
+            ).model_dump(mode="json"),
+            "fundamental": _make_signal(1, 52.6667).model_dump(mode="json"),
+            "mean_reversion": _make_signal(1, 11.1335).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.375, "investor": 0.0}},
     }
 
 
@@ -267,6 +323,31 @@ def test_build_selection_targets_selects_short_trade_for_fresh_watchlist_candida
     assert summary.short_trade_blocked_count == 0
 
 
+def test_build_selection_targets_preserves_merge_approved_reason_codes_for_watchlist_item() -> None:
+    watchlist = [
+        LayerCResult(
+            ticker="300720",
+            score_b=0.55,
+            score_c=0.12,
+            score_final=0.22,
+            quality_score=0.56,
+            decision="watch",
+            candidate_source="layer_c_watchlist_merge_approved",
+            candidate_reason_codes=["merge_approved_continuation"],
+        )
+    ]
+
+    selection_targets, _ = build_selection_targets(
+        trade_date="20260328",
+        watchlist=watchlist,
+        buy_order_tickers=set(),
+        target_mode="dual_target",
+    )
+
+    assert selection_targets["300720"].candidate_source == "layer_c_watchlist_merge_approved"
+    assert "merge_approved_continuation" in selection_targets["300720"].candidate_reason_codes
+
+
 def test_build_selection_targets_promotes_rejected_entry_for_short_trade_when_signals_are_fresh() -> None:
     trend_signal = _make_signal(
         1,
@@ -320,6 +401,76 @@ def test_build_selection_targets_promotes_rejected_entry_for_short_trade_when_si
     assert summary.short_trade_selected_count == 1
     assert summary.short_trade_blocked_count == 0
     assert summary.delta_classification_counts == {"research_reject_short_pass": 1}
+
+
+def test_merge_approved_continuation_relief_promotes_boundary_watchlist_candidate_to_selected() -> None:
+    watch_item = LayerCResult(
+        ticker="300720",
+        score_b=0.74,
+        score_c=0.31,
+        score_final=0.55,
+        quality_score=0.67,
+        decision="watch",
+        candidate_source="layer_c_watchlist_merge_approved",
+        candidate_reason_codes=["merge_approved_continuation"],
+        strategy_signals={
+            "trend": _make_signal(
+                1,
+                82.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 85.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 76.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 68.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                },
+            ),
+            "event_sentiment": _make_signal(
+                1,
+                74.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 66.0, "completeness": 1.0},
+                },
+            ),
+            "mean_reversion": _make_signal(-1, 20.0),
+        },
+        agent_contribution_summary={"cohort_contributions": {"analyst": 0.22, "investor": 0.11}},
+    )
+
+    baseline_result = evaluate_short_trade_selected_target(
+        trade_date="20260328",
+        item=watch_item,
+        rank_hint=1,
+        included_in_buy_orders=False,
+        profile_overrides={
+            "select_threshold": 0.90,
+            "near_miss_threshold": 0.80,
+            "merge_approved_continuation_relief_enabled": False,
+        },
+    )
+    relief_result = evaluate_short_trade_selected_target(
+        trade_date="20260328",
+        item=watch_item,
+        rank_hint=1,
+        included_in_buy_orders=False,
+        profile_overrides={
+            "select_threshold": 0.90,
+            "near_miss_threshold": 0.80,
+            "merge_approved_continuation_relief_enabled": True,
+            "merge_approved_continuation_select_threshold": 0.56,
+            "merge_approved_continuation_near_miss_threshold": 0.44,
+            "merge_approved_continuation_breakout_freshness_min": 0.24,
+            "merge_approved_continuation_trend_acceleration_min": 0.30,
+            "merge_approved_continuation_close_strength_min": 0.55,
+        },
+    )
+
+    assert baseline_result.decision in {"near_miss", "rejected"}
+    assert relief_result.decision == "selected"
+    assert "merge_approved_continuation_relief_applied" in relief_result.positive_tags
+    assert relief_result.metrics_payload["merge_approved_continuation_relief"]["applied"] is True
+    assert relief_result.explainability_payload["merge_approved_continuation_relief"]["effective_select_threshold"] == 0.56
 
 
 def test_watchlist_zero_catalyst_penalty_applies_only_to_layer_c_watchlist() -> None:
@@ -768,6 +919,13 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert guard_relief_profile.t_plus_2_continuation_trend_acceleration_max == 0.60
     assert guard_relief_profile.t_plus_2_continuation_close_strength_max == 0.90
     assert guard_relief_profile.t_plus_2_continuation_sector_resonance_max == 0.20
+    assert default_profile.visibility_gap_continuation_relief_enabled is True
+    assert default_profile.visibility_gap_continuation_breakout_freshness_min == 0.32
+    assert default_profile.visibility_gap_continuation_trend_acceleration_min == 0.78
+    assert default_profile.visibility_gap_continuation_close_strength_min == 0.88
+    assert default_profile.visibility_gap_continuation_catalyst_freshness_floor == 0.35
+    assert default_profile.visibility_gap_continuation_near_miss_threshold == 0.44
+    assert default_profile.visibility_gap_continuation_require_relaxed_band is True
     assert guard_relief_profile.hard_block_bearish_conflicts == frozenset()
 
 
@@ -866,6 +1024,152 @@ def test_short_trade_target_weight_overrides_can_raise_prepared_breakout_score()
     assert weighted_result.decision == "near_miss"
     assert weighted_result.metrics_payload["positive_score_weights"]["layer_c_alignment"] > baseline_result.metrics_payload["positive_score_weights"]["layer_c_alignment"]
     assert weighted_result.metrics_payload["thresholds"]["effective_positive_score_weights"]["catalyst_freshness"] == 0.20
+
+
+def test_prepared_breakout_penalty_relief_softens_narrow_watchlist_case() -> None:
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={
+            "prepared_breakout_penalty_relief_enabled": False,
+            "prepared_breakout_continuation_relief_enabled": False,
+        },
+    )
+    relieved_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={"prepared_breakout_continuation_relief_enabled": False},
+    )
+
+    assert baseline_result.decision == "rejected"
+    assert relieved_result.decision == "rejected"
+    assert relieved_result.score_target > baseline_result.score_target
+    assert relieved_result.metrics_payload["prepared_breakout_penalty_relief"]["enabled"] is True
+    assert relieved_result.metrics_payload["prepared_breakout_penalty_relief"]["eligible"] is True
+    assert relieved_result.metrics_payload["prepared_breakout_penalty_relief"]["applied"] is True
+    assert relieved_result.metrics_payload["prepared_breakout_penalty_relief"]["gate_hits"]["prepared_breakout_stage"] is True
+    assert relieved_result.metrics_payload["prepared_breakout_penalty_relief"]["effective_stale_score_penalty_weight"] == 0.06
+    assert relieved_result.metrics_payload["prepared_breakout_penalty_relief"]["effective_extension_score_penalty_weight"] == 0.04
+    assert relieved_result.metrics_payload["thresholds"]["effective_positive_score_weights"]["layer_c_alignment"] == 0.22
+    assert "prepared_breakout_penalty_relief_applied" in relieved_result.positive_tags
+    assert "prepared_breakout_penalty_relief" in relieved_result.top_reasons
+
+
+def test_prepared_breakout_catalyst_relief_carries_minimum_catalyst_floor_for_narrow_watchlist_case() -> None:
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={
+            "prepared_breakout_catalyst_relief_enabled": False,
+            "prepared_breakout_selected_catalyst_relief_enabled": False,
+        },
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={"prepared_breakout_selected_catalyst_relief_enabled": False},
+    )
+
+    assert relief_result.score_target > baseline_result.score_target
+    assert relief_result.metrics_payload["prepared_breakout_catalyst_relief"]["enabled"] is True
+    assert relief_result.metrics_payload["prepared_breakout_catalyst_relief"]["eligible"] is True
+    assert relief_result.metrics_payload["prepared_breakout_catalyst_relief"]["applied"] is True
+    assert relief_result.metrics_payload["effective_catalyst_freshness"] == 0.35
+    assert relief_result.metrics_payload["prepared_breakout_catalyst_relief"]["effective_catalyst_freshness"] == 0.35
+    assert relief_result.metrics_payload["prepared_breakout_catalyst_relief"]["gate_hits"]["prepared_breakout_stage"] is True
+    assert "prepared_breakout_catalyst_relief_applied" in relief_result.positive_tags
+    assert "prepared_breakout_catalyst_relief" in relief_result.top_reasons
+    assert relief_result.explainability_payload["prepared_breakout_catalyst_relief"]["applied"] is True
+
+
+def test_prepared_breakout_volume_relief_carries_hidden_volatility_expansion_for_narrow_watchlist_case() -> None:
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={
+            "prepared_breakout_volume_relief_enabled": False,
+            "prepared_breakout_continuation_relief_enabled": False,
+        },
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={"prepared_breakout_continuation_relief_enabled": False},
+    )
+
+    assert relief_result.score_target > baseline_result.score_target
+    assert relief_result.metrics_payload["prepared_breakout_volume_relief"]["enabled"] is True
+    assert relief_result.metrics_payload["prepared_breakout_volume_relief"]["eligible"] is True
+    assert relief_result.metrics_payload["prepared_breakout_volume_relief"]["applied"] is True
+    assert relief_result.metrics_payload["volume_expansion_quality"] == 0.35
+    assert relief_result.metrics_payload["prepared_breakout_volume_relief"]["effective_volume_expansion_quality"] == 0.35
+    assert relief_result.metrics_payload["prepared_breakout_volume_relief"]["volatility_regime"] == 1.2639
+    assert relief_result.metrics_payload["prepared_breakout_volume_relief"]["atr_ratio"] == 0.0988
+    assert "prepared_breakout_volume_relief_applied" in relief_result.positive_tags
+    assert relief_result.explainability_payload["prepared_breakout_volume_relief"]["applied"] is True
+
+
+def test_prepared_breakout_continuation_relief_restores_breakout_and_trend_expression_for_pullback_case() -> None:
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={
+            "prepared_breakout_continuation_relief_enabled": False,
+            "prepared_breakout_selected_catalyst_relief_enabled": False,
+        },
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={"prepared_breakout_selected_catalyst_relief_enabled": False},
+    )
+
+    assert baseline_result.decision == "rejected"
+    assert relief_result.score_target > baseline_result.score_target
+    assert relief_result.decision == "near_miss"
+    assert relief_result.metrics_payload["prepared_breakout_continuation_relief"]["enabled"] is True
+    assert relief_result.metrics_payload["prepared_breakout_continuation_relief"]["eligible"] is True
+    assert relief_result.metrics_payload["prepared_breakout_continuation_relief"]["applied"] is True
+    assert relief_result.metrics_payload["breakout_freshness"] == 0.24
+    assert relief_result.metrics_payload["trend_acceleration"] == 0.78
+    assert relief_result.metrics_payload["prepared_breakout_continuation_relief"]["continuation_support"] == 0.4636
+    assert relief_result.metrics_payload["prepared_breakout_continuation_relief"]["gate_hits"]["momentum_1m_pullback"] is True
+    assert "prepared_breakout_continuation_relief_applied" in relief_result.positive_tags
+    assert relief_result.explainability_payload["prepared_breakout_continuation_relief"]["applied"] is True
+
+
+def test_prepared_breakout_selected_catalyst_relief_promotes_narrow_near_miss_case_to_selected() -> None:
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+        profile_overrides={"prepared_breakout_selected_catalyst_relief_enabled": False},
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260326",
+        entry=_make_prepared_breakout_penalty_relief_entry(),
+        profile_name="default",
+    )
+
+    assert baseline_result.decision == "near_miss"
+    assert relief_result.score_target > baseline_result.score_target
+    assert relief_result.decision == "selected"
+    assert relief_result.metrics_payload["prepared_breakout_selected_catalyst_relief"]["enabled"] is True
+    assert relief_result.metrics_payload["prepared_breakout_selected_catalyst_relief"]["eligible"] is True
+    assert relief_result.metrics_payload["prepared_breakout_selected_catalyst_relief"]["applied"] is True
+    assert relief_result.metrics_payload["breakout_freshness"] == 0.35
+    assert relief_result.metrics_payload["effective_catalyst_freshness"] == 1.0
+    assert relief_result.metrics_payload["selected_breakout_gate_pass"] is True
+    assert "prepared_breakout_selected_catalyst_relief_applied" in relief_result.positive_tags
+    assert relief_result.explainability_payload["prepared_breakout_selected_catalyst_relief"]["applied"] is True
 
 
 def test_short_trade_target_can_remove_conflict_hard_block_without_dropping_overhead_conflict_penalty() -> None:
@@ -995,6 +1299,22 @@ def test_upstream_shadow_catalyst_relief_promotes_strong_recalled_shadow_to_near
     assert relief_result.explainability_payload["upstream_shadow_catalyst_relief"]["applied"] is True
 
 
+def test_upstream_shadow_catalyst_relief_can_promote_post_gate_shadow_to_selected() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry["short_trade_catalyst_relief"]["selected_threshold"] = 0.45
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "selected"
+    assert round(result.score_target, 4) == 0.5246
+    assert result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.45
+    assert result.metrics_payload["thresholds"]["upstream_shadow_catalyst_relief_select_threshold_override"] == 0.45
+    assert result.explainability_payload["upstream_shadow_catalyst_relief"]["effective_select_threshold"] == 0.45
+
+
 def test_upstream_shadow_catalyst_relief_keeps_profitability_hard_cliff_sample_rejected() -> None:
     result = evaluate_short_trade_rejected_target(
         trade_date="20260328",
@@ -1025,3 +1345,50 @@ def test_upstream_shadow_catalyst_relief_can_promote_corridor_profitability_hard
     assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is True
     assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is True
     assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.45
+
+
+def test_visibility_gap_continuation_relief_promotes_selected_visibility_gap_shadow_to_near_miss() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry.pop("short_trade_catalyst_relief", None)
+    entry["candidate_source"] = "post_gate_liquidity_competition_shadow"
+    entry["candidate_pool_lane"] = "post_gate_liquidity_competition"
+    entry["candidate_pool_shadow_reason"] = "upstream_base_liquidity_uplift_shadow_visibility_gap_relaxed_band"
+    entry["shadow_visibility_gap_selected"] = True
+    entry["shadow_visibility_gap_relaxed_band"] = True
+    entry["score_b"] = 0.40
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "near_miss"
+    assert round(result.score_target, 4) == 0.4754
+    assert "visibility_gap_continuation_relief_applied" in result.positive_tags
+    assert result.metrics_payload["effective_catalyst_freshness"] == 0.35
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.44
+    assert result.metrics_payload["visibility_gap_continuation_relief"]["applied"] is True
+    assert result.metrics_payload["visibility_gap_continuation_relief"]["gate_hits"]["relaxed_band"] is True
+    assert result.explainability_payload["visibility_gap_continuation_relief"]["applied"] is True
+
+
+def test_visibility_gap_continuation_relief_requires_relaxed_band_when_profile_demands_it() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry.pop("short_trade_catalyst_relief", None)
+    entry["candidate_source"] = "post_gate_liquidity_competition_shadow"
+    entry["candidate_pool_lane"] = "post_gate_liquidity_competition"
+    entry["candidate_pool_shadow_reason"] = "upstream_base_liquidity_uplift_shadow"
+    entry["shadow_visibility_gap_selected"] = True
+    entry["shadow_visibility_gap_relaxed_band"] = False
+    entry["score_b"] = 0.40
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "rejected"
+    assert round(result.score_target, 4) == 0.4390
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.46
+    assert result.metrics_payload["visibility_gap_continuation_relief"]["applied"] is False
+    assert result.metrics_payload["visibility_gap_continuation_relief"]["gate_hits"]["relaxed_band"] is False

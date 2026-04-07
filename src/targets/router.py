@@ -29,7 +29,9 @@ def _classify_delta(evaluation: DualTargetEvaluation) -> str | None:
 
 def _resolve_candidate_source(*, item: LayerCResult | None = None, entry: dict[str, Any] | None = None, default: str) -> tuple[str, list[str]]:
     if item is not None:
-        return default, []
+        source = str(getattr(item, "candidate_source", "") or default)
+        reason_codes = [str(reason) for reason in list(getattr(item, "candidate_reason_codes", []) or []) if str(reason or "").strip()]
+        return source, reason_codes
     entry = dict(entry or {})
     source = str(entry.get("candidate_source") or entry.get("source") or default)
     reason_codes = [str(reason) for reason in list(entry.get("candidate_reason_codes", entry.get("reasons", [])) or []) if str(reason or "").strip()]

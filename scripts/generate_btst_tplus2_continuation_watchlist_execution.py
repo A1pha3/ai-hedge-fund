@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.generate_btst_tplus2_continuation_promotion_review import READY_PROMOTION_REVIEW_VERDICTS
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_LANE_RULEPACK_PATH = REPORTS_DIR / "btst_tplus2_continuation_lane_rulepack_latest.json"
@@ -26,6 +28,13 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
     focus_ticker = str(promotion_gate.get("focus_ticker") or validation_queue.get("focus_ticker") or "")
     focus_candidate = dict(validation_queue.get("focus_candidate") or {})
     gate_verdict = str(promotion_gate.get("gate_verdict") or "")
+    governance_ready_watch = (
+        str(focus_candidate.get("candidate_tier_focus") or "") == "governance_followup"
+        and str(focus_candidate.get("promotion_readiness_verdict") or "") in {"watch_review_ready", "merge_review_ready"}
+    )
+    promotion_review_verdict = str(promotion_gate.get("promotion_review_verdict") or "")
+    merge_review_ready = promotion_review_verdict == "ready_for_default_btst_merge_review"
+    governance_ready_watch = governance_ready_watch or promotion_review_verdict in READY_PROMOTION_REVIEW_VERDICTS
 
     if gate_verdict == "approve_watchlist_promotion" and focus_ticker and focus_ticker not in raw_watchlist_tickers:
         execution_verdict = "watchlist_extension_applied"
@@ -48,12 +57,28 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
             "priority_score": focus_candidate.get("priority_rank"),
             "lane_stage": lane_rules.get("lane_stage", lane_rulepack.get("lane_stage")),
             "capital_mode": lane_rules.get("capital_mode", lane_rulepack.get("capital_mode")),
-            "promotion_blocker": "near_cluster_only",
-            "watchlist_validation_status": "promoted_from_validation_queue",
+            "promotion_blocker": (
+                "default_btst_merge_review_pending"
+                if merge_review_ready
+                else ("governance_approved_continuation_watch" if governance_ready_watch else "near_cluster_only")
+            ),
+            "watchlist_validation_status": (
+                str(focus_candidate.get("recent_tier_verdict") or "governance_followup_payoff_confirmed")
+                if governance_ready_watch
+                else "promoted_from_validation_queue"
+            ),
             "recent_supporting_window_count": focus_candidate.get("recent_tier_window_count"),
             "recent_window_count": focus_candidate.get("recent_window_count"),
             "recent_support_ratio": focus_candidate.get("recent_tier_ratio"),
-            "next_step": "Track this adopted validation watch candidate outside eligible_tickers until a strict-peer upgrade appears.",
+            "next_step": (
+                "Keep this continuation watch candidate visible while default BTST merge review is pending; do not demote it back to near-cluster-only handling."
+                if merge_review_ready
+                else (
+                "Track this governance-approved continuation watch candidate under isolated paper-only controls; do not merge it into default BTST."
+                if governance_ready_watch
+                else "Track this adopted validation watch candidate outside eligible_tickers until a strict-peer upgrade appears."
+                )
+            ),
             "t_plus_2_close_positive_rate": focus_candidate.get("t_plus_2_close_positive_rate"),
             "t_plus_2_close_return_mean": focus_candidate.get("t_plus_2_close_return_mean"),
             "next_close_positive_rate": focus_candidate.get("next_close_positive_rate"),
@@ -61,8 +86,15 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
 
     if execution_verdict == "watchlist_extension_applied":
         recommendation = (
-            f"Treat {focus_ticker} as a formal continuation watchlist ticker while keeping "
-            f"eligible_tickers={eligible_tickers} unchanged and the continuation lane isolated from default BTST."
+            (
+                f"Treat {focus_ticker} as a formal continuation watchlist ticker while default BTST merge review is pending; "
+                f"keep eligible_tickers={eligible_tickers} unchanged until governance approves the merge."
+            )
+            if merge_review_ready
+            else (
+                f"Treat {focus_ticker} as a formal continuation watchlist ticker while keeping "
+                f"eligible_tickers={eligible_tickers} unchanged and the continuation lane isolated from default BTST."
+            )
         )
     elif execution_verdict == "watchlist_extension_already_applied":
         recommendation = f"{focus_ticker} is already part of the effective continuation watchlist."

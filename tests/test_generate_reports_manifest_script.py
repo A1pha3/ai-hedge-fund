@@ -3,7 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
+from scripts.generate_reports_manifest import (
+    _build_continuation_promotion_ready_summary,
+    _build_execution_constraint_rollup,
+    _build_transient_probe_summary,
+    _collect_governance_synthesis_evidence_dirs,
+    generate_reports_manifest,
+    generate_reports_manifest_artifacts,
+)
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
 
@@ -135,6 +142,152 @@ def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "selection_target_replay_input.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_json(report_dir / "session_summary.json", {"plan_generation": {"selection_target": "dual_target"}})
+
+
+def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_default_merge_review_latest.json",
+        {
+            "focus_ticker": "300720",
+            "merge_review_verdict": "ready_for_default_btst_merge_review",
+            "operator_action": "review_default_btst_merge",
+            "t_plus_2_positive_rate_delta_vs_default_btst": 0.3961,
+            "t_plus_2_mean_return_delta_vs_default_btst": 0.0844,
+            "counterfactual_validation": {
+                "counterfactual_verdict": "supports_default_btst_merge",
+                "t_plus_2_positive_rate_margin_vs_threshold": 0.2961,
+                "t_plus_2_mean_return_margin_vs_threshold": 0.0644,
+            },
+        },
+    )
+    (reports_root / "btst_default_merge_review_latest.md").write_text("# merge review\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_default_merge_historical_counterfactual_latest.json",
+        {
+            "focus_ticker": "300720",
+            "counterfactual_verdict": "merged_default_btst_uplift_positive",
+            "uplift_vs_default_btst": {
+                "t_plus_2_positive_rate_uplift": 0.1857,
+                "mean_t_plus_2_return_uplift": 0.0394,
+            },
+        },
+    )
+    (reports_root / "btst_default_merge_historical_counterfactual_latest.md").write_text("# merge historical\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_continuation_merge_candidate_ranking_latest.json",
+        {
+            "candidate_count": 2,
+            "top_candidate": {
+                "ticker": "300720",
+                "promotion_path_status": "merge_review_ready",
+                "t_plus_2_positive_rate_delta_vs_default_btst": 0.3961,
+                "mean_t_plus_2_return_delta_vs_default_btst": 0.0844,
+            },
+        },
+    )
+    (reports_root / "btst_continuation_merge_candidate_ranking_latest.md").write_text("# candidate ranking\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_default_merge_strict_counterfactual_latest.json",
+        {
+            "focus_ticker": "300720",
+            "strict_counterfactual_verdict": "strict_merge_uplift_positive",
+            "strict_uplift_vs_default_btst": {
+                "t_plus_2_positive_rate_uplift": 0.0714,
+                "mean_t_plus_2_return_uplift": 0.0112,
+            },
+            "overlap_diagnostics": {
+                "overlap_case_count": 1,
+            },
+        },
+    )
+    (reports_root / "btst_default_merge_strict_counterfactual_latest.md").write_text("# strict counterfactual\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_merge_replay_validation_latest.json",
+        {
+            "overall_verdict": "merge_replay_promotes_selected",
+            "focus_tickers": ["300720", "300505"],
+            "promoted_to_selected_count": 1,
+            "promoted_to_near_miss_count": 1,
+            "relief_applied_count": 2,
+            "recommended_next_lever": "execution_signal",
+            "recommended_signal_levers": ["trend_acceleration", "breakout_freshness"],
+        },
+    )
+    (reports_root / "btst_merge_replay_validation_latest.md").write_text("# merge replay validation\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_prepared_breakout_relief_validation_latest.json",
+        {
+            "focus_ticker": "300505",
+            "verdict": "prepared_breakout_selected_relief_supported",
+            "selected_relief_window_count": 4,
+            "selected_relief_alignment_rate": 1.0,
+            "outcome_support": {
+                "evidence_status": "strong_t1_t2_support",
+                "next_close_positive_rate": 1.0,
+            },
+        },
+    )
+    (reports_root / "btst_prepared_breakout_relief_validation_latest.md").write_text("# prepared breakout relief validation\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_prepared_breakout_cohort_latest.json",
+        {
+            "candidate_count": 2,
+            "selected_frontier_candidate_count": 1,
+            "verdict": "selected_frontier_peer_found",
+            "next_candidate": {"ticker": "000792"},
+        },
+    )
+    (reports_root / "btst_prepared_breakout_cohort_latest.md").write_text("# prepared breakout cohort\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_prepared_breakout_residual_surface_latest.json",
+        {
+            "focus_ticker": "600988",
+            "verdict": "non_actionable_score_surface",
+            "focus_report_dir_count": 5,
+        },
+    )
+    (reports_root / "btst_prepared_breakout_residual_surface_latest.md").write_text("# prepared breakout residual surface\n", encoding="utf-8")
+
+    manifest = generate_reports_manifest(reports_root=reports_root)
+
+    entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
+    assert entries_by_id["btst_default_merge_review_latest"]["report_path"] == "data/reports/btst_default_merge_review_latest.md"
+    assert entries_by_id["btst_default_merge_historical_counterfactual_latest"]["report_path"] == "data/reports/btst_default_merge_historical_counterfactual_latest.md"
+    assert entries_by_id["btst_continuation_merge_candidate_ranking_latest"]["report_path"] == "data/reports/btst_continuation_merge_candidate_ranking_latest.md"
+    assert entries_by_id["btst_default_merge_strict_counterfactual_latest"]["report_path"] == "data/reports/btst_default_merge_strict_counterfactual_latest.md"
+    assert entries_by_id["btst_merge_replay_validation_latest"]["report_path"] == "data/reports/btst_merge_replay_validation_latest.md"
+    assert entries_by_id["btst_prepared_breakout_relief_validation_latest"]["report_path"] == "data/reports/btst_prepared_breakout_relief_validation_latest.md"
+    assert manifest["default_merge_review_summary"]["focus_ticker"] == "300720"
+    assert manifest["default_merge_review_summary"]["counterfactual_validation"]["counterfactual_verdict"] == "supports_default_btst_merge"
+    assert manifest["default_merge_historical_counterfactual_summary"]["counterfactual_verdict"] == "merged_default_btst_uplift_positive"
+    assert manifest["continuation_merge_candidate_ranking_summary"]["top_candidate"]["ticker"] == "300720"
+    assert manifest["default_merge_strict_counterfactual_summary"]["strict_counterfactual_verdict"] == "strict_merge_uplift_positive"
+    assert manifest["merge_replay_validation_summary"]["overall_verdict"] == "merge_replay_promotes_selected"
+    assert manifest["merge_replay_validation_summary"]["recommended_signal_levers"] == ["trend_acceleration", "breakout_freshness"]
+    assert manifest["prepared_breakout_relief_validation_summary"]["focus_ticker"] == "300505"
+    assert manifest["prepared_breakout_relief_validation_summary"]["verdict"] == "prepared_breakout_selected_relief_supported"
+    assert manifest["prepared_breakout_cohort_summary"]["candidate_count"] == 2
+    assert manifest["prepared_breakout_cohort_summary"]["next_candidate"]["ticker"] == "000792"
+    assert manifest["prepared_breakout_residual_surface_summary"]["focus_ticker"] == "600988"
+    assert manifest["prepared_breakout_residual_surface_summary"]["verdict"] == "non_actionable_score_surface"
+    reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
+    assert "btst_default_merge_review_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_default_merge_historical_counterfactual_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_continuation_merge_candidate_ranking_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_default_merge_strict_counterfactual_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_merge_replay_validation_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_prepared_breakout_relief_validation_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_prepared_breakout_cohort_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_prepared_breakout_residual_surface_latest" in reading_paths["btst_control_tower"]["entry_ids"]
+    assert "btst_default_merge_review_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_default_merge_historical_counterfactual_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_continuation_merge_candidate_ranking_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_prepared_breakout_cohort_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_prepared_breakout_residual_surface_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_default_merge_strict_counterfactual_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_merge_replay_validation_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_prepared_breakout_relief_validation_latest" in reading_paths["nightly_review"]["entry_ids"]
 
 
 def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:
@@ -380,6 +533,49 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
         },
     )
     _write_tradeable_opportunity_artifacts(reports_root)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_promotion_review_latest.json",
+        {"focus_ticker": "300720", "promotion_review_verdict": "watch_review_ready"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_promotion_gate_latest.json",
+        {"focus_ticker": "300720", "gate_verdict": "approve_watchlist_promotion"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_watchlist_execution_latest.json",
+        {"focus_ticker": "300720", "execution_verdict": "watchlist_extension_applied"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_eligible_gate_latest.json",
+        {"focus_ticker": "300720", "gate_verdict": "approve_eligible_promotion"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_gate_latest.json",
+        {"focus_ticker": "300720", "gate_verdict": "approve_execution_candidate"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "execution_verdict": "execution_candidate_applied",
+            "adopted_execution_row": {
+                "promotion_blocker": "no_selected_persistence_or_independent_edge",
+                "persistence_requirement": "selected_persistence_across_independent_windows",
+                "independent_edge_requirement": "outperform_default_btst_on_independent_windows",
+                "lane_support_ratio": 0.875,
+                "t_plus_2_mean_gap_vs_watch": 0.067,
+                "next_step": "只保留 isolated paper execution，继续验证 selected persistence。",
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_governance_board_latest.json",
+        {"focus_promotion_ticker": "300720", "governance_status": "single_ticker_with_validation_watch"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_watchboard_latest.json",
+        {"governance_status": "single_ticker_with_validation_watch"},
+    )
 
     result = generate_reports_manifest_artifacts(reports_root=reports_root)
     manifest = result["manifest"]
@@ -797,6 +993,49 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
         },
     )
     _write_tradeable_opportunity_artifacts(reports_root)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_promotion_review_latest.json",
+        {"focus_ticker": "300720", "promotion_review_verdict": "watch_review_ready"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_promotion_gate_latest.json",
+        {"focus_ticker": "300720", "gate_verdict": "approve_watchlist_promotion"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_watchlist_execution_latest.json",
+        {"focus_ticker": "300720", "execution_verdict": "watchlist_extension_applied"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_eligible_gate_latest.json",
+        {"focus_ticker": "300720", "gate_verdict": "approve_eligible_promotion"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_gate_latest.json",
+        {"focus_ticker": "300720", "gate_verdict": "approve_execution_candidate"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "execution_verdict": "execution_candidate_applied",
+            "adopted_execution_row": {
+                "promotion_blocker": "no_selected_persistence_or_independent_edge",
+                "persistence_requirement": "selected_persistence_across_independent_windows",
+                "independent_edge_requirement": "outperform_default_btst_on_independent_windows",
+                "lane_support_ratio": 0.875,
+                "t_plus_2_mean_gap_vs_watch": 0.067,
+                "next_step": "只保留 isolated paper execution，继续验证 selected persistence。",
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_governance_board_latest.json",
+        {"focus_promotion_ticker": "300720", "governance_status": "single_ticker_with_validation_watch"},
+    )
+    _write_json(
+        reports_root / "btst_tplus2_continuation_watchboard_latest.json",
+        {"governance_status": "single_ticker_with_validation_watch"},
+    )
 
     report_a = reports_root / "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329"
     _write_replay_input(report_a, trade_date="2026-03-26", entries=[_build_entry("300394", weak_structure=False), _build_entry("300502", weak_structure=True)])
@@ -874,17 +1113,28 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["candidate_pool_corridor_validation_pack_summary"]["pack_status"] == refresh["candidate_pool_corridor_validation_pack_status"]
     assert refresh["candidate_pool_corridor_shadow_pack_status"] in {"ready_for_primary_shadow_replay", "hold_for_more_corridor_evidence", "skipped_no_corridor_lane"}
     assert refresh["candidate_pool_corridor_shadow_pack_summary"]["shadow_status"] == refresh["candidate_pool_corridor_shadow_pack_status"]
-    assert refresh["candidate_pool_rebucket_shadow_pack_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
+    assert refresh["candidate_pool_rebucket_shadow_pack_status"] in {"ready_for_rebucket_shadow_replay", "persistence_diagnostics_only", "skipped_no_rebucket_candidate"}
     assert refresh["candidate_pool_rebucket_shadow_pack_json"] == str((reports_root / "btst_candidate_pool_rebucket_shadow_pack_latest.json").resolve())
     assert refresh["candidate_pool_rebucket_objective_validation_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
     assert refresh["candidate_pool_rebucket_comparison_bundle_status"] in {"ready_for_parallel_comparison", "keep_shadow_first", "needs_more_closed_cycle_support", "hold_structure_only", "skipped_no_rebucket_lane"}
     assert refresh["candidate_pool_rebucket_comparison_bundle_summary"]["bundle_status"] == refresh["candidate_pool_rebucket_comparison_bundle_status"]
     assert refresh["candidate_pool_lane_pair_board_status"] in {"ready_for_ranked_comparison", "await_corridor_shadow_pack", "await_rebucket_bundle", "insufficient_lane_evidence", "skipped_missing_candidates"}
     assert refresh["candidate_pool_lane_pair_board_summary"]["pair_status"] == refresh["candidate_pool_lane_pair_board_status"]
+    assert "leader_governance_status" in refresh["candidate_pool_lane_pair_board_summary"]
+    assert "parallel_watch_same_source_sample_count" in refresh["candidate_pool_lane_pair_board_summary"]
     assert refresh["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
     assert refresh["candidate_pool_upstream_handoff_board_summary"]["board_status"] == refresh["candidate_pool_upstream_handoff_board_status"]
+    assert "historical_shadow_probe_tickers" in refresh["candidate_pool_upstream_handoff_board_summary"]
     assert refresh["candidate_pool_corridor_uplift_runbook_status"] in {"ready_for_upstream_uplift_probe", "skipped_no_corridor_probe"}
     assert refresh["candidate_pool_corridor_uplift_runbook_summary"]["runbook_status"] == refresh["candidate_pool_corridor_uplift_runbook_status"]
+    assert result["manifest"]["continuation_focus_summary"]["focus_ticker"] == "300720"
+    assert result["manifest"]["continuation_focus_summary"]["promotion_review_verdict"] == "watch_review_ready"
+    assert result["manifest"]["continuation_focus_summary"]["focus_watch_validation_status"] is None
+    assert result["manifest"]["continuation_focus_summary"]["execution_gate_blockers"] is None
+    assert result["manifest"]["continuation_focus_summary"]["execution_overlay_verdict"] == "execution_candidate_applied"
+    assert result["manifest"]["continuation_focus_summary"]["execution_overlay_promotion_blocker"] == "no_selected_persistence_or_independent_edge"
+    assert result["manifest"]["continuation_focus_summary"]["execution_overlay_persistence_requirement"] == "selected_persistence_across_independent_windows"
+    assert result["manifest"]["continuation_promotion_ready_summary"]["focus_ticker"] == "300720"
     assert action_board["top_priority_tickers"] == ["300502"]
     assert replay_bundle["promising_priority_tickers"] == []
     assert failure_dossier["priority_ticker_dossiers"][0]["ticker"] == "300502"
@@ -942,3 +1192,483 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert "btst_governance_synthesis_status: skipped_missing_inputs" in markdown
     assert "btst_governance_validation_status: skipped_missing_inputs" in markdown
     assert "btst_replay_cohort_status: refreshed" in markdown
+
+
+def test_collect_governance_synthesis_evidence_dirs_uses_upstream_handoff_followups(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_candidate_pool_upstream_handoff_board_latest.json",
+        {
+            "board_rows": [
+                {"latest_followup_report_dir": "/tmp/reports/corridor_300720"},
+                {"latest_followup_report_dir": "/tmp/reports/rebucket_301292"},
+                {"latest_followup_report_dir": "/tmp/reports/corridor_300720"},
+            ]
+        },
+    )
+
+    evidence_dirs = _collect_governance_synthesis_evidence_dirs(
+        reports_root,
+        latest_btst_run={"report_dir": "/tmp/reports/latest_short_trade"},
+    )
+
+    assert evidence_dirs == [
+        "/tmp/reports/latest_short_trade",
+        "/tmp/reports/corridor_300720",
+        "/tmp/reports/rebucket_301292",
+    ]
+
+
+def test_build_transient_probe_summary_reads_historical_shadow_probe_row(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_candidate_pool_upstream_handoff_board_latest.json",
+        {
+            "board_rows": [
+                {
+                    "ticker": "301292",
+                    "board_phase": "historical_shadow_probe_gap",
+                    "downstream_followup_status": "transient_probe_only",
+                    "downstream_followup_blocker": "shadow_recall_not_persistent",
+                    "latest_followup_candidate_source": "post_gate_liquidity_competition_shadow",
+                    "latest_followup_gate_status": {"score": "fail"},
+                    "next_step": "先补 persistence diagnostics。",
+                }
+            ]
+        },
+    )
+
+    summary = _build_transient_probe_summary(reports_root)
+
+    assert summary["ticker"] == "301292"
+    assert summary["status"] == "transient_probe_only"
+    assert summary["blocker"] == "shadow_recall_not_persistent"
+    assert summary["candidate_source"] == "post_gate_liquidity_competition_shadow"
+    assert summary["score_state"] == "fail"
+
+
+def test_build_execution_constraint_rollup_summarizes_continuation_and_shadow_blocks(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_governance_synthesis_latest.json",
+        {
+            "execution_surface_constraints": [
+                {
+                    "status": "continuation_only_confirm_then_review",
+                    "blocker": "no_selected_persistence_or_independent_edge",
+                    "focus_tickers": ["300720"],
+                    "recommendation": "Keep continuation review isolated.",
+                },
+                {
+                    "status": "shadow_recall_not_execution_ready",
+                    "blocker": "profitability_hard_cliff_and_score_gap",
+                    "focus_tickers": ["301292"],
+                    "recommendation": "Keep shadow recall names diagnostic-only.",
+                },
+            ]
+        },
+    )
+
+    summary = _build_execution_constraint_rollup(reports_root)
+
+    assert summary["constraint_count"] == 2
+    assert summary["continuation_focus_tickers"] == ["300720"]
+    assert summary["shadow_focus_tickers"] == ["301292"]
+
+
+def test_build_continuation_promotion_ready_summary_quantifies_gap_vs_default_btst(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "adopted_execution_row": {
+                "ticker": "300720",
+                "t_plus_2_close_positive_rate": 0.8667,
+                "t_plus_2_close_return_mean": 0.0787,
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_governance_synthesis_latest.json",
+        {
+            "evidence_btst_followups": [
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                }
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
+        {
+            "tradeable_surface": {
+                "t_plus_2_positive_rate": 0.4706,
+                "mean_t_plus_2_return": -0.0057,
+            }
+        },
+    )
+
+    summary = _build_continuation_promotion_ready_summary(reports_root)
+
+    assert summary["focus_ticker"] == "300720"
+    assert summary["promotion_path_status"] == "one_qualifying_window_away"
+    assert summary["blockers_remaining_count"] == 1
+    assert summary["unresolved_requirements"] == ["new_independent_trade_date"]
+    assert summary["observed_independent_window_count"] == 1
+    assert summary["missing_independent_window_count"] == 1
+    assert summary["provisional_default_btst_edge_verdict"] == "provisionally_outperforming_default_btst"
+    assert summary["edge_threshold_verdict"] == "edge_threshold_satisfied"
+    assert summary["promotion_merge_review_verdict"] == "await_additional_independent_window_persistence"
+    assert summary["ready_after_next_qualifying_window"] is True
+    assert summary["next_window_requirement"] == "capture_one_new_independent_trade_date_with_edge_thresholds_still_satisfied"
+    assert summary["next_window_duplicate_trade_date_verdict"] == "independent_window_count_unchanged"
+    assert summary["next_window_quality_requirement"] == "must land in selected_entries_or_near_miss_entries"
+    assert summary["next_window_disqualified_bucket_verdict"] == "await_higher_quality_window_bucket"
+    assert summary["qualifying_window_buckets"] == ["near_miss_entries"]
+    assert summary["next_window_qualified_merge_review_verdict"] == "ready_for_default_btst_merge_review"
+
+
+def test_build_continuation_promotion_ready_summary_duplicate_trade_dates_do_not_count_as_independent_windows(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "adopted_execution_row": {
+                "ticker": "300720",
+                "t_plus_2_close_positive_rate": 0.8667,
+                "t_plus_2_close_return_mean": 0.0787,
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_governance_synthesis_latest.json",
+        {
+            "evidence_btst_followups": [
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720_a",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                },
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720_b",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                },
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
+        {
+            "tradeable_surface": {
+                "t_plus_2_positive_rate": 0.4706,
+                "mean_t_plus_2_return": -0.0057,
+            }
+        },
+    )
+
+    summary = _build_continuation_promotion_ready_summary(reports_root)
+
+    assert summary["observed_independent_window_count"] == 1
+    assert summary["missing_independent_window_count"] == 1
+    assert summary["evidence_trade_dates"] == ["2026-03-31"]
+    assert summary["next_window_trade_date_rule"] == "must be a new trade_date outside ['2026-03-31']"
+    assert summary["next_window_duplicate_trade_date_verdict"] == "independent_window_count_unchanged"
+
+
+def test_build_continuation_promotion_ready_summary_same_trade_date_selected_evidence_wins_bucket(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "adopted_execution_row": {
+                "ticker": "300720",
+                "t_plus_2_close_positive_rate": 0.8667,
+                "t_plus_2_close_return_mean": 0.0787,
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_governance_synthesis_latest.json",
+        {
+            "evidence_btst_followups": [
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720_old",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                },
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720_new",
+                    "entries": [{"ticker": "300720", "bucket": "selected_entries"}],
+                },
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
+        {
+            "tradeable_surface": {
+                "t_plus_2_positive_rate": 0.4706,
+                "mean_t_plus_2_return": -0.0057,
+            }
+        },
+    )
+
+    summary = _build_continuation_promotion_ready_summary(reports_root)
+
+    assert summary["observed_independent_window_count"] == 1
+    assert summary["evidence_trade_dates"] == ["2026-03-31"]
+    assert summary["qualifying_window_buckets"] == ["selected_entries"]
+
+
+def test_build_continuation_promotion_ready_summary_dossier_same_day_variants_do_not_add_independent_windows(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "adopted_execution_row": {
+                "ticker": "300720",
+                "t_plus_2_close_positive_rate": 0.8667,
+                "t_plus_2_close_return_mean": 0.0787,
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_governance_synthesis_latest.json",
+        {
+            "evidence_btst_followups": [
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                }
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus2_candidate_dossier_300720_latest.json",
+        {
+            "recent_supporting_window_count": 3,
+            "recent_window_count": 4,
+            "recent_validation_verdict": "governance_followup_pending_evidence",
+            "recent_tier_verdict": "governance_followup_payoff_confirmed",
+            "current_plan_visibility_summary": {
+                "raw_daily_events_trade_dates": ["2026-03-27", "2026-03-31"],
+                "raw_daily_events_trade_date_count": 2,
+                "current_plan_visible_trade_dates": ["2026-03-31"],
+                "current_plan_visible_trade_date_count": 1,
+                "current_plan_visibility_gap_trade_dates": ["2026-03-27"],
+                "current_plan_visibility_gap_trade_date_count": 1,
+            },
+            "recent_window_summaries": [
+                {"report_label": "20260331", "supporting_window": True, "report_dir": "/tmp/reports/a"},
+                {"report_label": "20260331", "supporting_window": True, "report_dir": "/tmp/reports/b"},
+                {"report_label": "20260331", "supporting_window": True, "report_dir": "/tmp/reports/c"},
+                {"report_label": "20260331", "supporting_window": False, "report_dir": "/tmp/reports/d"},
+            ],
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
+        {
+            "tradeable_surface": {
+                "t_plus_2_positive_rate": 0.4706,
+                "mean_t_plus_2_return": -0.0057,
+            }
+        },
+    )
+
+    summary = _build_continuation_promotion_ready_summary(reports_root)
+
+    assert summary["observed_independent_window_count"] == 1
+    assert summary["combined_evidence_trade_dates"] == ["2026-03-31"]
+    assert summary["candidate_dossier_support_trade_date_count"] == 1
+    assert summary["candidate_dossier_supporting_window_variant_count"] == 3
+    assert summary["candidate_dossier_same_trade_date_variant_count"] == 2
+    assert summary["candidate_dossier_same_trade_date_variant_credit"] == 0.5
+    assert summary["weighted_observed_window_credit"] == 1.5
+    assert summary["weighted_missing_window_credit"] == 0.5
+    assert summary["candidate_dossier_current_plan_visible_trade_dates"] == ["2026-03-31"]
+    assert summary["candidate_dossier_current_plan_visibility_gap_trade_dates"] == ["2026-03-27"]
+    assert summary["candidate_dossier_raw_daily_events_trade_dates"] == ["2026-03-27", "2026-03-31"]
+    assert summary["candidate_dossier_recent_supporting_window_count"] == 3
+    assert summary["candidate_dossier_recent_tier_verdict"] == "governance_followup_payoff_confirmed"
+
+
+def test_build_continuation_promotion_ready_summary_dossier_second_trade_date_advances_window_count(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "adopted_execution_row": {
+                "ticker": "300720",
+                "t_plus_2_close_positive_rate": 0.8667,
+                "t_plus_2_close_return_mean": 0.0787,
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_governance_synthesis_latest.json",
+        {
+            "evidence_btst_followups": [
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                }
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus2_candidate_dossier_300720_latest.json",
+        {
+            "recent_supporting_window_count": 2,
+            "recent_window_count": 2,
+            "recent_validation_verdict": "governance_followup_payoff_confirmed",
+            "recent_tier_verdict": "governance_followup_payoff_confirmed",
+            "recent_window_summaries": [
+                {"report_label": "20260331", "supporting_window": True, "report_dir": "/tmp/reports/a"},
+                {"report_label": "20260401", "supporting_window": True, "report_dir": "/tmp/reports/b"},
+            ],
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
+        {
+            "tradeable_surface": {
+                "t_plus_2_positive_rate": 0.4706,
+                "mean_t_plus_2_return": -0.0057,
+            }
+        },
+    )
+
+    summary = _build_continuation_promotion_ready_summary(reports_root)
+
+    assert summary["candidate_dossier_support_trade_date_count"] == 2
+    assert summary["combined_evidence_trade_dates"] == ["2026-03-31", "2026-04-01"]
+    assert summary["observed_independent_window_count"] == 2
+    assert summary["weighted_observed_window_credit"] == 2.0
+    assert summary["weighted_missing_window_credit"] == 0.0
+    assert summary["missing_independent_window_count"] == 0
+    assert summary["promotion_merge_review_verdict"] == "ready_for_default_btst_merge_review"
+
+
+def test_build_continuation_promotion_ready_summary_rejected_second_window_does_not_qualify(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "adopted_execution_row": {
+                "ticker": "300720",
+                "t_plus_2_close_positive_rate": 0.8667,
+                "t_plus_2_close_return_mean": 0.0787,
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_governance_synthesis_latest.json",
+        {
+            "evidence_btst_followups": [
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720_a",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                },
+                {
+                    "trade_date": "2026-04-01",
+                    "report_dir": "/tmp/reports/continuation_300720_b",
+                    "entries": [{"ticker": "300720", "bucket": "rejected_entries"}],
+                },
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
+        {
+            "tradeable_surface": {
+                "t_plus_2_positive_rate": 0.4706,
+                "mean_t_plus_2_return": -0.0057,
+            }
+        },
+    )
+
+    summary = _build_continuation_promotion_ready_summary(reports_root)
+
+    assert summary["observed_independent_window_count"] == 1
+    assert summary["missing_independent_window_count"] == 1
+    assert summary["promotion_path_status"] == "one_qualifying_window_away"
+    assert summary["disqualified_window_trade_dates"] == ["2026-04-01"]
+    assert summary["disqualified_window_buckets"] == ["rejected_entries"]
+    assert summary["next_window_quality_requirement"] == "must land in selected_entries_or_near_miss_entries"
+    assert summary["next_window_disqualified_bucket_verdict"] == "await_higher_quality_window_bucket"
+
+
+def test_build_continuation_promotion_ready_summary_two_windows_with_weak_edge_stay_blocked(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports_root / "btst_tplus2_continuation_execution_overlay_latest.json",
+        {
+            "focus_ticker": "300720",
+            "adopted_execution_row": {
+                "ticker": "300720",
+                "t_plus_2_close_positive_rate": 0.5,
+                "t_plus_2_close_return_mean": 0.0,
+            },
+        },
+    )
+    _write_json(
+        reports_root / "btst_governance_synthesis_latest.json",
+        {
+            "evidence_btst_followups": [
+                {
+                    "trade_date": "2026-03-31",
+                    "report_dir": "/tmp/reports/continuation_300720_a",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                },
+                {
+                    "trade_date": "2026-04-01",
+                    "report_dir": "/tmp/reports/continuation_300720_b",
+                    "entries": [{"ticker": "300720", "bucket": "near_miss_entries"}],
+                },
+            ]
+        },
+    )
+    _write_json(
+        reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
+        {
+            "tradeable_surface": {
+                "t_plus_2_positive_rate": 0.4706,
+                "mean_t_plus_2_return": -0.0057,
+            }
+        },
+    )
+
+    summary = _build_continuation_promotion_ready_summary(reports_root)
+
+    assert summary["promotion_path_status"] == "repair_edge_threshold"
+    assert summary["blockers_remaining_count"] == 1
+    assert summary["unresolved_requirements"] == ["edge_threshold_vs_default_btst"]
+    assert summary["observed_independent_window_count"] == 2
+    assert summary["persistence_verdict"] == "independent_window_requirement_satisfied"
+    assert summary["edge_threshold_verdict"] == "edge_threshold_not_satisfied"
+    assert summary["promotion_merge_review_verdict"] == "await_stronger_edge_vs_default_btst"
+    assert summary["next_window_edge_regression_merge_review_verdict"] == "await_stronger_edge_vs_default_btst"

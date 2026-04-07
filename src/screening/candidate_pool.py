@@ -57,14 +57,25 @@ SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS = int(os.getenv("CANDIDATE_POOL_SHADOW_LIQ
 SHADOW_REBUCKET_MAX_TICKERS = int(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MAX_TICKERS", "1"))
 SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE", "3.0"))
 SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE", "0.20"))
+SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE", "0.30"))
+SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE", "0.40"))
 SHADOW_REBUCKET_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MIN_GATE_SHARE", "8.0"))
 SHADOW_REBUCKET_MIN_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MIN_CUTOFF_SHARE", "0.30"))
 SHADOW_REBUCKET_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MAX_CUTOFF_SHARE", "0.80"))
+SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE", "0.20"))
+SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE", "0.15"))
 SHADOW_FOCUS_TICKERS = {item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS", "").split(",") if item.strip()}
 SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS = {
     item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", "").split(",") if item.strip()
 }
 SHADOW_FOCUS_REBUCKET_TICKERS = {item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS", "").split(",") if item.strip()}
+SHADOW_VISIBILITY_GAP_TICKERS = {item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_TICKERS", "").split(",") if item.strip()}
+SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS = {
+    item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS", "").split(",") if item.strip()
+}
+SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS = {
+    item.strip() for item in os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", "").split(",") if item.strip()
+}
 BEIJING_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("4", "8", "92")
 
 
@@ -133,6 +144,9 @@ def _shadow_focus_payload() -> dict[str, list[str]]:
         "all": sorted(SHADOW_FOCUS_TICKERS),
         "layer_a_liquidity_corridor": sorted(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS),
         "post_gate_liquidity_competition": sorted(SHADOW_FOCUS_REBUCKET_TICKERS),
+        "visibility_gap_all": sorted(SHADOW_VISIBILITY_GAP_TICKERS),
+        "visibility_gap_layer_a_liquidity_corridor": sorted(SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS),
+        "visibility_gap_post_gate_liquidity_competition": sorted(SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS),
     }
 
 
@@ -153,6 +167,15 @@ def _resolve_shadow_focus_tickers(*, lane: str) -> set[str]:
     return set(SHADOW_FOCUS_TICKERS) | set(lane_specific_focus)
 
 
+def _resolve_shadow_visibility_gap_tickers(*, lane: str) -> set[str]:
+    lane_specific_focus: set[str] = set()
+    if lane == "layer_a_liquidity_corridor":
+        lane_specific_focus = SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS
+    elif lane == "post_gate_liquidity_competition":
+        lane_specific_focus = SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS
+    return set(SHADOW_VISIBILITY_GAP_TICKERS) | set(lane_specific_focus)
+
+
 def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, pool_size: int) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
     ranked_candidates = sorted(candidates, key=_candidate_liquidity_sort_key, reverse=True)
     selected_candidates = [candidate.model_copy(update={"candidate_pool_rank": rank}) for rank, candidate in enumerate(ranked_candidates[:pool_size], start=1)]
@@ -170,57 +193,108 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
 
     cutoff_avg_volume = max(float(ranked_candidates[pool_size - 1].avg_volume_20d), 1.0)
     overflow_candidates = ranked_candidates[pool_size:]
-    corridor_candidates: list[tuple[float, int, CandidateStock]] = []
-    rebucket_candidates: list[tuple[float, int, CandidateStock]] = []
+    corridor_candidates: list[tuple[float, int, CandidateStock, bool, bool]] = []
+    rebucket_candidates: list[tuple[float, int, CandidateStock, bool, bool]] = []
+    corridor_focus_tickers = _resolve_shadow_focus_tickers(lane="layer_a_liquidity_corridor")
+    rebucket_focus_tickers = _resolve_shadow_focus_tickers(lane="post_gate_liquidity_competition")
+    corridor_visibility_gap_tickers = _resolve_shadow_visibility_gap_tickers(lane="layer_a_liquidity_corridor")
+    rebucket_visibility_gap_tickers = _resolve_shadow_visibility_gap_tickers(lane="post_gate_liquidity_competition")
 
     for rank, candidate in enumerate(overflow_candidates, start=pool_size + 1):
         cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_avg_volume, 4)
         min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4)
         if min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE:
-            corridor_candidates.append((min_gate_share, rank, candidate))
+            corridor_candidates.append((min_gate_share, rank, candidate, False, False))
+        elif (
+            candidate.ticker in corridor_visibility_gap_tickers
+            and min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE
+            and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE
+        ):
+            corridor_candidates.append((min_gate_share, rank, candidate, False, True))
+        elif (
+            candidate.ticker in corridor_focus_tickers
+            and min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE
+            and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE
+        ):
+            corridor_candidates.append((min_gate_share, rank, candidate, True, False))
         elif (
             min_gate_share >= SHADOW_REBUCKET_MIN_GATE_SHARE
             and cutoff_share >= SHADOW_REBUCKET_MIN_CUTOFF_SHARE
             and cutoff_share <= SHADOW_REBUCKET_MAX_CUTOFF_SHARE
         ):
-            rebucket_candidates.append((cutoff_share, rank, candidate))
+            rebucket_candidates.append((cutoff_share, rank, candidate, False, False))
+        elif (
+            candidate.ticker in rebucket_visibility_gap_tickers
+            and min_gate_share >= SHADOW_REBUCKET_MIN_GATE_SHARE
+            and cutoff_share >= SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE
+            and cutoff_share <= SHADOW_REBUCKET_MAX_CUTOFF_SHARE
+        ):
+            rebucket_candidates.append((cutoff_share, rank, candidate, False, True))
+        elif (
+            candidate.ticker in rebucket_focus_tickers
+            and min_gate_share >= SHADOW_REBUCKET_MIN_GATE_SHARE
+            and cutoff_share >= SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE
+            and cutoff_share <= SHADOW_REBUCKET_MAX_CUTOFF_SHARE
+        ):
+            rebucket_candidates.append((cutoff_share, rank, candidate, True, False))
 
     shadow_candidates: list[CandidateStock] = []
     shadow_entries: list[dict[str, Any]] = []
 
-    def append_shadow(rows: list[tuple[float, int, CandidateStock]], *, max_tickers: int, lane: str, reason: str, rank_key: str) -> None:
+    def append_shadow(rows: list[tuple[float, int, CandidateStock, bool, bool]], *, max_tickers: int, lane: str, reason: str, rank_key: str) -> None:
         focus_tickers = _resolve_shadow_focus_tickers(lane=lane)
-        ranked_rows = sorted(rows, key=lambda item: (item[0], -item[1], _candidate_liquidity_sort_key(item[2])), reverse=True)
-        selected_rows: list[tuple[float, int, CandidateStock]] = []
+        visibility_gap_tickers = _resolve_shadow_visibility_gap_tickers(lane=lane)
+        ranked_rows = sorted(
+            rows,
+            key=lambda item: (0 if item[4] else 1, 0 if item[3] else 1, item[0], -item[1], _candidate_liquidity_sort_key(item[2])),
+            reverse=True,
+        )
+        selected_rows: list[tuple[float, int, CandidateStock, bool, bool]] = []
         selected_tickers: set[str] = set()
 
-        for score, rank, candidate in ranked_rows:
-            if candidate.ticker not in focus_tickers:
+        for score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band in ranked_rows:
+            if candidate.ticker not in visibility_gap_tickers:
                 continue
-            selected_rows.append((score, rank, candidate))
+            selected_rows.append((score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band))
             selected_tickers.add(candidate.ticker)
             if len(selected_rows) >= max_tickers:
                 break
 
         if len(selected_rows) < max_tickers:
-            for score, rank, candidate in ranked_rows:
-                if candidate.ticker in selected_tickers:
+            for score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band in ranked_rows:
+                if candidate.ticker not in focus_tickers or candidate.ticker in selected_tickers:
                     continue
-                selected_rows.append((score, rank, candidate))
+                selected_rows.append((score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band))
                 selected_tickers.add(candidate.ticker)
                 if len(selected_rows) >= max_tickers:
                     break
 
-        for score, rank, candidate in selected_rows:
+        if len(selected_rows) < max_tickers:
+            for score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band in ranked_rows:
+                if candidate.ticker in selected_tickers:
+                    continue
+                selected_rows.append((score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band))
+                selected_tickers.add(candidate.ticker)
+                if len(selected_rows) >= max_tickers:
+                    break
+
+        for score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band in selected_rows:
             cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_avg_volume, 4)
             min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4)
+            resolved_reason = reason
+            if visibility_gap_relaxed_band:
+                resolved_reason = f"{reason}_visibility_gap_relaxed_band"
+            elif focus_relaxed_band:
+                resolved_reason = f"{reason}_focus_relaxed_band"
             shadow_candidate = candidate.model_copy(
                 update={
                     "candidate_pool_rank": rank,
                     "candidate_pool_lane": lane,
-                    "candidate_pool_shadow_reason": reason,
+                    "candidate_pool_shadow_reason": resolved_reason,
                     "candidate_pool_avg_amount_share_of_cutoff": cutoff_share,
                     "candidate_pool_avg_amount_share_of_min_gate": min_gate_share,
+                    "shadow_visibility_gap_selected": candidate.ticker in visibility_gap_tickers,
+                    "shadow_visibility_gap_relaxed_band": visibility_gap_relaxed_band,
                 }
             )
             shadow_candidates.append(shadow_candidate)
@@ -229,12 +303,15 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
                     "ticker": shadow_candidate.ticker,
                     "candidate_pool_rank": rank,
                     "candidate_pool_lane": lane,
-                    "candidate_pool_shadow_reason": reason,
+                    "candidate_pool_shadow_reason": resolved_reason,
                     "avg_volume_20d": round(float(shadow_candidate.avg_volume_20d), 4),
                     "market_cap": round(float(shadow_candidate.market_cap), 4),
                     "avg_amount_share_of_cutoff": cutoff_share,
                     "avg_amount_share_of_min_gate": min_gate_share,
                     "shadow_focus_selected": shadow_candidate.ticker in focus_tickers,
+                    "shadow_focus_relaxed_band": focus_relaxed_band,
+                    "shadow_visibility_gap_selected": shadow_candidate.ticker in visibility_gap_tickers,
+                    "shadow_visibility_gap_relaxed_band": visibility_gap_relaxed_band,
                     rank_key: round(float(score), 4),
                 }
             )
@@ -267,6 +344,7 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
         "lane_counts": lane_counts,
         "selected_tickers": [candidate.ticker for candidate in shadow_candidates],
         "focus_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_focus_selected")}),
+        "visibility_gap_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_visibility_gap_selected")}),
         "focus_signature": _shadow_focus_signature(),
         "tickers": shadow_entries,
     }
@@ -282,6 +360,7 @@ def _build_shadow_summary_from_selected_candidates(selected_candidates: List[Can
         "lane_counts": {},
         "selected_tickers": [],
         "focus_tickers": [],
+        "visibility_gap_tickers": [],
         "focus_signature": _shadow_focus_signature(),
         "tickers": [],
     }

@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.generate_btst_tplus2_continuation_promotion_review import READY_PROMOTION_REVIEW_VERDICTS
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_LANE_RULEPACK_PATH = REPORTS_DIR / "btst_tplus2_continuation_lane_rulepack_latest.json"
@@ -29,7 +31,7 @@ def _build_promotion_gate(lane_rulepack: dict[str, Any], promotion_review: dict[
 
     if not focus_ticker:
         gate_blockers.append("missing_focus_ticker")
-    if promotion_review_verdict != "watch_review_ready":
+    if promotion_review_verdict not in READY_PROMOTION_REVIEW_VERDICTS:
         gate_blockers.append("promotion_review_not_ready")
     if promotion_review_blockers:
         gate_blockers.extend(promotion_review_blockers)

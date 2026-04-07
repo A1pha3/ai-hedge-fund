@@ -97,9 +97,13 @@ def analyze_btst_candidate_pool_rebucket_comparison_bundle(
     objective_leader = dict(objective_rows[0]) if objective_rows else {}
     rebucket_structural_row = _find_branch_row(structural_rows, "post_gate_liquidity_competition")
     rebucket_objective_row = dict(rebucket_validation.get("branch_objective_row") or {})
+    rebucket_shadow_status = str(rebucket_shadow_pack.get("shadow_status") or "")
 
     if not rebucket_objective_row:
         rebucket_objective_row = _find_branch_row(objective_rows, "post_gate_liquidity_competition")
+    if rebucket_shadow_status and rebucket_shadow_status != "ready_for_rebucket_shadow_replay":
+        rebucket_structural_row = {}
+        rebucket_objective_row = {}
 
     corridor_objective_row = _find_branch_row(objective_rows, "layer_a_liquidity_corridor")
     validation_status = str(rebucket_validation.get("validation_status") or "skipped_no_rebucket_candidate")
@@ -155,7 +159,9 @@ def analyze_btst_candidate_pool_rebucket_comparison_bundle(
         )
 
     next_step = (
-        "对 301292 保持 rebucket shadow replay，对照 corridor objective leader 的 300720/003036 并行验证结果；"
+        "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再讨论是否回到与 corridor 的并行收益对照。"
+        if bundle_status == "skipped_no_rebucket_lane"
+        else "对 301292 保持 rebucket shadow replay，对照 corridor objective leader 的 300720/003036 并行验证结果；"
         "只有当 rebucket 在新增 closed-cycle 样本里继续维持不弱于 tradeable surface，才讨论进一步治理升级。"
     )
 
