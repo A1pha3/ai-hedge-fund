@@ -287,6 +287,79 @@ def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_
     return attached_entries
 
 
+def _historical_prior_float(prior: dict[str, Any], key: str) -> float | None:
+    value = prior.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _historical_prior_int(prior: dict[str, Any], key: str) -> int | None:
+    value = prior.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _summarize_upstream_shadow_release_historical_support(historical_prior: dict[str, Any]) -> dict[str, Any]:
+    prior = dict(historical_prior or {})
+    execution_quality_label = str(prior.get("execution_quality_label") or "").strip()
+    evaluable_count = _historical_prior_int(prior, "evaluable_count") or 0
+    next_close_positive_rate = _historical_prior_float(prior, "next_close_positive_rate")
+    next_high_hit_rate = _historical_prior_float(prior, "next_high_hit_rate_at_threshold")
+
+    support_score = 0.0
+    if execution_quality_label == "close_continuation":
+        support_score += 0.10
+    elif execution_quality_label == "gap_chase_risk":
+        support_score += 0.08
+    elif execution_quality_label == "balanced_confirmation":
+        support_score += 0.05
+    elif execution_quality_label == "intraday_only":
+        support_score -= 0.08
+    elif execution_quality_label == "zero_follow_through":
+        support_score -= 0.12
+
+    if evaluable_count >= 3 and next_close_positive_rate is not None:
+        if next_close_positive_rate >= 0.5:
+            support_score += 0.04
+        elif next_close_positive_rate <= 0.0:
+            support_score -= 0.04
+    if evaluable_count >= 3 and next_high_hit_rate is not None:
+        if next_high_hit_rate >= 0.5:
+            support_score += 0.04
+        elif next_high_hit_rate < 0.25:
+            support_score -= 0.02
+
+    suppress_release = evaluable_count >= 3 and (
+        execution_quality_label == "zero_follow_through"
+        or (execution_quality_label == "intraday_only" and (next_close_positive_rate or 0.0) <= 0.0)
+    )
+    verdict = "neutral"
+    if suppress_release:
+        verdict = "suppress_release"
+    elif support_score > 0:
+        verdict = "supportive"
+    elif support_score < 0:
+        verdict = "caution"
+
+    return {
+        "execution_quality_label": execution_quality_label or None,
+        "evaluable_count": evaluable_count,
+        "next_close_positive_rate": round(float(next_close_positive_rate), 4) if next_close_positive_rate is not None else None,
+        "next_high_hit_rate_at_threshold": round(float(next_high_hit_rate), 4) if next_high_hit_rate is not None else None,
+        "support_score": round(support_score, 4),
+        "verdict": verdict,
+        "suppress_release": suppress_release,
+    }
+
+
 def _build_layer_b_filter_diagnostics(fused: list, high_pool: list) -> dict:
     selected_tickers = {item.ticker for item in high_pool}
     entries: list[dict] = []
@@ -733,7 +806,13 @@ def _build_upstream_shadow_observation_entry(*, candidate_entry: dict[str, Any],
     }
 
 
-def _should_release_upstream_shadow_candidate(*, candidate_entry: dict[str, Any], filter_reason: str, metrics_payload: dict[str, Any]) -> tuple[bool, str | None]:
+def _should_release_upstream_shadow_candidate(
+    *,
+    candidate_entry: dict[str, Any],
+    filter_reason: str,
+    metrics_payload: dict[str, Any],
+    historical_support: dict[str, Any] | None = None,
+) -> tuple[bool, str | None]:
     candidate_pool_lane = str(candidate_entry.get("candidate_pool_lane") or "")
     candidate_score = float(metrics_payload.get("candidate_score", 0.0) or 0.0)
     lane_score_floor = float(UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.get(candidate_pool_lane, UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN))
@@ -744,6 +823,10 @@ def _should_release_upstream_shadow_candidate(*, candidate_entry: dict[str, Any]
         return False, None
     if candidate_score < lane_score_floor:
         return False, None
+    if bool((historical_support or {}).get("suppress_release")):
+        return False, None
+    if str((historical_support or {}).get("verdict") or "") == "supportive":
+        return True, "upstream_shadow_release_supported_by_historical_prior"
     return True, "upstream_shadow_release_score_floor_pass"
 
 
@@ -804,6 +887,7 @@ def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], fil
     candidate_score = round(float(metrics_payload.get("candidate_score", 0.0) or 0.0), 4)
     candidate_pool_lane = str(candidate_entry.get("candidate_pool_lane") or "")
     lane_score_floor = round(float(UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.get(candidate_pool_lane, UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN)), 4)
+    historical_support = _summarize_upstream_shadow_release_historical_support(dict(candidate_entry.get("historical_prior") or {}))
     catalyst_relief_config = _build_upstream_shadow_catalyst_relief_config(
         candidate_pool_lane=candidate_pool_lane,
         filter_reason=filter_reason,
@@ -827,6 +911,7 @@ def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], fil
         "shadow_release_reason": release_reason,
         "shadow_release_score_floor": lane_score_floor,
         "shadow_release_candidate_score": candidate_score,
+        "shadow_release_historical_support": historical_support,
         "promotion_trigger": "受控 upstream shadow release 样本，仅进入 short-trade supplemental replay，默认不直接进入正式买入名单。",
         **({"short_trade_catalyst_relief": catalyst_relief_config} if catalyst_relief_config else {}),
     }
@@ -862,7 +947,15 @@ def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -
     return True, "short_trade_prequalified", metrics_payload
 
 
-def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade_date: str, *, shadow_fused: list | None = None, shadow_candidate_by_ticker: dict[str, CandidateStock] | None = None) -> dict:
+def _build_short_trade_candidate_diagnostics(
+    fused: list,
+    high_pool: list,
+    trade_date: str,
+    *,
+    shadow_fused: list | None = None,
+    shadow_candidate_by_ticker: dict[str, CandidateStock] | None = None,
+    historical_prior_by_ticker: dict[str, dict[str, Any]] | None = None,
+) -> dict:
     selected_tickers = {item.ticker for item in high_pool}
     entries: list[dict] = []
     shadow_observation_entries: list[dict] = []
@@ -912,18 +1005,24 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
             shadow_visibility_gap_selected=bool(shadow_candidate.shadow_visibility_gap_selected) if shadow_candidate else False,
             shadow_visibility_gap_relaxed_band=bool(shadow_candidate.shadow_visibility_gap_relaxed_band) if shadow_candidate else False,
         )
+        historical_prior = dict((historical_prior_by_ticker or {}).get(item.ticker) or {})
+        if historical_prior:
+            candidate_entry["historical_prior"] = historical_prior
         qualified, filter_reason, metrics_payload = _qualifies_short_trade_boundary_candidate(trade_date=trade_date, entry=candidate_entry)
         if not qualified:
             filtered_reason_counts[filter_reason] = filtered_reason_counts.get(filter_reason, 0) + 1
             if shadow_candidate is not None:
+                historical_support = _summarize_upstream_shadow_release_historical_support(historical_prior)
                 should_release, release_reason = _should_release_upstream_shadow_candidate(
                     candidate_entry=candidate_entry,
                     filter_reason=filter_reason,
                     metrics_payload=metrics_payload,
+                    historical_support=historical_support,
                 )
                 if should_release and release_reason is not None:
                     ranked_released_shadow_entries.append(
                         (
+                            float(historical_support.get("support_score", 0.0) or 0.0),
                             float(metrics_payload.get("candidate_score", 0.0) or 0.0),
                             float(item.score_b),
                             _build_upstream_shadow_release_entry(
@@ -936,6 +1035,7 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
                     )
                 ranked_shadow_observations.append(
                     (
+                        float(historical_support.get("support_score", 0.0) or 0.0),
                         float(metrics_payload.get("candidate_score", 0.0) or 0.0),
                         float(item.score_b),
                         _build_upstream_shadow_observation_entry(
@@ -947,22 +1047,34 @@ def _build_short_trade_candidate_diagnostics(fused: list, high_pool: list, trade
                 )
             continue
 
-        ranked_candidates.append((float(metrics_payload.get("candidate_score", 0.0) or 0.0), float(item.score_b), {**candidate_entry, "short_trade_boundary_metrics": metrics_payload}))
+        historical_support = _summarize_upstream_shadow_release_historical_support(historical_prior)
+        ranked_candidates.append(
+            (
+                float(historical_support.get("support_score", 0.0) or 0.0),
+                float(metrics_payload.get("candidate_score", 0.0) or 0.0),
+                float(item.score_b),
+                {
+                    **candidate_entry,
+                    "short_trade_boundary_metrics": metrics_payload,
+                    **({"shadow_release_historical_support": historical_support} if historical_prior else {}),
+                },
+            )
+        )
 
-    ranked_candidates.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
-    for rank, (_, _, entry) in enumerate(ranked_candidates[:SHORT_TRADE_BOUNDARY_MAX_TICKERS], start=1):
+    ranked_candidates.sort(key=lambda row: (row[0], row[1], row[2], str(row[3].get("ticker") or "")), reverse=True)
+    for rank, (_, _, _, entry) in enumerate(ranked_candidates[:SHORT_TRADE_BOUNDARY_MAX_TICKERS], start=1):
         entry["rank"] = rank
         reason = str(entry.get("reason") or "short_trade_candidate_score_ranked")
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
         entries.append(entry)
 
-    ranked_shadow_observations.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
-    for rank, (_, _, entry) in enumerate(ranked_shadow_observations[:UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS], start=1):
+    ranked_shadow_observations.sort(key=lambda row: (row[0], row[1], row[2], str(row[3].get("ticker") or "")), reverse=True)
+    for rank, (_, _, _, entry) in enumerate(ranked_shadow_observations[:UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS], start=1):
         entry["rank"] = rank
         shadow_observation_entries.append(entry)
 
-    ranked_released_shadow_entries.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
-    for rank, (_, _, entry) in enumerate(ranked_released_shadow_entries[:UPSTREAM_SHADOW_RELEASE_MAX_TICKERS], start=1):
+    ranked_released_shadow_entries.sort(key=lambda row: (row[0], row[1], row[2], str(row[3].get("ticker") or "")), reverse=True)
+    for rank, (_, _, _, entry) in enumerate(ranked_released_shadow_entries[:UPSTREAM_SHADOW_RELEASE_MAX_TICKERS], start=1):
         entry["rank"] = rank
         released_shadow_entries.append(entry)
 
@@ -1852,12 +1964,14 @@ class DailyPipeline:
             merge_approved_tickers=self.merge_approved_tickers,
             threshold_relaxation=MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
         )
+        historical_prior_by_ticker = _load_latest_btst_historical_prior_by_ticker()
         short_trade_candidate_diagnostics = _build_short_trade_candidate_diagnostics(
             fused,
             high_pool,
             trade_date,
             shadow_fused=shadow_fused,
             shadow_candidate_by_ticker={candidate.ticker: candidate for candidate in shadow_candidates},
+            historical_prior_by_ticker=historical_prior_by_ticker,
         )
         catalyst_theme_candidate_diagnostics = _build_catalyst_theme_candidate_diagnostics(
             fused,
@@ -1947,7 +2061,6 @@ class DailyPipeline:
             "total_post_market": round(perf_counter() - total_started_at, 3),
         }
         with use_short_trade_target_profile(profile_name=self.short_trade_target_profile_name, overrides=self.short_trade_target_profile_overrides):
-            historical_prior_by_ticker = _load_latest_btst_historical_prior_by_ticker()
             selection_targets, dual_target_summary = build_selection_targets(
                 trade_date=trade_date,
                 watchlist=watchlist,

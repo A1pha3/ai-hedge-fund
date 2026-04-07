@@ -161,3 +161,59 @@ def test_load_btst_followup_by_ticker_for_report_reads_current_report_rows(tmp_p
 
     assert rows_by_ticker["600522"]["historical_prior"]["execution_quality_label"] == "intraday_only"
     assert rows_by_ticker["600522"]["historical_prior"]["next_close_positive_rate"] == 0.3889
+
+
+def test_load_latest_btst_followup_by_ticker_prefers_broader_more_conservative_prior_for_same_ticker(tmp_path):
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260406_short_trade"
+
+    _write_followup_report(
+        report_dir,
+        trade_date="2026-04-06",
+        selection_target="short_trade_only",
+        brief_payload={
+            "near_miss_entries": [
+                {
+                    "ticker": "300720",
+                    "decision": "near_miss",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "historical_prior": {
+                        "applied_scope": "same_ticker",
+                        "sample_count": 4,
+                        "evaluable_count": 4,
+                        "execution_quality_label": "intraday_only",
+                        "entry_timing_bias": "confirm_then_reduce",
+                        "next_high_hit_rate_at_threshold": 1.0,
+                        "next_close_positive_rate": 0.0,
+                        "execution_note": "历史上更多是盘中给空间、收盘回落。",
+                    },
+                }
+            ],
+            "upstream_shadow_summary": {
+                "released_shadow_entries": [
+                    {
+                        "ticker": "300720",
+                        "decision": "rejected",
+                        "candidate_source": "upstream_liquidity_corridor_shadow",
+                        "historical_prior": {
+                            "applied_scope": "same_family_source",
+                            "sample_count": 2,
+                            "evaluable_count": 2,
+                            "execution_quality_label": "balanced_confirmation",
+                            "entry_timing_bias": "confirm_then_review",
+                            "next_high_hit_rate_at_threshold": 0.5,
+                            "next_close_positive_rate": 0.5,
+                            "execution_note": "样本较少，隔夜表现相对均衡。",
+                        },
+                    }
+                ]
+            },
+        },
+        mtime=200,
+    )
+
+    latest_by_ticker = load_latest_btst_followup_by_ticker(reports_root)
+
+    assert latest_by_ticker["300720"]["historical_prior"]["execution_quality_label"] == "intraday_only"
+    assert latest_by_ticker["300720"]["historical_prior"]["evaluable_count"] == 4
+    assert latest_by_ticker["300720"]["historical_prior"]["applied_scope"] == "same_ticker"

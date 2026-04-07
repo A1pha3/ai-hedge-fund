@@ -41,6 +41,18 @@ class TargetEvaluationResult(BaseModel):
     gate_status: dict[str, str] = Field(default_factory=dict)
     expected_holding_window: str | None = None
     preferred_entry_mode: str | None = None
+    candidate_source: str | None = None
+    effective_near_miss_threshold: float | None = None
+    effective_select_threshold: float | None = None
+    breakout_freshness: float | None = None
+    trend_acceleration: float | None = None
+    volume_expansion_quality: float | None = None
+    close_strength: float | None = None
+    sector_resonance: float | None = None
+    catalyst_freshness: float | None = None
+    layer_c_alignment: float | None = None
+    weighted_positive_contributions: dict[str, Any] = Field(default_factory=dict)
+    weighted_negative_contributions: dict[str, Any] = Field(default_factory=dict)
     metrics_payload: dict[str, Any] = Field(default_factory=dict)
     explainability_payload: dict[str, Any] = Field(default_factory=dict)
 

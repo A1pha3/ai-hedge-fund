@@ -273,6 +273,13 @@ def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     resolved.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _sync_text_artifact_alias(source_path: str | Path, alias_path: str | Path) -> str:
+    resolved_source = Path(source_path).expanduser().resolve()
+    resolved_alias = Path(alias_path).expanduser().resolve()
+    resolved_alias.write_text(resolved_source.read_text(encoding="utf-8"), encoding="utf-8")
+    return str(resolved_alias)
+
+
 def _resolve_followup_trade_dates(
     trade_date: str | None,
     next_trade_date: str | None,
@@ -3352,17 +3359,25 @@ def register_btst_followup_artifacts(
         brief_json_path=brief_json_path,
         card_json_path=card_json_path,
     )
+    brief_json_latest = _sync_text_artifact_alias(brief_json_path, resolved_report_dir / "btst_next_day_trade_brief_latest.json")
+    brief_markdown_latest = _sync_text_artifact_alias(brief_markdown_path, resolved_report_dir / "btst_next_day_trade_brief_latest.md")
+    execution_card_json_latest = _sync_text_artifact_alias(card_json_path, resolved_report_dir / "btst_premarket_execution_card_latest.json")
+    execution_card_markdown_latest = _sync_text_artifact_alias(card_markdown_path, resolved_report_dir / "btst_premarket_execution_card_latest.md")
+    opening_watch_card_json_latest = _sync_text_artifact_alias(opening_card_json_path, resolved_report_dir / "btst_opening_watch_card_latest.json")
+    opening_watch_card_markdown_latest = _sync_text_artifact_alias(opening_card_markdown_path, resolved_report_dir / "btst_opening_watch_card_latest.md")
+    priority_board_json_latest = _sync_text_artifact_alias(priority_board_json_path, resolved_report_dir / "btst_next_day_priority_board_latest.json")
+    priority_board_markdown_latest = _sync_text_artifact_alias(priority_board_markdown_path, resolved_report_dir / "btst_next_day_priority_board_latest.md")
     followup_manifest = {
         "trade_date": resolved_trade_date,
         "next_trade_date": resolved_next_trade_date,
-        "brief_json": str(Path(brief_json_path).expanduser().resolve()),
-        "brief_markdown": str(Path(brief_markdown_path).expanduser().resolve()),
-        "execution_card_json": str(Path(card_json_path).expanduser().resolve()),
-        "execution_card_markdown": str(Path(card_markdown_path).expanduser().resolve()),
-        "opening_watch_card_json": str(Path(opening_card_json_path).expanduser().resolve()),
-        "opening_watch_card_markdown": str(Path(opening_card_markdown_path).expanduser().resolve()),
-        "priority_board_json": str(Path(priority_board_json_path).expanduser().resolve()),
-        "priority_board_markdown": str(Path(priority_board_markdown_path).expanduser().resolve()),
+        "brief_json": brief_json_latest,
+        "brief_markdown": brief_markdown_latest,
+        "execution_card_json": execution_card_json_latest,
+        "execution_card_markdown": execution_card_markdown_latest,
+        "opening_watch_card_json": opening_watch_card_json_latest,
+        "opening_watch_card_markdown": opening_watch_card_markdown_latest,
+        "priority_board_json": priority_board_json_latest,
+        "priority_board_markdown": priority_board_markdown_latest,
     }
     summary["btst_followup"] = followup_manifest
     artifacts = dict(summary.get("artifacts") or {})

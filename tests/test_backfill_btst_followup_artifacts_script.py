@@ -51,10 +51,16 @@ def test_backfill_btst_followup_artifacts_supports_report_root_discovery(tmp_pat
     result = generate_and_register_btst_followup_artifacts(report_dir, trade_date="2026-03-27", next_trade_date="2026-03-30")
     assert result["brief_json"].endswith("btst_next_day_trade_brief_latest.json")
     assert result["execution_card_json"].endswith("btst_premarket_execution_card_latest.json")
+    assert result["opening_watch_card_json"].endswith("btst_opening_watch_card_latest.json")
+    assert result["priority_board_json"].endswith("btst_next_day_priority_board_latest.json")
+    assert (report_dir / "btst_opening_watch_card_latest.json").exists()
+    assert (report_dir / "btst_next_day_priority_board_latest.json").exists()
 
     session_summary = json.loads((report_dir / "session_summary.json").read_text(encoding="utf-8"))
     assert session_summary["btst_followup"]["brief_json"] == result["brief_json"]
     assert session_summary["btst_followup"]["execution_card_json"] == result["execution_card_json"]
+    assert session_summary["btst_followup"]["opening_watch_card_json"] == result["opening_watch_card_json"]
+    assert session_summary["btst_followup"]["priority_board_json"] == result["priority_board_json"]
 
 
 def test_backfill_btst_followup_artifacts_registers_trade_dates_when_not_explicitly_provided(tmp_path):

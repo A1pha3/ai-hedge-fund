@@ -162,6 +162,84 @@ def _make_profitability_relief_entry(*, sector_resonance_ready: bool = True, inc
     }
 
 
+def _make_profitability_hard_cliff_boundary_frontier_entry(*, catalyst_ready: bool = True) -> dict:
+    event_signal = {
+        "direction": 1 if catalyst_ready else 0,
+        "confidence": 60.0 if catalyst_ready else 20.0,
+        "completeness": 0.56 if catalyst_ready else 0.2,
+        "sub_factors": {
+            "news_sentiment": {
+                "name": "news_sentiment",
+                "direction": 1 if catalyst_ready else 0,
+                "confidence": 60.0 if catalyst_ready else 20.0,
+                "completeness": 1.0 if catalyst_ready else 0.2,
+                "weight": 0.55,
+                "metrics": {"weighted_score": 0.63 if catalyst_ready else 0.2, "recent_articles": 2 if catalyst_ready else 0, "articles": []},
+            },
+            "insider_conviction": {"name": "insider_conviction", "direction": 0, "confidence": 0.0, "completeness": 0.0, "weight": 0.25, "metrics": {}},
+            "event_freshness": {
+                "name": "event_freshness",
+                "direction": 1 if catalyst_ready else 0,
+                "confidence": 35.0 if catalyst_ready else 0.0,
+                "completeness": 1.0 if catalyst_ready else 0.0,
+                "weight": 0.2,
+                "metrics": {"days_old": 0, "decay": 1.0, "positive_hits": 1 if catalyst_ready else 0, "negative_hits": 0},
+            },
+        },
+    }
+    return {
+        "ticker": "300620",
+        "score_b": -0.0293,
+        "score_c": 0.0,
+        "score_final": -0.0293,
+        "quality_score": 0.5,
+        "decision": "neutral",
+        "reason": "short_trade_candidate_score_ranked",
+        "reasons": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+        "candidate_source": "short_trade_boundary",
+        "candidate_reason_codes": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+        "agent_contribution_summary": {},
+        "strategy_signals": {
+            "trend": {
+                "direction": 1,
+                "confidence": 21.521211971978577,
+                "completeness": 1.0,
+                "sub_factors": {
+                    "ema_alignment": {"name": "ema_alignment", "direction": 1, "confidence": 92.70779321104632, "completeness": 1.0, "weight": 0.26, "metrics": {"ema_10": 164.7230631412387, "ema_30": 163.7076129143532, "ema_60": 158.05811447171016}},
+                    "adx_strength": {"name": "adx_strength", "direction": 0, "confidence": 18.28071015676836, "completeness": 1.0, "weight": 0.21, "metrics": {"adx": 18.28071015676836, "+di": 30.33713163411284, "-di": 16.538920044841777}},
+                    "momentum": {"name": "momentum", "direction": 1, "confidence": 100.0, "completeness": 1.0, "weight": 0.21, "metrics": {"momentum_1m": 0.07418125759039773, "momentum_3m": 0.18382231866987664, "momentum_6m": 0.9037767209678704, "volume_momentum": 1.5506305604559099}},
+                    "volatility": {"name": "volatility", "direction": 0, "confidence": 50.0, "completeness": 1.0, "weight": 0.17, "metrics": {"historical_volatility": 0.782107599546619, "volatility_regime": 0.9232240537212402, "volatility_z_score": -0.3489133515347444, "atr_ratio": 0.07206842009045314}},
+                    "long_trend_alignment": {"name": "long_trend_alignment", "direction": 1, "confidence": 95.2959858142346, "completeness": 1.0, "weight": 0.15, "metrics": {"ema_10": 164.7230631412387, "ema_200": 121.90419431525774}},
+                },
+            },
+            "mean_reversion": {
+                "direction": -1,
+                "confidence": 11.106141927976662,
+                "completeness": 1.0,
+                "sub_factors": {
+                    "zscore_bbands": {"name": "zscore_bbands", "direction": 0, "confidence": 50.0, "completeness": 1.0, "weight": 0.35, "metrics": {"z_score": 1.6085358749401812, "price_vs_bb": 1.010904139449355, "rsi_14": 56.551938627410316, "rsi_28": 50.513722087766574}},
+                    "rsi_extreme": {"name": "rsi_extreme", "direction": 0, "confidence": 50.0, "completeness": 1.0, "weight": 0.2, "metrics": {"rsi_14": 56.551938627410316, "rsi_28": 50.513722087766574}},
+                    "stat_arb": {"name": "stat_arb", "direction": 0, "confidence": 50.0, "completeness": 1.0, "weight": 0.25, "metrics": {"hurst_exponent": 0.4270953413359266, "skewness": 0.3513953523741022, "kurtosis": 1.1146513045523037}},
+                    "hurst_regime": {"name": "hurst_regime", "direction": -1, "confidence": 22.122838559533225, "completeness": 1.0, "weight": 0.2, "metrics": {"hurst_exponent": 0.4270953413359266, "z_score": 1.6085358749401812}},
+                },
+            },
+            "fundamental": {
+                "direction": -1,
+                "confidence": 30.0,
+                "completeness": 1.0,
+                "sub_factors": {
+                    "profitability": {"name": "profitability", "direction": -1, "confidence": 100.0, "completeness": 1.0, "weight": 0.25, "metrics": {"return_on_equity": 0.08140247071640379, "net_margin": 0.11986226419354493, "operating_margin": 0.11515257585764349, "available_count": 3, "positive_count": 0, "zero_pass_mode": "bearish"}},
+                    "growth": {"name": "growth", "direction": 1, "confidence": 30.0, "completeness": 1.0, "weight": 0.25, "metrics": {"score": 0.65, "revenue_growth": 0.47562899999999997, "revenue_trend": -0.008633130989221357, "eps_growth": 1.631774, "eps_trend": -0.28867597142857143, "fcf_growth": None, "fcf_trend": -0.34506548123473585}},
+                    "financial_health": {"name": "financial_health", "direction": 1, "confidence": 100.0, "completeness": 1.0, "weight": 0.2, "metrics": {"score": 1.0, "debt_to_equity": 0.6771, "current_ratio": 2.4825}},
+                    "growth_valuation": {"name": "growth_valuation", "direction": 0, "confidence": 50.0, "completeness": 1.0, "weight": 0.15, "metrics": {"score": 0.25, "peg_ratio": 1.5479689541884976, "price_to_sales_ratio": 30.3842}},
+                    "industry_pe": {"name": "industry_pe", "direction": -1, "confidence": 100.0, "completeness": 1.0, "weight": 0.15, "metrics": {"industry": "通信", "current_pe": 253.4923, "industry_pe_median": 96.693, "premium_ratio": 2.6216199724902527}},
+                },
+            },
+            "event_sentiment": event_signal,
+        },
+    }
+
+
 def _make_upstream_shadow_catalyst_relief_entry(*, include_profitability_hard_cliff: bool = False) -> dict:
     strategy_signals = {
         "trend": _make_signal(
@@ -1340,6 +1418,14 @@ def test_profitability_relief_profile_reduces_avoid_penalty_for_strong_btst_cont
     assert relief_result.metrics_payload["thresholds"]["profile_name"] == "staged_breakout_profitability_relief"
     assert relief_result.metrics_payload["thresholds"]["profitability_relief_enabled"] is True
     assert relief_result.explainability_payload["profitability_relief"]["applied"] is True
+    assert relief_result.candidate_source == "watchlist_filter_diagnostics"
+    assert relief_result.effective_near_miss_threshold == 0.42
+    assert relief_result.effective_select_threshold == 0.58
+    assert relief_result.breakout_freshness == round(relief_result.metrics_payload["breakout_freshness"], 4)
+    assert relief_result.trend_acceleration == round(relief_result.metrics_payload["trend_acceleration"], 4)
+    assert relief_result.catalyst_freshness == round(relief_result.metrics_payload["catalyst_freshness"], 4)
+    assert relief_result.weighted_positive_contributions == relief_result.metrics_payload["weighted_positive_contributions"]
+    assert relief_result.weighted_negative_contributions == relief_result.metrics_payload["weighted_negative_contributions"]
 
 
 def test_profitability_relief_requires_sector_resonance_confirmation() -> None:
@@ -1367,6 +1453,40 @@ def test_profitability_relief_does_not_trigger_without_profitability_hard_cliff(
     assert result.metrics_payload["profitability_relief_applied"] is False
     assert result.metrics_payload["layer_c_avoid_penalty"] == 0.12
     assert result.explainability_payload["profitability_relief"]["hard_cliff"] is False
+
+
+def test_profitability_hard_cliff_boundary_relief_promotes_frontier_case_to_near_miss() -> None:
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260324",
+        entry=_make_profitability_hard_cliff_boundary_frontier_entry(),
+        profile_overrides={"profitability_hard_cliff_boundary_relief_enabled": False},
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260324",
+        entry=_make_profitability_hard_cliff_boundary_frontier_entry(),
+    )
+
+    assert baseline_result.decision == "rejected"
+    assert 0.40 <= baseline_result.score_target < 0.46
+    assert relief_result.decision == "near_miss"
+    assert relief_result.score_target == baseline_result.score_target
+    assert "profitability_hard_cliff_boundary_relief_applied" in relief_result.positive_tags
+    assert relief_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["applied"] is True
+    assert relief_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["gate_hits"]["candidate_source"] is True
+    assert relief_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["effective_near_miss_threshold"] == 0.4
+    assert relief_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.4
+    assert relief_result.explainability_payload["profitability_hard_cliff_boundary_relief"]["applied"] is True
+
+
+def test_profitability_hard_cliff_boundary_relief_requires_catalyst_confirmation() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260324",
+        entry=_make_profitability_hard_cliff_boundary_frontier_entry(catalyst_ready=False),
+    )
+
+    assert result.decision == "rejected"
+    assert result.metrics_payload["profitability_hard_cliff_boundary_relief"]["applied"] is False
+    assert result.metrics_payload["profitability_hard_cliff_boundary_relief"]["gate_hits"]["catalyst_freshness"] is False
 
 
 def test_historical_execution_relief_promotes_positive_gap_chase_boundary_to_near_miss() -> None:

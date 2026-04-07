@@ -143,6 +143,66 @@ def _resolve_profitability_relief(
     }
 
 
+def _resolve_profitability_hard_cliff_boundary_relief(
+    *,
+    input_data: TargetEvaluationInput,
+    profitability_hard_cliff: bool,
+    breakout_freshness: float,
+    trend_acceleration: float,
+    catalyst_freshness: float,
+    sector_resonance: float,
+    close_strength: float,
+    stale_trend_repair_penalty: float,
+    extension_without_room_penalty: float,
+    profile: Any,
+) -> dict[str, Any]:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    base_near_miss_threshold = float(profile.near_miss_threshold)
+    near_miss_threshold_override = float(profile.profitability_hard_cliff_boundary_relief_near_miss_threshold)
+    default_result = {
+        "enabled": bool(profile.profitability_hard_cliff_boundary_relief_enabled),
+        "eligible": False,
+        "applied": False,
+        "candidate_source": source,
+        "gate_hits": {},
+        "base_near_miss_threshold": base_near_miss_threshold,
+        "effective_near_miss_threshold": base_near_miss_threshold,
+        "near_miss_threshold_override": base_near_miss_threshold,
+        "reason": "profitability_hard_cliff_boundary_relief",
+    }
+    if not bool(profile.profitability_hard_cliff_boundary_relief_enabled):
+        return default_result
+
+    gate_hits = {
+        "candidate_source": source == "short_trade_boundary",
+        "profitability_hard_cliff": profitability_hard_cliff,
+        "layer_c_decision": input_data.layer_c_decision != "avoid",
+        "breakout_freshness": breakout_freshness >= float(profile.profitability_hard_cliff_boundary_relief_breakout_freshness_min),
+        "trend_acceleration": trend_acceleration >= float(profile.profitability_hard_cliff_boundary_relief_trend_acceleration_min),
+        "catalyst_freshness": catalyst_freshness >= float(profile.profitability_hard_cliff_boundary_relief_catalyst_freshness_min),
+        "sector_resonance": sector_resonance >= float(profile.profitability_hard_cliff_boundary_relief_sector_resonance_min),
+        "close_strength": close_strength >= float(profile.profitability_hard_cliff_boundary_relief_close_strength_min),
+        "stale_trend_repair_penalty": stale_trend_repair_penalty <= float(profile.profitability_hard_cliff_boundary_relief_stale_penalty_max),
+        "extension_without_room_penalty": extension_without_room_penalty <= float(profile.profitability_hard_cliff_boundary_relief_extension_penalty_max),
+    }
+    eligible = all(gate_hits.values())
+    effective_near_miss_threshold = base_near_miss_threshold
+    if eligible:
+        effective_near_miss_threshold = min(base_near_miss_threshold, near_miss_threshold_override)
+
+    return {
+        "enabled": True,
+        "eligible": eligible,
+        "applied": eligible and effective_near_miss_threshold < base_near_miss_threshold,
+        "candidate_source": source,
+        "gate_hits": gate_hits,
+        "base_near_miss_threshold": base_near_miss_threshold,
+        "effective_near_miss_threshold": effective_near_miss_threshold,
+        "near_miss_threshold_override": near_miss_threshold_override,
+        "reason": "profitability_hard_cliff_boundary_relief",
+    }
+
+
 def _resolve_historical_execution_relief(
     *,
     input_data: TargetEvaluationInput,
@@ -1413,6 +1473,19 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     stale_trend_repair_penalty = clamp_unit_interval((0.45 * mean_reversion_strength) + (0.35 * long_trend_strength) + (0.20 * max(0.0, long_trend_strength - breakout_freshness)))
     overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.overhead_conflict_penalty_conflicts else 0.0) + (0.35 * analyst_penalty) + (0.20 * investor_penalty))
     extension_without_room_penalty = clamp_unit_interval((0.45 * long_trend_strength) + (0.35 * max(0.0, volatility_strength - catalyst_freshness)) + (0.20 * clamp_unit_interval((score_final_strength - 0.72) / 0.28)))
+    profitability_hard_cliff_boundary_relief = _resolve_profitability_hard_cliff_boundary_relief(
+        input_data=input_data,
+        profitability_hard_cliff=bool(profitability_relief["hard_cliff"]),
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        catalyst_freshness=raw_catalyst_freshness,
+        sector_resonance=sector_resonance,
+        close_strength=close_strength,
+        stale_trend_repair_penalty=stale_trend_repair_penalty,
+        extension_without_room_penalty=extension_without_room_penalty,
+        profile=profile,
+    )
+    effective_near_miss_threshold = min(effective_near_miss_threshold, float(profitability_hard_cliff_boundary_relief["effective_near_miss_threshold"]))
     effective_stale_score_penalty_weight = float(prepared_breakout_penalty_relief["effective_stale_score_penalty_weight"])
     effective_extension_score_penalty_weight = float(prepared_breakout_penalty_relief["effective_extension_score_penalty_weight"])
 
@@ -1477,6 +1550,8 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         positive_tags.append("profitability_relief_applied")
     elif profitability_relief["relief_enabled"] and profitability_relief["hard_cliff"] and input_data.layer_c_decision == "avoid":
         negative_tags.append("profitability_relief_not_triggered")
+    if profitability_hard_cliff_boundary_relief["applied"]:
+        positive_tags.append("profitability_hard_cliff_boundary_relief_applied")
     if historical_execution_relief["applied"]:
         positive_tags.append("historical_execution_relief_applied")
     if catalyst_relief["applied"]:
@@ -1551,6 +1626,7 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "profitability_relief_gate_hits": profitability_relief["relief_gate_hits"],
         "profitability_relief_eligible": profitability_relief["relief_eligible"],
         "profitability_relief_applied": profitability_relief["relief_applied"],
+        "profitability_hard_cliff_boundary_relief": profitability_hard_cliff_boundary_relief,
         "profitability_relief_soft_penalty": profitability_relief["soft_penalty"],
         "base_layer_c_avoid_penalty": profitability_relief["base_layer_c_avoid_penalty"],
         "layer_c_avoid_penalty": layer_c_avoid_penalty,
@@ -1661,6 +1737,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     profitability_relief_gate_hits = dict(snapshot["profitability_relief_gate_hits"])
     profitability_relief_eligible = bool(snapshot["profitability_relief_eligible"])
     profitability_relief_applied = bool(snapshot["profitability_relief_applied"])
+    profitability_hard_cliff_boundary_relief = dict(snapshot["profitability_hard_cliff_boundary_relief"])
     historical_execution_relief = dict(snapshot["historical_execution_relief"])
     historical_prior = dict(snapshot["historical_prior"])
     profitability_relief_soft_penalty = float(snapshot["profitability_relief_soft_penalty"])
@@ -1761,6 +1838,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "prepared_breakout_continuation_relief" if prepared_breakout_continuation_relief["applied"] else None,
                 "prepared_breakout_selected_catalyst_relief" if prepared_breakout_selected_catalyst_relief["applied"] else None,
                 "profitability_relief_applied" if profitability_relief_applied else None,
+                "profitability_hard_cliff_boundary_relief" if profitability_hard_cliff_boundary_relief.get("applied") else None,
                 "historical_execution_relief" if historical_execution_relief.get("applied") else None,
                 "profitability_hard_cliff" if profitability_hard_cliff and not profitability_relief_applied else None,
                 breakout_stage,
@@ -1809,6 +1887,18 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         gate_status=gate_status,
         expected_holding_window="t1_short_trade",
         preferred_entry_mode=_preferred_entry_mode_from_historical_prior(historical_prior),
+        candidate_source=str(input_data.replay_context.get("source") or "") or None,
+        effective_near_miss_threshold=round(effective_near_miss_threshold, 4),
+        effective_select_threshold=round(effective_select_threshold, 4),
+        breakout_freshness=round(breakout_freshness, 4),
+        trend_acceleration=round(trend_acceleration, 4),
+        volume_expansion_quality=round(volume_expansion_quality, 4),
+        close_strength=round(close_strength, 4),
+        sector_resonance=round(sector_resonance, 4),
+        catalyst_freshness=round(raw_catalyst_freshness, 4),
+        layer_c_alignment=round(layer_c_alignment, 4),
+        weighted_positive_contributions={name: round(float(value), 4) for name, value in weighted_positive_contributions.items()},
+        weighted_negative_contributions={name: round(float(value), 4) for name, value in weighted_negative_contributions.items()},
         metrics_payload={
             "score_b": round(float(input_data.score_b), 4),
             "score_c": round(float(input_data.score_c), 4),
@@ -1916,27 +2006,37 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
             "upstream_shadow_catalyst_relief_catalyst_freshness_floor": round(upstream_shadow_catalyst_relief_catalyst_freshness_floor, 4),
             "upstream_shadow_catalyst_relief_base_near_miss_threshold": round(upstream_shadow_catalyst_relief_base_near_miss_threshold, 4),
             "upstream_shadow_catalyst_relief_near_miss_threshold_override": round(upstream_shadow_catalyst_relief_near_miss_threshold_override, 4),
-                "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
-                "historical_execution_relief": {
-                    "enabled": bool(historical_execution_relief["enabled"]),
-                    "eligible": bool(historical_execution_relief["eligible"]),
-                    "applied": bool(historical_execution_relief["applied"]),
-                    "candidate_source": str(historical_execution_relief["candidate_source"]),
-                    "execution_quality_label": str(historical_execution_relief["execution_quality_label"]),
-                    "evaluable_count": int(historical_execution_relief["evaluable_count"]),
-                    "next_close_positive_rate": round(float(historical_execution_relief["next_close_positive_rate"]), 4),
-                    "next_high_hit_rate_at_threshold": round(float(historical_execution_relief["next_high_hit_rate_at_threshold"]), 4),
-                    "next_open_to_close_return_mean": round(float(historical_execution_relief["next_open_to_close_return_mean"]), 4),
-                    "strong_close_continuation": bool(historical_execution_relief["strong_close_continuation"]),
-                    "gate_hits": dict(historical_execution_relief["gate_hits"]),
-                    "base_near_miss_threshold": round(float(historical_execution_relief["base_near_miss_threshold"]), 4),
-                    "effective_near_miss_threshold": round(float(historical_execution_relief["effective_near_miss_threshold"]), 4),
-                    "near_miss_threshold_override": round(float(historical_execution_relief["near_miss_threshold_override"]), 4),
-                    "base_select_threshold": round(float(historical_execution_relief["base_select_threshold"]), 4),
-                    "effective_select_threshold": round(float(historical_execution_relief["effective_select_threshold"]), 4),
-                    "select_threshold_override": round(float(historical_execution_relief["select_threshold_override"]), 4),
-                },
-                "visibility_gap_continuation_relief": {
+            "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+            "profitability_hard_cliff_boundary_relief": {
+                "enabled": bool(profitability_hard_cliff_boundary_relief["enabled"]),
+                "eligible": bool(profitability_hard_cliff_boundary_relief["eligible"]),
+                "applied": bool(profitability_hard_cliff_boundary_relief["applied"]),
+                "candidate_source": str(profitability_hard_cliff_boundary_relief["candidate_source"]),
+                "gate_hits": dict(profitability_hard_cliff_boundary_relief["gate_hits"]),
+                "base_near_miss_threshold": round(float(profitability_hard_cliff_boundary_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(profitability_hard_cliff_boundary_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(profitability_hard_cliff_boundary_relief["near_miss_threshold_override"]), 4),
+            },
+            "historical_execution_relief": {
+                "enabled": bool(historical_execution_relief["enabled"]),
+                "eligible": bool(historical_execution_relief["eligible"]),
+                "applied": bool(historical_execution_relief["applied"]),
+                "candidate_source": str(historical_execution_relief["candidate_source"]),
+                "execution_quality_label": str(historical_execution_relief["execution_quality_label"]),
+                "evaluable_count": int(historical_execution_relief["evaluable_count"]),
+                "next_close_positive_rate": round(float(historical_execution_relief["next_close_positive_rate"]), 4),
+                "next_high_hit_rate_at_threshold": round(float(historical_execution_relief["next_high_hit_rate_at_threshold"]), 4),
+                "next_open_to_close_return_mean": round(float(historical_execution_relief["next_open_to_close_return_mean"]), 4),
+                "strong_close_continuation": bool(historical_execution_relief["strong_close_continuation"]),
+                "gate_hits": dict(historical_execution_relief["gate_hits"]),
+                "base_near_miss_threshold": round(float(historical_execution_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(historical_execution_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(historical_execution_relief["near_miss_threshold_override"]), 4),
+                "base_select_threshold": round(float(historical_execution_relief["base_select_threshold"]), 4),
+                "effective_select_threshold": round(float(historical_execution_relief["effective_select_threshold"]), 4),
+                "select_threshold_override": round(float(historical_execution_relief["select_threshold_override"]), 4),
+            },
+            "visibility_gap_continuation_relief": {
                 "enabled": bool(visibility_gap_continuation_relief["enabled"]),
                 "eligible": bool(visibility_gap_continuation_relief["eligible"]),
                 "applied": bool(visibility_gap_continuation_relief["applied"]),
@@ -2069,6 +2169,15 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "profitability_relief_catalyst_freshness_min": round(float(profile.profitability_relief_catalyst_freshness_min), 4),
                 "profitability_relief_sector_resonance_min": round(float(profile.profitability_relief_sector_resonance_min), 4),
                 "profitability_relief_avoid_penalty": round(float(profile.profitability_relief_avoid_penalty), 4),
+                "profitability_hard_cliff_boundary_relief_enabled": bool(profile.profitability_hard_cliff_boundary_relief_enabled),
+                "profitability_hard_cliff_boundary_relief_breakout_freshness_min": round(float(profile.profitability_hard_cliff_boundary_relief_breakout_freshness_min), 4),
+                "profitability_hard_cliff_boundary_relief_trend_acceleration_min": round(float(profile.profitability_hard_cliff_boundary_relief_trend_acceleration_min), 4),
+                "profitability_hard_cliff_boundary_relief_catalyst_freshness_min": round(float(profile.profitability_hard_cliff_boundary_relief_catalyst_freshness_min), 4),
+                "profitability_hard_cliff_boundary_relief_sector_resonance_min": round(float(profile.profitability_hard_cliff_boundary_relief_sector_resonance_min), 4),
+                "profitability_hard_cliff_boundary_relief_close_strength_min": round(float(profile.profitability_hard_cliff_boundary_relief_close_strength_min), 4),
+                "profitability_hard_cliff_boundary_relief_stale_penalty_max": round(float(profile.profitability_hard_cliff_boundary_relief_stale_penalty_max), 4),
+                "profitability_hard_cliff_boundary_relief_extension_penalty_max": round(float(profile.profitability_hard_cliff_boundary_relief_extension_penalty_max), 4),
+                "profitability_hard_cliff_boundary_relief_near_miss_threshold": round(float(profile.profitability_hard_cliff_boundary_relief_near_miss_threshold), 4),
                 "prepared_breakout_penalty_relief_enabled": bool(profile.prepared_breakout_penalty_relief_enabled),
                 "prepared_breakout_penalty_relief_breakout_freshness_max": round(float(profile.prepared_breakout_penalty_relief_breakout_freshness_max), 4),
                 "prepared_breakout_penalty_relief_trend_acceleration_min": round(float(profile.prepared_breakout_penalty_relief_trend_acceleration_min), 4),
@@ -2202,6 +2311,16 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "base_layer_c_avoid_penalty": round(base_layer_c_avoid_penalty, 4),
                 "effective_layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
                 "soft_penalty": round(profitability_relief_soft_penalty, 4),
+            },
+            "profitability_hard_cliff_boundary_relief": {
+                "enabled": bool(profitability_hard_cliff_boundary_relief["enabled"]),
+                "eligible": bool(profitability_hard_cliff_boundary_relief["eligible"]),
+                "applied": bool(profitability_hard_cliff_boundary_relief["applied"]),
+                "candidate_source": str(profitability_hard_cliff_boundary_relief["candidate_source"]),
+                "gate_hits": dict(profitability_hard_cliff_boundary_relief["gate_hits"]),
+                "base_near_miss_threshold": round(float(profitability_hard_cliff_boundary_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(profitability_hard_cliff_boundary_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(profitability_hard_cliff_boundary_relief["near_miss_threshold_override"]), 4),
             },
             "historical_prior": historical_prior,
             "historical_execution_relief": {

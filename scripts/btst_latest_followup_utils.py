@@ -40,6 +40,83 @@ def _decision_rank(decision: str | None) -> int:
     }.get(normalized, -1)
 
 
+def _historical_prior_int(prior: dict[str, Any], key: str) -> int:
+    value = prior.get(key)
+    if value in (None, "", [], {}):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _historical_prior_scope_rank(prior: dict[str, Any]) -> int:
+    scope = str(prior.get("applied_scope") or "").strip()
+    return {
+        "same_ticker": 4,
+        "same_family_source": 3,
+        "same_family": 2,
+        "same_source_score": 1,
+        "none": 0,
+    }.get(scope, 0)
+
+
+def _historical_prior_risk_rank(prior: dict[str, Any]) -> int:
+    label = str(prior.get("execution_quality_label") or "").strip()
+    return {
+        "zero_follow_through": 5,
+        "intraday_only": 4,
+        "gap_chase_risk": 3,
+        "balanced_confirmation": 2,
+        "close_continuation": 1,
+    }.get(label, 0)
+
+
+def _historical_prior_merge_rank(prior: dict[str, Any]) -> tuple[int, int, int, int]:
+    return (
+        _historical_prior_int(prior, "evaluable_count"),
+        _historical_prior_int(prior, "sample_count"),
+        _historical_prior_scope_rank(prior),
+        _historical_prior_risk_rank(prior),
+    )
+
+
+def _choose_preferred_historical_prior(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    if not current:
+        return dict(incoming)
+    if not incoming:
+        return dict(current)
+    current_rank = _historical_prior_merge_rank(current)
+    incoming_rank = _historical_prior_merge_rank(incoming)
+    if incoming_rank > current_rank:
+        return dict(incoming)
+    return dict(current)
+
+
+def _apply_historical_prior_fields(current: dict[str, Any], historical_prior: dict[str, Any]) -> None:
+    if not historical_prior:
+        return
+    current["historical_prior"] = dict(historical_prior)
+    historical_sample_count = historical_prior.get("sample_count")
+    if historical_sample_count not in (None, "", [], {}):
+        current["historical_sample_count"] = historical_sample_count
+    historical_next_close_positive_rate = historical_prior.get("next_close_positive_rate")
+    if historical_next_close_positive_rate not in (None, "", [], {}):
+        current["historical_next_close_positive_rate"] = historical_next_close_positive_rate
+    historical_next_close_return_mean = historical_prior.get("next_close_return_mean")
+    if historical_next_close_return_mean not in (None, "", [], {}):
+        current["historical_next_close_return_mean"] = historical_next_close_return_mean
+    historical_execution_quality_label = historical_prior.get("execution_quality_label")
+    if historical_execution_quality_label not in (None, "", [], {}):
+        current["historical_execution_quality_label"] = historical_execution_quality_label
+    historical_entry_timing_bias = historical_prior.get("entry_timing_bias")
+    if historical_entry_timing_bias not in (None, "", [], {}):
+        current["historical_entry_timing_bias"] = historical_entry_timing_bias
+    historical_execution_note = historical_prior.get("execution_note")
+    if historical_execution_note not in (None, "", [], {}):
+        current["historical_execution_note"] = historical_execution_note
+
+
 def _discover_report_dirs(reports_root: Path) -> list[Path]:
     if not reports_root.exists():
         return []
@@ -132,7 +209,8 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
         current = dict(merged.get(ticker) or {"ticker": ticker})
         historical_prior = dict(row.get("historical_prior") or {})
         if historical_prior:
-            current["historical_prior"] = historical_prior
+            chosen_historical_prior = _choose_preferred_historical_prior(dict(current.get("historical_prior") or {}), historical_prior)
+            _apply_historical_prior_fields(current, chosen_historical_prior)
         for key in (
             "decision",
             "candidate_source",
@@ -150,24 +228,6 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
             value = row.get(key)
             if value not in (None, "", [], {}):
                 current[key] = value
-        historical_sample_count = historical_prior.get("sample_count")
-        if historical_sample_count not in (None, "", [], {}):
-            current["historical_sample_count"] = historical_sample_count
-        historical_next_close_positive_rate = historical_prior.get("next_close_positive_rate")
-        if historical_next_close_positive_rate not in (None, "", [], {}):
-            current["historical_next_close_positive_rate"] = historical_next_close_positive_rate
-        historical_next_close_return_mean = historical_prior.get("next_close_return_mean")
-        if historical_next_close_return_mean not in (None, "", [], {}):
-            current["historical_next_close_return_mean"] = historical_next_close_return_mean
-        historical_execution_quality_label = historical_prior.get("execution_quality_label")
-        if historical_execution_quality_label not in (None, "", [], {}):
-            current["historical_execution_quality_label"] = historical_execution_quality_label
-        historical_entry_timing_bias = historical_prior.get("entry_timing_bias")
-        if historical_entry_timing_bias not in (None, "", [], {}):
-            current["historical_entry_timing_bias"] = historical_entry_timing_bias
-        historical_execution_note = historical_prior.get("execution_note")
-        if historical_execution_note not in (None, "", [], {}):
-            current["historical_execution_note"] = historical_execution_note
         for key in ("gate_status", "metrics"):
             value = row.get(key)
             if isinstance(value, dict) and value:

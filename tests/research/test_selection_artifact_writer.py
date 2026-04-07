@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -328,6 +329,77 @@ def test_file_selection_artifact_writer_persists_short_trade_profile_metadata(tm
     assert '"select_threshold": 0.54' in snapshot_text
     assert '"short_trade_target_profile": {' in replay_input_text
     assert '"name": "aggressive"' in replay_input_text
+
+
+def test_selection_snapshot_serializes_short_trade_frontier_fields(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_short_trade_frontier")
+    selection_targets, dual_target_summary = build_selection_targets(
+        trade_date="20260322",
+        watchlist=[],
+        rejected_entries=[],
+        supplemental_short_trade_entries=[
+            {
+                "ticker": "300720",
+                "score_b": 0.46,
+                "score_c": 0.0,
+                "score_final": 0.46,
+                "quality_score": 0.6,
+                "decision": "watch",
+                "reason": "short_trade_candidate_score_ranked",
+                "reasons": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+                "candidate_source": "short_trade_boundary",
+                "candidate_reason_codes": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+                "strategy_signals": {
+                    "trend": _make_signal(
+                        1,
+                        82.0,
+                        sub_factors={
+                            "momentum": {"direction": 1, "confidence": 84.0, "completeness": 1.0},
+                            "adx_strength": {"direction": 1, "confidence": 76.0, "completeness": 1.0},
+                            "ema_alignment": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                            "volatility": {"direction": 1, "confidence": 66.0, "completeness": 1.0},
+                            "long_trend_alignment": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                        },
+                    ).model_dump(mode="json"),
+                    "event_sentiment": _make_signal(
+                        1,
+                        74.0,
+                        sub_factors={
+                            "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                            "news_sentiment": {"direction": 1, "confidence": 62.0, "completeness": 1.0},
+                        },
+                    ).model_dump(mode="json"),
+                    "fundamental": _make_signal(1, 58.0).model_dump(mode="json"),
+                    "mean_reversion": _make_signal(-1, 12.0).model_dump(mode="json"),
+                },
+                "agent_contribution_summary": {},
+            }
+        ],
+        target_mode="short_trade_only",
+    )
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"layer_a_count": 1, "layer_b_count": 0, "watchlist_count": 0, "buy_order_count": 0, "sell_order_count": 0}},
+        watchlist=[],
+        selection_targets=selection_targets,
+        target_mode="short_trade_only",
+        dual_target_summary=dual_target_summary,
+        buy_orders=[],
+        sell_orders=[],
+    )
+
+    writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    snapshot = json.loads((tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    short_trade = snapshot["selection_targets"]["300720"]["short_trade"]
+    assert short_trade["candidate_source"] == "short_trade_boundary"
+    assert isinstance(short_trade["effective_near_miss_threshold"], float)
+    assert isinstance(short_trade["effective_select_threshold"], float)
+    assert isinstance(short_trade["weighted_positive_contributions"], dict)
+    assert isinstance(short_trade["weighted_negative_contributions"], dict)
+    assert isinstance(short_trade["breakout_freshness"], float)
+    assert isinstance(short_trade["trend_acceleration"], float)
 
 
 def test_file_selection_artifact_writer_merges_released_shadow_entries_into_replay_input(tmp_path):
