@@ -329,6 +329,15 @@ def _make_catalyst_theme_short_trade_carryover_entry(*, include_profitability_ha
         "close_strength_min": 0.85,
         "require_no_profitability_hard_cliff": True,
     }
+    entry["historical_prior"] = {
+        "execution_quality_label": "balanced_confirmation",
+        "entry_timing_bias": "confirm_then_review",
+        "evaluable_count": 4,
+        "next_high_hit_rate_at_threshold": 0.75,
+        "next_close_positive_rate": 0.75,
+        "next_open_to_close_return_mean": 0.012,
+        "execution_note": "历史上更适合确认后再参与，延续质量可接受。",
+    }
     return entry
 
 
@@ -599,6 +608,27 @@ def test_build_selection_targets_promotes_rejected_entry_for_short_trade_when_si
     assert summary.short_trade_selected_count == 1
     assert summary.short_trade_blocked_count == 0
     assert summary.delta_classification_counts == {"research_reject_short_pass": 1}
+
+
+def test_build_selection_targets_preserves_catalyst_theme_source_and_carryover_reason_for_short_trade_only_supplemental_entry() -> None:
+    supplemental_entry = _make_catalyst_theme_short_trade_carryover_entry()
+
+    selection_targets, summary = build_selection_targets(
+        trade_date="20260328",
+        watchlist=[],
+        rejected_entries=[],
+        supplemental_short_trade_entries=[supplemental_entry],
+        target_mode="short_trade_only",
+    )
+
+    assert selection_targets["688195"].candidate_source == "catalyst_theme"
+    assert "catalyst_theme_short_trade_carryover_candidate" in selection_targets["688195"].candidate_reason_codes
+    assert selection_targets["688195"].short_trade is not None
+    assert selection_targets["688195"].short_trade.decision == "near_miss"
+    assert selection_targets["688195"].short_trade.explainability_payload["candidate_source"] == "catalyst_theme"
+    assert selection_targets["688195"].short_trade.explainability_payload["upstream_shadow_catalyst_relief"]["reason"] == "catalyst_theme_short_trade_carryover"
+    assert summary.target_mode == "short_trade_only"
+    assert summary.short_trade_near_miss_count == 1
 
 
 def test_merge_approved_continuation_relief_promotes_boundary_watchlist_candidate_to_selected() -> None:
@@ -1583,6 +1613,7 @@ def test_historical_execution_relief_promotes_positive_gap_chase_boundary_to_nea
     baseline_entry = _make_historical_execution_relief_entry()
     relieved_entry = _make_historical_execution_relief_entry()
     baseline_entry.pop("historical_prior", None)
+    relieved_entry["historical_prior"]["next_open_to_close_return_mean"] = 0.01
 
     baseline_result = evaluate_short_trade_rejected_target(
         trade_date="20260328",
@@ -1602,6 +1633,23 @@ def test_historical_execution_relief_promotes_positive_gap_chase_boundary_to_nea
     assert relieved_result.metrics_payload["historical_execution_relief"]["effective_near_miss_threshold"] == 0.39
     assert relieved_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.39
     assert relieved_result.explainability_payload["historical_execution_relief"]["applied"] is True
+
+
+def test_historical_execution_relief_does_not_promote_gap_chase_profitability_hard_cliff_with_negative_open_to_close() -> None:
+    entry = _make_historical_execution_relief_entry()
+    entry["historical_prior"]["next_open_to_close_return_mean"] = -0.0056
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+    )
+
+    assert result.decision == "rejected"
+    assert result.metrics_payload["historical_execution_relief"]["applied"] is False
+    assert result.metrics_payload["historical_execution_relief"]["gate_hits"]["execution_quality_support"] is False
+    assert result.metrics_payload["historical_execution_relief"]["gate_hits"]["gap_chase_open_to_close_support"] is False
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.46
 
 
 def test_historical_execution_relief_does_not_promote_balanced_confirmation_boundary() -> None:
@@ -1794,6 +1842,87 @@ def test_catalyst_theme_short_trade_carryover_keeps_profitability_hard_cliff_sam
     assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is False
     assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is False
     assert "catalyst_theme_short_trade_carryover_not_triggered" in result.negative_tags
+
+
+def test_catalyst_theme_short_trade_carryover_requires_supported_historical_continuation_quality() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["historical_prior"] = {
+        "execution_quality_label": "unknown",
+        "entry_timing_bias": "unknown",
+        "evaluable_count": 0,
+        "next_high_hit_rate_at_threshold": 0.0,
+        "next_close_positive_rate": 0.0,
+        "next_open_to_close_return_mean": 0.0,
+        "execution_note": "历史执行样本不足。",
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "rejected"
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is False
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["historical_continuation_quality"] is False
+    assert "catalyst_theme_short_trade_carryover_not_triggered" in result.negative_tags
+
+
+def test_catalyst_theme_short_trade_carryover_uses_historical_execution_relief_for_strong_close_continuation() -> None:
+    entry = _make_strong_close_continuation_selected_frontier_entry()
+    entry["candidate_source"] = "catalyst_theme"
+    entry["reason"] = "catalyst_theme_candidate_score_ranked"
+    entry["reasons"] = [
+        "catalyst_theme_candidate_score_ranked",
+        "catalyst_theme_research_candidate",
+        "catalyst_theme_short_trade_carryover_candidate",
+    ]
+    entry["candidate_reason_codes"] = list(entry["reasons"])
+    entry["short_trade_catalyst_relief"] = {
+        "enabled": True,
+        "reason": "catalyst_theme_short_trade_carryover",
+        "catalyst_freshness_floor": 1.0,
+        "near_miss_threshold": 0.44,
+        "breakout_freshness_min": 0.35,
+        "trend_acceleration_min": 0.72,
+        "close_strength_min": 0.85,
+        "require_no_profitability_hard_cliff": True,
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "selected"
+    assert round(result.score_target, 4) == 0.5653
+    assert result.metrics_payload["historical_execution_relief"]["applied"] is True
+    assert result.metrics_payload["historical_execution_relief"]["candidate_source"] == "catalyst_theme"
+    assert result.metrics_payload["historical_execution_relief"]["execution_quality_label"] == "close_continuation"
+    assert result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.56
+    assert result.explainability_payload["historical_execution_relief"]["effective_select_threshold"] == 0.56
+
+
+def test_catalyst_theme_short_trade_carryover_does_not_use_historical_execution_relief_for_gap_chase_risk() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["historical_prior"] = {
+        "execution_quality_label": "gap_chase_risk",
+        "entry_timing_bias": "avoid_open_chase",
+        "evaluable_count": 6,
+        "next_high_hit_rate_at_threshold": 0.8333,
+        "next_close_positive_rate": 0.8333,
+        "next_open_to_close_return_mean": 0.031,
+        "execution_note": "历史上更像冲高回落，不适合按题材延续逻辑放宽 carryover。",
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.metrics_payload["historical_execution_relief"]["candidate_source"] == "catalyst_theme"
+    assert result.metrics_payload["historical_execution_relief"]["execution_quality_label"] == "gap_chase_risk"
+    assert result.metrics_payload["historical_execution_relief"]["gate_hits"]["execution_quality_support"] is False
+    assert result.metrics_payload["historical_execution_relief"]["applied"] is False
 
 
 def test_visibility_gap_continuation_relief_promotes_selected_visibility_gap_shadow_to_near_miss() -> None:

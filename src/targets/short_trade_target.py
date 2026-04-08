@@ -211,6 +211,12 @@ def _resolve_historical_execution_relief(
 ) -> dict[str, Any]:
     historical_prior = _historical_prior(input_data)
     source = str(input_data.replay_context.get("source") or "").strip()
+    candidate_reason_codes = {
+        str(code).strip()
+        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
+        if str(code or "").strip()
+    }
+    catalyst_theme_carryover_candidate = source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" in candidate_reason_codes
     base_near_miss_threshold = float(profile.near_miss_threshold)
     base_select_threshold = float(profile.select_threshold)
     execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
@@ -248,11 +254,18 @@ def _resolve_historical_execution_relief(
         and next_high_hit_rate >= 0.8
         and next_open_to_close_return_mean >= 0.02
     )
+    execution_quality_support = execution_quality_label in {"gap_chase_risk", "close_continuation"}
+    if catalyst_theme_carryover_candidate:
+        execution_quality_support = execution_quality_label == "close_continuation"
+    if profitability_hard_cliff and execution_quality_label == "gap_chase_risk":
+        execution_quality_support = execution_quality_support and next_open_to_close_return_mean >= 0.0
+
     gate_hits = {
-        "candidate_source": source in {"short_trade_boundary", "upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"},
+        "candidate_source": source in {"short_trade_boundary", "upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"} or catalyst_theme_carryover_candidate,
         "profitability_hard_cliff": profitability_hard_cliff,
         "evaluable_count": evaluable_count >= 3 or strong_close_continuation_candidate,
-        "execution_quality_support": execution_quality_label in {"gap_chase_risk", "close_continuation"},
+        "execution_quality_support": execution_quality_support,
+        "gap_chase_open_to_close_support": (not profitability_hard_cliff) or execution_quality_label != "gap_chase_risk" or next_open_to_close_return_mean >= 0.0,
         "next_close_positive_rate": next_close_positive_rate >= 0.5,
         "next_high_hit_rate": next_high_hit_rate >= 0.5,
     }
@@ -263,7 +276,7 @@ def _resolve_historical_execution_relief(
     if eligible:
         near_miss_threshold_override = min(
             base_near_miss_threshold,
-            0.39 if execution_quality_label == "gap_chase_risk" or strong_close_continuation else 0.40,
+            0.39 if (execution_quality_label == "gap_chase_risk" and not catalyst_theme_carryover_candidate) or strong_close_continuation else 0.40,
         )
         if strong_close_continuation:
             select_threshold_override = min(base_select_threshold, 0.56)
@@ -306,6 +319,10 @@ def _resolve_upstream_shadow_catalyst_relief(
     relief_payload = input_data.replay_context.get("short_trade_catalyst_relief")
     relief_config = dict(relief_payload) if isinstance(relief_payload, dict) else {}
     relief_reason = str(relief_config.get("reason") or "upstream_shadow_catalyst_relief")
+    historical_prior = _historical_prior(input_data)
+    historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
     base_near_miss_threshold = float(profile.near_miss_threshold)
     base_select_threshold = float(profile.select_threshold)
     default_result = {
@@ -324,6 +341,9 @@ def _resolve_upstream_shadow_catalyst_relief(
         "near_miss_threshold_override": base_near_miss_threshold,
         "select_threshold_override": base_select_threshold,
         "require_no_profitability_hard_cliff": False,
+        "historical_execution_quality_label": historical_execution_quality_label,
+        "historical_evaluable_count": historical_evaluable_count,
+        "historical_next_close_positive_rate": historical_next_close_positive_rate,
     }
 
     candidate_reason_codes = {
@@ -345,12 +365,20 @@ def _resolve_upstream_shadow_catalyst_relief(
     trend_acceleration_min = clamp_unit_interval(float(relief_config.get("trend_acceleration_min", 0.0) or 0.0))
     close_strength_min = clamp_unit_interval(float(relief_config.get("close_strength_min", 0.0) or 0.0))
     require_no_profitability_hard_cliff = bool(relief_config.get("require_no_profitability_hard_cliff", False))
+    carryover_history_supported = True
+    if relief_reason == "catalyst_theme_short_trade_carryover":
+        carryover_history_supported = (
+            historical_execution_quality_label in {"close_continuation", "balanced_confirmation"}
+            and historical_evaluable_count >= 2
+            and historical_next_close_positive_rate >= 0.5
+        )
 
     gate_hits = {
         "breakout_freshness": breakout_freshness >= breakout_freshness_min,
         "trend_acceleration": trend_acceleration >= trend_acceleration_min,
         "close_strength": close_strength >= close_strength_min,
         "no_profitability_hard_cliff": (not require_no_profitability_hard_cliff) or (not profitability_hard_cliff),
+        **({"historical_continuation_quality": carryover_history_supported} if relief_reason == "catalyst_theme_short_trade_carryover" else {}),
     }
     eligible = all(gate_hits.values())
     effective_catalyst_freshness = catalyst_freshness
@@ -382,6 +410,9 @@ def _resolve_upstream_shadow_catalyst_relief(
         "near_miss_threshold_override": near_miss_threshold_override,
         "select_threshold_override": select_threshold_override,
         "require_no_profitability_hard_cliff": require_no_profitability_hard_cliff,
+        "historical_execution_quality_label": historical_execution_quality_label,
+        "historical_evaluable_count": historical_evaluable_count,
+        "historical_next_close_positive_rate": historical_next_close_positive_rate,
     }
 
 

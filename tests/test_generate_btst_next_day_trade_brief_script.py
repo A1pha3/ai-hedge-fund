@@ -186,6 +186,7 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                 "selection_targets": {
                     "300757": {
                         "ticker": "300757",
+                        "candidate_reason_codes": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
                         "short_trade": {
                             "decision": "selected",
                             "score_target": 0.5907,
@@ -208,6 +209,7 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                     },
                     "601869": {
                         "ticker": "601869",
+                        "candidate_reason_codes": ["upstream_shadow_release_candidate"],
                         "short_trade": {
                             "decision": "near_miss",
                             "score_target": 0.5540,
@@ -225,6 +227,11 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                             },
                             "explainability_payload": {
                                 "candidate_source": "upstream_liquidity_corridor_shadow",
+                                "upstream_shadow_catalyst_relief": {
+                                    "enabled": True,
+                                    "applied": True,
+                                    "reason": "upstream_shadow_catalyst_relief",
+                                },
                                 "replay_context": {
                                     "candidate_pool_lane": "layer_a_liquidity_corridor",
                                     "candidate_pool_rank": 301,
@@ -314,6 +321,17 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                         "positive_tags": ["strong_catalyst_freshness"],
                         "top_reasons": ["catalyst_freshness=0.84", "sector_resonance=0.25"],
                         "candidate_source": "catalyst_theme",
+                        "candidate_reason_codes": [
+                            "catalyst_theme_candidate_score_ranked",
+                            "catalyst_theme_research_candidate",
+                            "catalyst_theme_short_trade_carryover_candidate",
+                        ],
+                        "short_trade_catalyst_relief": {
+                            "enabled": True,
+                            "reason": "catalyst_theme_short_trade_carryover",
+                            "catalyst_freshness_floor": 1.0,
+                            "near_miss_threshold": 0.44,
+                        },
                         "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
                         "blockers": ["stale_trend_repair_penalty"],
                         "promotion_trigger": "若催化继续扩散并形成量价确认，可升级到 short-trade shadow 观察。",
@@ -366,12 +384,16 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
     assert analysis["selected_entries"][0]["historical_prior"]["summary"] is not None
     assert [entry["ticker"] for entry in analysis["near_miss_entries"]] == ["601869"]
     assert analysis["near_miss_entries"][0]["candidate_source"] == "upstream_liquidity_corridor_shadow"
+    assert analysis["near_miss_entries"][0]["candidate_reason_codes"] == ["upstream_shadow_release_candidate"]
+    assert analysis["near_miss_entries"][0]["short_trade_catalyst_relief_reason"] == "upstream_shadow_catalyst_relief"
     assert [entry["ticker"] for entry in analysis["opportunity_pool_entries"]] == ["300442"]
     assert analysis["opportunity_pool_entries"][0]["candidate_source"] == "post_gate_liquidity_competition_shadow"
     assert [entry["ticker"] for entry in analysis["research_upside_radar_entries"]] == ["002001"]
     assert analysis["research_upside_radar_entries"][0]["historical_prior"]["summary"] is not None
     assert [entry["ticker"] for entry in analysis["catalyst_theme_entries"]] == ["300999"]
     assert analysis["catalyst_theme_entries"][0]["historical_prior"]["summary"] is not None
+    assert "catalyst_theme_short_trade_carryover_candidate" in analysis["catalyst_theme_entries"][0]["candidate_reason_codes"]
+    assert analysis["catalyst_theme_entries"][0]["short_trade_catalyst_relief_reason"] == "catalyst_theme_short_trade_carryover"
     assert [entry["ticker"] for entry in analysis["catalyst_theme_shadow_entries"]] == ["301001"]
     assert analysis["summary"]["catalyst_theme_frontier_promoted_count"] == 1
     assert analysis["summary"]["upstream_shadow_candidate_count"] == 2

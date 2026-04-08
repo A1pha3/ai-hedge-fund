@@ -124,6 +124,127 @@ def test_derive_shadow_focus_tickers_from_reports_keeps_selected_continuation_fo
     }
 
 
+def test_derive_shadow_focus_tickers_from_reports_includes_high_signal_candidate_pool_recall_rebucket_focus(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    (reports_root / "btst_candidate_pool_recall_dossier_latest.json").write_text(
+        """
+        {
+          "priority_ticker_dossiers": [
+            {
+              "ticker": "300720",
+              "strict_btst_goal_case_count": 2,
+              "closest_pre_truncation_gap": 797,
+              "truncation_liquidity_profile": {
+                "priority_handoff": "post_gate_liquidity_competition",
+                "avg_amount_share_of_min_gate_mean": 6.9694
+              }
+            },
+            {
+              "ticker": "003036",
+              "strict_btst_goal_case_count": 6,
+              "closest_pre_truncation_gap": 2031,
+              "truncation_liquidity_profile": {
+                "priority_handoff": "layer_a_liquidity_corridor",
+                "avg_amount_share_of_min_gate_mean": 3.5786
+              }
+            }
+          ]
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    derived = run_paper_trading_script._derive_shadow_focus_tickers_from_reports(reports_root)
+
+    assert derived == {
+        "all": ["300720"],
+        "layer_a_liquidity_corridor": [],
+        "post_gate_liquidity_competition": ["300720"],
+        "visibility_gap_all": [],
+        "visibility_gap_layer_a_liquidity_corridor": [],
+        "visibility_gap_post_gate_liquidity_competition": [],
+    }
+
+
+def test_derive_shadow_focus_tickers_from_reports_skips_negative_recent_followup_history(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    (reports_root / "btst_tplus2_candidate_dossier_300720_latest.json").write_text(
+        """
+        {
+          "candidate_ticker": "300720",
+          "governance_followup": {
+            "priority_handoff": "layer_a_liquidity_corridor",
+            "latest_followup_decision": "selected",
+            "downstream_followup_status": "continuation_only_confirm_then_review",
+            "latest_followup_historical_next_close_positive_rate": 0.0
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    derived = run_paper_trading_script._derive_shadow_focus_tickers_from_reports(reports_root)
+
+    assert derived == {
+        "all": [],
+        "layer_a_liquidity_corridor": [],
+        "post_gate_liquidity_competition": [],
+        "visibility_gap_all": [],
+        "visibility_gap_layer_a_liquidity_corridor": [],
+        "visibility_gap_post_gate_liquidity_competition": [],
+    }
+
+
+def test_derive_shadow_focus_tickers_from_reports_recall_addition_respects_negative_recent_followup_history(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    (reports_root / "btst_tplus2_candidate_dossier_300720_latest.json").write_text(
+        """
+        {
+          "candidate_ticker": "300720",
+          "governance_followup": {
+            "priority_handoff": "layer_a_liquidity_corridor",
+            "latest_followup_decision": "selected",
+            "downstream_followup_status": "continuation_only_confirm_then_review",
+            "latest_followup_historical_next_close_positive_rate": 0.0
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    (reports_root / "btst_candidate_pool_recall_dossier_latest.json").write_text(
+        """
+        {
+          "priority_ticker_dossiers": [
+            {
+              "ticker": "300720",
+              "strict_btst_goal_case_count": 2,
+              "closest_pre_truncation_gap": 797,
+              "truncation_liquidity_profile": {
+                "priority_handoff": "post_gate_liquidity_competition",
+                "avg_amount_share_of_min_gate_mean": 6.9694
+              }
+            }
+          ]
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    derived = run_paper_trading_script._derive_shadow_focus_tickers_from_reports(reports_root)
+
+    assert derived == {
+        "all": [],
+        "layer_a_liquidity_corridor": [],
+        "post_gate_liquidity_competition": [],
+        "visibility_gap_all": [],
+        "visibility_gap_layer_a_liquidity_corridor": [],
+        "visibility_gap_post_gate_liquidity_competition": [],
+    }
+
+
 def test_main_passes_selected_analysts_and_concurrency_limit(monkeypatch, capsys) -> None:
     captured: dict = {}
 

@@ -1968,7 +1968,7 @@ def test_run_post_market_attaches_upstream_shadow_catalyst_relief_for_catalyst_b
     assert diagnostics["filters"]["short_trade_candidates"]["prefilter_thresholds"]["upstream_shadow_catalyst_relief_near_miss_threshold"] == 0.45
     assert diagnostics["filters"]["short_trade_candidates"]["prefilter_thresholds"]["upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane"] == {
         "layer_a_liquidity_corridor": False,
-        "post_gate_liquidity_competition": True,
+        "post_gate_liquidity_competition": False,
     }
 
 def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
@@ -2055,6 +2055,67 @@ def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
     }
 
 
+def test_run_post_market_relaxes_post_gate_shadow_catalyst_relief_thresholds_for_profitability_hard_cliff_sample():
+    relief = daily_pipeline_module._build_upstream_shadow_catalyst_relief_config(
+        candidate_pool_lane="post_gate_liquidity_competition",
+        filter_reason="catalyst_freshness_below_short_trade_boundary_floor",
+        metrics_payload={
+            "candidate_score": 0.4407,
+            "breakout_freshness": 0.4,
+            "trend_acceleration": 0.763,
+            "close_strength": 0.8,
+            "profitability_hard_cliff": True,
+        },
+        historical_prior={},
+    )
+
+    assert relief == {
+        "enabled": True,
+        "reason": "upstream_shadow_catalyst_relief",
+        "catalyst_freshness_floor": 1.0,
+        "near_miss_threshold": 0.42,
+        "selected_threshold": 0.43,
+        "breakout_freshness_min": 0.38,
+        "trend_acceleration_min": 0.75,
+        "close_strength_min": 0.8,
+        "require_no_profitability_hard_cliff": False,
+    }
+
+
+def test_run_post_market_blocks_post_gate_profitability_hard_cliff_relief_when_history_has_zero_next_close_support():
+    relief = daily_pipeline_module._build_upstream_shadow_catalyst_relief_config(
+        candidate_pool_lane="post_gate_liquidity_competition",
+        filter_reason="catalyst_freshness_below_short_trade_boundary_floor",
+        metrics_payload={
+            "candidate_score": 0.4794,
+            "breakout_freshness": 0.4,
+            "trend_acceleration": 0.8814,
+            "close_strength": 0.8902,
+            "profitability_hard_cliff": True,
+        },
+        historical_prior={"next_close_positive_rate": 0.0},
+    )
+
+    assert relief == {}
+
+
+def test_run_post_market_blocks_post_gate_relief_when_history_has_zero_next_close_support_even_without_profitability_hard_cliff():
+    relief = daily_pipeline_module._build_upstream_shadow_catalyst_relief_config(
+        candidate_pool_lane="post_gate_liquidity_competition",
+        filter_reason="catalyst_freshness_below_short_trade_boundary_floor",
+        metrics_payload={
+            "candidate_score": 0.4794,
+            "breakout_freshness": 0.4,
+            "trend_acceleration": 0.8814,
+            "close_strength": 0.8902,
+            "profitability_hard_cliff": False,
+        },
+        historical_prior={"next_close_positive_rate": 0.0},
+    )
+
+    assert relief == {}
+
+
 def test_ensure_plan_target_shells_injects_latest_historical_prior_into_supplemental_entries(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         daily_pipeline_module,
@@ -2127,6 +2188,122 @@ def test_ensure_plan_target_shells_injects_latest_historical_prior_into_suppleme
     assert short_trade_result.decision in {"selected", "near_miss"}
     assert short_trade_result.preferred_entry_mode == "avoid_open_chase_confirmation"
     assert short_trade_result.metrics_payload["historical_execution_relief"]["applied"] is True
+
+
+def test_attach_historical_prior_to_entries_backfills_sparse_unknown_fields_from_latest_prior():
+    attached_entries = daily_pipeline_module._attach_historical_prior_to_entries(
+        [
+            {
+                "ticker": "300720",
+                "historical_prior": {
+                    "execution_quality_label": "unknown",
+                    "execution_note": "artifact note",
+                },
+            }
+        ],
+        prior_by_ticker={
+            "300720": {
+                "applied_scope": "same_ticker",
+                "execution_quality_label": "intraday_only",
+                "next_close_positive_rate": 0.0,
+                "execution_note": "latest note",
+            }
+        },
+    )
+
+    assert attached_entries == [
+        {
+            "ticker": "300720",
+            "historical_prior": {
+                "applied_scope": "same_ticker",
+                "execution_quality_label": "intraday_only",
+                "next_close_positive_rate": 0.0,
+                "execution_note": "artifact note",
+            },
+        }
+    ]
+
+
+def test_attach_historical_prior_to_entries_preserves_explicit_embedded_history_over_latest_prior():
+    attached_entries = daily_pipeline_module._attach_historical_prior_to_entries(
+        [
+            {
+                "ticker": "301292",
+                "historical_prior": {
+                    "execution_quality_label": "close_continuation",
+                    "next_close_positive_rate": 1.0,
+                },
+            }
+        ],
+        prior_by_ticker={
+            "301292": {
+                "execution_quality_label": "intraday_only",
+                "next_close_positive_rate": 0.0,
+            }
+        },
+    )
+
+    assert attached_entries == [
+        {
+            "ticker": "301292",
+            "historical_prior": {
+                "execution_quality_label": "close_continuation",
+                "next_close_positive_rate": 1.0,
+            },
+        }
+    ]
+
+
+def test_attach_historical_prior_to_entries_refreshes_stale_upstream_shadow_relief_after_backfill():
+    attached_entries = daily_pipeline_module._attach_historical_prior_to_entries(
+        [
+            {
+                "ticker": "300720",
+                "candidate_pool_lane": "post_gate_liquidity_competition",
+                "shadow_release_filter_reason": "catalyst_freshness_below_short_trade_boundary_floor",
+                "short_trade_boundary_metrics": {
+                    "candidate_score": 0.4794,
+                    "breakout_freshness": 0.4,
+                    "trend_acceleration": 0.8814,
+                    "close_strength": 0.8902,
+                    "profitability_hard_cliff": False,
+                },
+                "short_trade_catalyst_relief": {
+                    "enabled": True,
+                    "reason": "upstream_shadow_catalyst_relief",
+                    "selected_threshold": 0.45,
+                },
+                "historical_prior": {
+                    "execution_quality_label": "unknown",
+                },
+            }
+        ],
+        prior_by_ticker={
+            "300720": {
+                "execution_quality_label": "intraday_only",
+                "next_close_positive_rate": 0.0,
+            }
+        },
+    )
+
+    assert attached_entries == [
+        {
+            "ticker": "300720",
+            "candidate_pool_lane": "post_gate_liquidity_competition",
+            "shadow_release_filter_reason": "catalyst_freshness_below_short_trade_boundary_floor",
+            "short_trade_boundary_metrics": {
+                "candidate_score": 0.4794,
+                "breakout_freshness": 0.4,
+                "trend_acceleration": 0.8814,
+                "close_strength": 0.8902,
+                "profitability_hard_cliff": False,
+            },
+            "historical_prior": {
+                "execution_quality_label": "intraday_only",
+                "next_close_positive_rate": 0.0,
+            },
+        }
+    ]
 
 
 def test_run_post_market_promotes_strong_short_trade_boundary_candidate_even_below_old_score_buffer():
@@ -2483,11 +2660,15 @@ def test_run_post_market_short_trade_only_keeps_fresh_catalyst_theme_candidates_
         daily_pipeline_module.fuse_batch = original_fuse_batch
         daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
 
-    catalyst_entry = plan.risk_metrics["funnel_diagnostics"]["filters"]["catalyst_theme_candidates"]["tickers"][0]
-    assert catalyst_entry["ticker"] == "000006"
-    assert "close_momentum_catalyst_relief" not in catalyst_entry["positive_tags"]
-    assert "catalyst_theme_short_trade_carryover_candidate" not in catalyst_entry["candidate_reason_codes"]
-    assert "short_trade_catalyst_relief" not in catalyst_entry
+    diagnostics = plan.risk_metrics["funnel_diagnostics"]["filters"]
+    assert diagnostics["catalyst_theme_candidates"]["candidate_count"] == 0
+
+    boundary_entry = diagnostics["short_trade_candidates"]["tickers"][0]
+    assert boundary_entry["ticker"] == "000006"
+    assert "catalyst_theme_short_trade_carryover_candidate" not in boundary_entry["candidate_reason_codes"]
+    assert "short_trade_catalyst_relief" not in boundary_entry
+    assert "000006" in plan.selection_targets
+    assert plan.selection_targets["000006"].candidate_source == "short_trade_boundary"
 
 
 def test_watchlist_threshold_020_admits_edge_case_between_020_and_025():

@@ -536,6 +536,13 @@ def _extract_short_trade_entry(selection_entry: dict[str, Any]) -> dict[str, Any
 
     metrics_payload = short_trade_entry.get("metrics_payload") or {}
     explainability_payload = short_trade_entry.get("explainability_payload") or {}
+    candidate_reason_codes = [str(reason) for reason in list(selection_entry.get("candidate_reason_codes") or []) if str(reason or "").strip()]
+    catalyst_relief = dict(explainability_payload.get("upstream_shadow_catalyst_relief") or {})
+    short_trade_catalyst_relief_reason = (
+        str(catalyst_relief.get("reason") or "")
+        if catalyst_relief and (bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled")))
+        else None
+    )
 
     return {
         "ticker": selection_entry.get("ticker"),
@@ -548,6 +555,8 @@ def _extract_short_trade_entry(selection_entry: dict[str, Any]) -> dict[str, Any
         "positive_tags": list(short_trade_entry.get("positive_tags") or []),
         "top_reasons": list(short_trade_entry.get("top_reasons") or []),
         "candidate_source": explainability_payload.get("candidate_source") or selection_entry.get("candidate_source"),
+        "candidate_reason_codes": candidate_reason_codes,
+        "short_trade_catalyst_relief_reason": short_trade_catalyst_relief_reason,
         "gate_status": dict(short_trade_entry.get("gate_status") or {}),
         "metrics": {
             "breakout_freshness": metrics_payload.get("breakout_freshness"),
@@ -667,6 +676,7 @@ def _extract_short_trade_opportunity_entry(selection_entry: dict[str, Any]) -> d
         return None
 
     metrics_payload = dict(short_trade_entry.get("metrics_payload") or {})
+    explainability_payload = dict(short_trade_entry.get("explainability_payload") or {})
     score_target = _as_float(short_trade_entry.get("score_target"))
     if score_target < OPPORTUNITY_POOL_MIN_SCORE_TARGET:
         return None
@@ -687,6 +697,13 @@ def _extract_short_trade_opportunity_entry(selection_entry: dict[str, Any]) -> d
     thresholds = dict(metrics_payload.get("thresholds") or {})
     near_miss_threshold = _as_float(thresholds.get("near_miss_threshold"))
     score_gap_to_near_miss = round(max(0.0, near_miss_threshold - score_target), 4) if near_miss_threshold > 0 else None
+    candidate_reason_codes = [str(reason) for reason in list(selection_entry.get("candidate_reason_codes") or []) if str(reason or "").strip()]
+    catalyst_relief = dict(explainability_payload.get("upstream_shadow_catalyst_relief") or {})
+    short_trade_catalyst_relief_reason = (
+        str(catalyst_relief.get("reason") or "")
+        if catalyst_relief and (bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled")))
+        else None
+    )
 
     return {
         "ticker": selection_entry.get("ticker"),
@@ -696,6 +713,8 @@ def _extract_short_trade_opportunity_entry(selection_entry: dict[str, Any]) -> d
         "confidence": short_trade_entry.get("confidence"),
         "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
         "candidate_source": (short_trade_entry.get("explainability_payload") or {}).get("candidate_source") or selection_entry.get("candidate_source"),
+        "candidate_reason_codes": candidate_reason_codes,
+        "short_trade_catalyst_relief_reason": short_trade_catalyst_relief_reason,
         "positive_tags": positive_tags,
         "top_reasons": list(short_trade_entry.get("top_reasons") or []),
         "rejection_reasons": list(short_trade_entry.get("rejection_reasons") or []),
@@ -725,6 +744,7 @@ def _extract_research_upside_radar_entry(selection_entry: dict[str, Any]) -> dic
         return None
 
     metrics_payload = dict(short_trade_entry.get("metrics_payload") or {})
+    explainability_payload = dict(short_trade_entry.get("explainability_payload") or {})
     score_target = _as_float(short_trade_entry.get("score_target"))
     if score_target < OPPORTUNITY_POOL_MIN_SCORE_TARGET:
         return None
@@ -741,6 +761,13 @@ def _extract_research_upside_radar_entry(selection_entry: dict[str, Any]) -> dic
     )
     if strong_signal_count <= 0 and not positive_tags:
         return None
+    candidate_reason_codes = [str(reason) for reason in list(selection_entry.get("candidate_reason_codes") or []) if str(reason or "").strip()]
+    catalyst_relief = dict(explainability_payload.get("upstream_shadow_catalyst_relief") or {})
+    short_trade_catalyst_relief_reason = (
+        str(catalyst_relief.get("reason") or "")
+        if catalyst_relief and (bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled")))
+        else None
+    )
 
     return {
         "ticker": selection_entry.get("ticker"),
@@ -751,6 +778,8 @@ def _extract_research_upside_radar_entry(selection_entry: dict[str, Any]) -> dic
         "confidence": short_trade_entry.get("confidence"),
         "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
         "candidate_source": (short_trade_entry.get("explainability_payload") or {}).get("candidate_source") or selection_entry.get("candidate_source"),
+        "candidate_reason_codes": candidate_reason_codes,
+        "short_trade_catalyst_relief_reason": short_trade_catalyst_relief_reason,
         "positive_tags": positive_tags,
         "top_reasons": list(short_trade_entry.get("top_reasons") or []),
         "rejection_reasons": list(short_trade_entry.get("rejection_reasons") or []),
@@ -772,6 +801,8 @@ def _extract_catalyst_theme_entry(candidate: dict[str, Any]) -> dict[str, Any] |
         return None
 
     metrics = dict(candidate.get("metrics") or {})
+    candidate_reason_codes = [str(reason) for reason in list(candidate.get("candidate_reason_codes") or []) if str(reason or "").strip()]
+    short_trade_catalyst_relief = dict(candidate.get("short_trade_catalyst_relief") or {})
     candidate_score = _as_float(candidate.get("score_target") if candidate.get("score_target") is not None else candidate.get("candidate_score"))
     if candidate_score <= 0:
         return None
@@ -783,6 +814,8 @@ def _extract_catalyst_theme_entry(candidate: dict[str, Any]) -> dict[str, Any] |
         "confidence": candidate.get("confidence"),
         "preferred_entry_mode": candidate.get("preferred_entry_mode") or "theme_research_followup",
         "candidate_source": candidate.get("candidate_source") or "catalyst_theme",
+        "candidate_reason_codes": candidate_reason_codes,
+        "short_trade_catalyst_relief_reason": str(short_trade_catalyst_relief.get("reason") or "") or None,
         "positive_tags": list(candidate.get("positive_tags") or []),
         "top_reasons": list(candidate.get("top_reasons") or []),
         "blockers": list(candidate.get("blockers") or []),
@@ -803,6 +836,7 @@ def _extract_catalyst_theme_shadow_entry(candidate: dict[str, Any]) -> dict[str,
         return None
 
     metrics = dict(candidate.get("metrics") or {})
+    candidate_reason_codes = [str(reason) for reason in list(candidate.get("candidate_reason_codes") or []) if str(reason or "").strip()]
     candidate_score = _as_float(candidate.get("score_target") if candidate.get("score_target") is not None else candidate.get("candidate_score"))
     if candidate_score <= 0:
         return None
@@ -814,6 +848,7 @@ def _extract_catalyst_theme_shadow_entry(candidate: dict[str, Any]) -> dict[str,
         "confidence": candidate.get("confidence"),
         "preferred_entry_mode": candidate.get("preferred_entry_mode") or "theme_research_followup",
         "candidate_source": candidate.get("candidate_source") or "catalyst_theme_shadow",
+        "candidate_reason_codes": candidate_reason_codes,
         "positive_tags": list(candidate.get("positive_tags") or []),
         "top_reasons": list(candidate.get("top_reasons") or []),
         "blockers": list(candidate.get("blockers") or []),

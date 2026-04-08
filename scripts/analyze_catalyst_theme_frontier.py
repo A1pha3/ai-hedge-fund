@@ -7,6 +7,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from src.execution.daily_pipeline import (
     CATALYST_THEME_BREAKOUT_MIN,
     CATALYST_THEME_CANDIDATE_SCORE_MIN,
@@ -15,6 +17,12 @@ from src.execution.daily_pipeline import (
     CATALYST_THEME_MAX_TICKERS,
     CATALYST_THEME_SECTOR_MIN,
 )
+from src.project_env import load_project_dotenv
+from src.tools.api import get_price_data, prices_to_df
+from src.tools.akshare_api import get_prices_robust
+
+
+load_project_dotenv()
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -34,6 +42,92 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    normalized = frame.copy()
+    if not isinstance(normalized.index, pd.DatetimeIndex):
+        normalized.index = pd.to_datetime(normalized.index)
+    normalized = normalized.sort_index()
+    normalized.columns = [str(column).lower() for column in normalized.columns]
+    return normalized
+
+
+def _extract_forward_outcome(ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]) -> dict[str, Any]:
+    cache_key = (ticker, trade_date)
+    frame = price_cache.get(cache_key)
+    if frame is None:
+        end_date = (pd.Timestamp(trade_date) + pd.Timedelta(days=15)).strftime("%Y-%m-%d")
+        try:
+            frame = _normalize_price_frame(get_price_data(ticker, trade_date, end_date))
+        except Exception:
+            try:
+                frame = _normalize_price_frame(prices_to_df(get_prices_robust(ticker, trade_date, end_date, use_mock_on_fail=False)))
+            except Exception:
+                frame = pd.DataFrame()
+        price_cache[cache_key] = frame
+    if frame.empty:
+        return {"data_status": "missing_price_frame"}
+
+    trade_ts = pd.Timestamp(trade_date)
+    same_day = frame.loc[frame.index.normalize() == trade_ts.normalize()]
+    future_days = frame.loc[frame.index.normalize() > trade_ts.normalize()]
+    if same_day.empty:
+        return {"data_status": "missing_trade_day_bar"}
+    if future_days.empty:
+        return {"data_status": "missing_next_trade_day_bar"}
+    if len(future_days) < 2:
+        return {"data_status": "missing_second_trade_day_bar"}
+
+    trade_row = same_day.iloc[0]
+    next_row = future_days.iloc[0]
+    second_row = future_days.iloc[1]
+    trade_close = _safe_float(trade_row.get("close"), default=-1.0)
+    next_open = _safe_float(next_row.get("open"), default=-1.0)
+    next_high = _safe_float(next_row.get("high"), default=-1.0)
+    next_close = _safe_float(next_row.get("close"), default=-1.0)
+    second_open = _safe_float(second_row.get("open"), default=-1.0)
+    second_high = _safe_float(second_row.get("high"), default=-1.0)
+    second_close = _safe_float(second_row.get("close"), default=-1.0)
+    if min(trade_close, next_open, next_high, next_close, second_open, second_high, second_close) <= 0:
+        return {"data_status": "incomplete_price_bar"}
+
+    return {
+        "data_status": "ok",
+        "next_trade_date": future_days.index[0].strftime("%Y-%m-%d"),
+        "second_trade_date": future_days.index[1].strftime("%Y-%m-%d"),
+        "next_open_return": round((next_open / trade_close) - 1.0, 4),
+        "next_high_return": round((next_high / trade_close) - 1.0, 4),
+        "next_close_return": round((next_close / trade_close) - 1.0, 4),
+        "next_open_to_close_return": round((next_close / next_open) - 1.0, 4),
+        "second_open_return": round((second_open / trade_close) - 1.0, 4),
+        "second_high_return": round((second_high / trade_close) - 1.0, 4),
+        "second_close_return": round((second_close / trade_close) - 1.0, 4),
+        "second_open_to_close_return": round((second_close / second_open) - 1.0, 4),
+    }
+
+
+def _summarize_realized_outcomes(rows: list[dict[str, Any]], *, hit_threshold: float) -> dict[str, Any]:
+    ok_rows = [row for row in rows if row.get("data_status") == "ok"]
+    next_high_returns = [float(row["next_high_return"]) for row in ok_rows]
+    next_close_returns = [float(row["next_close_return"]) for row in ok_rows]
+    second_high_returns = [float(row["second_high_return"]) for row in ok_rows]
+    second_close_returns = [float(row["second_close_return"]) for row in ok_rows]
+    return {
+        "sample_count": len(rows),
+        "ok_count": len(ok_rows),
+        "data_status_counts": dict(Counter(str(row.get("data_status") or "unknown") for row in rows).most_common()),
+        "next_high_return_mean": round(sum(next_high_returns) / len(next_high_returns), 4) if next_high_returns else None,
+        "next_close_return_mean": round(sum(next_close_returns) / len(next_close_returns), 4) if next_close_returns else None,
+        "second_high_return_mean": round(sum(second_high_returns) / len(second_high_returns), 4) if second_high_returns else None,
+        "second_close_return_mean": round(sum(second_close_returns) / len(second_close_returns), 4) if second_close_returns else None,
+        "next_high_hit_rate_at_threshold": round(sum(value >= hit_threshold for value in next_high_returns) / len(next_high_returns), 4) if next_high_returns else None,
+        "next_close_positive_rate": round(sum(value > 0 for value in next_close_returns) / len(next_close_returns), 4) if next_close_returns else None,
+        "second_high_hit_rate_at_threshold": round(sum(value >= hit_threshold for value in second_high_returns) / len(second_high_returns), 4) if second_high_returns else None,
+        "second_close_positive_rate": round(sum(value > 0 for value in second_close_returns) / len(second_close_returns), 4) if second_close_returns else None,
+    }
 
 
 def _parse_float_grid(raw: str | None, *, default: float) -> list[float]:
@@ -235,9 +329,21 @@ def analyze_catalyst_theme_frontier(
     sector_min_grid: list[float] | None = None,
     catalyst_min_grid: list[float] | None = None,
     max_candidates_per_trade_date: int = CATALYST_THEME_MAX_TICKERS,
+    realized_hit_threshold: float = 0.02,
 ) -> dict[str, Any]:
     candidate_payload = collect_catalyst_theme_rows(report_dir)
-    rows = list(candidate_payload["rows"])
+    price_cache: dict[tuple[str, str], pd.DataFrame] = {}
+    rows = [
+        {
+            **row,
+            **_extract_forward_outcome(
+                str(row.get("ticker") or ""),
+                str(row.get("trade_date") or ""),
+                price_cache,
+            ),
+        }
+        for row in list(candidate_payload["rows"])
+    ]
     default_thresholds = default_catalyst_theme_thresholds()
     variants: list[dict[str, Any]] = []
 
@@ -320,6 +426,8 @@ def analyze_catalyst_theme_frontier(
                 "promoted_filter_reason_counts": dict(promoted_filter_reason_counts.most_common()),
                 "threshold_relaxation_cost": threshold_relaxation_cost,
                 "top_promoted_rows": promoted_rows[:8],
+                "selected_outcome_summary": _summarize_realized_outcomes(selected_rows, hit_threshold=realized_hit_threshold),
+                "promoted_outcome_summary": _summarize_realized_outcomes(promoted_rows, hit_threshold=realized_hit_threshold),
             }
         )
 
@@ -354,6 +462,16 @@ def analyze_catalyst_theme_frontier(
         "candidate_source_counts": candidate_payload["candidate_source_counts"],
         "shadow_filter_reason_counts": candidate_payload["shadow_filter_reason_counts"],
         "max_candidates_per_trade_date": int(max_candidates_per_trade_date),
+        "realized_hit_threshold": round(float(realized_hit_threshold), 4),
+        "overall_outcome_summary": _summarize_realized_outcomes(rows, hit_threshold=realized_hit_threshold),
+        "selected_outcome_summary": _summarize_realized_outcomes(
+            [row for row in rows if row.get("baseline_status") == "selected"],
+            hit_threshold=realized_hit_threshold,
+        ),
+        "shadow_outcome_summary": _summarize_realized_outcomes(
+            [row for row in rows if row.get("baseline_status") == "shadow"],
+            hit_threshold=realized_hit_threshold,
+        ),
         "baseline_variant": baseline_variant,
         "recommended_variant": recommended_variant,
         "variants": variants,
@@ -374,12 +492,19 @@ def render_catalyst_theme_frontier_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- shadow_filter_reason_counts: {analysis.get('shadow_filter_reason_counts')}")
     lines.append("")
 
+    lines.append("## Realized Outcomes")
+    lines.append(f"- overall_outcome_summary: {analysis.get('overall_outcome_summary')}")
+    lines.append(f"- selected_outcome_summary: {analysis.get('selected_outcome_summary')}")
+    lines.append(f"- shadow_outcome_summary: {analysis.get('shadow_outcome_summary')}")
+    lines.append("")
+
     baseline_variant = dict(analysis.get("baseline_variant") or {})
     lines.append("## Baseline")
     lines.append(f"- variant_name: {baseline_variant.get('variant_name')}")
     lines.append(f"- thresholds: {baseline_variant.get('thresholds')}")
     lines.append(f"- selected_candidate_count: {baseline_variant.get('selected_candidate_count')}")
     lines.append(f"- promoted_shadow_count: {baseline_variant.get('promoted_shadow_count')}")
+    lines.append(f"- selected_outcome_summary: {baseline_variant.get('selected_outcome_summary')}")
     lines.append("")
 
     recommended_variant = dict(analysis.get("recommended_variant") or {})
@@ -390,6 +515,8 @@ def render_catalyst_theme_frontier_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- selected_candidate_count: {recommended_variant.get('selected_candidate_count')}")
     lines.append(f"- promoted_shadow_count: {recommended_variant.get('promoted_shadow_count')}")
     lines.append(f"- promoted_filter_reason_counts: {recommended_variant.get('promoted_filter_reason_counts')}")
+    lines.append(f"- selected_outcome_summary: {recommended_variant.get('selected_outcome_summary')}")
+    lines.append(f"- promoted_outcome_summary: {recommended_variant.get('promoted_outcome_summary')}")
     lines.append("")
 
     lines.append("## Variant Ranking")

@@ -49,6 +49,14 @@ def _round_or_none(value: float | None, digits: int = 4) -> float | None:
     return round(float(value), digits)
 
 
+def _resolve_candidate_metrics(entry: dict[str, Any]) -> dict[str, Any]:
+    boundary_metrics = dict(entry.get("short_trade_boundary_metrics") or {})
+    catalyst_metrics = dict(entry.get("catalyst_theme_metrics") or {})
+    if boundary_metrics:
+        return boundary_metrics
+    return catalyst_metrics
+
+
 def _summarize(values: list[float]) -> dict[str, float | int | None]:
     if not values:
         return {"count": 0, "min": None, "max": None, "mean": None}
@@ -156,7 +164,12 @@ def render_pre_layer_short_trade_outcomes_markdown(analysis: dict[str, Any]) -> 
     lines.append("## Top Cases")
     for row in analysis["top_cases"]:
         lines.append(
-            f"- {row['trade_date']} {row['ticker']}: source={row['candidate_source']}, candidate_score={row['candidate_score']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}"
+            f"- {row.get('trade_date')} {row.get('ticker')}: "
+            f"source={row.get('candidate_source')}, "
+            f"candidate_score={row.get('candidate_score')}, "
+            f"data_status={row.get('data_status')}, "
+            f"next_high_return={row.get('next_high_return')}, "
+            f"next_close_return={row.get('next_close_return')}"
         )
     lines.append("")
     lines.append("## Recommendation")
@@ -189,6 +202,7 @@ def analyze_pre_layer_short_trade_outcomes(
             candidate_source = str(entry.get("candidate_source") or "unknown")
             if active_sources and candidate_source not in active_sources:
                 continue
+            metrics = _resolve_candidate_metrics(entry)
             outcome = _extract_next_day_outcome(ticker, trade_date, price_cache)
             data_status = str(outcome.get("data_status") or "unknown")
             data_status_counts[data_status] += 1
@@ -197,11 +211,11 @@ def analyze_pre_layer_short_trade_outcomes(
                 "trade_date": trade_date,
                 "ticker": ticker,
                 "candidate_source": candidate_source,
-                "candidate_score": _round_or_none(_safe_float(dict(entry.get("short_trade_boundary_metrics") or {}).get("candidate_score"))),
-                "breakout_freshness": _round_or_none(_safe_float(dict(entry.get("short_trade_boundary_metrics") or {}).get("breakout_freshness"))),
-                "trend_acceleration": _round_or_none(_safe_float(dict(entry.get("short_trade_boundary_metrics") or {}).get("trend_acceleration"))),
-                "volume_expansion_quality": _round_or_none(_safe_float(dict(entry.get("short_trade_boundary_metrics") or {}).get("volume_expansion_quality"))),
-                "catalyst_freshness": _round_or_none(_safe_float(dict(entry.get("short_trade_boundary_metrics") or {}).get("catalyst_freshness"))),
+                "candidate_score": _round_or_none(_safe_float(metrics.get("candidate_score"))),
+                "breakout_freshness": _round_or_none(_safe_float(metrics.get("breakout_freshness"))),
+                "trend_acceleration": _round_or_none(_safe_float(metrics.get("trend_acceleration"))),
+                "volume_expansion_quality": _round_or_none(_safe_float(metrics.get("volume_expansion_quality"))),
+                "catalyst_freshness": _round_or_none(_safe_float(metrics.get("catalyst_freshness"))),
                 **outcome,
             }
             candidate_rows.append(row)

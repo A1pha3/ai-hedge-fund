@@ -110,9 +110,33 @@ UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN = _get_env_float("DAILY_PIPELINE_UPSTR
 UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN", 0.85)
 UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR", 1.0)
 UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD", 0.45)
+UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD",
+    0.42,
+)
 UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD = _get_env_float(
     "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD",
     0.45,
+)
+UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD",
+    0.43,
+)
+UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN",
+    0.75,
+)
+UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN",
+    0.80,
+)
+UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN",
+    0.50,
+)
+UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN",
+    0.44,
 )
 UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT = bool(
     _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 1)
@@ -124,7 +148,7 @@ UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_BY_LANE = {
     "post_gate_liquidity_competition": bool(
         _get_env_int(
             "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_REBUCKET_REQUIRE_NO_PROFITABILITY_HARD_CLIFF",
-            int(UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT),
+            0,
         )
     ),
 }
@@ -280,14 +304,62 @@ def _load_latest_btst_historical_prior_by_ticker() -> dict[str, dict[str, Any]]:
     return load_latest_btst_historical_prior_by_ticker(BTST_REPORTS_ROOT)
 
 
+def _historical_prior_value_is_missing(key: str, value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return True
+        if key == "execution_quality_label" and normalized == "unknown":
+            return True
+    return False
+
+
+def _resolve_historical_prior_for_ticker(*, ticker: str, historical_prior: dict[str, Any] | None, prior_by_ticker: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    embedded_historical_prior = dict(historical_prior or {})
+    latest_historical_prior = dict(prior_by_ticker.get(ticker) or {})
+    if not embedded_historical_prior:
+        return latest_historical_prior
+    if not latest_historical_prior:
+        return embedded_historical_prior
+
+    resolved_historical_prior = dict(latest_historical_prior)
+    for key, value in embedded_historical_prior.items():
+        if _historical_prior_value_is_missing(str(key), value):
+            continue
+        resolved_historical_prior[str(key)] = value
+    return resolved_historical_prior
+
+
+def _refresh_attached_entry_relief(entry: dict[str, Any]) -> dict[str, Any]:
+    updated_entry = dict(entry)
+    candidate_pool_lane = str(updated_entry.get("candidate_pool_lane") or "")
+    historical_prior = dict(updated_entry.get("historical_prior") or {})
+    current_relief = dict(updated_entry.get("short_trade_catalyst_relief") or {})
+    if candidate_pool_lane != "post_gate_liquidity_competition":
+        return updated_entry
+    if str(current_relief.get("reason") or "") != "upstream_shadow_catalyst_relief":
+        return updated_entry
+    next_close_positive_rate = historical_prior.get("next_close_positive_rate")
+    if next_close_positive_rate is not None and float(next_close_positive_rate) < 0.5:
+        updated_entry.pop("short_trade_catalyst_relief", None)
+    return updated_entry
+
+
 def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_by_ticker: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     attached_entries: list[dict[str, Any]] = []
     for entry in entries:
         updated_entry = dict(entry)
         ticker = str(updated_entry.get("ticker") or "")
-        historical_prior = dict(updated_entry.get("historical_prior") or prior_by_ticker.get(ticker) or {})
+        historical_prior = _resolve_historical_prior_for_ticker(
+            ticker=ticker,
+            historical_prior=dict(updated_entry.get("historical_prior") or {}),
+            prior_by_ticker=prior_by_ticker,
+        )
         if historical_prior:
             updated_entry["historical_prior"] = historical_prior
+        updated_entry = _refresh_attached_entry_relief(updated_entry)
         attached_entries.append(updated_entry)
     return attached_entries
 
@@ -880,6 +952,7 @@ def _build_upstream_shadow_catalyst_relief_config(
     candidate_pool_lane: str,
     filter_reason: str,
     metrics_payload: dict[str, Any],
+    historical_prior: dict[str, Any] | None = None,
     shadow_visibility_gap_selected: bool = False,
 ) -> dict[str, Any]:
     if filter_reason != "catalyst_freshness_below_short_trade_boundary_floor":
@@ -889,32 +962,63 @@ def _build_upstream_shadow_catalyst_relief_config(
     breakout_freshness = float(metrics_payload.get("breakout_freshness", 0.0) or 0.0)
     trend_acceleration = float(metrics_payload.get("trend_acceleration", 0.0) or 0.0)
     close_strength = float(metrics_payload.get("close_strength", 0.0) or 0.0)
-    if candidate_score < UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN:
+    profitability_hard_cliff = bool(metrics_payload.get("profitability_hard_cliff"))
+    candidate_score_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN)
+    trend_acceleration_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN)
+    close_strength_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN)
+    historical_next_close_positive_rate_raw = dict(historical_prior or {}).get("next_close_positive_rate")
+    historical_next_close_positive_rate = None
+    if historical_next_close_positive_rate_raw is not None:
+        try:
+            historical_next_close_positive_rate = float(historical_next_close_positive_rate_raw)
+        except (TypeError, ValueError):
+            historical_next_close_positive_rate = None
+    near_miss_threshold = float(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD)
+    if candidate_pool_lane == "post_gate_liquidity_competition" and profitability_hard_cliff:
+        if (
+            historical_next_close_positive_rate is not None
+            and historical_next_close_positive_rate < UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN
+        ):
+            return {}
+        candidate_score_min = min(candidate_score_min, float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN))
+        trend_acceleration_min = min(trend_acceleration_min, float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN))
+        close_strength_min = min(close_strength_min, float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN))
+        near_miss_threshold = min(near_miss_threshold, float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD))
+    if (
+        candidate_pool_lane == "post_gate_liquidity_competition"
+        and historical_next_close_positive_rate is not None
+        and historical_next_close_positive_rate < UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN
+    ):
+        return {}
+    if candidate_score < candidate_score_min:
         return {}
     if breakout_freshness < UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN:
         return {}
-    if trend_acceleration < UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN:
+    if trend_acceleration < trend_acceleration_min:
         return {}
-    if close_strength < UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN:
+    if close_strength < close_strength_min:
         return {}
 
     require_no_profitability_hard_cliff = _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(candidate_pool_lane)
     selected_threshold_override_enabled = candidate_pool_lane == "post_gate_liquidity_competition" or (
         candidate_pool_lane == "layer_a_liquidity_corridor" and shadow_visibility_gap_selected
     )
+    selected_threshold = float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD)
+    if candidate_pool_lane == "post_gate_liquidity_competition" and profitability_hard_cliff:
+        selected_threshold = min(selected_threshold, float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD))
     return {
         "enabled": True,
         "reason": "upstream_shadow_catalyst_relief",
         "catalyst_freshness_floor": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR, 4),
-        "near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
+        "near_miss_threshold": round(near_miss_threshold, 4),
         **(
-            {"selected_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD, 4)}
+            {"selected_threshold": round(selected_threshold, 4)}
             if selected_threshold_override_enabled
             else {}
         ),
         "breakout_freshness_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN, 4),
-        "trend_acceleration_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN, 4),
-        "close_strength_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN, 4),
+        "trend_acceleration_min": round(trend_acceleration_min, 4),
+        "close_strength_min": round(close_strength_min, 4),
         "require_no_profitability_hard_cliff": require_no_profitability_hard_cliff,
     }
 
@@ -958,6 +1062,7 @@ def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], fil
         candidate_pool_lane=candidate_pool_lane,
         filter_reason=filter_reason,
         metrics_payload=metrics_payload,
+        historical_prior=dict(candidate_entry.get("historical_prior") or {}),
         shadow_visibility_gap_selected=bool(candidate_entry.get("shadow_visibility_gap_selected")),
     )
     resolved_reason_codes = [
@@ -1071,7 +1176,11 @@ def _build_short_trade_candidate_diagnostics(
             shadow_visibility_gap_selected=bool(shadow_candidate.shadow_visibility_gap_selected) if shadow_candidate else False,
             shadow_visibility_gap_relaxed_band=bool(shadow_candidate.shadow_visibility_gap_relaxed_band) if shadow_candidate else False,
         )
-        historical_prior = dict((historical_prior_by_ticker or {}).get(item.ticker) or {})
+        historical_prior = _resolve_historical_prior_for_ticker(
+            ticker=str(item.ticker or ""),
+            historical_prior=dict(candidate_entry.get("historical_prior") or {}),
+            prior_by_ticker=historical_prior_by_ticker or {},
+        )
         if historical_prior:
             candidate_entry["historical_prior"] = historical_prior
         qualified, filter_reason, metrics_payload = _qualifies_short_trade_boundary_candidate(trade_date=trade_date, entry=candidate_entry)
@@ -1706,16 +1815,15 @@ def _ensure_plan_target_shells(
         list(plan.watchlist or []),
         prior_by_ticker=historical_prior_by_ticker,
     )
+    funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
+    funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    catalyst_theme_candidates = list(dict(funnel_filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []) if target_mode == "short_trade_only" else []
     supplemental_short_trade_entries = _attach_historical_prior_to_entries(
         [
-        *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
-        *list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []),
-        *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
-        *(
-            list(((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("catalyst_theme_candidates", {}).get("tickers", []) or [])
-            if target_mode == "short_trade_only"
-            else []
-        ),
+            *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
+            *list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []),
+            *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
+            *catalyst_theme_candidates,
         ],
         prior_by_ticker=historical_prior_by_ticker,
     )

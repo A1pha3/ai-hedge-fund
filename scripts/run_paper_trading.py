@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Any
 
 
+AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES = int(os.getenv("AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES", "2"))
+AUTO_SHADOW_REBUCKET_MIN_GATE_SHARE = float(os.getenv("AUTO_SHADOW_REBUCKET_MIN_GATE_SHARE", "5.0"))
+AUTO_SHADOW_RECALL_MAX_CLOSEST_PRE_TRUNCATION_GAP = int(os.getenv("AUTO_SHADOW_RECALL_MAX_CLOSEST_PRE_TRUNCATION_GAP", "1200"))
+AUTO_SHADOW_FOLLOWUP_MIN_NEXT_CLOSE_POSITIVE_RATE = float(os.getenv("AUTO_SHADOW_FOLLOWUP_MIN_NEXT_CLOSE_POSITIVE_RATE", "0.5"))
+
+
 def _default_output_dir(start_date: str, end_date: str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path("data/reports") / f"paper_trading_{start_date}_{end_date}_{timestamp}"
@@ -157,6 +163,52 @@ def _load_json_if_exists(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _latest_followup_supports_overnight_shadow_focus(dossier: dict[str, Any]) -> bool:
+    governance_followup = dict(dossier.get("governance_followup") or {})
+    latest_followup_next_close_positive_rate = governance_followup.get("latest_followup_historical_next_close_positive_rate")
+    if latest_followup_next_close_positive_rate is None:
+        return True
+    try:
+        return float(latest_followup_next_close_positive_rate) >= AUTO_SHADOW_FOLLOWUP_MIN_NEXT_CLOSE_POSITIVE_RATE
+    except (TypeError, ValueError):
+        return True
+
+
+def _extend_shadow_focus_from_candidate_pool_recall_dossier(
+    reports_root: Path,
+    *,
+    all_focus: set[str],
+    rebucket_focus: set[str],
+) -> None:
+    dossier = _load_json_if_exists(reports_root / "btst_candidate_pool_recall_dossier_latest.json")
+    for row in list(dossier.get("priority_ticker_dossiers") or []):
+        payload = dict(row or {})
+        ticker = str(payload.get("ticker") or "").strip()
+        if not ticker:
+            continue
+
+        strict_goal_case_count = int(payload.get("strict_btst_goal_case_count") or 0)
+        closest_pre_truncation_gap = payload.get("closest_pre_truncation_gap")
+        truncation_liquidity_profile = dict(payload.get("truncation_liquidity_profile") or {})
+        priority_handoff = str(truncation_liquidity_profile.get("priority_handoff") or "").strip()
+        avg_amount_share_of_min_gate = truncation_liquidity_profile.get("avg_amount_share_of_min_gate_mean")
+
+        if strict_goal_case_count < AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES:
+            continue
+        if priority_handoff != "post_gate_liquidity_competition":
+            continue
+        if avg_amount_share_of_min_gate is None or float(avg_amount_share_of_min_gate) < AUTO_SHADOW_REBUCKET_MIN_GATE_SHARE:
+            continue
+        if closest_pre_truncation_gap is None or int(closest_pre_truncation_gap) > AUTO_SHADOW_RECALL_MAX_CLOSEST_PRE_TRUNCATION_GAP:
+            continue
+        candidate_dossier = _load_json_if_exists(reports_root / f"btst_tplus2_candidate_dossier_{ticker}_latest.json")
+        if candidate_dossier and not _latest_followup_supports_overnight_shadow_focus(candidate_dossier):
+            continue
+
+        all_focus.add(ticker)
+        rebucket_focus.add(ticker)
+
+
 def _derive_shadow_focus_tickers_from_reports(reports_root: Path | None) -> dict[str, list[str]]:
     derived_focus = {
         "all": [],
@@ -188,6 +240,7 @@ def _derive_shadow_focus_tickers_from_reports(reports_root: Path | None) -> dict
             not ticker
             or latest_followup_decision not in {"near_miss", "selected"}
             or downstream_followup_status not in {"continuation_confirm_then_review", "continuation_only_confirm_then_review"}
+            or not _latest_followup_supports_overnight_shadow_focus(dossier)
         ):
             continue
 
@@ -222,6 +275,12 @@ def _derive_shadow_focus_tickers_from_reports(reports_root: Path | None) -> dict
                 if latest_followup_decision == "selected" and has_visibility_gap:
                     visibility_gap_all_focus.add(ticker)
                     visibility_gap_rebucket_focus.add(ticker)
+
+    _extend_shadow_focus_from_candidate_pool_recall_dossier(
+        reports_root,
+        all_focus=all_focus,
+        rebucket_focus=rebucket_focus,
+    )
 
     derived_focus["all"] = sorted(all_focus)
     derived_focus["layer_a_liquidity_corridor"] = sorted(corridor_focus)
