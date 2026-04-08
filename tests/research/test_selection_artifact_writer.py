@@ -402,6 +402,86 @@ def test_selection_snapshot_serializes_short_trade_frontier_fields(tmp_path):
     assert isinstance(short_trade["trend_acceleration"], float)
 
 
+def test_file_selection_artifact_writer_includes_catalyst_theme_candidates_in_short_trade_replay_inputs(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_short_trade_catalyst_bridge")
+    plan = ExecutionPlan(
+        date="20260322",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {
+                "layer_a_count": 50,
+                "layer_b_count": 8,
+                "watchlist_count": 0,
+                "buy_order_count": 0,
+                "sell_order_count": 0,
+                "catalyst_theme_candidate_count": 1,
+            },
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": [], "shadow_observation_entries": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [
+                            {
+                                "ticker": "300999",
+                                "decision": "catalyst_theme",
+                                "score_b": 0.34,
+                                "score_c": 0.0,
+                                "score_final": 0.34,
+                                "quality_score": 0.5,
+                                "preferred_entry_mode": "theme_research_followup",
+                                "candidate_source": "catalyst_theme",
+                                "candidate_reason_codes": [
+                                    "catalyst_theme_candidate_score_ranked",
+                                    "catalyst_theme_research_candidate",
+                                    "catalyst_theme_short_trade_carryover_candidate",
+                                ],
+                                "positive_tags": ["close_momentum_catalyst_relief"],
+                                "top_reasons": ["candidate_score=0.44"],
+                                "short_trade_catalyst_relief": {
+                                    "enabled": True,
+                                    "reason": "catalyst_theme_short_trade_carryover",
+                                    "catalyst_freshness_floor": 1.0,
+                                    "near_miss_threshold": 0.44,
+                                    "breakout_freshness_min": 0.35,
+                                    "trend_acceleration_min": 0.72,
+                                    "close_strength_min": 0.85,
+                                    "require_no_profitability_hard_cliff": True,
+                                },
+                                "metrics": {
+                                    "breakout_freshness": 0.40,
+                                    "trend_acceleration": 0.80,
+                                    "close_strength": 0.91,
+                                    "sector_resonance": 0.10,
+                                    "catalyst_freshness": 0.0,
+                                },
+                                "gate_status": {"data": "pass", "structural": "pass", "score": "proxy_only"},
+                                "blockers": [],
+                            }
+                        ],
+                        "shadow_candidates": [],
+                    },
+                }
+            },
+        },
+        watchlist=[],
+        selection_targets={},
+        target_mode="short_trade_only",
+        dual_target_summary=DualTargetSummary(target_mode="short_trade_only", selection_target_count=0, short_trade_target_count=0, shell_target_count=0),
+        buy_orders=[],
+        sell_orders=[],
+    )
+
+    result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+
+    assert result.write_status == "success"
+    replay_input_payload = json.loads((tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    assert replay_input_payload["source_summary"]["supplemental_catalyst_theme_entry_count"] == 1
+    assert replay_input_payload["source_summary"]["supplemental_short_trade_entry_count"] == 1
+    assert replay_input_payload["supplemental_short_trade_entries"][0]["ticker"] == "300999"
+    assert replay_input_payload["supplemental_short_trade_entries"][0]["short_trade_catalyst_relief"]["reason"] == "catalyst_theme_short_trade_carryover"
+
+
 def test_file_selection_artifact_writer_merges_released_shadow_entries_into_replay_input(tmp_path):
     writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_shadow_release")
     plan = ExecutionPlan(

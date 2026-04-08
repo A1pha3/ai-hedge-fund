@@ -8,6 +8,7 @@ from scripts.replay_selection_target_calibration import (
     analyze_selection_target_combination_grid,
     analyze_selection_target_penalty_grid,
     analyze_selection_target_penalty_threshold_grid,
+    compare_selection_target_replay_inputs,
     analyze_selection_target_replay_inputs,
     analyze_selection_target_structural_variants,
     analyze_selection_target_threshold_grid,
@@ -285,6 +286,19 @@ def _write_replay_input_with_upstream_shadow_observation(tmp_path):
     return replay_input_path
 
 
+def _write_replay_input_with_pipeline_snapshot(tmp_path, *, run_id: str, selected_analysts: list[str], analyst_roster_version: str):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    replay_input_path = _write_replay_input(tmp_path)
+    payload = json.loads(replay_input_path.read_text(encoding="utf-8"))
+    payload["run_id"] = run_id
+    payload["pipeline_config_snapshot"] = {
+        "selected_analysts": list(selected_analysts),
+        "analyst_roster_version": analyst_roster_version,
+    }
+    replay_input_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay_input_path
+
+
 def test_override_short_trade_thresholds_accepts_watchlist_zero_catalyst_profile_overrides():
     with _override_short_trade_thresholds(
         profile_name="default",
@@ -432,6 +446,56 @@ def test_replay_selection_target_calibration_accepts_profile_name(tmp_path):
     assert diagnostic["replayed_metrics_payload"]["breakout_stage"] == "prepared_breakout"
     assert diagnostic["replayed_metrics_payload"]["thresholds"]["profile_name"] == "staged_breakout"
     assert diagnostic["replayed_metrics_payload"]["thresholds"]["near_miss_threshold"] == 0.42
+
+
+def test_compare_selection_target_replay_inputs_fails_fast_on_roster_drift(tmp_path):
+    left_path = _write_replay_input_with_pipeline_snapshot(
+        tmp_path / "left",
+        run_id="left_run",
+        selected_analysts=["technical_analyst", "fundamentals_analyst"],
+        analyst_roster_version="custom",
+    )
+    right_path = _write_replay_input_with_pipeline_snapshot(
+        tmp_path / "right",
+        run_id="right_run",
+        selected_analysts=[],
+        analyst_roster_version="default",
+    )
+
+    try:
+        compare_selection_target_replay_inputs(left_path, right_path)
+    except SystemExit as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected compare_selection_target_replay_inputs to fail on roster drift.")
+
+    assert "--compare-to detected analyst roster drift" in message
+    assert "technical_analyst" in message
+    assert "fundamentals_analyst" in message
+
+
+def test_compare_selection_target_replay_inputs_allows_roster_drift_when_explicitly_requested(tmp_path):
+    left_path = _write_replay_input_with_pipeline_snapshot(
+        tmp_path / "left",
+        run_id="left_run",
+        selected_analysts=["technical_analyst", "fundamentals_analyst"],
+        analyst_roster_version="custom",
+    )
+    right_path = _write_replay_input_with_pipeline_snapshot(
+        tmp_path / "right",
+        run_id="right_run",
+        selected_analysts=[],
+        analyst_roster_version="default",
+    )
+
+    comparison = compare_selection_target_replay_inputs(left_path, right_path, allow_roster_drift=True)
+
+    assert len(comparison["source_payload_differences"]) == 1
+    difference = comparison["source_payload_differences"][0]
+    assert difference["left"]["analyst_roster_version"] == "custom"
+    assert difference["left"]["selected_analysts"] == ["technical_analyst", "fundamentals_analyst"]
+    assert difference["right"]["analyst_roster_version"] == "default"
+    assert difference["right"]["selected_analysts"] == []
 
 
 def test_replay_selection_target_threshold_grid_finds_first_promotions(tmp_path):

@@ -929,25 +929,10 @@ def compare_selection_target_replay_inputs(
     near_miss_threshold: float | None = None,
     structural_variant: str = "baseline",
     focus_tickers: list[str] | None = None,
+    allow_roster_drift: bool = False,
 ) -> dict[str, Any]:
     left_sources = load_selection_target_replay_sources(input_path)
     right_sources = load_selection_target_replay_sources(compare_to_path)
-    left_analysis = analyze_selection_target_replay_inputs(
-        input_path,
-        profile_name=profile_name,
-        select_threshold=select_threshold,
-        near_miss_threshold=near_miss_threshold,
-        structural_variant=structural_variant,
-        focus_tickers=focus_tickers,
-    )
-    right_analysis = analyze_selection_target_replay_inputs(
-        compare_to_path,
-        profile_name=profile_name,
-        select_threshold=select_threshold,
-        near_miss_threshold=near_miss_threshold,
-        structural_variant=structural_variant,
-        focus_tickers=focus_tickers,
-    )
 
     def _index_source_payloads(sources: list[tuple[Path, dict[str, Any]]]) -> dict[str, dict[str, Any]]:
         indexed: dict[str, dict[str, Any]] = {}
@@ -964,23 +949,61 @@ def compare_selection_target_replay_inputs(
     left_sources_by_date = _index_source_payloads(left_sources)
     right_sources_by_date = _index_source_payloads(right_sources)
     source_payload_differences: list[dict[str, Any]] = []
+    roster_drift_differences: list[dict[str, Any]] = []
     for trade_date in sorted(set(left_sources_by_date) | set(right_sources_by_date)):
         left_row = left_sources_by_date.get(trade_date, {})
         right_row = right_sources_by_date.get(trade_date, {})
+        roster_changed = (
+            list(left_row.get("selected_analysts") or []) != list(right_row.get("selected_analysts") or [])
+            or str(left_row.get("analyst_roster_version") or "") != str(right_row.get("analyst_roster_version") or "")
+        )
         changed = (
             dict(left_row.get("source_summary") or {}) != dict(right_row.get("source_summary") or {})
-            or list(left_row.get("selected_analysts") or []) != list(right_row.get("selected_analysts") or [])
-            or str(left_row.get("analyst_roster_version") or "") != str(right_row.get("analyst_roster_version") or "")
+            or roster_changed
         )
         if not changed:
             continue
-        source_payload_differences.append(
-            {
-                "trade_date": trade_date,
-                "left": left_row,
-                "right": right_row,
-            }
+        difference = {
+            "trade_date": trade_date,
+            "left": left_row,
+            "right": right_row,
+        }
+        source_payload_differences.append(difference)
+        if roster_changed:
+            roster_drift_differences.append(difference)
+
+    if roster_drift_differences and not allow_roster_drift:
+        drift_lines = [
+            (
+                f"{row['trade_date']}: "
+                f"left roster={row['left'].get('analyst_roster_version')} analysts={row['left'].get('selected_analysts')} "
+                f"vs right roster={row['right'].get('analyst_roster_version')} analysts={row['right'].get('selected_analysts')}"
+            )
+            for row in roster_drift_differences
+        ]
+        raise SystemExit(
+            "--compare-to detected analyst roster drift between fixed artifacts. "
+            "These reports are not directly comparable for BTST validation. "
+            "Re-run with --allow-roster-drift only if you explicitly want a diagnostic apples-to-oranges comparison.\n"
+            + "\n".join(drift_lines)
         )
+
+    left_analysis = analyze_selection_target_replay_inputs(
+        input_path,
+        profile_name=profile_name,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        structural_variant=structural_variant,
+        focus_tickers=focus_tickers,
+    )
+    right_analysis = analyze_selection_target_replay_inputs(
+        compare_to_path,
+        profile_name=profile_name,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        structural_variant=structural_variant,
+        focus_tickers=focus_tickers,
+    )
 
     def _index_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
         return {
@@ -1856,6 +1879,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay short-trade selection targets from selection_target_replay_input.json artifacts.")
     parser.add_argument("input_path", help="Path to a selection_target_replay_input.json file, a selection_artifacts directory, or a report directory.")
     parser.add_argument("--compare-to", default=None, help="Optional second replay input/report path to compare against the primary fixed artifact.")
+    parser.add_argument("--allow-roster-drift", action="store_true", help="Allow compare mode to proceed even when selected_analysts rosters differ between artifacts.")
     parser.add_argument("--profile-name", default="default", help="Short-trade target profile used during replay. Available: " + ", ".join(sorted(SHORT_TRADE_TARGET_PROFILES.keys())))
     parser.add_argument("--select-threshold", type=float, default=None, help="Override short-trade SELECT_THRESHOLD during replay.")
     parser.add_argument("--near-miss-threshold", type=float, default=None, help="Override short-trade NEAR_MISS_THRESHOLD during replay.")
@@ -1907,6 +1931,7 @@ def main() -> int:
             near_miss_threshold=args.near_miss_threshold,
             structural_variant=(structural_variants or ["baseline"])[0],
             focus_tickers=focus_tickers,
+            allow_roster_drift=args.allow_roster_drift,
         )
         markdown_text = render_selection_target_replay_comparison_markdown(analysis)
     elif (avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid) and (select_grid or near_miss_grid):

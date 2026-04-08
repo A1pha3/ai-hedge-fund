@@ -143,6 +143,16 @@ CATALYST_THEME_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_BREA
 CATALYST_THEME_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CLOSE_MIN", 0.20)
 CATALYST_THEME_SECTOR_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SECTOR_MIN", 0.25)
 CATALYST_THEME_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CATALYST_MIN", 0.45)
+CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN = 0.35
+CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN = 0.72
+CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN = 0.85
+CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN = 0.10
+CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN", 0.43)
+CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR", 1.0)
+CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD", 0.44)
+CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF = bool(
+    _get_env_int("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 1)
+)
 BTST_REPORTS_ROOT = Path(os.getenv("DAILY_PIPELINE_BTST_REPORTS_ROOT", "data/reports")).expanduser()
 MERGE_APPROVED_TICKERS = _get_env_csv_set("DAILY_PIPELINE_MERGE_APPROVED_TICKERS", "")
 MERGE_APPROVED_MERGE_REVIEW_PATH = os.getenv("DAILY_PIPELINE_MERGE_APPROVED_MERGE_REVIEW_PATH", "")
@@ -909,6 +919,36 @@ def _build_upstream_shadow_catalyst_relief_config(
     }
 
 
+def _build_catalyst_theme_short_trade_carryover_relief_config(*, metrics_payload: dict[str, Any]) -> dict[str, Any]:
+    close_momentum_catalyst_relief = dict(metrics_payload.get("close_momentum_catalyst_relief") or {})
+    if not bool(close_momentum_catalyst_relief.get("applied")):
+        return {}
+
+    candidate_score = float(metrics_payload.get("candidate_score", 0.0) or 0.0)
+    breakout_freshness = float(metrics_payload.get("breakout_freshness", 0.0) or 0.0)
+    trend_acceleration = float(metrics_payload.get("trend_acceleration", 0.0) or 0.0)
+    close_strength = float(metrics_payload.get("close_strength", 0.0) or 0.0)
+    if candidate_score < CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN:
+        return {}
+    if breakout_freshness < CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN:
+        return {}
+    if trend_acceleration < CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN:
+        return {}
+    if close_strength < CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN:
+        return {}
+
+    return {
+        "enabled": True,
+        "reason": "catalyst_theme_short_trade_carryover",
+        "catalyst_freshness_floor": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR, 4),
+        "near_miss_threshold": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD, 4),
+        "breakout_freshness_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN, 4),
+        "trend_acceleration_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN, 4),
+        "close_strength_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN, 4),
+        "require_no_profitability_hard_cliff": CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+    }
+
+
 def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], filter_reason: str, metrics_payload: dict[str, Any], release_reason: str) -> dict[str, Any]:
     candidate_score = round(float(metrics_payload.get("candidate_score", 0.0) or 0.0), 4)
     candidate_pool_lane = str(candidate_entry.get("candidate_pool_lane") or "")
@@ -1182,8 +1222,34 @@ def _compute_catalyst_theme_candidate_score(snapshot: dict[str, Any]) -> float:
     )
 
 
-def _compute_catalyst_theme_threshold_shortfalls(metrics_payload: dict[str, Any]) -> dict[str, float]:
-    threshold_checks = {
+def _resolve_catalyst_theme_close_momentum_relief(
+    *,
+    breakout_freshness: float,
+    trend_acceleration: float,
+    close_strength: float,
+    sector_resonance: float,
+    catalyst_freshness: float,
+) -> dict[str, Any]:
+    eligible = (
+        catalyst_freshness < CATALYST_THEME_CATALYST_MIN
+        and breakout_freshness >= CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN
+        and trend_acceleration >= CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN
+        and close_strength >= CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN
+        and sector_resonance >= CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN
+    )
+    effective_catalyst_freshness = round(max(catalyst_freshness, CATALYST_THEME_CATALYST_MIN if eligible else catalyst_freshness), 4)
+    effective_sector_min = round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN if eligible else CATALYST_THEME_SECTOR_MIN, 4)
+    return {
+        "enabled": True,
+        "eligible": eligible,
+        "applied": eligible,
+        "effective_catalyst_freshness": effective_catalyst_freshness,
+        "effective_sector_min": effective_sector_min,
+    }
+
+
+def _compute_catalyst_theme_threshold_shortfalls(metric_values: dict[str, Any], threshold_checks: dict[str, float] | None = None) -> dict[str, float]:
+    threshold_checks = threshold_checks or {
         "candidate_score": round(float(CATALYST_THEME_CANDIDATE_SCORE_MIN), 4),
         "breakout_freshness": round(float(CATALYST_THEME_BREAKOUT_MIN), 4),
         "close_strength": round(float(CATALYST_THEME_CLOSE_MIN), 4),
@@ -1192,7 +1258,7 @@ def _compute_catalyst_theme_threshold_shortfalls(metrics_payload: dict[str, Any]
     }
     shortfalls: dict[str, float] = {}
     for metric_key, threshold_value in threshold_checks.items():
-        actual_value = round(float(metrics_payload.get(metric_key, 0.0) or 0.0), 4)
+        actual_value = round(float(metric_values.get(metric_key, 0.0) or 0.0), 4)
         shortfall = round(threshold_value - actual_value, 4)
         if shortfall > 0:
             shortfalls[metric_key] = shortfall
@@ -1200,7 +1266,10 @@ def _compute_catalyst_theme_threshold_shortfalls(metrics_payload: dict[str, Any]
 
 
 def _build_catalyst_theme_shadow_entry(*, item, filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
-    threshold_shortfalls = _compute_catalyst_theme_threshold_shortfalls(metrics_payload)
+    threshold_shortfalls = _compute_catalyst_theme_threshold_shortfalls(
+        dict(metrics_payload.get("threshold_metric_values") or metrics_payload),
+        dict(metrics_payload.get("threshold_checks") or {}),
+    )
     total_shortfall = round(sum(threshold_shortfalls.values()), 4)
     return {
         **_build_catalyst_theme_entry(item=item, reason=filter_reason, rank=0),
@@ -1242,21 +1311,46 @@ def _qualifies_catalyst_theme_candidate(*, trade_date: str, entry: dict) -> tupl
     close_strength = round(float(snapshot.get("close_strength", 0.0) or 0.0), 4)
     sector_resonance = round(float(snapshot.get("sector_resonance", 0.0) or 0.0), 4)
     catalyst_freshness = round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4)
+    close_momentum_catalyst_relief = _resolve_catalyst_theme_close_momentum_relief(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        catalyst_freshness=catalyst_freshness,
+    )
+    effective_catalyst_freshness = round(float(close_momentum_catalyst_relief.get("effective_catalyst_freshness") or catalyst_freshness), 4)
+    effective_sector_min = round(float(close_momentum_catalyst_relief.get("effective_sector_min") or CATALYST_THEME_SECTOR_MIN), 4)
     candidate_score = _compute_catalyst_theme_candidate_score(
         {
             "breakout_freshness": breakout_freshness,
             "trend_acceleration": trend_acceleration,
             "close_strength": close_strength,
             "sector_resonance": sector_resonance,
-            "catalyst_freshness": catalyst_freshness,
+            "catalyst_freshness": effective_catalyst_freshness,
         }
     )
+    threshold_checks = {
+        "candidate_score": round(float(CATALYST_THEME_CANDIDATE_SCORE_MIN), 4),
+        "breakout_freshness": round(float(CATALYST_THEME_BREAKOUT_MIN), 4),
+        "close_strength": round(float(CATALYST_THEME_CLOSE_MIN), 4),
+        "sector_resonance": effective_sector_min,
+        "catalyst_freshness": round(float(CATALYST_THEME_CATALYST_MIN), 4),
+    }
+    threshold_metric_values = {
+        "candidate_score": candidate_score,
+        "breakout_freshness": breakout_freshness,
+        "close_strength": close_strength,
+        "sector_resonance": sector_resonance,
+        "catalyst_freshness": effective_catalyst_freshness,
+    }
 
     theme_tags: list[str] = []
     if catalyst_freshness >= 0.65:
         theme_tags.append("strong_catalyst_freshness")
     elif catalyst_freshness >= CATALYST_THEME_CATALYST_MIN:
         theme_tags.append("fresh_catalyst_support")
+    elif close_momentum_catalyst_relief["applied"]:
+        theme_tags.append("close_momentum_catalyst_relief")
     if sector_resonance >= 0.45:
         theme_tags.append("sector_alignment_support")
     if breakout_freshness >= 0.45:
@@ -1274,13 +1368,17 @@ def _qualifies_catalyst_theme_candidate(*, trade_date: str, entry: dict) -> tupl
         "gate_status": gate_status,
         "blockers": blockers,
         "theme_tags": theme_tags,
+        "effective_catalyst_freshness": effective_catalyst_freshness,
+        "close_momentum_catalyst_relief": close_momentum_catalyst_relief,
+        "threshold_checks": threshold_checks,
+        "threshold_metric_values": threshold_metric_values,
     }
 
     if str(gate_status.get("data") or "") != "pass":
         return False, "metric_data_fail", metrics_payload
-    if catalyst_freshness < CATALYST_THEME_CATALYST_MIN:
+    if effective_catalyst_freshness < CATALYST_THEME_CATALYST_MIN:
         return False, "catalyst_freshness_below_catalyst_theme_floor", metrics_payload
-    if sector_resonance < CATALYST_THEME_SECTOR_MIN:
+    if sector_resonance < effective_sector_min:
         return False, "sector_resonance_below_catalyst_theme_floor", metrics_payload
     if close_strength < CATALYST_THEME_CLOSE_MIN:
         return False, "close_strength_below_catalyst_theme_floor", metrics_payload
@@ -1330,12 +1428,22 @@ def _build_catalyst_theme_candidate_diagnostics(
                 )
             continue
 
+        carryover_relief_config = _build_catalyst_theme_short_trade_carryover_relief_config(metrics_payload=metrics_payload)
+        resolved_reason_codes = [
+            str(code)
+            for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or [])
+            if str(code or "").strip()
+        ]
+        if carryover_relief_config and "catalyst_theme_short_trade_carryover_candidate" not in resolved_reason_codes:
+            resolved_reason_codes.append("catalyst_theme_short_trade_carryover_candidate")
         ranked_candidates.append(
             (
                 float(metrics_payload.get("candidate_score", 0.0) or 0.0),
                 float(item.score_b),
                 {
                     **candidate_entry,
+                    "reasons": resolved_reason_codes,
+                    "candidate_reason_codes": resolved_reason_codes,
                     "score_target": float(metrics_payload.get("candidate_score", 0.0) or 0.0),
                     "confidence": round(min(1.0, max(0.0, float(metrics_payload.get("candidate_score", 0.0) or 0.0))), 4),
                     "top_reasons": [
@@ -1355,6 +1463,7 @@ def _build_catalyst_theme_candidate_diagnostics(
                     },
                     "promotion_trigger": "若催化继续扩散并形成量价确认，可升级到 short-trade shadow 观察。",
                     "catalyst_theme_metrics": metrics_payload,
+                    **({"short_trade_catalyst_relief": carryover_relief_config} if carryover_relief_config else {}),
                 },
             )
         )
@@ -1383,6 +1492,10 @@ def _build_catalyst_theme_candidate_diagnostics(
             "close_strength_min": round(CATALYST_THEME_CLOSE_MIN, 4),
             "sector_resonance_min": round(CATALYST_THEME_SECTOR_MIN, 4),
             "catalyst_freshness_min": round(CATALYST_THEME_CATALYST_MIN, 4),
+            "short_trade_carryover_candidate_score_min": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN, 4),
+            "short_trade_carryover_catalyst_freshness_floor": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR, 4),
+            "short_trade_carryover_near_miss_threshold": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD, 4),
+            "short_trade_carryover_require_no_profitability_hard_cliff": CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
         },
         "selected_tickers": [entry["ticker"] for entry in entries],
         "shadow_tickers": [entry["ticker"] for entry in shadow_entries],
@@ -1598,6 +1711,11 @@ def _ensure_plan_target_shells(
         *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
         *list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []),
         *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
+        *(
+            list(((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("catalyst_theme_candidates", {}).get("tickers", []) or [])
+            if target_mode == "short_trade_only"
+            else []
+        ),
         ],
         prior_by_ticker=historical_prior_by_ticker,
     )
@@ -2107,6 +2225,11 @@ class DailyPipeline:
                         *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
                         *list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
                         *list((watchlist_filter_diagnostics or {}).get("released_shadow_entries", []) or []),
+                        *(
+                            list((catalyst_theme_candidate_diagnostics or {}).get("tickers", []) or [])
+                            if self.target_mode == "short_trade_only"
+                            else []
+                        ),
                     ],
                     prior_by_ticker=historical_prior_by_ticker,
                 ),

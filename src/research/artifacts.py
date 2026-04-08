@@ -424,13 +424,15 @@ def build_selection_target_replay_input(
     rejected_entries = list(dict(filters.get("watchlist", {}) or {}).get("tickers", []) or [])
     watchlist_filter = dict(filters.get("watchlist", {}) or {})
     short_trade_candidate_filters = dict(filters.get("short_trade_candidates", {}) or {})
+    supplemental_catalyst_theme_entries = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
     supplemental_short_trade_entries = [
         *list(short_trade_candidate_filters.get("tickers", []) or []),
         *list(short_trade_candidate_filters.get("released_shadow_entries", []) or []),
         *list(watchlist_filter.get("released_shadow_entries", []) or []),
     ]
     upstream_shadow_observation_entries = list(dict(filters.get("short_trade_candidates", {}) or {}).get("shadow_observation_entries", []) or [])
-    supplemental_catalyst_theme_entries = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
+    if str(getattr(plan, "target_mode", "research_only") or "research_only") == "short_trade_only":
+        supplemental_short_trade_entries.extend(supplemental_catalyst_theme_entries)
     watchlist_entries = [
         _serialize_layer_c_result_for_replay(item, candidate_source="layer_c_watchlist")
         for item in sorted(plan.watchlist, key=lambda current: current.score_final, reverse=True)

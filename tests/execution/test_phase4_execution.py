@@ -2312,6 +2312,184 @@ def test_run_post_market_adds_catalyst_theme_candidates_without_touching_main_se
     assert calls[0][0] == ("000001",)
 
 
+def test_run_post_market_short_trade_only_bridges_close_momentum_catalyst_candidates_into_selection_targets():
+    def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
+        payload = {ticker: {"signal": "bullish", "confidence": 80, "reasoning": "buy"} for ticker in tickers}
+        return {
+            "aswath_damodaran_agent": payload,
+            "ben_graham_agent": payload,
+        }
+
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI", target_mode="short_trade_only")
+
+    original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    try:
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
+            CandidateStock(ticker="000001", name="甲", industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403"),
+            CandidateStock(ticker="000006", name="己", industry_sw="传媒", avg_volume_20d=9000, market_cap=90, listing_date="19910403"),
+        ]
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {
+                "trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}),
+                "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}),
+                "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}),
+                "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={}),
+            }
+            for candidate in candidates
+        }
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
+            _fused("000001", 0.60),
+            FusedScore(
+                ticker="000006",
+                score_b=0.34,
+                strategy_signals={
+                    "trend": StrategySignal(
+                        direction=1,
+                        confidence=74,
+                        completeness=1.0,
+                        sub_factors={
+                            "momentum": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                            "adx_strength": {"direction": 1, "confidence": 84.0, "completeness": 1.0},
+                            "ema_alignment": {"direction": 1, "confidence": 82.0, "completeness": 1.0},
+                            "volatility": {"direction": 1, "confidence": 60.0, "completeness": 1.0},
+                            "long_trend_alignment": {"direction": 0, "confidence": 12.0, "completeness": 1.0},
+                        },
+                    ),
+                    "mean_reversion": StrategySignal(direction=-1, confidence=8, completeness=1.0, sub_factors={}),
+                    "fundamental": StrategySignal(direction=1, confidence=60, completeness=1.0, sub_factors={}),
+                    "event_sentiment": StrategySignal(
+                        direction=1,
+                        confidence=55,
+                        completeness=1.0,
+                        sub_factors={
+                            "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                            "news_sentiment": {"direction": 1, "confidence": 55.0, "completeness": 1.0},
+                        },
+                    ),
+                },
+                arbitration_applied=[],
+                market_state=MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}),
+                weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+                decision="watch",
+            ),
+        ]
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
+            "gate_status": {"data": "pass", "structural": "pass", "score": "proxy_only"},
+            "blockers": [],
+            "breakout_freshness": 0.40 if entry.get("ticker") == "000006" else 0.12,
+            "trend_acceleration": 0.80 if entry.get("ticker") == "000006" else 0.10,
+            "volume_expansion_quality": 0.42 if entry.get("ticker") == "000006" else 0.08,
+            "close_strength": 0.91 if entry.get("ticker") == "000006" else 0.10,
+            "sector_resonance": 0.10 if entry.get("ticker") == "000006" else 0.12,
+            "catalyst_freshness": 0.0 if entry.get("ticker") == "000006" else 0.10,
+        }
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    diagnostics = plan.risk_metrics["funnel_diagnostics"]
+    catalyst_diagnostics = diagnostics["filters"]["catalyst_theme_candidates"]
+    assert catalyst_diagnostics["candidate_count"] == 1
+    assert catalyst_diagnostics["selected_tickers"] == ["000006"]
+    assert "close_momentum_catalyst_relief" in catalyst_diagnostics["tickers"][0]["positive_tags"]
+    assert catalyst_diagnostics["tickers"][0]["catalyst_theme_metrics"]["close_momentum_catalyst_relief"]["applied"] is True
+    assert "catalyst_theme_short_trade_carryover_candidate" in catalyst_diagnostics["tickers"][0]["candidate_reason_codes"]
+    assert catalyst_diagnostics["tickers"][0]["short_trade_catalyst_relief"] == {
+        "enabled": True,
+        "reason": "catalyst_theme_short_trade_carryover",
+        "catalyst_freshness_floor": 1.0,
+        "near_miss_threshold": 0.44,
+        "breakout_freshness_min": 0.35,
+        "trend_acceleration_min": 0.72,
+        "close_strength_min": 0.85,
+        "require_no_profitability_hard_cliff": True,
+    }
+    assert "000006" in plan.selection_targets
+    assert plan.selection_targets["000006"].candidate_source == "catalyst_theme"
+    assert plan.selection_targets["000006"].short_trade is not None
+
+
+def test_run_post_market_short_trade_only_keeps_fresh_catalyst_theme_candidates_from_getting_carryover_relief():
+    def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
+        payload = {ticker: {"signal": "bullish", "confidence": 80, "reasoning": "buy"} for ticker in tickers}
+        return {
+            "aswath_damodaran_agent": payload,
+            "ben_graham_agent": payload,
+        }
+
+    pipeline = DailyPipeline(agent_runner=fake_agent_runner, exit_checker=lambda portfolio, trade_date: [], base_model_name="gpt-4.1", base_model_provider="OpenAI", target_mode="short_trade_only")
+
+    original_build_candidate_pool = daily_pipeline_module.build_candidate_pool
+    original_detect_market_state = daily_pipeline_module.detect_market_state
+    original_score_batch = daily_pipeline_module.score_batch
+    original_fuse_batch = daily_pipeline_module.fuse_batch
+    original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    try:
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
+            CandidateStock(ticker="000006", name="己", industry_sw="传媒", avg_volume_20d=9000, market_cap=90, listing_date="19910403"),
+        ]
+        daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {
+                "trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}),
+                "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}),
+                "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}),
+                "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={}),
+            }
+            for candidate in candidates
+        }
+        daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
+            FusedScore(
+                ticker="000006",
+                score_b=0.34,
+                strategy_signals={
+                    "trend": StrategySignal(direction=1, confidence=74, completeness=1.0, sub_factors={}),
+                    "mean_reversion": StrategySignal(direction=-1, confidence=8, completeness=1.0, sub_factors={}),
+                    "fundamental": StrategySignal(direction=1, confidence=60, completeness=1.0, sub_factors={}),
+                    "event_sentiment": StrategySignal(direction=1, confidence=55, completeness=1.0, sub_factors={}),
+                },
+                arbitration_applied=[],
+                market_state=MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2}),
+                weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+                decision="watch",
+            ),
+        ]
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
+            "gate_status": {"data": "pass", "structural": "pass", "score": "proxy_only"},
+            "blockers": [],
+            "breakout_freshness": 0.40,
+            "trend_acceleration": 0.60,
+            "volume_expansion_quality": 0.42,
+            "close_strength": 0.70,
+            "sector_resonance": 0.30,
+            "catalyst_freshness": 0.45,
+        }
+
+        plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 0, "positions": {}})
+    finally:
+        daily_pipeline_module.build_candidate_pool = original_build_candidate_pool
+        daily_pipeline_module.detect_market_state = original_detect_market_state
+        daily_pipeline_module.score_batch = original_score_batch
+        daily_pipeline_module.fuse_batch = original_fuse_batch
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    catalyst_entry = plan.risk_metrics["funnel_diagnostics"]["filters"]["catalyst_theme_candidates"]["tickers"][0]
+    assert catalyst_entry["ticker"] == "000006"
+    assert "close_momentum_catalyst_relief" not in catalyst_entry["positive_tags"]
+    assert "catalyst_theme_short_trade_carryover_candidate" not in catalyst_entry["candidate_reason_codes"]
+    assert "short_trade_catalyst_relief" not in catalyst_entry
+
+
 def test_watchlist_threshold_020_admits_edge_case_between_020_and_025():
     def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
         return {

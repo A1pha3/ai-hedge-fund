@@ -308,6 +308,30 @@ def _make_historical_execution_relief_entry() -> dict:
     return entry
 
 
+def _make_catalyst_theme_short_trade_carryover_entry(*, include_profitability_hard_cliff: bool = False) -> dict:
+    entry = _make_upstream_shadow_catalyst_relief_entry(include_profitability_hard_cliff=include_profitability_hard_cliff)
+    entry["ticker"] = "688195"
+    entry["candidate_source"] = "catalyst_theme"
+    entry["reason"] = "catalyst_theme_candidate_score_ranked"
+    entry["reasons"] = [
+        "catalyst_theme_candidate_score_ranked",
+        "catalyst_theme_research_candidate",
+        "catalyst_theme_short_trade_carryover_candidate",
+    ]
+    entry["candidate_reason_codes"] = list(entry["reasons"])
+    entry["short_trade_catalyst_relief"] = {
+        "enabled": True,
+        "reason": "catalyst_theme_short_trade_carryover",
+        "catalyst_freshness_floor": 1.0,
+        "near_miss_threshold": 0.44,
+        "breakout_freshness_min": 0.35,
+        "trend_acceleration_min": 0.72,
+        "close_strength_min": 0.85,
+        "require_no_profitability_hard_cliff": True,
+    }
+    return entry
+
+
 def _make_balanced_confirmation_relief_entry() -> dict:
     entry = _make_historical_execution_relief_entry()
     entry["ticker"] = "300620"
@@ -1712,6 +1736,64 @@ def test_upstream_shadow_catalyst_relief_can_promote_corridor_profitability_hard
     assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is True
     assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is True
     assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.45
+
+
+def test_catalyst_theme_short_trade_carryover_promotes_strong_close_theme_candidate_to_near_miss() -> None:
+    baseline_entry = _make_catalyst_theme_short_trade_carryover_entry()
+    relief_entry = _make_catalyst_theme_short_trade_carryover_entry()
+
+    baseline_entry.pop("short_trade_catalyst_relief", None)
+    baseline_entry["candidate_reason_codes"] = ["catalyst_theme_candidate_score_ranked", "catalyst_theme_research_candidate"]
+    baseline_entry["reasons"] = list(baseline_entry["candidate_reason_codes"])
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=baseline_entry,
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=relief_entry,
+    )
+
+    assert baseline_result.decision == "rejected"
+    assert round(baseline_result.score_target, 4) == 0.4362
+    assert relief_result.decision == "near_miss"
+    assert round(relief_result.score_target, 4) == 0.5246
+    assert "catalyst_theme_short_trade_carryover_applied" in relief_result.positive_tags
+    assert relief_result.metrics_payload["upstream_shadow_catalyst_relief_reason"] == "catalyst_theme_short_trade_carryover"
+    assert relief_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.44
+    assert relief_result.metrics_payload["effective_catalyst_freshness"] == 1.0
+    assert relief_result.explainability_payload["upstream_shadow_catalyst_relief"]["reason"] == "catalyst_theme_short_trade_carryover"
+
+
+def test_catalyst_theme_short_trade_carryover_requires_candidate_reason_code() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["candidate_reason_codes"] = ["catalyst_theme_candidate_score_ranked", "catalyst_theme_research_candidate"]
+    entry["reasons"] = list(entry["candidate_reason_codes"])
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "rejected"
+    assert round(result.score_target, 4) == 0.4362
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is False
+    assert "catalyst_theme_short_trade_carryover_applied" not in result.positive_tags
+
+
+def test_catalyst_theme_short_trade_carryover_keeps_profitability_hard_cliff_sample_rejected() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=_make_catalyst_theme_short_trade_carryover_entry(include_profitability_hard_cliff=True),
+    )
+
+    assert result.decision == "rejected"
+    assert round(result.score_target, 4) == 0.4362
+    assert result.metrics_payload["profitability_hard_cliff"] is True
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is False
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is False
+    assert "catalyst_theme_short_trade_carryover_not_triggered" in result.negative_tags
 
 
 def test_visibility_gap_continuation_relief_promotes_selected_visibility_gap_shadow_to_near_miss() -> None:

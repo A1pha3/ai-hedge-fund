@@ -331,7 +331,7 @@ def _resolve_upstream_shadow_catalyst_relief(
         for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
         if str(code or "").strip()
     }
-    if not relief_config or "upstream_shadow_release_candidate" not in candidate_reason_codes:
+    if not relief_config or not (candidate_reason_codes & {"upstream_shadow_release_candidate", "catalyst_theme_short_trade_carryover_candidate"}):
         return default_result
 
     enabled = bool(relief_config.get("enabled", True))
@@ -1603,9 +1603,15 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     if historical_execution_relief["applied"]:
         positive_tags.append("historical_execution_relief_applied")
     if catalyst_relief["applied"]:
-        positive_tags.append("upstream_shadow_catalyst_relief_applied")
+        if str(catalyst_relief["reason"]) == "catalyst_theme_short_trade_carryover":
+            positive_tags.append("catalyst_theme_short_trade_carryover_applied")
+        else:
+            positive_tags.append("upstream_shadow_catalyst_relief_applied")
     elif catalyst_relief["enabled"] and raw_catalyst_freshness < float(catalyst_relief["catalyst_freshness_floor"]):
-        negative_tags.append("upstream_shadow_catalyst_relief_not_triggered")
+        if str(catalyst_relief["reason"]) == "catalyst_theme_short_trade_carryover":
+            negative_tags.append("catalyst_theme_short_trade_carryover_not_triggered")
+        else:
+            negative_tags.append("upstream_shadow_catalyst_relief_not_triggered")
     if visibility_gap_continuation_relief["applied"]:
         positive_tags.append("visibility_gap_continuation_relief_applied")
     if merge_approved_continuation_relief["applied"]:
