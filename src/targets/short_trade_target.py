@@ -401,8 +401,23 @@ def _resolve_visibility_gap_continuation_relief(
     candidate_pool_lane = str(input_data.replay_context.get("candidate_pool_lane") or "").strip()
     shadow_visibility_gap_selected = bool(input_data.replay_context.get("shadow_visibility_gap_selected"))
     shadow_visibility_gap_relaxed_band = bool(input_data.replay_context.get("shadow_visibility_gap_relaxed_band"))
+    historical_prior = _historical_prior(input_data)
     require_relaxed_band = bool(profile.visibility_gap_continuation_require_relaxed_band)
     base_near_miss_threshold = float(profile.near_miss_threshold)
+    historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    historical_applied_scope = str(historical_prior.get("applied_scope") or "")
+    historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
+    weak_same_ticker_intraday_history = (
+        historical_applied_scope == "same_ticker"
+        and historical_execution_quality_label == "intraday_only"
+        and historical_evaluable_count >= 3
+        and historical_next_close_positive_rate <= 0.0
+    )
+    weak_zero_follow_through_history = (
+        historical_execution_quality_label == "zero_follow_through"
+        and historical_evaluable_count >= 3
+    )
     default_result = {
         "enabled": enabled,
         "eligible": False,
@@ -420,6 +435,10 @@ def _resolve_visibility_gap_continuation_relief(
         "catalyst_freshness_floor": 0.0,
         "near_miss_threshold_override": base_near_miss_threshold,
         "require_relaxed_band": require_relaxed_band,
+        "historical_execution_quality_label": historical_execution_quality_label,
+        "historical_applied_scope": historical_applied_scope,
+        "historical_evaluable_count": historical_evaluable_count,
+        "historical_next_close_positive_rate": historical_next_close_positive_rate,
     }
     if not enabled:
         return default_result
@@ -437,6 +456,7 @@ def _resolve_visibility_gap_continuation_relief(
         "trend_acceleration": trend_acceleration >= trend_acceleration_min,
         "close_strength": close_strength >= close_strength_min,
         "no_profitability_hard_cliff": not profitability_hard_cliff,
+        "historical_execution_quality": not (weak_same_ticker_intraday_history or weak_zero_follow_through_history),
     }
     eligible = all(gate_hits.values())
     effective_catalyst_freshness = catalyst_freshness
@@ -466,6 +486,10 @@ def _resolve_visibility_gap_continuation_relief(
         "catalyst_freshness_floor": catalyst_freshness_floor,
         "near_miss_threshold_override": near_miss_threshold_override,
         "require_relaxed_band": require_relaxed_band,
+        "historical_execution_quality_label": historical_execution_quality_label,
+        "historical_applied_scope": historical_applied_scope,
+        "historical_evaluable_count": historical_evaluable_count,
+        "historical_next_close_positive_rate": historical_next_close_positive_rate,
     }
 
 
@@ -483,8 +507,23 @@ def _resolve_merge_approved_continuation_relief(
         for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
         if str(code or "").strip()
     }
+    historical_prior = _historical_prior(input_data)
     base_near_miss_threshold = float(profile.near_miss_threshold)
     base_select_threshold = float(profile.select_threshold)
+    historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    historical_applied_scope = str(historical_prior.get("applied_scope") or "")
+    historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
+    weak_same_ticker_intraday_history = (
+        historical_applied_scope == "same_ticker"
+        and historical_execution_quality_label == "intraday_only"
+        and historical_evaluable_count >= 3
+        and historical_next_close_positive_rate <= 0.0
+    )
+    weak_zero_follow_through_history = (
+        historical_execution_quality_label == "zero_follow_through"
+        and historical_evaluable_count >= 3
+    )
     default_result = {
         "enabled": bool(profile.merge_approved_continuation_relief_enabled),
         "eligible": False,
@@ -498,6 +537,10 @@ def _resolve_merge_approved_continuation_relief(
         "near_miss_threshold_override": base_near_miss_threshold,
         "select_threshold_override": base_select_threshold,
         "require_no_profitability_hard_cliff": bool(profile.merge_approved_continuation_require_no_profitability_hard_cliff),
+        "historical_execution_quality_label": historical_execution_quality_label,
+        "historical_applied_scope": historical_applied_scope,
+        "historical_evaluable_count": historical_evaluable_count,
+        "historical_next_close_positive_rate": historical_next_close_positive_rate,
     }
     if "merge_approved_continuation" not in candidate_reason_codes or not bool(profile.merge_approved_continuation_relief_enabled):
         return default_result
@@ -509,6 +552,7 @@ def _resolve_merge_approved_continuation_relief(
         "trend_acceleration": trend_acceleration >= float(profile.merge_approved_continuation_trend_acceleration_min),
         "close_strength": close_strength >= float(profile.merge_approved_continuation_close_strength_min),
         "no_profitability_hard_cliff": (not bool(profile.merge_approved_continuation_require_no_profitability_hard_cliff)) or (not profitability_hard_cliff),
+        "historical_execution_quality": not (weak_same_ticker_intraday_history or weak_zero_follow_through_history),
     }
     eligible = all(gate_hits.values())
     effective_near_miss_threshold = base_near_miss_threshold
@@ -533,6 +577,10 @@ def _resolve_merge_approved_continuation_relief(
         "near_miss_threshold_override": near_miss_threshold_override,
         "select_threshold_override": select_threshold_override,
         "require_no_profitability_hard_cliff": bool(profile.merge_approved_continuation_require_no_profitability_hard_cliff),
+        "historical_execution_quality_label": historical_execution_quality_label,
+        "historical_applied_scope": historical_applied_scope,
+        "historical_evaluable_count": historical_evaluable_count,
+        "historical_next_close_positive_rate": historical_next_close_positive_rate,
     }
 
 
@@ -2046,6 +2094,10 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "shadow_visibility_gap_selected": bool(visibility_gap_continuation_relief["shadow_visibility_gap_selected"]),
                 "shadow_visibility_gap_relaxed_band": bool(visibility_gap_continuation_relief["shadow_visibility_gap_relaxed_band"]),
                 "gate_hits": dict(visibility_gap_continuation_relief["gate_hits"]),
+                "historical_execution_quality_label": str(visibility_gap_continuation_relief["historical_execution_quality_label"]),
+                "historical_applied_scope": str(visibility_gap_continuation_relief["historical_applied_scope"]),
+                "historical_evaluable_count": int(visibility_gap_continuation_relief["historical_evaluable_count"]),
+                "historical_next_close_positive_rate": round(float(visibility_gap_continuation_relief["historical_next_close_positive_rate"]), 4),
                 "catalyst_freshness_floor": round(float(visibility_gap_continuation_relief["catalyst_freshness_floor"]), 4),
                 "near_miss_threshold_override": round(float(visibility_gap_continuation_relief["near_miss_threshold_override"]), 4),
                 "require_relaxed_band": bool(visibility_gap_continuation_relief["require_relaxed_band"]),
@@ -2056,6 +2108,10 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "applied": bool(merge_approved_continuation_relief["applied"]),
                 "reason": str(merge_approved_continuation_relief["reason"]),
                 "gate_hits": dict(merge_approved_continuation_relief["gate_hits"]),
+                "historical_execution_quality_label": str(merge_approved_continuation_relief["historical_execution_quality_label"]),
+                "historical_applied_scope": str(merge_approved_continuation_relief["historical_applied_scope"]),
+                "historical_evaluable_count": int(merge_approved_continuation_relief["historical_evaluable_count"]),
+                "historical_next_close_positive_rate": round(float(merge_approved_continuation_relief["historical_next_close_positive_rate"]), 4),
                 "base_near_miss_threshold": round(float(merge_approved_continuation_relief["base_near_miss_threshold"]), 4),
                 "effective_near_miss_threshold": round(float(merge_approved_continuation_relief["effective_near_miss_threshold"]), 4),
                 "near_miss_threshold_override": round(float(merge_approved_continuation_relief["near_miss_threshold_override"]), 4),
@@ -2369,6 +2425,10 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "shadow_visibility_gap_selected": bool(visibility_gap_continuation_relief["shadow_visibility_gap_selected"]),
                 "shadow_visibility_gap_relaxed_band": bool(visibility_gap_continuation_relief["shadow_visibility_gap_relaxed_band"]),
                 "gate_hits": dict(visibility_gap_continuation_relief["gate_hits"]),
+                "historical_execution_quality_label": str(visibility_gap_continuation_relief["historical_execution_quality_label"]),
+                "historical_applied_scope": str(visibility_gap_continuation_relief["historical_applied_scope"]),
+                "historical_evaluable_count": int(visibility_gap_continuation_relief["historical_evaluable_count"]),
+                "historical_next_close_positive_rate": round(float(visibility_gap_continuation_relief["historical_next_close_positive_rate"]), 4),
                 "base_catalyst_freshness": round(float(visibility_gap_continuation_relief["base_catalyst_freshness"]), 4),
                 "effective_catalyst_freshness": round(float(visibility_gap_continuation_relief["effective_catalyst_freshness"]), 4),
                 "base_near_miss_threshold": round(float(visibility_gap_continuation_relief["base_near_miss_threshold"]), 4),
@@ -2383,6 +2443,10 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "applied": bool(merge_approved_continuation_relief["applied"]),
                 "reason": str(merge_approved_continuation_relief["reason"]),
                 "gate_hits": dict(merge_approved_continuation_relief["gate_hits"]),
+                "historical_execution_quality_label": str(merge_approved_continuation_relief["historical_execution_quality_label"]),
+                "historical_applied_scope": str(merge_approved_continuation_relief["historical_applied_scope"]),
+                "historical_evaluable_count": int(merge_approved_continuation_relief["historical_evaluable_count"]),
+                "historical_next_close_positive_rate": round(float(merge_approved_continuation_relief["historical_next_close_positive_rate"]), 4),
                 "base_near_miss_threshold": round(float(merge_approved_continuation_relief["base_near_miss_threshold"]), 4),
                 "effective_near_miss_threshold": round(float(merge_approved_continuation_relief["effective_near_miss_threshold"]), 4),
                 "near_miss_threshold_override": round(float(merge_approved_continuation_relief["near_miss_threshold_override"]), 4),

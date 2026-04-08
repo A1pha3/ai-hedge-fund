@@ -10,7 +10,7 @@ from time import perf_counter
 from typing import Any, Callable, Optional
 import os
 
-from scripts.btst_latest_followup_utils import load_latest_btst_followup_by_ticker
+from scripts.btst_latest_followup_utils import load_latest_btst_followup_by_ticker, load_latest_btst_historical_prior_by_ticker
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.execution.merge_approved_loader import load_merge_approved_tickers
@@ -267,12 +267,7 @@ def _build_filter_summary(entries: list[dict]) -> dict:
 
 
 def _load_latest_btst_historical_prior_by_ticker() -> dict[str, dict[str, Any]]:
-    rows_by_ticker = load_latest_btst_followup_by_ticker(BTST_REPORTS_ROOT)
-    return {
-        ticker: dict(row.get("historical_prior") or {})
-        for ticker, row in rows_by_ticker.items()
-        if dict(row.get("historical_prior") or {})
-    }
+    return load_latest_btst_historical_prior_by_ticker(BTST_REPORTS_ROOT)
 
 
 def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_by_ticker: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -285,6 +280,21 @@ def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_
             updated_entry["historical_prior"] = historical_prior
         attached_entries.append(updated_entry)
     return attached_entries
+
+
+def _attach_historical_prior_to_watchlist(
+    watchlist: list[LayerCResult],
+    *,
+    prior_by_ticker: dict[str, dict[str, Any]],
+) -> list[LayerCResult]:
+    attached_watchlist: list[LayerCResult] = []
+    for item in list(watchlist or []):
+        historical_prior = dict(prior_by_ticker.get(str(item.ticker or "")) or {})
+        if historical_prior:
+            attached_watchlist.append(item.model_copy(update={"historical_prior": historical_prior}))
+        else:
+            attached_watchlist.append(item)
+    return attached_watchlist
 
 
 def _historical_prior_float(prior: dict[str, Any], key: str) -> float | None:
@@ -310,6 +320,7 @@ def _historical_prior_int(prior: dict[str, Any], key: str) -> int | None:
 def _summarize_upstream_shadow_release_historical_support(historical_prior: dict[str, Any]) -> dict[str, Any]:
     prior = dict(historical_prior or {})
     execution_quality_label = str(prior.get("execution_quality_label") or "").strip()
+    applied_scope = str(prior.get("applied_scope") or "").strip()
     evaluable_count = _historical_prior_int(prior, "evaluable_count") or 0
     next_close_positive_rate = _historical_prior_float(prior, "next_close_positive_rate")
     next_high_hit_rate = _historical_prior_float(prior, "next_high_hit_rate_at_threshold")
@@ -337,9 +348,20 @@ def _summarize_upstream_shadow_release_historical_support(historical_prior: dict
         elif next_high_hit_rate < 0.25:
             support_score -= 0.02
 
+    sparse_weak_history = (
+        0 < evaluable_count < 3
+        and next_close_positive_rate is not None
+        and next_close_positive_rate <= 0.0
+        and next_high_hit_rate is not None
+        and next_high_hit_rate <= 0.0
+    )
+    if sparse_weak_history:
+        support_score = min(support_score, -0.01)
+
     suppress_release = evaluable_count >= 3 and (
         execution_quality_label == "zero_follow_through"
         or (execution_quality_label == "intraday_only" and (next_close_positive_rate or 0.0) <= 0.0)
+        or (applied_scope == "same_ticker" and execution_quality_label == "intraday_only" and (next_close_positive_rate or 0.0) <= 0.0)
     )
     verdict = "neutral"
     if suppress_release:
@@ -351,12 +373,14 @@ def _summarize_upstream_shadow_release_historical_support(historical_prior: dict
 
     return {
         "execution_quality_label": execution_quality_label or None,
+        "applied_scope": applied_scope or None,
         "evaluable_count": evaluable_count,
         "next_close_positive_rate": round(float(next_close_positive_rate), 4) if next_close_positive_rate is not None else None,
         "next_high_hit_rate_at_threshold": round(float(next_high_hit_rate), 4) if next_high_hit_rate is not None else None,
         "support_score": round(support_score, 4),
         "verdict": verdict,
         "suppress_release": suppress_release,
+        "sparse_weak_history": sparse_weak_history,
     }
 
 
@@ -824,6 +848,8 @@ def _should_release_upstream_shadow_candidate(
     if candidate_score < lane_score_floor:
         return False, None
     if bool((historical_support or {}).get("suppress_release")):
+        return False, None
+    if bool((historical_support or {}).get("sparse_weak_history")):
         return False, None
     if str((historical_support or {}).get("verdict") or "") == "supportive":
         return True, "upstream_shadow_release_supported_by_historical_prior"
@@ -1563,6 +1589,10 @@ def _ensure_plan_target_shells(
         list(watchlist_filter_diagnostics.get("tickers", []) or []),
         prior_by_ticker=historical_prior_by_ticker,
     )
+    watchlist = _attach_historical_prior_to_watchlist(
+        list(plan.watchlist or []),
+        prior_by_ticker=historical_prior_by_ticker,
+    )
     supplemental_short_trade_entries = _attach_historical_prior_to_entries(
         [
         *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
@@ -1572,11 +1602,11 @@ def _ensure_plan_target_shells(
         prior_by_ticker=historical_prior_by_ticker,
     )
     buy_order_tickers = {order.ticker for order in list(plan.buy_orders or [])}
-    if not selection_targets and (plan.watchlist or rejected_entries or supplemental_short_trade_entries):
+    if not selection_targets and (watchlist or rejected_entries or supplemental_short_trade_entries):
         with use_short_trade_target_profile(profile_name=short_trade_target_profile_name, overrides=short_trade_target_profile_overrides):
             selection_targets, summary = build_selection_targets(
                 trade_date=plan.date,
-                watchlist=plan.watchlist,
+                watchlist=watchlist,
                 rejected_entries=rejected_entries,
                 supplemental_short_trade_entries=supplemental_short_trade_entries,
                 buy_order_tickers=buy_order_tickers,
@@ -1972,6 +2002,10 @@ class DailyPipeline:
             shadow_fused=shadow_fused,
             shadow_candidate_by_ticker={candidate.ticker: candidate for candidate in shadow_candidates},
             historical_prior_by_ticker=historical_prior_by_ticker,
+        )
+        watchlist = _attach_historical_prior_to_watchlist(
+            watchlist,
+            prior_by_ticker=historical_prior_by_ticker,
         )
         catalyst_theme_candidate_diagnostics = _build_catalyst_theme_candidate_diagnostics(
             fused,

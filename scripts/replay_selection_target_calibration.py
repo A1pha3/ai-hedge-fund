@@ -908,6 +908,209 @@ def analyze_selection_target_replay_inputs(
     )
 
 
+def _diff_count_dict(left: dict[str, Any], right: dict[str, Any]) -> dict[str, dict[str, int]]:
+    keys = sorted(set(left) | set(right))
+    return {
+        key: {
+            "left": int(left.get(key) or 0),
+            "right": int(right.get(key) or 0),
+            "delta": int(right.get(key) or 0) - int(left.get(key) or 0),
+        }
+        for key in keys
+    }
+
+
+def compare_selection_target_replay_inputs(
+    input_path: str | Path,
+    compare_to_path: str | Path,
+    *,
+    profile_name: str = "default",
+    select_threshold: float | None = None,
+    near_miss_threshold: float | None = None,
+    structural_variant: str = "baseline",
+    focus_tickers: list[str] | None = None,
+) -> dict[str, Any]:
+    left_sources = load_selection_target_replay_sources(input_path)
+    right_sources = load_selection_target_replay_sources(compare_to_path)
+    left_analysis = analyze_selection_target_replay_inputs(
+        input_path,
+        profile_name=profile_name,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        structural_variant=structural_variant,
+        focus_tickers=focus_tickers,
+    )
+    right_analysis = analyze_selection_target_replay_inputs(
+        compare_to_path,
+        profile_name=profile_name,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        structural_variant=structural_variant,
+        focus_tickers=focus_tickers,
+    )
+
+    def _index_source_payloads(sources: list[tuple[Path, dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+        indexed: dict[str, dict[str, Any]] = {}
+        for replay_input_path, payload in sources:
+            trade_date = str(payload.get("trade_date") or "")
+            indexed[trade_date] = {
+                "replay_input_path": str(replay_input_path),
+                "source_summary": dict(payload.get("source_summary") or {}),
+                "selected_analysts": list(dict(payload.get("pipeline_config_snapshot") or {}).get("selected_analysts") or []),
+                "analyst_roster_version": str(dict(payload.get("pipeline_config_snapshot") or {}).get("analyst_roster_version") or ""),
+            }
+        return indexed
+
+    left_sources_by_date = _index_source_payloads(left_sources)
+    right_sources_by_date = _index_source_payloads(right_sources)
+    source_payload_differences: list[dict[str, Any]] = []
+    for trade_date in sorted(set(left_sources_by_date) | set(right_sources_by_date)):
+        left_row = left_sources_by_date.get(trade_date, {})
+        right_row = right_sources_by_date.get(trade_date, {})
+        changed = (
+            dict(left_row.get("source_summary") or {}) != dict(right_row.get("source_summary") or {})
+            or list(left_row.get("selected_analysts") or []) != list(right_row.get("selected_analysts") or [])
+            or str(left_row.get("analyst_roster_version") or "") != str(right_row.get("analyst_roster_version") or "")
+        )
+        if not changed:
+            continue
+        source_payload_differences.append(
+            {
+                "trade_date": trade_date,
+                "left": left_row,
+                "right": right_row,
+            }
+        )
+
+    def _index_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+        return {
+            (str(row.get("trade_date") or ""), str(row.get("ticker") or "")): row
+            for row in rows
+            if str(row.get("ticker") or "").strip()
+        }
+
+    left_focus = _index_rows(list(left_analysis.get("focused_score_diagnostics") or []))
+    right_focus = _index_rows(list(right_analysis.get("focused_score_diagnostics") or []))
+    focus_keys = sorted(set(left_focus) | set(right_focus))
+    focus_differences: list[dict[str, Any]] = []
+    for trade_date, ticker in focus_keys:
+        left_row = left_focus.get((trade_date, ticker), {})
+        right_row = right_focus.get((trade_date, ticker), {})
+        changed = (
+            left_row.get("candidate_source") != right_row.get("candidate_source")
+            or left_row.get("stored_decision") != right_row.get("stored_decision")
+            or left_row.get("replayed_decision") != right_row.get("replayed_decision")
+            or left_row.get("replayed_score_target") != right_row.get("replayed_score_target")
+            or list(left_row.get("replayed_blockers") or []) != list(right_row.get("replayed_blockers") or [])
+        )
+        if not changed:
+            continue
+        focus_differences.append(
+            {
+                "trade_date": trade_date,
+                "ticker": ticker,
+                "left": {
+                    "candidate_source": left_row.get("candidate_source"),
+                    "stored_decision": left_row.get("stored_decision"),
+                    "replayed_decision": left_row.get("replayed_decision"),
+                    "replayed_score_target": left_row.get("replayed_score_target"),
+                    "replayed_gap_to_near_miss": left_row.get("replayed_gap_to_near_miss"),
+                    "replayed_blockers": list(left_row.get("replayed_blockers") or []),
+                    "replayed_top_reasons": list(left_row.get("replayed_top_reasons") or []),
+                    "replay_input_path": left_row.get("replay_input_path"),
+                },
+                "right": {
+                    "candidate_source": right_row.get("candidate_source"),
+                    "stored_decision": right_row.get("stored_decision"),
+                    "replayed_decision": right_row.get("replayed_decision"),
+                    "replayed_score_target": right_row.get("replayed_score_target"),
+                    "replayed_gap_to_near_miss": right_row.get("replayed_gap_to_near_miss"),
+                    "replayed_blockers": list(right_row.get("replayed_blockers") or []),
+                    "replayed_top_reasons": list(right_row.get("replayed_top_reasons") or []),
+                    "replay_input_path": right_row.get("replay_input_path"),
+                },
+            }
+        )
+
+    left_mismatches = _index_rows(list(left_analysis.get("mismatch_examples") or []))
+    right_mismatches = _index_rows(list(right_analysis.get("mismatch_examples") or []))
+    mismatch_keys = sorted(set(left_mismatches) | set(right_mismatches))
+    mismatch_differences: list[dict[str, Any]] = []
+    for trade_date, ticker in mismatch_keys:
+        left_row = left_mismatches.get((trade_date, ticker), {})
+        right_row = right_mismatches.get((trade_date, ticker), {})
+        changed = (
+            left_row.get("stored_decision") != right_row.get("stored_decision")
+            or left_row.get("replayed_decision") != right_row.get("replayed_decision")
+            or left_row.get("replayed_score_target") != right_row.get("replayed_score_target")
+            or list(left_row.get("replayed_blockers") or []) != list(right_row.get("replayed_blockers") or [])
+        )
+        if not changed:
+            continue
+        mismatch_differences.append(
+            {
+                "trade_date": trade_date,
+                "ticker": ticker,
+                "left": {
+                    "stored_decision": left_row.get("stored_decision"),
+                    "replayed_decision": left_row.get("replayed_decision"),
+                    "replayed_score_target": left_row.get("replayed_score_target"),
+                    "replayed_gap_to_near_miss": left_row.get("replayed_gap_to_near_miss"),
+                    "replayed_blockers": list(left_row.get("replayed_blockers") or []),
+                    "replay_input_path": left_row.get("replay_input_path"),
+                },
+                "right": {
+                    "stored_decision": right_row.get("stored_decision"),
+                    "replayed_decision": right_row.get("replayed_decision"),
+                    "replayed_score_target": right_row.get("replayed_score_target"),
+                    "replayed_gap_to_near_miss": right_row.get("replayed_gap_to_near_miss"),
+                    "replayed_blockers": list(right_row.get("replayed_blockers") or []),
+                    "replay_input_path": right_row.get("replay_input_path"),
+                },
+            }
+        )
+
+    return {
+        "profile_name": str(profile_name or "default"),
+        "structural_variant": structural_variant,
+        "select_threshold": left_analysis["select_threshold"],
+        "near_miss_threshold": left_analysis["near_miss_threshold"],
+        "focus_tickers": sorted({ticker for ticker in (focus_tickers or []) if str(ticker).strip()}),
+        "left_input_path": str(Path(input_path).expanduser().resolve()),
+        "right_input_path": str(Path(compare_to_path).expanduser().resolve()),
+        "left_replay_input_count": int(left_analysis["replay_input_count"]),
+        "right_replay_input_count": int(right_analysis["replay_input_count"]),
+        "left_trade_date_count": int(left_analysis["trade_date_count"]),
+        "right_trade_date_count": int(right_analysis["trade_date_count"]),
+        "decision_mismatch_count_diff": {
+            "left": int(left_analysis["decision_mismatch_count"]),
+            "right": int(right_analysis["decision_mismatch_count"]),
+            "delta": int(right_analysis["decision_mismatch_count"]) - int(left_analysis["decision_mismatch_count"]),
+        },
+        "stored_short_trade_decision_counts_diff": _diff_count_dict(
+            dict(left_analysis.get("stored_short_trade_decision_counts") or {}),
+            dict(right_analysis.get("stored_short_trade_decision_counts") or {}),
+        ),
+        "replayed_short_trade_decision_counts_diff": _diff_count_dict(
+            dict(left_analysis.get("replayed_short_trade_decision_counts") or {}),
+            dict(right_analysis.get("replayed_short_trade_decision_counts") or {}),
+        ),
+        "decision_transition_counts_diff": _diff_count_dict(
+            dict(left_analysis.get("decision_transition_counts") or {}),
+            dict(right_analysis.get("decision_transition_counts") or {}),
+        ),
+        "candidate_source_counts_diff": _diff_count_dict(
+            dict(left_analysis.get("candidate_source_counts") or {}),
+            dict(right_analysis.get("candidate_source_counts") or {}),
+        ),
+        "source_payload_differences": source_payload_differences,
+        "focus_differences": focus_differences,
+        "mismatch_differences": mismatch_differences,
+        "left_analysis": left_analysis,
+        "right_analysis": right_analysis,
+    }
+
+
 def analyze_selection_target_threshold_grid(
     input_path: str | Path,
     *,
@@ -1470,6 +1673,49 @@ def render_selection_target_replay_markdown(analysis: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_selection_target_replay_comparison_markdown(comparison: dict[str, Any]) -> str:
+    lines = ["# Selection Target Replay Comparison", ""]
+    lines.append(f"- profile_name: {comparison['profile_name']}")
+    lines.append(f"- structural_variant: {comparison['structural_variant']}")
+    lines.append(f"- select_threshold: {comparison['select_threshold']}")
+    lines.append(f"- near_miss_threshold: {comparison['near_miss_threshold']}")
+    lines.append(f"- left_input_path: {comparison['left_input_path']}")
+    lines.append(f"- right_input_path: {comparison['right_input_path']}")
+    lines.append(f"- decision_mismatch_count_diff: {comparison['decision_mismatch_count_diff']}")
+    lines.append(f"- stored_short_trade_decision_counts_diff: {comparison['stored_short_trade_decision_counts_diff']}")
+    lines.append(f"- replayed_short_trade_decision_counts_diff: {comparison['replayed_short_trade_decision_counts_diff']}")
+    lines.append(f"- decision_transition_counts_diff: {comparison['decision_transition_counts_diff']}")
+    lines.append(f"- candidate_source_counts_diff: {comparison['candidate_source_counts_diff']}")
+    lines.append("")
+    lines.append("## Source Payload Differences")
+    if comparison["source_payload_differences"]:
+        for row in comparison["source_payload_differences"]:
+            lines.append(
+                f"- {row['trade_date']}: left(source_summary={row['left'].get('source_summary')}, roster={row['left'].get('analyst_roster_version')}, analysts={row['left'].get('selected_analysts')}) -> right(source_summary={row['right'].get('source_summary')}, roster={row['right'].get('analyst_roster_version')}, analysts={row['right'].get('selected_analysts')})"
+            )
+    else:
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Focus Differences")
+    if comparison["focus_differences"]:
+        for row in comparison["focus_differences"]:
+            lines.append(
+                f"- {row['trade_date']} {row['ticker']}: left(source={row['left']['candidate_source']}, stored={row['left']['stored_decision']}, replayed={row['left']['replayed_decision']}, score={row['left']['replayed_score_target']}, blockers={row['left']['replayed_blockers']}) -> right(source={row['right']['candidate_source']}, stored={row['right']['stored_decision']}, replayed={row['right']['replayed_decision']}, score={row['right']['replayed_score_target']}, blockers={row['right']['replayed_blockers']})"
+            )
+    else:
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Mismatch Differences")
+    if comparison["mismatch_differences"]:
+        for row in comparison["mismatch_differences"]:
+            lines.append(
+                f"- {row['trade_date']} {row['ticker']}: left({row['left']['stored_decision']} -> {row['left']['replayed_decision']}, score={row['left']['replayed_score_target']}, blockers={row['left']['replayed_blockers']}) -> right({row['right']['stored_decision']} -> {row['right']['replayed_decision']}, score={row['right']['replayed_score_target']}, blockers={row['right']['replayed_blockers']})"
+            )
+    else:
+        lines.append("- none")
+    return "\n".join(lines) + "\n"
+
+
 def render_selection_target_threshold_grid_markdown(grid_analysis: dict[str, Any]) -> str:
     lines = ["# Selection Target Threshold Grid", ""]
     lines.append(f"- profile_name: {grid_analysis['profile_name']}")
@@ -1609,6 +1855,7 @@ def render_selection_target_penalty_threshold_grid_markdown(grid_analysis: dict[
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay short-trade selection targets from selection_target_replay_input.json artifacts.")
     parser.add_argument("input_path", help="Path to a selection_target_replay_input.json file, a selection_artifacts directory, or a report directory.")
+    parser.add_argument("--compare-to", default=None, help="Optional second replay input/report path to compare against the primary fixed artifact.")
     parser.add_argument("--profile-name", default="default", help="Short-trade target profile used during replay. Available: " + ", ".join(sorted(SHORT_TRADE_TARGET_PROFILES.keys())))
     parser.add_argument("--select-threshold", type=float, default=None, help="Override short-trade SELECT_THRESHOLD during replay.")
     parser.add_argument("--near-miss-threshold", type=float, default=None, help="Override short-trade NEAR_MISS_THRESHOLD during replay.")
@@ -1645,7 +1892,24 @@ def main() -> int:
     extension_score_penalty_grid = _parse_threshold_grid(args.extension_score_penalty_grid)
     focus_tickers = _parse_ticker_grid(args.focus_tickers)
     preserve_tickers = _parse_ticker_grid(args.preserve_tickers)
-    if (avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid) and (select_grid or near_miss_grid):
+    if args.compare_to is not None:
+        if avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid or breakout_max_grid or trend_max_grid or volume_max_grid or close_max_grid or catalyst_max_grid:
+            raise SystemExit("--compare-to does not support penalty or candidate-entry grid modes.")
+        if select_grid or near_miss_grid:
+            raise SystemExit("--compare-to does not support threshold grid modes.")
+        if structural_variants and len(structural_variants) > 1:
+            raise SystemExit("--compare-to accepts at most one structural variant.")
+        analysis = compare_selection_target_replay_inputs(
+            args.input_path,
+            args.compare_to,
+            profile_name=args.profile_name,
+            select_threshold=args.select_threshold,
+            near_miss_threshold=args.near_miss_threshold,
+            structural_variant=(structural_variants or ["baseline"])[0],
+            focus_tickers=focus_tickers,
+        )
+        markdown_text = render_selection_target_replay_comparison_markdown(analysis)
+    elif (avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid) and (select_grid or near_miss_grid):
         analysis = analyze_selection_target_penalty_threshold_grid(
             args.input_path,
             profile_name=args.profile_name,

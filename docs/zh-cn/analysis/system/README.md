@@ -15,6 +15,7 @@
 | [03-frontend.md](./03-frontend.md) | React 前端问题（类型安全、性能、可访问性） |
 | [04-infra-config.md](./04-infra-config.md) | 基础设施与配置问题（Docker、依赖、CI/CD） |
 | [05-remediation-roadmap.md](./05-remediation-roadmap.md) | 分阶段整改路线图（立即修复、短期治理、中期演进） |
+| [06-btst-visibility-gap-replay-comparison.md](./06-btst-visibility-gap-replay-comparison.md) | BTST `visibility-gap` 治理前后 replay 对比结论 |
 
 ---
 
@@ -64,3 +65,4 @@
    - Web 安全与接口：`02-web-backend.md`
    - 前端稳定性与性能：`03-frontend.md`
    - 工程治理与交付：`04-infra-config.md`
+4. 若关注 BTST 当前主线治理结果，再看 `06-btst-visibility-gap-replay-comparison.md`

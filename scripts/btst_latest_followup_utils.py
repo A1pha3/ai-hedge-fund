@@ -238,14 +238,73 @@ def _merge_ticker_rows(brief: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return merged
 
 
+def _ticker_row_rank(row: dict[str, Any]) -> tuple[Any, ...]:
+    historical_prior = dict(row.get("historical_prior") or {})
+    return (
+        _compact_trade_date(row.get("trade_date")),
+        int(row.get("report_mtime_ns") or 0),
+        int(row.get("selection_target_rank") or 0),
+        _decision_rank(row.get("decision")),
+        _historical_prior_merge_rank(historical_prior),
+        str(row.get("report_dir_name") or ""),
+    )
+
+
 def load_latest_btst_followup_by_ticker(reports_root: str | Path) -> dict[str, dict[str, Any]]:
-    latest_candidate = select_latest_btst_followup_candidate(reports_root)
-    if not latest_candidate:
-        return {}
-    brief_json = dict(latest_candidate.get("brief_json") or {})
-    if not brief_json:
-        return {}
-    return _merge_ticker_rows(brief_json)
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    merged_by_ticker: dict[str, dict[str, Any]] = {}
+    for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root)):
+        if not candidate:
+            continue
+        brief_json = dict(candidate.get("brief_json") or {})
+        if not brief_json:
+            continue
+        rows_by_ticker = _merge_ticker_rows(brief_json)
+        for ticker, row in rows_by_ticker.items():
+            enriched_row = {
+                **row,
+                "report_dir": candidate.get("report_dir"),
+                "report_dir_name": candidate.get("report_dir_name"),
+                "trade_date": candidate.get("trade_date"),
+                "selection_target": candidate.get("selection_target"),
+                "selection_target_rank": candidate.get("selection_target_rank"),
+                "report_mtime_ns": candidate.get("report_mtime_ns"),
+            }
+            current = merged_by_ticker.get(ticker)
+            if current is None or _ticker_row_rank(enriched_row) > _ticker_row_rank(current):
+                merged_by_ticker[ticker] = enriched_row
+    return merged_by_ticker
+
+
+def load_latest_btst_historical_prior_by_ticker(reports_root: str | Path) -> dict[str, dict[str, Any]]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    priors_by_ticker: dict[str, dict[str, Any]] = {}
+    ranked_rows_by_ticker: dict[str, tuple[Any, ...]] = {}
+    for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root)):
+        if not candidate:
+            continue
+        brief_json = dict(candidate.get("brief_json") or {})
+        if not brief_json:
+            continue
+        rows_by_ticker = _merge_ticker_rows(brief_json)
+        for ticker, row in rows_by_ticker.items():
+            historical_prior = dict(row.get("historical_prior") or {})
+            if not historical_prior:
+                continue
+            enriched_row = {
+                **row,
+                "report_dir": candidate.get("report_dir"),
+                "report_dir_name": candidate.get("report_dir_name"),
+                "trade_date": candidate.get("trade_date"),
+                "selection_target": candidate.get("selection_target"),
+                "selection_target_rank": candidate.get("selection_target_rank"),
+                "report_mtime_ns": candidate.get("report_mtime_ns"),
+            }
+            rank = _ticker_row_rank(enriched_row)
+            if ticker not in ranked_rows_by_ticker or rank > ranked_rows_by_ticker[ticker]:
+                ranked_rows_by_ticker[ticker] = rank
+                priors_by_ticker[ticker] = historical_prior
+    return priors_by_ticker
 
 
 def _is_upstream_shadow_followup_row(ticker: str, row: dict[str, Any], *, focus_tickers: list[str]) -> bool:

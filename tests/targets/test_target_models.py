@@ -647,6 +647,72 @@ def test_merge_approved_continuation_relief_promotes_boundary_watchlist_candidat
     assert relief_result.explainability_payload["merge_approved_continuation_relief"]["effective_select_threshold"] == 0.56
 
 
+def test_merge_approved_continuation_relief_suppresses_same_ticker_intraday_only_history() -> None:
+    entry = {
+        "ticker": "300720",
+        "score_b": 0.74,
+        "score_c": 0.31,
+        "score_final": 0.55,
+        "quality_score": 0.67,
+        "decision": "watch",
+        "reason": "watchlist_selected",
+        "candidate_source": "layer_c_watchlist_merge_approved",
+        "candidate_reason_codes": ["merge_approved_continuation"],
+        "historical_prior": {
+            "applied_scope": "same_ticker",
+            "execution_quality_label": "intraday_only",
+            "evaluable_count": 4,
+            "next_close_positive_rate": 0.0,
+        },
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                82.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 85.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 76.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 68.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                74.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 66.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(-1, 20.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.22, "investor": 0.11}},
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+        profile_overrides={
+            "select_threshold": 0.90,
+            "near_miss_threshold": 0.80,
+            "merge_approved_continuation_relief_enabled": True,
+            "merge_approved_continuation_select_threshold": 0.56,
+            "merge_approved_continuation_near_miss_threshold": 0.44,
+            "merge_approved_continuation_breakout_freshness_min": 0.24,
+            "merge_approved_continuation_trend_acceleration_min": 0.30,
+            "merge_approved_continuation_close_strength_min": 0.55,
+        },
+    )
+
+    assert result.decision in {"near_miss", "rejected"}
+    assert "merge_approved_continuation_relief_applied" not in result.positive_tags
+    assert result.metrics_payload["merge_approved_continuation_relief"]["applied"] is False
+    assert result.metrics_payload["merge_approved_continuation_relief"]["gate_hits"]["historical_execution_quality"] is False
+    assert result.metrics_payload["merge_approved_continuation_relief"]["historical_execution_quality_label"] == "intraday_only"
+    assert result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.90
+
+
 def test_watchlist_zero_catalyst_penalty_applies_only_to_layer_c_watchlist() -> None:
     entry = {
         **_make_prepared_breakout_entry(),
@@ -1693,3 +1759,32 @@ def test_visibility_gap_continuation_relief_requires_relaxed_band_when_profile_d
     assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.46
     assert result.metrics_payload["visibility_gap_continuation_relief"]["applied"] is False
     assert result.metrics_payload["visibility_gap_continuation_relief"]["gate_hits"]["relaxed_band"] is False
+
+
+def test_visibility_gap_continuation_relief_suppresses_same_ticker_intraday_only_history() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry.pop("short_trade_catalyst_relief", None)
+    entry["candidate_source"] = "post_gate_liquidity_competition_shadow"
+    entry["candidate_pool_lane"] = "post_gate_liquidity_competition"
+    entry["candidate_pool_shadow_reason"] = "upstream_base_liquidity_uplift_shadow_visibility_gap_relaxed_band"
+    entry["shadow_visibility_gap_selected"] = True
+    entry["shadow_visibility_gap_relaxed_band"] = True
+    entry["score_b"] = 0.40
+    entry["historical_prior"] = {
+        "applied_scope": "same_ticker",
+        "execution_quality_label": "intraday_only",
+        "evaluable_count": 4,
+        "next_close_positive_rate": 0.0,
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "rejected"
+    assert "visibility_gap_continuation_relief_applied" not in result.positive_tags
+    assert result.metrics_payload["visibility_gap_continuation_relief"]["applied"] is False
+    assert result.metrics_payload["visibility_gap_continuation_relief"]["gate_hits"]["historical_execution_quality"] is False
+    assert result.metrics_payload["visibility_gap_continuation_relief"]["historical_execution_quality_label"] == "intraday_only"
+    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.46
