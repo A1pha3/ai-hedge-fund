@@ -241,3 +241,94 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
     assert "execution_posture: research_followup_only" in markdown
     assert "execution_note" in markdown
     assert "historical_summary" in markdown
+
+
+def test_generate_btst_opening_watch_card_surfaces_risky_observers_separately(tmp_path):
+    result = generate_btst_opening_watch_card_artifacts(
+        input_path={
+            "trade_date": "2026-04-09",
+            "next_trade_date": "2026-04-10",
+            "selection_target": "short_trade_only",
+            "recommendation": "只保留高风险盘中观察。",
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "risky_observer_entries": [
+                {
+                    "ticker": "601869",
+                    "score_target": 0.41,
+                    "preferred_entry_mode": "avoid_open_chase_confirmation",
+                    "top_reasons": ["historical_gap_chase_risk"],
+                    "historical_prior": {
+                        "summary": "同票历史 12 例，next_close 正收益率=0.2500。",
+                        "execution_note": "历史上更像高开后回落，避免开盘直接追价。",
+                    },
+                }
+            ],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {"shadow_candidate_count": 0, "promotable_count": 0, "lane_counts": {}, "decision_counts": {}, "top_focus_tickers": []},
+        },
+        output_dir=tmp_path,
+        trade_date="2026-04-09",
+        next_trade_date="2026-04-10",
+    )
+
+    payload = json.loads((tmp_path / "btst_opening_watch_card_20260410.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "btst_opening_watch_card_20260410.md").read_text(encoding="utf-8")
+
+    assert result["analysis"]["summary"]["risky_observer_count"] == 1
+    assert [item["ticker"] for item in payload["focus_items"]] == ["601869"]
+    assert payload["focus_items"][0]["focus_tier"] == "risky_observer"
+    assert payload["focus_items"][0]["execution_posture"] == "risk_observer_only"
+    assert "risky_observer_count: 1" in markdown
+    assert "focus_tier: risky_observer" in markdown
+
+
+def test_generate_btst_opening_watch_card_surfaces_no_history_observers_separately(tmp_path):
+    result = generate_btst_opening_watch_card_artifacts(
+        input_path={
+            "trade_date": "2026-03-23",
+            "next_trade_date": "2026-03-24",
+            "selection_target": "short_trade_only",
+            "recommendation": "只保留 no-history 观察。",
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "no_history_observer_entries": [
+                {
+                    "ticker": "003036",
+                    "score_target": 0.3857,
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "top_reasons": ["no_history_observer_rebucket"],
+                    "historical_prior": {
+                        "summary": "暂无同层可评估历史样本。 暂无可评估历史先验，已移入 no-history observer。",
+                        "execution_note": "先看盘中新证据，再决定是否重新评估。",
+                    },
+                }
+            ],
+            "risky_observer_entries": [],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {"shadow_candidate_count": 0, "promotable_count": 0, "lane_counts": {}, "decision_counts": {}, "top_focus_tickers": []},
+        },
+        output_dir=tmp_path,
+        trade_date="2026-03-23",
+        next_trade_date="2026-03-24",
+    )
+
+    payload = json.loads((tmp_path / "btst_opening_watch_card_20260324.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "btst_opening_watch_card_20260324.md").read_text(encoding="utf-8")
+
+    assert result["analysis"]["summary"]["no_history_observer_count"] == 1
+    assert [item["ticker"] for item in payload["focus_items"]] == ["003036"]
+    assert payload["focus_items"][0]["focus_tier"] == "no_history_observer"
+    assert payload["focus_items"][0]["execution_posture"] == "observe_only_no_history"
+    assert "no_history_observer_count: 1" in markdown
+    assert "focus_tier: no_history_observer" in markdown

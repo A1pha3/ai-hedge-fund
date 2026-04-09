@@ -304,6 +304,48 @@ def test_generate_btst_next_day_priority_board_places_demoted_weak_near_miss_in_
     assert "historical_zero_follow_through_demoted" in markdown
 
 
+def test_generate_btst_next_day_priority_board_surfaces_no_history_observer_lane(tmp_path):
+    board = generate_btst_next_day_priority_board_artifacts(
+        input_path={
+            "trade_date": "2026-03-23",
+            "next_trade_date": "2026-03-24",
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "no_history_observer_entries": [
+                {
+                    "ticker": "003036",
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "promotion_trigger": "暂无可评估历史先验；只有盘中新证据显著增强时，才允许从 no-history observer 升级。",
+                    "top_reasons": ["no_history_observer_rebucket"],
+                    "historical_prior": {
+                        "monitor_priority": "medium",
+                        "execution_priority": "unscored",
+                        "execution_quality_label": "unknown",
+                        "summary": "暂无同层可评估历史样本。 暂无可评估历史先验，已移入 no-history observer。",
+                        "execution_note": "先看盘中新证据，再决定是否重新评估。",
+                    },
+                }
+            ],
+            "risky_observer_entries": [],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_priority": {},
+        },
+        output_dir=tmp_path,
+    )
+
+    payload = json.loads((tmp_path / "btst_next_day_priority_board_20260324.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "btst_next_day_priority_board_20260324.md").read_text(encoding="utf-8")
+
+    assert board["analysis"]["summary"]["no_history_observer_count"] == 1
+    assert [row["ticker"] for row in payload["priority_rows"]] == ["003036"]
+    assert payload["priority_rows"][0]["lane"] == "no_history_observer"
+    assert payload["priority_rows"][0]["actionability"] == "observe_only_no_history"
+    assert "### 1. 003036" in markdown
+    assert "lane: no_history_observer" in markdown
+
+
 def test_generate_btst_next_day_priority_board_uses_execution_quality_specific_suggested_actions(tmp_path):
     generate_btst_next_day_priority_board_artifacts(
         input_path={

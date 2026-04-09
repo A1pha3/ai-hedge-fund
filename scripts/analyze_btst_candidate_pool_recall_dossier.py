@@ -14,6 +14,10 @@ from src.screening.candidate_pool import (
     MAX_CANDIDATE_POOL_SIZE,
     MIN_AVG_AMOUNT_20D,
     MIN_ESTIMATED_AMOUNT_1D,
+    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
+    SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
+    _load_candidate_pool_shadow_snapshot,
     _estimate_amount_from_daily_basic,
     MIN_LISTING_DAYS,
     _estimate_trading_days,
@@ -39,6 +43,7 @@ DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.md"
 DEFAULT_PRIORITY_LIMIT = 5
 DEFAULT_FRONTIER_NEIGHBOR_COUNT = 2
 STAGE_ORDER = [
+    "shadow_snapshot_legacy_unknown",
     "missing_market_context",
     "missing_stock_basic",
     "st_excluded",
@@ -104,6 +109,54 @@ def _snapshot_paths(snapshots_root: Path, trade_date: str) -> list[Path]:
     ]
 
 
+def _shadow_snapshot_path(snapshots_root: Path, trade_date: str) -> Path:
+    compact_trade_date = _compact_trade_date(trade_date)
+    return snapshots_root / f"candidate_pool_{compact_trade_date}_top300_shadow.json"
+
+
+def _find_local_prices_snapshot_path(snapshots_root: Path, ticker: str, trade_date: str) -> Path | None:
+    ticker_root = snapshots_root / ticker
+    if not ticker_root.exists():
+        return None
+    compact_trade_date = _compact_trade_date(trade_date)
+    for path in sorted(ticker_root.glob("*/prices.json")):
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        observed_trade_dates = {_compact_trade_date(str(row.get("time") or "")) for row in list(rows or [])}
+        if compact_trade_date in observed_trade_dates:
+            return path
+    return None
+
+
+def _estimate_avg_amount_20d_from_local_prices(snapshots_root: Path, ticker: str, trade_date: str) -> tuple[float | None, str | None]:
+    prices_path = _find_local_prices_snapshot_path(snapshots_root, ticker, trade_date)
+    if prices_path is None:
+        return None, None
+
+    try:
+        rows = json.loads(prices_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None, None
+
+    compact_trade_date = _compact_trade_date(trade_date)
+    amount_samples: list[float] = []
+    for row in list(rows or []):
+        row_trade_date = _compact_trade_date(str(row.get("time") or ""))
+        if not row_trade_date or row_trade_date > compact_trade_date:
+            continue
+        close_price = _safe_float(row.get("close"))
+        volume = _safe_float(row.get("volume"))
+        if close_price is None or volume is None:
+            continue
+        amount_samples.append(round(close_price * volume / 100.0, 4))
+
+    if not amount_samples:
+        return None, prices_path.as_posix()
+    return round(sum(amount_samples[-20:]) / len(amount_samples[-20:]), 4), prices_path.as_posix()
+
+
 def _load_candidate_pool_snapshot(
     snapshots_root: Path,
     trade_date: str,
@@ -115,22 +168,37 @@ def _load_candidate_pool_snapshot(
     if cached is not None:
         return cached
 
+    shadow_snapshot_path = _shadow_snapshot_path(snapshots_root, trade_date)
+    shadow_snapshot_payload = _load_candidate_pool_shadow_snapshot(shadow_snapshot_path) if shadow_snapshot_path.exists() else {}
+    shadow_summary = dict(shadow_snapshot_payload.get("shadow_summary") or {})
     for path in _snapshot_paths(snapshots_root, trade_date):
         if not path.exists():
             continue
         payload = json.loads(path.read_text(encoding="utf-8"))
         ticker_ranks: dict[str, int] = {}
+        snapshot_cutoff_ticker = None
+        snapshot_cutoff_avg_amount_20d = None
         for index, item in enumerate(list(payload or []), start=1):
             if not isinstance(item, dict):
                 continue
             ticker = str(item.get("ticker") or "").strip()
             if ticker and ticker not in ticker_ranks:
                 ticker_ranks[ticker] = index
+            snapshot_cutoff_ticker = ticker or snapshot_cutoff_ticker
+            avg_volume_20d = _safe_float(item.get("avg_volume_20d"))
+            if avg_volume_20d is not None:
+                snapshot_cutoff_avg_amount_20d = round(float(avg_volume_20d), 4)
         cached = {
             "snapshot_path": path.as_posix(),
             "snapshot_name": path.name,
             "snapshot_size": len(ticker_ranks),
             "ticker_ranks": ticker_ranks,
+            "selected_cutoff_ticker": snapshot_cutoff_ticker,
+            "selected_cutoff_avg_volume_20d": snapshot_cutoff_avg_amount_20d,
+            "shadow_snapshot_path": shadow_snapshot_path.as_posix() if shadow_snapshot_path.exists() else None,
+            "shadow_recall_complete": shadow_summary.get("shadow_recall_complete"),
+            "shadow_recall_status": shadow_summary.get("shadow_recall_status"),
+            "shadow_selected_cutoff_avg_volume_20d": shadow_summary.get("selected_cutoff_avg_volume_20d"),
         }
         snapshot_cache[compact_trade_date] = cached
         return cached
@@ -140,6 +208,12 @@ def _load_candidate_pool_snapshot(
         "snapshot_name": None,
         "snapshot_size": 0,
         "ticker_ranks": {},
+        "selected_cutoff_ticker": None,
+        "selected_cutoff_avg_volume_20d": None,
+        "shadow_snapshot_path": shadow_snapshot_path.as_posix() if shadow_snapshot_path.exists() else None,
+        "shadow_recall_complete": shadow_summary.get("shadow_recall_complete"),
+        "shadow_recall_status": shadow_summary.get("shadow_recall_status"),
+        "shadow_selected_cutoff_avg_volume_20d": shadow_summary.get("selected_cutoff_avg_volume_20d"),
     }
     snapshot_cache[compact_trade_date] = cached
     return cached
@@ -153,28 +227,90 @@ def _build_focus_tickers(
     priority_limit: int,
 ) -> list[str]:
     priority_limit = max(int(priority_limit), 0)
+    focus_tickers: list[str] = []
+
+    def _extend_unique(candidates: list[str]) -> None:
+        for value in candidates:
+            ticker = str(value or "").strip()
+            if not ticker or ticker in focus_tickers:
+                continue
+            focus_tickers.append(ticker)
+            if len(focus_tickers) >= priority_limit:
+                break
+
     top_absent_from_candidate_pool = [
         str(value)
         for value in list(watchlist_recall_dossier.get("top_absent_from_candidate_pool_tickers") or [])
         if str(value or "").strip()
     ]
-    if top_absent_from_candidate_pool:
-        return top_absent_from_candidate_pool[:priority_limit]
+    _extend_unique(top_absent_from_candidate_pool)
+    if len(focus_tickers) >= priority_limit:
+        return focus_tickers[:priority_limit]
 
     top_absent_from_watchlist = [
         str(value)
         for value in list(failure_dossier.get("top_absent_from_watchlist_tickers") or [])
         if str(value or "").strip()
     ]
-    if top_absent_from_watchlist:
-        return top_absent_from_watchlist[:priority_limit]
+    _extend_unique(top_absent_from_watchlist)
+    if len(focus_tickers) >= priority_limit:
+        return focus_tickers[:priority_limit]
+
+    high_value_ticker_metrics: dict[str, dict[str, Any]] = {}
+    for row in list(tradeable_pool.get("rows") or []):
+        ticker = str(row.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        if str(row.get("first_kill_switch") or "") != "no_candidate_entry":
+            continue
+        if not bool(row.get("strict_btst_goal_case")):
+            continue
+        metrics = high_value_ticker_metrics.setdefault(
+            ticker,
+            {
+                "ticker": ticker,
+                "occurrence_count": 0,
+                "max_t_plus_2_close_return": float("-inf"),
+                "max_next_high_return": float("-inf"),
+                "latest_trade_date": 0,
+            },
+        )
+        metrics["occurrence_count"] += 1
+        t_plus_2_close_return = _safe_float(row.get("t_plus_2_close_return"))
+        next_high_return = _safe_float(row.get("next_high_return"))
+        if t_plus_2_close_return is not None:
+            metrics["max_t_plus_2_close_return"] = max(float(metrics["max_t_plus_2_close_return"]), float(t_plus_2_close_return))
+        if next_high_return is not None:
+            metrics["max_next_high_return"] = max(float(metrics["max_next_high_return"]), float(next_high_return))
+        compact_trade_date = _compact_trade_date(str(row.get("trade_date") or ""))
+        if compact_trade_date:
+            metrics["latest_trade_date"] = max(int(metrics["latest_trade_date"]), int(compact_trade_date))
+
+    high_value_focus_tickers = [
+        str(row.get("ticker") or "")
+        for row in sorted(
+            high_value_ticker_metrics.values(),
+            key=lambda current: (
+                -float(current.get("max_t_plus_2_close_return") if current.get("max_t_plus_2_close_return") != float("-inf") else -999.0),
+                -float(current.get("max_next_high_return") if current.get("max_next_high_return") != float("-inf") else -999.0),
+                -int(current.get("occurrence_count") or 0),
+                -int(current.get("latest_trade_date") or 0),
+                str(current.get("ticker") or ""),
+            ),
+        )
+        if str(row.get("ticker") or "").strip()
+    ]
+    _extend_unique(high_value_focus_tickers)
+    if len(focus_tickers) >= priority_limit:
+        return focus_tickers[:priority_limit]
 
     top_ticker_rows = [
         dict(row)
         for row in list(dict(tradeable_pool.get("no_candidate_entry_summary") or {}).get("top_ticker_rows") or [])
         if str(row.get("ticker") or "").strip()
     ]
-    return [str(row.get("ticker") or "") for row in top_ticker_rows[:priority_limit] if str(row.get("ticker") or "").strip()]
+    _extend_unique([str(row.get("ticker") or "") for row in top_ticker_rows])
+    return focus_tickers[:priority_limit]
 
 
 def _build_trade_date_allowlist(watchlist_recall_dossier: dict[str, Any]) -> dict[str, set[str]]:
@@ -217,6 +353,27 @@ def _load_stock_basic_universe() -> tuple[pd.DataFrame, dict[str, dict[str, Any]
         if symbol:
             result[symbol] = row.to_dict()
     return normalized, result
+
+
+def _build_tradeable_pool_stock_basic_fallback(rows: list[dict[str, Any]]) -> tuple[pd.DataFrame, dict[str, dict[str, Any]]]:
+    fallback_rows: list[dict[str, Any]] = []
+    fallback_by_symbol: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        symbol = str(row.get("ticker") or "").strip()
+        ts_code = str(row.get("ts_code") or "").strip()
+        if not symbol or not ts_code:
+            continue
+        fallback_row = {
+            "symbol": symbol,
+            "ts_code": ts_code,
+            "name": str(row.get("name") or "").strip(),
+            "list_date": str(row.get("list_date") or "").strip(),
+            "market": str(row.get("market") or "").strip(),
+        }
+        fallback_by_symbol[symbol] = fallback_row
+    if fallback_by_symbol:
+        fallback_rows = list(fallback_by_symbol.values())
+    return pd.DataFrame(fallback_rows), fallback_by_symbol
 
 
 def _build_frontier_window(rows: list[dict[str, Any]], *, center_rank: int | None, neighbor_count: int = DEFAULT_FRONTIER_NEIGHBOR_COUNT) -> list[dict[str, Any]]:
@@ -271,7 +428,8 @@ def _build_ticker_truncation_ranking_summary(occurrence_evidence: list[dict[str,
     truncation_rows = [
         dict(row)
         for row in occurrence_evidence
-        if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters" and row.get("pre_truncation_rank") is not None
+        if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters"
+        and (row.get("pre_truncation_rank") is not None or row.get("pre_truncation_avg_amount_share_of_cutoff") is not None)
     ]
     if not truncation_rows:
         return None
@@ -290,8 +448,10 @@ def _build_ticker_truncation_ranking_summary(occurrence_evidence: list[dict[str,
     closest_case = min(
         truncation_rows,
         key=lambda row: (
-            int(row.get("pre_truncation_rank_gap_to_cutoff") or 0),
-            int(row.get("pre_truncation_rank") or 0),
+            0 if row.get("pre_truncation_rank") is not None else 1,
+            int(row.get("pre_truncation_rank_gap_to_cutoff") or 10**9),
+            int(row.get("pre_truncation_rank") or 10**9),
+            -float(_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) or 0.0),
             str(row.get("trade_date") or ""),
         ),
     )
@@ -601,6 +761,7 @@ def _describe_branch_experiment_prototype(
     tickers = [str(value) for value in list(mechanism.get("tickers") or []) if str(value or "").strip()]
     ticker_label = "/".join(tickers) if tickers else "该分支"
     avg_amount_share_of_cutoff_mean = mechanism.get("avg_amount_share_of_cutoff_mean")
+    avg_amount_share_of_min_gate_mean = _safe_float(mechanism.get("avg_amount_share_of_min_gate_mean"))
     nearest_frontier_peer_amount_multiple_mean = mechanism.get("nearest_frontier_peer_amount_multiple_mean")
     nearest_frontier_peer_amount_multiple_min = mechanism.get("nearest_frontier_peer_amount_multiple_min")
     lower_market_cap_higher_liquidity_peer_share = _safe_float(mechanism.get("lower_market_cap_higher_liquidity_peer_share"))
@@ -612,11 +773,22 @@ def _describe_branch_experiment_prototype(
     ]
 
     if priority_handoff == "layer_a_liquidity_corridor":
+        low_gate_focus_clause = ""
+        low_gate_guardrail_clause = ""
+        if avg_amount_share_of_min_gate_mean is not None and SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE <= avg_amount_share_of_min_gate_mean < SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE:
+            low_gate_focus_clause = (
+                f" 对低于 {SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE}x 最低流动性门槛的 focus 子样本，"
+                f"先用 tighter cutoff split（avg_amount/cutoff <= {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE}）隔离 deepest corridor，再观察是否值得继续保留。"
+            )
+            low_gate_guardrail_clause = (
+                f" 对 low-gate focus 子样本，只有 avg_amount/cutoff 仍不高于 {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE} 时才允许进入 shadow；"
+                "不得把更厚的 low-gate tail 一起带入 corridor focus。"
+            )
         return (
             "upstream_base_liquidity_uplift_probe",
-            f"先把 {ticker_label} 收敛到 upstream base-liquidity uplift shadow probe，只验证能否把基础流动性从当前 corridor 系统性抬升，不提前讨论 cutoff 微调。",
+            f"先把 {ticker_label} 收敛到 upstream base-liquidity uplift shadow probe，只验证能否把基础流动性从当前 corridor 系统性抬升，不提前讨论 cutoff 微调。{low_gate_focus_clause}",
             f"若 nearest frontier multiple 能持续从当前均值 {nearest_frontier_peer_amount_multiple_mean} 倍压向当前最轻样本 {nearest_frontier_peer_amount_multiple_min} 倍，且 avg_amount_share_of_cutoff 明显高于当前 {avg_amount_share_of_cutoff_mean}，再进入 cutoff tuning 讨论。",
-            f"仅限 {pressure_peer_cluster_type} 车道；若 larger-cap liquidity wall 仍主导，就不得把这条 lane 改写成 top300 boundary 微调。",
+            f"仅限 {pressure_peer_cluster_type} 车道；若 larger-cap liquidity wall 仍主导，就不得把这条 lane 改写成 top300 boundary 微调。{low_gate_guardrail_clause}",
         )
     if priority_handoff == "post_gate_liquidity_competition":
         lower_cap_share_pct = round(float(lower_market_cap_higher_liquidity_peer_share or 0.0) * 100, 1)
@@ -709,6 +881,13 @@ def _build_priority_handoff_branch_experiment_queue(
                 f"按当前 top300 cutoff 成交额口径，{priority_handoff} 分支平均需要把 20 日成交额抬到当前的 {uplift_to_cutoff_multiple_mean} 倍，"
                 f"目标 cutoff 成交额均值约为 {target_cutoff_avg_amount_20d_mean}；因此现阶段更适合先做 upstream uplift shadow probe，而不是直接讨论 pool-size 或 cutoff 微调。"
             )
+            avg_amount_share_of_min_gate_mean = _safe_float(normalized.get("avg_amount_share_of_min_gate_mean"))
+            if avg_amount_share_of_min_gate_mean is not None and SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE <= avg_amount_share_of_min_gate_mean < SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE:
+                evaluation_summary = (
+                    f"{evaluation_summary} 其中 low-gate corridor focus 子样本应先走 tighter cutoff split："
+                    f"只有 avg_amount/cutoff 不高于 {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE} 的 deepest corridor 样本才继续保留，"
+                    "避免把更厚的低门槛长尾一起放进 shadow probe。"
+                )
         elif priority_handoff == "post_gate_liquidity_competition" and uplift_to_cutoff_multiple_mean is not None:
             prototype_readiness = "shadow_ready_rebucket_signal" if lower_cap_hot_peer_case_share and lower_cap_hot_peer_case_share > 0 else "shadow_ready_without_rebucket_signal"
             if top300_lower_market_cap_hot_peer_count_mean is not None and estimated_rank_gap_after_rebucket_mean is not None:
@@ -1179,6 +1358,7 @@ def _evaluate_ticker_stage(
     ticker: str,
     trade_date: str,
     *,
+    snapshots_root: Path,
     stock_basic_by_symbol: dict[str, dict[str, Any]],
     trade_date_context: dict[str, Any],
     frontier_context: dict[str, Any],
@@ -1256,6 +1436,8 @@ def _evaluate_ticker_stage(
     ranking_by_ticker = dict(frontier_context.get("ranking_by_ticker") or {})
     frontier_row = dict(ranking_by_ticker.get(ticker) or {})
     cutoff_row = dict(frontier_context.get("cutoff_row") or {})
+    snapshot_cutoff_ticker = snapshot.get("selected_cutoff_ticker")
+    snapshot_cutoff_avg_amount_20d = _safe_float(snapshot.get("selected_cutoff_avg_volume_20d"))
     pre_truncation_rank = frontier_row.get("rank")
     pre_truncation_cutoff_rank = frontier_context.get("pre_truncation_cutoff_rank")
     pre_truncation_rank_gap_to_cutoff = None
@@ -1263,7 +1445,9 @@ def _evaluate_ticker_stage(
         pre_truncation_rank_gap_to_cutoff = max(0, int(pre_truncation_rank) - int(pre_truncation_cutoff_rank))
     pre_truncation_frontier_window = list(frontier_context.get("frontier_window") or [])
     pre_truncation_avg_amount_gap_to_cutoff = None
-    cutoff_avg_amount_20d = cutoff_row.get("avg_amount_20d")
+    cutoff_avg_amount_20d = _safe_float(cutoff_row.get("avg_amount_20d"))
+    if cutoff_avg_amount_20d is None:
+        cutoff_avg_amount_20d = snapshot_cutoff_avg_amount_20d
     current_avg_amount_20d = frontier_row.get("avg_amount_20d")
     avg_amount_share_of_min_gate = _avg_amount_share_of_min_gate(current_avg_amount_20d)
     pre_truncation_cutoff_avg_amount_share_of_min_gate = _avg_amount_share_of_min_gate(cutoff_avg_amount_20d)
@@ -1327,8 +1511,8 @@ def _evaluate_ticker_stage(
             "pre_truncation_cutoff_rank": pre_truncation_cutoff_rank,
             "pre_truncation_rank": pre_truncation_rank,
             "pre_truncation_rank_gap_to_cutoff": pre_truncation_rank_gap_to_cutoff,
-            "pre_truncation_cutoff_ticker": cutoff_row.get("ticker"),
-            "pre_truncation_cutoff_avg_amount_20d": cutoff_row.get("avg_amount_20d"),
+            "pre_truncation_cutoff_ticker": cutoff_row.get("ticker") or snapshot_cutoff_ticker,
+            "pre_truncation_cutoff_avg_amount_20d": cutoff_avg_amount_20d,
             "pre_truncation_cutoff_market_cap": cutoff_row.get("market_cap"),
             "pre_truncation_avg_amount_gap_to_cutoff": pre_truncation_avg_amount_gap_to_cutoff,
             "pre_truncation_avg_amount_share_of_cutoff": pre_truncation_avg_amount_share_of_cutoff,
@@ -1360,8 +1544,8 @@ def _evaluate_ticker_stage(
             "pre_truncation_cutoff_rank": pre_truncation_cutoff_rank,
             "pre_truncation_rank": pre_truncation_rank,
             "pre_truncation_rank_gap_to_cutoff": pre_truncation_rank_gap_to_cutoff,
-            "pre_truncation_cutoff_ticker": cutoff_row.get("ticker"),
-            "pre_truncation_cutoff_avg_amount_20d": cutoff_row.get("avg_amount_20d"),
+            "pre_truncation_cutoff_ticker": cutoff_row.get("ticker") or snapshot_cutoff_ticker,
+            "pre_truncation_cutoff_avg_amount_20d": cutoff_avg_amount_20d,
             "pre_truncation_cutoff_market_cap": cutoff_row.get("market_cap"),
             "pre_truncation_avg_amount_gap_to_cutoff": pre_truncation_avg_amount_gap_to_cutoff,
             "pre_truncation_avg_amount_share_of_cutoff": pre_truncation_avg_amount_share_of_cutoff,
@@ -1420,14 +1604,35 @@ def _evaluate_ticker_stage(
         estimated_amount_1d = None
         avg_amount_20d = None
     else:
-        if not daily_row or pro is None:
-            blocking_stage = "missing_market_context"
+        shadow_recall_status = str(snapshot.get("shadow_recall_status") or "").strip()
+        if shadow_recall_status == "legacy_unknown":
+            blocking_stage = "shadow_snapshot_legacy_unknown"
             estimated_amount_1d = None
             avg_amount_20d = None
+        elif not daily_row or pro is None:
+            local_avg_amount_20d, local_prices_snapshot_path = _estimate_avg_amount_20d_from_local_prices(
+                snapshots_root,
+                ticker,
+                compact_trade_date,
+            )
+            if local_avg_amount_20d is not None:
+                avg_amount_20d = local_avg_amount_20d
+                estimated_amount_1d = None
+                if avg_amount_20d < MIN_AVG_AMOUNT_20D:
+                    blocking_stage = "low_avg_amount_20d"
+                    failed_filters.append("low_avg_amount_20d")
+                else:
+                    blocking_stage = "candidate_pool_truncated_after_filters"
+            else:
+                blocking_stage = "missing_market_context"
+                estimated_amount_1d = None
+                avg_amount_20d = None
+                local_prices_snapshot_path = None
         else:
             turnover_rate = _safe_float(daily_row.get("turnover_rate"))
             circ_mv = _safe_float(daily_row.get("circ_mv"))
             estimated_amount_1d = None
+            local_prices_snapshot_path = None
             if turnover_rate is not None and circ_mv is not None:
                 estimated_amount_1d = round(max(0.0, circ_mv * turnover_rate / 100.0), 4)
             if estimated_amount_1d is not None and 0.0 < estimated_amount_1d < MIN_ESTIMATED_AMOUNT_1D:
@@ -1442,6 +1647,26 @@ def _evaluate_ticker_stage(
                     failed_filters.append("low_avg_amount_20d")
                 else:
                     blocking_stage = "candidate_pool_truncated_after_filters"
+    if "local_prices_snapshot_path" not in locals():
+        local_prices_snapshot_path = None
+    if avg_amount_share_of_min_gate is None:
+        avg_amount_share_of_min_gate = _avg_amount_share_of_min_gate(avg_amount_20d)
+    if pre_truncation_avg_amount_gap_to_cutoff is None and cutoff_avg_amount_20d is not None and avg_amount_20d is not None:
+        pre_truncation_avg_amount_gap_to_cutoff = round(float(cutoff_avg_amount_20d) - float(avg_amount_20d), 4)
+    if pre_truncation_avg_amount_share_of_cutoff is None:
+        pre_truncation_avg_amount_share_of_cutoff = _safe_ratio(avg_amount_20d, cutoff_avg_amount_20d)
+    if pre_truncation_ranking_driver == "unknown":
+        pre_truncation_ranking_driver = _classify_pre_truncation_ranking_driver(
+            pre_truncation_rank_gap_to_cutoff=pre_truncation_rank_gap_to_cutoff,
+            avg_amount_share_of_cutoff=pre_truncation_avg_amount_share_of_cutoff,
+            market_cap_share_of_cutoff=pre_truncation_market_cap_share_of_cutoff,
+        )
+    if pre_truncation_liquidity_gap_mode == "unknown":
+        pre_truncation_liquidity_gap_mode = _classify_pre_truncation_liquidity_gap_mode(
+            avg_amount_share_of_min_gate=avg_amount_share_of_min_gate,
+            avg_amount_share_of_cutoff=pre_truncation_avg_amount_share_of_cutoff,
+        )
+    local_avg_amount_share_of_cutoff = _safe_ratio(avg_amount_20d, snapshot.get("shadow_selected_cutoff_avg_volume_20d"))
 
     return {
         "ticker": ticker,
@@ -1456,12 +1681,18 @@ def _evaluate_ticker_stage(
         "candidate_pool_snapshot": snapshot.get("snapshot_name"),
         "candidate_pool_snapshot_path": snapshot.get("snapshot_path"),
         "candidate_pool_snapshot_size": snapshot.get("snapshot_size"),
+        "candidate_pool_shadow_snapshot_path": snapshot.get("shadow_snapshot_path"),
+        "candidate_pool_selected_cutoff_ticker": snapshot_cutoff_ticker,
+        "candidate_pool_selected_cutoff_avg_volume_20d": snapshot_cutoff_avg_amount_20d,
+        "candidate_pool_shadow_recall_complete": snapshot.get("shadow_recall_complete"),
+        "candidate_pool_shadow_recall_status": snapshot.get("shadow_recall_status"),
+        "candidate_pool_shadow_selected_cutoff_avg_volume_20d": snapshot.get("shadow_selected_cutoff_avg_volume_20d"),
         "pre_truncation_total_candidates": frontier_context.get("pre_truncation_total_candidates"),
         "pre_truncation_cutoff_rank": pre_truncation_cutoff_rank,
         "pre_truncation_rank": pre_truncation_rank,
         "pre_truncation_rank_gap_to_cutoff": pre_truncation_rank_gap_to_cutoff,
-        "pre_truncation_cutoff_ticker": cutoff_row.get("ticker"),
-        "pre_truncation_cutoff_avg_amount_20d": cutoff_row.get("avg_amount_20d"),
+        "pre_truncation_cutoff_ticker": cutoff_row.get("ticker") or snapshot_cutoff_ticker,
+        "pre_truncation_cutoff_avg_amount_20d": cutoff_avg_amount_20d,
         "pre_truncation_cutoff_market_cap": cutoff_row.get("market_cap"),
         "pre_truncation_avg_amount_gap_to_cutoff": pre_truncation_avg_amount_gap_to_cutoff,
         "pre_truncation_avg_amount_share_of_cutoff": pre_truncation_avg_amount_share_of_cutoff,
@@ -1478,6 +1709,9 @@ def _evaluate_ticker_stage(
         "estimated_rank_gap_after_rebucket": estimated_rank_gap_after_rebucket,
         "estimated_amount_1d": estimated_amount_1d,
         "avg_amount_20d": avg_amount_20d,
+        "avg_amount_20d_source": "local_snapshot_prices" if local_prices_snapshot_path else ("tushare_daily" if avg_amount_20d is not None else None),
+        "local_prices_snapshot_path": local_prices_snapshot_path,
+        "local_avg_amount_share_of_cutoff": local_avg_amount_share_of_cutoff,
         "market_cap": current_market_cap,
         "is_st": is_st,
         "is_beijing_exchange": is_bj,
@@ -1503,6 +1737,18 @@ def _build_priority_ticker_dossiers(
         if str(row.get("first_kill_switch") or "") == "no_candidate_entry"
     ]
     stock_basic_universe, stock_basic_by_symbol = _load_stock_basic_universe()
+    fallback_stock_basic_universe, fallback_stock_basic_by_symbol = _build_tradeable_pool_stock_basic_fallback(no_candidate_rows)
+    if stock_basic_universe.empty:
+        stock_basic_universe = fallback_stock_basic_universe
+    elif not fallback_stock_basic_universe.empty:
+        existing_symbols = set(stock_basic_universe["symbol"].astype(str).tolist()) if "symbol" in stock_basic_universe.columns else set()
+        missing_rows = fallback_stock_basic_universe[
+            ~fallback_stock_basic_universe["symbol"].astype(str).isin(existing_symbols)
+        ].copy()
+        if not missing_rows.empty:
+            stock_basic_universe = pd.concat([stock_basic_universe, missing_rows], ignore_index=True)
+    if fallback_stock_basic_by_symbol:
+        stock_basic_by_symbol = {**fallback_stock_basic_by_symbol, **stock_basic_by_symbol}
     pro = _get_pro()
     snapshot_cache: dict[str, dict[str, Any]] = {}
     context_cache: dict[str, dict[str, Any]] = {}
@@ -1535,6 +1781,7 @@ def _build_priority_ticker_dossiers(
             stage_payload = _evaluate_ticker_stage(
                 ticker,
                 compact_trade_date,
+                snapshots_root=snapshots_root,
                 stock_basic_by_symbol=stock_basic_by_symbol,
                 trade_date_context=trade_date_context,
                 frontier_context=frontier_context,
@@ -1559,6 +1806,7 @@ def _build_priority_ticker_dossiers(
         action_tier, title, next_step = _blocking_stage_details(dominant_stage or "missing_market_context", subject=ticker)
         strict_goal_case_count = sum(1 for row in occurrence_evidence if bool(row.get("strict_btst_goal_case")))
         failure_reason_map = {
+            "shadow_snapshot_legacy_unknown": f"{ticker} 当前只有 legacy 空 shadow 快照，暂时不能把 upstream absence 直接当成真实 candidate_pool 漏票。",
             "missing_market_context": f"{ticker} 当前还缺 Layer A 市场上下文，无法稳定还原 candidate_pool 排除原因。",
             "missing_stock_basic": f"{ticker} 在 stock_basic universe 中没有稳定命中，Layer A 基础输入仍有缺口。",
             "st_excluded": f"{ticker} 在 Layer A 就被 ST 过滤挡下。",
@@ -1615,7 +1863,8 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
             rank_gap = occurrence.get("pre_truncation_rank_gap_to_cutoff")
             rank_value = occurrence.get("pre_truncation_rank")
             cutoff_rank = occurrence.get("pre_truncation_cutoff_rank")
-            if rank_gap is None or rank_value is None or cutoff_rank is None:
+            share_of_cutoff = occurrence.get("pre_truncation_avg_amount_share_of_cutoff")
+            if rank_gap is None and rank_value is None and cutoff_rank is None and share_of_cutoff is None:
                 continue
             truncation_rows.append(
                 {
@@ -1630,7 +1879,7 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
                     "pre_truncation_cutoff_avg_amount_share_of_min_gate": occurrence.get("pre_truncation_cutoff_avg_amount_share_of_min_gate"),
                     "pre_truncation_cutoff_market_cap": occurrence.get("pre_truncation_cutoff_market_cap"),
                     "pre_truncation_avg_amount_gap_to_cutoff": occurrence.get("pre_truncation_avg_amount_gap_to_cutoff"),
-                    "pre_truncation_avg_amount_share_of_cutoff": occurrence.get("pre_truncation_avg_amount_share_of_cutoff"),
+                    "pre_truncation_avg_amount_share_of_cutoff": share_of_cutoff,
                     "avg_amount_share_of_min_gate": occurrence.get("avg_amount_share_of_min_gate"),
                     "pre_truncation_market_cap_gap_to_cutoff": occurrence.get("pre_truncation_market_cap_gap_to_cutoff"),
                     "pre_truncation_market_cap_share_of_cutoff": occurrence.get("pre_truncation_market_cap_share_of_cutoff"),
@@ -1644,13 +1893,15 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
     ordered_rows = sorted(
         truncation_rows,
         key=lambda current: (
-            int(current.get("pre_truncation_rank_gap_to_cutoff") or 0),
-            int(current.get("pre_truncation_rank") or 0),
+            0 if current.get("pre_truncation_rank") is not None else 1,
+            int(current.get("pre_truncation_rank_gap_to_cutoff") or 10**9),
+            int(current.get("pre_truncation_rank") or 10**9),
+            -float(_safe_float(current.get("pre_truncation_avg_amount_share_of_cutoff")) or 0.0),
             str(current.get("ticker") or ""),
             str(current.get("trade_date") or ""),
         ),
     )
-    rank_gaps = [int(row.get("pre_truncation_rank_gap_to_cutoff") or 0) for row in ordered_rows]
+    rank_gaps = [int(row.get("pre_truncation_rank_gap_to_cutoff") or 0) for row in ordered_rows if row.get("pre_truncation_rank_gap_to_cutoff") is not None]
     distinct_ticker_cases: list[dict[str, Any]] = []
     seen_tickers: set[str] = set()
     for row in ordered_rows:
@@ -1674,7 +1925,13 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
     liquidity_gap_mode_counts = Counter(str(row.get("pre_truncation_liquidity_gap_mode") or "unknown") for row in ordered_rows)
     dominant_liquidity_gap_mode = liquidity_gap_mode_counts.most_common(1)[0][0] if liquidity_gap_mode_counts else None
     if min_rank_gap is None:
-        frontier_verdict = "no_rank_observability"
+        max_share = max(avg_amount_shares) if avg_amount_shares else None
+        if max_share is not None and max_share < 0.65:
+            frontier_verdict = "far_below_cutoff_not_boundary"
+        elif max_share is not None and max_share < 0.85:
+            frontier_verdict = "mid_cutoff_gap"
+        else:
+            frontier_verdict = "no_rank_observability"
     elif min_rank_gap <= 20:
         frontier_verdict = "near_cutoff_boundary"
     elif min_rank_gap <= 100:
@@ -1744,6 +2001,12 @@ def _build_recommendation(
     priority_handoff_branch_mechanisms: list[dict[str, Any]] | None = None,
     priority_handoff_branch_experiment_queue: list[dict[str, Any]] | None = None,
 ) -> str:
+    if dominant_stage == "shadow_snapshot_legacy_unknown":
+        return (
+            f"当前 Layer A candidate_pool recall backlog 里至少有一部分样本仍停留在 legacy 空 shadow 快照状态："
+            f"{top_stage_tickers.get('shadow_snapshot_legacy_unknown', [])} 还不能被直接解释成真实 upstream absence。"
+            "下一步应先补齐 shadow 证据，再决定是否调整 recall 规则。"
+        )
     if dominant_stage == "low_avg_amount_20d":
         return (
             f"当前 Layer A candidate_pool recall backlog 的主矛盾落在 20 日均成交额门槛：{top_stage_tickers.get('low_avg_amount_20d', [])} 持续卡在 {MIN_AVG_AMOUNT_20D} 万流动性线下。"
@@ -1769,6 +2032,15 @@ def _build_recommendation(
                 gap_mode_reason = " 这些票已经明显高于最低流动性门槛，问题更像是通过 gate 后仍打不过 cutoff 竞争集。"
             elif dominant_liquidity_gap_mode == "barely_above_gate_and_far_below_cutoff":
                 gap_mode_reason = " 这些票多数只是勉强高于最低流动性门槛，说明 gate 与 top300 cutoff 之间存在很长的质量走廊。"
+            if closest_case.get("pre_truncation_rank") is None:
+                share_of_cutoff = closest_case.get("pre_truncation_avg_amount_share_of_cutoff")
+                cutoff_target = closest_case.get("pre_truncation_cutoff_avg_amount_20d")
+                return (
+                    f"当前 Layer A candidate_pool recall backlog 虽然都落在 top300 截断后，但最近 distinct ticker {closest_case.get('ticker')}@{closest_case.get('trade_date')} "
+                    f"在缺 rank 观测时，avg_amount/cutoff 也只有 {share_of_cutoff}，目标 cutoff 成交额约为 {cutoff_target}。"
+                    f"这说明当前主矛盾已经不是小幅 top300 边界调参，而是{ranking_reason}，下一步应优先拆解 liquidity / ranking source，而不是直接放宽 top300。{gap_mode_reason}"
+                    f" 当前焦点 ticker 画像为 {[(row.get('ticker'), row.get('dominant_liquidity_gap_mode'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。"
+                )
             return (
                 f"当前 Layer A candidate_pool recall backlog 虽然都落在 top300 截断后，但最近的 distinct ticker 也只有 {closest_case.get('ticker')}@{closest_case.get('trade_date')}，"
                 f"pre-truncation rank={closest_case.get('pre_truncation_rank')}，距 cutoff 仍有 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
@@ -1833,7 +2105,9 @@ def _build_next_actions(
     priority_handoff_branch_experiment_queue: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     actions: list[str] = []
-    if dominant_stage == "low_avg_amount_20d":
+    if dominant_stage == "shadow_snapshot_legacy_unknown":
+        actions.append(f"先补 {top_stage_tickers.get('shadow_snapshot_legacy_unknown', [])} 的默认 shadow 快照证据，再判断是否存在真实 candidate_pool absence。")
+    elif dominant_stage == "low_avg_amount_20d":
         actions.append(f"优先回查 {top_stage_tickers.get('low_avg_amount_20d', [])} 的 20 日均成交额门槛与 liquidity gate。")
     elif dominant_stage == "candidate_pool_truncated_after_filters":
         frontier_summary = dict(truncation_frontier_summary or {})
@@ -1845,9 +2119,14 @@ def _build_next_actions(
         closest_distinct = list(frontier_summary.get("closest_distinct_ticker_cases") or [])
         if frontier_verdict == "far_below_cutoff_not_boundary" and closest_distinct:
             closest_case = dict(closest_distinct[0])
-            actions.append(
-                f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 也还差 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
-            )
+            if closest_case.get("pre_truncation_rank_gap_to_cutoff") is None:
+                actions.append(
+                    f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 的 avg_amount/cutoff 也只有 {closest_case.get('pre_truncation_avg_amount_share_of_cutoff')}。"
+                )
+            else:
+                actions.append(
+                    f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 也还差 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
+                )
             if dominant_ranking_driver in {"avg_amount_20d_gap_dominant", "avg_amount_20d_gap"}:
                 actions.append("优先拆解过滤后排序里的 20 日成交额落差，而不是先调 MAX_CANDIDATE_POOL_SIZE。")
             elif dominant_ranking_driver == "market_cap_tie_break_gap":

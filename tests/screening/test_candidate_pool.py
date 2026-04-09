@@ -489,6 +489,8 @@ class TestExcludeRules:
             "post_gate_liquidity_competition": 1,
         }
         assert shadow_summary["selected_tickers"] == ["000302", "000300", "000301"]
+        assert shadow_summary["shadow_recall_complete"] is True
+        assert shadow_summary["shadow_recall_status"] == "computed"
 
     def test_candidate_pool_shadow_recall_preserves_cached_main_pool_when_shadow_backfill_unavailable(self):
         snapshot_dir = Path(tempfile.mkdtemp())
@@ -513,6 +515,8 @@ class TestExcludeRules:
         assert shadow_candidates == []
         assert shadow_summary["selected_count"] == 1
         assert shadow_summary["lane_counts"] == {}
+        assert shadow_summary["shadow_recall_complete"] is False
+        assert shadow_summary["shadow_recall_status"] == "selected_cache_backfill"
         assert (snapshot_dir / "candidate_pool_20260305_top300_shadow.json").exists()
 
     def test_candidate_pool_shadow_recall_uses_cached_main_pool_without_recompute_when_focus_is_empty(self):
@@ -538,6 +542,74 @@ class TestExcludeRules:
         assert [candidate.ticker for candidate in selected_candidates] == ["000001"]
         assert shadow_candidates == []
         assert shadow_summary["selected_count"] == 1
+        assert shadow_summary["shadow_recall_complete"] is False
+        assert shadow_summary["shadow_recall_status"] == "selected_cache_backfill"
+
+    def test_load_candidate_pool_shadow_snapshot_marks_legacy_empty_shadow_as_unknown(self):
+        snapshot_dir = Path(tempfile.mkdtemp())
+        shadow_snapshot_path = snapshot_dir / "candidate_pool_20260305_top300_shadow.json"
+        shadow_snapshot_path.write_text(
+            json.dumps(
+                {
+                    "selected_candidates": [CandidateStock(ticker="000001", name="缓存主池", industry_sw="银行", avg_volume_20d=12345.0, market_cap=100.0, listing_date="20100101").model_dump()],
+                    "shadow_candidates": [],
+                    "shadow_summary": {
+                        "pool_size": 300,
+                        "selected_count": 1,
+                        "overflow_count": 0,
+                        "lane_counts": {},
+                        "selected_tickers": [],
+                        "tickers": [],
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        payload = candidate_pool_module._load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
+
+        assert payload["shadow_summary"]["shadow_recall_complete"] is False
+        assert payload["shadow_summary"]["shadow_recall_status"] == "legacy_unknown"
+
+    def test_load_candidate_pool_shadow_snapshot_marks_legacy_nonempty_shadow_as_computed(self):
+        snapshot_dir = Path(tempfile.mkdtemp())
+        shadow_candidate = CandidateStock(
+            ticker="000301",
+            name="shadow",
+            industry_sw="银行",
+            avg_volume_20d=20000.0,
+            market_cap=100.0,
+            listing_date="20100101",
+            candidate_pool_lane="post_gate_liquidity_competition",
+            candidate_pool_shadow_reason="post_gate_liquidity_competition_shadow",
+        )
+        shadow_snapshot_path = snapshot_dir / "candidate_pool_20260305_top300_shadow.json"
+        shadow_snapshot_path.write_text(
+            json.dumps(
+                {
+                    "selected_candidates": [],
+                    "shadow_candidates": [shadow_candidate.model_dump()],
+                    "shadow_summary": {
+                        "pool_size": 300,
+                        "selected_count": 300,
+                        "overflow_count": 10,
+                        "lane_counts": {"post_gate_liquidity_competition": 1},
+                        "selected_tickers": ["000301"],
+                        "tickers": [{"ticker": "000301"}],
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        payload = candidate_pool_module._load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
+
+        assert payload["shadow_summary"]["shadow_recall_complete"] is True
+        assert payload["shadow_summary"]["shadow_recall_status"] == "computed_legacy"
 
     @patch("src.screening.candidate_pool.get_sw_industry_classification")
     @patch("src.screening.candidate_pool.get_daily_basic_batch")
@@ -711,6 +783,116 @@ class TestExcludeRules:
         assert focused_shadow_summary["focus_tickers"] == ["000301"]
         assert focused_shadow_summary["tickers"][0]["candidate_pool_shadow_reason"] == "upstream_base_liquidity_uplift_shadow_focus_relaxed_band"
         assert focused_shadow_summary["tickers"][0]["shadow_focus_relaxed_band"] is True
+
+    @patch("src.screening.candidate_pool.get_sw_industry_classification")
+    @patch("src.screening.candidate_pool.get_daily_basic_batch")
+    @patch("src.screening.candidate_pool.get_limit_list")
+    @patch("src.screening.candidate_pool.get_suspend_list")
+    @patch("src.screening.candidate_pool.get_all_stock_basic")
+    @patch("src.screening.candidate_pool._get_pro")
+    def test_candidate_pool_shadow_recall_focus_can_use_relaxed_gate_share_floor(
+        self,
+        mock_pro,
+        mock_basic,
+        mock_suspend,
+        mock_limit,
+        mock_daily,
+        mock_sw,
+    ):
+        stocks = [
+            {"ts_code": f"{i:06d}.SZ", "symbol": f"{i:06d}", "name": f"股票{i}"}
+            for i in range(302)
+        ]
+        avg_amount_map = {f"{i:06d}.SZ": float(200_000 - i) for i in range(300)}
+        avg_amount_map["000300.SZ"] = 19_000.0
+        avg_amount_map["000301.SZ"] = 11_750.0
+
+        snapshot_dir = Path(tempfile.mkdtemp())
+        mock_pro.return_value = MagicMock()
+        mock_basic.return_value = _make_stock_basic_df(stocks)
+        mock_suspend.return_value = pd.DataFrame()
+        mock_limit.return_value = pd.DataFrame()
+        mock_daily.return_value = _make_daily_basic_df(
+            [{"ts_code": stock["ts_code"], "total_mv": 1_000_000} for stock in stocks]
+        )
+        mock_sw.return_value = {}
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
+             patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 300), \
+             patch("src.screening.candidate_pool.SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS", 2), \
+             patch("src.screening.candidate_pool.SHADOW_REBUCKET_MAX_TICKERS", 0), \
+             patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value=avg_amount_map):
+            baseline_selected, baseline_shadow_candidates, _ = build_candidate_pool_with_shadow(
+                "20260305",
+                use_cache=False,
+                cooldown_tickers=set(),
+            )
+
+            with patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", {"000301"}):
+                focused_selected, focused_shadow_candidates, focused_shadow_summary = build_candidate_pool_with_shadow(
+                    "20260305",
+                    use_cache=False,
+                    cooldown_tickers=set(),
+                )
+
+        assert len(baseline_selected) == 300
+        assert len(focused_selected) == 300
+        assert [candidate.ticker for candidate in baseline_shadow_candidates] == ["000300"]
+        assert [candidate.ticker for candidate in focused_shadow_candidates] == ["000301", "000300"]
+        assert focused_shadow_summary["focus_tickers"] == ["000301"]
+        focus_entry = next(item for item in focused_shadow_summary["tickers"] if item["ticker"] == "000301")
+        assert focus_entry["candidate_pool_shadow_reason"] == "upstream_base_liquidity_uplift_shadow_focus_relaxed_band"
+        assert focus_entry["shadow_focus_selected"] is True
+        assert focus_entry["shadow_focus_relaxed_band"] is True
+        assert focus_entry["avg_amount_share_of_min_gate"] == 2.35
+
+    @patch("src.screening.candidate_pool.get_sw_industry_classification")
+    @patch("src.screening.candidate_pool.get_daily_basic_batch")
+    @patch("src.screening.candidate_pool.get_limit_list")
+    @patch("src.screening.candidate_pool.get_suspend_list")
+    @patch("src.screening.candidate_pool.get_all_stock_basic")
+    @patch("src.screening.candidate_pool._get_pro")
+    def test_candidate_pool_shadow_recall_low_gate_focus_requires_tighter_cutoff_share(
+        self,
+        mock_pro,
+        mock_basic,
+        mock_suspend,
+        mock_limit,
+        mock_daily,
+        mock_sw,
+    ):
+        stocks = [
+            {"ts_code": f"{i:06d}.SZ", "symbol": f"{i:06d}", "name": f"股票{i}"}
+            for i in range(302)
+        ]
+        avg_amount_map = {f"{i:06d}.SZ": float(200_000 - i) for i in range(300)}
+        avg_amount_map["000300.SZ"] = 19_000.0
+        avg_amount_map["000301.SZ"] = 14_990.0
+
+        snapshot_dir = Path(tempfile.mkdtemp())
+        mock_pro.return_value = MagicMock()
+        mock_basic.return_value = _make_stock_basic_df(stocks)
+        mock_suspend.return_value = pd.DataFrame()
+        mock_limit.return_value = pd.DataFrame()
+        mock_daily.return_value = _make_daily_basic_df(
+            [{"ts_code": stock["ts_code"], "total_mv": 1_000_000} for stock in stocks]
+        )
+        mock_sw.return_value = {}
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
+             patch("src.screening.candidate_pool.MAX_CANDIDATE_POOL_SIZE", 300), \
+             patch("src.screening.candidate_pool.SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS", 2), \
+             patch("src.screening.candidate_pool.SHADOW_REBUCKET_MAX_TICKERS", 0), \
+             patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value=avg_amount_map):
+            with patch("src.screening.candidate_pool.SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", {"000301"}):
+                _, focused_shadow_candidates, focused_shadow_summary = build_candidate_pool_with_shadow(
+                    "20260305",
+                    use_cache=False,
+                    cooldown_tickers=set(),
+                )
+
+        assert [candidate.ticker for candidate in focused_shadow_candidates] == ["000300"]
+        assert focused_shadow_summary["focus_tickers"] == []
 
     @patch("src.screening.candidate_pool.get_sw_industry_classification")
     @patch("src.screening.candidate_pool.get_daily_basic_batch")

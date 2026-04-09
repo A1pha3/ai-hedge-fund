@@ -167,6 +167,41 @@ def test_derive_shadow_focus_tickers_from_reports_includes_high_signal_candidate
     }
 
 
+def test_derive_shadow_focus_tickers_from_reports_includes_high_signal_candidate_pool_recall_corridor_focus(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    (reports_root / "btst_candidate_pool_recall_dossier_latest.json").write_text(
+        """
+        {
+          "priority_ticker_dossiers": [
+            {
+              "ticker": "301188",
+              "strict_btst_goal_case_count": 2,
+              "closest_pre_truncation_gap": null,
+              "truncation_liquidity_profile": {
+                "priority_handoff": "layer_a_liquidity_corridor",
+                "avg_amount_share_of_min_gate_mean": 2.3434,
+                "avg_amount_share_of_cutoff_mean": 0.0875
+              }
+            }
+          ]
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    derived = run_paper_trading_script._derive_shadow_focus_tickers_from_reports(reports_root)
+
+    assert derived == {
+        "all": ["301188"],
+        "layer_a_liquidity_corridor": ["301188"],
+        "post_gate_liquidity_competition": [],
+        "visibility_gap_all": [],
+        "visibility_gap_layer_a_liquidity_corridor": [],
+        "visibility_gap_post_gate_liquidity_competition": [],
+    }
+
+
 def test_derive_shadow_focus_tickers_from_reports_skips_negative_recent_followup_history(tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()
@@ -225,6 +260,55 @@ def test_derive_shadow_focus_tickers_from_reports_recall_addition_respects_negat
               "truncation_liquidity_profile": {
                 "priority_handoff": "post_gate_liquidity_competition",
                 "avg_amount_share_of_min_gate_mean": 6.9694
+              }
+            }
+          ]
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    derived = run_paper_trading_script._derive_shadow_focus_tickers_from_reports(reports_root)
+
+    assert derived == {
+        "all": [],
+        "layer_a_liquidity_corridor": [],
+        "post_gate_liquidity_competition": [],
+        "visibility_gap_all": [],
+        "visibility_gap_layer_a_liquidity_corridor": [],
+        "visibility_gap_post_gate_liquidity_competition": [],
+    }
+
+
+def test_derive_shadow_focus_tickers_from_reports_corridor_recall_addition_respects_negative_recent_followup_history(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+    (reports_root / "btst_tplus2_candidate_dossier_301188_latest.json").write_text(
+        """
+        {
+          "candidate_ticker": "301188",
+          "governance_followup": {
+            "priority_handoff": "layer_a_liquidity_corridor",
+            "latest_followup_decision": "selected",
+            "downstream_followup_status": "continuation_only_confirm_then_review",
+            "latest_followup_historical_next_close_positive_rate": 0.0
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    (reports_root / "btst_candidate_pool_recall_dossier_latest.json").write_text(
+        """
+        {
+          "priority_ticker_dossiers": [
+            {
+              "ticker": "301188",
+              "strict_btst_goal_case_count": 2,
+              "closest_pre_truncation_gap": null,
+              "truncation_liquidity_profile": {
+                "priority_handoff": "layer_a_liquidity_corridor",
+                "avg_amount_share_of_min_gate_mean": 2.3434,
+                "avg_amount_share_of_cutoff_mean": 0.0875
               }
             }
           ]

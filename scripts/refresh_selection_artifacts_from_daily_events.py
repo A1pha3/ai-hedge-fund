@@ -10,7 +10,7 @@ from scripts.btst_report_utils import discover_report_dirs, normalize_trade_date
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
 from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
 from scripts.btst_latest_followup_utils import load_btst_followup_by_ticker_for_report, load_latest_btst_followup_by_ticker
-from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config
+from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config, _build_upstream_shadow_observation_entry, _qualifies_short_trade_boundary_candidate
 from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
@@ -105,16 +105,27 @@ def _merge_shadow_metadata(entry: dict[str, Any], shadow_lookup: dict[str, dict[
     return merged
 
 
-def _refresh_released_shadow_entries(filters: dict[str, Any], filter_key: str, shadow_lookup: dict[str, dict[str, Any]]) -> None:
+def _refresh_released_shadow_entries(
+    filters: dict[str, Any],
+    filter_key: str,
+    shadow_lookup: dict[str, dict[str, Any]],
+    *,
+    prior_by_ticker: dict[str, dict[str, Any]],
+) -> None:
     filter_payload = dict(filters.get(filter_key) or {})
     refreshed_entries: list[dict[str, Any]] = []
     for raw_entry in list(filter_payload.get("released_shadow_entries") or []):
         entry = _merge_shadow_metadata(dict(raw_entry or {}), shadow_lookup)
+        ticker = str(entry.get("ticker") or "").strip()
+        historical_prior = dict(entry.get("historical_prior") or prior_by_ticker.get(ticker) or {})
+        if historical_prior:
+            entry["historical_prior"] = historical_prior
         existing_relief = dict(entry.get("short_trade_catalyst_relief") or {})
         relief = _build_upstream_shadow_catalyst_relief_config(
             candidate_pool_lane=str(entry.get("candidate_pool_lane") or ""),
             filter_reason=str(entry.get("shadow_release_filter_reason") or ""),
             metrics_payload=dict(entry.get("short_trade_boundary_metrics") or {}),
+            historical_prior=historical_prior,
             shadow_visibility_gap_selected=bool(entry.get("shadow_visibility_gap_selected")),
         )
         merged_relief = {**existing_relief, **relief} if relief else existing_relief
@@ -123,6 +134,36 @@ def _refresh_released_shadow_entries(filters: dict[str, Any], filter_key: str, s
         refreshed_entries.append(entry)
     filter_payload["released_shadow_entries"] = refreshed_entries
     filters[filter_key] = filter_payload
+
+
+def _refresh_shadow_observation_entries(
+    filters: dict[str, Any],
+    *,
+    shadow_lookup: dict[str, dict[str, Any]],
+    prior_by_ticker: dict[str, dict[str, Any]],
+    trade_date_compact: str,
+) -> None:
+    filter_payload = dict(filters.get("short_trade_candidates") or {})
+    refreshed_entries: list[dict[str, Any]] = []
+    for raw_entry in list(filter_payload.get("shadow_observation_entries") or []):
+        entry = _merge_shadow_metadata(dict(raw_entry or {}), shadow_lookup)
+        ticker = str(entry.get("ticker") or "").strip()
+        historical_prior = dict(entry.get("historical_prior") or prior_by_ticker.get(ticker) or {})
+        if historical_prior:
+            entry["historical_prior"] = historical_prior
+        qualified, filter_reason, metrics_payload = _qualifies_short_trade_boundary_candidate(
+            trade_date=trade_date_compact,
+            entry=entry,
+        )
+        if not qualified and filter_reason:
+            entry = _build_upstream_shadow_observation_entry(
+                candidate_entry=entry,
+                filter_reason=filter_reason,
+                metrics_payload=metrics_payload,
+            )
+        refreshed_entries.append(entry)
+    filter_payload["shadow_observation_entries"] = refreshed_entries
+    filters["short_trade_candidates"] = filter_payload
 
 
 def _load_latest_historical_prior_by_ticker(report_dir: Path) -> dict[str, dict[str, Any]]:
@@ -161,8 +202,14 @@ def rebuild_selection_targets_for_plan(
     shadow_lookup = dict(shadow_lookup or {})
     historical_prior_by_ticker = dict(historical_prior_by_ticker or {})
 
-    _refresh_released_shadow_entries(filters, "short_trade_candidates", shadow_lookup)
-    _refresh_released_shadow_entries(filters, "watchlist", shadow_lookup)
+    _refresh_released_shadow_entries(filters, "short_trade_candidates", shadow_lookup, prior_by_ticker=historical_prior_by_ticker)
+    _refresh_released_shadow_entries(filters, "watchlist", shadow_lookup, prior_by_ticker=historical_prior_by_ticker)
+    _refresh_shadow_observation_entries(
+        filters,
+        shadow_lookup=shadow_lookup,
+        prior_by_ticker=historical_prior_by_ticker,
+        trade_date_compact=trade_date_compact,
+    )
 
     short_trade_candidate_filters = dict(filters.get("short_trade_candidates") or {})
     watchlist_filter = dict(filters.get("watchlist") or {})

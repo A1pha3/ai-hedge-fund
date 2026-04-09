@@ -10,6 +10,7 @@ A股数据接口模块 - 使用 AKShare 获取中国股票数据
 """
 
 import datetime
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -30,6 +31,7 @@ from src.data.models import (
 # Global cache instance
 _cache = get_cache()
 _persistent_cache = get_enhanced_cache()
+AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS = float(os.getenv("AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS", "8"))
 
 # AKShare 是否可用标志
 _akshare_available = False
@@ -84,7 +86,18 @@ def _cached_akshare_dataframe_call(api_name: str, func, ttl: Optional[int] = Non
         return cached_df.copy()
 
     try:
-        df = func(**kwargs)
+        if api_name == "stock_news_em" and AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS > 0:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(func, **kwargs)
+            try:
+                df = future.result(timeout=AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS)
+            except concurrent.futures.TimeoutError as exc:
+                future.cancel()
+                raise TimeoutError(f"AKShare {api_name} timed out after {AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS}s") from exc
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+        else:
+            df = func(**kwargs)
     except Exception:
         raise
 

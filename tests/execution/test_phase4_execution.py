@@ -1311,6 +1311,32 @@ def test_run_post_market_keeps_failed_upstream_shadow_as_observation_lane():
     assert "301292" not in plan.selection_targets
 
 
+def test_qualifies_short_trade_boundary_candidate_keeps_structural_blockers_in_metrics_payload():
+    original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    try:
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
+            "gate_status": {"data": "pass", "structural": "fail", "score": "proxy_only"},
+            "blockers": ["trend_not_constructive"],
+            "breakout_freshness": 0.0,
+            "trend_acceleration": 0.0,
+            "volume_expansion_quality": 0.0,
+            "catalyst_freshness": 0.0,
+            "close_strength": 0.068,
+        }
+        qualified, filter_reason, metrics_payload = daily_pipeline_module._qualifies_short_trade_boundary_candidate(
+            trade_date="20260330",
+            entry={"ticker": "301188"},
+        )
+    finally:
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    assert qualified is False
+    assert filter_reason == "structural_prefilter_fail"
+    assert metrics_payload["gate_status"] == {"data": "pass", "structural": "fail", "score": "proxy_only"}
+    assert metrics_payload["blockers"] == ["trend_not_constructive"]
+    assert metrics_payload["candidate_score"] == 0.0068
+
+
 def test_run_post_market_releases_strong_upstream_shadow_into_supplemental_targets():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [], target_mode="short_trade_only")
 
@@ -1411,6 +1437,7 @@ def test_run_post_market_releases_rebucket_shadow_into_supplemental_targets():
                 "entry_timing_bias": "hold_into_close",
                 "next_close_positive_rate": 0.75,
                 "next_high_hit_rate_at_threshold": 0.75,
+                "next_open_to_close_return_mean": 0.03,
             }
         }
         daily_pipeline_module.build_candidate_pool_with_shadow = lambda trade_date: (
@@ -1888,6 +1915,7 @@ def test_run_post_market_attaches_upstream_shadow_catalyst_relief_for_catalyst_b
                 "entry_timing_bias": "hold_into_close",
                 "next_close_positive_rate": 0.75,
                 "next_high_hit_rate_at_threshold": 0.75,
+                "next_open_to_close_return_mean": 0.03,
             }
         }
         daily_pipeline_module.build_candidate_pool_with_shadow = lambda trade_date: (
@@ -1964,6 +1992,10 @@ def test_run_post_market_attaches_upstream_shadow_catalyst_relief_for_catalyst_b
         "trend_acceleration_min": 0.8,
         "close_strength_min": 0.85,
         "require_no_profitability_hard_cliff": False,
+        "required_execution_quality_labels": ["close_continuation"],
+        "min_historical_evaluable_count": 2,
+        "min_historical_next_close_positive_rate": 0.5,
+        "min_historical_next_open_to_close_return_mean": 0.0,
     }
     assert diagnostics["filters"]["short_trade_candidates"]["prefilter_thresholds"]["upstream_shadow_catalyst_relief_near_miss_threshold"] == 0.45
     assert diagnostics["filters"]["short_trade_candidates"]["prefilter_thresholds"]["upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane"] == {
@@ -2066,7 +2098,12 @@ def test_run_post_market_relaxes_post_gate_shadow_catalyst_relief_thresholds_for
             "close_strength": 0.8,
             "profitability_hard_cliff": True,
         },
-        historical_prior={},
+        historical_prior={
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 2,
+            "next_close_positive_rate": 0.6,
+            "next_open_to_close_return_mean": 0.01,
+        },
     )
 
     assert relief == {
@@ -2079,6 +2116,10 @@ def test_run_post_market_relaxes_post_gate_shadow_catalyst_relief_thresholds_for
         "trend_acceleration_min": 0.75,
         "close_strength_min": 0.8,
         "require_no_profitability_hard_cliff": False,
+        "required_execution_quality_labels": ["close_continuation"],
+        "min_historical_evaluable_count": 2,
+        "min_historical_next_close_positive_rate": 0.5,
+        "min_historical_next_open_to_close_return_mean": 0.0,
     }
 
 
@@ -2111,6 +2152,28 @@ def test_run_post_market_blocks_post_gate_relief_when_history_has_zero_next_clos
             "profitability_hard_cliff": False,
         },
         historical_prior={"next_close_positive_rate": 0.0},
+    )
+
+    assert relief == {}
+
+
+def test_run_post_market_blocks_upstream_shadow_catalyst_relief_without_close_continuation_history_support():
+    relief = daily_pipeline_module._build_upstream_shadow_catalyst_relief_config(
+        candidate_pool_lane="layer_a_liquidity_corridor",
+        filter_reason="catalyst_freshness_below_short_trade_boundary_floor",
+        metrics_payload={
+            "candidate_score": 0.4794,
+            "breakout_freshness": 0.4,
+            "trend_acceleration": 0.8814,
+            "close_strength": 0.8902,
+            "profitability_hard_cliff": False,
+        },
+        historical_prior={
+            "execution_quality_label": "balanced_confirmation",
+            "evaluable_count": 4,
+            "next_close_positive_rate": 0.75,
+            "next_open_to_close_return_mean": 0.03,
+        },
     )
 
     assert relief == {}

@@ -283,6 +283,16 @@ def _make_upstream_shadow_catalyst_relief_entry(*, include_profitability_hard_cl
             "trend_acceleration_min": 0.80,
             "close_strength_min": 0.85,
             "require_no_profitability_hard_cliff": True,
+            "required_execution_quality_labels": ["close_continuation"],
+            "min_historical_evaluable_count": 2,
+            "min_historical_next_close_positive_rate": 0.5,
+            "min_historical_next_open_to_close_return_mean": 0.0,
+        },
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "evaluable_count": 4,
+            "next_close_positive_rate": 0.75,
+            "next_open_to_close_return_mean": 0.03,
         },
         "strategy_signals": strategy_signals,
         "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
@@ -1752,6 +1762,25 @@ def test_upstream_shadow_catalyst_relief_can_promote_post_gate_shadow_to_selecte
     assert result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.45
     assert result.metrics_payload["thresholds"]["upstream_shadow_catalyst_relief_select_threshold_override"] == 0.45
     assert result.explainability_payload["upstream_shadow_catalyst_relief"]["effective_select_threshold"] == 0.45
+
+
+def test_upstream_shadow_catalyst_relief_requires_close_continuation_history_support() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry["historical_prior"] = {
+        "execution_quality_label": "balanced_confirmation",
+        "evaluable_count": 4,
+        "next_close_positive_rate": 0.75,
+        "next_open_to_close_return_mean": 0.03,
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "rejected"
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is False
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["historical_continuation_quality"] is False
 
 
 def test_upstream_shadow_catalyst_relief_keeps_profitability_hard_cliff_sample_rejected() -> None:

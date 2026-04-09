@@ -57,7 +57,9 @@ SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS = int(os.getenv("CANDIDATE_POOL_SHADOW_LIQ
 SHADOW_REBUCKET_MAX_TICKERS = int(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MAX_TICKERS", "1"))
 SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE", "3.0"))
 SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE", "0.20"))
+SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE", "2.25"))
 SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE", "0.30"))
+SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE", "0.075"))
 SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE", "0.40"))
 SHADOW_REBUCKET_MIN_GATE_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MIN_GATE_SHARE", "8.0"))
 SHADOW_REBUCKET_MIN_CUTOFF_SHARE = float(os.getenv("CANDIDATE_POOL_SHADOW_REBUCKET_MIN_CUTOFF_SHARE", "0.30"))
@@ -101,6 +103,22 @@ def _load_candidate_pool_snapshot(snapshot_path: Path) -> List[CandidateStock]:
     return [CandidateStock(**item) for item in data]
 
 
+def _normalize_shadow_summary(shadow_summary: dict[str, Any], *, shadow_candidates: list[CandidateStock]) -> dict[str, Any]:
+    normalized_summary = dict(shadow_summary or {})
+    if "shadow_recall_complete" in normalized_summary and "shadow_recall_status" in normalized_summary:
+        return normalized_summary
+
+    has_shadow_entries = bool(normalized_summary.get("tickers")) or bool(shadow_candidates)
+    if has_shadow_entries:
+        normalized_summary.setdefault("shadow_recall_complete", True)
+        normalized_summary.setdefault("shadow_recall_status", "computed_legacy")
+        return normalized_summary
+
+    normalized_summary.setdefault("shadow_recall_complete", False)
+    normalized_summary.setdefault("shadow_recall_status", "legacy_unknown")
+    return normalized_summary
+
+
 def _write_candidate_pool_snapshot(snapshot_path: Path, candidates: List[CandidateStock]) -> None:
     _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     with open(snapshot_path, "w", encoding="utf-8") as f:
@@ -110,10 +128,14 @@ def _write_candidate_pool_snapshot(snapshot_path: Path, candidates: List[Candida
 def _load_candidate_pool_shadow_snapshot(snapshot_path: Path) -> dict[str, Any]:
     with open(snapshot_path, "r", encoding="utf-8") as f:
         payload = json.load(f)
+    shadow_candidates = [CandidateStock(**item) for item in list(payload.get("shadow_candidates") or [])]
     return {
         "selected_candidates": [CandidateStock(**item) for item in list(payload.get("selected_candidates") or [])],
-        "shadow_candidates": [CandidateStock(**item) for item in list(payload.get("shadow_candidates") or [])],
-        "shadow_summary": dict(payload.get("shadow_summary") or {}),
+        "shadow_candidates": shadow_candidates,
+        "shadow_summary": _normalize_shadow_summary(
+            dict(payload.get("shadow_summary") or {}),
+            shadow_candidates=shadow_candidates,
+        ),
     }
 
 
@@ -188,6 +210,8 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
             "selected_cutoff_avg_volume_20d": round(float(ranked_candidates[-1].avg_volume_20d), 4) if ranked_candidates else 0.0,
             "lane_counts": {},
             "selected_tickers": [],
+            "shadow_recall_complete": True,
+            "shadow_recall_status": "computed",
             "tickers": [],
         }
 
@@ -215,6 +239,12 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
             candidate.ticker in corridor_focus_tickers
             and min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE
             and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE
+        ):
+            corridor_candidates.append((min_gate_share, rank, candidate, True, False))
+        elif (
+            candidate.ticker in corridor_focus_tickers
+            and min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE
+            and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE
         ):
             corridor_candidates.append((min_gate_share, rank, candidate, True, False))
         elif (
@@ -346,6 +376,8 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
         "focus_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_focus_selected")}),
         "visibility_gap_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_visibility_gap_selected")}),
         "focus_signature": _shadow_focus_signature(),
+        "shadow_recall_complete": True,
+        "shadow_recall_status": "computed",
         "tickers": shadow_entries,
     }
 
@@ -362,6 +394,8 @@ def _build_shadow_summary_from_selected_candidates(selected_candidates: List[Can
         "focus_tickers": [],
         "visibility_gap_tickers": [],
         "focus_signature": _shadow_focus_signature(),
+        "shadow_recall_complete": False,
+        "shadow_recall_status": "selected_cache_backfill",
         "tickers": [],
     }
 
@@ -556,6 +590,7 @@ def build_candidate_pool_with_shadow(
             cached_selected_candidates,
             pool_size=MAX_CANDIDATE_POOL_SIZE,
         )
+        shadow_summary["shadow_recall_status"] = "selected_cache_fallback_after_recompute_failure"
         _write_candidate_pool_shadow_snapshot(
             shadow_snapshot_path,
             selected_candidates=cached_selected_candidates,

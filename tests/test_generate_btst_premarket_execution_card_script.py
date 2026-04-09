@@ -174,7 +174,8 @@ def test_generate_btst_premarket_execution_card_creates_primary_watch_and_non_tr
     assert payload["summary"]["upstream_shadow_candidate_count"] == 2
     assert payload["summary"]["upstream_shadow_promotable_count"] == 1
     assert [entry["ticker"] for entry in payload["watch_actions"]] == ["601869"]
-    assert [entry["ticker"] for entry in payload["opportunity_actions"]] == ["300442"]
+    assert payload["opportunity_actions"] == []
+    assert [entry["ticker"] for entry in payload["no_history_observer_actions"]] == ["300442"]
     assert [entry["ticker"] for entry in payload["upstream_shadow_entries"]] == ["601869", "300442"]
     assert payload["catalyst_theme_frontier_priority"]["promoted_tickers"] == ["301001"]
     assert [entry["ticker"] for entry in payload["catalyst_theme_shadow_watch"]] == ["301001"]
@@ -248,6 +249,95 @@ def test_generate_btst_premarket_execution_card_uses_execution_quality_specific_
     assert any("intraday" in rule for rule in payload["watch_actions"][0]["trigger_rules"])
     assert payload["opportunity_actions"][0]["execution_quality_label"] == "gap_chase_risk"
     assert any("避免开盘直接追价" in rule for rule in payload["opportunity_actions"][0]["trigger_rules"])
+
+
+def test_generate_btst_premarket_execution_card_renders_risky_observer_actions(tmp_path):
+    generate_btst_premarket_execution_card_artifacts(
+        input_path={
+            "trade_date": "2026-04-09",
+            "next_trade_date": "2026-04-10",
+            "summary": {},
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "risky_observer_entries": [
+                {
+                    "ticker": "600522",
+                    "preferred_entry_mode": "intraday_confirmation_only",
+                    "top_reasons": ["historical_intraday_only_execution"],
+                    "historical_prior": {
+                        "summary": "同票历史 18 例，next_close 正收益率=0.3889。",
+                        "execution_quality_label": "intraday_only",
+                        "execution_note": "历史上更多是盘中给空间、收盘回落。",
+                    },
+                }
+            ],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {"shadow_candidate_count": 0, "promotable_count": 0, "lane_counts": {}, "decision_counts": {}, "top_focus_tickers": []},
+        },
+        output_dir=tmp_path,
+        trade_date="2026-04-09",
+        next_trade_date="2026-04-10",
+    )
+
+    payload = json.loads((tmp_path / "btst_premarket_execution_card_20260409_for_20260410.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "btst_premarket_execution_card_20260409_for_20260410.md").read_text(encoding="utf-8")
+
+    assert payload["summary"]["risky_observer_count"] == 1
+    assert [entry["ticker"] for entry in payload["risky_observer_actions"]] == ["600522"]
+    assert payload["risky_observer_actions"][0]["action_tier"] == "risky_observer_watch"
+    assert payload["risky_observer_actions"][0]["execution_posture"] == "observe_only_high_risk"
+    assert "## Risky Observer Actions" in markdown
+    assert "action_tier: risky_observer_watch" in markdown
+
+
+def test_generate_btst_premarket_execution_card_renders_no_history_observer_actions(tmp_path):
+    generate_btst_premarket_execution_card_artifacts(
+        input_path={
+            "trade_date": "2026-03-23",
+            "next_trade_date": "2026-03-24",
+            "summary": {},
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "no_history_observer_entries": [
+                {
+                    "ticker": "003036",
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "top_reasons": ["no_history_observer_rebucket"],
+                    "historical_prior": {
+                        "summary": "暂无同层可评估历史样本。 暂无可评估历史先验，已移入 no-history observer。",
+                        "execution_quality_label": "unknown",
+                        "execution_note": "先看盘中新证据，再决定是否重新评估。",
+                    },
+                }
+            ],
+            "risky_observer_entries": [],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {"shadow_candidate_count": 0, "promotable_count": 0, "lane_counts": {}, "decision_counts": {}, "top_focus_tickers": []},
+        },
+        output_dir=tmp_path,
+        trade_date="2026-03-23",
+        next_trade_date="2026-03-24",
+    )
+
+    payload = json.loads((tmp_path / "btst_premarket_execution_card_20260323_for_20260324.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "btst_premarket_execution_card_20260323_for_20260324.md").read_text(encoding="utf-8")
+
+    assert payload["summary"]["no_history_observer_count"] == 1
+    assert [entry["ticker"] for entry in payload["no_history_observer_actions"]] == ["003036"]
+    assert payload["no_history_observer_actions"][0]["action_tier"] == "no_history_observer_watch"
+    assert payload["no_history_observer_actions"][0]["execution_posture"] == "observe_only_no_history"
+    assert "## No-History Observer Actions" in markdown
+    assert "action_tier: no_history_observer_watch" in markdown
 
 
 def test_generate_btst_premarket_execution_card_supports_confirm_then_hold_breakout_mode(tmp_path):

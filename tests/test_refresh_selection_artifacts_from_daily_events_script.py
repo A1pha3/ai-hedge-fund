@@ -163,7 +163,58 @@ def _make_corridor_released_shadow_entry(*, shadow_visibility_gap_selected: bool
     }
 
 
-def test_refresh_selection_artifacts_from_daily_events_promotes_post_gate_shadow_entry(tmp_path):
+def _make_corridor_shadow_observation_entry() -> dict:
+    return {
+        "ticker": "301188",
+        "decision": "observation",
+        "reason": "upstream_base_liquidity_uplift_shadow",
+        "candidate_source": "upstream_liquidity_corridor_shadow",
+        "upstream_candidate_source": "candidate_pool_truncated_after_filters",
+        "candidate_reason_codes": [
+            "upstream_base_liquidity_uplift_shadow",
+            "candidate_pool_truncated_after_filters",
+            "layer_a_liquidity_corridor",
+        ],
+        "candidate_pool_lane": "layer_a_liquidity_corridor",
+        "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow_focus_relaxed_band",
+        "candidate_pool_rank": 3179,
+        "candidate_pool_avg_amount_share_of_cutoff": 0.0738,
+        "candidate_pool_avg_amount_share_of_min_gate": 2.4069,
+        "gate_status": {"score": "shadow_observation"},
+        "top_reasons": [
+            "candidate_score=0.01",
+            "filter_reason=structural_prefilter_fail",
+            "breakout_freshness=0.00",
+        ],
+        "short_trade_boundary_metrics": {
+            "breakout_freshness": 0.0,
+            "trend_acceleration": 0.0,
+            "volume_expansion_quality": 0.0,
+            "catalyst_freshness": 0.0,
+            "close_strength": 0.068,
+            "candidate_score": 0.0068,
+        },
+        "strategy_signals": {
+            "trend": _make_signal(
+                -1,
+                45.0,
+                sub_factors={
+                    "momentum": {"direction": 0, "confidence": 50.0, "completeness": 1.0},
+                    "adx_strength": {"direction": -1, "confidence": 21.7, "completeness": 1.0},
+                    "ema_alignment": {"direction": -1, "confidence": 100.0, "completeness": 1.0},
+                    "volatility": {"direction": -1, "confidence": 61.1, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": -1, "confidence": 32.5, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 49.0).model_dump(mode="json"),
+            "fundamental": _make_signal(0, 0.0, completeness=0.0).model_dump(mode="json"),
+            "event_sentiment": _make_signal(0, 0.0, completeness=0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+    }
+
+
+def test_refresh_selection_artifacts_from_daily_events_promotes_post_gate_shadow_entry(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260331_20260331_refresh_target"
     (report_dir / "selection_artifacts").mkdir(parents=True)
     trade_date = "20260331"
@@ -210,6 +261,18 @@ def test_refresh_selection_artifacts_from_daily_events_promotes_post_gate_shadow
         + "\n",
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        refresh_module,
+        "_load_latest_historical_prior_by_ticker",
+        lambda report_path: {
+            "300720": {
+                "execution_quality_label": "close_continuation",
+                "evaluable_count": 4,
+                "next_close_positive_rate": 0.75,
+                "next_open_to_close_return_mean": 0.03,
+            }
+        },
+    )
 
     result = refresh_selection_artifacts_for_report(report_dir, trade_date="2026-03-31")
 
@@ -227,7 +290,7 @@ def test_refresh_selection_artifacts_from_daily_events_promotes_post_gate_shadow
     assert session_summary["selection_artifact_refresh"]["refreshed_trade_dates"] == ["2026-03-31"]
 
 
-def test_refresh_selection_artifacts_from_daily_events_promotes_visibility_gap_corridor_shadow_entry(tmp_path):
+def test_refresh_selection_artifacts_from_daily_events_promotes_visibility_gap_corridor_shadow_entry(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260406_20260406_refresh_target"
     (report_dir / "selection_artifacts").mkdir(parents=True)
     trade_date = "20260406"
@@ -259,6 +322,18 @@ def test_refresh_selection_artifacts_from_daily_events_promotes_visibility_gap_c
         + "\n",
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        refresh_module,
+        "_load_latest_historical_prior_by_ticker",
+        lambda report_path: {
+            "300720": {
+                "execution_quality_label": "close_continuation",
+                "evaluable_count": 4,
+                "next_close_positive_rate": 0.75,
+                "next_open_to_close_return_mean": 0.03,
+            }
+        },
+    )
 
     refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-06")
 
@@ -267,6 +342,55 @@ def test_refresh_selection_artifacts_from_daily_events_promotes_visibility_gap_c
     assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.45
     assert short_trade["metrics_payload"]["thresholds"]["near_miss_threshold"] == 0.45
     assert selection_snapshot["selection_targets"]["300720"]["short_trade"]["decision"] == "selected"
+
+
+def test_refresh_selection_artifacts_from_daily_events_recomputes_shadow_observation_blockers(tmp_path):
+    report_dir = tmp_path / "paper_trading_20260330_20260330_refresh_shadow_observation"
+    (report_dir / "selection_artifacts").mkdir(parents=True)
+    trade_date = "20260330"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {
+                        "tickers": [],
+                        "released_shadow_entries": [],
+                        "shadow_observation_entries": [_make_corridor_shadow_observation_entry()],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-03-30")
+
+    replay_input = json.loads((report_dir / "selection_artifacts" / "2026-03-30" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    observation_entry = replay_input["upstream_shadow_observation_entries"][0]
+    assert observation_entry["ticker"] == "301188"
+    assert observation_entry["filter_reason"] == "structural_prefilter_fail"
+    assert observation_entry["blockers"] == ["trend_not_constructive"]
+    assert observation_entry["short_trade_boundary_metrics"]["gate_status"] == {
+        "data": "pass",
+        "execution": "proxy_only",
+        "structural": "fail",
+        "score": "fail",
+    }
 
 
 def test_refresh_selection_artifacts_from_daily_events_keeps_plain_corridor_shadow_below_selected(tmp_path):
@@ -307,7 +431,7 @@ def test_refresh_selection_artifacts_from_daily_events_keeps_plain_corridor_shad
     selection_snapshot = json.loads((report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json").read_text(encoding="utf-8"))
     short_trade = selection_snapshot["selection_targets"]["300720"]["short_trade"]
     assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.58
-    assert selection_snapshot["selection_targets"]["300720"]["short_trade"]["decision"] == "near_miss"
+    assert selection_snapshot["selection_targets"]["300720"]["short_trade"]["decision"] == "rejected"
 
 
 def test_refresh_selection_artifacts_from_daily_events_injects_historical_prior_into_boundary_candidate(

@@ -134,6 +134,22 @@ UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN = _g
     "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN",
     0.50,
 )
+UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY = _get_env_csv_set(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY",
+    "close_continuation",
+)
+UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT = _get_env_int(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT",
+    2,
+)
+UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN",
+    0.50,
+)
+UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN = _get_env_float(
+    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN",
+    0.0,
+)
 UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN = _get_env_float(
     "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN",
     0.44,
@@ -464,6 +480,23 @@ def _summarize_upstream_shadow_release_historical_support(historical_prior: dict
         "suppress_release": suppress_release,
         "sparse_weak_history": sparse_weak_history,
     }
+
+
+def _supports_upstream_shadow_catalyst_relief_history(historical_prior: dict[str, Any] | None) -> bool:
+    prior = dict(historical_prior or {})
+    execution_quality_label = str(prior.get("execution_quality_label") or "").strip()
+    evaluable_count = _historical_prior_int(prior, "evaluable_count") or 0
+    next_close_positive_rate = _historical_prior_float(prior, "next_close_positive_rate")
+    next_open_to_close_return_mean = _historical_prior_float(prior, "next_open_to_close_return_mean")
+
+    return (
+        execution_quality_label in UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY
+        and evaluable_count >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT
+        and next_close_positive_rate is not None
+        and next_close_positive_rate >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN
+        and next_open_to_close_return_mean is not None
+        and next_open_to_close_return_mean >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN
+    )
 
 
 def _build_layer_b_filter_diagnostics(fused: list, high_pool: list) -> dict:
@@ -990,6 +1023,8 @@ def _build_upstream_shadow_catalyst_relief_config(
         and historical_next_close_positive_rate < UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN
     ):
         return {}
+    if not _supports_upstream_shadow_catalyst_relief_history(historical_prior):
+        return {}
     if candidate_score < candidate_score_min:
         return {}
     if breakout_freshness < UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN:
@@ -1020,6 +1055,10 @@ def _build_upstream_shadow_catalyst_relief_config(
         "trend_acceleration_min": round(trend_acceleration_min, 4),
         "close_strength_min": round(close_strength_min, 4),
         "require_no_profitability_hard_cliff": require_no_profitability_hard_cliff,
+        "required_execution_quality_labels": sorted(UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY),
+        "min_historical_evaluable_count": int(UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT),
+        "min_historical_next_close_positive_rate": round(UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN, 4),
+        "min_historical_next_open_to_close_return_mean": round(UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN, 4),
     }
 
 
@@ -1091,7 +1130,7 @@ def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], fil
 def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
     snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
     gate_status = dict(snapshot.get("gate_status") or {})
-    blockers = {str(blocker) for blocker in list(snapshot.get("blockers") or []) if str(blocker or "").strip()}
+    blockers = sorted({str(blocker) for blocker in list(snapshot.get("blockers") or []) if str(blocker or "").strip()})
     metrics_payload = {
         "breakout_freshness": round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4),
         "trend_acceleration": round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4),
@@ -1099,6 +1138,8 @@ def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -
         "catalyst_freshness": round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4),
         "close_strength": round(float(snapshot.get("close_strength", 0.0) or 0.0), 4),
         "candidate_score": _compute_short_trade_boundary_candidate_score(snapshot),
+        "gate_status": gate_status,
+        "blockers": blockers,
     }
 
     if str(gate_status.get("data") or "") != "pass":
