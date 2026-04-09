@@ -8,6 +8,8 @@ from src.targets.explainability import clamp_unit_interval, derive_confidence, t
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
 from src.targets.profiles import get_active_short_trade_target_profile, use_short_trade_target_profile
 
+STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE = 0.001
+
 
 def _normalize_score(value: float) -> float:
     return clamp_unit_interval((float(value or 0.0) + 1.0) / 2.0)
@@ -79,6 +81,46 @@ def _historical_prior(input_data: TargetEvaluationInput) -> dict[str, Any]:
     return dict(input_data.replay_context.get("historical_prior") or {})
 
 
+def _resolve_carryover_evidence_deficiency(input_data: TargetEvaluationInput) -> dict[str, Any]:
+    historical_prior = _historical_prior(input_data)
+    source = str(input_data.replay_context.get("source") or "").strip()
+    candidate_reason_codes = {
+        str(code).strip()
+        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
+        if str(code or "").strip()
+    }
+    same_ticker_sample_count = int(historical_prior.get("same_ticker_sample_count") or 0)
+    same_family_sample_count = int(historical_prior.get("same_family_sample_count") or 0)
+    same_family_source_sample_count = int(historical_prior.get("same_family_source_sample_count") or 0)
+    same_family_source_score_catalyst_sample_count = int(historical_prior.get("same_family_source_score_catalyst_sample_count") or 0)
+    same_source_score_sample_count = int(historical_prior.get("same_source_score_sample_count") or 0)
+    evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+
+    gate_hits = {
+        "candidate_source": source == "catalyst_theme",
+        "carryover_candidate": "catalyst_theme_short_trade_carryover_candidate" in candidate_reason_codes,
+        "execution_quality_label": str(historical_prior.get("execution_quality_label") or "") == "close_continuation",
+        "entry_timing_bias": str(historical_prior.get("entry_timing_bias") or "") == "confirm_then_hold",
+        "low_same_ticker_samples": same_ticker_sample_count < 2,
+        "low_evaluable_count": evaluable_count <= 1,
+        "broad_family_only": same_family_sample_count > 0,
+        "no_same_family_source": same_family_source_sample_count == 0,
+        "no_same_family_source_score_catalyst": same_family_source_score_catalyst_sample_count == 0,
+        "no_same_source_score": same_source_score_sample_count == 0,
+    }
+    return {
+        "enabled": bool(historical_prior),
+        "evidence_deficient": all(gate_hits.values()),
+        "gate_hits": gate_hits,
+        "same_ticker_sample_count": same_ticker_sample_count,
+        "same_family_sample_count": same_family_sample_count,
+        "same_family_source_sample_count": same_family_source_sample_count,
+        "same_family_source_score_catalyst_sample_count": same_family_source_score_catalyst_sample_count,
+        "same_source_score_sample_count": same_source_score_sample_count,
+        "evaluable_count": evaluable_count,
+    }
+
+
 def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any] | None) -> str:
     execution_quality_label = str((historical_prior or {}).get("execution_quality_label") or "unknown")
     if execution_quality_label == "intraday_only":
@@ -90,6 +132,28 @@ def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any]
     if execution_quality_label == "zero_follow_through":
         return "strong_reconfirmation_only"
     return "next_day_breakout_confirmation"
+
+
+def _resolve_selected_score_tolerance(
+    *,
+    score_target: float,
+    effective_select_threshold: float,
+    upstream_shadow_catalyst_relief_applied: bool,
+    upstream_shadow_catalyst_relief_reason: str,
+    historical_prior: dict[str, Any],
+) -> float:
+    gap_to_selected = float(effective_select_threshold) - float(score_target)
+    if gap_to_selected <= 0.0:
+        return 0.0
+    if not upstream_shadow_catalyst_relief_applied:
+        return 0.0
+    if upstream_shadow_catalyst_relief_reason != "catalyst_theme_short_trade_carryover":
+        return 0.0
+    if str(historical_prior.get("execution_quality_label") or "") != "close_continuation":
+        return 0.0
+    if str(historical_prior.get("entry_timing_bias") or "") != "confirm_then_hold":
+        return 0.0
+    return STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE if gap_to_selected <= STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE else 0.0
 
 
 def _resolve_profitability_relief(
@@ -323,6 +387,7 @@ def _resolve_upstream_shadow_catalyst_relief(
     historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
     historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
     historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
+    historical_next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
     historical_next_open_to_close_return_mean = float(historical_prior.get("next_open_to_close_return_mean", 0.0) or 0.0)
     base_near_miss_threshold = float(profile.near_miss_threshold)
     base_select_threshold = float(profile.select_threshold)
@@ -345,7 +410,9 @@ def _resolve_upstream_shadow_catalyst_relief(
         "historical_execution_quality_label": historical_execution_quality_label,
         "historical_evaluable_count": historical_evaluable_count,
         "historical_next_close_positive_rate": historical_next_close_positive_rate,
+        "historical_next_high_hit_rate_at_threshold": historical_next_high_hit_rate,
         "historical_next_open_to_close_return_mean": historical_next_open_to_close_return_mean,
+        "historical_strong_close_continuation": False,
     }
 
     candidate_reason_codes = {
@@ -384,6 +451,14 @@ def _resolve_upstream_shadow_catalyst_relief(
             and historical_evaluable_count >= 2
             and historical_next_close_positive_rate >= 0.5
         )
+    carryover_strong_close_continuation = (
+        relief_reason == "catalyst_theme_short_trade_carryover"
+        and historical_execution_quality_label == "close_continuation"
+        and historical_evaluable_count >= 2
+        and historical_next_close_positive_rate >= 0.8
+        and historical_next_high_hit_rate >= 0.8
+        and historical_next_open_to_close_return_mean >= 0.02
+    )
     upstream_shadow_history_supported = True
     if relief_reason == "upstream_shadow_catalyst_relief" and required_execution_quality_labels:
         upstream_shadow_history_supported = (
@@ -409,6 +484,8 @@ def _resolve_upstream_shadow_catalyst_relief(
         effective_catalyst_freshness = max(catalyst_freshness, catalyst_freshness_floor)
         effective_near_miss_threshold = min(base_near_miss_threshold, near_miss_threshold_override)
         effective_select_threshold = min(base_select_threshold, select_threshold_override)
+        if carryover_strong_close_continuation:
+            effective_select_threshold = min(effective_select_threshold, 0.45)
 
     applied = eligible and (
         effective_catalyst_freshness > catalyst_freshness
@@ -434,6 +511,9 @@ def _resolve_upstream_shadow_catalyst_relief(
         "historical_execution_quality_label": historical_execution_quality_label,
         "historical_evaluable_count": historical_evaluable_count,
         "historical_next_close_positive_rate": historical_next_close_positive_rate,
+        "historical_next_high_hit_rate_at_threshold": historical_next_high_hit_rate,
+        "historical_next_open_to_close_return_mean": historical_next_open_to_close_return_mean,
+        "historical_strong_close_continuation": carryover_strong_close_continuation,
     }
 
 
@@ -864,6 +944,10 @@ def _build_target_input_from_entry(*, trade_date: str, entry: dict[str, Any]) ->
         for reason in list(entry.get("candidate_reason_codes", entry.get("reasons", [])) or [])
         if str(reason or "").strip()
     ]
+    candidate_source = str(entry.get("candidate_source") or "watchlist_filter_diagnostics")
+    explicit_metric_overrides = {}
+    if candidate_source == "catalyst_theme":
+        explicit_metric_overrides = dict(entry.get("catalyst_theme_metrics") or entry.get("metrics") or {})
     return TargetEvaluationInput(
         trade_date=trade_date,
         ticker=str(entry.get("ticker") or ""),
@@ -876,7 +960,7 @@ def _build_target_input_from_entry(*, trade_date: str, entry: dict[str, Any]) ->
         strategy_signals=dict(entry.get("strategy_signals") or {}),
         agent_contribution_summary=dict(entry.get("agent_contribution_summary") or {}),
         replay_context={
-            "source": str(entry.get("candidate_source") or "watchlist_filter_diagnostics"),
+            "source": candidate_source,
             "reason": str(entry.get("reason") or ""),
             "candidate_reason_codes": candidate_reason_codes,
             "historical_prior": dict(entry.get("historical_prior") or {}),
@@ -885,6 +969,7 @@ def _build_target_input_from_entry(*, trade_date: str, entry: dict[str, Any]) ->
             "shadow_visibility_gap_selected": bool(entry.get("shadow_visibility_gap_selected")),
             "shadow_visibility_gap_relaxed_band": bool(entry.get("shadow_visibility_gap_relaxed_band")),
             "short_trade_catalyst_relief": dict(entry.get("short_trade_catalyst_relief") or {}),
+            "explicit_metric_overrides": explicit_metric_overrides,
         },
     )
 
@@ -1381,6 +1466,7 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     score_b_strength = _normalize_score(input_data.score_b)
     score_c_strength = _normalize_score(input_data.score_c)
     score_final_strength = _normalize_score(input_data.score_final)
+    explicit_metric_overrides = dict(input_data.replay_context.get("explicit_metric_overrides") or {})
 
     breakout_freshness = clamp_unit_interval((0.40 * momentum_strength) + (0.35 * event_freshness_strength) + (0.25 * event_signal_strength))
     trend_acceleration = clamp_unit_interval((0.40 * momentum_strength) + (0.35 * adx_strength) + (0.25 * ema_strength))
@@ -1389,6 +1475,13 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     sector_resonance = clamp_unit_interval((0.45 * analyst_alignment) + (0.20 * investor_alignment) + (0.20 * score_c_strength) + (0.15 * event_signal_strength))
     raw_catalyst_freshness = clamp_unit_interval((0.65 * event_freshness_strength) + (0.35 * news_sentiment_strength))
     layer_c_alignment = clamp_unit_interval((0.55 * score_c_strength) + (0.25 * analyst_alignment) + (0.20 * clamp_unit_interval(1.0 if input_data.layer_c_decision != "avoid" else 0.0)))
+    if explicit_metric_overrides:
+        breakout_freshness = clamp_unit_interval(float(explicit_metric_overrides.get("breakout_freshness", breakout_freshness) or breakout_freshness))
+        trend_acceleration = clamp_unit_interval(float(explicit_metric_overrides.get("trend_acceleration", trend_acceleration) or trend_acceleration))
+        volume_expansion_quality = clamp_unit_interval(float(explicit_metric_overrides.get("volume_expansion_quality", volume_expansion_quality) or volume_expansion_quality))
+        close_strength = clamp_unit_interval(float(explicit_metric_overrides.get("close_strength", close_strength) or close_strength))
+        sector_resonance = clamp_unit_interval(float(explicit_metric_overrides.get("sector_resonance", sector_resonance) or sector_resonance))
+        raw_catalyst_freshness = clamp_unit_interval(float(explicit_metric_overrides.get("catalyst_freshness", raw_catalyst_freshness) or raw_catalyst_freshness))
     breakout_stage, _, _ = _classify_breakout_stage(
         breakout_freshness=breakout_freshness,
         trend_acceleration=trend_acceleration,
@@ -1626,6 +1719,13 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         - effective_watchlist_zero_catalyst_crowded_penalty
         - effective_watchlist_zero_catalyst_flat_trend_penalty
     )
+    selected_score_tolerance = _resolve_selected_score_tolerance(
+        score_target=score_target,
+        effective_select_threshold=effective_select_threshold,
+        upstream_shadow_catalyst_relief_applied=bool(catalyst_relief["applied"]),
+        upstream_shadow_catalyst_relief_reason=str(catalyst_relief["reason"]),
+        historical_prior=_historical_prior(input_data),
+    )
 
     positive_tags: list[str] = []
     negative_tags: list[str] = []
@@ -1725,6 +1825,7 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "layer_c_alignment": layer_c_alignment,
         "effective_near_miss_threshold": effective_near_miss_threshold,
         "effective_select_threshold": effective_select_threshold,
+        "selected_score_tolerance": selected_score_tolerance,
         "profitability_hard_cliff": profitability_relief["hard_cliff"],
         "profitability_positive_count": profitability_relief["profitability_positive_count"],
         "profitability_confidence": profitability_relief["profitability_confidence"],
@@ -1846,6 +1947,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     profitability_hard_cliff_boundary_relief = dict(snapshot["profitability_hard_cliff_boundary_relief"])
     historical_execution_relief = dict(snapshot["historical_execution_relief"])
     historical_prior = dict(snapshot["historical_prior"])
+    carryover_evidence_deficiency = _resolve_carryover_evidence_deficiency(input_data)
     profitability_relief_soft_penalty = float(snapshot["profitability_relief_soft_penalty"])
     upstream_shadow_catalyst_relief_enabled = bool(snapshot["upstream_shadow_catalyst_relief_enabled"])
     upstream_shadow_catalyst_relief_gate_hits = dict(snapshot["upstream_shadow_catalyst_relief_gate_hits"])
@@ -1858,6 +1960,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     upstream_shadow_catalyst_relief_base_select_threshold = float(snapshot["upstream_shadow_catalyst_relief_base_select_threshold"])
     upstream_shadow_catalyst_relief_select_threshold_override = float(snapshot["upstream_shadow_catalyst_relief_select_threshold_override"])
     upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff = bool(snapshot["upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff"])
+    selected_score_tolerance = float(snapshot["selected_score_tolerance"])
     visibility_gap_continuation_relief = dict(snapshot["visibility_gap_continuation_relief"])
     merge_approved_continuation_relief = dict(snapshot["merge_approved_continuation_relief"])
     prepared_breakout_penalty_relief = dict(snapshot["prepared_breakout_penalty_relief"])
@@ -1909,12 +2012,14 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         profile=profile,
     )
 
+    selected_score_pass = score_target >= (effective_select_threshold - selected_score_tolerance)
+
     if blockers:
         decision = "blocked" if gate_status["data"] == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers else "rejected"
-    elif score_target >= effective_select_threshold and selected_breakout_gate_pass:
+    elif selected_score_pass and selected_breakout_gate_pass:
         decision = "selected"
         gate_status["score"] = "pass"
-    elif score_target >= effective_select_threshold and near_miss_breakout_gate_pass:
+    elif selected_score_pass and near_miss_breakout_gate_pass:
         decision = "near_miss"
         gate_status["score"] = "near_miss"
     elif score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass:
@@ -1927,6 +2032,8 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         positive_tags.append("confirmed_breakout_stage")
     elif breakout_stage == "prepared_breakout":
         positive_tags.append("prepared_breakout_stage")
+    if carryover_evidence_deficiency["evidence_deficient"]:
+        negative_tags.append("evidence_deficient_broad_family_only")
 
     top_reasons = trim_reasons(
         [
@@ -1955,6 +2062,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "watchlist_zero_catalyst_penalty_applied" if watchlist_zero_catalyst_guard["applied"] else None,
                 "watchlist_zero_catalyst_crowded_penalty_applied" if watchlist_zero_catalyst_crowded_guard["applied"] else None,
                 "watchlist_zero_catalyst_flat_trend_penalty_applied" if watchlist_zero_catalyst_flat_trend_guard["applied"] else None,
+                "evidence_deficient_broad_family_only" if carryover_evidence_deficiency["evidence_deficient"] else None,
                 "t_plus_2_continuation_candidate" if t_plus_2_continuation_candidate["applied"] else None,
                 f"score_short={score_target:.2f}",
             ]
@@ -1977,6 +2085,8 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         if decision == "rejected"
         else []
     )
+    if decision == "rejected" and carryover_evidence_deficiency["evidence_deficient"]:
+        rejection_reasons = trim_reasons(["evidence_deficient_broad_family_only", *rejection_reasons])
     confidence = derive_confidence(score_target, breakout_freshness, trend_acceleration, catalyst_freshness, float(input_data.quality_score or 0.0))
 
     return TargetEvaluationResult(
@@ -2069,6 +2179,17 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "base_select_threshold": round(float(historical_execution_relief["base_select_threshold"]), 4),
                 "effective_select_threshold": round(float(historical_execution_relief["effective_select_threshold"]), 4),
                 "select_threshold_override": round(float(historical_execution_relief["select_threshold_override"]), 4),
+            },
+            "carryover_evidence_deficiency": {
+                "enabled": bool(carryover_evidence_deficiency["enabled"]),
+                "evidence_deficient": bool(carryover_evidence_deficiency["evidence_deficient"]),
+                "gate_hits": dict(carryover_evidence_deficiency["gate_hits"]),
+                "same_ticker_sample_count": int(carryover_evidence_deficiency["same_ticker_sample_count"]),
+                "same_family_sample_count": int(carryover_evidence_deficiency["same_family_sample_count"]),
+                "same_family_source_sample_count": int(carryover_evidence_deficiency["same_family_source_sample_count"]),
+                "same_family_source_score_catalyst_sample_count": int(carryover_evidence_deficiency["same_family_source_score_catalyst_sample_count"]),
+                "same_source_score_sample_count": int(carryover_evidence_deficiency["same_source_score_sample_count"]),
+                "evaluable_count": int(carryover_evidence_deficiency["evaluable_count"]),
             },
             "base_layer_c_avoid_penalty": round(base_layer_c_avoid_penalty, 4),
             "profitability_relief_soft_penalty": round(profitability_relief_soft_penalty, 4),
@@ -2260,6 +2381,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "profile_name": profile.name,
                 "select_threshold": round(float(profile.select_threshold), 4),
                 "effective_select_threshold": round(effective_select_threshold, 4),
+                "selected_score_tolerance": round(selected_score_tolerance, 4),
                 "near_miss_threshold": round(effective_near_miss_threshold, 4),
                 "base_near_miss_threshold": round(float(profile.near_miss_threshold), 4),
                 "selected_breakout_freshness_min": round(float(profile.selected_breakout_freshness_min), 4),
@@ -2456,6 +2578,17 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "effective_select_threshold": round(float(historical_execution_relief["effective_select_threshold"]), 4),
                 "select_threshold_override": round(float(historical_execution_relief["select_threshold_override"]), 4),
             },
+            "carryover_evidence_deficiency": {
+                "enabled": bool(carryover_evidence_deficiency["enabled"]),
+                "evidence_deficient": bool(carryover_evidence_deficiency["evidence_deficient"]),
+                "gate_hits": dict(carryover_evidence_deficiency["gate_hits"]),
+                "same_ticker_sample_count": int(carryover_evidence_deficiency["same_ticker_sample_count"]),
+                "same_family_sample_count": int(carryover_evidence_deficiency["same_family_sample_count"]),
+                "same_family_source_sample_count": int(carryover_evidence_deficiency["same_family_source_sample_count"]),
+                "same_family_source_score_catalyst_sample_count": int(carryover_evidence_deficiency["same_family_source_score_catalyst_sample_count"]),
+                "same_source_score_sample_count": int(carryover_evidence_deficiency["same_source_score_sample_count"]),
+                "evaluable_count": int(carryover_evidence_deficiency["evaluable_count"]),
+            },
             "upstream_shadow_catalyst_relief": {
                 "enabled": upstream_shadow_catalyst_relief_enabled,
                 "eligible": upstream_shadow_catalyst_relief_eligible,
@@ -2470,6 +2603,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "near_miss_threshold_override": round(upstream_shadow_catalyst_relief_near_miss_threshold_override, 4),
                 "base_select_threshold": round(upstream_shadow_catalyst_relief_base_select_threshold, 4),
                 "effective_select_threshold": round(effective_select_threshold, 4),
+                "selected_score_tolerance": round(selected_score_tolerance, 4),
                 "select_threshold_override": round(upstream_shadow_catalyst_relief_select_threshold_override, 4),
                 "require_no_profitability_hard_cliff": upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
             },

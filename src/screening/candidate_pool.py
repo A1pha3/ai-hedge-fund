@@ -198,21 +198,89 @@ def _resolve_shadow_visibility_gap_tickers(*, lane: str) -> set[str]:
     return set(SHADOW_VISIBILITY_GAP_TICKERS) | set(lane_specific_focus)
 
 
-def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, pool_size: int) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
+def _resolve_cooldown_shadow_review_tickers() -> set[str]:
+    return (
+        set(SHADOW_FOCUS_TICKERS)
+        | set(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS)
+        | set(SHADOW_FOCUS_REBUCKET_TICKERS)
+        | set(SHADOW_VISIBILITY_GAP_TICKERS)
+        | set(SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS)
+        | set(SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS)
+    )
+
+
+def _build_shadow_candidate_pool_payload(
+    candidates: List[CandidateStock],
+    *,
+    pool_size: int,
+    cooldown_review_candidates: Optional[List[CandidateStock]] = None,
+) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
     ranked_candidates = sorted(candidates, key=_candidate_liquidity_sort_key, reverse=True)
     selected_candidates = [candidate.model_copy(update={"candidate_pool_rank": rank}) for rank, candidate in enumerate(ranked_candidates[:pool_size], start=1)]
+    cooldown_review_candidates = list(cooldown_review_candidates or [])
+    cutoff_avg_volume = round(float(ranked_candidates[-1].avg_volume_20d), 4) if ranked_candidates else 0.0
+    cutoff_reference = max(float(selected_candidates[-1].avg_volume_20d), 1.0) if selected_candidates else 1.0
+
+    shadow_candidates: list[CandidateStock] = []
+    shadow_entries: list[dict[str, Any]] = []
+
+    def append_cooldown_review_shadow(rows: list[CandidateStock]) -> None:
+        if not rows:
+            return
+        review_focus_tickers = _resolve_cooldown_shadow_review_tickers()
+        for candidate in rows:
+            cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_reference, 4) if candidate.avg_volume_20d > 0 else 0.0
+            min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4) if candidate.avg_volume_20d > 0 else 0.0
+            shadow_candidate = candidate.model_copy(
+                update={
+                    "candidate_pool_rank": 0,
+                    "candidate_pool_lane": "cooldown_review",
+                    "candidate_pool_shadow_reason": "cooldown_review_shadow",
+                    "candidate_pool_avg_amount_share_of_cutoff": cutoff_share,
+                    "candidate_pool_avg_amount_share_of_min_gate": min_gate_share,
+                    "shadow_visibility_gap_selected": candidate.ticker in SHADOW_VISIBILITY_GAP_TICKERS,
+                    "shadow_visibility_gap_relaxed_band": False,
+                }
+            )
+            shadow_candidates.append(shadow_candidate)
+            shadow_entries.append(
+                {
+                    "ticker": shadow_candidate.ticker,
+                    "candidate_pool_rank": 0,
+                    "candidate_pool_lane": "cooldown_review",
+                    "candidate_pool_shadow_reason": "cooldown_review_shadow",
+                    "avg_volume_20d": round(float(shadow_candidate.avg_volume_20d), 4),
+                    "market_cap": round(float(shadow_candidate.market_cap), 4),
+                    "avg_amount_share_of_cutoff": cutoff_share,
+                    "avg_amount_share_of_min_gate": min_gate_share,
+                    "shadow_focus_selected": shadow_candidate.ticker in review_focus_tickers,
+                    "shadow_focus_relaxed_band": False,
+                    "shadow_visibility_gap_selected": shadow_candidate.ticker in SHADOW_VISIBILITY_GAP_TICKERS,
+                    "shadow_visibility_gap_relaxed_band": False,
+                    "cooldown_review": True,
+                }
+            )
+
+    append_cooldown_review_shadow(cooldown_review_candidates)
 
     if len(ranked_candidates) <= pool_size:
-        return selected_candidates, [], {
+        lane_counts: dict[str, int] = {}
+        for entry in shadow_entries:
+            lane = str(entry.get("candidate_pool_lane") or "unknown")
+            lane_counts[lane] = lane_counts.get(lane, 0) + 1
+        return selected_candidates, shadow_candidates, {
             "pool_size": pool_size,
             "selected_count": len(selected_candidates),
             "overflow_count": 0,
-            "selected_cutoff_avg_volume_20d": round(float(ranked_candidates[-1].avg_volume_20d), 4) if ranked_candidates else 0.0,
-            "lane_counts": {},
-            "selected_tickers": [],
+            "selected_cutoff_avg_volume_20d": cutoff_avg_volume,
+            "lane_counts": lane_counts,
+            "selected_tickers": [candidate.ticker for candidate in shadow_candidates],
+            "focus_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_focus_selected")}),
+            "visibility_gap_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_visibility_gap_selected")}),
+            "focus_signature": _shadow_focus_signature(),
             "shadow_recall_complete": True,
             "shadow_recall_status": "computed",
-            "tickers": [],
+            "tickers": shadow_entries,
         }
 
     cutoff_avg_volume = max(float(ranked_candidates[pool_size - 1].avg_volume_20d), 1.0)
@@ -267,9 +335,6 @@ def _build_shadow_candidate_pool_payload(candidates: List[CandidateStock], *, po
             and cutoff_share <= SHADOW_REBUCKET_MAX_CUTOFF_SHARE
         ):
             rebucket_candidates.append((cutoff_share, rank, candidate, True, False))
-
-    shadow_candidates: list[CandidateStock] = []
-    shadow_entries: list[dict[str, Any]] = []
 
     def append_shadow(rows: list[tuple[float, int, CandidateStock, bool, bool]], *, max_tickers: int, lane: str, reason: str, rank_key: str) -> None:
         focus_tickers = _resolve_shadow_focus_tickers(lane=lane)
@@ -403,7 +468,7 @@ def _build_shadow_summary_from_selected_candidates(selected_candidates: List[Can
 def _compute_candidate_pool_candidates(
     trade_date: str,
     cooldown_tickers: Optional[Set[str]] = None,
-) -> List[CandidateStock]:
+) -> tuple[List[CandidateStock], List[CandidateStock]]:
     """计算未截断的候选池，供主池与 shadow recall 共同消费。"""
     pro = _get_pro()
     if pro is None:
@@ -413,7 +478,7 @@ def _compute_candidate_pool_candidates(
     stock_df = get_all_stock_basic()
     if stock_df is None or stock_df.empty:
         print("[CandidatePool] 无法获取全 A 股基本信息")
-        return []
+        return [], []
 
     initial_count = len(stock_df)
     print(f"[CandidatePool] 全 A 股标的: {initial_count}")
@@ -448,10 +513,16 @@ def _compute_candidate_pool_candidates(
 
     if cooldown_tickers is None:
         cooldown_tickers = get_cooled_tickers(trade_date)
+    cooldown_review_df = stock_df.iloc[0:0].copy()
     if cooldown_tickers:
         mask_cool = stock_df["symbol"].isin(cooldown_tickers)
+        cooldown_review_tickers = _resolve_cooldown_shadow_review_tickers()
+        if cooldown_review_tickers:
+            cooldown_review_df = stock_df[mask_cool & stock_df["symbol"].isin(cooldown_review_tickers)].copy()
         stock_df = stock_df[~mask_cool].copy()
         print(f"[CandidatePool] 排除冷却期后: {len(stock_df)} (过滤 {mask_cool.sum()})")
+        if not cooldown_review_df.empty:
+            print(f"[CandidatePool] 保留冷却期 focus shadow review: {len(cooldown_review_df)}")
 
     daily_df = get_daily_basic_batch(trade_date)
     amount_map: Dict[str, float] = {}
@@ -474,9 +545,11 @@ def _compute_candidate_pool_candidates(
         if low_estimated_liq_codes:
             mask_low_estimated_liq = stock_df["ts_code"].isin(low_estimated_liq_codes)
             stock_df = stock_df[~mask_low_estimated_liq].copy()
+            if not cooldown_review_df.empty:
+                cooldown_review_df = cooldown_review_df[~cooldown_review_df["ts_code"].isin(low_estimated_liq_codes)].copy()
             print(f"[CandidatePool] 排除低当日估算流动性后: {len(stock_df)} (过滤 {mask_low_estimated_liq.sum()})")
 
-    remaining_codes = stock_df["ts_code"].tolist()
+    remaining_codes = stock_df["ts_code"].tolist() + cooldown_review_df["ts_code"].tolist()
     print(f"[CandidatePool] 开始计算 {len(remaining_codes)} 只标的的 20 日均成交额...")
 
     low_liq_codes: Set[str] = set()
@@ -508,6 +581,8 @@ def _compute_candidate_pool_candidates(
 
     mask_low_liq = stock_df["ts_code"].isin(low_liq_codes)
     stock_df = stock_df[~mask_low_liq].copy()
+    if not cooldown_review_df.empty:
+        cooldown_review_df = cooldown_review_df[~cooldown_review_df["ts_code"].isin(low_liq_codes)].copy()
     print(f"[CandidatePool] 排除低流动性后: {len(stock_df)} (过滤 {mask_low_liq.sum()})")
 
     sw_map = get_sw_industry_classification()
@@ -516,6 +591,7 @@ def _compute_candidate_pool_candidates(
 
     is_disclosure = _is_disclosure_window(trade_date)
     candidates: List[CandidateStock] = []
+    cooldown_review_candidates: List[CandidateStock] = []
 
     for _, row in stock_df.iterrows():
         ts_code = str(row["ts_code"])
@@ -536,7 +612,28 @@ def _compute_candidate_pool_candidates(
             disclosure_risk=is_disclosure,
         ))
 
-    return candidates
+    for _, row in cooldown_review_df.iterrows():
+        ts_code = str(row["ts_code"])
+        symbol = str(row["symbol"])
+        name = str(row["name"])
+        list_date = str(row["list_date"]) if pd.notna(row.get("list_date")) else ""
+        industry_sw = sw_map.get(ts_code, str(row.get("industry", "")))
+        market_cap = mv_map.get(ts_code, 0.0) / 10000.0
+        avg_vol = amount_map.get(ts_code, 0.0)
+
+        cooldown_review_candidates.append(CandidateStock(
+            ticker=symbol,
+            name=name,
+            industry_sw=industry_sw,
+            market_cap=market_cap,
+            avg_volume_20d=avg_vol,
+            listing_date=list_date,
+            disclosure_risk=is_disclosure,
+            candidate_pool_lane="cooldown_review",
+            candidate_pool_shadow_reason="cooldown_review_shadow",
+        ))
+
+    return candidates, cooldown_review_candidates
 
 
 def build_candidate_pool_with_shadow(
@@ -584,7 +681,7 @@ def build_candidate_pool_with_shadow(
         except Exception as e:
             print(f"[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: {e}")
 
-    candidates = _compute_candidate_pool_candidates(trade_date, cooldown_tickers=cooldown_tickers)
+    candidates, cooldown_review_candidates = _compute_candidate_pool_candidates(trade_date, cooldown_tickers=cooldown_tickers)
     if not candidates and cached_selected_candidates:
         shadow_summary = _build_shadow_summary_from_selected_candidates(
             cached_selected_candidates,
@@ -606,6 +703,7 @@ def build_candidate_pool_with_shadow(
     selected_candidates, shadow_candidates, shadow_summary = _build_shadow_candidate_pool_payload(
         candidates,
         pool_size=MAX_CANDIDATE_POOL_SIZE,
+        cooldown_review_candidates=cooldown_review_candidates,
     )
 
     _write_candidate_pool_snapshot(snapshot_path, selected_candidates)

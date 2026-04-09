@@ -53,10 +53,15 @@ def _historical_prior_int(prior: dict[str, Any], key: str) -> int:
 def _historical_prior_scope_rank(prior: dict[str, Any]) -> int:
     scope = str(prior.get("applied_scope") or "").strip()
     return {
-        "same_ticker": 4,
-        "same_family_source": 3,
-        "same_family": 2,
-        "same_source_score": 1,
+        "same_ticker": 6,
+        "same_family_source_score_catalyst": 5,
+        "family_source_score_catalyst": 5,
+        "same_family_source": 4,
+        "family_source": 4,
+        "same_family": 3,
+        "same_source_score": 2,
+        "source_score": 2,
+        "candidate_source": 1,
         "none": 0,
     }.get(scope, 0)
 

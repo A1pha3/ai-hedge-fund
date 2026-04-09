@@ -332,3 +332,44 @@ def test_generate_btst_opening_watch_card_surfaces_no_history_observers_separate
     assert payload["focus_items"][0]["execution_posture"] == "observe_only_no_history"
     assert "no_history_observer_count: 1" in markdown
     assert "focus_tier: no_history_observer" in markdown
+
+
+def test_generate_btst_opening_watch_card_adds_tplus2_bias_note_for_confirm_then_hold_primary(tmp_path):
+    result = generate_btst_opening_watch_card_artifacts(
+        input_path={
+            "trade_date": "2026-04-09",
+            "next_trade_date": "2026-04-10",
+            "summary": {},
+            "primary_entry": {
+                "ticker": "002001",
+                "preferred_entry_mode": "confirm_then_hold_breakout",
+                "score_target": 0.4493,
+                "top_reasons": ["catalyst_theme_short_trade_carryover", "historical_close_continuation"],
+                "historical_prior": {
+                    "summary": "同票历史 2 例，next_close 正收益率=1.0000。",
+                    "execution_quality_label": "close_continuation",
+                    "entry_timing_bias": "confirm_then_hold",
+                    "execution_note": "历史上更偏向次日收盘延续，确认后可保留 follow-through 预期。",
+                },
+            },
+            "selected_entries": [],
+            "near_miss_entries": [],
+            "opportunity_pool_entries": [],
+            "no_history_observer_entries": [],
+            "risky_observer_entries": [],
+            "research_upside_radar_entries": [],
+            "catalyst_theme_shadow_entries": [],
+            "catalyst_theme_frontier_summary": {},
+            "catalyst_theme_frontier_priority": {},
+            "upstream_shadow_entries": [],
+            "upstream_shadow_summary": {"shadow_candidate_count": 0, "promotable_count": 0, "lane_counts": {}, "decision_counts": {}, "top_focus_tickers": []},
+        },
+        output_dir=tmp_path,
+        trade_date="2026-04-09",
+        next_trade_date="2026-04-10",
+    )
+
+    payload = json.loads((tmp_path / "btst_opening_watch_card_20260410.json").read_text(encoding="utf-8"))
+
+    assert result["analysis"]["focus_items"][0]["ticker"] == "002001"
+    assert "T+2 bias" in payload["focus_items"][0]["execution_note"]

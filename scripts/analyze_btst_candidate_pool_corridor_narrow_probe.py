@@ -10,17 +10,120 @@ from scripts.analyze_btst_candidate_pool_corridor_window_diagnostics import (
     DEFAULT_COMMAND_BOARD_PATH,
     analyze_btst_candidate_pool_corridor_window_diagnostics,
 )
+from src.screening.candidate_pool import (
+    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
+    SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
+)
 
 REPORTS_DIR = Path("data/reports")
+DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_corridor_narrow_probe_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_corridor_narrow_probe_latest.md"
 
 
+def _load_optional_json(path: str | Path) -> dict[str, Any] | None:
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        return None
+    return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _analyze_deepest_corridor_split(candidate_pool_recall_dossier: dict[str, Any], recall_dossier_path: str | Path) -> dict[str, Any] | None:
+    corridor_rows: list[dict[str, Any]] = []
+    for dossier in list(candidate_pool_recall_dossier.get("priority_ticker_dossiers") or []):
+        normalized = dict(dossier or {})
+        ticker = str(normalized.get("ticker") or "").strip()
+        profile = dict(normalized.get("truncation_liquidity_profile") or {})
+        if str(profile.get("priority_handoff") or "").strip() != "layer_a_liquidity_corridor":
+            continue
+        cutoff_share = _safe_float(profile.get("avg_amount_share_of_cutoff_mean"))
+        min_gate_share = _safe_float(profile.get("avg_amount_share_of_min_gate_mean"))
+        low_gate_focus = (
+            min_gate_share is not None
+            and SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE <= min_gate_share < SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE
+        )
+        keep_for_deepest_probe = low_gate_focus and cutoff_share is not None and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE
+        corridor_rows.append(
+            {
+                "ticker": ticker,
+                "avg_amount_share_of_cutoff_mean": cutoff_share,
+                "avg_amount_share_of_min_gate_mean": min_gate_share,
+                "keep_for_deepest_probe": keep_for_deepest_probe,
+                "is_low_gate_focus": low_gate_focus,
+            }
+        )
+    if not corridor_rows:
+        return None
+
+    ranked_rows = sorted(
+        corridor_rows,
+        key=lambda row: (
+            0 if row.get("keep_for_deepest_probe") else 1,
+            float(row.get("avg_amount_share_of_cutoff_mean") or 999.0),
+            str(row.get("ticker") or ""),
+        ),
+    )
+    retained_rows = [row for row in ranked_rows if row.get("keep_for_deepest_probe")]
+    low_gate_excluded_rows = [row for row in ranked_rows if row.get("is_low_gate_focus") and not row.get("keep_for_deepest_probe")]
+    standard_corridor_rows = [row for row in ranked_rows if not row.get("is_low_gate_focus")]
+    verdict = "deepest_corridor_split_ready" if retained_rows else "no_retainable_deepest_corridor_focus"
+    recommendation = (
+        f"Keep only the deepest low-gate corridor names whose avg_amount/cutoff stays at or below "
+        f"{SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE}; route thicker low-gate tails back to "
+        "upstream base-liquidity uplift instead of keeping them in the same shadow probe."
+    )
+    if low_gate_excluded_rows:
+        recommendation += f" Current excluded low-gate tail: {[row['ticker'] for row in low_gate_excluded_rows]}."
+    if standard_corridor_rows:
+        recommendation += f" Standard corridor names {[row['ticker'] for row in standard_corridor_rows]} stay on the broader uplift lane."
+
+    return {
+        "focus_ticker": str((retained_rows or ranked_rows)[0].get("ticker") or ""),
+        "verdict": verdict,
+        "deepest_corridor_focus_tickers": [str(row.get("ticker") or "") for row in retained_rows],
+        "excluded_low_gate_tail_tickers": [str(row.get("ticker") or "") for row in low_gate_excluded_rows],
+        "standard_corridor_tickers": [str(row.get("ticker") or "") for row in standard_corridor_rows],
+        "focus_min_gate_share": SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
+        "standard_min_gate_share": SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
+        "low_gate_focus_max_cutoff_share": SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+        "retained_deepest_count": len(retained_rows),
+        "low_gate_excluded_count": len(low_gate_excluded_rows),
+        "threshold_override_gap_vs_anchor": None,
+        "target_gap_to_selected": None,
+        "recommendation": recommendation,
+        "source_reports": {
+            "candidate_pool_recall_dossier": str(Path(recall_dossier_path).expanduser().resolve()),
+        },
+    }
+
+
 def analyze_btst_candidate_pool_corridor_narrow_probe(
     *,
+    candidate_pool_recall_dossier_path: str | Path = DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH,
     candidate_dossier_path: str | Path = DEFAULT_CANDIDATE_DOSSIER_PATH,
     command_board_path: str | Path = DEFAULT_COMMAND_BOARD_PATH,
 ) -> dict[str, Any]:
+    legacy_mode_requested = (
+        Path(candidate_dossier_path).expanduser().resolve() != DEFAULT_CANDIDATE_DOSSIER_PATH.expanduser().resolve()
+        or Path(command_board_path).expanduser().resolve() != DEFAULT_COMMAND_BOARD_PATH.expanduser().resolve()
+    )
+    if not legacy_mode_requested:
+        recall_dossier = _load_optional_json(candidate_pool_recall_dossier_path)
+        if recall_dossier:
+            deepest_corridor_analysis = _analyze_deepest_corridor_split(recall_dossier, candidate_pool_recall_dossier_path)
+            if deepest_corridor_analysis:
+                return deepest_corridor_analysis
+
     diagnostics = analyze_btst_candidate_pool_corridor_window_diagnostics(
         candidate_dossier_path=candidate_dossier_path,
         command_board_path=command_board_path,
@@ -82,6 +185,10 @@ def render_btst_candidate_pool_corridor_narrow_probe_markdown(analysis: dict[str
         f"- target_effective_select_threshold: {analysis.get('target_effective_select_threshold')}",
         f"- threshold_override_gap_vs_anchor: {analysis.get('threshold_override_gap_vs_anchor')}",
         f"- target_gap_to_selected: {analysis.get('target_gap_to_selected')}",
+        f"- deepest_corridor_focus_tickers: {analysis.get('deepest_corridor_focus_tickers')}",
+        f"- excluded_low_gate_tail_tickers: {analysis.get('excluded_low_gate_tail_tickers')}",
+        f"- standard_corridor_tickers: {analysis.get('standard_corridor_tickers')}",
+        f"- low_gate_focus_max_cutoff_share: {analysis.get('low_gate_focus_max_cutoff_share')}",
         f"- verdict: {analysis.get('verdict')}",
         f"- recommendation: {analysis.get('recommendation')}",
     ]
@@ -89,7 +196,8 @@ def render_btst_candidate_pool_corridor_narrow_probe_markdown(analysis: dict[str
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Quantify the smallest lane-specific gap between the 300720 selected anchor and near-miss target window.")
+    parser = argparse.ArgumentParser(description="Isolate the deepest BTST liquidity corridor focus subset before keeping any corridor shadow probe.")
+    parser.add_argument("--candidate-pool-recall-dossier-path", default=str(DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH))
     parser.add_argument("--candidate-dossier-path", default=str(DEFAULT_CANDIDATE_DOSSIER_PATH))
     parser.add_argument("--command-board-path", default=str(DEFAULT_COMMAND_BOARD_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
@@ -97,6 +205,7 @@ def main() -> None:
     args = parser.parse_args()
 
     analysis = analyze_btst_candidate_pool_corridor_narrow_probe(
+        candidate_pool_recall_dossier_path=args.candidate_pool_recall_dossier_path,
         candidate_dossier_path=args.candidate_dossier_path,
         command_board_path=args.command_board_path,
     )

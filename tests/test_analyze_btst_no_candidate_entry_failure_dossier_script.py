@@ -116,11 +116,21 @@ def test_analyze_btst_no_candidate_entry_failure_dossier_distinguishes_absence_a
             ],
         },
     )
+    watchlist_recall_dossier_path = _write_json(
+        reports_root / "btst_watchlist_recall_dossier_latest.json",
+        {
+            "priority_ticker_dossiers": [
+                {"ticker": "300720", "dominant_recall_stage": "absent_from_candidate_pool"},
+                {"ticker": "003036", "dominant_recall_stage": "watchlist_visible_but_missing_candidate_entry"},
+            ]
+        },
+    )
 
     analysis = analyze_btst_no_candidate_entry_failure_dossier(
         tradeable_pool_path,
         action_board_path=action_board_path,
         replay_bundle_path=replay_bundle_path,
+        watchlist_recall_dossier_path=watchlist_recall_dossier_path,
         priority_limit=2,
         hotspot_limit=1,
     )
@@ -138,16 +148,20 @@ def test_analyze_btst_no_candidate_entry_failure_dossier_distinguishes_absence_a
     }
     assert analysis["top_upstream_absence_tickers"] == ["300720"]
     assert analysis["top_absent_from_watchlist_tickers"] == ["300720"]
+    assert analysis["top_absent_from_candidate_pool_breakpoint_tickers"] == ["300720"]
     assert analysis["top_candidate_entry_semantic_miss_tickers"] == ["003036"]
-    assert "watchlist 都没有进入" in analysis["recommendation"]
+    assert "candidate_pool snapshot 都没有进入" in analysis["recommendation"]
     assert analysis["priority_handoff_action_queue"][0]["task_id"] == "300720_absent_from_watchlist"
+    assert analysis["next_actions"][0] == "先补 ['300720'] 的 Layer A candidate_pool 召回观测，确认它们为何连 candidate_pool snapshot 都没进入。"
 
     dossiers_by_ticker = {row["ticker"]: row for row in analysis["priority_ticker_dossiers"]}
     assert dossiers_by_ticker["300720"]["primary_failure_class"] == "upstream_absent_from_replay_inputs"
     assert dossiers_by_ticker["300720"]["handoff_stage"] == "absent_from_watchlist"
+    assert dossiers_by_ticker["300720"]["watchlist_recall_stage"] == "absent_from_candidate_pool"
     assert dossiers_by_ticker["300720"]["replay_input_visible_report_count"] == 0
     assert dossiers_by_ticker["003036"]["primary_failure_class"] == "candidate_entry_semantic_miss"
     assert dossiers_by_ticker["003036"]["handoff_stage"] == "candidate_entry_visible_and_selection_target_attached"
+    assert dossiers_by_ticker["003036"]["watchlist_recall_stage"] == "watchlist_visible_but_missing_candidate_entry"
     assert dossiers_by_ticker["003036"]["candidate_entry_visible_report_count"] == 1
 
     hotspot_dossier = analysis["hotspot_report_dossiers"][0]

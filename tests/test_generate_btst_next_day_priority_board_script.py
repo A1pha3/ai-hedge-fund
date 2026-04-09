@@ -408,6 +408,7 @@ def test_generate_btst_next_day_priority_board_backfills_confirm_then_hold_mode_
                     "top_reasons": ["historical_execution_relief_applied"],
                     "historical_prior": {
                         "execution_quality_label": "close_continuation",
+                        "entry_timing_bias": "confirm_then_hold",
                         "summary": "同票历史 4 例，next_close 正收益率=1.0000。",
                         "execution_note": "确认后若量价延续良好，可保留收盘 follow-through。",
                     },
@@ -427,3 +428,4 @@ def test_generate_btst_next_day_priority_board_backfills_confirm_then_hold_mode_
     assert payload["priority_rows"][0]["preferred_entry_mode"] == "confirm_then_hold_breakout"
     assert "continuation 确认" in payload["priority_rows"][0]["suggested_action"]
     assert "持有到收盘" in payload["priority_rows"][0]["suggested_action"]
+    assert "T+2 bias" in payload["priority_rows"][0]["execution_note"]

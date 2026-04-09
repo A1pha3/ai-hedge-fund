@@ -351,6 +351,7 @@ def test_generate_btst_premarket_execution_card_supports_confirm_then_hold_break
         "historical_prior": {
             "summary": "同票历史 4 例，next_close 正收益率=1.0000。",
             "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
             "execution_note": "确认后若量价延续良好，可保留收盘 follow-through。",
         },
     }
@@ -381,4 +382,5 @@ def test_generate_btst_premarket_execution_card_supports_confirm_then_hold_break
     assert payload["primary_action"]["preferred_entry_mode"] == "confirm_then_hold_breakout"
     assert payload["primary_action"]["execution_posture"] == "confirm_then_hold"
     assert any("持有到收盘" in rule for rule in payload["primary_action"]["trigger_rules"])
+    assert any("T+2 bias" in rule for rule in payload["primary_action"]["trigger_rules"])
     assert "confirm_then_hold" in markdown

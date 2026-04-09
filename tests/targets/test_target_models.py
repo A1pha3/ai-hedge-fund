@@ -2,7 +2,7 @@ from src.execution.models import ExecutionPlan, LayerCResult
 from src.screening.models import StrategySignal
 from src.targets import get_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets
-from src.targets.short_trade_target import evaluate_short_trade_rejected_target, evaluate_short_trade_selected_target
+from src.targets.short_trade_target import _resolve_selected_score_tolerance, evaluate_short_trade_rejected_target, evaluate_short_trade_selected_target
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -1843,6 +1843,67 @@ def test_catalyst_theme_short_trade_carryover_promotes_strong_close_theme_candid
     assert relief_result.explainability_payload["upstream_shadow_catalyst_relief"]["reason"] == "catalyst_theme_short_trade_carryover"
 
 
+def test_catalyst_theme_short_trade_carryover_promotes_strong_close_theme_candidate_to_selected() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["historical_prior"] = {
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
+        "evaluable_count": 2,
+        "next_high_hit_rate_at_threshold": 1.0,
+        "next_close_positive_rate": 1.0,
+        "next_open_to_close_return_mean": 0.0393,
+        "execution_note": "历史上更偏向次日收盘延续，确认后可保留 follow-through 预期。",
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "selected"
+    assert result.preferred_entry_mode == "confirm_then_hold_breakout"
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is True
+    assert result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.45
+    assert result.metrics_payload["thresholds"]["selected_score_tolerance"] == 0.0
+    assert result.explainability_payload["upstream_shadow_catalyst_relief"]["effective_select_threshold"] == 0.45
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["historical_continuation_quality"] is True
+
+
+def test_selected_score_tolerance_only_applies_to_strong_carryover_close_continuation() -> None:
+    tolerance = _resolve_selected_score_tolerance(
+        score_target=0.44934181968680575,
+        effective_select_threshold=0.45,
+        upstream_shadow_catalyst_relief_applied=True,
+        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+        historical_prior={
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+        },
+    )
+
+    assert tolerance == 0.001
+    assert _resolve_selected_score_tolerance(
+        score_target=0.44934181968680575,
+        effective_select_threshold=0.45,
+        upstream_shadow_catalyst_relief_applied=True,
+        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+        historical_prior={
+            "execution_quality_label": "balanced_confirmation",
+            "entry_timing_bias": "confirm_then_review",
+        },
+    ) == 0.0
+    assert _resolve_selected_score_tolerance(
+        score_target=0.44934181968680575,
+        effective_select_threshold=0.45,
+        upstream_shadow_catalyst_relief_applied=False,
+        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+        historical_prior={
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+        },
+    ) == 0.0
+
+
 def test_catalyst_theme_short_trade_carryover_requires_candidate_reason_code() -> None:
     entry = _make_catalyst_theme_short_trade_carryover_entry()
     entry["candidate_reason_codes"] = ["catalyst_theme_candidate_score_ranked", "catalyst_theme_research_candidate"]
@@ -1952,6 +2013,41 @@ def test_catalyst_theme_short_trade_carryover_does_not_use_historical_execution_
     assert result.metrics_payload["historical_execution_relief"]["execution_quality_label"] == "gap_chase_risk"
     assert result.metrics_payload["historical_execution_relief"]["gate_hits"]["execution_quality_support"] is False
     assert result.metrics_payload["historical_execution_relief"]["applied"] is False
+
+
+def test_catalyst_theme_short_trade_carryover_marks_broad_family_only_low_sample_as_evidence_deficient() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["ticker"] = "688498"
+    entry["score_b"] = 0.25
+    entry["score_c"] = -0.55
+    entry["score_final"] = -0.10
+    entry["quality_score"] = 0.58
+    entry["historical_prior"] = {
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
+        "evaluable_count": 1,
+        "next_high_hit_rate_at_threshold": 1.0,
+        "next_close_positive_rate": 1.0,
+        "next_open_to_close_return_mean": 0.0172,
+        "same_ticker_sample_count": 1,
+        "same_family_sample_count": 74,
+        "same_family_source_sample_count": 0,
+        "same_family_source_score_catalyst_sample_count": 0,
+        "same_source_score_sample_count": 0,
+        "execution_note": "历史 close-continuation 兑现次数过少，且只有 broad family 外围样本。",
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260330",
+        entry=entry,
+    )
+
+    assert result.decision == "rejected"
+    assert "evidence_deficient_broad_family_only" in result.negative_tags
+    assert result.rejection_reasons[0] == "evidence_deficient_broad_family_only"
+    assert result.metrics_payload["carryover_evidence_deficiency"]["evidence_deficient"] is True
+    assert result.metrics_payload["carryover_evidence_deficiency"]["gate_hits"]["broad_family_only"] is True
+    assert result.explainability_payload["carryover_evidence_deficiency"]["same_family_sample_count"] == 74
 
 
 def test_visibility_gap_continuation_relief_promotes_selected_visibility_gap_shadow_to_near_miss() -> None:

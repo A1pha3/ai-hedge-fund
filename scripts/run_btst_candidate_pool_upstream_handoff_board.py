@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from scripts.btst_latest_followup_utils import load_latest_upstream_shadow_followup_by_ticker, load_latest_upstream_shadow_followup_summary
+from src.screening.candidate_pool import (
+    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
+    SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
+)
 
 
 REPORTS_DIR = Path("data/reports")
@@ -160,17 +165,58 @@ def _classify_historical_shadow_probe_gap(ticker: str, followup_row: dict[str, A
 def _board_sort_key(row: dict[str, Any]) -> tuple[int, int, float, str]:
     first_broken = str(row.get("first_broken_handoff") or "")
     priority_handoff = str(row.get("priority_handoff") or "")
+    corridor_bucket = str(row.get("corridor_uplift_bucket") or "")
     unresolved_priority = 0 if first_broken in {"absent_from_watchlist", "absent_from_candidate_pool", "candidate_pool_truncated_after_filters"} else 1
     handoff_priority = 0 if priority_handoff == "layer_a_liquidity_corridor" else 1
+    corridor_bucket_priority = {
+        "deepest_corridor_focus": 0,
+        "standard_corridor_uplift": 1,
+        "excluded_low_gate_tail": 2,
+    }.get(corridor_bucket, 1)
     return (
         unresolved_priority,
         handoff_priority,
+        corridor_bucket_priority,
         float(row.get("candidate_pool_rank_gap_min") or 999999),
         str(row.get("ticker") or ""),
     )
 
 
-def _build_handoff_commands(*, ticker: str, priority_handoff: str | None) -> list[str]:
+def _classify_corridor_uplift_bucket(
+    *,
+    priority_handoff: str | None,
+    avg_amount_share_of_cutoff_mean: Any,
+    avg_amount_share_of_min_gate_mean: Any,
+) -> str | None:
+    if str(priority_handoff or "").strip() != "layer_a_liquidity_corridor":
+        return None
+    try:
+        cutoff_share = float(avg_amount_share_of_cutoff_mean)
+        min_gate_share = float(avg_amount_share_of_min_gate_mean)
+    except (TypeError, ValueError):
+        return "standard_corridor_uplift"
+    if SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE <= min_gate_share < SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE:
+        if cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE:
+            return "deepest_corridor_focus"
+        return "excluded_low_gate_tail"
+    return "standard_corridor_uplift"
+
+
+def _build_corridor_next_step(ticker: str, corridor_uplift_bucket: str | None, prototype_summary: str, profile_summary: str | None) -> str:
+    if corridor_uplift_bucket == "deepest_corridor_focus":
+        return (
+            f"{ticker} 已落入 retained deepest corridor focus；先补 upstream handoff / persistence 断点，"
+            "再进入 corridor uplift runbook，不把更厚的 low-gate tail 一起带入 shadow pack。"
+        )
+    if corridor_uplift_bucket == "excluded_low_gate_tail":
+        return (
+            f"{ticker} 当前属于 thicker low-gate tail（avg_amount/cutoff 高于 retained deepest corridor 上限），"
+            "先回补 replay input -> watchlist -> candidate_pool 断点，不进入 retained deepest corridor shadow pack。"
+        )
+    return prototype_summary or str(profile_summary or "").strip()
+
+
+def _build_handoff_commands(*, ticker: str, priority_handoff: str | None, corridor_uplift_bucket: str | None) -> list[str]:
     normalized_priority_handoff = str(priority_handoff or "").strip()
     commands = [
         "python scripts/run_btst_candidate_pool_upstream_handoff_board.py "
@@ -180,7 +226,7 @@ def _build_handoff_commands(*, ticker: str, priority_handoff: str | None) -> lis
         "--output-json data/reports/btst_candidate_pool_upstream_handoff_board_latest.json "
         "--output-md data/reports/btst_candidate_pool_upstream_handoff_board_latest.md",
     ]
-    if normalized_priority_handoff == "layer_a_liquidity_corridor":
+    if normalized_priority_handoff == "layer_a_liquidity_corridor" and corridor_uplift_bucket != "excluded_low_gate_tail":
         commands.append(
             "python scripts/run_btst_candidate_pool_corridor_uplift_runbook.py "
             "--candidate-pool-recall-dossier-path data/reports/btst_candidate_pool_recall_dossier_latest.json "
@@ -270,6 +316,11 @@ def analyze_btst_candidate_pool_upstream_handoff_board(
         truncation_profile = dict(recall_row.get("truncation_liquidity_profile") or {})
         prototype = _prototype_for_ticker(experiment_queue, ticker)
         latest_followup_row = dict(latest_followup_by_ticker.get(ticker) or {})
+        corridor_uplift_bucket = _classify_corridor_uplift_bucket(
+            priority_handoff=truncation_profile.get("priority_handoff"),
+            avg_amount_share_of_cutoff_mean=truncation_profile.get("avg_amount_share_of_cutoff_mean"),
+            avg_amount_share_of_min_gate_mean=truncation_profile.get("avg_amount_share_of_min_gate_mean"),
+        )
 
         replay_input_visible_report_count = int(failure_row.get("replay_input_visible_report_count") or 0)
         watchlist_visible_report_count = int(failure_row.get("watchlist_visible_report_count") or 0)
@@ -278,8 +329,17 @@ def analyze_btst_candidate_pool_upstream_handoff_board(
         first_broken_handoff = failure_row.get("handoff_stage") or watchlist_row.get("dominant_recall_stage")
         board_phase = "upstream_handoff_gap"
         failure_reason = failure_row.get("failure_reason")
-        next_step = prototype.get("prototype_summary") or recall_row.get("next_step") or failure_row.get("next_step")
-        recommended_commands = _build_handoff_commands(ticker=ticker, priority_handoff=truncation_profile.get("priority_handoff"))
+        next_step = _build_corridor_next_step(
+            ticker,
+            corridor_uplift_bucket,
+            str(prototype.get("prototype_summary") or recall_row.get("next_step") or failure_row.get("next_step") or "").strip(),
+            truncation_profile.get("profile_summary"),
+        )
+        recommended_commands = _build_handoff_commands(
+            ticker=ticker,
+            priority_handoff=truncation_profile.get("priority_handoff"),
+            corridor_uplift_bucket=corridor_uplift_bucket,
+        )
         is_active_followup = bool(latest_followup_row) and str(latest_followup_row.get("report_dir") or "") == latest_active_report_dir
         if latest_followup_row and is_active_followup:
             first_broken_handoff = "downstream_validated_after_shadow_recall"
@@ -294,10 +354,16 @@ def analyze_btst_candidate_pool_upstream_handoff_board(
                 f"{ticker} 曾在历史 shadow replay 中短暂进入 recalled-shadow 诊断层，但当前最新 active followup 已不再可见，"
                 "说明主要问题转为 upstream recall persistence，而不是简单的从未召回。"
             )
-            next_step = (
-                f"不要直接放宽 {ticker} 的默认召回边界；先围绕历史 shadow probe 补 persistence diagnostics，"
-                "确认它是 transient probe 还是可复现的 recall lane。"
-            )
+            if str(truncation_profile.get("priority_handoff") or "").strip() == "post_gate_liquidity_competition":
+                next_step = (
+                    f"不要直接放宽 {ticker} 的默认召回边界；先围绕历史 rebucket shadow probe 补 persistence diagnostics，"
+                    "只保留 shadow probe，不进入 selective exemption review。"
+                )
+            else:
+                next_step = (
+                    f"不要直接放宽 {ticker} 的默认召回边界；先围绕历史 shadow probe 补 persistence diagnostics，"
+                    "确认它是 transient probe 还是可复现的 recall lane。"
+                )
         downstream_followup_classification = (
             _classify_downstream_followup_lane(ticker, latest_followup_row)
             if latest_followup_row and is_active_followup
@@ -318,6 +384,9 @@ def analyze_btst_candidate_pool_upstream_handoff_board(
                 "prototype_task_id": prototype.get("task_id"),
                 "prototype_readiness": prototype.get("prototype_readiness"),
                 "prototype_type": prototype.get("prototype_type"),
+                "corridor_uplift_bucket": corridor_uplift_bucket,
+                "selective_exemption_readiness": prototype.get("selective_exemption_readiness"),
+                "selective_exemption_summary": prototype.get("selective_exemption_summary"),
                 "primary_report_dir": failure_row.get("primary_report_dir") or watchlist_row.get("primary_report_dir"),
                 "replay_input_visible_report_count": replay_input_visible_report_count,
                 "watchlist_visible_report_count": watchlist_visible_report_count,
@@ -424,10 +493,12 @@ def render_btst_candidate_pool_upstream_handoff_board_markdown(analysis: dict[st
     lines.append("## Board")
     for row in list(analysis.get("board_rows") or []):
         lines.append(
-            f"- board_rank={row.get('board_rank')} ticker={row.get('ticker')} board_phase={row.get('board_phase')} first_broken_handoff={row.get('first_broken_handoff')} priority_handoff={row.get('priority_handoff')} prototype_readiness={row.get('prototype_readiness')} candidate_pool_rank_gap_min={row.get('candidate_pool_rank_gap_min')}"
+            f"- board_rank={row.get('board_rank')} ticker={row.get('ticker')} board_phase={row.get('board_phase')} first_broken_handoff={row.get('first_broken_handoff')} priority_handoff={row.get('priority_handoff')} prototype_readiness={row.get('prototype_readiness')} corridor_uplift_bucket={row.get('corridor_uplift_bucket')} selective_exemption_readiness={row.get('selective_exemption_readiness')} candidate_pool_rank_gap_min={row.get('candidate_pool_rank_gap_min')}"
         )
         lines.append(f"  failure_reason: {row.get('failure_reason')}")
         lines.append(f"  next_step: {row.get('next_step')}")
+        if row.get("selective_exemption_summary"):
+            lines.append(f"  selective_exemption_summary: {row.get('selective_exemption_summary')}")
         if row.get("latest_followup_decision"):
             lines.append(
                 f"  latest_followup: decision={row.get('latest_followup_decision')} bottleneck={row.get('latest_followup_downstream_bottleneck')} lane={row.get('downstream_followup_lane')} status={row.get('downstream_followup_status')} blocker={row.get('downstream_followup_blocker')} top_reasons={row.get('latest_followup_top_reasons')}"

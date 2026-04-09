@@ -620,6 +620,27 @@ def _build_default_merge_review_summary(reports_root: Path) -> dict[str, Any]:
     return _optional_report_json(reports_root / "btst_default_merge_review_latest.json")
 
 
+def _build_selected_outcome_refresh_summary(reports_root: Path) -> dict[str, Any]:
+    refresh_board = _optional_report_json(reports_root / "btst_selected_outcome_refresh_board_latest.json")
+    if not refresh_board:
+        return {}
+    entries = [dict(entry or {}) for entry in list(refresh_board.get("entries") or [])]
+    focus_entry = entries[0] if entries else {}
+    return {
+        "trade_date": refresh_board.get("trade_date"),
+        "selected_count": refresh_board.get("selected_count"),
+        "current_cycle_status_counts": dict(refresh_board.get("current_cycle_status_counts") or {}),
+        "focus_ticker": focus_entry.get("ticker"),
+        "focus_cycle_status": focus_entry.get("current_cycle_status"),
+        "focus_data_status": focus_entry.get("current_data_status"),
+        "focus_next_close_return": focus_entry.get("current_next_close_return"),
+        "focus_t_plus_2_close_return": focus_entry.get("current_t_plus_2_close_return"),
+        "focus_historical_next_close_positive_rate": focus_entry.get("historical_next_close_positive_rate"),
+        "focus_historical_t_plus_2_close_positive_rate": focus_entry.get("historical_t_plus_2_close_positive_rate"),
+        "recommendation": refresh_board.get("recommendation"),
+    }
+
+
 def _build_default_merge_historical_counterfactual_summary(reports_root: Path) -> dict[str, Any]:
     return _optional_report_json(reports_root / "btst_default_merge_historical_counterfactual_latest.json")
 
@@ -819,6 +840,19 @@ STATIC_ENTRY_SPECS: tuple[dict[str, Any], ...] = (
         "is_latest": True,
         "question": "今天收盘到底验证了什么，明天该如何理解当前 BTST 结论",
         "view_order": 2,
+        "time_scope": {"label": "rolling"},
+        "source_kind": "generated_runtime_artifact",
+    },
+    {
+        "id": "btst_selected_outcome_refresh_board_latest",
+        "path": "data/reports/btst_selected_outcome_refresh_board_latest.md",
+        "report_type": "btst_selected_outcome_refresh_board",
+        "topic": "btst_followup",
+        "usage": "nightly_review",
+        "priority": 1,
+        "is_latest": True,
+        "question": "当前 formal selected 的实时兑现状态与历史 proof 是否一致",
+        "view_order": 3,
         "time_scope": {"label": "rolling"},
         "source_kind": "generated_runtime_artifact",
     },
@@ -1592,6 +1626,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "entry_ids": [
             "btst_open_ready_delta_latest",
             "btst_latest_close_validation_latest",
+            "btst_selected_outcome_refresh_board_latest",
             "btst_default_merge_review_latest",
             "btst_default_merge_historical_counterfactual_latest",
             "btst_continuation_merge_candidate_ranking_latest",
@@ -1647,6 +1682,7 @@ READING_PATH_SPECS: tuple[dict[str, Any], ...] = (
         "entry_ids": [
             "btst_open_ready_delta_latest",
             "btst_latest_close_validation_latest",
+            "btst_selected_outcome_refresh_board_latest",
             "btst_default_merge_review_latest",
             "btst_default_merge_historical_counterfactual_latest",
             "btst_continuation_merge_candidate_ranking_latest",
@@ -2519,6 +2555,7 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "parallel_watch_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("parallel_watch_tickers") or [])[:3],
             },
             "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
+            "selected_outcome_refresh_summary": _build_selected_outcome_refresh_summary(resolved_reports_root),
             "continuation_promotion_ready_summary": _build_continuation_promotion_ready_summary(resolved_reports_root),
             "default_merge_review_summary": _build_default_merge_review_summary(resolved_reports_root),
             "default_merge_historical_counterfactual_summary": _build_default_merge_historical_counterfactual_summary(resolved_reports_root),
@@ -2782,6 +2819,7 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "parallel_watch_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("parallel_watch_tickers") or [])[:3],
         },
         "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
+        "selected_outcome_refresh_summary": _build_selected_outcome_refresh_summary(resolved_reports_root),
         "continuation_promotion_ready_summary": _build_continuation_promotion_ready_summary(resolved_reports_root),
         "default_merge_review_summary": _build_default_merge_review_summary(resolved_reports_root),
         "default_merge_historical_counterfactual_summary": _build_default_merge_historical_counterfactual_summary(resolved_reports_root),
@@ -3429,6 +3467,7 @@ def generate_reports_manifest(
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
         "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
         "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
+        "selected_outcome_refresh_summary": _build_selected_outcome_refresh_summary(resolved_reports_root),
         "continuation_promotion_ready_summary": _build_continuation_promotion_ready_summary(resolved_reports_root),
         "default_merge_review_summary": _build_default_merge_review_summary(resolved_reports_root),
         "default_merge_historical_counterfactual_summary": _build_default_merge_historical_counterfactual_summary(resolved_reports_root),
@@ -3629,6 +3668,11 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
         summary = dict(manifest.get("continuation_focus_summary") or {})
         lines.append(
             f"- continuation_focus_summary: focus_ticker={summary.get('focus_ticker')} promotion_review_verdict={summary.get('promotion_review_verdict')} promotion_gate_verdict={summary.get('promotion_gate_verdict')} watchlist_execution_verdict={summary.get('watchlist_execution_verdict')} focus_watch_validation_status={summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={summary.get('eligible_gate_verdict')} execution_gate_verdict={summary.get('execution_gate_verdict')} execution_gate_blockers={summary.get('execution_gate_blockers')} execution_overlay_verdict={summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={summary.get('execution_overlay_lane_support_ratio')} governance_status={summary.get('governance_status')}"
+        )
+    if manifest.get("selected_outcome_refresh_summary"):
+        summary = dict(manifest.get("selected_outcome_refresh_summary") or {})
+        lines.append(
+            f"- selected_outcome_refresh_summary: trade_date={summary.get('trade_date')} selected_count={summary.get('selected_count')} focus_ticker={summary.get('focus_ticker')} focus_cycle_status={summary.get('focus_cycle_status')} focus_data_status={summary.get('focus_data_status')} focus_next_close_return={summary.get('focus_next_close_return')} focus_t_plus_2_close_return={summary.get('focus_t_plus_2_close_return')} focus_historical_next_close_positive_rate={summary.get('focus_historical_next_close_positive_rate')} focus_historical_t_plus_2_close_positive_rate={summary.get('focus_historical_t_plus_2_close_positive_rate')}"
         )
     if manifest.get("continuation_promotion_ready_summary"):
         summary = dict(manifest.get("continuation_promotion_ready_summary") or {})

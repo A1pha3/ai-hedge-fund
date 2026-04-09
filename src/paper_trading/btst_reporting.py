@@ -1969,6 +1969,9 @@ def analyze_btst_next_day_trade_brief(input_path: str | Path, trade_date: str | 
             recommendation_lines.append("主票历史先验参考: " + str(primary_historical.get("summary")))
         if primary_historical.get("execution_note"):
             recommendation_lines.append("主票执行先验: " + str(primary_historical.get("execution_note")))
+        primary_contract_note = _selected_holding_contract_note(primary_entry.get("preferred_entry_mode"), primary_historical)
+        if primary_contract_note:
+            recommendation_lines.append("主票持有 contract: " + primary_contract_note)
     else:
         recommendation_lines.append("本次 short-trade 没有正式 selected 样本，不建议把 near_miss 直接当成主入场票。")
     if near_miss_entries:
@@ -2592,6 +2595,26 @@ def _selected_action_posture(preferred_entry_mode: str | None) -> tuple[str, lis
     )
 
 
+def _selected_holding_contract_note(preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None) -> str | None:
+    prior = dict(historical_prior or {})
+    if preferred_entry_mode != "confirm_then_hold_breakout":
+        return None
+    if str(prior.get("execution_quality_label") or "") != "close_continuation":
+        return None
+    if str(prior.get("entry_timing_bias") or "") != "confirm_then_hold":
+        return None
+    return "默认按 BTST T+2 bias 管理，不把 T+3 连续走强当成基础预期。"
+
+
+def _augment_execution_note(preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None) -> str | None:
+    prior = dict(historical_prior or {})
+    base_note = str(prior.get("execution_note") or "").strip()
+    contract_note = _selected_holding_contract_note(preferred_entry_mode, prior)
+    if contract_note and contract_note not in base_note:
+        return f"{base_note} {contract_note}".strip() if base_note else contract_note
+    return base_note or None
+
+
 def analyze_btst_premarket_execution_card(input_path: str | Path | dict[str, Any], trade_date: str | None = None, next_trade_date: str | None = None) -> dict[str, Any]:
     brief = _resolve_brief_analysis(input_path, trade_date=trade_date, next_trade_date=next_trade_date)
     primary_entry = brief.get("primary_entry")
@@ -2605,6 +2628,9 @@ def analyze_btst_premarket_execution_card(input_path: str | Path | dict[str, Any
             trigger_rules.insert(0, f"历史先验: {historical_prior['summary']}")
         if historical_prior.get("execution_note"):
             trigger_rules.append(f"执行先验: {historical_prior['execution_note']}")
+        holding_contract_note = _selected_holding_contract_note(primary_entry.get("preferred_entry_mode"), historical_prior)
+        if holding_contract_note:
+            trigger_rules.append(f"持有 contract: {holding_contract_note}")
         primary_action = {
             "ticker": primary_entry.get("ticker"),
             "action_tier": "primary_entry",
@@ -2621,6 +2647,7 @@ def analyze_btst_premarket_execution_card(input_path: str | Path | dict[str, Any
             "positive_tags": list(primary_entry.get("positive_tags") or []),
             "metrics": dict(primary_entry.get("metrics") or {}),
             "historical_prior": historical_prior,
+            "holding_contract_note": holding_contract_note,
         }
 
     watch_actions = []
@@ -3132,7 +3159,7 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
                 "why_now": ", ".join(primary_entry.get("top_reasons") or []) or "当前 short-trade 正式 selected。",
                 "opening_plan": trigger_rules[0] if trigger_rules else "只在确认出现后执行。",
                 "historical_summary": historical_prior.get("summary"),
-                "execution_note": historical_prior.get("execution_note"),
+                "execution_note": _augment_execution_note(primary_entry.get("preferred_entry_mode"), historical_prior),
             }
         )
 
@@ -3153,7 +3180,7 @@ def analyze_btst_opening_watch_card(input_path: str | Path | dict[str, Any], tra
                 "why_now": ", ".join(entry.get("top_reasons") or []) or "当前接近 near-miss 边界。",
                 "opening_plan": opening_plan,
                 "historical_summary": historical_prior.get("summary"),
-                "execution_note": historical_prior.get("execution_note"),
+                "execution_note": _augment_execution_note(entry.get("preferred_entry_mode"), historical_prior),
             }
         )
 
@@ -3511,7 +3538,7 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
                 "why_now": ", ".join(entry.get("top_reasons") or []) or "当前 short-trade selected。",
                 "suggested_action": trigger_rules[0] if trigger_rules else "盘中确认后再执行。",
                 "historical_summary": historical_prior.get("summary"),
-                "execution_note": historical_prior.get("execution_note"),
+                "execution_note": _augment_execution_note(entry.get("preferred_entry_mode"), historical_prior),
             }
         )
 
@@ -3534,7 +3561,7 @@ def analyze_btst_next_day_priority_board(input_path: str | Path | dict[str, Any]
                 "why_now": ", ".join(entry.get("top_reasons") or []) or "当前接近 near-miss 边界。",
                 "suggested_action": suggested_action,
                 "historical_summary": historical_prior.get("summary"),
-                "execution_note": historical_prior.get("execution_note"),
+                "execution_note": _augment_execution_note(entry.get("preferred_entry_mode"), historical_prior),
             }
         )
 

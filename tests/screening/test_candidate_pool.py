@@ -508,7 +508,7 @@ class TestExcludeRules:
         snapshot_path.write_text(json.dumps([candidate.model_dump() for candidate in cached_candidates], ensure_ascii=False, indent=2), encoding="utf-8")
 
         with patch("src.screening.candidate_pool._SNAPSHOT_DIR", snapshot_dir), \
-             patch("src.screening.candidate_pool._compute_candidate_pool_candidates", return_value=[]):
+             patch("src.screening.candidate_pool._compute_candidate_pool_candidates", return_value=([], [])):
             selected_candidates, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow("20260305", use_cache=True)
 
         assert [candidate.ticker for candidate in selected_candidates] == ["000001"]
@@ -544,6 +544,50 @@ class TestExcludeRules:
         assert shadow_summary["selected_count"] == 1
         assert shadow_summary["shadow_recall_complete"] is False
         assert shadow_summary["shadow_recall_status"] == "selected_cache_backfill"
+
+    @patch("src.screening.candidate_pool.get_sw_industry_classification")
+    @patch("src.screening.candidate_pool.get_daily_basic_batch")
+    @patch("src.screening.candidate_pool.get_limit_list")
+    @patch("src.screening.candidate_pool.get_suspend_list")
+    @patch("src.screening.candidate_pool.get_all_stock_basic")
+    @patch("src.screening.candidate_pool._get_pro")
+    def test_candidate_pool_preserves_cooldown_focus_ticker_as_shadow_review(
+        self,
+        mock_pro,
+        mock_basic,
+        mock_suspend,
+        mock_limit,
+        mock_daily,
+        mock_sw,
+    ):
+        stocks = [
+            {"ts_code": "000001.SZ", "symbol": "000001", "name": "冷却focus", "list_date": "20100101"},
+            {"ts_code": "000002.SZ", "symbol": "000002", "name": "正常标的", "list_date": "20100101"},
+        ]
+        mock_pro.return_value = MagicMock()
+        mock_basic.return_value = _make_stock_basic_df(stocks)
+        mock_suspend.return_value = pd.DataFrame()
+        mock_limit.return_value = pd.DataFrame()
+        mock_daily.return_value = _make_daily_basic_df(
+            [{"ts_code": "000001.SZ", "total_mv": 1000000}, {"ts_code": "000002.SZ", "total_mv": 1000000}]
+        )
+        mock_sw.return_value = {}
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", Path(tempfile.mkdtemp())), \
+             patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value={"000001.SZ": 12000.0, "000002.SZ": 15000.0}), \
+             patch.object(candidate_pool_module, "SHADOW_FOCUS_TICKERS", {"000001"}):
+            selected_candidates, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow(
+                "20260305",
+                use_cache=False,
+                cooldown_tickers={"000001"},
+            )
+
+        assert [candidate.ticker for candidate in selected_candidates] == ["000002"]
+        assert [candidate.ticker for candidate in shadow_candidates] == ["000001"]
+        assert shadow_candidates[0].candidate_pool_lane == "cooldown_review"
+        assert shadow_candidates[0].candidate_pool_shadow_reason == "cooldown_review_shadow"
+        assert shadow_summary["lane_counts"]["cooldown_review"] == 1
+        assert "000001" in shadow_summary["focus_tickers"]
 
     def test_load_candidate_pool_shadow_snapshot_marks_legacy_empty_shadow_as_unknown(self):
         snapshot_dir = Path(tempfile.mkdtemp())

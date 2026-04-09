@@ -327,3 +327,50 @@ def test_load_latest_btst_historical_prior_by_ticker_skips_newer_rows_without_pr
 
     assert priors_by_ticker["300720"]["execution_quality_label"] == "intraday_only"
     assert priors_by_ticker["300720"]["evaluable_count"] == 4
+
+
+def test_load_latest_btst_historical_prior_by_ticker_recognizes_real_scope_aliases(tmp_path):
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260406_short_trade"
+
+    _write_followup_report(
+        report_dir,
+        trade_date="2026-04-06",
+        selection_target="short_trade_only",
+        brief_payload={
+            "selected_entries": [
+                {
+                    "ticker": "688498",
+                    "decision": "selected",
+                    "candidate_source": "catalyst_theme",
+                    "historical_prior": {
+                        "applied_scope": "candidate_source",
+                        "sample_count": 3,
+                        "evaluable_count": 3,
+                        "execution_quality_label": "balanced_confirmation",
+                        "entry_timing_bias": "confirm_then_review",
+                    },
+                }
+            ],
+            "opportunity_pool_entries": [
+                {
+                    "ticker": "688498",
+                    "decision": "rejected",
+                    "candidate_source": "catalyst_theme",
+                    "historical_prior": {
+                        "applied_scope": "family_source_score_catalyst",
+                        "sample_count": 3,
+                        "evaluable_count": 3,
+                        "execution_quality_label": "close_continuation",
+                        "entry_timing_bias": "confirm_then_hold",
+                    },
+                }
+            ],
+        },
+        mtime=200,
+    )
+
+    priors_by_ticker = load_latest_btst_historical_prior_by_ticker(reports_root)
+
+    assert priors_by_ticker["688498"]["applied_scope"] == "family_source_score_catalyst"
+    assert priors_by_ticker["688498"]["execution_quality_label"] == "close_continuation"

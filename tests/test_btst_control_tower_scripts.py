@@ -1988,6 +1988,199 @@ def test_control_tower_surfaces_transient_probe_summary_from_manifest_refresh() 
     assert payload["control_tower_snapshot"]["execution_constraint_rollup"]["constraint_count"] == 2
 
 
+def test_control_tower_prioritizes_recall_and_primary_lane_when_latest_btst_has_no_selected(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = _write_btst_followup_report(
+        reports_root,
+        report_name="paper_trading_20260409_20260409_live_m2_7_short_trade_only_20260410",
+        selection_target="short_trade_only",
+        mode="live_pipeline",
+        trade_date="2026-04-09",
+        next_trade_date="2026-04-10",
+        summary_counts={
+            "selected_count": 0,
+            "near_miss_count": 1,
+            "blocked_count": 2,
+            "rejected_count": 5,
+            "opportunity_pool_count": 0,
+            "research_upside_radar_count": 0,
+        },
+    )
+
+    synthesis_json = reports_root / "btst_governance_synthesis_latest.json"
+    validation_json = reports_root / "btst_governance_validation_latest.json"
+    independent_json = reports_root / "btst_independent_window_monitor_latest.json"
+    tplus_json = reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json"
+    replay_json = reports_root / "btst_replay_cohort_latest.json"
+    candidate_pool_dossier_json = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
+
+    _write_json(
+        synthesis_json,
+        {
+            "lane_matrix": [
+                {
+                    "lane_id": "primary_roll_forward",
+                    "ticker": "001309",
+                    "lane_status": "primary_controlled_follow_through",
+                    "blocker": "cross_window_stability_missing",
+                    "next_step": "collect second window",
+                },
+                {
+                    "lane_id": "single_name_shadow",
+                    "ticker": "300383",
+                    "lane_status": "ready_for_shadow_validation",
+                    "blocker": "same_rule_shadow_expansion_not_ready",
+                    "next_step": "shadow monitor",
+                },
+            ],
+            "waiting_lane_count": 1,
+            "ready_lane_count": 1,
+            "recommendation": "聚焦 recall 和 primary lane。",
+            "lane_status_counts": {"primary_controlled_follow_through": 1, "ready_for_shadow_validation": 1},
+            "closed_frontiers": [],
+            "next_actions": [
+                {"task_id": "existing", "title": "旧任务", "why_now": "旧排序", "next_step": "legacy step", "source": "legacy"}
+            ],
+        },
+    )
+    _write_json(validation_json, {"overall_verdict": "pass", "warn_count": 0, "fail_count": 0})
+    _write_json(independent_json, {"report_dir_count": 0, "rows": [], "recommendation": "n/a"})
+    _write_json(tplus_json, {"tradeable_surface": {"verdict": "n/a"}})
+    _write_json(replay_json, {"report_count": 1, "selection_target_counts": {"short_trade_only": 1}, "cohort_summaries": [], "recommendation": "n/a"})
+    _write_json(
+        candidate_pool_dossier_json,
+        {
+            "priority_stage_counts": {"cooldown_excluded": 2},
+            "dominant_stage": "cooldown_excluded",
+            "top_stage_tickers": {"cooldown_excluded": ["301292", "301188"]},
+            "truncation_frontier_summary": {"frontier_verdict": "far_below_cutoff_not_boundary"},
+            "next_actions": ["先核对硬过滤规则是否误杀当前策略主线候选。"],
+            "recommendation": "优先检查 cooldown 规则。",
+        },
+    )
+
+    manifest = {
+        "reports_root": str(reports_root.resolve()),
+        "latest_btst_run": {
+            "report_dir_abs": str(report_dir.resolve()),
+            "report_dir": report_dir.name,
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-04-09",
+            "next_trade_date": "2026-04-10",
+        },
+        "btst_governance_synthesis_refresh": {"status": "refreshed", "output_json": str(synthesis_json.resolve())},
+        "btst_governance_validation_refresh": {"status": "refreshed", "output_json": str(validation_json.resolve())},
+        "btst_independent_window_monitor_refresh": {"status": "refreshed", "output_json": str(independent_json.resolve())},
+        "btst_tplus1_tplus2_objective_monitor_refresh": {"status": "refreshed", "output_json": str(tplus_json.resolve())},
+        "btst_replay_cohort_refresh": {"status": "refreshed", "output_json": str(replay_json.resolve())},
+        "candidate_entry_shadow_refresh": {
+            "status": "refreshed",
+            "candidate_pool_recall_dossier_json": str(candidate_pool_dossier_json.resolve()),
+        },
+        "entries": [],
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+    next_actions = payload["control_tower_snapshot"]["next_actions"]
+
+    assert [task["task_id"] for task in next_actions] == [
+        "candidate_pool_recall_priority",
+        "primary_roll_forward_priority",
+        "single_name_shadow_priority",
+    ]
+    assert "cooldown_excluded" in next_actions[0]["title"]
+    assert "001309" in next_actions[1]["title"]
+    assert "evidence_only_not_current_formal_selected" in next_actions[1]["why_now"]
+    assert next_actions[1]["next_step"] == "collect second window；仅作独立窗口证据补充，不把它包装成当前 formal selected 主票。"
+    assert "300383" in next_actions[2]["title"]
+
+
+def test_control_tower_recall_priority_prefers_active_upstream_handoff_focus_tickers(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = _write_btst_followup_report(
+        reports_root,
+        report_name="paper_trading_20260409_20260409_live_m2_7_short_trade_only_20260410",
+        selection_target="short_trade_only",
+        mode="live_pipeline",
+        trade_date="2026-04-09",
+        next_trade_date="2026-04-10",
+        summary_counts={
+            "selected_count": 0,
+            "near_miss_count": 2,
+            "blocked_count": 0,
+            "rejected_count": 0,
+            "opportunity_pool_count": 0,
+            "research_upside_radar_count": 0,
+        },
+    )
+
+    synthesis_json = reports_root / "btst_governance_synthesis_latest.json"
+    validation_json = reports_root / "btst_governance_validation_latest.json"
+    independent_json = reports_root / "btst_independent_window_monitor_latest.json"
+    tplus_json = reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json"
+    replay_json = reports_root / "btst_replay_cohort_latest.json"
+    candidate_pool_dossier_json = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
+
+    _write_json(
+        synthesis_json,
+        {
+            "lane_matrix": [],
+            "waiting_lane_count": 0,
+            "ready_lane_count": 0,
+            "recommendation": "聚焦 recall。",
+            "lane_status_counts": {},
+            "closed_frontiers": [],
+            "next_actions": [],
+        },
+    )
+    _write_json(validation_json, {"overall_verdict": "pass", "warn_count": 0, "fail_count": 0})
+    _write_json(independent_json, {"report_dir_count": 0, "rows": [], "recommendation": "n/a"})
+    _write_json(tplus_json, {"tradeable_surface": {"verdict": "n/a"}})
+    _write_json(replay_json, {"report_count": 1, "selection_target_counts": {"short_trade_only": 1}, "cohort_summaries": [], "recommendation": "n/a"})
+    _write_json(
+        candidate_pool_dossier_json,
+        {
+            "priority_stage_counts": {"candidate_pool_truncated_after_filters": 3},
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["688796", "688383", "301292"]},
+            "truncation_frontier_summary": {"frontier_verdict": "far_below_cutoff_not_boundary"},
+            "recommendation": "先拆 liquidity corridor 和 post-gate competition。",
+        },
+    )
+
+    manifest = {
+        "reports_root": str(reports_root.resolve()),
+        "latest_btst_run": {
+            "report_dir_abs": str(report_dir.resolve()),
+            "report_dir": report_dir.name,
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-04-09",
+            "next_trade_date": "2026-04-10",
+        },
+        "btst_governance_synthesis_refresh": {"status": "refreshed", "output_json": str(synthesis_json.resolve())},
+        "btst_governance_validation_refresh": {"status": "refreshed", "output_json": str(validation_json.resolve())},
+        "btst_independent_window_monitor_refresh": {"status": "refreshed", "output_json": str(independent_json.resolve())},
+        "btst_tplus1_tplus2_objective_monitor_refresh": {"status": "refreshed", "output_json": str(tplus_json.resolve())},
+        "btst_replay_cohort_refresh": {"status": "refreshed", "output_json": str(replay_json.resolve())},
+        "candidate_entry_shadow_refresh": {
+            "status": "refreshed",
+            "candidate_pool_recall_dossier_json": str(candidate_pool_dossier_json.resolve()),
+            "candidate_pool_upstream_handoff_board_summary": {
+                "focus_tickers": ["688796", "300683", "688383"],
+            },
+        },
+        "entries": [],
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+    next_action = payload["control_tower_snapshot"]["next_actions"][0]
+
+    assert next_action["task_id"] == "candidate_pool_recall_priority"
+    assert next_action["title"] == "优先修复 Layer A recall / handoff 主链路"
+    assert "focus_tickers=['688796', '300683', '688383']" in next_action["why_now"]
+    assert next_action["next_step"] == "先补 ['688796', '300683', '688383'] 的 candidate pool -> watchlist 召回观测，确认它们为何连 watchlist 都没进入。"
+
+
 def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     reports_root = repo_root / "data" / "reports"

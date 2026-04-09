@@ -35,6 +35,7 @@ load_project_dotenv()
 
 
 REPORTS_DIR = Path("data/reports")
+POST_GATE_SELECTIVE_EXEMPTION_MAX_REBUCKET_RANK_GAP = 300
 DEFAULT_TRADEABLE_OPPORTUNITY_POOL_PATH = REPORTS_DIR / "btst_tradeable_opportunity_pool_march.json"
 DEFAULT_FAILURE_DOSSIER_PATH = REPORTS_DIR / "btst_no_candidate_entry_failure_dossier_latest.json"
 DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH = REPORTS_DIR / "btst_watchlist_recall_dossier_latest.json"
@@ -813,6 +814,32 @@ def _describe_branch_experiment_prototype(
     )
 
 
+def _classify_post_gate_selective_exemption_readiness(
+    *,
+    lower_cap_hot_peer_case_share: float | None,
+    estimated_rank_gap_after_rebucket_mean: float | None,
+) -> tuple[str, str]:
+    if not lower_cap_hot_peer_case_share or lower_cap_hot_peer_case_share <= 0:
+        return (
+            "insufficient_smaller_cap_hot_peer_signal",
+            "当前 smaller-cap hot peer 证据不足，只保留 rebucket shadow probe，不进入 selective exemption review。",
+        )
+    if estimated_rank_gap_after_rebucket_mean is None:
+        return (
+            "missing_rebucket_rank_gap_estimate",
+            "当前缺少 rebucket 后剩余 rank gap 估计，只保留 shadow probe，不进入 selective exemption review。",
+        )
+    if estimated_rank_gap_after_rebucket_mean <= POST_GATE_SELECTIVE_EXEMPTION_MAX_REBUCKET_RANK_GAP:
+        return (
+            "ready_for_selective_exemption_review",
+            f"rebucket 后剩余 rank gap 已压到 {POST_GATE_SELECTIVE_EXEMPTION_MAX_REBUCKET_RANK_GAP} 名以内，可进入 selective exemption review。",
+        )
+    return (
+        "shadow_only_large_remaining_rank_gap",
+        f"rebucket 后剩余 rank gap 仍高于 {POST_GATE_SELECTIVE_EXEMPTION_MAX_REBUCKET_RANK_GAP}，只保留 shadow probe，不进入 selective exemption review。",
+    )
+
+
 def _build_priority_handoff_branch_experiment_queue(
     priority_handoff_branch_mechanisms: list[dict[str, Any]],
     priority_ticker_dossiers: list[dict[str, Any]] | None = None,
@@ -875,6 +902,8 @@ def _build_priority_handoff_branch_experiment_queue(
         estimated_rank_gap_after_rebucket_mean = round(sum(rebucket_rank_gaps) / len(rebucket_rank_gaps), 4) if rebucket_rank_gaps else None
         prototype_readiness = "research_only"
         evaluation_summary = "当前 prototype 还缺足够 occurrence 证据，暂不进入 execution-ready 讨论。"
+        selective_exemption_readiness = None
+        selective_exemption_summary = None
         if priority_handoff == "layer_a_liquidity_corridor" and uplift_to_cutoff_multiple_mean is not None:
             prototype_readiness = "shadow_ready_large_gap" if uplift_to_cutoff_multiple_mean >= 3.0 else "shadow_ready_boundary_gap"
             evaluation_summary = (
@@ -901,6 +930,11 @@ def _build_priority_handoff_branch_experiment_queue(
                     f"按当前 top300 cutoff 口径，{priority_handoff} 分支平均仍需 {uplift_to_cutoff_multiple_mean} 倍成交额才能贴近 cutoff，"
                     "但当前还缺稳定的 top300 smaller-cap hot-peer 计数，暂时只宜保持 shadow probe。"
                 )
+            selective_exemption_readiness, selective_exemption_summary = _classify_post_gate_selective_exemption_readiness(
+                lower_cap_hot_peer_case_share=lower_cap_hot_peer_case_share,
+                estimated_rank_gap_after_rebucket_mean=estimated_rank_gap_after_rebucket_mean,
+            )
+            evaluation_summary = f"{evaluation_summary} {selective_exemption_summary}"
         queue.append(
             {
                 "task_id": f"{priority_handoff}_{prototype_type}",
@@ -917,6 +951,8 @@ def _build_priority_handoff_branch_experiment_queue(
                 "top300_lower_market_cap_hot_peer_count_mean": top300_lower_market_cap_hot_peer_count_mean,
                 "lower_cap_hot_peer_case_share": lower_cap_hot_peer_case_share,
                 "estimated_rank_gap_after_rebucket_mean": estimated_rank_gap_after_rebucket_mean,
+                "selective_exemption_readiness": selective_exemption_readiness,
+                "selective_exemption_summary": selective_exemption_summary,
                 "prototype_summary": prototype_summary,
                 "success_signal": success_signal,
                 "guardrail_summary": guardrail_summary,
@@ -2015,12 +2051,40 @@ def _build_recommendation(
     if dominant_stage == "candidate_pool_truncated_after_filters":
         frontier_summary = dict(truncation_frontier_summary or {})
         focus_profile_summary = dict(focus_liquidity_profile_summary or {})
+        branch_diagnoses = [dict(row) for row in list(priority_handoff_branch_diagnoses or [])]
+        branch_mechanisms = [dict(row) for row in list(priority_handoff_branch_mechanisms or [])]
+        branch_experiment_queue = [dict(row) for row in list(priority_handoff_branch_experiment_queue or [])]
         frontier_verdict = str(frontier_summary.get("frontier_verdict") or "").strip()
         dominant_ranking_driver = str(frontier_summary.get("dominant_ranking_driver") or "").strip()
         dominant_liquidity_gap_mode = str(frontier_summary.get("dominant_liquidity_gap_mode") or "").strip()
         primary_focus_tickers = [dict(row) for row in list(focus_profile_summary.get("primary_focus_tickers") or [])]
         closest_distinct = list(frontier_summary.get("closest_distinct_ticker_cases") or [])
         closest_case = dict(closest_distinct[0]) if closest_distinct else {}
+        if branch_diagnoses:
+            mechanism_suffix = ""
+            if branch_mechanisms:
+                pressure_summary = str(branch_mechanisms[0].get("pressure_cluster_summary") or "").strip()
+                repair_summary = str(branch_mechanisms[0].get("repair_hypothesis_summary") or "").strip()
+                mechanism_suffix = f" 当前最重要的机制摘要是：{branch_mechanisms[0].get('mechanism_summary')}"
+                if pressure_summary:
+                    mechanism_suffix = f"{mechanism_suffix} 压力同伴结构显示：{pressure_summary}"
+                if repair_summary:
+                    mechanism_suffix = f"{mechanism_suffix} 当前优先修复假设是：{repair_summary}"
+            if branch_experiment_queue:
+                experiment_summary = str(branch_experiment_queue[0].get("prototype_summary") or "").strip()
+                guardrail_summary = str(branch_experiment_queue[0].get("guardrail_summary") or "").strip()
+                evaluation_summary = str(branch_experiment_queue[0].get("evaluation_summary") or "").strip()
+                if experiment_summary:
+                    mechanism_suffix = f"{mechanism_suffix} 当前优先实验原型是：{experiment_summary}"
+                if evaluation_summary:
+                    mechanism_suffix = f"{mechanism_suffix} 当前实验评估是：{evaluation_summary}"
+                if guardrail_summary:
+                    mechanism_suffix = f"{mechanism_suffix} 守门条件是：{guardrail_summary}"
+            return (
+                f"当前 Layer A candidate_pool recall backlog 的主矛盾虽然都落在 top300 截断，但已拆成分支车道："
+                f"{[(row.get('priority_handoff'), row.get('tickers')) for row in branch_diagnoses[:3]]}。"
+                f" {branch_diagnoses[0].get('diagnosis_summary')}{mechanism_suffix}"
+            )
         if frontier_verdict == "far_below_cutoff_not_boundary" and closest_case:
             ranking_reason = "过滤后排序仍明显偏弱"
             if dominant_ranking_driver in {"avg_amount_20d_gap_dominant", "avg_amount_20d_gap"}:
@@ -2046,34 +2110,6 @@ def _build_recommendation(
                 f"pre-truncation rank={closest_case.get('pre_truncation_rank')}，距 cutoff 仍有 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
                 f"这说明当前主矛盾已经不是小幅 top300 边界调参，而是{ranking_reason}，下一步应优先拆解 liquidity / ranking source，而不是直接放宽 top300。{gap_mode_reason}"
                 f" 当前焦点 ticker 画像为 {[(row.get('ticker'), row.get('dominant_liquidity_gap_mode'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。"
-            )
-        branch_diagnoses = [dict(row) for row in list(priority_handoff_branch_diagnoses or [])]
-        branch_mechanisms = [dict(row) for row in list(priority_handoff_branch_mechanisms or [])]
-        branch_experiment_queue = [dict(row) for row in list(priority_handoff_branch_experiment_queue or [])]
-        if branch_diagnoses:
-            mechanism_suffix = ""
-            if branch_mechanisms:
-                pressure_summary = str(branch_mechanisms[0].get("pressure_cluster_summary") or "").strip()
-                repair_summary = str(branch_mechanisms[0].get("repair_hypothesis_summary") or "").strip()
-                mechanism_suffix = f" 当前最重要的机制摘要是：{branch_mechanisms[0].get('mechanism_summary')}"
-                if pressure_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 压力同伴结构显示：{pressure_summary}"
-                if repair_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 当前优先修复假设是：{repair_summary}"
-            if branch_experiment_queue:
-                experiment_summary = str(branch_experiment_queue[0].get("prototype_summary") or "").strip()
-                guardrail_summary = str(branch_experiment_queue[0].get("guardrail_summary") or "").strip()
-                evaluation_summary = str(branch_experiment_queue[0].get("evaluation_summary") or "").strip()
-                if experiment_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 当前优先实验原型是：{experiment_summary}"
-                if evaluation_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 当前实验评估是：{evaluation_summary}"
-                if guardrail_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 守门条件是：{guardrail_summary}"
-            return (
-                f"当前 Layer A candidate_pool recall backlog 的主矛盾虽然都落在 top300 截断，但已拆成分支车道："
-                f"{[(row.get('priority_handoff'), row.get('tickers')) for row in branch_diagnoses[:3]]}。"
-                f" {branch_diagnoses[0].get('diagnosis_summary')}{mechanism_suffix}"
             )
         return (
             f"当前 Layer A candidate_pool recall backlog 的主矛盾更像 top300 截断：{top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 通过过滤后仍未进入 snapshot。"
@@ -2112,12 +2148,42 @@ def _build_next_actions(
     elif dominant_stage == "candidate_pool_truncated_after_filters":
         frontier_summary = dict(truncation_frontier_summary or {})
         focus_profile_summary = dict(focus_liquidity_profile_summary or {})
+        branch_diagnoses = [dict(row) for row in list(priority_handoff_branch_diagnoses or [])]
+        branch_mechanisms = [dict(row) for row in list(priority_handoff_branch_mechanisms or [])]
+        branch_experiment_queue = [dict(row) for row in list(priority_handoff_branch_experiment_queue or [])]
         frontier_verdict = str(frontier_summary.get("frontier_verdict") or "").strip()
         dominant_ranking_driver = str(frontier_summary.get("dominant_ranking_driver") or "").strip()
         dominant_liquidity_gap_mode = str(frontier_summary.get("dominant_liquidity_gap_mode") or "").strip()
         primary_focus_tickers = [dict(row) for row in list(focus_profile_summary.get("primary_focus_tickers") or [])]
         closest_distinct = list(frontier_summary.get("closest_distinct_ticker_cases") or [])
-        if frontier_verdict == "far_below_cutoff_not_boundary" and closest_distinct:
+        if branch_diagnoses:
+            if primary_focus_tickers:
+                actions.append(f"按焦点 ticker 画像拆分后续 handoff：{[(row.get('ticker'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。")
+            for diagnosis in branch_diagnoses[:2]:
+                next_step = str(dict(diagnosis).get("next_step") or "").strip()
+                if next_step:
+                    actions.append(next_step)
+            for mechanism in branch_mechanisms[:2]:
+                summary = str(dict(mechanism).get("mechanism_summary") or "").strip()
+                if summary:
+                    actions.append(summary)
+                pressure_summary = str(dict(mechanism).get("pressure_cluster_summary") or "").strip()
+                if pressure_summary:
+                    actions.append(pressure_summary)
+                repair_summary = str(dict(mechanism).get("repair_hypothesis_summary") or "").strip()
+                if repair_summary:
+                    actions.append(repair_summary)
+            for experiment in branch_experiment_queue[:2]:
+                prototype_summary = str(dict(experiment).get("prototype_summary") or "").strip()
+                if prototype_summary:
+                    actions.append(prototype_summary)
+                evaluation_summary = str(dict(experiment).get("evaluation_summary") or "").strip()
+                if evaluation_summary:
+                    actions.append(evaluation_summary)
+                success_signal = str(dict(experiment).get("success_signal") or "").strip()
+                if success_signal:
+                    actions.append(success_signal)
+        elif frontier_verdict == "far_below_cutoff_not_boundary" and closest_distinct:
             closest_case = dict(closest_distinct[0])
             if closest_case.get("pre_truncation_rank_gap_to_cutoff") is None:
                 actions.append(
@@ -2139,30 +2205,6 @@ def _build_next_actions(
                 actions.append("这些票多数只是勉强高于最低流动性门槛，下一步应同时复核 liquidity gate 与 cutoff 竞争强度。")
             if primary_focus_tickers:
                 actions.append(f"按焦点 ticker 画像拆分后续 handoff：{[(row.get('ticker'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。")
-            for diagnosis in list(priority_handoff_branch_diagnoses or [])[:2]:
-                next_step = str(dict(diagnosis).get("next_step") or "").strip()
-                if next_step:
-                    actions.append(next_step)
-            for mechanism in list(priority_handoff_branch_mechanisms or [])[:2]:
-                summary = str(dict(mechanism).get("mechanism_summary") or "").strip()
-                if summary:
-                    actions.append(summary)
-                pressure_summary = str(dict(mechanism).get("pressure_cluster_summary") or "").strip()
-                if pressure_summary:
-                    actions.append(pressure_summary)
-                repair_summary = str(dict(mechanism).get("repair_hypothesis_summary") or "").strip()
-                if repair_summary:
-                    actions.append(repair_summary)
-            for experiment in list(priority_handoff_branch_experiment_queue or [])[:2]:
-                prototype_summary = str(dict(experiment).get("prototype_summary") or "").strip()
-                if prototype_summary:
-                    actions.append(prototype_summary)
-                evaluation_summary = str(dict(experiment).get("evaluation_summary") or "").strip()
-                if evaluation_summary:
-                    actions.append(evaluation_summary)
-                success_signal = str(dict(experiment).get("success_signal") or "").strip()
-                if success_signal:
-                    actions.append(success_signal)
         else:
             actions.append(f"优先补 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 的 pre-truncation 排名观测与 top300 frontier。")
     elif dominant_stage == "low_estimated_liquidity":

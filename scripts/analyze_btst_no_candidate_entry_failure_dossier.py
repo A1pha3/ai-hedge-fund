@@ -14,6 +14,7 @@ REPORTS_DIR = Path("data/reports")
 DEFAULT_TRADEABLE_OPPORTUNITY_POOL_PATH = REPORTS_DIR / "btst_tradeable_opportunity_pool_march.json"
 DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "btst_no_candidate_entry_action_board_latest.json"
 DEFAULT_REPLAY_BUNDLE_PATH = REPORTS_DIR / "btst_no_candidate_entry_replay_bundle_latest.json"
+DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH = REPORTS_DIR / "btst_watchlist_recall_dossier_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_no_candidate_entry_failure_dossier_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_no_candidate_entry_failure_dossier_latest.md"
 DEFAULT_PRIORITY_LIMIT = 5
@@ -44,6 +45,14 @@ def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
     if not resolved.exists():
         return {}
     return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _build_watchlist_recall_stage_map(watchlist_recall_dossier: dict[str, Any]) -> dict[str, str]:
+    return {
+        str(row.get("ticker") or "").strip(): str(row.get("dominant_recall_stage") or "").strip()
+        for row in list(watchlist_recall_dossier.get("priority_ticker_dossiers") or [])
+        if str(row.get("ticker") or "").strip() and str(row.get("dominant_recall_stage") or "").strip()
+    }
 
 
 def _unique_strings(values: list[Any]) -> list[str]:
@@ -555,6 +564,7 @@ def _build_priority_ticker_dossiers(
     *,
     reports_root: Path,
     replay_bundle: dict[str, Any],
+    watchlist_recall_stage_map: dict[str, str],
     report_cache: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     replay_rows_by_ticker = {
@@ -612,6 +622,7 @@ def _build_priority_ticker_dossiers(
             selection_target_visible=selection_target_visible_report_count > 0,
             buy_order_visible=buy_order_visible_report_count > 0,
         )
+        watchlist_recall_stage = str(watchlist_recall_stage_map.get(ticker) or "").strip() or None
 
         dossiers.append(
             {
@@ -637,6 +648,7 @@ def _build_priority_ticker_dossiers(
                 "frontier_comparison_note": frontier_row.get("comparison_note"),
                 "primary_failure_class": primary_failure_class,
                 "handoff_stage": handoff_stage,
+                "watchlist_recall_stage": watchlist_recall_stage,
                 "failure_reason": failure_reason,
                 "next_step": next_step,
                 "report_dir_evidence": report_dir_evidence,
@@ -731,6 +743,7 @@ def _build_recommendation(
     priority_failure_class_counts: Counter[str],
     top_upstream_absence_tickers: list[str],
     top_absent_from_watchlist_tickers: list[str],
+    top_absent_from_candidate_pool_breakpoint_tickers: list[str],
     top_watchlist_handoff_gap_tickers: list[str],
     top_candidate_entry_to_target_gap_tickers: list[str],
     top_outside_candidate_entry_tickers: list[str],
@@ -738,6 +751,11 @@ def _build_recommendation(
     promising_priority_tickers: list[str],
 ) -> str:
     if top_upstream_absence_tickers:
+        if top_absent_from_candidate_pool_breakpoint_tickers:
+            return (
+                f"当前 top no-entry backlog 的主矛盾是上游 absence，而且真断点比 watchlist 更早：{top_absent_from_candidate_pool_breakpoint_tickers} 连 candidate_pool snapshot 都没有进入。"
+                "下一步应先补 Layer A candidate_pool 召回与池内截断观测，而不是继续调 watchlist 阈值或 candidate-entry semantic。"
+            )
         if top_absent_from_watchlist_tickers:
             return (
                 f"当前 top no-entry backlog 的主矛盾是上游 absence，而且具体断点先落在 watchlist 之前：{top_absent_from_watchlist_tickers} 连 watchlist 都没有进入。"
@@ -783,6 +801,7 @@ def _build_next_actions(
     *,
     top_upstream_absence_tickers: list[str],
     top_absent_from_watchlist_tickers: list[str],
+    top_absent_from_candidate_pool_breakpoint_tickers: list[str],
     top_watchlist_handoff_gap_tickers: list[str],
     top_candidate_entry_to_target_gap_tickers: list[str],
     top_outside_candidate_entry_tickers: list[str],
@@ -791,6 +810,10 @@ def _build_next_actions(
     promising_priority_tickers: list[str],
 ) -> list[str]:
     actions: list[str] = []
+    if top_absent_from_candidate_pool_breakpoint_tickers:
+        actions.append(
+            f"先补 {top_absent_from_candidate_pool_breakpoint_tickers} 的 Layer A candidate_pool 召回观测，确认它们为何连 candidate_pool snapshot 都没进入。"
+        )
     if top_absent_from_watchlist_tickers:
         actions.append(f"先补 {top_absent_from_watchlist_tickers} 的 candidate pool -> watchlist 召回观测，确认它们为何连 watchlist 都没进入。")
     if top_upstream_absence_tickers:
@@ -817,6 +840,7 @@ def analyze_btst_no_candidate_entry_failure_dossier(
     *,
     action_board_path: str | Path | None = None,
     replay_bundle_path: str | Path | None = None,
+    watchlist_recall_dossier_path: str | Path | None = None,
     priority_limit: int = DEFAULT_PRIORITY_LIMIT,
     hotspot_limit: int = DEFAULT_HOTSPOT_LIMIT,
 ) -> dict[str, Any]:
@@ -824,6 +848,9 @@ def analyze_btst_no_candidate_entry_failure_dossier(
     resolved_tradeable_pool_path = Path(tradeable_opportunity_pool_path).expanduser().resolve()
     action_board = _safe_load_json(action_board_path)
     replay_bundle = _safe_load_json(replay_bundle_path)
+    if watchlist_recall_dossier_path is None:
+        watchlist_recall_dossier_path = DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH
+    watchlist_recall_dossier = _safe_load_json(watchlist_recall_dossier_path)
     reports_root = Path(
         action_board.get("reports_root")
         or resolved_tradeable_pool_path.parent
@@ -831,6 +858,7 @@ def analyze_btst_no_candidate_entry_failure_dossier(
     no_candidate_rows = _collect_no_candidate_rows(tradeable_pool)
     priority_rows = _build_priority_rows(action_board, tradeable_pool, priority_limit=max(int(priority_limit), 0))
     hotspot_rows = _build_hotspot_rows(action_board, hotspot_limit=max(int(hotspot_limit), 0))
+    watchlist_recall_stage_map = _build_watchlist_recall_stage_map(watchlist_recall_dossier)
     report_cache: dict[str, dict[str, Any]] = {}
 
     priority_ticker_dossiers = _build_priority_ticker_dossiers(
@@ -838,6 +866,7 @@ def analyze_btst_no_candidate_entry_failure_dossier(
         no_candidate_rows,
         reports_root=reports_root,
         replay_bundle=replay_bundle,
+        watchlist_recall_stage_map=watchlist_recall_stage_map,
         report_cache=report_cache,
     )
     hotspot_report_dossiers = _build_hotspot_report_dossiers(
@@ -864,6 +893,13 @@ def analyze_btst_no_candidate_entry_failure_dossier(
     ]
     top_upstream_absence_tickers = _top_tickers_by_failure(priority_ticker_dossiers, "upstream_absent_from_replay_inputs")
     top_absent_from_watchlist_tickers = _top_tickers_by_handoff_stage(priority_ticker_dossiers, "absent_from_watchlist")
+    top_absent_from_candidate_pool_breakpoint_tickers = [
+        str(row.get("ticker") or "")
+        for row in priority_ticker_dossiers
+        if str(row.get("handoff_stage") or "") == "absent_from_watchlist"
+        and str(row.get("watchlist_recall_stage") or "") == "absent_from_candidate_pool"
+        and str(row.get("ticker") or "").strip()
+    ][:3]
     top_watchlist_handoff_gap_tickers = _top_tickers_by_handoff_stage(priority_ticker_dossiers, "watchlist_visible_but_not_candidate_entry")
     top_candidate_entry_to_target_gap_tickers = _top_tickers_by_handoff_stage(priority_ticker_dossiers, "candidate_entry_visible_but_not_selection_target")
     top_outside_candidate_entry_tickers = _top_tickers_by_failure(priority_ticker_dossiers, "present_but_outside_candidate_entry_universe")
@@ -878,6 +914,7 @@ def analyze_btst_no_candidate_entry_failure_dossier(
         priority_failure_class_counts=priority_failure_class_counts,
         top_upstream_absence_tickers=top_upstream_absence_tickers,
         top_absent_from_watchlist_tickers=top_absent_from_watchlist_tickers,
+        top_absent_from_candidate_pool_breakpoint_tickers=top_absent_from_candidate_pool_breakpoint_tickers,
         top_watchlist_handoff_gap_tickers=top_watchlist_handoff_gap_tickers,
         top_candidate_entry_to_target_gap_tickers=top_candidate_entry_to_target_gap_tickers,
         top_outside_candidate_entry_tickers=top_outside_candidate_entry_tickers,
@@ -887,6 +924,7 @@ def analyze_btst_no_candidate_entry_failure_dossier(
     next_actions = _build_next_actions(
         top_upstream_absence_tickers=top_upstream_absence_tickers,
         top_absent_from_watchlist_tickers=top_absent_from_watchlist_tickers,
+        top_absent_from_candidate_pool_breakpoint_tickers=top_absent_from_candidate_pool_breakpoint_tickers,
         top_watchlist_handoff_gap_tickers=top_watchlist_handoff_gap_tickers,
         top_candidate_entry_to_target_gap_tickers=top_candidate_entry_to_target_gap_tickers,
         top_outside_candidate_entry_tickers=top_outside_candidate_entry_tickers,
@@ -900,6 +938,7 @@ def analyze_btst_no_candidate_entry_failure_dossier(
         "tradeable_opportunity_pool_path": resolved_tradeable_pool_path.as_posix(),
         "action_board_path": Path(action_board_path).expanduser().resolve().as_posix() if action_board_path else None,
         "replay_bundle_path": Path(replay_bundle_path).expanduser().resolve().as_posix() if replay_bundle_path else None,
+        "watchlist_recall_dossier_path": Path(watchlist_recall_dossier_path).expanduser().resolve().as_posix() if watchlist_recall_dossier_path else None,
         "reports_root": reports_root.as_posix(),
         "priority_limit": max(int(priority_limit), 0),
         "hotspot_limit": max(int(hotspot_limit), 0),
@@ -909,6 +948,7 @@ def analyze_btst_no_candidate_entry_failure_dossier(
         "hotspot_handoff_stage_counts": hotspot_handoff_stage_counts,
         "top_upstream_absence_tickers": top_upstream_absence_tickers,
         "top_absent_from_watchlist_tickers": top_absent_from_watchlist_tickers,
+        "top_absent_from_candidate_pool_breakpoint_tickers": top_absent_from_candidate_pool_breakpoint_tickers,
         "top_watchlist_visible_but_not_candidate_entry_tickers": top_watchlist_handoff_gap_tickers,
         "top_candidate_entry_visible_but_not_selection_target_tickers": top_candidate_entry_to_target_gap_tickers,
         "top_present_but_outside_candidate_entry_tickers": top_outside_candidate_entry_tickers,
@@ -934,12 +974,14 @@ def render_btst_no_candidate_entry_failure_dossier_markdown(analysis: dict[str, 
     lines.append(f"- tradeable_opportunity_pool_path: {analysis.get('tradeable_opportunity_pool_path')}")
     lines.append(f"- action_board_path: {analysis.get('action_board_path')}")
     lines.append(f"- replay_bundle_path: {analysis.get('replay_bundle_path')}")
+    lines.append(f"- watchlist_recall_dossier_path: {analysis.get('watchlist_recall_dossier_path')}")
     lines.append(f"- priority_failure_class_counts: {analysis.get('priority_failure_class_counts')}")
     lines.append(f"- hotspot_failure_class_counts: {analysis.get('hotspot_failure_class_counts')}")
     lines.append(f"- priority_handoff_stage_counts: {analysis.get('priority_handoff_stage_counts')}")
     lines.append(f"- hotspot_handoff_stage_counts: {analysis.get('hotspot_handoff_stage_counts')}")
     lines.append(f"- top_upstream_absence_tickers: {analysis.get('top_upstream_absence_tickers')}")
     lines.append(f"- top_absent_from_watchlist_tickers: {analysis.get('top_absent_from_watchlist_tickers')}")
+    lines.append(f"- top_absent_from_candidate_pool_breakpoint_tickers: {analysis.get('top_absent_from_candidate_pool_breakpoint_tickers')}")
     lines.append(f"- top_watchlist_visible_but_not_candidate_entry_tickers: {analysis.get('top_watchlist_visible_but_not_candidate_entry_tickers')}")
     lines.append(f"- top_candidate_entry_visible_but_not_selection_target_tickers: {analysis.get('top_candidate_entry_visible_but_not_selection_target_tickers')}")
     lines.append(f"- top_present_but_outside_candidate_entry_tickers: {analysis.get('top_present_but_outside_candidate_entry_tickers')}")
@@ -951,6 +993,7 @@ def render_btst_no_candidate_entry_failure_dossier_markdown(analysis: dict[str, 
         lines.append(
             f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} failure_class={row.get('primary_failure_class')} handoff_stage={row.get('handoff_stage')} frontier_status={row.get('frontier_status')} primary_report_dir={row.get('primary_report_dir')} replay_input_visible_reports={row.get('replay_input_visible_report_count')} candidate_entry_visible_reports={row.get('candidate_entry_visible_report_count')}"
         )
+        lines.append(f"  watchlist_recall_stage: {row.get('watchlist_recall_stage')}")
         lines.append(f"  source_presence_counts: {row.get('source_presence_counts')}")
         lines.append(f"  candidate_sources: {row.get('candidate_sources')}")
         lines.append(f"  failure_reason: {row.get('failure_reason')}")
@@ -1004,6 +1047,7 @@ def main() -> None:
     parser.add_argument("--tradeable-opportunity-pool", default=str(DEFAULT_TRADEABLE_OPPORTUNITY_POOL_PATH))
     parser.add_argument("--action-board", default=str(DEFAULT_ACTION_BOARD_PATH))
     parser.add_argument("--replay-bundle", default=str(DEFAULT_REPLAY_BUNDLE_PATH))
+    parser.add_argument("--watchlist-recall-dossier", default=str(DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH))
     parser.add_argument("--priority-limit", type=int, default=DEFAULT_PRIORITY_LIMIT)
     parser.add_argument("--hotspot-limit", type=int, default=DEFAULT_HOTSPOT_LIMIT)
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
@@ -1014,6 +1058,7 @@ def main() -> None:
         args.tradeable_opportunity_pool,
         action_board_path=args.action_board or None,
         replay_bundle_path=args.replay_bundle or None,
+        watchlist_recall_dossier_path=args.watchlist_recall_dossier or None,
         priority_limit=args.priority_limit,
         hotspot_limit=args.hotspot_limit,
     )

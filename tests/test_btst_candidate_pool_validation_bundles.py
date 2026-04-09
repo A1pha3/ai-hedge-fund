@@ -591,7 +591,14 @@ def test_upstream_handoff_board_prioritizes_watchlist_break_before_lane_probe(tm
             ],
             "priority_handoff_branch_experiment_queue": [
                 {"task_id": "corridor_probe", "tickers": ["300720"], "prototype_readiness": "shadow_ready_large_gap", "prototype_type": "upstream_base_liquidity_uplift_probe"},
-                {"task_id": "rebucket_probe", "tickers": ["301292"], "prototype_readiness": "shadow_ready_rebucket_signal", "prototype_type": "post_gate_competition_rebucket_probe"},
+                {
+                    "task_id": "rebucket_probe",
+                    "tickers": ["301292"],
+                    "prototype_readiness": "shadow_ready_rebucket_signal",
+                    "prototype_type": "post_gate_competition_rebucket_probe",
+                    "selective_exemption_readiness": "shadow_only_large_remaining_rank_gap",
+                    "selective_exemption_summary": "rebucket 后剩余 rank gap 仍高于 300，只保留 shadow probe，不进入 selective exemption review。",
+                },
             ],
         },
     )
@@ -605,9 +612,11 @@ def test_upstream_handoff_board_prioritizes_watchlist_break_before_lane_probe(tm
     assert analysis["board_status"] == "ready_for_upstream_handoff_execution"
     assert analysis["board_rows"][0]["ticker"] == "300720"
     assert analysis["board_rows"][0]["first_broken_handoff"] == "absent_from_watchlist"
+    assert analysis["board_rows"][0]["corridor_uplift_bucket"] == "standard_corridor_uplift"
     assert analysis["board_rows"][0]["prototype_task_id"] == "corridor_probe"
     assert any("run_btst_candidate_pool_corridor_uplift_runbook.py" in command for command in analysis["board_rows"][0]["recommended_commands"])
     assert any("run_btst_candidate_pool_rebucket_shadow_pack.py" in command for command in analysis["board_rows"][1]["recommended_commands"])
+    assert analysis["board_rows"][1]["selective_exemption_readiness"] == "shadow_only_large_remaining_rank_gap"
 
 
 def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_path: Path) -> None:
@@ -705,7 +714,14 @@ def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_p
             ],
             "priority_handoff_branch_experiment_queue": [
                 {"task_id": "corridor_probe", "tickers": ["300720", "003036"], "prototype_readiness": "shadow_ready_large_gap", "prototype_type": "upstream_base_liquidity_uplift_probe"},
-                {"task_id": "rebucket_probe", "tickers": ["301292"], "prototype_readiness": "shadow_ready_rebucket_signal", "prototype_type": "post_gate_competition_rebucket_probe"},
+                {
+                    "task_id": "rebucket_probe",
+                    "tickers": ["301292"],
+                    "prototype_readiness": "shadow_ready_rebucket_signal",
+                    "prototype_type": "post_gate_competition_rebucket_probe",
+                    "selective_exemption_readiness": "shadow_only_large_remaining_rank_gap",
+                    "selective_exemption_summary": "rebucket 后剩余 rank gap 仍高于 300，只保留 shadow probe，不进入 selective exemption review。",
+                },
             ],
         },
     )
@@ -803,7 +819,102 @@ def test_upstream_handoff_board_overlays_latest_shadow_followup_validation(tmp_p
     assert rows_by_ticker["301292"]["downstream_followup_lane"] == "rebucket_persistence_diagnostics"
     assert rows_by_ticker["301292"]["downstream_followup_status"] == "transient_probe_only"
     assert rows_by_ticker["301292"]["downstream_followup_blocker"] == "shadow_recall_not_persistent"
+    assert rows_by_ticker["301292"]["selective_exemption_readiness"] == "shadow_only_large_remaining_rank_gap"
+    assert "不进入 selective exemption review" in rows_by_ticker["301292"]["next_step"]
     assert "301292" in analysis["recommendation"]
+
+
+def test_analyze_btst_candidate_pool_upstream_handoff_board_respects_corridor_split_buckets(tmp_path: Path) -> None:
+    failure_dossier_path = tmp_path / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_path = tmp_path / "btst_watchlist_recall_dossier_latest.json"
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    _write_json(
+        failure_dossier_path,
+        {
+            "top_upstream_absence_tickers": ["301188", "300683", "688796"],
+            "priority_ticker_dossiers": [
+                {"ticker": "301188", "handoff_stage": "absent_from_watchlist", "primary_failure_class": "upstream_absent_from_replay_inputs", "replay_input_visible_report_count": 0, "watchlist_visible_report_count": 0},
+                {"ticker": "300683", "handoff_stage": "absent_from_watchlist", "primary_failure_class": "upstream_absent_from_replay_inputs", "replay_input_visible_report_count": 0, "watchlist_visible_report_count": 0},
+                {"ticker": "688796", "handoff_stage": "absent_from_watchlist", "primary_failure_class": "upstream_absent_from_replay_inputs", "replay_input_visible_report_count": 0, "watchlist_visible_report_count": 0},
+            ],
+        },
+    )
+    _write_json(
+        watchlist_dossier_path,
+        {
+            "focus_tickers": ["301188", "300683", "688796"],
+            "priority_ticker_dossiers": [
+                {"ticker": "301188", "dominant_recall_stage": "absent_from_candidate_pool", "candidate_pool_visible_count": 0, "layer_b_visible_count": 0},
+                {"ticker": "300683", "dominant_recall_stage": "absent_from_candidate_pool", "candidate_pool_visible_count": 0, "layer_b_visible_count": 0},
+                {"ticker": "688796", "dominant_recall_stage": "absent_from_candidate_pool", "candidate_pool_visible_count": 0, "layer_b_visible_count": 0},
+            ],
+        },
+    )
+    _write_json(
+        recall_dossier_path,
+        {
+            "focus_tickers": ["301188", "300683", "688796"],
+            "action_queue": [
+                {
+                    "ticker": "301188",
+                    "dominant_blocking_stage": "candidate_pool_truncated_after_filters",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "min_rank_gap_to_cutoff": 2809,
+                        "avg_amount_share_of_cutoff_mean": 0.0709,
+                        "avg_amount_share_of_min_gate_mean": 2.3434,
+                        "profile_summary": "deepest corridor",
+                    },
+                },
+                {
+                    "ticker": "300683",
+                    "dominant_blocking_stage": "candidate_pool_truncated_after_filters",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "min_rank_gap_to_cutoff": 1599,
+                        "avg_amount_share_of_cutoff_mean": 0.1519,
+                        "avg_amount_share_of_min_gate_mean": 5.0386,
+                        "profile_summary": "standard corridor",
+                    },
+                },
+                {
+                    "ticker": "688796",
+                    "dominant_blocking_stage": "candidate_pool_truncated_after_filters",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "min_rank_gap_to_cutoff": 2561,
+                        "avg_amount_share_of_cutoff_mean": 0.0789,
+                        "avg_amount_share_of_min_gate_mean": 2.6142,
+                        "profile_summary": "excluded low-gate tail",
+                    },
+                },
+            ],
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "corridor_probe",
+                    "tickers": ["301188", "300683", "688796"],
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "prototype_summary": "corridor uplift summary",
+                }
+            ],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_upstream_handoff_board(
+        failure_dossier_path,
+        watchlist_recall_dossier_path=watchlist_dossier_path,
+        candidate_pool_recall_dossier_path=recall_dossier_path,
+    )
+
+    rows_by_ticker = {row["ticker"]: row for row in analysis["board_rows"]}
+    assert rows_by_ticker["301188"]["corridor_uplift_bucket"] == "deepest_corridor_focus"
+    assert rows_by_ticker["300683"]["corridor_uplift_bucket"] == "standard_corridor_uplift"
+    assert rows_by_ticker["688796"]["corridor_uplift_bucket"] == "excluded_low_gate_tail"
+    assert any("run_btst_candidate_pool_corridor_uplift_runbook.py" in command for command in rows_by_ticker["301188"]["recommended_commands"])
+    assert any("run_btst_candidate_pool_corridor_uplift_runbook.py" in command for command in rows_by_ticker["300683"]["recommended_commands"])
+    assert not any("run_btst_candidate_pool_corridor_uplift_runbook.py" in command for command in rows_by_ticker["688796"]["recommended_commands"])
+    assert "不进入 retained deepest corridor shadow pack" in rows_by_ticker["688796"]["next_step"]
 
 
 def test_analyze_btst_candidate_pool_upstream_handoff_board_keeps_selected_post_recall_followup_in_continuation_lane(tmp_path: Path) -> None:

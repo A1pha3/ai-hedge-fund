@@ -6,6 +6,7 @@ from pathlib import Path
 from scripts.generate_reports_manifest import (
     _build_continuation_promotion_ready_summary,
     _build_execution_constraint_rollup,
+    _build_selected_outcome_refresh_summary,
     _build_transient_probe_summary,
     _collect_governance_synthesis_evidence_dirs,
     generate_reports_manifest,
@@ -299,6 +300,27 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
         },
     )
     (reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.md").write_text("# corridor narrow probe\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_selected_outcome_refresh_board_latest.json",
+        {
+            "trade_date": "2026-04-09",
+            "selected_count": 1,
+            "current_cycle_status_counts": {"missing_next_day": 1},
+            "entries": [
+                {
+                    "ticker": "002001",
+                    "current_cycle_status": "missing_next_day",
+                    "current_data_status": "missing_next_trade_day_bar",
+                    "current_next_close_return": None,
+                    "current_t_plus_2_close_return": None,
+                    "historical_next_close_positive_rate": 1.0,
+                    "historical_t_plus_2_close_positive_rate": 1.0,
+                }
+            ],
+            "recommendation": "formal selected still open case",
+        },
+    )
+    (reports_root / "btst_selected_outcome_refresh_board_latest.md").write_text("# selected refresh board\n", encoding="utf-8")
 
     manifest = generate_reports_manifest(reports_root=reports_root)
 
@@ -333,6 +355,9 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     assert manifest["candidate_pool_corridor_window_diagnostics_summary"]["focus_ticker"] == "300720"
     assert manifest["candidate_pool_corridor_window_diagnostics_summary"]["near_miss_upgrade_window"]["verdict"] == "narrow_selected_gap_candidate"
     assert manifest["candidate_pool_corridor_narrow_probe_summary"]["verdict"] == "lane_specific_select_threshold_override_gap"
+    assert manifest["selected_outcome_refresh_summary"]["focus_ticker"] == "002001"
+    assert manifest["selected_outcome_refresh_summary"]["focus_cycle_status"] == "missing_next_day"
+    assert manifest["selected_outcome_refresh_summary"]["focus_historical_t_plus_2_close_positive_rate"] == 1.0
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
     assert "btst_default_merge_review_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_default_merge_historical_counterfactual_latest" in reading_paths["btst_control_tower"]["entry_ids"]
@@ -358,6 +383,37 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     assert "btst_default_merge_strict_counterfactual_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_merge_replay_validation_latest" in reading_paths["nightly_review"]["entry_ids"]
     assert "btst_prepared_breakout_relief_validation_latest" in reading_paths["nightly_review"]["entry_ids"]
+    assert "btst_selected_outcome_refresh_board_latest" in reading_paths["nightly_review"]["entry_ids"]
+
+
+def test_build_selected_outcome_refresh_summary(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_selected_outcome_refresh_board_latest.json",
+        {
+            "trade_date": "2026-04-09",
+            "selected_count": 1,
+            "current_cycle_status_counts": {"missing_next_day": 1},
+            "entries": [
+                {
+                    "ticker": "002001",
+                    "current_cycle_status": "missing_next_day",
+                    "current_data_status": "missing_next_trade_day_bar",
+                    "current_next_close_return": None,
+                    "current_t_plus_2_close_return": None,
+                    "historical_next_close_positive_rate": 1.0,
+                    "historical_t_plus_2_close_positive_rate": 1.0,
+                }
+            ],
+            "recommendation": "formal selected still open case",
+        },
+    )
+
+    summary = _build_selected_outcome_refresh_summary(reports_root)
+
+    assert summary["focus_ticker"] == "002001"
+    assert summary["focus_cycle_status"] == "missing_next_day"
+    assert summary["current_cycle_status_counts"] == {"missing_next_day": 1}
 
 
 def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:

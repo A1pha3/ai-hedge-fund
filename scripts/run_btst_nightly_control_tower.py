@@ -785,6 +785,147 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_recall_priority_task(
+    latest_btst_snapshot: dict[str, Any],
+    control_tower_snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    priority_summary = _extract_priority_summary(latest_btst_snapshot)
+    if int(priority_summary.get("primary_count") or 0) > 0:
+        return None
+
+    candidate_pool_recall_dossier = dict(control_tower_snapshot.get("candidate_pool_recall_dossier") or {})
+    dominant_stage = str(candidate_pool_recall_dossier.get("dominant_stage") or "").strip()
+    if not dominant_stage:
+        return None
+
+    active_upstream_focus_tickers = list(control_tower_snapshot.get("active_candidate_pool_upstream_handoff_focus_tickers") or [])[:3]
+    top_stage_tickers = list(dict(candidate_pool_recall_dossier.get("top_stage_tickers") or {}).get(dominant_stage) or [])[:3]
+    focus_tickers = (
+        active_upstream_focus_tickers
+        if dominant_stage == "candidate_pool_truncated_after_filters" and active_upstream_focus_tickers
+        else top_stage_tickers
+    )
+    frontier_verdict = str(dict(candidate_pool_recall_dossier.get("truncation_frontier_summary") or {}).get("frontier_verdict") or "").strip()
+    why_now_parts = [
+        "latest BTST still has 0 primary selections",
+        f"dominant recall stage={dominant_stage}",
+    ]
+    if focus_tickers:
+        why_now_parts.append(f"focus_tickers={focus_tickers}")
+    if frontier_verdict:
+        why_now_parts.append(f"frontier_verdict={frontier_verdict}")
+
+    next_actions = list(candidate_pool_recall_dossier.get("next_actions") or [])
+    next_step_default = str(candidate_pool_recall_dossier.get("recommendation") or "").strip() or "review candidate-pool recall dossier and upstream hard-filter stages"
+    prioritized_handoff_next_step = None
+    if dominant_stage == "candidate_pool_truncated_after_filters" and active_upstream_focus_tickers:
+        prioritized_handoff_next_step = f"先补 {active_upstream_focus_tickers} 的 candidate pool -> watchlist 召回观测，确认它们为何连 watchlist 都没进入。"
+        next_step_default = prioritized_handoff_next_step
+    next_step = prioritized_handoff_next_step or next(
+        (str(action).strip() for action in next_actions if str(action).strip()),
+        next_step_default,
+    )
+    return {
+        "task_id": "candidate_pool_recall_priority",
+        "title": (
+            "优先修复 Layer A recall / handoff 主链路"
+            if dominant_stage == "candidate_pool_truncated_after_filters" and active_upstream_focus_tickers
+            else f"优先修复 {dominant_stage} recall 主链路"
+        ),
+        "why_now": " | ".join(why_now_parts),
+        "next_step": str(next_step),
+        "source": "candidate_pool_recall_dossier",
+    }
+
+
+def _build_lane_priority_task(
+    latest_btst_snapshot: dict[str, Any],
+    control_tower_snapshot: dict[str, Any],
+    *,
+    lane_id: str,
+    task_id: str,
+    title_template: str,
+    fallback_why_now: str,
+    source: str,
+) -> dict[str, Any] | None:
+    lane_row = next((dict(row or {}) for row in list(control_tower_snapshot.get("rollout_lanes") or []) if row.get("lane_id") == lane_id), {})
+    if not lane_row:
+        return None
+
+    ticker = str(lane_row.get("ticker") or "").strip()
+    if not ticker:
+        return None
+
+    lane_status = str(lane_row.get("lane_status") or "").strip()
+    blocker = str(lane_row.get("blocker") or "").strip()
+    why_now_parts = [fallback_why_now]
+    if lane_status:
+        why_now_parts.append(f"lane_status={lane_status}")
+    if blocker:
+        why_now_parts.append(f"blocker={blocker}")
+
+    next_step = str(lane_row.get("next_step") or "").strip()
+    if lane_id == "primary_roll_forward":
+        priority_summary = _extract_priority_summary(latest_btst_snapshot)
+        if int(priority_summary.get("primary_count") or 0) == 0:
+            why_now_parts.append("evidence_only_not_current_formal_selected")
+            if next_step:
+                next_step = f"{next_step}；仅作独立窗口证据补充，不把它包装成当前 formal selected 主票。"
+            else:
+                next_step = "仅作独立窗口证据补充，不把它包装成当前 formal selected 主票。"
+
+    return {
+        "task_id": task_id,
+        "title": title_template.format(ticker=ticker),
+        "why_now": " | ".join(why_now_parts),
+        "next_step": next_step,
+        "source": source,
+    }
+
+
+def _prioritize_control_tower_next_actions(
+    latest_btst_snapshot: dict[str, Any],
+    control_tower_snapshot: dict[str, Any],
+) -> list[dict[str, Any]]:
+    prioritized: list[dict[str, Any]] = []
+
+    for task in (
+        _build_recall_priority_task(latest_btst_snapshot, control_tower_snapshot),
+        _build_lane_priority_task(
+            latest_btst_snapshot,
+            control_tower_snapshot,
+            lane_id="primary_roll_forward",
+            task_id="primary_roll_forward_priority",
+            title_template="推进 {ticker} primary controlled follow-through",
+            fallback_why_now="唯一 primary 主线仍需补独立窗口证据",
+            source="rollout_lane_primary",
+        ),
+        _build_lane_priority_task(
+            latest_btst_snapshot,
+            control_tower_snapshot,
+            lane_id="single_name_shadow",
+            task_id="single_name_shadow_priority",
+            title_template="保持 {ticker} shadow 单票验证",
+            fallback_why_now="shadow 只允许单票低污染验证，不能抢占 primary 主线",
+            source="rollout_lane_shadow",
+        ),
+    ):
+        if task:
+            prioritized.append(task)
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for task in prioritized + list(control_tower_snapshot.get("next_actions") or []):
+        dedupe_key = (str(task.get("title") or "").strip(), str(task.get("next_step") or "").strip())
+        if not any(dedupe_key):
+            continue
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        deduped.append(task)
+    return deduped[:3]
+
+
 def _extract_replay_cohort_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     cohort = _safe_load_json(dict(manifest.get("btst_replay_cohort_refresh") or {}).get("output_json"))
     cohort_summaries = list(cohort.get("cohort_summaries") or [])
@@ -1651,6 +1792,7 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
 def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[str, Any]:
     latest_btst_snapshot = _extract_latest_btst_snapshot(manifest)
     control_tower_snapshot = _extract_control_tower_snapshot(manifest)
+    control_tower_snapshot["next_actions"] = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
     replay_cohort_snapshot = _extract_replay_cohort_snapshot(manifest)
     priority_board = dict(latest_btst_snapshot.get("priority_board") or {})
     default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
@@ -1921,9 +2063,15 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
         )
     corridor_narrow_probe_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_narrow_probe_summary") or {})
     if corridor_narrow_probe_summary:
-        lines.append(
-            f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={corridor_narrow_probe_summary.get('focus_ticker')} verdict={corridor_narrow_probe_summary.get('verdict')} threshold_override_gap_vs_anchor={corridor_narrow_probe_summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={corridor_narrow_probe_summary.get('target_gap_to_selected')}"
-        )
+        deepest_corridor_focus_tickers = list(corridor_narrow_probe_summary.get("deepest_corridor_focus_tickers") or [])
+        if deepest_corridor_focus_tickers:
+            lines.append(
+                f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={corridor_narrow_probe_summary.get('focus_ticker')} verdict={corridor_narrow_probe_summary.get('verdict')} deepest_corridor_focus_tickers={deepest_corridor_focus_tickers} excluded_low_gate_tail_tickers={corridor_narrow_probe_summary.get('excluded_low_gate_tail_tickers')} low_gate_focus_max_cutoff_share={corridor_narrow_probe_summary.get('low_gate_focus_max_cutoff_share')}"
+            )
+        else:
+            lines.append(
+                f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={corridor_narrow_probe_summary.get('focus_ticker')} verdict={corridor_narrow_probe_summary.get('verdict')} threshold_override_gap_vs_anchor={corridor_narrow_probe_summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={corridor_narrow_probe_summary.get('target_gap_to_selected')}"
+            )
     default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
     if default_merge_review_summary:
         counterfactual = dict(default_merge_review_summary.get("counterfactual_validation") or {})

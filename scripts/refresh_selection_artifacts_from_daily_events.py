@@ -17,6 +17,8 @@ from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.research.artifacts import FileSelectionArtifactWriter
 from src.targets.router import build_selection_targets
 
+EVIDENCE_DEFICIENT_BROAD_FAMILY_ONLY = "evidence_deficient_broad_family_only"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refresh selection_artifacts from historical daily_events current_plan records using current target rules.")
@@ -105,6 +107,65 @@ def _merge_shadow_metadata(entry: dict[str, Any], shadow_lookup: dict[str, dict[
     return merged
 
 
+def _resolve_carryover_evidence_deficiency(entry: dict[str, Any]) -> dict[str, Any]:
+    historical_prior = dict(entry.get("historical_prior") or {})
+    candidate_reason_codes = {
+        str(code).strip()
+        for code in list(entry.get("candidate_reason_codes") or [])
+        if str(code or "").strip()
+    }
+    same_ticker_sample_count = int(historical_prior.get("same_ticker_sample_count") or 0)
+    same_family_sample_count = int(historical_prior.get("same_family_sample_count") or 0)
+    same_family_source_sample_count = int(historical_prior.get("same_family_source_sample_count") or 0)
+    same_family_source_score_catalyst_sample_count = int(historical_prior.get("same_family_source_score_catalyst_sample_count") or 0)
+    same_source_score_sample_count = int(historical_prior.get("same_source_score_sample_count") or 0)
+    evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    gate_hits = {
+        "candidate_source": str(entry.get("candidate_source") or "").strip() == "catalyst_theme",
+        "carryover_candidate": "catalyst_theme_short_trade_carryover_candidate" in candidate_reason_codes,
+        "execution_quality_label": str(historical_prior.get("execution_quality_label") or "") == "close_continuation",
+        "entry_timing_bias": str(historical_prior.get("entry_timing_bias") or "") == "confirm_then_hold",
+        "low_same_ticker_samples": same_ticker_sample_count < 2,
+        "low_evaluable_count": evaluable_count <= 1,
+        "broad_family_only": same_family_sample_count > 0,
+        "no_same_family_source": same_family_source_sample_count == 0,
+        "no_same_family_source_score_catalyst": same_family_source_score_catalyst_sample_count == 0,
+        "no_same_source_score": same_source_score_sample_count == 0,
+    }
+    return {
+        "enabled": bool(historical_prior),
+        "evidence_deficient": bool(historical_prior) and all(gate_hits.values()),
+        "gate_hits": gate_hits,
+        "same_ticker_sample_count": same_ticker_sample_count,
+        "same_family_sample_count": same_family_sample_count,
+        "same_family_source_sample_count": same_family_source_sample_count,
+        "same_family_source_score_catalyst_sample_count": same_family_source_score_catalyst_sample_count,
+        "same_source_score_sample_count": same_source_score_sample_count,
+        "evaluable_count": evaluable_count,
+    }
+
+
+def _prepend_unique(values: list[str], item: str) -> list[str]:
+    normalized = [str(value) for value in values if str(value or "").strip()]
+    return [item, *[value for value in normalized if value != item]]
+
+
+def _annotate_carryover_evidence_deficiency(entry: dict[str, Any]) -> dict[str, Any]:
+    updated_entry = dict(entry or {})
+    deficiency = _resolve_carryover_evidence_deficiency(updated_entry)
+    if not deficiency.get("enabled"):
+        return updated_entry
+    updated_entry["carryover_evidence_deficiency"] = deficiency
+    metrics_payload = dict(updated_entry.get("short_trade_boundary_metrics") or {})
+    metrics_payload["carryover_evidence_deficiency"] = deficiency
+    updated_entry["short_trade_boundary_metrics"] = metrics_payload
+    if not deficiency.get("evidence_deficient"):
+        return updated_entry
+    updated_entry["negative_tags"] = _prepend_unique(list(updated_entry.get("negative_tags") or []), EVIDENCE_DEFICIENT_BROAD_FAMILY_ONLY)
+    updated_entry["rejection_reasons"] = _prepend_unique(list(updated_entry.get("rejection_reasons") or []), EVIDENCE_DEFICIENT_BROAD_FAMILY_ONLY)
+    return updated_entry
+
+
 def _refresh_released_shadow_entries(
     filters: dict[str, Any],
     filter_key: str,
@@ -131,7 +192,7 @@ def _refresh_released_shadow_entries(
         merged_relief = {**existing_relief, **relief} if relief else existing_relief
         if merged_relief:
             entry["short_trade_catalyst_relief"] = merged_relief
-        refreshed_entries.append(entry)
+        refreshed_entries.append(_annotate_carryover_evidence_deficiency(entry))
     filter_payload["released_shadow_entries"] = refreshed_entries
     filters[filter_key] = filter_payload
 
@@ -161,7 +222,7 @@ def _refresh_shadow_observation_entries(
                 filter_reason=filter_reason,
                 metrics_payload=metrics_payload,
             )
-        refreshed_entries.append(entry)
+        refreshed_entries.append(_annotate_carryover_evidence_deficiency(entry))
     filter_payload["shadow_observation_entries"] = refreshed_entries
     filters["short_trade_candidates"] = filter_payload
 
@@ -185,8 +246,20 @@ def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_
         historical_prior = dict(updated_entry.get("historical_prior") or prior_by_ticker.get(ticker) or {})
         if historical_prior:
             updated_entry["historical_prior"] = historical_prior
-        attached_entries.append(updated_entry)
+        attached_entries.append(_annotate_carryover_evidence_deficiency(updated_entry))
     return attached_entries
+
+
+def _extract_historical_prior_from_plan_selection_targets(plan: ExecutionPlan) -> dict[str, dict[str, Any]]:
+    prior_by_ticker: dict[str, dict[str, Any]] = {}
+    for ticker, evaluation in dict(getattr(plan, "selection_targets", {}) or {}).items():
+        short_trade = getattr(evaluation, "short_trade", None)
+        explainability_payload = dict(getattr(short_trade, "explainability_payload", {}) or {}) if short_trade is not None else {}
+        replay_context = dict(explainability_payload.get("replay_context") or {})
+        historical_prior = dict(replay_context.get("historical_prior") or {})
+        if historical_prior:
+            prior_by_ticker[str(ticker)] = historical_prior
+    return prior_by_ticker
 
 
 def rebuild_selection_targets_for_plan(
@@ -200,7 +273,10 @@ def rebuild_selection_targets_for_plan(
     funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics") or {})
     filters = dict(funnel_diagnostics.get("filters") or {})
     shadow_lookup = dict(shadow_lookup or {})
-    historical_prior_by_ticker = dict(historical_prior_by_ticker or {})
+    historical_prior_by_ticker = {
+        **_extract_historical_prior_from_plan_selection_targets(plan),
+        **dict(historical_prior_by_ticker or {}),
+    }
 
     _refresh_released_shadow_entries(filters, "short_trade_candidates", shadow_lookup, prior_by_ticker=historical_prior_by_ticker)
     _refresh_released_shadow_entries(filters, "watchlist", shadow_lookup, prior_by_ticker=historical_prior_by_ticker)
@@ -213,6 +289,7 @@ def rebuild_selection_targets_for_plan(
 
     short_trade_candidate_filters = dict(filters.get("short_trade_candidates") or {})
     watchlist_filter = dict(filters.get("watchlist") or {})
+    catalyst_theme_filter = dict(filters.get("catalyst_theme_candidates") or {})
     refreshed_rejected_entries = _attach_historical_prior_to_entries(
         list(watchlist_filter.get("tickers") or []),
         prior_by_ticker=historical_prior_by_ticker,
@@ -229,6 +306,10 @@ def rebuild_selection_targets_for_plan(
         list(watchlist_filter.get("released_shadow_entries") or []),
         prior_by_ticker=historical_prior_by_ticker,
     )
+    refreshed_catalyst_theme_tickers = _attach_historical_prior_to_entries(
+        list(catalyst_theme_filter.get("tickers") or []),
+        prior_by_ticker=historical_prior_by_ticker,
+    )
     selection_targets, dual_target_summary = build_selection_targets(
         trade_date=trade_date_compact,
         watchlist=list(plan.watchlist or []),
@@ -237,6 +318,7 @@ def rebuild_selection_targets_for_plan(
             *refreshed_short_trade_tickers,
             *refreshed_short_trade_released_shadow_entries,
             *refreshed_watchlist_released_shadow_entries,
+            *refreshed_catalyst_theme_tickers,
         ],
         buy_order_tickers={str(order.ticker) for order in list(plan.buy_orders or [])},
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
@@ -246,8 +328,10 @@ def rebuild_selection_targets_for_plan(
     watchlist_filter["released_shadow_entries"] = refreshed_watchlist_released_shadow_entries
     short_trade_candidate_filters["tickers"] = refreshed_short_trade_tickers
     short_trade_candidate_filters["released_shadow_entries"] = refreshed_short_trade_released_shadow_entries
+    catalyst_theme_filter["tickers"] = refreshed_catalyst_theme_tickers
     filters["watchlist"] = watchlist_filter
     filters["short_trade_candidates"] = short_trade_candidate_filters
+    filters["catalyst_theme_candidates"] = catalyst_theme_filter
     funnel_diagnostics["filters"] = filters
     risk_metrics["funnel_diagnostics"] = funnel_diagnostics
     plan.risk_metrics = risk_metrics

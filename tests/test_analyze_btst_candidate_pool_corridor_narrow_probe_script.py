@@ -141,3 +141,68 @@ def test_analyze_btst_candidate_pool_corridor_narrow_probe_surfaces_threshold_ov
     markdown = render_btst_candidate_pool_corridor_narrow_probe_markdown(analysis)
     assert "# BTST Candidate Pool Corridor Narrow Probe" in markdown
     assert "lane_specific_select_threshold_override_gap" in markdown
+
+
+def test_analyze_btst_candidate_pool_corridor_narrow_probe_surfaces_deepest_corridor_split(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    recall_dossier_path = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_ticker_dossiers": [
+                {
+                    "ticker": "300683",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "avg_amount_share_of_cutoff_mean": 0.1519,
+                        "avg_amount_share_of_min_gate_mean": 4.53,
+                    },
+                },
+                {
+                    "ticker": "688796",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "avg_amount_share_of_cutoff_mean": 0.0821,
+                        "avg_amount_share_of_min_gate_mean": 2.46,
+                    },
+                },
+                {
+                    "ticker": "301188",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "avg_amount_share_of_cutoff_mean": 0.074,
+                        "avg_amount_share_of_min_gate_mean": 2.5,
+                    },
+                },
+                {
+                    "ticker": "688383",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "avg_amount_share_of_cutoff_mean": 0.0584,
+                        "avg_amount_share_of_min_gate_mean": 2.31,
+                    },
+                },
+                {
+                    "ticker": "301292",
+                    "truncation_liquidity_profile": {
+                        "priority_handoff": "post_gate_liquidity_competition",
+                        "avg_amount_share_of_cutoff_mean": 0.091,
+                        "avg_amount_share_of_min_gate_mean": 2.7,
+                    },
+                },
+            ]
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_narrow_probe(
+        candidate_pool_recall_dossier_path=recall_dossier_path,
+    )
+
+    assert analysis["verdict"] == "deepest_corridor_split_ready"
+    assert set(analysis["deepest_corridor_focus_tickers"]) == {"301188", "688383"}
+    assert analysis["excluded_low_gate_tail_tickers"] == ["688796"]
+    assert analysis["standard_corridor_tickers"] == ["300683"]
+
+    markdown = render_btst_candidate_pool_corridor_narrow_probe_markdown(analysis)
+    assert "deepest_corridor_focus_tickers" in markdown
+    assert "688796" in markdown

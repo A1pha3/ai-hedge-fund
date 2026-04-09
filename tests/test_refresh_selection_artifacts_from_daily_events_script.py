@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -212,6 +213,134 @@ def _make_corridor_shadow_observation_entry() -> dict:
         },
         "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
     }
+
+
+def _make_catalyst_theme_carryover_entry() -> dict:
+    return {
+        "ticker": "002001",
+        "score_b": 0.2,
+        "score_c": -0.4,
+        "score_final": 0.05,
+        "quality_score": 0.58,
+        "decision": "catalyst_theme",
+        "reason": "catalyst_theme_candidate_score_ranked",
+        "reasons": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+            "catalyst_theme_short_trade_carryover_candidate",
+        ],
+        "candidate_source": "catalyst_theme",
+        "candidate_reason_codes": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+            "catalyst_theme_short_trade_carryover_candidate",
+        ],
+        "short_trade_catalyst_relief": {
+            "enabled": True,
+            "reason": "catalyst_theme_short_trade_carryover",
+            "catalyst_freshness_floor": 1.0,
+            "near_miss_threshold": 0.44,
+            "breakout_freshness_min": 0.35,
+            "trend_acceleration_min": 0.72,
+            "close_strength_min": 0.85,
+            "require_no_profitability_hard_cliff": True,
+        },
+        "historical_prior": {
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 2,
+            "next_high_hit_rate_at_threshold": 1.0,
+            "next_close_positive_rate": 1.0,
+            "next_open_to_close_return_mean": 0.0393,
+            "execution_note": "历史上更偏向次日收盘延续，确认后可保留 follow-through 预期。",
+        },
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                95.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 88.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 85.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 95.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 30.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                1,
+                40.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+            "fundamental": _make_signal(1, 45.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+    }
+
+
+def _make_metric_override_catalyst_theme_carryover_entry() -> dict:
+    entry = _make_catalyst_theme_carryover_entry()
+    entry["ticker"] = "002002"
+    entry["strategy_signals"] = {
+        "trend": _make_signal(
+            1,
+            20.0,
+            sub_factors={
+                "momentum": {"direction": 1, "confidence": 10.0, "completeness": 1.0},
+                "adx_strength": {"direction": 1, "confidence": 10.0, "completeness": 1.0},
+                "ema_alignment": {"direction": 1, "confidence": 10.0, "completeness": 1.0},
+                "volatility": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                "long_trend_alignment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+            },
+        ).model_dump(mode="json"),
+        "event_sentiment": _make_signal(
+            0,
+            0.0,
+            sub_factors={
+                "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+            },
+        ).model_dump(mode="json"),
+        "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        "fundamental": _make_signal(1, 20.0).model_dump(mode="json"),
+    }
+    entry["metrics"] = {
+        "breakout_freshness": 0.4,
+        "trend_acceleration": 0.7594,
+        "volume_expansion_quality": 0.25,
+        "close_strength": 0.9317,
+        "sector_resonance": 0.1,
+        "catalyst_freshness": 0.0,
+    }
+    entry["catalyst_theme_metrics"] = {
+        **entry["metrics"],
+        "candidate_score": 0.4341,
+        "effective_catalyst_freshness": 1.0,
+    }
+    return entry
+
+
+def _make_low_sample_catalyst_theme_carryover_entry() -> dict:
+    entry = _make_catalyst_theme_carryover_entry()
+    entry["ticker"] = "688498"
+    entry["historical_prior"] = {
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
+        "evaluable_count": 1,
+        "same_ticker_sample_count": 1,
+        "same_family_sample_count": 74,
+        "same_family_source_sample_count": 0,
+        "same_family_source_score_catalyst_sample_count": 0,
+        "same_source_score_sample_count": 0,
+        "next_high_hit_rate_at_threshold": 1.0,
+        "next_close_positive_rate": 1.0,
+        "next_open_to_close_return_mean": 0.01,
+        "execution_note": "历史样本很少，且只有 broad family 外围支持。",
+    }
+    return entry
 
 
 def test_refresh_selection_artifacts_from_daily_events_promotes_post_gate_shadow_entry(tmp_path, monkeypatch: pytest.MonkeyPatch):
@@ -569,3 +698,288 @@ def test_refresh_selection_artifacts_from_daily_events_injects_historical_prior_
     assert short_trade["preferred_entry_mode"] == "avoid_open_chase_confirmation"
     assert short_trade["metrics_payload"]["historical_execution_relief"]["applied"] is True
     assert short_trade["metrics_payload"]["historical_execution_relief"]["execution_quality_label"] == "gap_chase_risk"
+
+
+def test_refresh_selection_artifacts_from_daily_events_preserves_catalyst_theme_candidates(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    report_dir = tmp_path / "paper_trading_20260409_20260409_refresh_catalyst_theme"
+    (report_dir / "selection_artifacts").mkdir(parents=True)
+    trade_date = "20260409"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [_make_catalyst_theme_carryover_entry()],
+                        "selected_tickers": ["002001"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text(
+        json.dumps(
+            {
+                "end_date": "2026-04-09",
+                "plan_generation": {"selection_target": "short_trade_only"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "_load_latest_historical_prior_by_ticker",
+        lambda report_path: {
+            "002001": {
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 2,
+                "next_high_hit_rate_at_threshold": 1.0,
+                "next_close_positive_rate": 1.0,
+                "next_open_to_close_return_mean": 0.0393,
+                "execution_note": "历史上更偏向次日收盘延续，确认后可保留 follow-through 预期。",
+            }
+        },
+    )
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-09")
+
+    selection_snapshot = json.loads((report_dir / "selection_artifacts" / "2026-04-09" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    short_trade = selection_snapshot["selection_targets"]["002001"]["short_trade"]
+    assert short_trade["decision"] == "selected"
+    assert short_trade["preferred_entry_mode"] == "confirm_then_hold_breakout"
+    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.45
+
+
+def test_refresh_selection_artifacts_from_daily_events_uses_catalyst_theme_metric_overrides(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    report_dir = tmp_path / "paper_trading_20260409_20260409_refresh_catalyst_metric_override"
+    (report_dir / "selection_artifacts").mkdir(parents=True)
+    trade_date = "20260409"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [_make_metric_override_catalyst_theme_carryover_entry()],
+                        "selected_tickers": ["002002"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text(
+        json.dumps(
+            {
+                "end_date": "2026-04-09",
+                "plan_generation": {"selection_target": "short_trade_only"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "_load_latest_historical_prior_by_ticker",
+        lambda report_path: {
+            "002002": {
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 2,
+                "next_high_hit_rate_at_threshold": 1.0,
+                "next_close_positive_rate": 1.0,
+                "next_open_to_close_return_mean": 0.0393,
+                "execution_note": "历史上更偏向次日收盘延续，确认后可保留 follow-through 预期。",
+            }
+        },
+    )
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-09")
+
+    selection_snapshot = json.loads((report_dir / "selection_artifacts" / "2026-04-09" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    short_trade = selection_snapshot["selection_targets"]["002002"]["short_trade"]
+    assert short_trade["decision"] == "selected"
+    assert short_trade["score_target"] >= 0.45
+    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.45
+    assert short_trade["explainability_payload"]["upstream_shadow_catalyst_relief"]["applied"] is True
+
+
+def test_rebuild_selection_targets_for_plan_uses_selection_target_historical_prior(monkeypatch: pytest.MonkeyPatch):
+    captured_entries: list[dict] = []
+
+    def _fake_build_selection_targets(**kwargs):
+        captured_entries.extend(kwargs["supplemental_short_trade_entries"])
+        return {}, SimpleNamespace(short_trade_selected_count=0)
+
+    monkeypatch.setattr(refresh_module, "build_selection_targets", _fake_build_selection_targets)
+
+    historical_prior = {
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
+        "evaluable_count": 2,
+        "next_high_hit_rate_at_threshold": 1.0,
+        "next_close_positive_rate": 1.0,
+        "next_open_to_close_return_mean": 0.0393,
+    }
+    plan = SimpleNamespace(
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [_make_metric_override_catalyst_theme_carryover_entry()],
+                    },
+                }
+            }
+        },
+        watchlist=[],
+        buy_orders=[],
+        target_mode="short_trade_only",
+        selection_targets={
+            "002002": SimpleNamespace(
+                short_trade=SimpleNamespace(
+                    explainability_payload={
+                        "replay_context": {
+                            "historical_prior": historical_prior,
+                        }
+                    }
+                )
+            )
+        },
+    )
+
+    refresh_module.rebuild_selection_targets_for_plan(
+        plan,
+        "20260409",
+        historical_prior_by_ticker={},
+    )
+
+    preserved_entry = next(entry for entry in captured_entries if entry["ticker"] == "002002")
+    assert preserved_entry["historical_prior"]["execution_quality_label"] == "close_continuation"
+    assert preserved_entry["historical_prior"]["next_close_positive_rate"] == 1.0
+
+
+def test_refresh_selection_artifacts_from_daily_events_passthroughs_carryover_evidence_deficiency(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    report_dir = tmp_path / "paper_trading_20260409_20260409_refresh_carryover_evidence"
+    (report_dir / "selection_artifacts").mkdir(parents=True)
+    trade_date = "20260409"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [_make_low_sample_catalyst_theme_carryover_entry()],
+                        "selected_tickers": [],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text(
+        json.dumps(
+            {
+                "end_date": "2026-04-09",
+                "plan_generation": {"selection_target": "short_trade_only"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "_load_latest_historical_prior_by_ticker",
+        lambda report_path: {
+            "688498": {
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 1,
+                "same_ticker_sample_count": 1,
+                "same_family_sample_count": 74,
+                "same_family_source_sample_count": 0,
+                "same_family_source_score_catalyst_sample_count": 0,
+                "same_source_score_sample_count": 0,
+                "next_high_hit_rate_at_threshold": 1.0,
+                "next_close_positive_rate": 1.0,
+                "next_open_to_close_return_mean": 0.01,
+                "execution_note": "历史样本很少，且只有 broad family 外围支持。",
+            }
+        },
+    )
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-09")
+
+    replay_input = json.loads((report_dir / "selection_artifacts" / "2026-04-09" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    replay_entry = next(entry for entry in replay_input["supplemental_catalyst_theme_entries"] if entry["ticker"] == "688498")
+    assert replay_entry["negative_tags"][0] == "evidence_deficient_broad_family_only"
+    assert replay_entry["rejection_reasons"][0] == "evidence_deficient_broad_family_only"
+    assert replay_entry["carryover_evidence_deficiency"]["evidence_deficient"] is True
+    assert replay_entry["short_trade_boundary_metrics"]["carryover_evidence_deficiency"]["same_family_sample_count"] == 74
+
+    selection_snapshot = json.loads((report_dir / "selection_artifacts" / "2026-04-09" / "selection_snapshot.json").read_text(encoding="utf-8"))
+    snapshot_entry = next(entry for entry in selection_snapshot["catalyst_theme_candidates"] if entry["ticker"] == "688498")
+    assert snapshot_entry["negative_tags"][0] == "evidence_deficient_broad_family_only"
+    assert snapshot_entry["carryover_evidence_deficiency"]["evidence_deficient"] is True
+    assert (
+        selection_snapshot["selection_targets"]["688498"]["short_trade"]["metrics_payload"]["carryover_evidence_deficiency"]["evidence_deficient"]
+        is True
+    )
