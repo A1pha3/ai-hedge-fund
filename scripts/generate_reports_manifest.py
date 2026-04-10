@@ -3730,348 +3730,225 @@ def _build_markdown_link(entry: dict[str, Any], output_parent: Path) -> str:
     return f"[{entry['report_path']}]({relative_target})"
 
 
-def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent: str | Path) -> str:
-    resolved_output_parent = Path(output_parent).expanduser().resolve()
-    entries_by_id = {entry["id"]: entry for entry in list(manifest.get("entries") or [])}
+def _append_markdown_field_lines(
+    lines: list[str],
+    *,
+    payload: dict[str, Any],
+    field_specs: list[tuple[str, str, str]],
+) -> None:
+    for label, key, mode in field_specs:
+        value = payload.get(key)
+        if mode == "not_none" and value is None:
+            continue
+        if mode == "truthy" and not value:
+            continue
+        lines.append(f"- {label}: {value}")
 
-    lines: list[str] = []
+
+def _append_manifest_header(lines: list[str], manifest: dict[str, Any]) -> None:
     lines.append("# Reports Manifest Latest")
     lines.append("")
     lines.append(f"- generated_at: {manifest['generated_at']}")
     lines.append(f"- entry_count: {manifest['entry_count']}")
     lines.append(f"- reports_root: {manifest['reports_root']}")
-    catalyst_theme_frontier_refresh = manifest.get("catalyst_theme_frontier_refresh") or {}
-    if catalyst_theme_frontier_refresh:
-        lines.append(f"- catalyst_theme_frontier_refresh_status: {catalyst_theme_frontier_refresh.get('status')}")
-        lines.append(f"- catalyst_theme_frontier_shadow_candidate_count: {catalyst_theme_frontier_refresh.get('shadow_candidate_count')}")
-        lines.append(f"- catalyst_theme_frontier_promoted_shadow_count: {catalyst_theme_frontier_refresh.get('recommended_promoted_shadow_count')}")
-        lines.append(f"- catalyst_theme_frontier_recommended_variant: {catalyst_theme_frontier_refresh.get('recommended_variant_name')}")
-    btst_window_evidence_refresh = manifest.get("btst_window_evidence_refresh") or {}
-    if btst_window_evidence_refresh:
-        lines.append(f"- btst_window_evidence_refresh_status: {btst_window_evidence_refresh.get('status')}")
-        lines.append(f"- btst_window_evidence_window_report_count: {btst_window_evidence_refresh.get('window_report_count')}")
-        lines.append(f"- btst_window_evidence_candidate_count: {btst_window_evidence_refresh.get('candidate_count')}")
-        lines.append(f"- btst_window_evidence_stable_candidate_count: {btst_window_evidence_refresh.get('stable_candidate_count')}")
-        lines.append(f"- btst_window_evidence_primary_refresh_status: {btst_window_evidence_refresh.get('primary_refresh_status')}")
-        lines.append(f"- btst_window_evidence_primary_missing_window_count: {btst_window_evidence_refresh.get('primary_missing_window_count')}")
-    candidate_entry_shadow_refresh = manifest.get("candidate_entry_shadow_refresh") or {}
-    if candidate_entry_shadow_refresh:
-        lines.append(f"- candidate_entry_shadow_refresh_status: {candidate_entry_shadow_refresh.get('status')}")
-        lines.append(f"- candidate_entry_shadow_refresh_window_reports: {candidate_entry_shadow_refresh.get('window_report_count')}")
-        lines.append(f"- candidate_entry_shadow_refresh_filtered_reports: {candidate_entry_shadow_refresh.get('filtered_report_count')}")
-        lines.append(f"- candidate_entry_shadow_refresh_rollout_readiness: {candidate_entry_shadow_refresh.get('rollout_readiness')}")
-        if candidate_entry_shadow_refresh.get("no_candidate_entry_action_board_status") is not None:
-            lines.append(f"- candidate_entry_shadow_no_candidate_entry_action_board_status: {candidate_entry_shadow_refresh.get('no_candidate_entry_action_board_status')}")
-        if candidate_entry_shadow_refresh.get("no_candidate_entry_priority_queue_count") is not None:
-            lines.append(f"- candidate_entry_shadow_no_candidate_entry_priority_queue_count: {candidate_entry_shadow_refresh.get('no_candidate_entry_priority_queue_count')}")
-        if candidate_entry_shadow_refresh.get("no_candidate_entry_top_tickers") is not None:
-            lines.append(f"- candidate_entry_shadow_no_candidate_entry_top_tickers: {candidate_entry_shadow_refresh.get('no_candidate_entry_top_tickers')}")
-        if candidate_entry_shadow_refresh.get("no_candidate_entry_replay_bundle_status") is not None:
-            lines.append(f"- candidate_entry_shadow_no_candidate_entry_replay_bundle_status: {candidate_entry_shadow_refresh.get('no_candidate_entry_replay_bundle_status')}")
-        if candidate_entry_shadow_refresh.get("no_candidate_entry_promising_tickers") is not None:
-            lines.append(f"- candidate_entry_shadow_no_candidate_entry_promising_tickers: {candidate_entry_shadow_refresh.get('no_candidate_entry_promising_tickers')}")
-        if candidate_entry_shadow_refresh.get("no_candidate_entry_failure_dossier_status") is not None:
-            lines.append(f"- candidate_entry_shadow_no_candidate_entry_failure_dossier_status: {candidate_entry_shadow_refresh.get('no_candidate_entry_failure_dossier_status')}")
-        if candidate_entry_shadow_refresh.get("no_candidate_entry_upstream_absence_tickers") is not None:
-            lines.append(f"- candidate_entry_shadow_no_candidate_entry_upstream_absence_tickers: {candidate_entry_shadow_refresh.get('no_candidate_entry_upstream_absence_tickers')}")
-        if candidate_entry_shadow_refresh.get("no_candidate_entry_semantic_miss_tickers") is not None:
-            lines.append(f"- candidate_entry_shadow_no_candidate_entry_semantic_miss_tickers: {candidate_entry_shadow_refresh.get('no_candidate_entry_semantic_miss_tickers')}")
-        if candidate_entry_shadow_refresh.get("watchlist_recall_dossier_status") is not None:
-            lines.append(f"- candidate_entry_shadow_watchlist_recall_dossier_status: {candidate_entry_shadow_refresh.get('watchlist_recall_dossier_status')}")
-        if candidate_entry_shadow_refresh.get("watchlist_recall_stage_counts") is not None:
-            lines.append(f"- candidate_entry_shadow_watchlist_recall_stage_counts: {candidate_entry_shadow_refresh.get('watchlist_recall_stage_counts')}")
-        if candidate_entry_shadow_refresh.get("watchlist_recall_absent_from_candidate_pool_tickers") is not None:
-            lines.append(f"- candidate_entry_shadow_watchlist_recall_absent_from_candidate_pool_tickers: {candidate_entry_shadow_refresh.get('watchlist_recall_absent_from_candidate_pool_tickers')}")
-        if candidate_entry_shadow_refresh.get("watchlist_recall_candidate_pool_layer_b_gap_tickers") is not None:
-            lines.append(f"- candidate_entry_shadow_watchlist_recall_candidate_pool_layer_b_gap_tickers: {candidate_entry_shadow_refresh.get('watchlist_recall_candidate_pool_layer_b_gap_tickers')}")
-        if candidate_entry_shadow_refresh.get("watchlist_recall_layer_b_watchlist_gap_tickers") is not None:
-            lines.append(f"- candidate_entry_shadow_watchlist_recall_layer_b_watchlist_gap_tickers: {candidate_entry_shadow_refresh.get('watchlist_recall_layer_b_watchlist_gap_tickers')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_dossier_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_dossier_status: {candidate_entry_shadow_refresh.get('candidate_pool_recall_dossier_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_stage_counts") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_stage_counts: {candidate_entry_shadow_refresh.get('candidate_pool_recall_stage_counts')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_dominant_stage") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_dominant_stage: {candidate_entry_shadow_refresh.get('candidate_pool_recall_dominant_stage')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_top_stage_tickers") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_top_stage_tickers: {candidate_entry_shadow_refresh.get('candidate_pool_recall_top_stage_tickers')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_truncation_frontier_summary") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary: {candidate_entry_shadow_refresh.get('candidate_pool_recall_truncation_frontier_summary')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_dominant_liquidity_gap_mode") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_dominant_liquidity_gap_mode: {candidate_entry_shadow_refresh.get('candidate_pool_recall_dominant_liquidity_gap_mode')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_focus_liquidity_profiles"):
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_focus_liquidity_profiles: {candidate_entry_shadow_refresh.get('candidate_pool_recall_focus_liquidity_profiles')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_counts"):
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_counts: {candidate_entry_shadow_refresh.get('candidate_pool_recall_priority_handoff_counts')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_branch_diagnoses"):
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_diagnoses: {candidate_entry_shadow_refresh.get('candidate_pool_recall_priority_handoff_branch_diagnoses')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_branch_mechanisms"):
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_mechanisms: {candidate_entry_shadow_refresh.get('candidate_pool_recall_priority_handoff_branch_mechanisms')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_branch_experiment_queue"):
-            branch_experiment_queue = list(candidate_entry_shadow_refresh.get("candidate_pool_recall_priority_handoff_branch_experiment_queue") or [])
-            lines.append("- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
-            lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
-            for experiment in branch_experiment_queue[:3]:
-                lines.append(
-                    f"- candidate_entry_shadow_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
-                )
-                lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
-                lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
-                lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_board_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_branch_priority_board_status: {candidate_entry_shadow_refresh.get('candidate_pool_branch_priority_board_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_alignment_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_branch_priority_alignment_status: {candidate_entry_shadow_refresh.get('candidate_pool_branch_priority_alignment_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_alignment_summary"):
-            lines.append(f"- candidate_entry_shadow_candidate_pool_branch_priority_alignment_summary: {candidate_entry_shadow_refresh.get('candidate_pool_branch_priority_alignment_summary')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_board_rows"):
-            for row in list(candidate_entry_shadow_refresh.get("candidate_pool_branch_priority_board_rows") or [])[:3]:
-                lines.append(
-                    f"- candidate_entry_shadow_candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
-                )
-        if candidate_entry_shadow_refresh.get("candidate_pool_lane_objective_support_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_lane_objective_support_status: {candidate_entry_shadow_refresh.get('candidate_pool_lane_objective_support_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_lane_objective_support_rows"):
-            for row in list(candidate_entry_shadow_refresh.get("candidate_pool_lane_objective_support_rows") or [])[:3]:
-                lines.append(
-                    f"- candidate_entry_shadow_candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
-                )
-        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_validation_pack_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_corridor_validation_pack_status: {candidate_entry_shadow_refresh.get('candidate_pool_corridor_validation_pack_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_validation_pack_summary"):
-            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_corridor_validation_pack_summary") or {})
-            lines.append(
-                f"- candidate_entry_shadow_candidate_pool_corridor_validation_pack_summary: pack_status={summary.get('pack_status')} primary_validation_ticker={summary.get('primary_validation_ticker')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}"
-            )
-        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_shadow_pack_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_corridor_shadow_pack_status: {candidate_entry_shadow_refresh.get('candidate_pool_corridor_shadow_pack_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_shadow_pack_summary"):
-            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_corridor_shadow_pack_summary") or {})
-            lines.append(
-                f"- candidate_entry_shadow_candidate_pool_corridor_shadow_pack_summary: shadow_status={summary.get('shadow_status')} primary_shadow_replay={summary.get('primary_shadow_replay')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}"
-            )
-        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status: {candidate_entry_shadow_refresh.get('candidate_pool_rebucket_shadow_pack_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_experiment"):
-            experiment = dict(candidate_entry_shadow_refresh.get("candidate_pool_rebucket_shadow_pack_experiment") or {})
-            lines.append(
-                f"- candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_experiment: handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
-            )
-        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_objective_validation_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_rebucket_objective_validation_status: {candidate_entry_shadow_refresh.get('candidate_pool_rebucket_objective_validation_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_objective_validation_summary"):
-            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_rebucket_objective_validation_summary") or {})
-            lines.append(
-                f"- candidate_entry_shadow_candidate_pool_rebucket_objective_validation_summary: validation_status={summary.get('validation_status')} support_verdict={summary.get('support_verdict')} mean_t_plus_2_return={summary.get('mean_t_plus_2_return')}"
-            )
-        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_comparison_bundle_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_status: {candidate_entry_shadow_refresh.get('candidate_pool_rebucket_comparison_bundle_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_rebucket_comparison_bundle_summary"):
-            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_rebucket_comparison_bundle_summary") or {})
-            lines.append(
-                f"- candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_summary: bundle_status={summary.get('bundle_status')} structural_leader={summary.get('structural_leader')} objective_leader={summary.get('objective_leader')}"
-            )
-        if candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_lane_pair_board_status: {candidate_entry_shadow_refresh.get('candidate_pool_lane_pair_board_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_summary"):
-            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_lane_pair_board_summary") or {})
-            lines.append(
-                f"- candidate_entry_shadow_candidate_pool_lane_pair_board_summary: pair_status={summary.get('pair_status')} board_leader={summary.get('board_leader')} leader_lane_family={summary.get('leader_lane_family')} leader_governance_status={summary.get('leader_governance_status')} leader_governance_execution_quality={summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={summary.get('parallel_watch_next_close_return_mean')}"
-            )
-        if candidate_entry_shadow_refresh.get("candidate_pool_upstream_handoff_board_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_upstream_handoff_board_status: {candidate_entry_shadow_refresh.get('candidate_pool_upstream_handoff_board_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_upstream_handoff_board_summary"):
-            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_upstream_handoff_board_summary") or {})
-            lines.append(
-                f"- candidate_entry_shadow_candidate_pool_upstream_handoff_board_summary: board_status={summary.get('board_status')} focus_tickers={summary.get('focus_tickers')} first_broken_handoff_counts={summary.get('first_broken_handoff_counts')}"
-            )
-        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_uplift_runbook_status") is not None:
-            lines.append(f"- candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_status: {candidate_entry_shadow_refresh.get('candidate_pool_corridor_uplift_runbook_status')}")
-        if candidate_entry_shadow_refresh.get("candidate_pool_corridor_uplift_runbook_summary"):
-            summary = dict(candidate_entry_shadow_refresh.get("candidate_pool_corridor_uplift_runbook_summary") or {})
-            lines.append(
-                f"- candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_summary: runbook_status={summary.get('runbook_status')} primary_shadow_replay={summary.get('primary_shadow_replay')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}"
-            )
-    if manifest.get("continuation_focus_summary"):
-        summary = dict(manifest.get("continuation_focus_summary") or {})
-        lines.append(
-            f"- continuation_focus_summary: focus_ticker={summary.get('focus_ticker')} promotion_review_verdict={summary.get('promotion_review_verdict')} promotion_gate_verdict={summary.get('promotion_gate_verdict')} watchlist_execution_verdict={summary.get('watchlist_execution_verdict')} focus_watch_validation_status={summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={summary.get('eligible_gate_verdict')} execution_gate_verdict={summary.get('execution_gate_verdict')} execution_gate_blockers={summary.get('execution_gate_blockers')} execution_overlay_verdict={summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={summary.get('execution_overlay_lane_support_ratio')} governance_status={summary.get('governance_status')}"
-        )
-    if manifest.get("selected_outcome_refresh_summary"):
-        summary = dict(manifest.get("selected_outcome_refresh_summary") or {})
-        lines.append(
-            f"- selected_outcome_refresh_summary: trade_date={summary.get('trade_date')} selected_count={summary.get('selected_count')} focus_ticker={summary.get('focus_ticker')} focus_cycle_status={summary.get('focus_cycle_status')} focus_data_status={summary.get('focus_data_status')} focus_next_close_return={summary.get('focus_next_close_return')} focus_t_plus_2_close_return={summary.get('focus_t_plus_2_close_return')} focus_historical_next_close_positive_rate={summary.get('focus_historical_next_close_positive_rate')} focus_historical_t_plus_2_close_positive_rate={summary.get('focus_historical_t_plus_2_close_positive_rate')} focus_next_day_contract_verdict={summary.get('focus_next_day_contract_verdict')} focus_t_plus_2_contract_verdict={summary.get('focus_t_plus_2_contract_verdict')} focus_overall_contract_verdict={summary.get('focus_overall_contract_verdict')}"
-        )
-    if manifest.get("carryover_multiday_continuation_audit_summary"):
-        summary = dict(manifest.get("carryover_multiday_continuation_audit_summary") or {})
-        lines.append(
-            f"- carryover_multiday_continuation_audit_summary: selected_ticker={summary.get('selected_ticker')} supportive_case_count={summary.get('supportive_case_count')} peer_status_counts={summary.get('peer_status_counts')} selected_path_t2_bias_only={summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={summary.get('broad_family_only_multiday_unsupported')} aligned_peer_multiday_ready={summary.get('aligned_peer_multiday_ready')} open_selected_case_count={summary.get('open_selected_case_count')} selected_t_plus_3_close_positive_rate={summary.get('selected_t_plus_3_close_positive_rate')} broad_family_only_next_close_positive_rate={summary.get('broad_family_only_next_close_positive_rate')}"
-        )
-    if manifest.get("carryover_aligned_peer_harvest_summary"):
-        summary = dict(manifest.get("carryover_aligned_peer_harvest_summary") or {})
-        lines.append(
-            f"- carryover_aligned_peer_harvest_summary: focus_ticker={summary.get('focus_ticker')} focus_status={summary.get('focus_status')} focus_latest_trade_date={summary.get('focus_latest_trade_date')} focus_latest_scope={summary.get('focus_latest_scope')} focus_closed_cycle_count={summary.get('focus_closed_cycle_count')} focus_next_day_available_count={summary.get('focus_next_day_available_count')} fresh_open_cycle_tickers={summary.get('fresh_open_cycle_tickers')}"
-        )
-    if manifest.get("carryover_peer_expansion_summary"):
-        summary = dict(manifest.get("carryover_peer_expansion_summary") or {})
-        lines.append(
-            f"- carryover_peer_expansion_summary: focus_ticker={summary.get('focus_ticker')} focus_status={summary.get('focus_status')} priority_expansion_tickers={summary.get('priority_expansion_tickers')} watch_with_risk_tickers={summary.get('watch_with_risk_tickers')} expansion_status_counts={summary.get('expansion_status_counts')}"
-        )
-    if manifest.get("carryover_aligned_peer_proof_summary"):
-        summary = dict(manifest.get("carryover_aligned_peer_proof_summary") or {})
-        lines.append(
-            f"- carryover_aligned_peer_proof_summary: focus_ticker={summary.get('focus_ticker')} focus_proof_verdict={summary.get('focus_proof_verdict')} focus_promotion_review_verdict={summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={summary.get('risk_review_tickers')} pending_t_plus_2_tickers={summary.get('pending_t_plus_2_tickers')}"
-        )
-    if manifest.get("carryover_peer_promotion_gate_summary"):
-        summary = dict(manifest.get("carryover_peer_promotion_gate_summary") or {})
-        lines.append(
-            f"- carryover_peer_promotion_gate_summary: focus_ticker={summary.get('focus_ticker')} focus_gate_verdict={summary.get('focus_gate_verdict')} ready_tickers={summary.get('ready_tickers')} blocked_open_tickers={summary.get('blocked_open_tickers')} risk_review_tickers={summary.get('risk_review_tickers')} pending_t_plus_2_tickers={summary.get('pending_t_plus_2_tickers')}"
-        )
-    if manifest.get("continuation_promotion_ready_summary"):
-        summary = dict(manifest.get("continuation_promotion_ready_summary") or {})
-        lines.append(
-            f"- continuation_promotion_ready_summary: focus_ticker={summary.get('focus_ticker')} promotion_path_status={summary.get('promotion_path_status')} blockers_remaining_count={summary.get('blockers_remaining_count')} observed_independent_window_count={summary.get('observed_independent_window_count')} weighted_observed_window_credit={summary.get('weighted_observed_window_credit')} missing_independent_window_count={summary.get('missing_independent_window_count')} weighted_missing_window_credit={summary.get('weighted_missing_window_credit')} candidate_dossier_support_trade_date_count={summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={summary.get('candidate_dossier_same_trade_date_variant_count')} candidate_dossier_same_trade_date_variant_credit={summary.get('candidate_dossier_same_trade_date_variant_credit')} persistence_verdict={summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={summary.get('ready_after_next_qualifying_window')} next_window_requirement={summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')}"
-        )
-    if manifest.get("default_merge_review_summary"):
-        summary = dict(manifest.get("default_merge_review_summary") or {})
-        counterfactual = dict(summary.get("counterfactual_validation") or {})
-        lines.append(
-            f"- default_merge_review_summary: focus_ticker={summary.get('focus_ticker')} merge_review_verdict={summary.get('merge_review_verdict')} operator_action={summary.get('operator_action')} counterfactual_verdict={counterfactual.get('counterfactual_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_positive_rate_margin_vs_threshold={counterfactual.get('t_plus_2_positive_rate_margin_vs_threshold')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')} t_plus_2_mean_return_margin_vs_threshold={counterfactual.get('t_plus_2_mean_return_margin_vs_threshold')}"
-        )
-    if manifest.get("default_merge_historical_counterfactual_summary"):
-        summary = dict(manifest.get("default_merge_historical_counterfactual_summary") or {})
-        uplift = dict(summary.get("uplift_vs_default_btst") or {})
-        lines.append(
-            f"- default_merge_historical_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} counterfactual_verdict={summary.get('counterfactual_verdict')} merged_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} merged_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}"
-        )
-    if manifest.get("continuation_merge_candidate_ranking_summary"):
-        summary = dict(manifest.get("continuation_merge_candidate_ranking_summary") or {})
-        top_candidate = dict(summary.get("top_candidate") or {})
-        lines.append(
-            f"- continuation_merge_candidate_ranking_summary: candidate_count={summary.get('candidate_count')} top_ticker={top_candidate.get('ticker')} top_stage={top_candidate.get('promotion_path_status') or top_candidate.get('promotion_readiness_verdict')} top_positive_rate_delta={top_candidate.get('t_plus_2_positive_rate_delta_vs_default_btst')} top_mean_return_delta={top_candidate.get('mean_t_plus_2_return_delta_vs_default_btst')}"
-        )
-    if manifest.get("default_merge_strict_counterfactual_summary"):
-        summary = dict(manifest.get("default_merge_strict_counterfactual_summary") or {})
-        uplift = dict(summary.get("strict_uplift_vs_default_btst") or {})
-        overlap = dict(summary.get("overlap_diagnostics") or {})
-        lines.append(
-            f"- default_merge_strict_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} strict_counterfactual_verdict={summary.get('strict_counterfactual_verdict')} overlap_case_count={overlap.get('overlap_case_count')} strict_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} strict_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}"
-        )
-    if manifest.get("merge_replay_validation_summary"):
-        summary = dict(manifest.get("merge_replay_validation_summary") or {})
-        lines.append(
-            f"- merge_replay_validation_summary: overall_verdict={summary.get('overall_verdict')} focus_tickers={summary.get('focus_tickers')} promoted_to_selected_count={summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={summary.get('promoted_to_near_miss_count')} relief_applied_count={summary.get('relief_applied_count')} relief_actionable_applied_count={summary.get('relief_actionable_applied_count')} relief_already_selected_count={summary.get('relief_already_selected_count')} relief_positive_promotion_precision={summary.get('relief_positive_promotion_precision')} relief_actionable_positive_promotion_precision={summary.get('relief_actionable_positive_promotion_precision')} relief_no_promotion_ratio={summary.get('relief_no_promotion_ratio')} relief_actionable_no_promotion_ratio={summary.get('relief_actionable_no_promotion_ratio')} relief_decision_deteriorated_count={summary.get('relief_decision_deteriorated_count')} recommended_next_lever={summary.get('recommended_next_lever')} recommended_signal_levers={summary.get('recommended_signal_levers')}"
-        )
-    if manifest.get("prepared_breakout_relief_validation_summary"):
-        summary = dict(manifest.get("prepared_breakout_relief_validation_summary") or {})
-        outcome_support = dict(summary.get("outcome_support") or {})
-        lines.append(
-            f"- prepared_breakout_relief_validation_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} selected_relief_window_count={summary.get('selected_relief_window_count')} selected_relief_alignment_rate={summary.get('selected_relief_alignment_rate')} outcome_support={outcome_support.get('evidence_status')}"
-        )
-    if manifest.get("prepared_breakout_cohort_summary"):
-        summary = dict(manifest.get("prepared_breakout_cohort_summary") or {})
-        next_candidate = dict(summary.get("next_candidate") or {})
-        lines.append(
-            f"- prepared_breakout_cohort_summary: verdict={summary.get('verdict')} candidate_count={summary.get('candidate_count')} selected_frontier_candidate_count={summary.get('selected_frontier_candidate_count')} next_candidate={next_candidate.get('ticker')}"
-        )
-    if manifest.get("prepared_breakout_residual_surface_summary"):
-        summary = dict(manifest.get("prepared_breakout_residual_surface_summary") or {})
-        lines.append(
-            f"- prepared_breakout_residual_surface_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} focus_report_dir_count={summary.get('focus_report_dir_count')}"
-        )
-    if manifest.get("candidate_pool_corridor_persistence_dossier_summary"):
-        summary = dict(manifest.get("candidate_pool_corridor_persistence_dossier_summary") or {})
-        lines.append(
-            f"- candidate_pool_corridor_persistence_dossier_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} next_confirmation_requirement={summary.get('next_confirmation_requirement')}"
-        )
-    if manifest.get("candidate_pool_corridor_window_command_board_summary"):
-        summary = dict(manifest.get("candidate_pool_corridor_window_command_board_summary") or {})
-        lines.append(
-            f"- candidate_pool_corridor_window_command_board_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} next_target_trade_dates={summary.get('next_target_trade_dates')}"
-        )
-    if manifest.get("candidate_pool_corridor_window_diagnostics_summary"):
-        summary = dict(manifest.get("candidate_pool_corridor_window_diagnostics_summary") or {})
-        near_miss_window = dict(summary.get("near_miss_upgrade_window") or {})
-        visibility_gap_window = dict(summary.get("visibility_gap_window") or {})
-        lines.append(
-            f"- candidate_pool_corridor_window_diagnostics_summary: focus_ticker={summary.get('focus_ticker')} near_miss_verdict={near_miss_window.get('verdict')} visibility_gap_verdict={visibility_gap_window.get('verdict')} recommendation={summary.get('recommendation')}"
-        )
-    if manifest.get("candidate_pool_corridor_narrow_probe_summary"):
-        summary = dict(manifest.get("candidate_pool_corridor_narrow_probe_summary") or {})
-        lines.append(
-            f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} threshold_override_gap_vs_anchor={summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={summary.get('target_gap_to_selected')}"
-        )
-    if manifest.get("transient_probe_summary"):
-        summary = dict(manifest.get("transient_probe_summary") or {})
-        lines.append(
-            f"- transient_probe_summary: ticker={summary.get('ticker')} status={summary.get('status')} blocker={summary.get('blocker')} candidate_source={summary.get('candidate_source')} score_state={summary.get('score_state')} downstream_bottleneck={summary.get('downstream_bottleneck')} historical_sample_count={summary.get('historical_sample_count')} historical_next_close_positive_rate={summary.get('historical_next_close_positive_rate')}"
-        )
-    if manifest.get("execution_constraint_rollup"):
-        summary = dict(manifest.get("execution_constraint_rollup") or {})
-        lines.append(
-            f"- execution_constraint_rollup: constraint_count={summary.get('constraint_count')} continuation_focus_tickers={summary.get('continuation_focus_tickers')} continuation_blockers={summary.get('continuation_blockers')} shadow_focus_tickers={summary.get('shadow_focus_tickers')} shadow_blockers={summary.get('shadow_blockers')}"
-        )
-    btst_score_fail_frontier_refresh = manifest.get("btst_score_fail_frontier_refresh") or {}
-    if btst_score_fail_frontier_refresh:
-        lines.append(f"- btst_score_fail_frontier_refresh_status: {btst_score_fail_frontier_refresh.get('status')}")
-        lines.append(f"- btst_score_fail_frontier_rejected_case_count: {btst_score_fail_frontier_refresh.get('rejected_short_trade_boundary_count')}")
-        lines.append(f"- btst_score_fail_frontier_rescueable_case_count: {btst_score_fail_frontier_refresh.get('rescueable_case_count')}")
-        lines.append(f"- btst_score_fail_frontier_recurring_case_count: {btst_score_fail_frontier_refresh.get('recurring_case_count')}")
-        lines.append(f"- btst_score_fail_frontier_transition_refresh_status: {btst_score_fail_frontier_refresh.get('transition_refresh_status')}")
-        lines.append(f"- btst_score_fail_frontier_recurring_shadow_refresh_status: {btst_score_fail_frontier_refresh.get('recurring_shadow_refresh_status')}")
-    btst_rollout_governance_refresh = manifest.get("btst_rollout_governance_refresh") or {}
-    if btst_rollout_governance_refresh:
-        lines.append(f"- btst_rollout_governance_refresh_status: {btst_rollout_governance_refresh.get('status')}")
-        lines.append(f"- btst_rollout_governance_row_count: {btst_rollout_governance_refresh.get('governance_row_count')}")
-        lines.append(f"- btst_rollout_governance_penalty_status: {btst_rollout_governance_refresh.get('penalty_frontier_status')}")
-    btst_governance_synthesis_refresh = manifest.get("btst_governance_synthesis_refresh") or {}
-    if btst_governance_synthesis_refresh:
-        lines.append(f"- btst_governance_synthesis_status: {btst_governance_synthesis_refresh.get('status')}")
-        lines.append(f"- btst_governance_synthesis_waiting_lane_count: {btst_governance_synthesis_refresh.get('waiting_lane_count')}")
-        lines.append(f"- btst_governance_synthesis_ready_lane_count: {btst_governance_synthesis_refresh.get('ready_lane_count')}")
-    btst_governance_validation_refresh = manifest.get("btst_governance_validation_refresh") or {}
-    if btst_governance_validation_refresh:
-        lines.append(f"- btst_governance_validation_status: {btst_governance_validation_refresh.get('status')}")
-        lines.append(f"- btst_governance_validation_overall_verdict: {btst_governance_validation_refresh.get('overall_verdict')}")
-    btst_replay_cohort_refresh = manifest.get("btst_replay_cohort_refresh") or {}
-    if btst_replay_cohort_refresh:
-        lines.append(f"- btst_replay_cohort_status: {btst_replay_cohort_refresh.get('status')}")
-        lines.append(f"- btst_replay_cohort_report_count: {btst_replay_cohort_refresh.get('report_count')}")
-        lines.append(f"- btst_replay_cohort_short_trade_only_report_count: {btst_replay_cohort_refresh.get('short_trade_only_report_count')}")
-    btst_independent_window_monitor_refresh = manifest.get("btst_independent_window_monitor_refresh") or {}
-    if btst_independent_window_monitor_refresh:
-        lines.append(f"- btst_independent_window_monitor_status: {btst_independent_window_monitor_refresh.get('status')}")
-        lines.append(f"- btst_independent_window_monitor_report_dir_count: {btst_independent_window_monitor_refresh.get('report_dir_count')}")
-        lines.append(f"- btst_independent_window_monitor_ready_lane_count: {btst_independent_window_monitor_refresh.get('ready_lane_count')}")
-        lines.append(f"- btst_independent_window_monitor_waiting_lane_count: {btst_independent_window_monitor_refresh.get('waiting_lane_count')}")
-    btst_tplus1_tplus2_objective_monitor_refresh = manifest.get("btst_tplus1_tplus2_objective_monitor_refresh") or {}
-    if btst_tplus1_tplus2_objective_monitor_refresh:
-        lines.append(f"- btst_tplus1_tplus2_objective_monitor_status: {btst_tplus1_tplus2_objective_monitor_refresh.get('status')}")
-        lines.append(f"- btst_tplus1_tplus2_objective_monitor_report_dir_count: {btst_tplus1_tplus2_objective_monitor_refresh.get('report_dir_count')}")
-        lines.append(f"- btst_tplus1_tplus2_objective_monitor_tradeable_closed_cycle_count: {btst_tplus1_tplus2_objective_monitor_refresh.get('tradeable_closed_cycle_count')}")
-        lines.append(f"- btst_tplus1_tplus2_objective_monitor_tradeable_positive_rate: {btst_tplus1_tplus2_objective_monitor_refresh.get('tradeable_positive_rate')}")
-        lines.append(f"- btst_tplus1_tplus2_objective_monitor_tradeable_return_hit_rate: {btst_tplus1_tplus2_objective_monitor_refresh.get('tradeable_return_hit_rate')}")
-        lines.append(f"- btst_tplus1_tplus2_objective_monitor_best_ticker: {btst_tplus1_tplus2_objective_monitor_refresh.get('best_ticker')}")
-    btst_tradeable_opportunity_pool_refresh = manifest.get("btst_tradeable_opportunity_pool_refresh") or {}
-    if btst_tradeable_opportunity_pool_refresh:
-        lines.append(f"- btst_tradeable_opportunity_pool_refresh_status: {btst_tradeable_opportunity_pool_refresh.get('status')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_result_truth_count: {btst_tradeable_opportunity_pool_refresh.get('result_truth_pool_count')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_tradeable_count: {btst_tradeable_opportunity_pool_refresh.get('tradeable_opportunity_pool_count')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_capture_rate: {btst_tradeable_opportunity_pool_refresh.get('tradeable_pool_capture_rate')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_selected_or_near_miss_rate: {btst_tradeable_opportunity_pool_refresh.get('tradeable_pool_selected_or_near_miss_rate')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_strict_goal_false_negative_count: {btst_tradeable_opportunity_pool_refresh.get('strict_goal_false_negative_count')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_top_kill_switches: {btst_tradeable_opportunity_pool_refresh.get('top_tradeable_kill_switch_labels')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_no_candidate_entry_count: {btst_tradeable_opportunity_pool_refresh.get('no_candidate_entry_count')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_top_no_candidate_entry_industries: {btst_tradeable_opportunity_pool_refresh.get('top_no_candidate_entry_industries')}")
-        lines.append(f"- btst_tradeable_opportunity_pool_top_no_candidate_entry_tickers: {btst_tradeable_opportunity_pool_refresh.get('top_no_candidate_entry_tickers')}")
-    latest_btst_run = manifest.get("latest_btst_run") or {}
-    if latest_btst_run:
-        lines.append(f"- latest_btst_report_dir: {latest_btst_run['report_dir']}")
-        lines.append(f"- latest_btst_trade_date: {latest_btst_run.get('trade_date')}")
-        lines.append(f"- latest_btst_next_trade_date: {latest_btst_run.get('next_trade_date')}")
-        lines.append(f"- latest_btst_selection_target: {latest_btst_run.get('selection_target')}")
-    lines.append("")
+    for refresh_key, field_specs in (
+        (
+            "catalyst_theme_frontier_refresh",
+            [
+                ("catalyst_theme_frontier_refresh_status", "status", "always"),
+                ("catalyst_theme_frontier_shadow_candidate_count", "shadow_candidate_count", "always"),
+                ("catalyst_theme_frontier_promoted_shadow_count", "recommended_promoted_shadow_count", "always"),
+                ("catalyst_theme_frontier_recommended_variant", "recommended_variant_name", "always"),
+            ],
+        ),
+        (
+            "btst_window_evidence_refresh",
+            [
+                ("btst_window_evidence_refresh_status", "status", "always"),
+                ("btst_window_evidence_window_report_count", "window_report_count", "always"),
+                ("btst_window_evidence_candidate_count", "candidate_count", "always"),
+                ("btst_window_evidence_stable_candidate_count", "stable_candidate_count", "always"),
+                ("btst_window_evidence_primary_refresh_status", "primary_refresh_status", "always"),
+                ("btst_window_evidence_primary_missing_window_count", "primary_missing_window_count", "always"),
+            ],
+        ),
+    ):
+        payload = dict(manifest.get(refresh_key) or {})
+        if payload:
+            _append_markdown_field_lines(lines, payload=payload, field_specs=field_specs)
 
-    for reading_path in list(manifest.get("reading_paths") or []):
+
+def _append_candidate_entry_shadow_refresh(lines: list[str], payload: dict[str, Any]) -> None:
+    if not payload:
+        return
+    _append_markdown_field_lines(
+        lines,
+        payload=payload,
+        field_specs=[
+            ("candidate_entry_shadow_refresh_status", "status", "always"),
+            ("candidate_entry_shadow_refresh_window_reports", "window_report_count", "always"),
+            ("candidate_entry_shadow_refresh_filtered_reports", "filtered_report_count", "always"),
+            ("candidate_entry_shadow_refresh_rollout_readiness", "rollout_readiness", "always"),
+            ("candidate_entry_shadow_no_candidate_entry_action_board_status", "no_candidate_entry_action_board_status", "not_none"),
+            ("candidate_entry_shadow_no_candidate_entry_priority_queue_count", "no_candidate_entry_priority_queue_count", "not_none"),
+            ("candidate_entry_shadow_no_candidate_entry_top_tickers", "no_candidate_entry_top_tickers", "not_none"),
+            ("candidate_entry_shadow_no_candidate_entry_replay_bundle_status", "no_candidate_entry_replay_bundle_status", "not_none"),
+            ("candidate_entry_shadow_no_candidate_entry_promising_tickers", "no_candidate_entry_promising_tickers", "not_none"),
+            ("candidate_entry_shadow_no_candidate_entry_failure_dossier_status", "no_candidate_entry_failure_dossier_status", "not_none"),
+            ("candidate_entry_shadow_no_candidate_entry_upstream_absence_tickers", "no_candidate_entry_upstream_absence_tickers", "not_none"),
+            ("candidate_entry_shadow_no_candidate_entry_semantic_miss_tickers", "no_candidate_entry_semantic_miss_tickers", "not_none"),
+            ("candidate_entry_shadow_watchlist_recall_dossier_status", "watchlist_recall_dossier_status", "not_none"),
+            ("candidate_entry_shadow_watchlist_recall_stage_counts", "watchlist_recall_stage_counts", "not_none"),
+            ("candidate_entry_shadow_watchlist_recall_absent_from_candidate_pool_tickers", "watchlist_recall_absent_from_candidate_pool_tickers", "not_none"),
+            ("candidate_entry_shadow_watchlist_recall_candidate_pool_layer_b_gap_tickers", "watchlist_recall_candidate_pool_layer_b_gap_tickers", "not_none"),
+            ("candidate_entry_shadow_watchlist_recall_layer_b_watchlist_gap_tickers", "watchlist_recall_layer_b_watchlist_gap_tickers", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_recall_dossier_status", "candidate_pool_recall_dossier_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_recall_stage_counts", "candidate_pool_recall_stage_counts", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_recall_dominant_stage", "candidate_pool_recall_dominant_stage", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_recall_top_stage_tickers", "candidate_pool_recall_top_stage_tickers", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary", "candidate_pool_recall_truncation_frontier_summary", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_recall_dominant_liquidity_gap_mode", "candidate_pool_recall_dominant_liquidity_gap_mode", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_recall_focus_liquidity_profiles", "candidate_pool_recall_focus_liquidity_profiles", "truthy"),
+            ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_counts", "candidate_pool_recall_priority_handoff_counts", "truthy"),
+            ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_diagnoses", "candidate_pool_recall_priority_handoff_branch_diagnoses", "truthy"),
+            ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_mechanisms", "candidate_pool_recall_priority_handoff_branch_mechanisms", "truthy"),
+            ("candidate_entry_shadow_candidate_pool_branch_priority_board_status", "candidate_pool_branch_priority_board_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_branch_priority_alignment_status", "candidate_pool_branch_priority_alignment_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_branch_priority_alignment_summary", "candidate_pool_branch_priority_alignment_summary", "truthy"),
+            ("candidate_entry_shadow_candidate_pool_lane_objective_support_status", "candidate_pool_lane_objective_support_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_corridor_validation_pack_status", "candidate_pool_corridor_validation_pack_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_corridor_shadow_pack_status", "candidate_pool_corridor_shadow_pack_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status", "candidate_pool_rebucket_shadow_pack_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_rebucket_objective_validation_status", "candidate_pool_rebucket_objective_validation_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_status", "candidate_pool_rebucket_comparison_bundle_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_lane_pair_board_status", "candidate_pool_lane_pair_board_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_upstream_handoff_board_status", "candidate_pool_upstream_handoff_board_status", "not_none"),
+            ("candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_status", "candidate_pool_corridor_uplift_runbook_status", "not_none"),
+        ],
+    )
+    branch_experiment_queue = list(payload.get("candidate_pool_recall_priority_handoff_branch_experiment_queue") or [])
+    if branch_experiment_queue:
+        lines.append("- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
+        lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
+        for experiment in branch_experiment_queue[:3]:
+            lines.append(
+                f"- candidate_entry_shadow_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
+            )
+            lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
+            lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
+            lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
+    for row in list(payload.get("candidate_pool_branch_priority_board_rows") or [])[:3]:
+        lines.append(
+            f"- candidate_entry_shadow_candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
+        )
+    for row in list(payload.get("candidate_pool_lane_objective_support_rows") or [])[:3]:
+        lines.append(
+            f"- candidate_entry_shadow_candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
+        )
+    for key, formatter in (
+        (
+            "candidate_pool_corridor_validation_pack_summary",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_corridor_validation_pack_summary: pack_status={summary.get('pack_status')} primary_validation_ticker={summary.get('primary_validation_ticker')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}",
+        ),
+        (
+            "candidate_pool_corridor_shadow_pack_summary",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_corridor_shadow_pack_summary: shadow_status={summary.get('shadow_status')} primary_shadow_replay={summary.get('primary_shadow_replay')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}",
+        ),
+        (
+            "candidate_pool_rebucket_shadow_pack_experiment",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_experiment: handoff={summary.get('priority_handoff')} readiness={summary.get('prototype_readiness')} tickers={summary.get('tickers')}",
+        ),
+        (
+            "candidate_pool_rebucket_objective_validation_summary",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_rebucket_objective_validation_summary: validation_status={summary.get('validation_status')} support_verdict={summary.get('support_verdict')} mean_t_plus_2_return={summary.get('mean_t_plus_2_return')}",
+        ),
+        (
+            "candidate_pool_rebucket_comparison_bundle_summary",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_summary: bundle_status={summary.get('bundle_status')} structural_leader={summary.get('structural_leader')} objective_leader={summary.get('objective_leader')}",
+        ),
+        (
+            "candidate_pool_lane_pair_board_summary",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_lane_pair_board_summary: pair_status={summary.get('pair_status')} board_leader={summary.get('board_leader')} leader_lane_family={summary.get('leader_lane_family')} leader_governance_status={summary.get('leader_governance_status')} leader_governance_execution_quality={summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={summary.get('parallel_watch_next_close_return_mean')}",
+        ),
+        (
+            "candidate_pool_upstream_handoff_board_summary",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_upstream_handoff_board_summary: board_status={summary.get('board_status')} focus_tickers={summary.get('focus_tickers')} first_broken_handoff_counts={summary.get('first_broken_handoff_counts')}",
+        ),
+        (
+            "candidate_pool_corridor_uplift_runbook_summary",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_summary: runbook_status={summary.get('runbook_status')} primary_shadow_replay={summary.get('primary_shadow_replay')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}",
+        ),
+    ):
+        summary = dict(payload.get(key) or {})
+        if summary:
+            lines.append(formatter(summary))
+
+
+def _append_manifest_summary_sections(lines: list[str], manifest: dict[str, Any]) -> None:
+    for key, formatter in (
+        (
+            "continuation_focus_summary",
+            lambda summary: f"- continuation_focus_summary: focus_ticker={summary.get('focus_ticker')} promotion_review_verdict={summary.get('promotion_review_verdict')} promotion_gate_verdict={summary.get('promotion_gate_verdict')} watchlist_execution_verdict={summary.get('watchlist_execution_verdict')} focus_watch_validation_status={summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={summary.get('eligible_gate_verdict')} execution_gate_verdict={summary.get('execution_gate_verdict')} execution_gate_blockers={summary.get('execution_gate_blockers')} execution_overlay_verdict={summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={summary.get('execution_overlay_lane_support_ratio')} governance_status={summary.get('governance_status')}",
+        ),
+        (
+            "selected_outcome_refresh_summary",
+            lambda summary: f"- selected_outcome_refresh_summary: trade_date={summary.get('trade_date')} selected_count={summary.get('selected_count')} focus_ticker={summary.get('focus_ticker')} focus_cycle_status={summary.get('focus_cycle_status')} focus_data_status={summary.get('focus_data_status')} focus_next_close_return={summary.get('focus_next_close_return')} focus_t_plus_2_close_return={summary.get('focus_t_plus_2_close_return')} focus_historical_next_close_positive_rate={summary.get('focus_historical_next_close_positive_rate')} focus_historical_t_plus_2_close_positive_rate={summary.get('focus_historical_t_plus_2_close_positive_rate')} focus_next_day_contract_verdict={summary.get('focus_next_day_contract_verdict')} focus_t_plus_2_contract_verdict={summary.get('focus_t_plus_2_contract_verdict')} focus_overall_contract_verdict={summary.get('focus_overall_contract_verdict')}",
+        ),
+        (
+            "carryover_multiday_continuation_audit_summary",
+            lambda summary: f"- carryover_multiday_continuation_audit_summary: selected_ticker={summary.get('selected_ticker')} supportive_case_count={summary.get('supportive_case_count')} peer_status_counts={summary.get('peer_status_counts')} selected_path_t2_bias_only={summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={summary.get('broad_family_only_multiday_unsupported')} aligned_peer_multiday_ready={summary.get('aligned_peer_multiday_ready')} open_selected_case_count={summary.get('open_selected_case_count')} selected_t_plus_3_close_positive_rate={summary.get('selected_t_plus_3_close_positive_rate')} broad_family_only_next_close_positive_rate={summary.get('broad_family_only_next_close_positive_rate')}",
+        ),
+        ("carryover_aligned_peer_harvest_summary", lambda summary: f"- carryover_aligned_peer_harvest_summary: focus_ticker={summary.get('focus_ticker')} focus_status={summary.get('focus_status')} focus_latest_trade_date={summary.get('focus_latest_trade_date')} focus_latest_scope={summary.get('focus_latest_scope')} focus_closed_cycle_count={summary.get('focus_closed_cycle_count')} focus_next_day_available_count={summary.get('focus_next_day_available_count')} fresh_open_cycle_tickers={summary.get('fresh_open_cycle_tickers')}"),
+        ("carryover_peer_expansion_summary", lambda summary: f"- carryover_peer_expansion_summary: focus_ticker={summary.get('focus_ticker')} focus_status={summary.get('focus_status')} priority_expansion_tickers={summary.get('priority_expansion_tickers')} watch_with_risk_tickers={summary.get('watch_with_risk_tickers')} expansion_status_counts={summary.get('expansion_status_counts')}"),
+        ("carryover_aligned_peer_proof_summary", lambda summary: f"- carryover_aligned_peer_proof_summary: focus_ticker={summary.get('focus_ticker')} focus_proof_verdict={summary.get('focus_proof_verdict')} focus_promotion_review_verdict={summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={summary.get('risk_review_tickers')} pending_t_plus_2_tickers={summary.get('pending_t_plus_2_tickers')}"),
+        ("carryover_peer_promotion_gate_summary", lambda summary: f"- carryover_peer_promotion_gate_summary: focus_ticker={summary.get('focus_ticker')} focus_gate_verdict={summary.get('focus_gate_verdict')} ready_tickers={summary.get('ready_tickers')} blocked_open_tickers={summary.get('blocked_open_tickers')} risk_review_tickers={summary.get('risk_review_tickers')} pending_t_plus_2_tickers={summary.get('pending_t_plus_2_tickers')}"),
+        ("continuation_promotion_ready_summary", lambda summary: f"- continuation_promotion_ready_summary: focus_ticker={summary.get('focus_ticker')} promotion_path_status={summary.get('promotion_path_status')} blockers_remaining_count={summary.get('blockers_remaining_count')} observed_independent_window_count={summary.get('observed_independent_window_count')} weighted_observed_window_credit={summary.get('weighted_observed_window_credit')} missing_independent_window_count={summary.get('missing_independent_window_count')} weighted_missing_window_credit={summary.get('weighted_missing_window_credit')} candidate_dossier_support_trade_date_count={summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={summary.get('candidate_dossier_same_trade_date_variant_count')} candidate_dossier_same_trade_date_variant_credit={summary.get('candidate_dossier_same_trade_date_variant_credit')} persistence_verdict={summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={summary.get('ready_after_next_qualifying_window')} next_window_requirement={summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')}"),
+        ("default_merge_review_summary", lambda summary: f"- default_merge_review_summary: focus_ticker={summary.get('focus_ticker')} merge_review_verdict={summary.get('merge_review_verdict')} operator_action={summary.get('operator_action')} counterfactual_verdict={dict(summary.get('counterfactual_validation') or {}).get('counterfactual_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_positive_rate_margin_vs_threshold={dict(summary.get('counterfactual_validation') or {}).get('t_plus_2_positive_rate_margin_vs_threshold')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')} t_plus_2_mean_return_margin_vs_threshold={dict(summary.get('counterfactual_validation') or {}).get('t_plus_2_mean_return_margin_vs_threshold')}"),
+        ("default_merge_historical_counterfactual_summary", lambda summary: f"- default_merge_historical_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} counterfactual_verdict={summary.get('counterfactual_verdict')} merged_positive_rate_uplift={dict(summary.get('uplift_vs_default_btst') or {}).get('t_plus_2_positive_rate_uplift')} merged_mean_return_uplift={dict(summary.get('uplift_vs_default_btst') or {}).get('mean_t_plus_2_return_uplift')}"),
+        ("continuation_merge_candidate_ranking_summary", lambda summary: f"- continuation_merge_candidate_ranking_summary: candidate_count={summary.get('candidate_count')} top_ticker={dict(summary.get('top_candidate') or {}).get('ticker')} top_stage={dict(summary.get('top_candidate') or {}).get('promotion_path_status') or dict(summary.get('top_candidate') or {}).get('promotion_readiness_verdict')} top_positive_rate_delta={dict(summary.get('top_candidate') or {}).get('t_plus_2_positive_rate_delta_vs_default_btst')} top_mean_return_delta={dict(summary.get('top_candidate') or {}).get('t_plus_2_mean_return_delta_vs_default_btst')}"),
+        ("default_merge_strict_counterfactual_summary", lambda summary: f"- default_merge_strict_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} strict_counterfactual_verdict={summary.get('strict_counterfactual_verdict')} overlap_case_count={dict(summary.get('overlap_diagnostics') or {}).get('overlap_case_count')} strict_positive_rate_uplift={dict(summary.get('strict_uplift_vs_default_btst') or {}).get('t_plus_2_positive_rate_uplift')} strict_mean_return_uplift={dict(summary.get('strict_uplift_vs_default_btst') or {}).get('mean_t_plus_2_return_uplift')}"),
+        ("merge_replay_validation_summary", lambda summary: f"- merge_replay_validation_summary: overall_verdict={summary.get('overall_verdict')} focus_tickers={summary.get('focus_tickers')} promoted_to_selected_count={summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={summary.get('promoted_to_near_miss_count')} relief_applied_count={summary.get('relief_applied_count')} relief_actionable_applied_count={summary.get('relief_actionable_applied_count')} relief_already_selected_count={summary.get('relief_already_selected_count')} relief_positive_promotion_precision={summary.get('relief_positive_promotion_precision')} relief_actionable_positive_promotion_precision={summary.get('relief_actionable_positive_promotion_precision')} relief_no_promotion_ratio={summary.get('relief_no_promotion_ratio')} relief_actionable_no_promotion_ratio={summary.get('relief_actionable_no_promotion_ratio')} relief_decision_deteriorated_count={summary.get('relief_decision_deteriorated_count')} recommended_next_lever={summary.get('recommended_next_lever')} recommended_signal_levers={summary.get('recommended_signal_levers')}"),
+        ("prepared_breakout_relief_validation_summary", lambda summary: f"- prepared_breakout_relief_validation_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} selected_relief_window_count={summary.get('selected_relief_window_count')} selected_relief_alignment_rate={summary.get('selected_relief_alignment_rate')} outcome_support={dict(summary.get('outcome_support') or {}).get('evidence_status')}"),
+        ("prepared_breakout_cohort_summary", lambda summary: f"- prepared_breakout_cohort_summary: verdict={summary.get('verdict')} candidate_count={summary.get('candidate_count')} selected_frontier_candidate_count={summary.get('selected_frontier_candidate_count')} next_candidate={dict(summary.get('next_candidate') or {}).get('ticker')}"),
+        ("prepared_breakout_residual_surface_summary", lambda summary: f"- prepared_breakout_residual_surface_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} focus_report_dir_count={summary.get('focus_report_dir_count')}"),
+        ("candidate_pool_corridor_persistence_dossier_summary", lambda summary: f"- candidate_pool_corridor_persistence_dossier_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} next_confirmation_requirement={summary.get('next_confirmation_requirement')}"),
+        ("candidate_pool_corridor_window_command_board_summary", lambda summary: f"- candidate_pool_corridor_window_command_board_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} next_target_trade_dates={summary.get('next_target_trade_dates')}"),
+        ("candidate_pool_corridor_window_diagnostics_summary", lambda summary: f"- candidate_pool_corridor_window_diagnostics_summary: focus_ticker={summary.get('focus_ticker')} near_miss_verdict={dict(summary.get('near_miss_upgrade_window') or {}).get('verdict')} visibility_gap_verdict={dict(summary.get('visibility_gap_window') or {}).get('verdict')} recommendation={summary.get('recommendation')}"),
+        ("candidate_pool_corridor_narrow_probe_summary", lambda summary: f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} threshold_override_gap_vs_anchor={summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={summary.get('target_gap_to_selected')}"),
+        ("transient_probe_summary", lambda summary: f"- transient_probe_summary: ticker={summary.get('ticker')} status={summary.get('status')} blocker={summary.get('blocker')} candidate_source={summary.get('candidate_source')} score_state={summary.get('score_state')} downstream_bottleneck={summary.get('downstream_bottleneck')} historical_sample_count={summary.get('historical_sample_count')} historical_next_close_positive_rate={summary.get('historical_next_close_positive_rate')}"),
+        ("execution_constraint_rollup", lambda summary: f"- execution_constraint_rollup: constraint_count={summary.get('constraint_count')} continuation_focus_tickers={summary.get('continuation_focus_tickers')} continuation_blockers={summary.get('continuation_blockers')} shadow_focus_tickers={summary.get('shadow_focus_tickers')} shadow_blockers={summary.get('shadow_blockers')}"),
+    ):
+        summary = dict(manifest.get(key) or {})
+        if summary:
+            lines.append(formatter(summary))
+
+
+def _append_manifest_trailing_refreshes(lines: list[str], manifest: dict[str, Any]) -> None:
+    for refresh_key, field_specs in (
+        ("btst_score_fail_frontier_refresh", [("btst_score_fail_frontier_refresh_status", "status", "always"), ("btst_score_fail_frontier_rejected_case_count", "rejected_short_trade_boundary_count", "always"), ("btst_score_fail_frontier_rescueable_case_count", "rescueable_case_count", "always"), ("btst_score_fail_frontier_recurring_case_count", "recurring_case_count", "always"), ("btst_score_fail_frontier_transition_refresh_status", "transition_refresh_status", "always"), ("btst_score_fail_frontier_recurring_shadow_refresh_status", "recurring_shadow_refresh_status", "always")]),
+        ("btst_rollout_governance_refresh", [("btst_rollout_governance_refresh_status", "status", "always"), ("btst_rollout_governance_row_count", "governance_row_count", "always"), ("btst_rollout_governance_penalty_status", "penalty_frontier_status", "always")]),
+        ("btst_governance_synthesis_refresh", [("btst_governance_synthesis_status", "status", "always"), ("btst_governance_synthesis_waiting_lane_count", "waiting_lane_count", "always"), ("btst_governance_synthesis_ready_lane_count", "ready_lane_count", "always")]),
+        ("btst_governance_validation_refresh", [("btst_governance_validation_status", "status", "always"), ("btst_governance_validation_overall_verdict", "overall_verdict", "always")]),
+        ("btst_replay_cohort_refresh", [("btst_replay_cohort_status", "status", "always"), ("btst_replay_cohort_report_count", "report_count", "always"), ("btst_replay_cohort_short_trade_only_report_count", "short_trade_only_report_count", "always")]),
+        ("btst_independent_window_monitor_refresh", [("btst_independent_window_monitor_status", "status", "always"), ("btst_independent_window_monitor_report_dir_count", "report_dir_count", "always"), ("btst_independent_window_monitor_ready_lane_count", "ready_lane_count", "always"), ("btst_independent_window_monitor_waiting_lane_count", "waiting_lane_count", "always")]),
+        ("btst_tplus1_tplus2_objective_monitor_refresh", [("btst_tplus1_tplus2_objective_monitor_status", "status", "always"), ("btst_tplus1_tplus2_objective_monitor_report_dir_count", "report_dir_count", "always"), ("btst_tplus1_tplus2_objective_monitor_tradeable_closed_cycle_count", "tradeable_closed_cycle_count", "always"), ("btst_tplus1_tplus2_objective_monitor_tradeable_positive_rate", "tradeable_positive_rate", "always"), ("btst_tplus1_tplus2_objective_monitor_tradeable_return_hit_rate", "tradeable_return_hit_rate", "always"), ("btst_tplus1_tplus2_objective_monitor_best_ticker", "best_ticker", "always")]),
+        ("btst_tradeable_opportunity_pool_refresh", [("btst_tradeable_opportunity_pool_refresh_status", "status", "always"), ("btst_tradeable_opportunity_pool_result_truth_count", "result_truth_pool_count", "always"), ("btst_tradeable_opportunity_pool_tradeable_count", "tradeable_opportunity_pool_count", "always"), ("btst_tradeable_opportunity_pool_capture_rate", "tradeable_pool_capture_rate", "always"), ("btst_tradeable_opportunity_pool_selected_or_near_miss_rate", "tradeable_pool_selected_or_near_miss_rate", "always"), ("btst_tradeable_opportunity_pool_strict_goal_false_negative_count", "strict_goal_false_negative_count", "always"), ("btst_tradeable_opportunity_pool_top_kill_switches", "top_tradeable_kill_switch_labels", "always"), ("btst_tradeable_opportunity_pool_no_candidate_entry_count", "no_candidate_entry_count", "always"), ("btst_tradeable_opportunity_pool_top_no_candidate_entry_industries", "top_no_candidate_entry_industries", "always"), ("btst_tradeable_opportunity_pool_top_no_candidate_entry_tickers", "top_no_candidate_entry_tickers", "always")]),
+        ("latest_btst_run", [("latest_btst_report_dir", "report_dir", "always"), ("latest_btst_trade_date", "trade_date", "always"), ("latest_btst_next_trade_date", "next_trade_date", "always"), ("latest_btst_selection_target", "selection_target", "always")]),
+    ):
+        payload = dict(manifest.get(refresh_key) or {})
+        if payload:
+            _append_markdown_field_lines(lines, payload=payload, field_specs=field_specs)
+
+
+def _append_manifest_reading_paths(
+    lines: list[str],
+    *,
+    reading_paths: list[dict[str, Any]],
+    entries_by_id: dict[str, dict[str, Any]],
+    resolved_output_parent: Path,
+) -> None:
+    lines.append("")
+    for reading_path in reading_paths:
         lines.append(f"## {reading_path['title']}")
         lines.append("")
         lines.append(reading_path["description"])
@@ -4082,6 +3959,24 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
             lines.append(f"   用途：{entry['question']}")
             lines.append(f"   类型：{entry['report_type']} | usage={entry['usage']} | priority={entry['priority']}")
         lines.append("")
+
+
+def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent: str | Path) -> str:
+    resolved_output_parent = Path(output_parent).expanduser().resolve()
+    entries_by_id = {entry["id"]: entry for entry in list(manifest.get("entries") or [])}
+
+    lines: list[str] = []
+    _append_manifest_header(lines, manifest)
+    _append_candidate_entry_shadow_refresh(lines, dict(manifest.get("candidate_entry_shadow_refresh") or {}))
+    _append_manifest_summary_sections(lines, manifest)
+    
+    _append_manifest_trailing_refreshes(lines, manifest)
+    _append_manifest_reading_paths(
+        lines,
+        reading_paths=list(manifest.get("reading_paths") or []),
+        entries_by_id=entries_by_id,
+        resolved_output_parent=resolved_output_parent,
+    )
 
     return "\n".join(lines).rstrip() + "\n"
 

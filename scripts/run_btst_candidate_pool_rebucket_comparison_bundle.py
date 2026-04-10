@@ -49,16 +49,15 @@ def _find_branch_row(rows: list[dict[str, Any]], handoff: str) -> dict[str, Any]
     return {}
 
 
-def analyze_btst_candidate_pool_rebucket_comparison_bundle(
-    dossier_path: str | Path,
+def _load_rebucket_bundle_inputs(
     *,
-    lane_objective_support_path: str | Path | None = None,
-    branch_priority_board_path: str | Path | None = None,
-    rebucket_shadow_pack_path: str | Path | None = None,
-    rebucket_objective_validation_path: str | Path | None = None,
-    objective_monitor_path: str | Path | None = None,
-) -> dict[str, Any]:
-    resolved_dossier_path = Path(dossier_path).expanduser().resolve()
+    resolved_dossier_path: Path,
+    lane_objective_support_path: str | Path | None,
+    branch_priority_board_path: str | Path | None,
+    rebucket_shadow_pack_path: str | Path | None,
+    rebucket_objective_validation_path: str | Path | None,
+    objective_monitor_path: str | Path | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     lane_support = _maybe_load_json(lane_objective_support_path)
     if not lane_support:
         lane_support = analyze_btst_candidate_pool_lane_objective_support(
@@ -90,36 +89,34 @@ def analyze_btst_candidate_pool_rebucket_comparison_bundle(
             objective_monitor_path=objective_monitor_path,
             lane_objective_support_path=lane_objective_support_path,
         )
+    return lane_support, branch_priority_board, rebucket_shadow_pack, rebucket_validation
 
-    structural_rows = list(branch_priority_board.get("branch_rows") or [])
-    objective_rows = list(lane_support.get("branch_rows") or [])
-    structural_leader = dict(structural_rows[0]) if structural_rows else {}
-    objective_leader = dict(objective_rows[0]) if objective_rows else {}
-    rebucket_structural_row = _find_branch_row(structural_rows, "post_gate_liquidity_competition")
-    rebucket_objective_row = dict(rebucket_validation.get("branch_objective_row") or {})
-    rebucket_shadow_status = str(rebucket_shadow_pack.get("shadow_status") or "")
 
-    if not rebucket_objective_row:
-        rebucket_objective_row = _find_branch_row(objective_rows, "post_gate_liquidity_competition")
-    if rebucket_shadow_status and rebucket_shadow_status != "ready_for_rebucket_shadow_replay":
-        rebucket_structural_row = {}
-        rebucket_objective_row = {}
-
-    corridor_objective_row = _find_branch_row(objective_rows, "layer_a_liquidity_corridor")
-    validation_status = str(rebucket_validation.get("validation_status") or "skipped_no_rebucket_candidate")
-
+def _resolve_rebucket_bundle_status(
+    *,
+    rebucket_structural_row: dict[str, Any],
+    rebucket_objective_row: dict[str, Any],
+    validation_status: str,
+) -> str:
     if not rebucket_structural_row and not rebucket_objective_row:
-        bundle_status = "skipped_no_rebucket_lane"
-    elif validation_status == "advance_shadow_replay_comparison":
-        bundle_status = "ready_for_parallel_comparison"
-    elif validation_status == "keep_first_priority_shadow_validation":
-        bundle_status = "keep_shadow_first"
-    elif validation_status == "accumulate_more_closed_cycle_support":
-        bundle_status = "needs_more_closed_cycle_support"
-    else:
-        bundle_status = "hold_structure_only"
+        return "skipped_no_rebucket_lane"
+    if validation_status == "advance_shadow_replay_comparison":
+        return "ready_for_parallel_comparison"
+    if validation_status == "keep_first_priority_shadow_validation":
+        return "keep_shadow_first"
+    if validation_status == "accumulate_more_closed_cycle_support":
+        return "needs_more_closed_cycle_support"
+    return "hold_structure_only"
 
-    comparison = {
+
+def _build_rebucket_bundle_comparison(
+    *,
+    rebucket_structural_row: dict[str, Any],
+    objective_leader: dict[str, Any],
+    rebucket_objective_row: dict[str, Any],
+    corridor_objective_row: dict[str, Any],
+) -> dict[str, Any]:
+    return {
         "structural_rank_gap_vs_objective_leader": _delta(
             rebucket_structural_row.get("execution_priority_rank"),
             objective_leader.get("objective_priority_rank"),
@@ -142,6 +139,13 @@ def analyze_btst_candidate_pool_rebucket_comparison_bundle(
         ),
     }
 
+
+def _build_rebucket_bundle_guidance(
+    *,
+    bundle_status: str,
+    validation_status: str,
+    comparison: dict[str, Any],
+) -> tuple[str, str]:
     if bundle_status == "ready_for_parallel_comparison":
         recommendation = (
             "rebucket lane 已具备进入 parallel comparison bundle 的条件。"
@@ -163,6 +167,60 @@ def analyze_btst_candidate_pool_rebucket_comparison_bundle(
         if bundle_status == "skipped_no_rebucket_lane"
         else "对 301292 保持 rebucket shadow replay，对照 corridor objective leader 的 300720/003036 并行验证结果；"
         "只有当 rebucket 在新增 closed-cycle 样本里继续维持不弱于 tradeable surface，才讨论进一步治理升级。"
+    )
+    return recommendation, next_step
+
+
+def analyze_btst_candidate_pool_rebucket_comparison_bundle(
+    dossier_path: str | Path,
+    *,
+    lane_objective_support_path: str | Path | None = None,
+    branch_priority_board_path: str | Path | None = None,
+    rebucket_shadow_pack_path: str | Path | None = None,
+    rebucket_objective_validation_path: str | Path | None = None,
+    objective_monitor_path: str | Path | None = None,
+) -> dict[str, Any]:
+    resolved_dossier_path = Path(dossier_path).expanduser().resolve()
+    lane_support, branch_priority_board, rebucket_shadow_pack, rebucket_validation = _load_rebucket_bundle_inputs(
+        resolved_dossier_path=resolved_dossier_path,
+        lane_objective_support_path=lane_objective_support_path,
+        branch_priority_board_path=branch_priority_board_path,
+        rebucket_shadow_pack_path=rebucket_shadow_pack_path,
+        rebucket_objective_validation_path=rebucket_objective_validation_path,
+        objective_monitor_path=objective_monitor_path,
+    )
+
+    structural_rows = list(branch_priority_board.get("branch_rows") or [])
+    objective_rows = list(lane_support.get("branch_rows") or [])
+    structural_leader = dict(structural_rows[0]) if structural_rows else {}
+    objective_leader = dict(objective_rows[0]) if objective_rows else {}
+    rebucket_structural_row = _find_branch_row(structural_rows, "post_gate_liquidity_competition")
+    rebucket_objective_row = dict(rebucket_validation.get("branch_objective_row") or {})
+    rebucket_shadow_status = str(rebucket_shadow_pack.get("shadow_status") or "")
+
+    if not rebucket_objective_row:
+        rebucket_objective_row = _find_branch_row(objective_rows, "post_gate_liquidity_competition")
+    if rebucket_shadow_status and rebucket_shadow_status != "ready_for_rebucket_shadow_replay":
+        rebucket_structural_row = {}
+        rebucket_objective_row = {}
+
+    corridor_objective_row = _find_branch_row(objective_rows, "layer_a_liquidity_corridor")
+    validation_status = str(rebucket_validation.get("validation_status") or "skipped_no_rebucket_candidate")
+    bundle_status = _resolve_rebucket_bundle_status(
+        rebucket_structural_row=rebucket_structural_row,
+        rebucket_objective_row=rebucket_objective_row,
+        validation_status=validation_status,
+    )
+    comparison = _build_rebucket_bundle_comparison(
+        rebucket_structural_row=rebucket_structural_row,
+        objective_leader=objective_leader,
+        rebucket_objective_row=rebucket_objective_row,
+        corridor_objective_row=corridor_objective_row,
+    )
+    recommendation, next_step = _build_rebucket_bundle_guidance(
+        bundle_status=bundle_status,
+        validation_status=validation_status,
+        comparison=comparison,
     )
 
     return {

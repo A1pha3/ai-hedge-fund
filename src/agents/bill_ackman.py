@@ -134,21 +134,41 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze business quality"}
 
-    # 1. Multi-period revenue growth analysis - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
-    growth_rate = calculate_cagr_from_line_items(financial_line_items, field="revenue")
-    if growth_rate is not None:
-        if growth_rate > 0.15:  # 15% CAGR is strong
-            score += 2
-            details.append(f"Revenue CAGR of {growth_rate:.1%} over the period (strong growth).")
-        elif growth_rate > 0.05:  # 5% CAGR is moderate
-            score += 1
-            details.append(f"Revenue CAGR of {growth_rate:.1%} (moderate growth).")
-        else:
-            details.append(f"Revenue CAGR of {growth_rate:.1%} (weak growth).")
-    else:
-        details.append("Insufficient revenue data for CAGR calculation.")
+    growth_score, growth_detail = _analyze_ackman_revenue_growth(financial_line_items)
+    score += growth_score
+    details.append(growth_detail)
 
-    # 2. Operating margin and free cash flow consistency
+    profitability_score, profitability_details = _analyze_ackman_profitability_and_cash_flow(financial_line_items)
+    score += profitability_score
+    details.extend(profitability_details)
+
+    roe_score, roe_detail = _analyze_ackman_roe(metrics)
+    score += roe_score
+    details.append(roe_detail)
+
+    # 4. (Optional) Brand Intangible (if intangible_assets are fetched)
+    # intangible_vals = [item.intangible_assets for item in financial_line_items if item.intangible_assets]
+    # if intangible_vals and sum(intangible_vals) > 0:
+    #     details.append("Significant intangible assets may indicate brand value or proprietary tech.")
+    #     score += 1
+
+    return {"score": score, "details": "; ".join(details)}
+
+
+def _analyze_ackman_revenue_growth(financial_line_items: list) -> tuple[int, str]:
+    growth_rate = calculate_cagr_from_line_items(financial_line_items, field="revenue")
+    if growth_rate is None:
+        return 0, "Insufficient revenue data for CAGR calculation."
+    if growth_rate > 0.15:
+        return 2, f"Revenue CAGR of {growth_rate:.1%} over the period (strong growth)."
+    if growth_rate > 0.05:
+        return 1, f"Revenue CAGR of {growth_rate:.1%} (moderate growth)."
+    return 0, f"Revenue CAGR of {growth_rate:.1%} (weak growth)."
+
+
+def _analyze_ackman_profitability_and_cash_flow(financial_line_items: list) -> tuple[int, list[str]]:
+    score = 0
+    details: list[str] = []
     fcf_vals = [getattr(item, "free_cash_flow", None) for item in financial_line_items if getattr(item, "free_cash_flow", None) is not None]
     op_margin_vals = [getattr(item, "operating_margin", None) for item in financial_line_items if getattr(item, "operating_margin", None) is not None]
 
@@ -172,23 +192,60 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
     else:
         details.append("No free cash flow data across periods.")
 
-    # 3. Return on Equity (ROE) check from the latest metrics
+    return score, details
+
+
+def _analyze_ackman_roe(metrics: list) -> tuple[int, str]:
     latest_metrics = metrics[0]
     if latest_metrics.return_on_equity and latest_metrics.return_on_equity > 0.15:
-        score += 2
-        details.append(f"High ROE of {latest_metrics.return_on_equity:.1%}, indicating a competitive advantage.")
-    elif latest_metrics.return_on_equity:
-        details.append(f"ROE of {latest_metrics.return_on_equity:.1%} is moderate.")
-    else:
-        details.append("ROE data not available.")
+        return 2, f"High ROE of {latest_metrics.return_on_equity:.1%}, indicating a competitive advantage."
+    if latest_metrics.return_on_equity:
+        return 0, f"ROE of {latest_metrics.return_on_equity:.1%} is moderate."
+    return 0, "ROE data not available."
 
-    # 4. (Optional) Brand Intangible (if intangible_assets are fetched)
-    # intangible_vals = [item.intangible_assets for item in financial_line_items if item.intangible_assets]
-    # if intangible_vals and sum(intangible_vals) > 0:
-    #     details.append("Significant intangible assets may indicate brand value or proprietary tech.")
-    #     score += 1
 
-    return {"score": score, "details": "; ".join(details)}
+def _analyze_ackman_leverage(financial_line_items: list) -> tuple[int, str]:
+    debt_to_equity_vals = [getattr(item, "debt_to_equity", None) for item in financial_line_items if getattr(item, "debt_to_equity", None) is not None]
+    if debt_to_equity_vals:
+        below_one_count = sum(1 for d in debt_to_equity_vals if d < 1.0)
+        if below_one_count >= (len(debt_to_equity_vals) // 2 + 1):
+            return 2, "Debt-to-equity < 1.0 for the majority of periods (reasonable leverage)."
+        return 0, "Debt-to-equity >= 1.0 in many periods (could be high leverage)."
+
+    liab_to_assets = []
+    for item in financial_line_items:
+        total_liabilities = getattr(item, "total_liabilities", None)
+        total_assets = getattr(item, "total_assets", None)
+        if total_liabilities and total_assets and total_assets > 0:
+            liab_to_assets.append(total_liabilities / total_assets)
+
+    if not liab_to_assets:
+        return 0, "No consistent leverage ratio data available."
+
+    below_50pct_count = sum(1 for ratio in liab_to_assets if ratio < 0.5)
+    if below_50pct_count >= (len(liab_to_assets) // 2 + 1):
+        return 2, "Liabilities-to-assets < 50% for majority of periods."
+    return 0, "Liabilities-to-assets >= 50% in many periods."
+
+
+def _analyze_ackman_dividends(financial_line_items: list) -> tuple[int, str]:
+    dividends_list = [getattr(item, "dividends_and_other_cash_distributions", None) for item in financial_line_items if getattr(item, "dividends_and_other_cash_distributions", None) is not None]
+    if not dividends_list:
+        return 0, "No dividend data found across periods."
+
+    paying_dividends_count = sum(1 for d in dividends_list if d < 0)
+    if paying_dividends_count >= (len(dividends_list) // 2 + 1):
+        return 1, "Company has a history of returning capital to shareholders (dividends)."
+    return 0, "Dividends not consistently paid or no data on distributions."
+
+
+def _analyze_ackman_buybacks(financial_line_items: list) -> tuple[int, str]:
+    shares = [getattr(item, "outstanding_shares", None) for item in financial_line_items if getattr(item, "outstanding_shares", None) is not None]
+    if len(shares) < 2:
+        return 0, "No multi-period share count data to assess buybacks."
+    if shares[0] < shares[-1]:
+        return 1, "Outstanding shares have decreased over time (possible buybacks)."
+    return 0, "Outstanding shares have not decreased over the available periods."
 
 
 def analyze_financial_discipline(metrics: list, financial_line_items: list) -> dict:
@@ -203,57 +260,17 @@ def analyze_financial_discipline(metrics: list, financial_line_items: list) -> d
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze financial discipline"}
 
-    # 1. Multi-period debt ratio or debt_to_equity
-    debt_to_equity_vals = [getattr(item, "debt_to_equity", None) for item in financial_line_items if getattr(item, "debt_to_equity", None) is not None]
-    if debt_to_equity_vals:
-        below_one_count = sum(1 for d in debt_to_equity_vals if d < 1.0)
-        if below_one_count >= (len(debt_to_equity_vals) // 2 + 1):
-            score += 2
-            details.append("Debt-to-equity < 1.0 for the majority of periods (reasonable leverage).")
-        else:
-            details.append("Debt-to-equity >= 1.0 in many periods (could be high leverage).")
-    else:
-        # Fallback to total_liabilities / total_assets
-        liab_to_assets = []
-        for item in financial_line_items:
-            total_liabilities = getattr(item, "total_liabilities", None)
-            total_assets = getattr(item, "total_assets", None)
-            if total_liabilities and total_assets and total_assets > 0:
-                liab_to_assets.append(total_liabilities / total_assets)
+    leverage_score, leverage_detail = _analyze_ackman_leverage(financial_line_items)
+    score += leverage_score
+    details.append(leverage_detail)
 
-        if liab_to_assets:
-            below_50pct_count = sum(1 for ratio in liab_to_assets if ratio < 0.5)
-            if below_50pct_count >= (len(liab_to_assets) // 2 + 1):
-                score += 2
-                details.append("Liabilities-to-assets < 50% for majority of periods.")
-            else:
-                details.append("Liabilities-to-assets >= 50% in many periods.")
-        else:
-            details.append("No consistent leverage ratio data available.")
+    dividend_score, dividend_detail = _analyze_ackman_dividends(financial_line_items)
+    score += dividend_score
+    details.append(dividend_detail)
 
-    # 2. Capital allocation approach (dividends + share counts)
-    dividends_list = [getattr(item, "dividends_and_other_cash_distributions", None) for item in financial_line_items if getattr(item, "dividends_and_other_cash_distributions", None) is not None]
-    if dividends_list:
-        paying_dividends_count = sum(1 for d in dividends_list if d < 0)
-        if paying_dividends_count >= (len(dividends_list) // 2 + 1):
-            score += 1
-            details.append("Company has a history of returning capital to shareholders (dividends).")
-        else:
-            details.append("Dividends not consistently paid or no data on distributions.")
-    else:
-        details.append("No dividend data found across periods.")
-
-    # Check for decreasing share count (simple approach)
-    shares = [getattr(item, "outstanding_shares", None) for item in financial_line_items if getattr(item, "outstanding_shares", None) is not None]
-    if len(shares) >= 2:
-        # For buybacks, the newest count should be less than the oldest count
-        if shares[0] < shares[-1]:
-            score += 1
-            details.append("Outstanding shares have decreased over time (possible buybacks).")
-        else:
-            details.append("Outstanding shares have not decreased over the available periods.")
-    else:
-        details.append("No multi-period share count data to assess buybacks.")
+    buyback_score, buyback_detail = _analyze_ackman_buybacks(financial_line_items)
+    score += buyback_score
+    details.append(buyback_detail)
 
     return {"score": score, "details": "; ".join(details)}
 

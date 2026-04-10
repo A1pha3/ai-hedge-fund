@@ -19,6 +19,8 @@ from src.tools.tushare_api import get_stock_details
 
 TABLE_HEADER = "| 代码 | 名称 | 涨幅 | 昨日收盘价 | 今日收盘价 | 地域 | 所属行业 | 市场类型 | 上市日期 | 操作 | 置信度 |"
 TABLE_SEPARATOR = "|------|------|------|-----------|-----------|------|---------|---------|---------|------|--------|"
+OLD_ROW_PATTERN = re.compile(r"\|\s*([0-9]{6})\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|")
+DETAIL_ROW_PATTERN = re.compile(r"\|\s*([0-9]{6})\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|")
 
 
 def _fetch_details_with_retry(ticker: str, max_retries: int = 3) -> dict:
@@ -33,105 +35,70 @@ def _fetch_details_with_retry(ticker: str, max_retries: int = 3) -> dict:
     return details
 
 
-def generate_summary():
-    reports_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/reports"))
-    output_file = os.path.join(reports_dir, f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
+def _resolve_reports_dir() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/reports"))
 
-    if not os.path.exists(reports_dir):
-        print(f"错误: 目录 {reports_dir} 不存在")
-        return
 
-    buy_list = []
-    hold_list = []
-    short_list = []
+def _build_output_file(reports_dir: str) -> str:
+    return os.path.join(reports_dir, f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
 
-    # 记录每只股票的分类，用于后续文件归类
-    ticker_category = {}  # ticker -> "buy" | "hold" | "short"
 
-    # 匹配表格行的正则
-    # 历史版本格式: | 代码 | 名称 | 操作 | 置信度 |
-    old_row_pattern = re.compile(r"\|\s*([0-9]{6})\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|")
-    # 包含详情的格式: | 代码 | 股票名称 | 涨幅 | 昨日收盘价 | 今日收盘价 | 地域 | 所属行业 | 市场类型 | 上市日期 | 操作 | 置信度 |
-    detail_row_pattern = re.compile(r"\|\s*([0-9]{6})\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|")
+def _append_entry(action: str, entry: str, ticker: str, buy_list: list, hold_list: list, short_list: list, ticker_category: dict) -> None:
+    if "BUY" in action.upper():
+        buy_list.append(entry)
+        ticker_category[ticker] = "buy"
+    elif "HOLD" in action.upper():
+        hold_list.append(entry)
+        ticker_category[ticker] = "hold"
+    else:
+        short_list.append(entry)
+        ticker_category[ticker] = "short"
 
-    processed_tickers = set()
 
-    # 获取所有 md 文件，按修改时间倒序排列（最新的在前）
+def _report_files(reports_dir: str) -> list[str]:
     files = [f for f in os.listdir(reports_dir) if f.endswith(".md") and f.startswith(("0", "3", "6", "9"))]
     files.sort(key=lambda x: os.path.getmtime(os.path.join(reports_dir, x)), reverse=True)
+    return files
 
-    # 扫描收集
-    for filename in files:
-        filepath = os.path.join(reports_dir, filename)
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-            # 优先匹配带详情的行
-            matches = detail_row_pattern.findall(content)
-            if matches:
-                for m in matches:
-                    ticker = m[0].strip()
-                    if ticker in processed_tickers:
-                        continue
-                    processed_tickers.add(ticker)
-                    
-                    # 取出各个字段 (代码|名称|涨幅|昨收|今收|地域|行业|市场|日期|操作|置信度)
-                    # m = (ticker, name, pct_chg, pre_close, close, area, industry, market, list_date, action, confidence)
-                    action = m[9].strip()
-                    row_data = [f" {x.strip()} " for x in m]
-                    entry = "|" + "|".join(row_data) + "|"
-                    
-                    if "BUY" in action.upper():
-                        buy_list.append(entry)
-                        ticker_category[ticker] = "buy"
-                    elif "HOLD" in action.upper():
-                        hold_list.append(entry)
-                        ticker_category[ticker] = "hold"
-                    else:
-                        short_list.append(entry)
-                        ticker_category[ticker] = "short"
-            else:
-                # 兼容旧版本简单表格或尝试使用 Tushare 补充
-                matches = old_row_pattern.findall(content)
-                for m in matches:
-                    ticker, name, action, confidence = [i.strip() for i in m]
-                    if ticker in processed_tickers:
-                        continue
-                    processed_tickers.add(ticker)
-                    
-                    print(f"警告: 报告 {filename} 中 {ticker} 详情缺失，正在尝试使用 Tushare 补充...")
-                    details = _fetch_details_with_retry(ticker)
-                    
-                    stock_name = details.get("name", name)
-                    pct_chg = details.get("pct_chg", "N/A")
-                    pre_close = details.get("pre_close", "N/A")
-                    close = details.get("close", "N/A")
-                    area = details.get("area", "N/A")
-                    industry = details.get("industry", "N/A")
-                    market = details.get("market", "N/A")
-                    list_date = details.get("list_date", "N/A")
 
-                    entry = f"| {ticker} | {stock_name} | {pct_chg} | {pre_close} | {close} | {area} | {industry} | {market} | {list_date} | **{action}** | {confidence} |"
-                    
-                    if "BUY" in action.upper():
-                        buy_list.append(entry)
-                        ticker_category[ticker] = "buy"
-                    elif "HOLD" in action.upper():
-                        hold_list.append(entry)
-                        ticker_category[ticker] = "hold"
-                    else:
-                        short_list.append(entry)
-                        ticker_category[ticker] = "short"
-                    
-                    # tushare 限速保护
-                    time.sleep(0.3)
+def _collect_detailed_matches(content: str, processed_tickers: set[str], buy_list: list, hold_list: list, short_list: list, ticker_category: dict) -> bool:
+    matches = DETAIL_ROW_PATTERN.findall(content)
+    if not matches:
+        return False
+    for match in matches:
+        ticker = match[0].strip()
+        if ticker in processed_tickers:
+            continue
+        processed_tickers.add(ticker)
+        action = match[9].strip()
+        row_data = [f" {item.strip()} " for item in match]
+        _append_entry(action, "|" + "|".join(row_data) + "|", ticker, buy_list, hold_list, short_list, ticker_category)
+    return True
 
-    # 汇总输出
+
+def _collect_legacy_matches(filename: str, content: str, processed_tickers: set[str], buy_list: list, hold_list: list, short_list: list, ticker_category: dict) -> None:
+    for match in OLD_ROW_PATTERN.findall(content):
+        ticker, name, action, confidence = [item.strip() for item in match]
+        if ticker in processed_tickers:
+            continue
+        processed_tickers.add(ticker)
+
+        print(f"警告: 报告 {filename} 中 {ticker} 详情缺失，正在尝试使用 Tushare 补充...")
+        details = _fetch_details_with_retry(ticker)
+        entry = (
+            f"| {ticker} | {details.get('name', name)} | {details.get('pct_chg', 'N/A')} | {details.get('pre_close', 'N/A')} | {details.get('close', 'N/A')} | "
+            f"{details.get('area', 'N/A')} | {details.get('industry', 'N/A')} | {details.get('market', 'N/A')} | {details.get('list_date', 'N/A')} | **{action}** | {confidence} |"
+        )
+        _append_entry(action, entry, ticker, buy_list, hold_list, short_list, ticker_category)
+        time.sleep(0.3)
+
+
+def _build_markdown_content(reports_dir: str, buy_list: list, hold_list: list, short_list: list) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     buy_rows = "\n".join(sorted(buy_list))
     hold_rows = "\n".join(sorted(hold_list))
     short_rows = "\n".join(sorted(short_list))
-
-    markdown_content = f"""# 对冲基金投资建议汇总报告
+    return f"""# 对冲基金投资建议汇总报告
 
 **生成时间**: {ts}
 **扫描目录**: `{reports_dir}`
@@ -154,6 +121,36 @@ def generate_summary():
 ---
 *本报告由脚本自动提取，仅汇总最新分析结果。*
 """
+
+
+def generate_summary():
+    reports_dir = _resolve_reports_dir()
+    output_file = _build_output_file(reports_dir)
+
+    if not os.path.exists(reports_dir):
+        print(f"错误: 目录 {reports_dir} 不存在")
+        return
+
+    buy_list = []
+    hold_list = []
+    short_list = []
+
+    # 记录每只股票的分类，用于后续文件归类
+    ticker_category = {}  # ticker -> "buy" | "hold" | "short"
+
+    processed_tickers = set()
+    files = _report_files(reports_dir)
+
+    # 扫描收集
+    for filename in files:
+        filepath = os.path.join(reports_dir, filename)
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+            if _collect_detailed_matches(content, processed_tickers, buy_list, hold_list, short_list, ticker_category):
+                continue
+            _collect_legacy_matches(filename, content, processed_tickers, buy_list, hold_list, short_list, ticker_category)
+
+    markdown_content = _build_markdown_content(reports_dir, buy_list, hold_list, short_list)
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(markdown_content)

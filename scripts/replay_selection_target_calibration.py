@@ -5,7 +5,7 @@ import json
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 
 from scripts.btst_candidate_entry_utils import build_watchlist_avoid_weak_structure_filter as _build_watchlist_avoid_weak_structure_filter
 from src.execution.models import LayerCResult
@@ -416,6 +416,54 @@ def _apply_candidate_entry_filters(entries: list[dict[str, Any]], filter_rules: 
     return kept_entries, filtered_entries
 
 
+def _build_short_trade_profile_overrides(
+    *,
+    profile_overrides: dict[str, Any] | None = None,
+    select_threshold: float | None = None,
+    near_miss_threshold: float | None = None,
+    breakout_freshness_weight: float | None = None,
+    trend_acceleration_weight: float | None = None,
+    volume_expansion_quality_weight: float | None = None,
+    close_strength_weight: float | None = None,
+    sector_resonance_weight: float | None = None,
+    catalyst_freshness_weight: float | None = None,
+    layer_c_alignment_weight: float | None = None,
+    stale_penalty_block_threshold: float | None = None,
+    overhead_penalty_block_threshold: float | None = None,
+    extension_penalty_block_threshold: float | None = None,
+    layer_c_avoid_penalty: float | None = None,
+    strong_bearish_conflicts: list[str] | None = None,
+    stale_score_penalty_weight: float | None = None,
+    overhead_score_penalty_weight: float | None = None,
+    extension_score_penalty_weight: float | None = None,
+) -> dict[str, Any]:
+    overrides: dict[str, Any] = dict(profile_overrides or {})
+    numeric_overrides = {
+        "select_threshold": select_threshold,
+        "near_miss_threshold": near_miss_threshold,
+        "breakout_freshness_weight": breakout_freshness_weight,
+        "trend_acceleration_weight": trend_acceleration_weight,
+        "volume_expansion_quality_weight": volume_expansion_quality_weight,
+        "close_strength_weight": close_strength_weight,
+        "sector_resonance_weight": sector_resonance_weight,
+        "catalyst_freshness_weight": catalyst_freshness_weight,
+        "layer_c_alignment_weight": layer_c_alignment_weight,
+        "stale_penalty_block_threshold": stale_penalty_block_threshold,
+        "overhead_penalty_block_threshold": overhead_penalty_block_threshold,
+        "extension_penalty_block_threshold": extension_penalty_block_threshold,
+        "layer_c_avoid_penalty": layer_c_avoid_penalty,
+        "stale_score_penalty_weight": stale_score_penalty_weight,
+        "overhead_score_penalty_weight": overhead_score_penalty_weight,
+        "extension_score_penalty_weight": extension_score_penalty_weight,
+    }
+    for key, value in numeric_overrides.items():
+        if value is not None:
+            overrides[key] = float(value)
+    if strong_bearish_conflicts is not None:
+        overrides["strong_bearish_conflicts"] = [str(value) for value in strong_bearish_conflicts]
+    return overrides
+
+
 @contextmanager
 def _override_short_trade_thresholds(
     *,
@@ -439,41 +487,26 @@ def _override_short_trade_thresholds(
     overhead_score_penalty_weight: float | None = None,
     extension_score_penalty_weight: float | None = None,
 ) -> Iterator[None]:
-    overrides: dict[str, Any] = dict(profile_overrides or {})
-    if select_threshold is not None:
-        overrides["select_threshold"] = float(select_threshold)
-    if near_miss_threshold is not None:
-        overrides["near_miss_threshold"] = float(near_miss_threshold)
-    if breakout_freshness_weight is not None:
-        overrides["breakout_freshness_weight"] = float(breakout_freshness_weight)
-    if trend_acceleration_weight is not None:
-        overrides["trend_acceleration_weight"] = float(trend_acceleration_weight)
-    if volume_expansion_quality_weight is not None:
-        overrides["volume_expansion_quality_weight"] = float(volume_expansion_quality_weight)
-    if close_strength_weight is not None:
-        overrides["close_strength_weight"] = float(close_strength_weight)
-    if sector_resonance_weight is not None:
-        overrides["sector_resonance_weight"] = float(sector_resonance_weight)
-    if catalyst_freshness_weight is not None:
-        overrides["catalyst_freshness_weight"] = float(catalyst_freshness_weight)
-    if layer_c_alignment_weight is not None:
-        overrides["layer_c_alignment_weight"] = float(layer_c_alignment_weight)
-    if stale_penalty_block_threshold is not None:
-        overrides["stale_penalty_block_threshold"] = float(stale_penalty_block_threshold)
-    if overhead_penalty_block_threshold is not None:
-        overrides["overhead_penalty_block_threshold"] = float(overhead_penalty_block_threshold)
-    if extension_penalty_block_threshold is not None:
-        overrides["extension_penalty_block_threshold"] = float(extension_penalty_block_threshold)
-    if layer_c_avoid_penalty is not None:
-        overrides["layer_c_avoid_penalty"] = float(layer_c_avoid_penalty)
-    if strong_bearish_conflicts is not None:
-        overrides["strong_bearish_conflicts"] = [str(value) for value in strong_bearish_conflicts]
-    if stale_score_penalty_weight is not None:
-        overrides["stale_score_penalty_weight"] = float(stale_score_penalty_weight)
-    if overhead_score_penalty_weight is not None:
-        overrides["overhead_score_penalty_weight"] = float(overhead_score_penalty_weight)
-    if extension_score_penalty_weight is not None:
-        overrides["extension_score_penalty_weight"] = float(extension_score_penalty_weight)
+    overrides = _build_short_trade_profile_overrides(
+        profile_overrides=profile_overrides,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        breakout_freshness_weight=breakout_freshness_weight,
+        trend_acceleration_weight=trend_acceleration_weight,
+        volume_expansion_quality_weight=volume_expansion_quality_weight,
+        close_strength_weight=close_strength_weight,
+        sector_resonance_weight=sector_resonance_weight,
+        catalyst_freshness_weight=catalyst_freshness_weight,
+        layer_c_alignment_weight=layer_c_alignment_weight,
+        stale_penalty_block_threshold=stale_penalty_block_threshold,
+        overhead_penalty_block_threshold=overhead_penalty_block_threshold,
+        extension_penalty_block_threshold=extension_penalty_block_threshold,
+        layer_c_avoid_penalty=layer_c_avoid_penalty,
+        strong_bearish_conflicts=strong_bearish_conflicts,
+        stale_score_penalty_weight=stale_score_penalty_weight,
+        overhead_score_penalty_weight=overhead_score_penalty_weight,
+        extension_score_penalty_weight=extension_score_penalty_weight,
+    )
     with short_trade_target_module.use_short_trade_target_profile(profile_name=profile_name, overrides=overrides):
         yield
 
@@ -592,6 +625,110 @@ def _build_score_diagnostic_row(
         "replayed_total_positive_contribution": replayed_metrics.get("total_positive_contribution"),
         "replayed_total_negative_contribution": replayed_metrics.get("total_negative_contribution"),
         "replay_input_path": str(replay_input_path),
+    }
+
+
+def _merge_candidate_entry_filter_observability(
+    aggregate_observability: dict[str, Counter[str]],
+    observability_sets: list[dict[str, Counter[str]]],
+) -> dict[str, Counter[str]]:
+    day_candidate_entry_filter_observability: dict[str, Counter[str]] = {}
+    for observability in observability_sets:
+        for rule_name, counters in observability.items():
+            aggregate_counters = aggregate_observability.setdefault(rule_name, Counter())
+            aggregate_counters.update(counters)
+            day_counters = day_candidate_entry_filter_observability.setdefault(rule_name, Counter())
+            day_counters.update(counters)
+    return day_candidate_entry_filter_observability
+
+
+def _analyze_replay_source_decisions(
+    *,
+    trade_date: str,
+    payload: dict[str, Any],
+    replay_input_path: Path,
+    replay_entry_index: dict[str, dict[str, Any]],
+    filtered_entry_index: dict[str, dict[str, Any]],
+    replayed_targets: dict[str, Any],
+    focus_ticker_set: set[str],
+    mismatch_budget: int,
+) -> dict[str, Any]:
+    stored_decisions = _extract_short_trade_decision_map(dict(payload.get("selection_targets") or {}))
+    replayed_decisions = _extract_short_trade_decision_map(replayed_targets)
+    stored_snapshots = _extract_short_trade_snapshot_map(dict(payload.get("selection_targets") or {}))
+    replayed_snapshots = _extract_short_trade_snapshot_map(replayed_targets)
+    stored_decision_counts: Counter[str] = Counter()
+    replayed_decision_counts: Counter[str] = Counter()
+    transition_counts: Counter[str] = Counter()
+    candidate_source_counts: Counter[str] = Counter()
+    mismatch_examples: list[dict[str, Any]] = []
+    focused_score_diagnostics: list[dict[str, Any]] = []
+    day_transition_counts: Counter[str] = Counter()
+    day_mismatch_count = 0
+    active_profile = _active_short_trade_target_profile()
+    resolved_near_miss_threshold = float(active_profile.near_miss_threshold)
+    resolved_select_threshold = float(active_profile.select_threshold)
+
+    for entry in replay_entry_index.values():
+        candidate_source_counts[str(entry.get("candidate_source") or "unknown")] += 1
+
+    for ticker in sorted(set(stored_decisions) | set(replayed_decisions)):
+        stored_decision = stored_decisions.get(ticker)
+        replayed_decision = replayed_decisions.get(ticker)
+        stored_evaluation = dict((payload.get("selection_targets") or {}).get(ticker) or {})
+        stored_decision_counts[str(stored_decision or "none")] += 1
+        replayed_decision_counts[str(replayed_decision or "none")] += 1
+        transition_key = f"{stored_decision or 'none'}->{replayed_decision or 'none'}"
+        transition_counts[transition_key] += 1
+        day_transition_counts[transition_key] += 1
+        if stored_decision != replayed_decision:
+            day_mismatch_count += 1
+            if len(mismatch_examples) < mismatch_budget:
+                stored_snapshot = dict(stored_snapshots.get(ticker) or {})
+                replayed_snapshot = dict(replayed_snapshots.get(ticker) or {})
+                replayed_score_target = replayed_snapshot.get("score_target")
+                mismatch_examples.append(
+                    {
+                        "trade_date": trade_date,
+                        "ticker": ticker,
+                        "stored_decision": stored_decision,
+                        "replayed_decision": replayed_decision,
+                        "stored_score_target": stored_snapshot.get("score_target"),
+                        "replayed_score_target": replayed_score_target,
+                        "replayed_gap_to_near_miss": None if replayed_score_target is None else round(resolved_near_miss_threshold - float(replayed_score_target), 4),
+                        "replayed_gap_to_selected": None if replayed_score_target is None else round(resolved_select_threshold - float(replayed_score_target), 4),
+                        "stored_blockers": list(stored_snapshot.get("blockers") or []),
+                        "replayed_blockers": list(replayed_snapshot.get("blockers") or []),
+                        "stored_rejection_reasons": list(stored_snapshot.get("rejection_reasons") or []),
+                        "replayed_rejection_reasons": list(replayed_snapshot.get("rejection_reasons") or []),
+                        "replayed_top_reasons": list(replayed_snapshot.get("top_reasons") or []),
+                        "replayed_gate_status": dict(replayed_snapshot.get("gate_status") or {}),
+                        "replayed_metrics_payload": dict(replayed_snapshot.get("metrics_payload") or {}),
+                        "replay_input_path": str(replay_input_path),
+                    }
+                )
+        if ticker in focus_ticker_set:
+            focused_score_diagnostics.append(
+                _build_score_diagnostic_row(
+                    trade_date=trade_date,
+                    ticker=ticker,
+                    stored_evaluation=stored_evaluation,
+                    stored_snapshot=dict(stored_snapshots.get(ticker) or {}),
+                    replayed_snapshot=dict(replayed_snapshots.get(ticker) or {}),
+                    replay_input_path=replay_input_path,
+                    replay_entry=replay_entry_index.get(ticker),
+                    filtered_entry=filtered_entry_index.get(ticker),
+                )
+            )
+    return {
+        "stored_decision_counts": stored_decision_counts,
+        "replayed_decision_counts": replayed_decision_counts,
+        "transition_counts": transition_counts,
+        "candidate_source_counts": candidate_source_counts,
+        "mismatch_examples": mismatch_examples,
+        "focused_score_diagnostics": focused_score_diagnostics,
+        "day_transition_counts": day_transition_counts,
+        "day_mismatch_count": day_mismatch_count,
     }
 
 
@@ -772,65 +909,28 @@ def analyze_selection_target_replay_sources(
             overall_signal_availability.update(signal_availability)
             overall_signal_name_counts.update(signal_name_counts)
             filtered_candidate_entry_counts.update(entry["matched_filter"] for entry in filtered_rejected_entries + filtered_supplemental_entries)
-            day_candidate_entry_filter_observability: dict[str, Counter[str]] = {}
-            for observability in [rejected_filter_observability, supplemental_filter_observability]:
-                for rule_name, counters in observability.items():
-                    aggregate_counters = candidate_entry_filter_observability.setdefault(rule_name, Counter())
-                    aggregate_counters.update(counters)
-                    day_counters = day_candidate_entry_filter_observability.setdefault(rule_name, Counter())
-                    day_counters.update(counters)
-
-            for entry in watchlist_entries + rejected_entries + supplemental_entries:
-                candidate_source_counts[str(entry.get("candidate_source") or "unknown")] += 1
-
-            for ticker in sorted(set(stored_decisions) | set(replayed_decisions)):
-                stored_decision = stored_decisions.get(ticker)
-                replayed_decision = replayed_decisions.get(ticker)
-                stored_evaluation = dict((payload.get("selection_targets") or {}).get(ticker) or {})
-                stored_decision_counts[str(stored_decision or "none")] += 1
-                replayed_decision_counts[str(replayed_decision or "none")] += 1
-                transition_key = f"{stored_decision or 'none'}->{replayed_decision or 'none'}"
-                transition_counts[transition_key] += 1
-                day_transition_counts[transition_key] += 1
-                if stored_decision != replayed_decision:
-                    day_mismatch_count += 1
-                    if len(mismatch_examples) < 20:
-                        stored_snapshot = dict(stored_snapshots.get(ticker) or {})
-                        replayed_snapshot = dict(replayed_snapshots.get(ticker) or {})
-                        replayed_score_target = replayed_snapshot.get("score_target")
-                        mismatch_examples.append(
-                            {
-                                "trade_date": trade_date,
-                                "ticker": ticker,
-                                "stored_decision": stored_decision,
-                                "replayed_decision": replayed_decision,
-                                "stored_score_target": stored_snapshot.get("score_target"),
-                                "replayed_score_target": replayed_score_target,
-                                "replayed_gap_to_near_miss": None if replayed_score_target is None else round(float(near_miss_threshold if near_miss_threshold is not None else _active_short_trade_target_profile().near_miss_threshold) - float(replayed_score_target), 4),
-                                "replayed_gap_to_selected": None if replayed_score_target is None else round(float(select_threshold if select_threshold is not None else _active_short_trade_target_profile().select_threshold) - float(replayed_score_target), 4),
-                                "stored_blockers": list(stored_snapshot.get("blockers") or []),
-                                "replayed_blockers": list(replayed_snapshot.get("blockers") or []),
-                                "stored_rejection_reasons": list(stored_snapshot.get("rejection_reasons") or []),
-                                "replayed_rejection_reasons": list(replayed_snapshot.get("rejection_reasons") or []),
-                                "replayed_top_reasons": list(replayed_snapshot.get("top_reasons") or []),
-                                "replayed_gate_status": dict(replayed_snapshot.get("gate_status") or {}),
-                                "replayed_metrics_payload": dict(replayed_snapshot.get("metrics_payload") or {}),
-                                "replay_input_path": str(replay_input_path),
-                            }
-                        )
-                if ticker in focus_ticker_set:
-                    focused_score_diagnostics.append(
-                        _build_score_diagnostic_row(
-                            trade_date=trade_date,
-                            ticker=ticker,
-                            stored_evaluation=stored_evaluation,
-                            stored_snapshot=dict(stored_snapshots.get(ticker) or {}),
-                            replayed_snapshot=dict(replayed_snapshots.get(ticker) or {}),
-                            replay_input_path=replay_input_path,
-                            replay_entry=replay_entry_index.get(ticker),
-                            filtered_entry=filtered_entry_index.get(ticker),
-                        )
-                    )
+            day_candidate_entry_filter_observability = _merge_candidate_entry_filter_observability(
+                candidate_entry_filter_observability,
+                [rejected_filter_observability, supplemental_filter_observability],
+            )
+            source_analysis = _analyze_replay_source_decisions(
+                trade_date=trade_date,
+                payload=payload,
+                replay_input_path=replay_input_path,
+                replay_entry_index=replay_entry_index,
+                filtered_entry_index=filtered_entry_index,
+                replayed_targets=replayed_targets,
+                focus_ticker_set=focus_ticker_set,
+                mismatch_budget=max(0, 20 - len(mismatch_examples)),
+            )
+            stored_decision_counts.update(source_analysis["stored_decision_counts"])
+            replayed_decision_counts.update(source_analysis["replayed_decision_counts"])
+            transition_counts.update(source_analysis["transition_counts"])
+            candidate_source_counts.update(source_analysis["candidate_source_counts"])
+            mismatch_examples.extend(source_analysis["mismatch_examples"])
+            focused_score_diagnostics.extend(source_analysis["focused_score_diagnostics"])
+            day_transition_counts = source_analysis["day_transition_counts"]
+            day_mismatch_count = int(source_analysis["day_mismatch_count"])
 
             per_day.append(
                 {
@@ -920,34 +1020,31 @@ def _diff_count_dict(left: dict[str, Any], right: dict[str, Any]) -> dict[str, d
     }
 
 
-def compare_selection_target_replay_inputs(
-    input_path: str | Path,
-    compare_to_path: str | Path,
-    *,
-    profile_name: str = "default",
-    select_threshold: float | None = None,
-    near_miss_threshold: float | None = None,
-    structural_variant: str = "baseline",
-    focus_tickers: list[str] | None = None,
-    allow_roster_drift: bool = False,
-) -> dict[str, Any]:
-    left_sources = load_selection_target_replay_sources(input_path)
-    right_sources = load_selection_target_replay_sources(compare_to_path)
+def _index_replay_source_payloads(sources: list[tuple[Path, dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    for replay_input_path, payload in sources:
+        trade_date = str(payload.get("trade_date") or "")
+        indexed[trade_date] = {
+            "replay_input_path": str(replay_input_path),
+            "source_summary": dict(payload.get("source_summary") or {}),
+            "selected_analysts": list(dict(payload.get("pipeline_config_snapshot") or {}).get("selected_analysts") or []),
+            "analyst_roster_version": str(dict(payload.get("pipeline_config_snapshot") or {}).get("analyst_roster_version") or ""),
+        }
+    return indexed
 
-    def _index_source_payloads(sources: list[tuple[Path, dict[str, Any]]]) -> dict[str, dict[str, Any]]:
-        indexed: dict[str, dict[str, Any]] = {}
-        for replay_input_path, payload in sources:
-            trade_date = str(payload.get("trade_date") or "")
-            indexed[trade_date] = {
-                "replay_input_path": str(replay_input_path),
-                "source_summary": dict(payload.get("source_summary") or {}),
-                "selected_analysts": list(dict(payload.get("pipeline_config_snapshot") or {}).get("selected_analysts") or []),
-                "analyst_roster_version": str(dict(payload.get("pipeline_config_snapshot") or {}).get("analyst_roster_version") or ""),
-            }
-        return indexed
 
-    left_sources_by_date = _index_source_payloads(left_sources)
-    right_sources_by_date = _index_source_payloads(right_sources)
+def _index_replay_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+    return {
+        (str(row.get("trade_date") or ""), str(row.get("ticker") or "")): row
+        for row in rows
+        if str(row.get("ticker") or "").strip()
+    }
+
+
+def _collect_source_payload_differences(
+    left_sources_by_date: dict[str, dict[str, Any]],
+    right_sources_by_date: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     source_payload_differences: list[dict[str, Any]] = []
     roster_drift_differences: list[dict[str, Any]] = []
     for trade_date in sorted(set(left_sources_by_date) | set(right_sources_by_date)):
@@ -957,10 +1054,7 @@ def compare_selection_target_replay_inputs(
             list(left_row.get("selected_analysts") or []) != list(right_row.get("selected_analysts") or [])
             or str(left_row.get("analyst_roster_version") or "") != str(right_row.get("analyst_roster_version") or "")
         )
-        changed = (
-            dict(left_row.get("source_summary") or {}) != dict(right_row.get("source_summary") or {})
-            or roster_changed
-        )
+        changed = dict(left_row.get("source_summary") or {}) != dict(right_row.get("source_summary") or {}) or roster_changed
         if not changed:
             continue
         difference = {
@@ -971,52 +1065,32 @@ def compare_selection_target_replay_inputs(
         source_payload_differences.append(difference)
         if roster_changed:
             roster_drift_differences.append(difference)
+    return source_payload_differences, roster_drift_differences
 
-    if roster_drift_differences and not allow_roster_drift:
-        drift_lines = [
-            (
-                f"{row['trade_date']}: "
-                f"left roster={row['left'].get('analyst_roster_version')} analysts={row['left'].get('selected_analysts')} "
-                f"vs right roster={row['right'].get('analyst_roster_version')} analysts={row['right'].get('selected_analysts')}"
-            )
-            for row in roster_drift_differences
-        ]
-        raise SystemExit(
-            "--compare-to detected analyst roster drift between fixed artifacts. "
-            "These reports are not directly comparable for BTST validation. "
-            "Re-run with --allow-roster-drift only if you explicitly want a diagnostic apples-to-oranges comparison.\n"
-            + "\n".join(drift_lines)
+
+def _build_roster_drift_message(roster_drift_differences: list[dict[str, Any]]) -> str:
+    drift_lines = [
+        (
+            f"{row['trade_date']}: "
+            f"left roster={row['left'].get('analyst_roster_version')} analysts={row['left'].get('selected_analysts')} "
+            f"vs right roster={row['right'].get('analyst_roster_version')} analysts={row['right'].get('selected_analysts')}"
         )
-
-    left_analysis = analyze_selection_target_replay_inputs(
-        input_path,
-        profile_name=profile_name,
-        select_threshold=select_threshold,
-        near_miss_threshold=near_miss_threshold,
-        structural_variant=structural_variant,
-        focus_tickers=focus_tickers,
-    )
-    right_analysis = analyze_selection_target_replay_inputs(
-        compare_to_path,
-        profile_name=profile_name,
-        select_threshold=select_threshold,
-        near_miss_threshold=near_miss_threshold,
-        structural_variant=structural_variant,
-        focus_tickers=focus_tickers,
+        for row in roster_drift_differences
+    ]
+    return (
+        "--compare-to detected analyst roster drift between fixed artifacts. "
+        "These reports are not directly comparable for BTST validation. "
+        "Re-run with --allow-roster-drift only if you explicitly want a diagnostic apples-to-oranges comparison.\n"
+        + "\n".join(drift_lines)
     )
 
-    def _index_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-        return {
-            (str(row.get("trade_date") or ""), str(row.get("ticker") or "")): row
-            for row in rows
-            if str(row.get("ticker") or "").strip()
-        }
 
-    left_focus = _index_rows(list(left_analysis.get("focused_score_diagnostics") or []))
-    right_focus = _index_rows(list(right_analysis.get("focused_score_diagnostics") or []))
-    focus_keys = sorted(set(left_focus) | set(right_focus))
+def _collect_focus_differences(
+    left_focus: dict[tuple[str, str], dict[str, Any]],
+    right_focus: dict[tuple[str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
     focus_differences: list[dict[str, Any]] = []
-    for trade_date, ticker in focus_keys:
+    for trade_date, ticker in sorted(set(left_focus) | set(right_focus)):
         left_row = left_focus.get((trade_date, ticker), {})
         right_row = right_focus.get((trade_date, ticker), {})
         changed = (
@@ -1054,12 +1128,15 @@ def compare_selection_target_replay_inputs(
                 },
             }
         )
+    return focus_differences
 
-    left_mismatches = _index_rows(list(left_analysis.get("mismatch_examples") or []))
-    right_mismatches = _index_rows(list(right_analysis.get("mismatch_examples") or []))
-    mismatch_keys = sorted(set(left_mismatches) | set(right_mismatches))
+
+def _collect_mismatch_differences(
+    left_mismatches: dict[tuple[str, str], dict[str, Any]],
+    right_mismatches: dict[tuple[str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
     mismatch_differences: list[dict[str, Any]] = []
-    for trade_date, ticker in mismatch_keys:
+    for trade_date, ticker in sorted(set(left_mismatches) | set(right_mismatches)):
         left_row = left_mismatches.get((trade_date, ticker), {})
         right_row = right_mismatches.get((trade_date, ticker), {})
         changed = (
@@ -1092,6 +1169,53 @@ def compare_selection_target_replay_inputs(
                 },
             }
         )
+    return mismatch_differences
+
+
+def compare_selection_target_replay_inputs(
+    input_path: str | Path,
+    compare_to_path: str | Path,
+    *,
+    profile_name: str = "default",
+    select_threshold: float | None = None,
+    near_miss_threshold: float | None = None,
+    structural_variant: str = "baseline",
+    focus_tickers: list[str] | None = None,
+    allow_roster_drift: bool = False,
+) -> dict[str, Any]:
+    left_sources = load_selection_target_replay_sources(input_path)
+    right_sources = load_selection_target_replay_sources(compare_to_path)
+    left_sources_by_date = _index_replay_source_payloads(left_sources)
+    right_sources_by_date = _index_replay_source_payloads(right_sources)
+    source_payload_differences, roster_drift_differences = _collect_source_payload_differences(left_sources_by_date, right_sources_by_date)
+
+    if roster_drift_differences and not allow_roster_drift:
+        raise SystemExit(_build_roster_drift_message(roster_drift_differences))
+
+    left_analysis = analyze_selection_target_replay_inputs(
+        input_path,
+        profile_name=profile_name,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        structural_variant=structural_variant,
+        focus_tickers=focus_tickers,
+    )
+    right_analysis = analyze_selection_target_replay_inputs(
+        compare_to_path,
+        profile_name=profile_name,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        structural_variant=structural_variant,
+        focus_tickers=focus_tickers,
+    )
+
+    left_focus = _index_replay_rows(list(left_analysis.get("focused_score_diagnostics") or []))
+    right_focus = _index_replay_rows(list(right_analysis.get("focused_score_diagnostics") or []))
+    focus_differences = _collect_focus_differences(left_focus, right_focus)
+
+    left_mismatches = _index_replay_rows(list(left_analysis.get("mismatch_examples") or []))
+    right_mismatches = _index_replay_rows(list(right_analysis.get("mismatch_examples") or []))
+    mismatch_differences = _collect_mismatch_differences(left_mismatches, right_mismatches)
 
     return {
         "profile_name": str(profile_name or "default"),
@@ -1526,93 +1650,85 @@ def analyze_selection_target_penalty_grid(
     }
 
 
-def analyze_selection_target_penalty_threshold_grid(
-    input_path: str | Path,
+def _resolve_penalty_threshold_grid_defaults(
     *,
-    profile_name: str = "default",
     avoid_penalty_values: list[float],
     stale_score_penalty_weight_values: list[float],
     extension_score_penalty_weight_values: list[float],
     select_thresholds: list[float],
     near_miss_thresholds: list[float],
-    base_structural_variants: list[str] | None = None,
-    focus_tickers: list[str] | None = None,
+) -> dict[str, list[float] | float]:
+    default_profile = _default_short_trade_target_profile()
+    return {
+        "avoid_values": avoid_penalty_values or [float(default_profile.layer_c_avoid_penalty)],
+        "stale_values": stale_score_penalty_weight_values or [float(default_profile.stale_score_penalty_weight)],
+        "extension_values": extension_score_penalty_weight_values or [float(default_profile.extension_score_penalty_weight)],
+        "select_values": select_thresholds or [float(default_profile.select_threshold)],
+        "near_miss_values": near_miss_thresholds or [float(default_profile.near_miss_threshold)],
+        "default_avoid_penalty": float(default_profile.layer_c_avoid_penalty),
+        "default_stale_weight": float(default_profile.stale_score_penalty_weight),
+        "default_extension_weight": float(default_profile.extension_score_penalty_weight),
+        "default_select_threshold": float(default_profile.select_threshold),
+        "default_near_miss_threshold": float(default_profile.near_miss_threshold),
+    }
+
+
+def _build_penalty_threshold_grid_row(
+    *,
+    input_path: str | Path,
+    profile_name: str,
+    variant_name: str,
+    avoid_penalty: float,
+    stale_weight: float,
+    extension_weight: float,
+    select_threshold: float,
+    near_miss_threshold: float,
+    focus_tickers: list[str] | None,
+    focus_ticker_set: list[str],
+    defaults: dict[str, list[float] | float],
 ) -> dict[str, Any]:
-    variant_names = base_structural_variants or ["baseline"]
-    avoid_values = avoid_penalty_values or [float(_default_short_trade_target_profile().layer_c_avoid_penalty)]
-    stale_values = stale_score_penalty_weight_values or [float(_default_short_trade_target_profile().stale_score_penalty_weight)]
-    extension_values = extension_score_penalty_weight_values or [float(_default_short_trade_target_profile().extension_score_penalty_weight)]
-    select_values = select_thresholds or [float(_default_short_trade_target_profile().select_threshold)]
-    near_miss_values = near_miss_thresholds or [float(_default_short_trade_target_profile().near_miss_threshold)]
-    focus_ticker_set = [ticker for ticker in (focus_tickers or []) if str(ticker).strip()]
-    rows: list[dict[str, Any]] = []
+    analysis = analyze_selection_target_replay_inputs(
+        input_path,
+        profile_name=profile_name,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        structural_variant=variant_name,
+        structural_overrides={
+            "layer_c_avoid_penalty": float(avoid_penalty),
+            "stale_score_penalty_weight": float(stale_weight),
+            "extension_score_penalty_weight": float(extension_weight),
+        },
+        focus_tickers=focus_tickers,
+    )
+    row = _build_replay_summary_row(analysis, structural_variant=variant_name)
+    focused_diagnostics = list(analysis.get("focused_score_diagnostics") or [])
+    focus_by_ticker = {str(item.get("ticker") or ""): item for item in focused_diagnostics if str(item.get("ticker") or "").strip()}
+    adjustment_cost = round(
+        (float(defaults["default_avoid_penalty"]) - float(avoid_penalty))
+        + (float(defaults["default_stale_weight"]) - float(stale_weight))
+        + (float(defaults["default_extension_weight"]) - float(extension_weight))
+        + (float(defaults["default_select_threshold"]) - float(select_threshold))
+        + (float(defaults["default_near_miss_threshold"]) - float(near_miss_threshold)),
+        4,
+    )
+    row.update(
+        {
+            "layer_c_avoid_penalty": round(float(avoid_penalty), 4),
+            "stale_score_penalty_weight": round(float(stale_weight), 4),
+            "extension_score_penalty_weight": round(float(extension_weight), 4),
+            "select_threshold": round(float(select_threshold), 4),
+            "near_miss_threshold": round(float(near_miss_threshold), 4),
+            "adjustment_cost": adjustment_cost,
+            "analysis": analysis,
+            "focus_scores": {ticker: focus_by_ticker[ticker].get("replayed_score_target") for ticker in focus_ticker_set if ticker in focus_by_ticker},
+            "focus_gaps_to_near_miss": {ticker: focus_by_ticker[ticker].get("replayed_gap_to_near_miss") for ticker in focus_ticker_set if ticker in focus_by_ticker},
+            "focus_decisions": {ticker: focus_by_ticker[ticker].get("replayed_decision") for ticker in focus_ticker_set if ticker in focus_by_ticker},
+        }
+    )
+    return row
 
-    default_avoid_penalty = float(_default_short_trade_target_profile().layer_c_avoid_penalty)
-    default_stale_weight = float(_default_short_trade_target_profile().stale_score_penalty_weight)
-    default_extension_weight = float(_default_short_trade_target_profile().extension_score_penalty_weight)
-    default_select_threshold = float(_default_short_trade_target_profile().select_threshold)
-    default_near_miss_threshold = float(_default_short_trade_target_profile().near_miss_threshold)
 
-    for variant_name in variant_names:
-        for avoid_penalty in avoid_values:
-            for stale_weight in stale_values:
-                for extension_weight in extension_values:
-                    for select_threshold in select_values:
-                        for near_miss_threshold in near_miss_values:
-                            if float(select_threshold) < float(near_miss_threshold):
-                                continue
-                            analysis = analyze_selection_target_replay_inputs(
-                                input_path,
-                                profile_name=profile_name,
-                                select_threshold=select_threshold,
-                                near_miss_threshold=near_miss_threshold,
-                                structural_variant=variant_name,
-                                structural_overrides={
-                                    "layer_c_avoid_penalty": float(avoid_penalty),
-                                    "stale_score_penalty_weight": float(stale_weight),
-                                    "extension_score_penalty_weight": float(extension_weight),
-                                },
-                                focus_tickers=focus_tickers,
-                            )
-                            row = _build_replay_summary_row(analysis, structural_variant=variant_name)
-                            focused_diagnostics = list(analysis.get("focused_score_diagnostics") or [])
-                            focus_by_ticker = {str(item.get("ticker") or ""): item for item in focused_diagnostics if str(item.get("ticker") or "").strip()}
-                            adjustment_cost = round(
-                                (default_avoid_penalty - float(avoid_penalty))
-                                + (default_stale_weight - float(stale_weight))
-                                + (default_extension_weight - float(extension_weight))
-                                + (default_select_threshold - float(select_threshold))
-                                + (default_near_miss_threshold - float(near_miss_threshold)),
-                                4,
-                            )
-                            row.update(
-                                {
-                                    "layer_c_avoid_penalty": round(float(avoid_penalty), 4),
-                                    "stale_score_penalty_weight": round(float(stale_weight), 4),
-                                    "extension_score_penalty_weight": round(float(extension_weight), 4),
-                                    "select_threshold": round(float(select_threshold), 4),
-                                    "near_miss_threshold": round(float(near_miss_threshold), 4),
-                                    "adjustment_cost": adjustment_cost,
-                                    "analysis": analysis,
-                                    "focus_scores": {
-                                        ticker: focus_by_ticker[ticker].get("replayed_score_target")
-                                        for ticker in focus_ticker_set
-                                        if ticker in focus_by_ticker
-                                    },
-                                    "focus_gaps_to_near_miss": {
-                                        ticker: focus_by_ticker[ticker].get("replayed_gap_to_near_miss")
-                                        for ticker in focus_ticker_set
-                                        if ticker in focus_by_ticker
-                                    },
-                                    "focus_decisions": {
-                                        ticker: focus_by_ticker[ticker].get("replayed_decision")
-                                        for ticker in focus_ticker_set
-                                        if ticker in focus_by_ticker
-                                    },
-                                }
-                            )
-                            rows.append(row)
-
+def _select_penalty_threshold_focus_rows(rows: list[dict[str, Any]], focus_ticker_set: list[str]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     first_focus_near_miss_rows: dict[str, dict[str, Any]] = {}
     first_focus_selected_rows: dict[str, dict[str, Any]] = {}
     for ticker in focus_ticker_set:
@@ -1636,6 +1752,61 @@ def analyze_selection_target_penalty_threshold_grid(
                     -float(row["focus_scores"].get(ticker) or float("-inf")),
                 ),
             )
+    return first_focus_near_miss_rows, first_focus_selected_rows
+
+
+def analyze_selection_target_penalty_threshold_grid(
+    input_path: str | Path,
+    *,
+    profile_name: str = "default",
+    avoid_penalty_values: list[float],
+    stale_score_penalty_weight_values: list[float],
+    extension_score_penalty_weight_values: list[float],
+    select_thresholds: list[float],
+    near_miss_thresholds: list[float],
+    base_structural_variants: list[str] | None = None,
+    focus_tickers: list[str] | None = None,
+) -> dict[str, Any]:
+    variant_names = base_structural_variants or ["baseline"]
+    defaults = _resolve_penalty_threshold_grid_defaults(
+        avoid_penalty_values=avoid_penalty_values,
+        stale_score_penalty_weight_values=stale_score_penalty_weight_values,
+        extension_score_penalty_weight_values=extension_score_penalty_weight_values,
+        select_thresholds=select_thresholds,
+        near_miss_thresholds=near_miss_thresholds,
+    )
+    avoid_values = list(cast(list[float], defaults["avoid_values"]))
+    stale_values = list(cast(list[float], defaults["stale_values"]))
+    extension_values = list(cast(list[float], defaults["extension_values"]))
+    select_values = list(cast(list[float], defaults["select_values"]))
+    near_miss_values = list(cast(list[float], defaults["near_miss_values"]))
+    focus_ticker_set = [ticker for ticker in (focus_tickers or []) if str(ticker).strip()]
+    rows: list[dict[str, Any]] = []
+
+    for variant_name in variant_names:
+        for avoid_penalty in avoid_values:
+            for stale_weight in stale_values:
+                for extension_weight in extension_values:
+                    for select_threshold in select_values:
+                        for near_miss_threshold in near_miss_values:
+                            if float(select_threshold) < float(near_miss_threshold):
+                                continue
+                            rows.append(
+                                _build_penalty_threshold_grid_row(
+                                    input_path=input_path,
+                                    profile_name=profile_name,
+                                    variant_name=variant_name,
+                                    avoid_penalty=avoid_penalty,
+                                    stale_weight=stale_weight,
+                                    extension_weight=extension_weight,
+                                    select_threshold=select_threshold,
+                                    near_miss_threshold=near_miss_threshold,
+                                    focus_tickers=focus_tickers,
+                                    focus_ticker_set=focus_ticker_set,
+                                    defaults=defaults,
+                                )
+                            )
+    first_focus_near_miss_rows, first_focus_selected_rows = _select_penalty_threshold_focus_rows(rows, focus_ticker_set)
 
     return {
         "profile_name": str(profile_name or "default"),
@@ -1901,40 +2072,91 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    select_grid = _parse_threshold_grid(args.select_threshold_grid)
-    near_miss_grid = _parse_threshold_grid(args.near_miss_threshold_grid)
-    structural_variants = _parse_structural_variant_grid(args.structural_variants)
-    breakout_max_grid = _parse_optional_threshold_grid(args.breakout_freshness_max_grid)
-    trend_max_grid = _parse_optional_threshold_grid(args.trend_acceleration_max_grid)
-    volume_max_grid = _parse_optional_threshold_grid(args.volume_expansion_quality_max_grid)
-    close_max_grid = _parse_optional_threshold_grid(args.close_strength_max_grid)
-    catalyst_max_grid = _parse_optional_threshold_grid(args.catalyst_freshness_max_grid)
-    avoid_penalty_grid = _parse_threshold_grid(args.avoid_penalty_grid)
-    stale_score_penalty_grid = _parse_threshold_grid(args.stale_score_penalty_grid)
-    extension_score_penalty_grid = _parse_threshold_grid(args.extension_score_penalty_grid)
-    focus_tickers = _parse_ticker_grid(args.focus_tickers)
-    preserve_tickers = _parse_ticker_grid(args.preserve_tickers)
+def _parse_main_grid_options(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "select_grid": _parse_threshold_grid(args.select_threshold_grid),
+        "near_miss_grid": _parse_threshold_grid(args.near_miss_threshold_grid),
+        "structural_variants": _parse_structural_variant_grid(args.structural_variants),
+        "breakout_max_grid": _parse_optional_threshold_grid(args.breakout_freshness_max_grid),
+        "trend_max_grid": _parse_optional_threshold_grid(args.trend_acceleration_max_grid),
+        "volume_max_grid": _parse_optional_threshold_grid(args.volume_expansion_quality_max_grid),
+        "close_max_grid": _parse_optional_threshold_grid(args.close_strength_max_grid),
+        "catalyst_max_grid": _parse_optional_threshold_grid(args.catalyst_freshness_max_grid),
+        "avoid_penalty_grid": _parse_threshold_grid(args.avoid_penalty_grid),
+        "stale_score_penalty_grid": _parse_threshold_grid(args.stale_score_penalty_grid),
+        "extension_score_penalty_grid": _parse_threshold_grid(args.extension_score_penalty_grid),
+        "focus_tickers": _parse_ticker_grid(args.focus_tickers),
+        "preserve_tickers": _parse_ticker_grid(args.preserve_tickers),
+    }
+
+
+def _run_main_compare_analysis(
+    args: argparse.Namespace,
+    *,
+    select_grid: list[float],
+    near_miss_grid: list[float],
+    structural_variants: list[str],
+    breakout_max_grid: list[float | None],
+    trend_max_grid: list[float | None],
+    volume_max_grid: list[float | None],
+    close_max_grid: list[float | None],
+    catalyst_max_grid: list[float | None],
+    avoid_penalty_grid: list[float],
+    stale_score_penalty_grid: list[float],
+    extension_score_penalty_grid: list[float],
+    focus_tickers: list[str],
+) -> tuple[dict[str, Any], str]:
+    if avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid or breakout_max_grid or trend_max_grid or volume_max_grid or close_max_grid or catalyst_max_grid:
+        raise SystemExit("--compare-to does not support penalty or candidate-entry grid modes.")
+    if select_grid or near_miss_grid:
+        raise SystemExit("--compare-to does not support threshold grid modes.")
+    if structural_variants and len(structural_variants) > 1:
+        raise SystemExit("--compare-to accepts at most one structural variant.")
+    analysis = compare_selection_target_replay_inputs(
+        args.input_path,
+        args.compare_to,
+        profile_name=args.profile_name,
+        select_threshold=args.select_threshold,
+        near_miss_threshold=args.near_miss_threshold,
+        structural_variant=(structural_variants or ["baseline"])[0],
+        focus_tickers=focus_tickers,
+        allow_roster_drift=args.allow_roster_drift,
+    )
+    return analysis, render_selection_target_replay_comparison_markdown(analysis)
+
+
+def _run_main_analysis(args: argparse.Namespace, grid_options: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    select_grid = grid_options["select_grid"]
+    near_miss_grid = grid_options["near_miss_grid"]
+    structural_variants = grid_options["structural_variants"]
+    breakout_max_grid = grid_options["breakout_max_grid"]
+    trend_max_grid = grid_options["trend_max_grid"]
+    volume_max_grid = grid_options["volume_max_grid"]
+    close_max_grid = grid_options["close_max_grid"]
+    catalyst_max_grid = grid_options["catalyst_max_grid"]
+    avoid_penalty_grid = grid_options["avoid_penalty_grid"]
+    stale_score_penalty_grid = grid_options["stale_score_penalty_grid"]
+    extension_score_penalty_grid = grid_options["extension_score_penalty_grid"]
+    focus_tickers = grid_options["focus_tickers"]
+    preserve_tickers = grid_options["preserve_tickers"]
+
     if args.compare_to is not None:
-        if avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid or breakout_max_grid or trend_max_grid or volume_max_grid or close_max_grid or catalyst_max_grid:
-            raise SystemExit("--compare-to does not support penalty or candidate-entry grid modes.")
-        if select_grid or near_miss_grid:
-            raise SystemExit("--compare-to does not support threshold grid modes.")
-        if structural_variants and len(structural_variants) > 1:
-            raise SystemExit("--compare-to accepts at most one structural variant.")
-        analysis = compare_selection_target_replay_inputs(
-            args.input_path,
-            args.compare_to,
-            profile_name=args.profile_name,
-            select_threshold=args.select_threshold,
-            near_miss_threshold=args.near_miss_threshold,
-            structural_variant=(structural_variants or ["baseline"])[0],
+        return _run_main_compare_analysis(
+            args,
+            select_grid=select_grid,
+            near_miss_grid=near_miss_grid,
+            structural_variants=structural_variants,
+            breakout_max_grid=breakout_max_grid,
+            trend_max_grid=trend_max_grid,
+            volume_max_grid=volume_max_grid,
+            close_max_grid=close_max_grid,
+            catalyst_max_grid=catalyst_max_grid,
+            avoid_penalty_grid=avoid_penalty_grid,
+            stale_score_penalty_grid=stale_score_penalty_grid,
+            extension_score_penalty_grid=extension_score_penalty_grid,
             focus_tickers=focus_tickers,
-            allow_roster_drift=args.allow_roster_drift,
         )
-        markdown_text = render_selection_target_replay_comparison_markdown(analysis)
-    elif (avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid) and (select_grid or near_miss_grid):
+    if (avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid) and (select_grid or near_miss_grid):
         analysis = analyze_selection_target_penalty_threshold_grid(
             args.input_path,
             profile_name=args.profile_name,
@@ -1946,8 +2168,8 @@ def main() -> int:
             base_structural_variants=structural_variants or ["baseline"],
             focus_tickers=focus_tickers,
         )
-        markdown_text = render_selection_target_penalty_threshold_grid_markdown(analysis)
-    elif avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid:
+        return analysis, render_selection_target_penalty_threshold_grid_markdown(analysis)
+    if avoid_penalty_grid or stale_score_penalty_grid or extension_score_penalty_grid:
         analysis = analyze_selection_target_penalty_grid(
             args.input_path,
             profile_name=args.profile_name,
@@ -1959,8 +2181,8 @@ def main() -> int:
             near_miss_threshold=args.near_miss_threshold,
             focus_tickers=focus_tickers,
         )
-        markdown_text = render_selection_target_penalty_grid_markdown(analysis)
-    elif breakout_max_grid or trend_max_grid or volume_max_grid or close_max_grid or catalyst_max_grid:
+        return analysis, render_selection_target_penalty_grid_markdown(analysis)
+    if breakout_max_grid or trend_max_grid or volume_max_grid or close_max_grid or catalyst_max_grid:
         analysis = analyze_selection_target_candidate_entry_metric_grid(
             args.input_path,
             profile_name=args.profile_name,
@@ -1975,8 +2197,8 @@ def main() -> int:
             focus_tickers=focus_tickers,
             preserve_tickers=preserve_tickers,
         )
-        markdown_text = render_selection_target_candidate_entry_metric_grid_markdown(analysis)
-    elif structural_variants and (select_grid or near_miss_grid):
+        return analysis, render_selection_target_candidate_entry_metric_grid_markdown(analysis)
+    if structural_variants and (select_grid or near_miss_grid):
         analysis = analyze_selection_target_combination_grid(
             args.input_path,
             profile_name=args.profile_name,
@@ -1984,8 +2206,8 @@ def main() -> int:
             select_thresholds=select_grid,
             near_miss_thresholds=near_miss_grid,
         )
-        markdown_text = render_selection_target_combination_grid_markdown(analysis)
-    elif structural_variants:
+        return analysis, render_selection_target_combination_grid_markdown(analysis)
+    if structural_variants:
         analysis = analyze_selection_target_structural_variants(
             args.input_path,
             profile_name=args.profile_name,
@@ -1994,25 +2216,29 @@ def main() -> int:
             near_miss_threshold=args.near_miss_threshold,
             focus_tickers=focus_tickers,
         )
-        markdown_text = render_selection_target_structural_variants_markdown(analysis)
-    elif select_grid or near_miss_grid:
+        return analysis, render_selection_target_structural_variants_markdown(analysis)
+    if select_grid or near_miss_grid:
         analysis = analyze_selection_target_threshold_grid(
             args.input_path,
             profile_name=args.profile_name,
             select_thresholds=select_grid,
             near_miss_thresholds=near_miss_grid,
         )
-        markdown_text = render_selection_target_threshold_grid_markdown(analysis)
-    else:
-        analysis = analyze_selection_target_replay_inputs(
-            args.input_path,
-            profile_name=args.profile_name,
-            select_threshold=args.select_threshold,
-            near_miss_threshold=args.near_miss_threshold,
-            structural_variant="baseline",
-            focus_tickers=focus_tickers,
-        )
-        markdown_text = render_selection_target_replay_markdown(analysis)
+        return analysis, render_selection_target_threshold_grid_markdown(analysis)
+    analysis = analyze_selection_target_replay_inputs(
+        args.input_path,
+        profile_name=args.profile_name,
+        select_threshold=args.select_threshold,
+        near_miss_threshold=args.near_miss_threshold,
+        structural_variant="baseline",
+        focus_tickers=focus_tickers,
+    )
+    return analysis, render_selection_target_replay_markdown(analysis)
+
+
+def main() -> int:
+    args = parse_args()
+    analysis, markdown_text = _run_main_analysis(args, _parse_main_grid_options(args))
     if args.output is not None:
         _dump_json(args.output, analysis)
     if args.markdown_output is not None:

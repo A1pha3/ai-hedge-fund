@@ -182,67 +182,103 @@ def analyze_fisher_growth_quality(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # up to 9 raw points => scale to 0–10
 
-    # 1. Revenue Growth (annualized CAGR) - 使用统一的计算方法(处理A股YTD累计数据)
-    rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
-    if rev_growth is not None:
-        if rev_growth > 0.20:  # 20% annualized
-            raw_score += 3
-            details.append(f"Very strong annualized revenue growth: {rev_growth:.1%}")
-        elif rev_growth > 0.10:  # 10% annualized
-            raw_score += 2
-            details.append(f"Moderate annualized revenue growth: {rev_growth:.1%}")
-        elif rev_growth > 0.03:  # 3% annualized
-            raw_score += 1
-            details.append(f"Slight annualized revenue growth: {rev_growth:.1%}")
-        else:
-            details.append(f"Minimal or negative annualized revenue growth: {rev_growth:.1%}")
-    else:
-        details.append("Insufficient revenue data for CAGR calculation.")
+    revenue_score, revenue_detail = _analyze_fisher_revenue_growth(financial_line_items)
+    raw_score += revenue_score
+    details.append(revenue_detail)
 
-    # 2. EPS Growth - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
-    eps_growth = calculate_cagr_from_line_items(financial_line_items, field="earnings_per_share")
-    if eps_growth is not None:
-        if eps_growth > 0.20:  # 20% annualized
-            raw_score += 3
-            details.append(f"Very strong annualized EPS growth: {eps_growth:.1%}")
-        elif eps_growth > 0.10:  # 10% annualized
-            raw_score += 2
-            details.append(f"Moderate annualized EPS growth: {eps_growth:.1%}")
-        elif eps_growth > 0.03:  # 3% annualized
-            raw_score += 1
-            details.append(f"Slight annualized EPS growth: {eps_growth:.1%}")
-        else:
-            details.append(f"Minimal or negative annualized EPS growth: {eps_growth:.1%}")
-    else:
-        details.append("Insufficient EPS data for CAGR calculation.")
+    eps_score, eps_detail = _analyze_fisher_eps_growth(financial_line_items)
+    raw_score += eps_score
+    details.append(eps_detail)
 
-    # 3. R&D as % of Revenue (if we have R&D data)
-    rnd_values = [getattr(fi, "research_and_development", None) for fi in financial_line_items if getattr(fi, "research_and_development", None) is not None]
-    revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
-    if rnd_values and revenues and len(rnd_values) == len(revenues):
-        # We'll just look at the most recent for a simple measure
-        recent_rnd = rnd_values[0]
-        recent_rev = revenues[0] if revenues[0] else 1e-9
-        rnd_ratio = recent_rnd / recent_rev
-        # Generally, Fisher admired companies that invest aggressively in R&D,
-        # but it must be appropriate. We'll assume "3%-15%" is healthy, just as an example.
-        if 0.03 <= rnd_ratio <= 0.15:
-            raw_score += 3
-            details.append(f"R&D ratio {rnd_ratio:.1%} indicates significant investment in future growth")
-        elif rnd_ratio > 0.15:
-            raw_score += 2
-            details.append(f"R&D ratio {rnd_ratio:.1%} is very high (could be good if well-managed)")
-        elif rnd_ratio > 0.0:
-            raw_score += 1
-            details.append(f"R&D ratio {rnd_ratio:.1%} is somewhat low but still positive")
-        else:
-            details.append("No meaningful R&D expense ratio")
-    else:
-        details.append("Insufficient R&D data to evaluate")
+    rnd_score, rnd_detail = _analyze_fisher_rnd_intensity(financial_line_items)
+    raw_score += rnd_score
+    details.append(rnd_detail)
 
     # scale raw_score (max 9) to 0–10
     final_score = min(10, (raw_score / 9) * 10)
     return {"score": final_score, "details": "; ".join(details)}
+
+
+def _analyze_fisher_revenue_growth(financial_line_items: list) -> tuple[int, str]:
+    rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
+    if rev_growth is None:
+        return 0, "Insufficient revenue data for CAGR calculation."
+    if rev_growth > 0.20:
+        return 3, f"Very strong annualized revenue growth: {rev_growth:.1%}"
+    if rev_growth > 0.10:
+        return 2, f"Moderate annualized revenue growth: {rev_growth:.1%}"
+    if rev_growth > 0.03:
+        return 1, f"Slight annualized revenue growth: {rev_growth:.1%}"
+    return 0, f"Minimal or negative annualized revenue growth: {rev_growth:.1%}"
+
+
+def _analyze_fisher_eps_growth(financial_line_items: list) -> tuple[int, str]:
+    eps_growth = calculate_cagr_from_line_items(financial_line_items, field="earnings_per_share")
+    if eps_growth is None:
+        return 0, "Insufficient EPS data for CAGR calculation."
+    if eps_growth > 0.20:
+        return 3, f"Very strong annualized EPS growth: {eps_growth:.1%}"
+    if eps_growth > 0.10:
+        return 2, f"Moderate annualized EPS growth: {eps_growth:.1%}"
+    if eps_growth > 0.03:
+        return 1, f"Slight annualized EPS growth: {eps_growth:.1%}"
+    return 0, f"Minimal or negative annualized EPS growth: {eps_growth:.1%}"
+
+
+def _analyze_fisher_rnd_intensity(financial_line_items: list) -> tuple[int, str]:
+    rnd_values = [getattr(fi, "research_and_development", None) for fi in financial_line_items if getattr(fi, "research_and_development", None) is not None]
+    revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
+    if not (rnd_values and revenues and len(rnd_values) == len(revenues)):
+        return 0, "Insufficient R&D data to evaluate"
+
+    recent_rnd = rnd_values[0]
+    recent_rev = revenues[0] if revenues[0] else 1e-9
+    rnd_ratio = recent_rnd / recent_rev
+    if 0.03 <= rnd_ratio <= 0.15:
+        return 3, f"R&D ratio {rnd_ratio:.1%} indicates significant investment in future growth"
+    if rnd_ratio > 0.15:
+        return 2, f"R&D ratio {rnd_ratio:.1%} is very high (could be good if well-managed)"
+    if rnd_ratio > 0.0:
+        return 1, f"R&D ratio {rnd_ratio:.1%} is somewhat low but still positive"
+    return 0, "No meaningful R&D expense ratio"
+
+
+def _analyze_fisher_operating_margin_consistency(op_margins: list[float]) -> tuple[int, str]:
+    if len(op_margins) < 2:
+        return 0, "Not enough operating margin data points"
+
+    oldest_op_margin = op_margins[-1]
+    newest_op_margin = op_margins[0]
+    if newest_op_margin >= oldest_op_margin > 0:
+        return 2, f"Operating margin stable or improving ({oldest_op_margin:.1%} -> {newest_op_margin:.1%})"
+    if newest_op_margin > 0:
+        return 1, "Operating margin positive but slightly declined"
+    return 0, "Operating margin may be negative or uncertain"
+
+
+def _analyze_fisher_gross_margin(financial_line_items: list) -> tuple[int, str]:
+    gm_values = [getattr(fi, "gross_margin", None) for fi in financial_line_items if getattr(fi, "gross_margin", None) is not None]
+    if not gm_values:
+        return 0, "No gross margin data available"
+
+    recent_gm = gm_values[0]
+    if recent_gm > 0.5:
+        return 2, f"Strong gross margin: {recent_gm:.1%}"
+    if recent_gm > 0.3:
+        return 1, f"Moderate gross margin: {recent_gm:.1%}"
+    return 0, f"Low gross margin: {recent_gm:.1%}"
+
+
+def _analyze_fisher_margin_volatility(op_margins: list[float]) -> tuple[int, str]:
+    if len(op_margins) < 3:
+        return 0, "Not enough margin data points for volatility check"
+
+    stdev = statistics.pstdev(op_margins)
+    if stdev < 0.02:
+        return 2, "Operating margin extremely stable over multiple years"
+    if stdev < 0.05:
+        return 1, "Operating margin reasonably stable"
+    return 0, "Operating margin volatility is high"
 
 
 def analyze_margins_stability(financial_line_items: list) -> dict:
@@ -258,53 +294,18 @@ def analyze_margins_stability(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # up to 6 => scale to 0-10
 
-    # 1. Operating Margin Consistency
     op_margins = [getattr(fi, "operating_margin", None) for fi in financial_line_items if getattr(fi, "operating_margin", None) is not None]
-    if len(op_margins) >= 2:
-        # Check if margins are stable or improving (comparing oldest to newest)
-        oldest_op_margin = op_margins[-1]
-        newest_op_margin = op_margins[0]
-        if newest_op_margin >= oldest_op_margin > 0:
-            raw_score += 2
-            details.append(f"Operating margin stable or improving ({oldest_op_margin:.1%} -> {newest_op_margin:.1%})")
-        elif newest_op_margin > 0:
-            raw_score += 1
-            details.append(f"Operating margin positive but slightly declined")
-        else:
-            details.append(f"Operating margin may be negative or uncertain")
-    else:
-        details.append("Not enough operating margin data points")
+    consistency_score, consistency_detail = _analyze_fisher_operating_margin_consistency(op_margins)
+    raw_score += consistency_score
+    details.append(consistency_detail)
 
-    # 2. Gross Margin Level
-    gm_values = [getattr(fi, "gross_margin", None) for fi in financial_line_items if getattr(fi, "gross_margin", None) is not None]
-    if gm_values:
-        # We'll just take the most recent
-        recent_gm = gm_values[0]
-        if recent_gm > 0.5:
-            raw_score += 2
-            details.append(f"Strong gross margin: {recent_gm:.1%}")
-        elif recent_gm > 0.3:
-            raw_score += 1
-            details.append(f"Moderate gross margin: {recent_gm:.1%}")
-        else:
-            details.append(f"Low gross margin: {recent_gm:.1%}")
-    else:
-        details.append("No gross margin data available")
+    gross_margin_score, gross_margin_detail = _analyze_fisher_gross_margin(financial_line_items)
+    raw_score += gross_margin_score
+    details.append(gross_margin_detail)
 
-    # 3. Multi-year Margin Stability
-    #   e.g. if we have at least 3 data points, see if standard deviation is low.
-    if len(op_margins) >= 3:
-        stdev = statistics.pstdev(op_margins)
-        if stdev < 0.02:
-            raw_score += 2
-            details.append("Operating margin extremely stable over multiple years")
-        elif stdev < 0.05:
-            raw_score += 1
-            details.append("Operating margin reasonably stable")
-        else:
-            details.append("Operating margin volatility is high")
-    else:
-        details.append("Not enough margin data points for volatility check")
+    volatility_score, volatility_detail = _analyze_fisher_margin_volatility(op_margins)
+    raw_score += volatility_score
+    details.append(volatility_detail)
 
     # scale raw_score (max 6) to 0-10
     final_score = min(10, (raw_score / 6) * 10)

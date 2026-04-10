@@ -63,6 +63,46 @@ def _build_lane(row: dict[str, Any], *, lane_role: str, lane_rank: int) -> dict[
     }
 
 
+def _resolve_corridor_shadow_status(*, pack_status: str, primary: dict[str, Any]) -> str:
+    if pack_status == "parallel_probe_ready" and primary:
+        return "ready_for_primary_shadow_replay"
+    if pack_status == "accumulate_more_corridor_evidence":
+        return "hold_for_more_corridor_evidence"
+    return "skipped_no_corridor_lane"
+
+
+def _build_corridor_shadow_lanes(primary: dict[str, Any], parallel: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lanes: list[dict[str, Any]] = []
+    if primary:
+        lanes.append(_build_lane(primary, lane_role="primary_shadow_replay", lane_rank=1))
+    for index, row in enumerate(parallel, start=2):
+        lanes.append(_build_lane(row, lane_role="parallel_watch", lane_rank=index))
+    return lanes
+
+
+def _build_corridor_shadow_replay_commands(
+    corridor_validation_pack_path: str | Path,
+    *,
+    primary: dict[str, Any],
+    parallel: list[dict[str, Any]],
+    refresh_commands: list[str],
+) -> list[str]:
+    shadow_replay_commands: list[str] = []
+    if primary:
+        shadow_replay_commands.append(refresh_commands[-1])
+    for row in parallel:
+        ticker = str(row.get("ticker") or "").strip()
+        if ticker:
+            shadow_replay_commands.append(
+                "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
+                f"--corridor-validation-pack-path {Path(corridor_validation_pack_path).expanduser().resolve()} "
+                "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
+                "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md "
+                f"# parallel_watch={ticker}"
+            )
+    return shadow_replay_commands
+
+
 def analyze_btst_candidate_pool_corridor_shadow_pack(
     corridor_validation_pack_path: str | Path,
 ) -> dict[str, Any]:
@@ -73,19 +113,8 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
     pack_status = str(pack.get("pack_status") or "skipped_no_corridor_lane")
     primary = dict(pack.get("primary_validation_ticker") or {})
     parallel = [dict(row) for row in list(pack.get("parallel_watch_tickers") or [])]
-
-    if pack_status == "parallel_probe_ready" and primary:
-        shadow_status = "ready_for_primary_shadow_replay"
-    elif pack_status == "accumulate_more_corridor_evidence":
-        shadow_status = "hold_for_more_corridor_evidence"
-    else:
-        shadow_status = "skipped_no_corridor_lane"
-
-    lanes: list[dict[str, Any]] = []
-    if primary:
-        lanes.append(_build_lane(primary, lane_role="primary_shadow_replay", lane_rank=1))
-    for index, row in enumerate(parallel, start=2):
-        lanes.append(_build_lane(row, lane_role="parallel_watch", lane_rank=index))
+    shadow_status = _resolve_corridor_shadow_status(pack_status=pack_status, primary=primary)
+    lanes = _build_corridor_shadow_lanes(primary, parallel)
 
     success_criteria = [
         "primary ticker 在新增窗口里仍维持 t_plus_2_return_hit_rate_at_target 不低于当前 tradeable surface。",
@@ -109,19 +138,12 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         recommendation = "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控。"
 
     refresh_commands = _build_refresh_commands(corridor_validation_pack_path=corridor_validation_pack_path)
-    shadow_replay_commands: list[str] = []
-    if primary:
-        shadow_replay_commands.append(refresh_commands[-1])
-    for row in parallel:
-        ticker = str(row.get("ticker") or "").strip()
-        if ticker:
-            shadow_replay_commands.append(
-                "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
-                f"--corridor-validation-pack-path {Path(corridor_validation_pack_path).expanduser().resolve()} "
-                "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
-                "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md "
-                f"# parallel_watch={ticker}"
-            )
+    shadow_replay_commands = _build_corridor_shadow_replay_commands(
+        corridor_validation_pack_path,
+        primary=primary,
+        parallel=parallel,
+        refresh_commands=refresh_commands,
+    )
 
     return {
         "corridor_validation_pack_path": str(Path(corridor_validation_pack_path).expanduser().resolve()),

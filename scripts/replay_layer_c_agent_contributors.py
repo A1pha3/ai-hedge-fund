@@ -187,7 +187,7 @@ def _compare(targets: list[dict], replay_results: list) -> list[dict]:
     return comparisons
 
 
-def main() -> int:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay Layer C agent contributors for extra tickers already identified in timing logs")
     parser.add_argument("--baseline", required=True, help="Baseline timing JSONL path")
     parser.add_argument("--variant", action="append", dest="variants", default=[], help="Variant timing JSONL path; can be passed multiple times")
@@ -198,7 +198,89 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true", help="Resume from an existing --output file by skipping completed dates")
     parser.add_argument("--ticker-batch-size", type=int, default=0, help="Optional ticker batch size for more granular persistence; 0 means process all tickers for a date together")
     parser.add_argument("--ticker", action="append", dest="tickers", default=[], help="Optional ticker filter; can be passed multiple times")
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def _collect_all_targets(
+    *,
+    baseline_rows: dict[str, dict],
+    variant_args: list[str],
+    selected_dates: set[str] | None,
+    selected_tickers: set[str] | None,
+) -> list[dict]:
+    all_targets: list[dict] = []
+    for variant_arg in variant_args:
+        variant_path = Path(variant_arg).resolve()
+        variant_rows = _load_pipeline_rows(variant_path)
+        all_targets.extend(_filter_targets_by_tickers(_build_focus_targets(baseline_rows, variant_rows, selected_dates, variant_path.stem), selected_tickers))
+    return all_targets
+
+
+def _process_trade_date_targets(
+    *,
+    trade_date: str,
+    targets: list[dict],
+    ticker_batch_size: int,
+    agent_runner,
+    completed_keys: set[tuple[str, str, str]],
+    comparison_rows: list[dict],
+    output_path: Path | None,
+    completed_dates: list[str],
+    resolved_model_name: str,
+    resolved_model_provider: str,
+) -> None:
+    pending_targets = [target for target in targets if (target["variant"], target["trade_date"], target["ticker"]) not in completed_keys]
+    if not pending_targets:
+        completed_dates.append(trade_date)
+        return
+    for ticker_batch in _chunked(sorted({target["ticker"] for target in pending_targets}), ticker_batch_size):
+        batch_targets = [target for target in pending_targets if target["ticker"] in set(ticker_batch)]
+        analyst_signals = agent_runner(ticker_batch, trade_date, "fast") if ticker_batch else {}
+        for _, variant_targets in sorted(_group_targets_by_variant(batch_targets).items()):
+            replay_results = aggregate_layer_c_results(_build_fused_scores(variant_targets), analyst_signals)
+            new_rows = _compare(variant_targets, replay_results)
+            comparison_rows.extend(new_rows)
+            completed_keys.update(_comparison_key(row) for row in new_rows)
+        if output_path is not None:
+            _write_payload(
+                output_path,
+                _build_payload(
+                    resolved_model_name,
+                    resolved_model_provider,
+                    sorted(completed_dates),
+                    comparison_rows,
+                    partial=True,
+                ),
+            )
+            print(f"saved_partial_json: {output_path} completed_keys={len(completed_keys)}")
+    completed_dates.append(trade_date)
+    if output_path is not None:
+        _write_payload(
+            output_path,
+            _build_payload(
+                resolved_model_name,
+                resolved_model_provider,
+                sorted(completed_dates),
+                comparison_rows,
+                partial=True,
+            ),
+        )
+        print(f"saved_partial_json: {output_path} completed_dates={sorted(completed_dates)}")
+
+
+def _print_comparison_rows(comparison_rows: list[dict]) -> None:
+    for row in comparison_rows:
+        replay = row["replay"]
+        print(
+            f"{row['trade_date']} {row['variant']} {row['ticker']} "
+            f"logged_score_c={row['logged']['score_c']:.4f} replay_score_c={replay['score_c']:.4f} "
+            f"logged_conflict={row['logged']['bc_conflict']} replay_conflict={replay['bc_conflict']}"
+        )
+        print(f"  top_negative_agents={replay['agent_contribution_summary']['top_negative_agents']}")
+
+
+def main() -> int:
+    args = parse_args()
 
     if not args.variants:
         raise ValueError("至少需要提供一个 --variant")
@@ -213,12 +295,12 @@ def main() -> int:
         model_provider=resolved_model_provider,
         selected_analysts=selected_analysts,
     )
-
-    all_targets: list[dict] = []
-    for variant_arg in args.variants:
-        variant_path = Path(variant_arg).resolve()
-        variant_rows = _load_pipeline_rows(variant_path)
-        all_targets.extend(_filter_targets_by_tickers(_build_focus_targets(baseline_rows, variant_rows, selected_dates, variant_path.stem), selected_tickers))
+    all_targets = _collect_all_targets(
+        baseline_rows=baseline_rows,
+        variant_args=args.variants,
+        selected_dates=selected_dates,
+        selected_tickers=selected_tickers,
+    )
 
     grouped_by_date = _group_targets_by_date(all_targets)
     output_path = Path(args.output).resolve() if args.output else None
@@ -232,43 +314,18 @@ def main() -> int:
         if trade_date in completed_dates:
             print(f"skip_completed_date: {trade_date}")
             continue
-        pending_targets = [target for target in targets if (target["variant"], target["trade_date"], target["ticker"]) not in completed_keys]
-        if not pending_targets:
-            completed_dates.append(trade_date)
-            continue
-        for ticker_batch in _chunked(sorted({target["ticker"] for target in pending_targets}), args.ticker_batch_size):
-            batch_targets = [target for target in pending_targets if target["ticker"] in set(ticker_batch)]
-            analyst_signals = agent_runner(ticker_batch, trade_date, "fast") if ticker_batch else {}
-            for _, variant_targets in sorted(_group_targets_by_variant(batch_targets).items()):
-                replay_results = aggregate_layer_c_results(_build_fused_scores(variant_targets), analyst_signals)
-                new_rows = _compare(variant_targets, replay_results)
-                comparison_rows.extend(new_rows)
-                completed_keys.update(_comparison_key(row) for row in new_rows)
-            if output_path is not None:
-                _write_payload(
-                    output_path,
-                    _build_payload(
-                        resolved_model_name,
-                        resolved_model_provider,
-                        sorted(completed_dates),
-                        comparison_rows,
-                        partial=True,
-                    ),
-                )
-                print(f"saved_partial_json: {output_path} completed_keys={len(completed_keys)}")
-        completed_dates.append(trade_date)
-        if output_path is not None:
-            _write_payload(
-                output_path,
-                _build_payload(
-                    resolved_model_name,
-                    resolved_model_provider,
-                    sorted(completed_dates),
-                    comparison_rows,
-                    partial=True,
-                ),
-            )
-            print(f"saved_partial_json: {output_path} completed_dates={sorted(completed_dates)}")
+        _process_trade_date_targets(
+            trade_date=trade_date,
+            targets=targets,
+            ticker_batch_size=args.ticker_batch_size,
+            agent_runner=agent_runner,
+            completed_keys=completed_keys,
+            comparison_rows=comparison_rows,
+            output_path=output_path,
+            completed_dates=completed_dates,
+            resolved_model_name=resolved_model_name,
+            resolved_model_provider=resolved_model_provider,
+        )
 
     payload = _build_payload(
         resolved_model_name,
@@ -278,14 +335,7 @@ def main() -> int:
         partial=False,
     )
 
-    for row in comparison_rows:
-        replay = row["replay"]
-        print(
-            f"{row['trade_date']} {row['variant']} {row['ticker']} "
-            f"logged_score_c={row['logged']['score_c']:.4f} replay_score_c={replay['score_c']:.4f} "
-            f"logged_conflict={row['logged']['bc_conflict']} replay_conflict={replay['bc_conflict']}"
-        )
-        print(f"  top_negative_agents={replay['agent_contribution_summary']['top_negative_agents']}")
+    _print_comparison_rows(comparison_rows)
 
     if output_path is not None:
         _write_payload(output_path, payload)

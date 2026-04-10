@@ -135,6 +135,149 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
     return {"messages": [message], "data": state["data"]}
 
 
+def _analyze_pabrai_net_cash(cash: float | None, debt: float | None, ticker: str) -> tuple[int, str | None]:
+    if cash is None or debt is None:
+        return 0, None
+
+    net_cash = cash - debt
+    currency_symbol = get_currency_symbol(ticker)
+    if net_cash > 0:
+        return 3, f"Net cash position: {currency_symbol}{net_cash:,.0f}"
+    return 0, f"Net debt position: {currency_symbol}{net_cash:,.0f}"
+
+
+def _analyze_pabrai_liquidity(current_assets: float | None, current_liabilities: float | None) -> tuple[int, str | None]:
+    if current_assets is None or current_liabilities is None or current_liabilities <= 0:
+        return 0, None
+
+    current_ratio = current_assets / current_liabilities
+    if current_ratio >= 2.0:
+        return 2, f"Strong liquidity (current ratio {current_ratio:.2f})"
+    if current_ratio >= 1.2:
+        return 1, f"Adequate liquidity (current ratio {current_ratio:.2f})"
+    return 0, f"Weak liquidity (current ratio {current_ratio:.2f})"
+
+
+def _analyze_pabrai_leverage(latest: object, debt: float | None, equity: float | None) -> tuple[int, str | None]:
+    dte_direct = getattr(latest, "debt_to_equity", None)
+    if dte_direct is not None:
+        de_ratio = dte_direct
+    elif equity is not None and equity > 0 and debt is not None:
+        de_ratio = debt / equity
+    else:
+        de_ratio = None
+
+    if de_ratio is None:
+        return 0, None
+    if de_ratio < 0.3:
+        return 2, f"Very low leverage (D/E {de_ratio:.2f})"
+    if de_ratio < 0.7:
+        return 1, f"Moderate leverage (D/E {de_ratio:.2f})"
+    return 0, f"High leverage (D/E {de_ratio:.2f})"
+
+
+def _analyze_pabrai_fcf_stability(financial_line_items: list) -> tuple[int, str | None]:
+    fcf_values = [getattr(li, "free_cash_flow", None) for li in financial_line_items if getattr(li, "free_cash_flow", None) is not None]
+    if not fcf_values or len(fcf_values) < 3:
+        return 0, None
+
+    recent_avg = sum(fcf_values[:3]) / 3
+    older = sum(fcf_values[-3:]) / 3 if len(fcf_values) >= 6 else fcf_values[-1]
+    if recent_avg > 0 and recent_avg >= older:
+        return 2, "Positive and improving/stable FCF"
+    if recent_avg > 0:
+        return 1, "Positive but declining FCF"
+    return 0, "Negative FCF"
+
+
+def _resolve_pabrai_normalized_fcf(financial_line_items: list) -> tuple[float | None, str | None]:
+    fcf_values = [getattr(li, "free_cash_flow", None) for li in financial_line_items if getattr(li, "free_cash_flow", None) is not None]
+    if not fcf_values or len(fcf_values) < 3:
+        return None, "Insufficient FCF history"
+
+    normalized_fcf = sum(fcf_values[: min(5, len(fcf_values))]) / min(5, len(fcf_values))
+    if normalized_fcf <= 0:
+        return normalized_fcf, "Non-positive normalized FCF"
+    return normalized_fcf, None
+
+
+def _score_pabrai_fcf_yield(fcf_yield: float) -> tuple[int, str]:
+    if fcf_yield > 0.10:
+        return 4, f"Exceptional value: {fcf_yield:.1%} FCF yield"
+    if fcf_yield > 0.07:
+        return 3, f"Attractive value: {fcf_yield:.1%} FCF yield"
+    if fcf_yield > 0.05:
+        return 2, f"Reasonable value: {fcf_yield:.1%} FCF yield"
+    if fcf_yield > 0.03:
+        return 1, f"Borderline value: {fcf_yield:.1%} FCF yield"
+    return 0, f"Expensive: {fcf_yield:.1%} FCF yield"
+
+
+def _score_pabrai_capex_intensity(financial_line_items: list) -> tuple[int, str | None]:
+    capex_to_revenue = []
+    for item in financial_line_items:
+        revenue = getattr(item, "revenue", None)
+        capex = abs(getattr(item, "capital_expenditure", 0) or 0)
+        if revenue and revenue > 0:
+            capex_to_revenue.append(capex / revenue)
+
+    if not capex_to_revenue:
+        return 0, None
+
+    avg_ratio = sum(capex_to_revenue) / len(capex_to_revenue)
+    if avg_ratio < 0.05:
+        return 2, f"Asset-light: Avg capex {avg_ratio:.1%} of revenue"
+    if avg_ratio < 0.10:
+        return 1, f"Moderate capex: Avg capex {avg_ratio:.1%} of revenue"
+    return 0, f"Capex heavy: Avg capex {avg_ratio:.1%} of revenue"
+
+
+def _score_pabrai_revenue_trajectory(financial_line_items: list) -> tuple[int, str | None]:
+    if len(financial_line_items) < 3:
+        return 0, None
+
+    rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
+    if rev_growth is None:
+        return 0, None
+    if rev_growth > 0.15:
+        return 2, f"Strong revenue trajectory ({rev_growth:.1%})"
+    if rev_growth > 0.05:
+        return 1, f"Modest revenue growth ({rev_growth:.1%})"
+    return 0, None
+
+
+def _score_pabrai_fcf_growth(financial_line_items: list) -> tuple[int, str | None]:
+    fcfs = [getattr(li, "free_cash_flow", None) for li in financial_line_items if getattr(li, "free_cash_flow", None) is not None]
+    if len(fcfs) < 3:
+        return 0, None
+
+    recent_fcf = sum(fcfs[:3]) / 3
+    older_fcf = sum(fcfs[-3:]) / 3 if len(fcfs) >= 6 else fcfs[-1]
+    if older_fcf == 0:
+        return 0, None
+
+    fcf_growth = (recent_fcf / older_fcf) - 1
+    if fcf_growth > 0.20:
+        return 3, f"Strong FCF growth ({fcf_growth:.1%})"
+    if fcf_growth > 0.08:
+        return 2, f"Healthy FCF growth ({fcf_growth:.1%})"
+    if fcf_growth > 0:
+        return 1, f"Positive FCF growth ({fcf_growth:.1%})"
+    return 0, None
+
+
+def _score_pabrai_doubling_yield_support(financial_line_items: list, market_cap: float) -> tuple[int, str | None]:
+    valuation = analyze_pabrai_valuation(financial_line_items, market_cap)
+    fcf_yield = valuation.get("fcf_yield")
+    if fcf_yield is None:
+        return 0, None
+    if fcf_yield > 0.08:
+        return 3, "High FCF yield can drive doubling via retained cash/Buybacks"
+    if fcf_yield > 0.05:
+        return 1, "Reasonable FCF yield supports moderate compounding"
+    return 0, None
+
+
 def analyze_downside_protection(financial_line_items: list, ticker: str = "") -> dict[str, any]:
     """Assess balance-sheet strength and downside resiliency (capital preservation first)."""
     if not financial_line_items:
@@ -150,60 +293,25 @@ def analyze_downside_protection(financial_line_items: list, ticker: str = "") ->
     current_liabilities = getattr(latest, "current_liabilities", None)
     equity = getattr(latest, "shareholders_equity", None)
 
-    # Net cash position is a strong downside protector
-    net_cash = None
-    if cash is not None and debt is not None:
-        net_cash = cash - debt
-        cs = get_currency_symbol(ticker)
-        if net_cash > 0:
-            score += 3
-            details.append(f"Net cash position: {cs}{net_cash:,.0f}")
-        else:
-            details.append(f"Net debt position: {cs}{net_cash:,.0f}")
+    net_cash_score, net_cash_detail = _analyze_pabrai_net_cash(cash, debt, ticker)
+    score += net_cash_score
+    if net_cash_detail:
+        details.append(net_cash_detail)
 
-    # Current ratio
-    if current_assets is not None and current_liabilities is not None and current_liabilities > 0:
-        current_ratio = current_assets / current_liabilities
-        if current_ratio >= 2.0:
-            score += 2
-            details.append(f"Strong liquidity (current ratio {current_ratio:.2f})")
-        elif current_ratio >= 1.2:
-            score += 1
-            details.append(f"Adequate liquidity (current ratio {current_ratio:.2f})")
-        else:
-            details.append(f"Weak liquidity (current ratio {current_ratio:.2f})")
+    liquidity_score, liquidity_detail = _analyze_pabrai_liquidity(current_assets, current_liabilities)
+    score += liquidity_score
+    if liquidity_detail:
+        details.append(liquidity_detail)
 
-    # Low leverage - 优先使用标准 debt_to_equity 字段（total_liabilities/equity）
-    dte_direct = getattr(latest, "debt_to_equity", None)
-    if dte_direct is not None:
-        de_ratio = dte_direct
-    elif equity is not None and equity > 0 and debt is not None:
-        de_ratio = debt / equity
-    else:
-        de_ratio = None
-    if de_ratio is not None:
-        if de_ratio < 0.3:
-            score += 2
-            details.append(f"Very low leverage (D/E {de_ratio:.2f})")
-        elif de_ratio < 0.7:
-            score += 1
-            details.append(f"Moderate leverage (D/E {de_ratio:.2f})")
-        else:
-            details.append(f"High leverage (D/E {de_ratio:.2f})")
+    leverage_score, leverage_detail = _analyze_pabrai_leverage(latest, debt, equity)
+    score += leverage_score
+    if leverage_detail:
+        details.append(leverage_detail)
 
-    # Free cash flow positive and stable
-    fcf_values = [getattr(li, "free_cash_flow", None) for li in financial_line_items if getattr(li, "free_cash_flow", None) is not None]
-    if fcf_values and len(fcf_values) >= 3:
-        recent_avg = sum(fcf_values[:3]) / 3
-        older = sum(fcf_values[-3:]) / 3 if len(fcf_values) >= 6 else fcf_values[-1]
-        if recent_avg > 0 and recent_avg >= older:
-            score += 2
-            details.append("Positive and improving/stable FCF")
-        elif recent_avg > 0:
-            score += 1
-            details.append("Positive but declining FCF")
-        else:
-            details.append("Negative FCF")
+    fcf_score, fcf_detail = _analyze_pabrai_fcf_stability(financial_line_items)
+    score += fcf_score
+    if fcf_detail:
+        details.append(fcf_detail)
 
     return {"score": min(10, score), "details": "; ".join(details)}
 
@@ -214,53 +322,21 @@ def analyze_pabrai_valuation(financial_line_items: list, market_cap: float | Non
         return {"score": 0, "details": "Insufficient data", "fcf_yield": None, "normalized_fcf": None}
 
     details: list[str] = []
-    fcf_values = [getattr(li, "free_cash_flow", None) for li in financial_line_items if getattr(li, "free_cash_flow", None) is not None]
-    capex_vals = [abs(getattr(li, "capital_expenditure", 0) or 0) for li in financial_line_items]
-
-    if not fcf_values or len(fcf_values) < 3:
-        return {"score": 0, "details": "Insufficient FCF history", "fcf_yield": None, "normalized_fcf": None}
-
-    normalized_fcf = sum(fcf_values[: min(5, len(fcf_values))]) / min(5, len(fcf_values))
-    if normalized_fcf <= 0:
-        return {"score": 0, "details": "Non-positive normalized FCF", "fcf_yield": None, "normalized_fcf": normalized_fcf}
+    normalized_fcf, normalized_fcf_error = _resolve_pabrai_normalized_fcf(financial_line_items)
+    if normalized_fcf_error == "Insufficient FCF history":
+        return {"score": 0, "details": normalized_fcf_error, "fcf_yield": None, "normalized_fcf": None}
+    if normalized_fcf_error is not None:
+        return {"score": 0, "details": normalized_fcf_error, "fcf_yield": None, "normalized_fcf": normalized_fcf}
 
     fcf_yield = normalized_fcf / market_cap
 
-    score = 0
-    if fcf_yield > 0.10:
-        score += 4
-        details.append(f"Exceptional value: {fcf_yield:.1%} FCF yield")
-    elif fcf_yield > 0.07:
-        score += 3
-        details.append(f"Attractive value: {fcf_yield:.1%} FCF yield")
-    elif fcf_yield > 0.05:
-        score += 2
-        details.append(f"Reasonable value: {fcf_yield:.1%} FCF yield")
-    elif fcf_yield > 0.03:
-        score += 1
-        details.append(f"Borderline value: {fcf_yield:.1%} FCF yield")
-    else:
-        details.append(f"Expensive: {fcf_yield:.1%} FCF yield")
+    score, fcf_yield_detail = _score_pabrai_fcf_yield(fcf_yield)
+    details.append(fcf_yield_detail)
 
-    # Asset-light tilt: lower capex intensity preferred
-    if capex_vals and len(financial_line_items) >= 3:
-        revenue_vals = [getattr(li, "revenue", None) for li in financial_line_items]
-        capex_to_revenue = []
-        for i, li in enumerate(financial_line_items):
-            revenue = getattr(li, "revenue", None)
-            capex = abs(getattr(li, "capital_expenditure", 0) or 0)
-            if revenue and revenue > 0:
-                capex_to_revenue.append(capex / revenue)
-        if capex_to_revenue:
-            avg_ratio = sum(capex_to_revenue) / len(capex_to_revenue)
-            if avg_ratio < 0.05:
-                score += 2
-                details.append(f"Asset-light: Avg capex {avg_ratio:.1%} of revenue")
-            elif avg_ratio < 0.10:
-                score += 1
-                details.append(f"Moderate capex: Avg capex {avg_ratio:.1%} of revenue")
-            else:
-                details.append(f"Capex heavy: Avg capex {avg_ratio:.1%} of revenue")
+    capex_score, capex_detail = _score_pabrai_capex_intensity(financial_line_items)
+    score += capex_score
+    if capex_detail is not None:
+        details.append(capex_detail)
 
     return {"score": min(10, score), "details": "; ".join(details), "fcf_yield": fcf_yield, "normalized_fcf": normalized_fcf}
 
@@ -271,46 +347,21 @@ def analyze_double_potential(financial_line_items: list, market_cap: float | Non
         return {"score": 0, "details": "Insufficient data"}
 
     details: list[str] = []
-
-    # Use revenue and FCF trends as rough growth proxy (keep it simple) - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
-    fcfs = [getattr(li, "free_cash_flow", None) for li in financial_line_items if getattr(li, "free_cash_flow", None) is not None]
-
     score = 0
-    if len(financial_line_items) >= 3:
-        rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
-        if rev_growth is not None:
-            if rev_growth > 0.15:
-                score += 2
-                details.append(f"Strong revenue trajectory ({rev_growth:.1%})")
-            elif rev_growth > 0.05:
-                score += 1
-                details.append(f"Modest revenue growth ({rev_growth:.1%})")
+    revenue_score, revenue_detail = _score_pabrai_revenue_trajectory(financial_line_items)
+    score += revenue_score
+    if revenue_detail:
+        details.append(revenue_detail)
 
-    if fcfs and len(fcfs) >= 3:
-        recent_fcf = sum(fcfs[:3]) / 3
-        older_fcf = sum(fcfs[-3:]) / 3 if len(fcfs) >= 6 else fcfs[-1]
-        if older_fcf != 0:
-            fcf_growth = (recent_fcf / older_fcf) - 1
-            if fcf_growth > 0.20:
-                score += 3
-                details.append(f"Strong FCF growth ({fcf_growth:.1%})")
-            elif fcf_growth > 0.08:
-                score += 2
-                details.append(f"Healthy FCF growth ({fcf_growth:.1%})")
-            elif fcf_growth > 0:
-                score += 1
-                details.append(f"Positive FCF growth ({fcf_growth:.1%})")
+    fcf_growth_score, fcf_growth_detail = _score_pabrai_fcf_growth(financial_line_items)
+    score += fcf_growth_score
+    if fcf_growth_detail:
+        details.append(fcf_growth_detail)
 
-    # If FCF yield is already high (>8%), doubling can come from cash generation alone in few years
-    tmp_val = analyze_pabrai_valuation(financial_line_items, market_cap)
-    fcf_yield = tmp_val.get("fcf_yield")
-    if fcf_yield is not None:
-        if fcf_yield > 0.08:
-            score += 3
-            details.append("High FCF yield can drive doubling via retained cash/Buybacks")
-        elif fcf_yield > 0.05:
-            score += 1
-            details.append("Reasonable FCF yield supports moderate compounding")
+    yield_support_score, yield_support_detail = _score_pabrai_doubling_yield_support(financial_line_items, market_cap)
+    score += yield_support_score
+    if yield_support_detail:
+        details.append(yield_support_detail)
 
     return {"score": min(10, score), "details": "; ".join(details)}
 

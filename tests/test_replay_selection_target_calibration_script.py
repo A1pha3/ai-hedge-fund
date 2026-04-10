@@ -1,5 +1,8 @@
 import json
 
+import pytest
+
+import scripts.replay_selection_target_calibration as replay_selection_target_calibration
 from scripts.replay_selection_target_calibration import (
     WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,
     WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES,
@@ -1754,3 +1757,96 @@ def test_replay_selection_target_combination_grid_surfaces_blocked_to_selected_r
     assert baseline_row["replayed_short_trade_decision_counts"] == {"blocked": 1}
     assert variant_row["structural_variant"] == "no_bearish_conflict_block"
     assert variant_row["replayed_short_trade_decision_counts"] == {"selected": 1}
+
+
+def test_replay_selection_target_calibration_main_runs_default_replay_path(tmp_path, monkeypatch):
+    replay_input_path = _write_replay_input(tmp_path)
+    output_path = tmp_path / "analysis.json"
+    markdown_path = tmp_path / "analysis.md"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        replay_selection_target_calibration,
+        "parse_args",
+        lambda: replay_selection_target_calibration.argparse.Namespace(
+            input_path=replay_input_path,
+            compare_to=None,
+            profile_name="default",
+            select_threshold=0.58,
+            near_miss_threshold=0.46,
+            select_threshold_grid=None,
+            near_miss_threshold_grid=None,
+            structural_variants=None,
+            breakout_freshness_max_grid=None,
+            trend_acceleration_max_grid=None,
+            volume_expansion_quality_max_grid=None,
+            close_strength_max_grid=None,
+            catalyst_freshness_max_grid=None,
+            avoid_penalty_grid=None,
+            stale_score_penalty_grid=None,
+            extension_score_penalty_grid=None,
+            focus_tickers="000001,300394",
+            preserve_tickers=None,
+            allow_roster_drift=False,
+            output=output_path,
+            markdown_output=markdown_path,
+        ),
+    )
+
+    def _fake_analyze(input_path, **kwargs):
+        captured["input_path"] = input_path
+        captured["kwargs"] = kwargs
+        return {"status": "ok", "focus_tickers": kwargs["focus_tickers"]}
+
+    monkeypatch.setattr(replay_selection_target_calibration, "analyze_selection_target_replay_inputs", _fake_analyze)
+    monkeypatch.setattr(replay_selection_target_calibration, "render_selection_target_replay_markdown", lambda analysis: f"markdown:{analysis['focus_tickers']}")
+
+    exit_code = replay_selection_target_calibration.main()
+
+    assert exit_code == 0
+    assert captured["input_path"] == replay_input_path
+    assert captured["kwargs"] == {
+        "profile_name": "default",
+        "select_threshold": 0.58,
+        "near_miss_threshold": 0.46,
+        "structural_variant": "baseline",
+        "focus_tickers": ["000001", "300394"],
+    }
+    assert json.loads(output_path.read_text(encoding="utf-8")) == {"status": "ok", "focus_tickers": ["000001", "300394"]}
+    assert markdown_path.read_text(encoding="utf-8") == "markdown:['000001', '300394']"
+
+
+def test_replay_selection_target_calibration_main_rejects_compare_to_with_penalty_grid(monkeypatch, tmp_path):
+    replay_input_path = _write_replay_input(tmp_path)
+    compare_input_path = tmp_path / "compare_input.json"
+    compare_input_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        replay_selection_target_calibration,
+        "parse_args",
+        lambda: replay_selection_target_calibration.argparse.Namespace(
+            input_path=replay_input_path,
+            compare_to=compare_input_path,
+            profile_name="default",
+            select_threshold=None,
+            near_miss_threshold=None,
+            select_threshold_grid=None,
+            near_miss_threshold_grid=None,
+            structural_variants=None,
+            breakout_freshness_max_grid=None,
+            trend_acceleration_max_grid=None,
+            volume_expansion_quality_max_grid=None,
+            close_strength_max_grid=None,
+            catalyst_freshness_max_grid=None,
+            avoid_penalty_grid="0.12",
+            stale_score_penalty_grid=None,
+            extension_score_penalty_grid=None,
+            focus_tickers=None,
+            preserve_tickers=None,
+            allow_roster_drift=False,
+            output=None,
+            markdown_output=None,
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="--compare-to does not support penalty or candidate-entry grid modes."):
+        replay_selection_target_calibration.main()

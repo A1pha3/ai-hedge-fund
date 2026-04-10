@@ -210,6 +210,73 @@ def _extract_plan_generation_mode(session_summary: dict | None) -> str | None:
     return str(mode) if mode else None
 
 
+def _build_fast_threshold_margin(selection_root: Path, proposed_fast_threshold: float) -> dict[str, object]:
+    released_examples: list[dict[str, object]] = []
+    for snapshot in _iter_selection_snapshots(selection_root):
+        layer_b = ((snapshot.get("funnel_diagnostics") or {}).get("filters") or {}).get("layer_b") or {}
+        for item in layer_b.get("tickers") or []:
+            score_b = item.get("score_b")
+            if score_b is None:
+                continue
+            if proposed_fast_threshold <= float(score_b) < DEFAULT_FAST_SCORE_THRESHOLD:
+                released_examples.append(
+                    {
+                        "trade_date": snapshot.get("trade_date"),
+                        "ticker": item.get("ticker"),
+                        "score_b": float(score_b),
+                        "decision": item.get("decision"),
+                        "rank": item.get("rank"),
+                    }
+                )
+    return {
+        "baseline_threshold": DEFAULT_FAST_SCORE_THRESHOLD,
+        "proposed_threshold": proposed_fast_threshold,
+        "released_count": len(released_examples),
+        "released_examples": released_examples[:20],
+        "note": "Frozen current_plan replay does not rerun Layer B or Layer C. This margin scan only counts layer_b-filtered names whose score_b falls into the newly opened band; it does not imply they would survive downstream watchlist or buy-order filters.",
+    }
+
+
+def _build_watchlist_margin_payload(snapshot: dict, item: dict, score_final: float) -> dict[str, object]:
+    return {
+        "trade_date": snapshot.get("trade_date"),
+        "ticker": item.get("ticker"),
+        "score_b": item.get("score_b"),
+        "score_c": item.get("score_c"),
+        "score_final": score_final,
+        "decision": item.get("decision"),
+        "bc_conflict": item.get("bc_conflict"),
+        "reasons": item.get("reasons") or ([item.get("reason")] if item.get("reason") else []),
+    }
+
+
+def _build_watchlist_threshold_margin(selection_root: Path, proposed_watchlist_threshold: float) -> dict[str, object]:
+    threshold_only_examples: list[dict[str, object]] = []
+    avoid_blocked_examples: list[dict[str, object]] = []
+    for snapshot in _iter_selection_snapshots(selection_root):
+        watchlist = ((snapshot.get("funnel_diagnostics") or {}).get("filters") or {}).get("watchlist") or {}
+        for item in watchlist.get("tickers") or []:
+            score_final = item.get("score_final")
+            if score_final is None:
+                continue
+            score_final_value = float(score_final)
+            if proposed_watchlist_threshold <= score_final_value < DEFAULT_WATCHLIST_SCORE_THRESHOLD:
+                payload = _build_watchlist_margin_payload(snapshot, item, score_final_value)
+                if item.get("decision") == "avoid":
+                    avoid_blocked_examples.append(payload)
+                else:
+                    threshold_only_examples.append(payload)
+    return {
+        "baseline_threshold": DEFAULT_WATCHLIST_SCORE_THRESHOLD,
+        "proposed_threshold": proposed_watchlist_threshold,
+        "threshold_only_release_count": len(threshold_only_examples),
+        "threshold_only_release_examples": threshold_only_examples[:20],
+        "still_avoid_blocked_count": len(avoid_blocked_examples),
+        "still_avoid_blocked_examples": avoid_blocked_examples[:20],
+        "note": "Frozen current_plan replay preserves the historical watchlist decision set. This margin scan isolates names inside the newly opened score_final band and separates pure threshold misses from names that would still be blocked by decision=avoid.",
+    }
+
+
 def _build_frozen_gate_margin_scan(output_dir: Path, env_updates: dict[str, str]) -> dict | None:
     selection_root = output_dir / "selection_artifacts"
     if not selection_root.exists():
@@ -220,64 +287,10 @@ def _build_frozen_gate_margin_scan(output_dir: Path, env_updates: dict[str, str]
     proposed_watchlist_threshold = _extract_env_float(env_updates, "DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD")
 
     if proposed_fast_threshold is not None and proposed_fast_threshold < DEFAULT_FAST_SCORE_THRESHOLD:
-        released_examples: list[dict[str, object]] = []
-        for snapshot in _iter_selection_snapshots(selection_root):
-            layer_b = ((snapshot.get("funnel_diagnostics") or {}).get("filters") or {}).get("layer_b") or {}
-            for item in layer_b.get("tickers") or []:
-                score_b = item.get("score_b")
-                if score_b is None:
-                    continue
-                if proposed_fast_threshold <= float(score_b) < DEFAULT_FAST_SCORE_THRESHOLD:
-                    released_examples.append(
-                        {
-                            "trade_date": snapshot.get("trade_date"),
-                            "ticker": item.get("ticker"),
-                            "score_b": float(score_b),
-                            "decision": item.get("decision"),
-                            "rank": item.get("rank"),
-                        }
-                    )
-        scan["fast_threshold_margin"] = {
-            "baseline_threshold": DEFAULT_FAST_SCORE_THRESHOLD,
-            "proposed_threshold": proposed_fast_threshold,
-            "released_count": len(released_examples),
-            "released_examples": released_examples[:20],
-            "note": "Frozen current_plan replay does not rerun Layer B or Layer C. This margin scan only counts layer_b-filtered names whose score_b falls into the newly opened band; it does not imply they would survive downstream watchlist or buy-order filters.",
-        }
+        scan["fast_threshold_margin"] = _build_fast_threshold_margin(selection_root, proposed_fast_threshold)
 
     if proposed_watchlist_threshold is not None and proposed_watchlist_threshold < DEFAULT_WATCHLIST_SCORE_THRESHOLD:
-        threshold_only_examples: list[dict[str, object]] = []
-        avoid_blocked_examples: list[dict[str, object]] = []
-        for snapshot in _iter_selection_snapshots(selection_root):
-            watchlist = ((snapshot.get("funnel_diagnostics") or {}).get("filters") or {}).get("watchlist") or {}
-            for item in watchlist.get("tickers") or []:
-                score_final = item.get("score_final")
-                if score_final is None:
-                    continue
-                if proposed_watchlist_threshold <= float(score_final) < DEFAULT_WATCHLIST_SCORE_THRESHOLD:
-                    payload = {
-                        "trade_date": snapshot.get("trade_date"),
-                        "ticker": item.get("ticker"),
-                        "score_b": item.get("score_b"),
-                        "score_c": item.get("score_c"),
-                        "score_final": float(score_final),
-                        "decision": item.get("decision"),
-                        "bc_conflict": item.get("bc_conflict"),
-                        "reasons": item.get("reasons") or ([item.get("reason")] if item.get("reason") else []),
-                    }
-                    if item.get("decision") == "avoid":
-                        avoid_blocked_examples.append(payload)
-                    else:
-                        threshold_only_examples.append(payload)
-        scan["watchlist_threshold_margin"] = {
-            "baseline_threshold": DEFAULT_WATCHLIST_SCORE_THRESHOLD,
-            "proposed_threshold": proposed_watchlist_threshold,
-            "threshold_only_release_count": len(threshold_only_examples),
-            "threshold_only_release_examples": threshold_only_examples[:20],
-            "still_avoid_blocked_count": len(avoid_blocked_examples),
-            "still_avoid_blocked_examples": avoid_blocked_examples[:20],
-            "note": "Frozen current_plan replay preserves the historical watchlist decision set. This margin scan isolates names inside the newly opened score_final band and separates pure threshold misses from names that would still be blocked by decision=avoid.",
-        }
+        scan["watchlist_threshold_margin"] = _build_watchlist_threshold_margin(selection_root, proposed_watchlist_threshold)
 
     return scan or None
 
