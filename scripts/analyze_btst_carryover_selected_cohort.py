@@ -48,24 +48,13 @@ def _extract_case_row(snapshot_path: Path, ticker: str, payload: dict[str, Any])
     candidate_reason_codes = [str(code) for code in list(replay_context.get("candidate_reason_codes") or []) if str(code or "").strip()]
     relief_reason = str(upstream_relief.get("reason") or short_trade_catalyst_relief.get("reason") or "").strip()
 
-    if relief_reason != RELIEF_REASON and "catalyst_theme_short_trade_carryover_candidate" not in candidate_reason_codes:
+    if not _is_carryover_case(relief_reason=relief_reason, candidate_reason_codes=candidate_reason_codes):
         return None
 
-    metrics_payload = dict(short_trade.get("metrics_payload") or {})
-    thresholds = dict(metrics_payload.get("thresholds") or {})
     trade_date = str(snapshot_path.parent.name)
-    score_target = _safe_float(short_trade.get("score_target"))
-    effective_select_threshold = _safe_float(
-        short_trade.get("effective_select_threshold")
-        or upstream_relief.get("effective_select_threshold")
-        or thresholds.get("effective_select_threshold")
-        or 0.58
-    )
-    selected_score_tolerance = _safe_float(
-        short_trade.get("selected_score_tolerance")
-        or thresholds.get("selected_score_tolerance")
-        or upstream_relief.get("selected_score_tolerance")
-        or 0.0
+    score_target, effective_select_threshold, selected_score_tolerance = _resolve_case_threshold_metrics(
+        short_trade=short_trade,
+        upstream_relief=upstream_relief,
     )
 
     return {
@@ -86,6 +75,35 @@ def _extract_case_row(snapshot_path: Path, ticker: str, payload: dict[str, Any])
         "candidate_reason_codes": candidate_reason_codes,
         "top_reasons": [str(reason) for reason in list(short_trade.get("top_reasons") or []) if str(reason or "").strip()],
         "blockers": [str(reason) for reason in list(short_trade.get("blockers") or []) if str(reason or "").strip()],
+        **_build_case_historical_prior_fields(historical_prior),
+    }
+
+
+def _is_carryover_case(*, relief_reason: str, candidate_reason_codes: list[str]) -> bool:
+    return relief_reason == RELIEF_REASON or "catalyst_theme_short_trade_carryover_candidate" in candidate_reason_codes
+
+
+def _resolve_case_threshold_metrics(*, short_trade: dict[str, Any], upstream_relief: dict[str, Any]) -> tuple[float, float, float]:
+    metrics_payload = dict(short_trade.get("metrics_payload") or {})
+    thresholds = dict(metrics_payload.get("thresholds") or {})
+    score_target = _safe_float(short_trade.get("score_target"))
+    effective_select_threshold = _safe_float(
+        short_trade.get("effective_select_threshold")
+        or upstream_relief.get("effective_select_threshold")
+        or thresholds.get("effective_select_threshold")
+        or 0.58
+    )
+    selected_score_tolerance = _safe_float(
+        short_trade.get("selected_score_tolerance")
+        or thresholds.get("selected_score_tolerance")
+        or upstream_relief.get("selected_score_tolerance")
+        or 0.0
+    )
+    return score_target, effective_select_threshold, selected_score_tolerance
+
+
+def _build_case_historical_prior_fields(historical_prior: dict[str, Any]) -> dict[str, Any]:
+    return {
         "historical_execution_quality_label": str(historical_prior.get("execution_quality_label") or ""),
         "historical_entry_timing_bias": str(historical_prior.get("entry_timing_bias") or ""),
         "historical_applied_scope": str(historical_prior.get("applied_scope") or ""),

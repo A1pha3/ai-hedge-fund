@@ -1688,43 +1688,12 @@ def _build_watch_candidate_historical_prior(
     family: str,
 ) -> dict[str, Any]:
     decorated_entry = _decorate_watch_candidate_history_entry(entry, family)
-    same_ticker_rows = [row for row in historical_rows if row.get("ticker") == decorated_entry.get("ticker")]
-    same_family_rows = [row for row in historical_rows if row.get("watch_candidate_family") == family]
-    same_source_rows = [row for row in historical_rows if row.get("candidate_source") == decorated_entry.get("candidate_source")]
-    same_family_source_rows = [
-        row
-        for row in same_family_rows
-        if row.get("candidate_source") == decorated_entry.get("candidate_source")
-    ]
-    same_family_source_score_catalyst_rows = [
-        row
-        for row in same_family_source_rows
-        if row.get("score_bucket") == decorated_entry.get("score_bucket") and row.get("catalyst_bucket") == decorated_entry.get("catalyst_bucket")
-    ]
-    same_source_score_rows = [
-        row
-        for row in same_source_rows
-        if row.get("score_bucket") == decorated_entry.get("score_bucket")
-    ]
-
-    scope_candidates = [
-        ("same_ticker", "同票", same_ticker_rows if len(same_ticker_rows) >= OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES else []),
-        ("family_source_score_catalyst", "同层同源同分桶", same_family_source_score_catalyst_rows),
-        ("family_source", "同层同源", same_family_source_rows),
-        ("source_score", "同源同分桶", same_source_score_rows),
-        ("candidate_source", "同源", same_source_rows),
-        ("same_ticker", "同票", same_ticker_rows),
-    ]
-
-    applied_scope = "none"
-    applied_rows: list[dict[str, Any]] = []
-    scope_label: str | None = None
-    for scope_name, label, scope_rows in scope_candidates:
-        if scope_rows:
-            applied_scope = scope_name
-            applied_rows = scope_rows
-            scope_label = label
-            break
+    row_buckets = _build_watch_candidate_historical_row_buckets(
+        historical_rows=historical_rows,
+        decorated_entry=decorated_entry,
+        family=family,
+    )
+    applied_scope, scope_label, applied_rows = _resolve_watch_candidate_scope_selection(row_buckets)
 
     stats = _summarize_historical_opportunity_rows(applied_rows, price_cache)
     bias_label, monitor_priority = _classify_historical_prior(
@@ -1745,12 +1714,12 @@ def _build_watch_candidate_historical_prior(
         "watch_candidate_family": family,
         "score_bucket": decorated_entry.get("score_bucket"),
         "catalyst_bucket": decorated_entry.get("catalyst_bucket"),
-        "same_ticker_sample_count": len(same_ticker_rows),
-        "same_family_sample_count": len(same_family_rows),
-        "same_candidate_source_sample_count": len(same_source_rows),
-        "same_family_source_sample_count": len(same_family_source_rows),
-        "same_family_source_score_catalyst_sample_count": len(same_family_source_score_catalyst_rows),
-        "same_source_score_sample_count": len(same_source_score_rows),
+        "same_ticker_sample_count": len(row_buckets["same_ticker"]),
+        "same_family_sample_count": len(row_buckets["same_family"]),
+        "same_candidate_source_sample_count": len(row_buckets["same_source"]),
+        "same_family_source_sample_count": len(row_buckets["same_family_source"]),
+        "same_family_source_score_catalyst_sample_count": len(row_buckets["same_family_source_score_catalyst"]),
+        "same_source_score_sample_count": len(row_buckets["same_source_score"]),
         "applied_scope": applied_scope,
         **stats,
         "bias_label": bias_label,
@@ -1764,6 +1733,49 @@ def _build_watch_candidate_historical_prior(
             scope_label=scope_label,
         ),
     }
+
+
+def _build_watch_candidate_historical_row_buckets(
+    *,
+    historical_rows: list[dict[str, Any]],
+    decorated_entry: dict[str, Any],
+    family: str,
+) -> dict[str, list[dict[str, Any]]]:
+    same_ticker_rows = [row for row in historical_rows if row.get("ticker") == decorated_entry.get("ticker")]
+    same_family_rows = [row for row in historical_rows if row.get("watch_candidate_family") == family]
+    same_source_rows = [row for row in historical_rows if row.get("candidate_source") == decorated_entry.get("candidate_source")]
+    same_family_source_rows = [row for row in same_family_rows if row.get("candidate_source") == decorated_entry.get("candidate_source")]
+    same_family_source_score_catalyst_rows = [
+        row
+        for row in same_family_source_rows
+        if row.get("score_bucket") == decorated_entry.get("score_bucket") and row.get("catalyst_bucket") == decorated_entry.get("catalyst_bucket")
+    ]
+    same_source_score_rows = [row for row in same_source_rows if row.get("score_bucket") == decorated_entry.get("score_bucket")]
+    return {
+        "same_ticker": same_ticker_rows,
+        "same_family": same_family_rows,
+        "same_source": same_source_rows,
+        "same_family_source": same_family_source_rows,
+        "same_family_source_score_catalyst": same_family_source_score_catalyst_rows,
+        "same_source_score": same_source_score_rows,
+    }
+
+
+def _resolve_watch_candidate_scope_selection(
+    row_buckets: dict[str, list[dict[str, Any]]],
+) -> tuple[str, str | None, list[dict[str, Any]]]:
+    scope_candidates = [
+        ("same_ticker", "同票", row_buckets["same_ticker"] if len(row_buckets["same_ticker"]) >= OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES else []),
+        ("family_source_score_catalyst", "同层同源同分桶", row_buckets["same_family_source_score_catalyst"]),
+        ("family_source", "同层同源", row_buckets["same_family_source"]),
+        ("source_score", "同源同分桶", row_buckets["same_source_score"]),
+        ("candidate_source", "同源", row_buckets["same_source"]),
+        ("same_ticker", "同票", row_buckets["same_ticker"]),
+    ]
+    for scope_name, label, scope_rows in scope_candidates:
+        if scope_rows:
+            return scope_name, label, scope_rows
+    return "none", None, []
 
 
 def _extract_excluded_research_entry(selection_entry: dict[str, Any]) -> dict[str, Any] | None:

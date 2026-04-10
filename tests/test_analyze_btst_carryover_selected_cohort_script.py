@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_carryover_selected_cohort import analyze_btst_carryover_selected_cohort, render_btst_carryover_selected_cohort_markdown
+from scripts.analyze_btst_carryover_selected_cohort import _extract_case_row, analyze_btst_carryover_selected_cohort, render_btst_carryover_selected_cohort_markdown
 
 
 def test_analyze_btst_carryover_selected_cohort_deduplicates_and_ranks_expansion_candidates(monkeypatch, tmp_path):
@@ -89,3 +89,61 @@ def test_analyze_btst_carryover_selected_cohort_deduplicates_and_ranks_expansion
     assert "688498" in markdown
     assert "peer_evidence_status=broad_family_only" in markdown
     assert "002001" in markdown
+
+
+def test_extract_case_row_returns_none_without_carryover_relief_signal(tmp_path):
+    snapshot_path = tmp_path / "report" / "selection_artifacts" / "2026-04-09" / "selection_snapshot.json"
+    snapshot_path.parent.mkdir(parents=True)
+
+    row = _extract_case_row(
+        snapshot_path,
+        "688498",
+        {
+            "short_trade": {
+                "decision": "rejected",
+                "candidate_source": "catalyst_theme",
+                "explainability_payload": {"replay_context": {"candidate_reason_codes": ["ordinary_candidate"]}},
+            }
+        },
+    )
+
+    assert row is None
+
+
+def test_extract_case_row_uses_threshold_fallback_chain(tmp_path):
+    snapshot_path = tmp_path / "report" / "selection_artifacts" / "2026-04-09" / "selection_snapshot.json"
+    snapshot_path.parent.mkdir(parents=True)
+
+    row = _extract_case_row(
+        snapshot_path,
+        "002001",
+        {
+            "short_trade": {
+                "decision": "selected",
+                "score_target": 0.44934,
+                "candidate_source": "catalyst_theme",
+                "preferred_entry_mode": "confirm_then_hold_breakout",
+                "metrics_payload": {"thresholds": {"effective_select_threshold": 0.46, "selected_score_tolerance": 0.0005}},
+                "explainability_payload": {
+                    "historical_prior": {
+                        "execution_quality_label": "close_continuation",
+                        "entry_timing_bias": "confirm_then_hold",
+                        "sample_count": 3,
+                        "evaluable_count": 3,
+                    },
+                    "replay_context": {"candidate_reason_codes": ["catalyst_theme_short_trade_carryover_candidate"]},
+                    "upstream_shadow_catalyst_relief": {
+                        "applied": True,
+                        "reason": "catalyst_theme_short_trade_carryover",
+                    },
+                },
+            }
+        },
+    )
+
+    assert row is not None
+    assert row["trade_date"] == "2026-04-09"
+    assert row["effective_select_threshold"] == 0.46
+    assert row["selected_score_tolerance"] == 0.0005
+    assert row["gap_to_selected"] == 0.0107
+    assert row["selected_within_tolerance"] is False

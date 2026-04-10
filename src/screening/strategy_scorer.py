@@ -516,13 +516,11 @@ def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
 
     direction = _resolve_profitability_direction(positive, zero_pass_mode)
     confidence = _calculate_profitability_confidence(available=available, positive=positive, direction=direction)
-    return _make_sub_factor(
-        "profitability",
-        direction,
-        confidence,
-        FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
-        completeness=available / 3.0,
-        metrics=metrics_payload,
+    return _build_profitability_scored_factor(
+        direction=direction,
+        confidence=confidence,
+        available=available,
+        metrics_payload=metrics_payload,
     )
 
 
@@ -537,6 +535,23 @@ def _build_inactive_profitability_factor(metrics_payload: dict[str, float | int 
         0.0,
         FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
         completeness=0.0,
+        metrics=metrics_payload,
+    )
+
+
+def _build_profitability_scored_factor(
+    *,
+    direction: int,
+    confidence: float,
+    available: int,
+    metrics_payload: dict[str, float | int | str | None],
+) -> SubFactor:
+    return _make_sub_factor(
+        "profitability",
+        direction,
+        confidence,
+        FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
+        completeness=available / 3.0,
         metrics=metrics_payload,
     )
 
@@ -753,26 +768,51 @@ def _score_news_sentiment(news_items: list[CompanyNews], trade_date: str) -> Sub
     trade_dt = datetime.strptime(trade_date, "%Y%m%d")
     article_metrics = [_score_news_article(item, trade_dt) for item in news_items[:20]]
     normalized_score, recent_count, informative_count = _aggregate_news_article_metrics(article_metrics)
-    direction = 1 if normalized_score > 0.08 else -1 if normalized_score < -0.08 else 0
-    confidence = min(100.0, abs(normalized_score) * 130.0)
-    completeness = min(1.0, informative_count / 3.0)
+    direction, confidence, completeness = _resolve_news_sentiment_signal(
+        normalized_score=normalized_score,
+        informative_count=informative_count,
+    )
     return _make_sub_factor(
         "news_sentiment",
         direction,
         confidence,
         EVENT_SUBFACTOR_WEIGHTS["news_sentiment"],
         completeness=completeness,
-        metrics={"weighted_score": normalized_score, "recent_articles": recent_count, "informative_articles": informative_count, "articles": article_metrics[:5]},
+        metrics=_build_news_sentiment_metrics_payload(
+            normalized_score=normalized_score,
+            recent_count=recent_count,
+            informative_count=informative_count,
+            article_metrics=article_metrics,
+        ),
     )
 
 
+def _resolve_news_sentiment_signal(*, normalized_score: float, informative_count: int) -> tuple[int, float, float]:
+    direction = 1 if normalized_score > 0.08 else -1 if normalized_score < -0.08 else 0
+    confidence = min(100.0, abs(normalized_score) * 130.0)
+    completeness = min(1.0, informative_count / 3.0)
+    return direction, confidence, completeness
+
+
+def _build_news_sentiment_metrics_payload(
+    *,
+    normalized_score: float,
+    recent_count: int,
+    informative_count: int,
+    article_metrics: list[dict],
+) -> dict[str, float | int | list[dict]]:
+    return {
+        "weighted_score": normalized_score,
+        "recent_articles": recent_count,
+        "informative_articles": informative_count,
+        "articles": article_metrics[:5],
+    }
+
+
 def _score_news_article(item: CompanyNews, trade_dt: datetime) -> dict:
-    item_dt = _safe_date(item.date)
-    days_old = (trade_dt - item_dt).days if item_dt else 0
+    days_old = _resolve_news_article_days_old(item.date, trade_dt)
     decay = compute_event_decay(days_old)
-    text = f"{item.title or ''} {item.content or ''}".lower()
-    pos_hits = sum(1 for word in POSITIVE_NEWS_KEYWORDS if word in text)
-    neg_hits = sum(1 for word in NEGATIVE_NEWS_KEYWORDS if word in text)
+    pos_hits, neg_hits = _count_event_keyword_hits(item)
     direction, strength = _resolve_news_direction_and_strength(pos_hits, neg_hits)
     effective_weight = decay * _event_weight_multiplier(days_old, strength)
     confidence = min(100.0, 45.0 + strength * 18.0) if strength > 0 else 0.0
@@ -784,6 +824,11 @@ def _score_news_article(item: CompanyNews, trade_dt: datetime) -> dict:
         "confidence": confidence,
         "effective_weight": effective_weight,
     }
+
+
+def _resolve_news_article_days_old(news_date: str, trade_dt: datetime) -> int:
+    item_dt = _safe_date(news_date)
+    return (trade_dt - item_dt).days if item_dt else 0
 
 
 def _resolve_news_direction_and_strength(pos_hits: int, neg_hits: int) -> tuple[int, int]:
@@ -830,18 +875,12 @@ def _score_insider_conviction(trades: list[InsiderTrade]) -> SubFactor:
 def _score_event_freshness(news_items: list[CompanyNews], trade_date: str) -> SubFactor:
     if not news_items:
         return _make_sub_factor("event_freshness", 0, 0.0, EVENT_SUBFACTOR_WEIGHTS["event_freshness"], completeness=0.0)
-    trade_dt = datetime.strptime(trade_date, "%Y%m%d")
-    latest_dt = _safe_date(news_items[0].date)
-    days_old = (trade_dt - latest_dt).days if latest_dt else 0
+    days_old = _resolve_event_freshness_days_old(news_items[0].date, trade_date)
     decay = compute_event_decay(days_old)
-    text = f"{news_items[0].title or ''} {news_items[0].content or ''}".lower()
-    pos_hits = sum(1 for word in POSITIVE_NEWS_KEYWORDS if word in text)
-    neg_hits = sum(1 for word in NEGATIVE_NEWS_KEYWORDS if word in text)
+    pos_hits, neg_hits = _count_event_keyword_hits(news_items[0])
     strength = abs(pos_hits - neg_hits)
-    direction = 1 if pos_hits > neg_hits else -1 if neg_hits > pos_hits else 0
     freshness_weight = _event_weight_multiplier(days_old, strength)
-    if freshness_weight <= 0 or freshness_weight < 0.35 or strength < 2:
-        direction = 0
+    direction = _resolve_event_freshness_direction(pos_hits=pos_hits, neg_hits=neg_hits, strength=strength, freshness_weight=freshness_weight)
     confidence = decay * freshness_weight * 100.0
     return _make_sub_factor(
         "event_freshness",
@@ -850,6 +889,29 @@ def _score_event_freshness(news_items: list[CompanyNews], trade_date: str) -> Su
         EVENT_SUBFACTOR_WEIGHTS["event_freshness"],
         metrics={"days_old": days_old, "decay": decay, "positive_hits": pos_hits, "negative_hits": neg_hits, "freshness_weight": freshness_weight},
     )
+
+
+def _resolve_event_freshness_days_old(news_date: str, trade_date: str) -> int:
+    trade_dt = datetime.strptime(trade_date, "%Y%m%d")
+    latest_dt = _safe_date(news_date)
+    return (trade_dt - latest_dt).days if latest_dt else 0
+
+
+def _count_event_keyword_hits(news_item: CompanyNews) -> tuple[int, int]:
+    text = f"{news_item.title or ''} {news_item.content or ''}".lower()
+    pos_hits = sum(1 for word in POSITIVE_NEWS_KEYWORDS if word in text)
+    neg_hits = sum(1 for word in NEGATIVE_NEWS_KEYWORDS if word in text)
+    return pos_hits, neg_hits
+
+
+def _resolve_event_freshness_direction(*, pos_hits: int, neg_hits: int, strength: int, freshness_weight: float) -> int:
+    if freshness_weight <= 0 or freshness_weight < 0.35 or strength < 2:
+        return 0
+    if pos_hits > neg_hits:
+        return 1
+    if neg_hits > pos_hits:
+        return -1
+    return 0
 
 
 def score_event_sentiment_strategy(ticker: str, trade_date: str) -> StrategySignal:

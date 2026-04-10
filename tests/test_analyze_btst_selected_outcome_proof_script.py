@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_selected_outcome_proof import analyze_btst_selected_outcome_proof, render_btst_selected_outcome_proof_markdown
+import pandas as pd
+
+from scripts.analyze_btst_selected_outcome_proof import _extract_holding_outcome, analyze_btst_selected_outcome_proof, render_btst_selected_outcome_proof_markdown
 
 
 def test_analyze_btst_selected_outcome_proof_uses_primary_selected_recent_examples(monkeypatch, tmp_path):
@@ -90,3 +92,46 @@ def test_analyze_btst_selected_outcome_proof_uses_primary_selected_recent_exampl
     assert analysis["relief_reason"] == "catalyst_theme_short_trade_carryover"
     assert "confirm_then_hold" in markdown
     assert "002001" in markdown
+
+
+def test_extract_holding_outcome_returns_missing_next_day_when_future_bar_absent(monkeypatch):
+    frame = pd.DataFrame(
+        [{"open": 10.0, "high": 10.4, "close": 10.2}],
+        index=pd.to_datetime(["2026-03-27"]),
+    )
+    monkeypatch.setattr("scripts.analyze_btst_selected_outcome_proof.fetch_price_frame", lambda ticker, trade_date, price_cache: frame)
+
+    outcome = _extract_holding_outcome("002001", "2026-03-27", {})
+
+    assert outcome == {
+        "data_status": "missing_next_trade_day_bar",
+        "trade_close": 10.2,
+        "cycle_status": "missing_next_day",
+    }
+
+
+def test_extract_holding_outcome_builds_full_t_plus_four_window(monkeypatch):
+    frame = pd.DataFrame(
+        [
+            {"open": 10.0, "high": 10.4, "close": 10.0},
+            {"open": 10.1, "high": 10.6, "close": 10.3},
+            {"open": 10.2, "high": 10.5, "close": 10.4},
+            {"open": 10.3, "high": 10.7, "close": 10.2},
+            {"open": 10.4, "high": 10.8, "close": 10.5},
+        ],
+        index=pd.to_datetime(["2026-03-27", "2026-03-28", "2026-03-31", "2026-04-01", "2026-04-02"]),
+    )
+    monkeypatch.setattr("scripts.analyze_btst_selected_outcome_proof.fetch_price_frame", lambda ticker, trade_date, price_cache: frame)
+
+    outcome = _extract_holding_outcome("002001", "2026-03-27", {})
+
+    assert outcome["data_status"] == "ok"
+    assert outcome["cycle_status"] == "t_plus_4_closed"
+    assert outcome["next_trade_date"] == "2026-03-28"
+    assert outcome["next_open_return"] == 0.01
+    assert outcome["next_high_return"] == 0.06
+    assert outcome["next_close_return"] == 0.03
+    assert outcome["t_plus_2_trade_date"] == "2026-03-31"
+    assert outcome["t_plus_2_close_return"] == 0.04
+    assert outcome["t_plus_3_close_return"] == 0.02
+    assert outcome["t_plus_4_close_return"] == 0.05

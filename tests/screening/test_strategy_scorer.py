@@ -1,5 +1,6 @@
 import os
 import importlib
+from datetime import datetime
 from unittest.mock import patch
 
 import pandas as pd
@@ -7,7 +8,7 @@ import pytest
 
 from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade
 from src.screening.models import CandidateStock, StrategySignal, SubFactor
-from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_adx_strength, _score_ema_alignment, _score_long_trend_alignment, _score_news_sentiment, _score_profitability, aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
+from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_adx_strength, _score_ema_alignment, _score_event_freshness, _score_long_trend_alignment, _score_news_sentiment, _score_profitability, aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
 import src.screening.strategy_scorer as strategy_scorer_module
 
 
@@ -256,6 +257,37 @@ def test_profitability_two_positive_metrics_is_bullish():
     assert factor.completeness == 1.0
     assert factor.metrics["available_count"] == 3
     assert factor.metrics["positive_count"] == 2
+
+
+def test_score_event_freshness_returns_incomplete_without_news():
+    factor = _score_event_freshness([], "20260305")
+
+    assert factor.direction == 0
+    assert factor.confidence == 0.0
+    assert factor.completeness == 0.0
+
+
+def test_score_event_freshness_marks_fresh_positive_news_as_bullish():
+    factor = _score_event_freshness(
+        [
+            _news_item(
+                title="Record profit growth",
+                date="2026-03-04",
+                content="breakthrough contract profit growth",
+            )
+        ],
+        "20260305",
+    )
+
+    assert factor.direction == 1
+    assert factor.confidence == pytest.approx(70.4688, rel=1e-4)
+    assert factor.metrics == {
+        "days_old": 1,
+        "decay": pytest.approx(0.7046880897),
+        "positive_hits": 5,
+        "negative_hits": 0,
+        "freshness_weight": 1.0,
+    }
 
 
 def test_score_industry_pe_returns_incomplete_without_industry_context():
@@ -585,6 +617,29 @@ def test_score_news_sentiment_returns_incomplete_when_no_news():
     assert factor.direction == 0
     assert factor.confidence == 0.0
     assert factor.completeness == 0.0
+
+
+def test_score_news_article_builds_positive_fresh_article_metrics():
+    metrics = strategy_scorer_module._score_news_article(
+        _news_item("profit growth beat", "2026-03-05", "record upgrade and contract"),
+        datetime(2026, 3, 5),
+    )
+
+    assert metrics["days_old"] == 0
+    assert metrics["direction"] == 1
+    assert metrics["confidence"] > 45.0
+    assert metrics["effective_weight"] == metrics["decay"]
+
+
+def test_score_news_article_downweights_stale_negative_article():
+    metrics = strategy_scorer_module._score_news_article(
+        _news_item("downgrade warning", "2026-03-01", "fraud risk and weak demand"),
+        datetime(2026, 3, 5),
+    )
+
+    assert metrics["days_old"] == 4
+    assert metrics["direction"] == -1
+    assert metrics["effective_weight"] < metrics["decay"]
 
 
 def test_score_mean_reversion_strategy_marks_rsi_oversold_and_reversion_regime():

@@ -438,6 +438,97 @@ def test_build_pipeline_day_timing_payload_includes_queue_counts(monkeypatch):
     assert captured["kwargs"]["total_day_seconds"] == 1.5
 
 
+def test_build_pipeline_day_event_payload_includes_runtime_state(monkeypatch):
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=StubPipeline(post_market_plans=[], intraday_responses=[]),
+    )
+    engine._pending_buy_queue = [PendingOrder(ticker="AAPL", order_type="buy", shares=10)]
+    engine._pending_sell_queue = [PendingOrder(ticker="AAPL", order_type="sell", shares=5)]
+    engine._exit_reentry_cooldowns = {"AAPL": {"blocked_until": "20240311"}}
+    engine._portfolio.apply_long_buy("AAPL", 10, 10.0)
+    captured: dict[str, object] = {}
+
+    def fake_build_payload(**kwargs):
+        captured["kwargs"] = kwargs
+        return {"event": "paper_trading_day"}
+
+    monkeypatch.setattr("src.backtesting.engine.build_pipeline_event_payload", fake_build_payload)
+
+    payload = engine._build_pipeline_day_event_payload(
+        trade_date_compact="20240304",
+        active_tickers=["AAPL"],
+        executed_trades={"AAPL": 10},
+        decisions={"AAPL": {"action": "buy", "quantity": 10}},
+        current_prices={"AAPL": 11.0},
+        prepared_plan=ExecutionPlan(date="20240301"),
+        pending_plan=ExecutionPlan(date="20240304"),
+        execution_plan_observations=[{"trade_date": "20240304", "status": "ok"}],
+        timing_seconds={"total_day_seconds": 1.5},
+    )
+
+    assert payload == {"event": "paper_trading_day"}
+    assert captured["kwargs"]["portfolio_snapshot"]["positions"]["AAPL"]["long"] == 10
+    assert captured["kwargs"]["pending_buy_queue"] == engine._pending_buy_queue
+    assert captured["kwargs"]["pending_sell_queue"] == engine._pending_sell_queue
+    assert captured["kwargs"]["exit_reentry_cooldowns"] == {"AAPL": {"blocked_until": "20240311"}}
+
+
+def test_apply_pipeline_decisions_builds_lookup_maps_and_dedupes_queues(monkeypatch):
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=StubPipeline(post_market_plans=[], intraday_responses=[]),
+    )
+    prepared_plan = ExecutionPlan(
+        date="20240304",
+        buy_orders=[PositionPlan(ticker="AAPL", shares=100, amount=1000.0, score_final=0.8, execution_ratio=1.0)],
+        watchlist=[LayerCResult(ticker="MSFT", score_c=0.2, score_final=0.6, action="watch")],
+    )
+    engine._pending_buy_queue = [PendingOrder(ticker="AAPL", order_type="buy", shares=10)]
+    engine._pending_sell_queue = [PendingOrder(ticker="AAPL", order_type="sell", shares=5)]
+    captured: dict[str, object] = {}
+
+    def fake_apply_single(**kwargs):
+        captured["apply_kwargs"] = kwargs
+
+    monkeypatch.setattr(engine, "_apply_single_pipeline_decision", fake_apply_single)
+    monkeypatch.setattr(engine, "_dedupe_pending_orders", lambda orders: [*orders, PendingOrder(ticker="DONE", order_type="buy", shares=1)])
+
+    engine._apply_pipeline_decisions(
+        prepared_plan=prepared_plan,
+        current_prices={"AAPL": 11.0},
+        daily_turnovers={"AAPL": 1000000.0},
+        limit_up=set(),
+        limit_down=set(),
+        trade_date_compact="20240304",
+        decisions={"AAPL": {"action": "buy", "quantity": 10}},
+        executed_trades={"AAPL": 0},
+    )
+
+    assert captured["apply_kwargs"]["buy_order_by_ticker"] == {"AAPL": prepared_plan.buy_orders[0]}
+    assert captured["apply_kwargs"]["watchlist_by_ticker"] == {"MSFT": prepared_plan.watchlist[0]}
+    assert engine._pending_buy_queue[-1].ticker == "DONE"
+    assert engine._pending_sell_queue[-1].ticker == "DONE"
+
+
 def test_apply_single_pipeline_decision_skips_when_price_missing(monkeypatch):
     engine = BacktestEngine(
         agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},

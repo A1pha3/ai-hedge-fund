@@ -759,8 +759,7 @@ class BacktestEngine:
         decisions: Dict[str, dict],
         executed_trades: Dict[str, int],
     ) -> None:
-        buy_order_by_ticker = {order.ticker: order for order in prepared_plan.buy_orders}
-        watchlist_by_ticker = {item.ticker: item for item in prepared_plan.watchlist}
+        buy_order_by_ticker, watchlist_by_ticker = self._build_pipeline_decision_lookup_maps(prepared_plan)
         for ticker, decision in decisions.items():
             self._apply_single_pipeline_decision(
                 ticker=ticker,
@@ -774,6 +773,15 @@ class BacktestEngine:
                 watchlist_by_ticker=watchlist_by_ticker,
                 executed_trades=executed_trades,
             )
+        self._dedupe_pipeline_pending_queues()
+
+    def _build_pipeline_decision_lookup_maps(self, prepared_plan: ExecutionPlan) -> tuple[dict[str, Any], dict[str, Any]]:
+        return (
+            {order.ticker: order for order in prepared_plan.buy_orders},
+            {item.ticker: item for item in prepared_plan.watchlist},
+        )
+
+    def _dedupe_pipeline_pending_queues(self) -> None:
         self._pending_buy_queue = self._dedupe_pending_orders(self._pending_buy_queue)
         self._pending_sell_queue = self._dedupe_pending_orders(self._pending_sell_queue)
 
@@ -1263,6 +1271,26 @@ class BacktestEngine:
         day_started_at: float,
     ) -> None:
         execution_plan_observations = self._collect_pipeline_day_observations(day_context.trade_date_compact)
+        timing_payload, event_payload = self._build_pipeline_day_record_payloads(
+            day_context=day_context,
+            day_state=day_state,
+            pending_plan=pending_plan,
+            current_prices=current_prices,
+            day_started_at=day_started_at,
+            execution_plan_observations=execution_plan_observations,
+        )
+        self._emit_pipeline_day_records(timing_payload=timing_payload, event_payload=event_payload)
+
+    def _build_pipeline_day_record_payloads(
+        self,
+        *,
+        day_context: PipelineDayContext,
+        day_state: PipelineModeDayState,
+        pending_plan: ExecutionPlan | None,
+        current_prices: Dict[str, float],
+        day_started_at: float,
+        execution_plan_observations: list[dict],
+    ) -> tuple[dict, dict]:
         timing_payload = self._build_pipeline_day_timing_payload(
             trade_date_compact=day_context.trade_date_compact,
             active_tickers=day_context.active_tickers,
@@ -1290,7 +1318,7 @@ class BacktestEngine:
             execution_plan_observations=execution_plan_observations,
             timing_seconds=timing_payload["timing_seconds"],
         )
-        self._emit_pipeline_day_records(timing_payload=timing_payload, event_payload=event_payload)
+        return timing_payload, event_payload
 
     def _collect_pipeline_day_observations(self, trade_date_compact: str) -> list[dict]:
         if self._pipeline is None:
@@ -1379,15 +1407,20 @@ class BacktestEngine:
             executed_trades=executed_trades,
             decisions=decisions,
             current_prices=current_prices,
-            portfolio_snapshot=self._portfolio.get_snapshot(),
-            pending_buy_queue=self._pending_buy_queue,
-            pending_sell_queue=self._pending_sell_queue,
-            exit_reentry_cooldowns=self._exit_reentry_cooldowns,
             prepared_plan=prepared_plan,
             pending_plan=pending_plan,
             execution_plan_observations=execution_plan_observations,
             timing_seconds=timing_seconds,
+            **self._build_pipeline_runtime_state_payload(),
         )
+
+    def _build_pipeline_runtime_state_payload(self) -> dict[str, object]:
+        return {
+            "portfolio_snapshot": self._portfolio.get_snapshot(),
+            "pending_buy_queue": self._pending_buy_queue,
+            "pending_sell_queue": self._pending_sell_queue,
+            "exit_reentry_cooldowns": self._exit_reentry_cooldowns,
+        }
 
     def _emit_pipeline_day_records(self, *, timing_payload: dict, event_payload: dict) -> None:
         self._append_timing_log(timing_payload)

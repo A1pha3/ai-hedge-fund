@@ -520,17 +520,19 @@ def _prepare_session_runtime_context(
         selection_target=selection_target,
     )
     recorder, engine = _build_runtime_recorder_and_engine(
-        agent=agent,
-        tickers=tickers,
-        start_date=start_date,
-        end_date=end_date,
-        initial_capital=initial_capital,
-        resolved_model_name=resolved_model_name,
-        resolved_model_provider=resolved_model_provider,
-        selected_analysts=selected_analysts,
-        initial_margin_requirement=initial_margin_requirement,
-        pipeline=resolved_pipeline,
-        session_paths=session_paths,
+        **_build_runtime_engine_inputs(
+            agent=agent,
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            resolved_model_name=resolved_model_name,
+            resolved_model_provider=resolved_model_provider,
+            selected_analysts=selected_analysts,
+            initial_margin_requirement=initial_margin_requirement,
+            pipeline=resolved_pipeline,
+            session_paths=session_paths,
+        )
     )
     return _build_session_runtime_context(
         resolved_model_name=resolved_model_name,
@@ -540,6 +542,35 @@ def _prepare_session_runtime_context(
         recorder=recorder,
         engine=engine,
     )
+
+
+def _build_runtime_engine_inputs(
+    *,
+    agent: Callable,
+    tickers: list[str] | None,
+    start_date: str,
+    end_date: str,
+    initial_capital: float,
+    resolved_model_name: str,
+    resolved_model_provider: str,
+    selected_analysts: list[str] | None,
+    initial_margin_requirement: float,
+    pipeline: DailyPipeline,
+    session_paths: Any,
+) -> dict[str, Any]:
+    return {
+        "agent": agent,
+        "tickers": tickers,
+        "start_date": start_date,
+        "end_date": end_date,
+        "initial_capital": initial_capital,
+        "resolved_model_name": resolved_model_name,
+        "resolved_model_provider": resolved_model_provider,
+        "selected_analysts": selected_analysts,
+        "initial_margin_requirement": initial_margin_requirement,
+        "pipeline": pipeline,
+        "session_paths": session_paths,
+    }
 
 
 def _resolve_runtime_model_config(*, model_name: str | None, model_provider: str | None) -> tuple[str, str]:
@@ -971,22 +1002,59 @@ def _finalize_runtime_run(
     cache_benchmark_clear_first: bool,
 ) -> PaperTradingArtifacts:
     _, feedback_summary_path = _finalize_paper_trading_session(
-        context=context,
-        metrics=metrics,
-        start_date=start_date,
-        end_date=end_date,
-        tickers=tickers,
-        initial_capital=initial_capital,
-        selected_analysts=selected_analysts,
-        fast_selected_analysts=fast_selected_analysts,
-        short_trade_target_profile_name=short_trade_target_profile_name,
-        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
-        selection_target=selection_target,
-        cache_benchmark=cache_benchmark,
-        cache_benchmark_ticker=cache_benchmark_ticker,
-        cache_benchmark_clear_first=cache_benchmark_clear_first,
+        **_build_runtime_finalization_inputs(
+            context=context,
+            metrics=metrics,
+            start_date=start_date,
+            end_date=end_date,
+            tickers=tickers,
+            initial_capital=initial_capital,
+            selected_analysts=selected_analysts,
+            fast_selected_analysts=fast_selected_analysts,
+            short_trade_target_profile_name=short_trade_target_profile_name,
+            short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+            selection_target=selection_target,
+            cache_benchmark=cache_benchmark,
+            cache_benchmark_ticker=cache_benchmark_ticker,
+            cache_benchmark_clear_first=cache_benchmark_clear_first,
+        )
     )
     return _build_runtime_artifacts(context, feedback_summary_path)
+
+
+def _build_runtime_finalization_inputs(
+    *,
+    context: SessionRuntimeContext,
+    metrics: PerformanceMetrics,
+    start_date: str,
+    end_date: str,
+    tickers: list[str] | None,
+    initial_capital: float,
+    selected_analysts: list[str] | None,
+    fast_selected_analysts: list[str] | None,
+    short_trade_target_profile_name: str,
+    short_trade_target_profile_overrides: dict[str, object] | None,
+    selection_target: str,
+    cache_benchmark: bool,
+    cache_benchmark_ticker: str | None,
+    cache_benchmark_clear_first: bool,
+) -> dict[str, Any]:
+    return {
+        "context": context,
+        "metrics": metrics,
+        "start_date": start_date,
+        "end_date": end_date,
+        "tickers": tickers,
+        "initial_capital": initial_capital,
+        "selected_analysts": selected_analysts,
+        "fast_selected_analysts": fast_selected_analysts,
+        "short_trade_target_profile_name": short_trade_target_profile_name,
+        "short_trade_target_profile_overrides": short_trade_target_profile_overrides,
+        "selection_target": selection_target,
+        "cache_benchmark": cache_benchmark,
+        "cache_benchmark_ticker": cache_benchmark_ticker,
+        "cache_benchmark_clear_first": cache_benchmark_clear_first,
+    }
 
 
 def run_paper_trading_session(

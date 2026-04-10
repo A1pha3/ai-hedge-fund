@@ -33,6 +33,72 @@ def _write_catalyst_theme_frontier(report_dir, promoted_tickers=None):
     (report_dir / "catalyst_theme_frontier_latest.md").write_text("# Catalyst Theme Frontier\n", encoding="utf-8")
 
 
+def test_build_watch_candidate_historical_prior_prefers_family_source_score_scope(monkeypatch):
+    captured: dict[str, object] = {}
+    entry = {"ticker": "002001", "candidate_source": "catalyst_theme"}
+    historical_rows = [
+        {"ticker": "002001", "watch_candidate_family": "catalyst_theme", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
+        {"ticker": "300001", "watch_candidate_family": "catalyst_theme", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
+        {"ticker": "300002", "watch_candidate_family": "catalyst_theme", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
+        {"ticker": "300003", "watch_candidate_family": "catalyst_theme", "candidate_source": "other_source", "score_bucket": "high", "catalyst_bucket": "fresh"},
+    ]
+
+    monkeypatch.setattr(
+        btst_reporting,
+        "_decorate_watch_candidate_history_entry",
+        lambda raw_entry, family: {**raw_entry, "ticker": "002001", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
+    )
+
+    def fake_summarize(rows, price_cache):
+        captured["applied_rows"] = list(rows)
+        return {"sample_count": len(rows), "evaluable_count": len(rows), "next_high_hit_rate_at_threshold": 1.0, "next_close_positive_rate": 1.0}
+
+    monkeypatch.setattr(btst_reporting, "_classify_historical_prior", lambda *args: ("supportive", "high"))
+    monkeypatch.setattr(btst_reporting, "_classify_execution_quality_prior", lambda *args: {"execution_quality_label": "close_continuation"})
+    monkeypatch.setattr(btst_reporting, "_summarize_historical_opportunity_rows", fake_summarize)
+
+    def fake_summary(**kwargs):
+        captured["summary_kwargs"] = kwargs
+        return "summary"
+
+    monkeypatch.setattr(btst_reporting, "_build_historical_prior_summary", fake_summary)
+
+    prior = btst_reporting._build_watch_candidate_historical_prior(entry, historical_rows, {}, family="catalyst_theme")
+
+    assert prior["applied_scope"] == "family_source_score_catalyst"
+    assert len(captured["applied_rows"]) == 3
+    assert prior["same_ticker_sample_count"] == 1
+    assert prior["same_family_sample_count"] == 4
+    assert prior["same_family_source_sample_count"] == 3
+    assert prior["same_family_source_score_catalyst_sample_count"] == 3
+
+
+def test_build_watch_candidate_historical_prior_falls_back_to_same_ticker_when_no_broader_scope(monkeypatch):
+    historical_rows = [
+        {"ticker": "002001", "watch_candidate_family": "other_family", "candidate_source": "other_source", "score_bucket": "mid", "catalyst_bucket": "old"},
+    ]
+
+    monkeypatch.setattr(
+        btst_reporting,
+        "_decorate_watch_candidate_history_entry",
+        lambda raw_entry, family: {**raw_entry, "ticker": "002001", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
+    )
+    monkeypatch.setattr(
+        btst_reporting,
+        "_summarize_historical_opportunity_rows",
+        lambda rows, price_cache: {"sample_count": len(rows), "evaluable_count": len(rows), "next_high_hit_rate_at_threshold": None, "next_close_positive_rate": None},
+    )
+    monkeypatch.setattr(btst_reporting, "_classify_historical_prior", lambda *args: ("unknown", "normal"))
+    monkeypatch.setattr(btst_reporting, "_classify_execution_quality_prior", lambda *args: {"execution_quality_label": "unknown"})
+    monkeypatch.setattr(btst_reporting, "_build_historical_prior_summary", lambda **kwargs: "fallback-summary")
+
+    prior = btst_reporting._build_watch_candidate_historical_prior({"ticker": "002001", "candidate_source": "catalyst_theme"}, historical_rows, {}, family="catalyst_theme")
+
+    assert prior["applied_scope"] == "same_ticker"
+    assert prior["sample_count"] == 1
+    assert prior["summary"] == "fallback-summary"
+
+
 def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(tmp_path, monkeypatch):
     report_dir = tmp_path / "report"
     trade_dir = report_dir / "selection_artifacts" / "2026-03-27"

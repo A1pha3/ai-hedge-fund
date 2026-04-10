@@ -154,8 +154,19 @@ def _extract_holding_outcome(ticker: str, trade_date: str, price_cache: dict[tup
     if trade_close is None or trade_close <= 0:
         return {"data_status": "incomplete_trade_day_bar", "cycle_status": "missing_next_day"}
 
-    future_rows = [future_days.iloc[index] for index in range(min(len(future_days), 4))]
-    future_dates = [future_days.index[index].strftime("%Y-%m-%d") for index in range(min(len(future_days), 4))]
+    future_rows, future_dates = _extract_holding_future_window(future_days)
+    return _build_holding_outcome_payload(trade_close=trade_close, future_rows=future_rows, future_dates=future_dates)
+
+
+def _extract_holding_future_window(future_days: Any) -> tuple[list[Any], list[str]]:
+    window_size = min(len(future_days), 4)
+    return (
+        [future_days.iloc[index] for index in range(window_size)],
+        [future_days.index[index].strftime("%Y-%m-%d") for index in range(window_size)],
+    )
+
+
+def _build_holding_outcome_payload(*, trade_close: float, future_rows: list[Any], future_dates: list[str]) -> dict[str, Any]:
     next_row = future_rows[0]
     next_open = safe_float(next_row.get("open"))
     next_high = safe_float(next_row.get("high"))
@@ -176,7 +187,11 @@ def _extract_holding_outcome(ticker: str, trade_date: str, price_cache: dict[tup
         "next_open_to_close_return": round((next_close / next_open) - 1.0, 4),
         "cycle_status": "t1_only",
     }
+    _append_holding_extension_window(outcome=outcome, trade_close=trade_close, future_rows=future_rows, future_dates=future_dates)
+    return outcome
 
+
+def _append_holding_extension_window(*, outcome: dict[str, Any], trade_close: float, future_rows: list[Any], future_dates: list[str]) -> None:
     for offset in range(1, 4):
         row = future_rows[offset] if len(future_rows) > offset else None
         date = future_dates[offset] if len(future_dates) > offset else None
@@ -192,8 +207,6 @@ def _extract_holding_outcome(ticker: str, trade_date: str, price_cache: dict[tup
         outcome["cycle_status"] = "t_plus_3_closed"
     elif outcome.get("t_plus_2_close_return") is not None:
         outcome["cycle_status"] = "t_plus_2_closed"
-
-    return outcome
 
 
 def _rate(hit_count: int, total_count: int) -> float | None:
