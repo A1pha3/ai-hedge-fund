@@ -1436,8 +1436,7 @@ def _resolve_prepared_breakout_selected_catalyst_relief(
     }
 
 
-def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dict[str, Any]:
-    profile = get_active_short_trade_target_profile()
+def _compute_short_trade_signal_snapshot(input_data: TargetEvaluationInput, *, profile: Any) -> dict[str, Any]:
     trend_signal = _load_signal(input_data.strategy_signals.get("trend"))
     event_signal = _load_signal(input_data.strategy_signals.get("event_sentiment"))
     fundamental_signal = _load_signal(input_data.strategy_signals.get("fundamental"))
@@ -1489,6 +1488,74 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         trend_acceleration=trend_acceleration,
         profile=profile,
     )
+    return {
+        "trend_signal": trend_signal,
+        "event_signal": event_signal,
+        "fundamental_signal": fundamental_signal,
+        "mean_reversion_signal": mean_reversion_signal,
+        "momentum_strength": momentum_strength,
+        "momentum_1m": momentum_1m,
+        "momentum_3m": momentum_3m,
+        "momentum_6m": momentum_6m,
+        "volume_momentum": volume_momentum,
+        "adx_strength": adx_strength,
+        "ema_strength": ema_strength,
+        "volatility_strength": volatility_strength,
+        "volatility_metrics": volatility_metrics,
+        "volatility_regime": volatility_regime,
+        "atr_ratio": atr_ratio,
+        "long_trend_strength": long_trend_strength,
+        "event_freshness_strength": event_freshness_strength,
+        "news_sentiment_strength": news_sentiment_strength,
+        "event_signal_strength": event_signal_strength,
+        "mean_reversion_strength": mean_reversion_strength,
+        "analyst_alignment": analyst_alignment,
+        "investor_alignment": investor_alignment,
+        "analyst_penalty": analyst_penalty,
+        "investor_penalty": investor_penalty,
+        "score_b_strength": score_b_strength,
+        "score_c_strength": score_c_strength,
+        "score_final_strength": score_final_strength,
+        "breakout_freshness": breakout_freshness,
+        "trend_acceleration": trend_acceleration,
+        "volume_expansion_quality": volume_expansion_quality,
+        "close_strength": close_strength,
+        "sector_resonance": sector_resonance,
+        "raw_catalyst_freshness": raw_catalyst_freshness,
+        "layer_c_alignment": layer_c_alignment,
+        "breakout_stage": breakout_stage,
+    }
+
+
+def _resolve_short_trade_snapshot_reliefs(
+    input_data: TargetEvaluationInput,
+    *,
+    profile: Any,
+    signal_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    fundamental_signal = signal_snapshot["fundamental_signal"]
+    breakout_stage = str(signal_snapshot["breakout_stage"])
+    breakout_freshness = float(signal_snapshot["breakout_freshness"])
+    trend_acceleration = float(signal_snapshot["trend_acceleration"])
+    volume_expansion_quality = float(signal_snapshot["volume_expansion_quality"])
+    close_strength = float(signal_snapshot["close_strength"])
+    sector_resonance = float(signal_snapshot["sector_resonance"])
+    raw_catalyst_freshness = float(signal_snapshot["raw_catalyst_freshness"])
+    layer_c_alignment = float(signal_snapshot["layer_c_alignment"])
+    long_trend_strength = float(signal_snapshot["long_trend_strength"])
+    mean_reversion_strength = float(signal_snapshot["mean_reversion_strength"])
+    momentum_1m = float(signal_snapshot["momentum_1m"])
+    momentum_3m = float(signal_snapshot["momentum_3m"])
+    momentum_6m = float(signal_snapshot["momentum_6m"])
+    volume_momentum = float(signal_snapshot["volume_momentum"])
+    ema_strength = float(signal_snapshot["ema_strength"])
+    volatility_strength = float(signal_snapshot["volatility_strength"])
+    volatility_metrics = dict(signal_snapshot["volatility_metrics"])
+    score_final_strength = float(signal_snapshot["score_final_strength"])
+    analyst_penalty = float(signal_snapshot["analyst_penalty"])
+    investor_penalty = float(signal_snapshot["investor_penalty"])
+    historical_prior = _historical_prior(input_data)
+
     prepared_breakout_continuation_relief = _resolve_prepared_breakout_continuation_relief(
         input_data=input_data,
         breakout_stage=breakout_stage,
@@ -1726,24 +1793,58 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         effective_select_threshold=effective_select_threshold,
         upstream_shadow_catalyst_relief_applied=bool(catalyst_relief["applied"]),
         upstream_shadow_catalyst_relief_reason=str(catalyst_relief["reason"]),
-        historical_prior=_historical_prior(input_data),
+        historical_prior=historical_prior,
     )
 
-    positive_tags: list[str] = []
-    negative_tags: list[str] = []
-    blockers: list[str] = []
-    gate_status = {
-        "data": "pass",
-        "execution": "pass" if input_data.execution_constraints.get("included_in_buy_orders") else "proxy_only",
-        "structural": "pass",
-        "score": "fail",
+    return {
+        "prepared_breakout_penalty_relief": prepared_breakout_penalty_relief,
+        "prepared_breakout_catalyst_relief": prepared_breakout_catalyst_relief,
+        "prepared_breakout_volume_relief": prepared_breakout_volume_relief,
+        "prepared_breakout_continuation_relief": prepared_breakout_continuation_relief,
+        "prepared_breakout_selected_catalyst_relief": prepared_breakout_selected_catalyst_relief,
+        "profitability_relief": profitability_relief,
+        "profitability_hard_cliff_boundary_relief": profitability_hard_cliff_boundary_relief,
+        "historical_execution_relief": historical_execution_relief,
+        "historical_prior": historical_prior,
+        "upstream_shadow_catalyst_relief": catalyst_relief,
+        "visibility_gap_continuation_relief": visibility_gap_continuation_relief,
+        "merge_approved_continuation_relief": merge_approved_continuation_relief,
+        "watchlist_zero_catalyst_penalty": watchlist_zero_catalyst_penalty,
+        "watchlist_zero_catalyst_crowded_penalty": watchlist_zero_catalyst_crowded_penalty,
+        "watchlist_zero_catalyst_flat_trend_penalty": watchlist_zero_catalyst_flat_trend_penalty,
+        "t_plus_2_continuation_candidate": t_plus_2_continuation_candidate,
+        "positive_score_weights": positive_score_weights,
+        "weighted_positive_contributions": weighted_positive_contributions,
+        "weighted_negative_contributions": weighted_negative_contributions,
+        "total_positive_contribution": total_positive_contribution,
+        "total_negative_contribution": total_negative_contribution,
+        "score_target": score_target,
+        "selected_score_tolerance": selected_score_tolerance,
+        "effective_near_miss_threshold": effective_near_miss_threshold,
+        "effective_select_threshold": effective_select_threshold,
+        "catalyst_freshness": catalyst_freshness,
+        "breakout_freshness": breakout_freshness,
+        "trend_acceleration": trend_acceleration,
+        "volume_expansion_quality": volume_expansion_quality,
+        "layer_c_avoid_penalty": layer_c_avoid_penalty,
+        "watchlist_zero_catalyst_penalty_effective": effective_watchlist_zero_catalyst_penalty,
+        "watchlist_zero_catalyst_crowded_penalty_effective": effective_watchlist_zero_catalyst_crowded_penalty,
+        "watchlist_zero_catalyst_flat_trend_penalty_effective": effective_watchlist_zero_catalyst_flat_trend_penalty,
+        "stale_trend_repair_penalty": stale_trend_repair_penalty,
+        "overhead_supply_penalty": overhead_supply_penalty,
+        "extension_without_room_penalty": extension_without_room_penalty,
     }
 
-    if trend_signal is None or float(trend_signal.completeness) <= 0:
-        blockers.append("missing_trend_signal")
-        gate_status["data"] = "fail"
-    if event_signal is None or float(event_signal.completeness) <= 0:
-        negative_tags.append("event_signal_incomplete")
+
+def _append_short_trade_snapshot_profitability_tags(
+    *,
+    input_data: TargetEvaluationInput,
+    profitability_relief: dict[str, Any],
+    profitability_hard_cliff_boundary_relief: dict[str, Any],
+    historical_execution_relief: dict[str, Any],
+    positive_tags: list[str],
+    negative_tags: list[str],
+) -> None:
     if input_data.layer_c_decision == "avoid":
         negative_tags.append("layer_c_avoid_signal")
     if profitability_relief["hard_cliff"]:
@@ -1756,6 +1857,15 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         positive_tags.append("profitability_hard_cliff_boundary_relief_applied")
     if historical_execution_relief["applied"]:
         positive_tags.append("historical_execution_relief_applied")
+
+
+def _append_short_trade_snapshot_catalyst_tags(
+    *,
+    raw_catalyst_freshness: float,
+    catalyst_relief: dict[str, Any],
+    positive_tags: list[str],
+    negative_tags: list[str],
+) -> None:
     if catalyst_relief["applied"]:
         if str(catalyst_relief["reason"]) == "catalyst_theme_short_trade_carryover":
             positive_tags.append("catalyst_theme_short_trade_carryover_applied")
@@ -1766,6 +1876,19 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
             negative_tags.append("catalyst_theme_short_trade_carryover_not_triggered")
         else:
             negative_tags.append("upstream_shadow_catalyst_relief_not_triggered")
+
+
+def _append_short_trade_snapshot_continuation_relief_tags(
+    *,
+    visibility_gap_continuation_relief: dict[str, Any],
+    merge_approved_continuation_relief: dict[str, Any],
+    prepared_breakout_penalty_relief: dict[str, Any],
+    prepared_breakout_catalyst_relief: dict[str, Any],
+    prepared_breakout_volume_relief: dict[str, Any],
+    prepared_breakout_continuation_relief: dict[str, Any],
+    prepared_breakout_selected_catalyst_relief: dict[str, Any],
+    positive_tags: list[str],
+) -> None:
     if visibility_gap_continuation_relief["applied"]:
         positive_tags.append("visibility_gap_continuation_relief_applied")
     if merge_approved_continuation_relief["applied"]:
@@ -1780,6 +1903,17 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         positive_tags.append("prepared_breakout_continuation_relief_applied")
     if prepared_breakout_selected_catalyst_relief["applied"]:
         positive_tags.append("prepared_breakout_selected_catalyst_relief_applied")
+
+
+def _append_short_trade_snapshot_penalty_tags(
+    *,
+    watchlist_zero_catalyst_penalty: dict[str, Any],
+    watchlist_zero_catalyst_crowded_penalty: dict[str, Any],
+    watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any],
+    t_plus_2_continuation_candidate: dict[str, Any],
+    positive_tags: list[str],
+    negative_tags: list[str],
+) -> None:
     if watchlist_zero_catalyst_penalty["applied"]:
         negative_tags.append("watchlist_zero_catalyst_penalty_applied")
     if watchlist_zero_catalyst_crowded_penalty["applied"]:
@@ -1788,6 +1922,22 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         negative_tags.append("watchlist_zero_catalyst_flat_trend_penalty_applied")
     if t_plus_2_continuation_candidate["applied"]:
         positive_tags.append("t_plus_2_continuation_candidate")
+
+
+def _append_short_trade_snapshot_blockers(
+    *,
+    input_data: TargetEvaluationInput,
+    profile: Any,
+    trend_signal: Any,
+    stale_trend_repair_penalty: float,
+    overhead_supply_penalty: float,
+    extension_without_room_penalty: float,
+    blockers: list[str],
+    gate_status: dict[str, Any],
+) -> None:
+    if trend_signal is None or float(trend_signal.completeness) <= 0:
+        blockers.append("missing_trend_signal")
+        gate_status["data"] = "fail"
     if input_data.bc_conflict in profile.hard_block_bearish_conflicts:
         blockers.append("layer_c_bearish_conflict")
         gate_status["structural"] = "fail"
@@ -1804,6 +1954,20 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         blockers.append("extension_without_room_penalty")
         gate_status["structural"] = "fail"
 
+
+def _append_short_trade_snapshot_strength_tags(
+    *,
+    input_data: TargetEvaluationInput,
+    breakout_freshness: float,
+    trend_acceleration: float,
+    catalyst_freshness: float,
+    sector_resonance: float,
+    event_signal: Any,
+    positive_tags: list[str],
+    negative_tags: list[str],
+) -> None:
+    if event_signal is None or float(event_signal.completeness) <= 0:
+        negative_tags.append("event_signal_incomplete")
     if breakout_freshness >= 0.50:
         positive_tags.append("fresh_breakout_candidate")
     if trend_acceleration >= 0.50:
@@ -1815,19 +1979,148 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
     if input_data.execution_constraints.get("included_in_buy_orders"):
         positive_tags.append("execution_bridge_ready")
 
+
+def _collect_short_trade_snapshot_labels_and_gates(
+    input_data: TargetEvaluationInput,
+    *,
+    profile: Any,
+    signal_snapshot: dict[str, Any],
+    relief_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    trend_signal = signal_snapshot["trend_signal"]
+    event_signal = signal_snapshot["event_signal"]
+    breakout_freshness = float(relief_snapshot["breakout_freshness"])
+    trend_acceleration = float(relief_snapshot["trend_acceleration"])
+    raw_catalyst_freshness = float(signal_snapshot["raw_catalyst_freshness"])
+    catalyst_freshness = float(relief_snapshot["catalyst_freshness"])
+    sector_resonance = float(signal_snapshot["sector_resonance"])
+    profitability_relief = dict(relief_snapshot["profitability_relief"])
+    profitability_hard_cliff_boundary_relief = dict(relief_snapshot["profitability_hard_cliff_boundary_relief"])
+    historical_execution_relief = dict(relief_snapshot["historical_execution_relief"])
+    catalyst_relief = dict(relief_snapshot["upstream_shadow_catalyst_relief"])
+    visibility_gap_continuation_relief = dict(relief_snapshot["visibility_gap_continuation_relief"])
+    merge_approved_continuation_relief = dict(relief_snapshot["merge_approved_continuation_relief"])
+    prepared_breakout_penalty_relief = dict(relief_snapshot["prepared_breakout_penalty_relief"])
+    prepared_breakout_catalyst_relief = dict(relief_snapshot["prepared_breakout_catalyst_relief"])
+    prepared_breakout_volume_relief = dict(relief_snapshot["prepared_breakout_volume_relief"])
+    prepared_breakout_continuation_relief = dict(relief_snapshot["prepared_breakout_continuation_relief"])
+    prepared_breakout_selected_catalyst_relief = dict(relief_snapshot["prepared_breakout_selected_catalyst_relief"])
+    watchlist_zero_catalyst_penalty = dict(relief_snapshot["watchlist_zero_catalyst_penalty"])
+    watchlist_zero_catalyst_crowded_penalty = dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"])
+    watchlist_zero_catalyst_flat_trend_penalty = dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"])
+    t_plus_2_continuation_candidate = dict(relief_snapshot["t_plus_2_continuation_candidate"])
+    stale_trend_repair_penalty = float(relief_snapshot["stale_trend_repair_penalty"])
+    overhead_supply_penalty = float(relief_snapshot["overhead_supply_penalty"])
+    extension_without_room_penalty = float(relief_snapshot["extension_without_room_penalty"])
+
+    positive_tags: list[str] = []
+    negative_tags: list[str] = []
+    blockers: list[str] = []
+    gate_status = {
+        "data": "pass",
+        "execution": "pass" if input_data.execution_constraints.get("included_in_buy_orders") else "proxy_only",
+        "structural": "pass",
+        "score": "fail",
+    }
+
+    _append_short_trade_snapshot_profitability_tags(
+        input_data=input_data,
+        profitability_relief=profitability_relief,
+        profitability_hard_cliff_boundary_relief=profitability_hard_cliff_boundary_relief,
+        historical_execution_relief=historical_execution_relief,
+        positive_tags=positive_tags,
+        negative_tags=negative_tags,
+    )
+    _append_short_trade_snapshot_catalyst_tags(
+        raw_catalyst_freshness=raw_catalyst_freshness,
+        catalyst_relief=catalyst_relief,
+        positive_tags=positive_tags,
+        negative_tags=negative_tags,
+    )
+    _append_short_trade_snapshot_continuation_relief_tags(
+        visibility_gap_continuation_relief=visibility_gap_continuation_relief,
+        merge_approved_continuation_relief=merge_approved_continuation_relief,
+        prepared_breakout_penalty_relief=prepared_breakout_penalty_relief,
+        prepared_breakout_catalyst_relief=prepared_breakout_catalyst_relief,
+        prepared_breakout_volume_relief=prepared_breakout_volume_relief,
+        prepared_breakout_continuation_relief=prepared_breakout_continuation_relief,
+        prepared_breakout_selected_catalyst_relief=prepared_breakout_selected_catalyst_relief,
+        positive_tags=positive_tags,
+    )
+    _append_short_trade_snapshot_penalty_tags(
+        watchlist_zero_catalyst_penalty=watchlist_zero_catalyst_penalty,
+        watchlist_zero_catalyst_crowded_penalty=watchlist_zero_catalyst_crowded_penalty,
+        watchlist_zero_catalyst_flat_trend_penalty=watchlist_zero_catalyst_flat_trend_penalty,
+        t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
+        positive_tags=positive_tags,
+        negative_tags=negative_tags,
+    )
+    _append_short_trade_snapshot_blockers(
+        input_data=input_data,
+        profile=profile,
+        trend_signal=trend_signal,
+        stale_trend_repair_penalty=stale_trend_repair_penalty,
+        overhead_supply_penalty=overhead_supply_penalty,
+        extension_without_room_penalty=extension_without_room_penalty,
+        blockers=blockers,
+        gate_status=gate_status,
+    )
+    _append_short_trade_snapshot_strength_tags(
+        input_data=input_data,
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        catalyst_freshness=catalyst_freshness,
+        sector_resonance=sector_resonance,
+        event_signal=event_signal,
+        positive_tags=positive_tags,
+        negative_tags=negative_tags,
+    )
+
+    return {
+        "positive_tags": positive_tags,
+        "negative_tags": negative_tags,
+        "blockers": blockers,
+        "gate_status": gate_status,
+    }
+
+
+def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dict[str, Any]:
+    profile = get_active_short_trade_target_profile()
+    signal_snapshot = _compute_short_trade_signal_snapshot(input_data, profile=profile)
+    relief_snapshot = _resolve_short_trade_snapshot_reliefs(
+        input_data,
+        profile=profile,
+        signal_snapshot=signal_snapshot,
+    )
+    labels_and_gates = _collect_short_trade_snapshot_labels_and_gates(
+        input_data,
+        profile=profile,
+        signal_snapshot=signal_snapshot,
+        relief_snapshot=relief_snapshot,
+    )
+
+    volatility_metrics = dict(signal_snapshot["volatility_metrics"])
+    profitability_relief = dict(relief_snapshot["profitability_relief"])
+    profitability_hard_cliff_boundary_relief = dict(relief_snapshot["profitability_hard_cliff_boundary_relief"])
+    historical_execution_relief = dict(relief_snapshot["historical_execution_relief"])
+    catalyst_relief = dict(relief_snapshot["upstream_shadow_catalyst_relief"])
+    watchlist_zero_catalyst_penalty = dict(relief_snapshot["watchlist_zero_catalyst_penalty"])
+    watchlist_zero_catalyst_crowded_penalty = dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"])
+    watchlist_zero_catalyst_flat_trend_penalty = dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"])
+
     return {
         "profile": profile,
-        "breakout_freshness": breakout_freshness,
-        "trend_acceleration": trend_acceleration,
-        "volume_expansion_quality": volume_expansion_quality,
-        "close_strength": close_strength,
-        "sector_resonance": sector_resonance,
-        "raw_catalyst_freshness": raw_catalyst_freshness,
-        "catalyst_freshness": catalyst_freshness,
-        "layer_c_alignment": layer_c_alignment,
-        "effective_near_miss_threshold": effective_near_miss_threshold,
-        "effective_select_threshold": effective_select_threshold,
-        "selected_score_tolerance": selected_score_tolerance,
+        "breakout_freshness": relief_snapshot["breakout_freshness"],
+        "trend_acceleration": relief_snapshot["trend_acceleration"],
+        "volume_expansion_quality": relief_snapshot["volume_expansion_quality"],
+        "close_strength": signal_snapshot["close_strength"],
+        "sector_resonance": signal_snapshot["sector_resonance"],
+        "raw_catalyst_freshness": signal_snapshot["raw_catalyst_freshness"],
+        "catalyst_freshness": relief_snapshot["catalyst_freshness"],
+        "layer_c_alignment": signal_snapshot["layer_c_alignment"],
+        "effective_near_miss_threshold": relief_snapshot["effective_near_miss_threshold"],
+        "effective_select_threshold": relief_snapshot["effective_select_threshold"],
+        "selected_score_tolerance": relief_snapshot["selected_score_tolerance"],
         "profitability_hard_cliff": profitability_relief["hard_cliff"],
         "profitability_positive_count": profitability_relief["profitability_positive_count"],
         "profitability_confidence": profitability_relief["profitability_confidence"],
@@ -1838,14 +2131,14 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "profitability_hard_cliff_boundary_relief": profitability_hard_cliff_boundary_relief,
         "profitability_relief_soft_penalty": profitability_relief["soft_penalty"],
         "base_layer_c_avoid_penalty": profitability_relief["base_layer_c_avoid_penalty"],
-        "layer_c_avoid_penalty": layer_c_avoid_penalty,
+        "layer_c_avoid_penalty": relief_snapshot["layer_c_avoid_penalty"],
         "watchlist_zero_catalyst_guard": watchlist_zero_catalyst_penalty,
-        "watchlist_zero_catalyst_penalty": effective_watchlist_zero_catalyst_penalty,
+        "watchlist_zero_catalyst_penalty": relief_snapshot["watchlist_zero_catalyst_penalty_effective"],
         "watchlist_zero_catalyst_crowded_guard": watchlist_zero_catalyst_crowded_penalty,
-        "watchlist_zero_catalyst_crowded_penalty": effective_watchlist_zero_catalyst_crowded_penalty,
+        "watchlist_zero_catalyst_crowded_penalty": relief_snapshot["watchlist_zero_catalyst_crowded_penalty_effective"],
         "watchlist_zero_catalyst_flat_trend_guard": watchlist_zero_catalyst_flat_trend_penalty,
-        "watchlist_zero_catalyst_flat_trend_penalty": effective_watchlist_zero_catalyst_flat_trend_penalty,
-        "t_plus_2_continuation_candidate": t_plus_2_continuation_candidate,
+        "watchlist_zero_catalyst_flat_trend_penalty": relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty_effective"],
+        "t_plus_2_continuation_candidate": relief_snapshot["t_plus_2_continuation_candidate"],
         "upstream_shadow_catalyst_relief_enabled": catalyst_relief["enabled"],
         "upstream_shadow_catalyst_relief_gate_hits": catalyst_relief["gate_hits"],
         "upstream_shadow_catalyst_relief_eligible": catalyst_relief["eligible"],
@@ -1857,51 +2150,199 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         "upstream_shadow_catalyst_relief_base_select_threshold": catalyst_relief["base_select_threshold"],
         "upstream_shadow_catalyst_relief_select_threshold_override": catalyst_relief["select_threshold_override"],
         "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": catalyst_relief["require_no_profitability_hard_cliff"],
-                "visibility_gap_continuation_relief": visibility_gap_continuation_relief,
-        "merge_approved_continuation_relief": merge_approved_continuation_relief,
+        "visibility_gap_continuation_relief": relief_snapshot["visibility_gap_continuation_relief"],
+        "merge_approved_continuation_relief": relief_snapshot["merge_approved_continuation_relief"],
         "historical_execution_relief": historical_execution_relief,
-        "historical_prior": _historical_prior(input_data),
-        "prepared_breakout_penalty_relief": prepared_breakout_penalty_relief,
-                "prepared_breakout_catalyst_relief": prepared_breakout_catalyst_relief,
-                "prepared_breakout_volume_relief": prepared_breakout_volume_relief,
-                "prepared_breakout_continuation_relief": prepared_breakout_continuation_relief,
-                "prepared_breakout_selected_catalyst_relief": prepared_breakout_selected_catalyst_relief,
-                "stale_trend_repair_penalty": stale_trend_repair_penalty,
-                "overhead_supply_penalty": overhead_supply_penalty,
-                "extension_without_room_penalty": extension_without_room_penalty,
-                "positive_score_weights": positive_score_weights,
-        "weighted_positive_contributions": weighted_positive_contributions,
-        "weighted_negative_contributions": weighted_negative_contributions,
-        "total_positive_contribution": total_positive_contribution,
-        "total_negative_contribution": total_negative_contribution,
-        "score_target": score_target,
-        "positive_tags": positive_tags,
-        "negative_tags": negative_tags,
-        "blockers": blockers,
-        "gate_status": gate_status,
-        "score_b_strength": score_b_strength,
-        "score_c_strength": score_c_strength,
-        "score_final_strength": score_final_strength,
-        "momentum_strength": momentum_strength,
-        "momentum_1m": momentum_1m,
-        "momentum_3m": momentum_3m,
-        "momentum_6m": momentum_6m,
-        "volume_momentum": volume_momentum,
-        "adx_strength": adx_strength,
-        "ema_strength": ema_strength,
-        "volatility_strength": volatility_strength,
+        "historical_prior": relief_snapshot["historical_prior"],
+        "prepared_breakout_penalty_relief": relief_snapshot["prepared_breakout_penalty_relief"],
+        "prepared_breakout_catalyst_relief": relief_snapshot["prepared_breakout_catalyst_relief"],
+        "prepared_breakout_volume_relief": relief_snapshot["prepared_breakout_volume_relief"],
+        "prepared_breakout_continuation_relief": relief_snapshot["prepared_breakout_continuation_relief"],
+        "prepared_breakout_selected_catalyst_relief": relief_snapshot["prepared_breakout_selected_catalyst_relief"],
+        "stale_trend_repair_penalty": relief_snapshot["stale_trend_repair_penalty"],
+        "overhead_supply_penalty": relief_snapshot["overhead_supply_penalty"],
+        "extension_without_room_penalty": relief_snapshot["extension_without_room_penalty"],
+        "positive_score_weights": relief_snapshot["positive_score_weights"],
+        "weighted_positive_contributions": relief_snapshot["weighted_positive_contributions"],
+        "weighted_negative_contributions": relief_snapshot["weighted_negative_contributions"],
+        "total_positive_contribution": relief_snapshot["total_positive_contribution"],
+        "total_negative_contribution": relief_snapshot["total_negative_contribution"],
+        "score_target": relief_snapshot["score_target"],
+        "positive_tags": labels_and_gates["positive_tags"],
+        "negative_tags": labels_and_gates["negative_tags"],
+        "blockers": labels_and_gates["blockers"],
+        "gate_status": labels_and_gates["gate_status"],
+        "score_b_strength": signal_snapshot["score_b_strength"],
+        "score_c_strength": signal_snapshot["score_c_strength"],
+        "score_final_strength": signal_snapshot["score_final_strength"],
+        "momentum_strength": signal_snapshot["momentum_strength"],
+        "momentum_1m": signal_snapshot["momentum_1m"],
+        "momentum_3m": signal_snapshot["momentum_3m"],
+        "momentum_6m": signal_snapshot["momentum_6m"],
+        "volume_momentum": signal_snapshot["volume_momentum"],
+        "adx_strength": signal_snapshot["adx_strength"],
+        "ema_strength": signal_snapshot["ema_strength"],
+        "volatility_strength": signal_snapshot["volatility_strength"],
         "volatility_regime": float(volatility_metrics.get("volatility_regime", 0.0) or 0.0),
         "atr_ratio": float(volatility_metrics.get("atr_ratio", 0.0) or 0.0),
-        "long_trend_strength": long_trend_strength,
-        "event_freshness_strength": event_freshness_strength,
-        "news_sentiment_strength": news_sentiment_strength,
-        "event_signal_strength": event_signal_strength,
-        "mean_reversion_strength": mean_reversion_strength,
-        "analyst_alignment": analyst_alignment,
-        "investor_alignment": investor_alignment,
-        "analyst_penalty": analyst_penalty,
-        "investor_penalty": investor_penalty,
+        "long_trend_strength": signal_snapshot["long_trend_strength"],
+        "event_freshness_strength": signal_snapshot["event_freshness_strength"],
+        "news_sentiment_strength": signal_snapshot["news_sentiment_strength"],
+        "event_signal_strength": signal_snapshot["event_signal_strength"],
+        "mean_reversion_strength": signal_snapshot["mean_reversion_strength"],
+        "analyst_alignment": signal_snapshot["analyst_alignment"],
+        "investor_alignment": signal_snapshot["investor_alignment"],
+        "analyst_penalty": signal_snapshot["analyst_penalty"],
+        "investor_penalty": signal_snapshot["investor_penalty"],
     }
+
+
+def _resolve_short_trade_decision(
+    *,
+    blockers: list[str],
+    gate_status: dict[str, Any],
+    score_target: float,
+    effective_near_miss_threshold: float,
+    effective_select_threshold: float,
+    selected_score_tolerance: float,
+    selected_breakout_gate_pass: bool,
+    near_miss_breakout_gate_pass: bool,
+    carryover_evidence_deficiency: dict[str, Any],
+) -> str:
+    selected_score_pass = score_target >= (effective_select_threshold - selected_score_tolerance)
+
+    if blockers:
+        decision = "blocked" if gate_status["data"] == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers else "rejected"
+    elif selected_score_pass and selected_breakout_gate_pass:
+        decision = "selected"
+        gate_status["score"] = "pass"
+    elif selected_score_pass and near_miss_breakout_gate_pass:
+        decision = "near_miss"
+        gate_status["score"] = "near_miss"
+    elif score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass:
+        decision = "near_miss"
+        gate_status["score"] = "near_miss"
+    else:
+        decision = "rejected"
+
+    if carryover_evidence_deficiency["evidence_deficient"] and decision in {"selected", "near_miss"}:
+        gate_status["score"] = "fail"
+        return "rejected"
+    return decision
+
+
+def _annotate_short_trade_tags(
+    *,
+    positive_tags: list[str],
+    negative_tags: list[str],
+    breakout_stage: str,
+    carryover_evidence_deficiency: dict[str, Any],
+) -> None:
+    if breakout_stage == "confirmed_breakout":
+        positive_tags.append("confirmed_breakout_stage")
+    elif breakout_stage == "prepared_breakout":
+        positive_tags.append("prepared_breakout_stage")
+
+    if carryover_evidence_deficiency["evidence_deficient"]:
+        negative_tags.append("evidence_deficient_broad_family_only")
+
+
+def _build_short_trade_top_reasons(
+    *,
+    breakout_freshness: float,
+    trend_acceleration: float,
+    raw_catalyst_freshness: float,
+    upstream_shadow_catalyst_relief_applied: bool,
+    upstream_shadow_catalyst_relief_reason: str,
+    visibility_gap_continuation_relief: dict[str, Any],
+    merge_approved_continuation_relief: dict[str, Any],
+    prepared_breakout_penalty_relief: dict[str, Any],
+    prepared_breakout_catalyst_relief: dict[str, Any],
+    prepared_breakout_volume_relief: dict[str, Any],
+    prepared_breakout_continuation_relief: dict[str, Any],
+    prepared_breakout_selected_catalyst_relief: dict[str, Any],
+    profitability_relief_applied: bool,
+    profitability_hard_cliff_boundary_relief: dict[str, Any],
+    historical_execution_relief: dict[str, Any],
+    profitability_hard_cliff: bool,
+    breakout_stage: str,
+    layer_c_avoid_penalty: float,
+    stale_trend_repair_penalty: float,
+    overhead_supply_penalty: float,
+    extension_without_room_penalty: float,
+    watchlist_zero_catalyst_guard: dict[str, Any],
+    watchlist_zero_catalyst_crowded_guard: dict[str, Any],
+    watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
+    carryover_evidence_deficiency: dict[str, Any],
+    t_plus_2_continuation_candidate: dict[str, Any],
+    score_target: float,
+) -> list[str]:
+    return trim_reasons(
+        [
+            reason
+            for reason in [
+                _summarize_positive_factor("breakout_freshness", breakout_freshness),
+                _summarize_positive_factor("trend_acceleration", trend_acceleration),
+                _summarize_positive_factor("catalyst_freshness", raw_catalyst_freshness),
+                upstream_shadow_catalyst_relief_reason if upstream_shadow_catalyst_relief_applied else None,
+                "visibility_gap_continuation_relief" if visibility_gap_continuation_relief["applied"] else None,
+                "merge_approved_continuation_relief" if merge_approved_continuation_relief["applied"] else None,
+                "prepared_breakout_penalty_relief" if prepared_breakout_penalty_relief["applied"] else None,
+                "prepared_breakout_catalyst_relief" if prepared_breakout_catalyst_relief["applied"] else None,
+                "prepared_breakout_volume_relief" if prepared_breakout_volume_relief["applied"] else None,
+                "prepared_breakout_continuation_relief" if prepared_breakout_continuation_relief["applied"] else None,
+                "prepared_breakout_selected_catalyst_relief" if prepared_breakout_selected_catalyst_relief["applied"] else None,
+                "profitability_relief_applied" if profitability_relief_applied else None,
+                "profitability_hard_cliff_boundary_relief" if profitability_hard_cliff_boundary_relief.get("applied") else None,
+                "historical_execution_relief" if historical_execution_relief.get("applied") else None,
+                "profitability_hard_cliff" if profitability_hard_cliff and not profitability_relief_applied else None,
+                breakout_stage,
+                _summarize_penalty("layer_c_avoid_penalty", layer_c_avoid_penalty),
+                _summarize_penalty("stale_trend_repair_penalty", stale_trend_repair_penalty),
+                _summarize_penalty("overhead_supply_penalty", overhead_supply_penalty),
+                _summarize_penalty("extension_without_room_penalty", extension_without_room_penalty),
+                "watchlist_zero_catalyst_penalty_applied" if watchlist_zero_catalyst_guard["applied"] else None,
+                "watchlist_zero_catalyst_crowded_penalty_applied" if watchlist_zero_catalyst_crowded_guard["applied"] else None,
+                "watchlist_zero_catalyst_flat_trend_penalty_applied" if watchlist_zero_catalyst_flat_trend_guard["applied"] else None,
+                "evidence_deficient_broad_family_only" if carryover_evidence_deficiency["evidence_deficient"] else None,
+                "t_plus_2_continuation_candidate" if t_plus_2_continuation_candidate["applied"] else None,
+                f"score_short={score_target:.2f}",
+            ]
+            if reason is not None
+        ]
+    )
+
+
+def _build_short_trade_rejection_reasons(
+    *,
+    decision: str,
+    blockers: list[str],
+    breakout_freshness: float,
+    trend_acceleration: float,
+    effective_near_miss_threshold: float,
+    score_target: float,
+    near_miss_breakout_gate_pass: bool,
+    profile: Any,
+    carryover_evidence_deficiency: dict[str, Any],
+) -> list[str]:
+    rejection_reasons = trim_reasons(
+        blockers
+        if blockers
+        else _collect_breakout_gate_misses(
+            breakout_freshness=breakout_freshness,
+            trend_acceleration=trend_acceleration,
+            breakout_min=float(profile.near_miss_breakout_freshness_min),
+            trend_min=float(profile.near_miss_trend_acceleration_min),
+            label="near_miss",
+        )
+        if decision == "rejected" and score_target >= effective_near_miss_threshold and not near_miss_breakout_gate_pass
+        else ["score_short_below_threshold"]
+        if decision == "rejected"
+        else []
+    )
+    if decision == "rejected" and carryover_evidence_deficiency["evidence_deficient"]:
+        return trim_reasons(["evidence_deficient_broad_family_only", *rejection_reasons])
+    return rejection_reasons
 
 
 def build_short_trade_target_snapshot_from_entry(
@@ -2014,85 +2455,64 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         profile=profile,
     )
 
-    selected_score_pass = score_target >= (effective_select_threshold - selected_score_tolerance)
-
-    if blockers:
-        decision = "blocked" if gate_status["data"] == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers else "rejected"
-    elif selected_score_pass and selected_breakout_gate_pass:
-        decision = "selected"
-        gate_status["score"] = "pass"
-    elif selected_score_pass and near_miss_breakout_gate_pass:
-        decision = "near_miss"
-        gate_status["score"] = "near_miss"
-    elif score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass:
-        decision = "near_miss"
-        gate_status["score"] = "near_miss"
-    else:
-        decision = "rejected"
-
-    if carryover_evidence_deficiency["evidence_deficient"] and decision in {"selected", "near_miss"}:
-        decision = "rejected"
-        gate_status["score"] = "fail"
-
-    if breakout_stage == "confirmed_breakout":
-        positive_tags.append("confirmed_breakout_stage")
-    elif breakout_stage == "prepared_breakout":
-        positive_tags.append("prepared_breakout_stage")
-    if carryover_evidence_deficiency["evidence_deficient"]:
-        negative_tags.append("evidence_deficient_broad_family_only")
-
-    top_reasons = trim_reasons(
-        [
-            reason
-            for reason in [
-                _summarize_positive_factor("breakout_freshness", breakout_freshness),
-                _summarize_positive_factor("trend_acceleration", trend_acceleration),
-                _summarize_positive_factor("catalyst_freshness", raw_catalyst_freshness),
-                upstream_shadow_catalyst_relief_reason if upstream_shadow_catalyst_relief_applied else None,
-                "visibility_gap_continuation_relief" if visibility_gap_continuation_relief["applied"] else None,
-                "merge_approved_continuation_relief" if merge_approved_continuation_relief["applied"] else None,
-                "prepared_breakout_penalty_relief" if prepared_breakout_penalty_relief["applied"] else None,
-                "prepared_breakout_catalyst_relief" if prepared_breakout_catalyst_relief["applied"] else None,
-                "prepared_breakout_volume_relief" if prepared_breakout_volume_relief["applied"] else None,
-                "prepared_breakout_continuation_relief" if prepared_breakout_continuation_relief["applied"] else None,
-                "prepared_breakout_selected_catalyst_relief" if prepared_breakout_selected_catalyst_relief["applied"] else None,
-                "profitability_relief_applied" if profitability_relief_applied else None,
-                "profitability_hard_cliff_boundary_relief" if profitability_hard_cliff_boundary_relief.get("applied") else None,
-                "historical_execution_relief" if historical_execution_relief.get("applied") else None,
-                "profitability_hard_cliff" if profitability_hard_cliff and not profitability_relief_applied else None,
-                breakout_stage,
-                _summarize_penalty("layer_c_avoid_penalty", layer_c_avoid_penalty),
-                _summarize_penalty("stale_trend_repair_penalty", stale_trend_repair_penalty),
-                _summarize_penalty("overhead_supply_penalty", overhead_supply_penalty),
-                _summarize_penalty("extension_without_room_penalty", extension_without_room_penalty),
-                "watchlist_zero_catalyst_penalty_applied" if watchlist_zero_catalyst_guard["applied"] else None,
-                "watchlist_zero_catalyst_crowded_penalty_applied" if watchlist_zero_catalyst_crowded_guard["applied"] else None,
-                "watchlist_zero_catalyst_flat_trend_penalty_applied" if watchlist_zero_catalyst_flat_trend_guard["applied"] else None,
-                "evidence_deficient_broad_family_only" if carryover_evidence_deficiency["evidence_deficient"] else None,
-                "t_plus_2_continuation_candidate" if t_plus_2_continuation_candidate["applied"] else None,
-                f"score_short={score_target:.2f}",
-            ]
-            if reason is not None
-        ]
+    decision = _resolve_short_trade_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=score_target,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        effective_select_threshold=effective_select_threshold,
+        selected_score_tolerance=selected_score_tolerance,
+        selected_breakout_gate_pass=selected_breakout_gate_pass,
+        near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
+        carryover_evidence_deficiency=carryover_evidence_deficiency,
+    )
+    _annotate_short_trade_tags(
+        positive_tags=positive_tags,
+        negative_tags=negative_tags,
+        breakout_stage=breakout_stage,
+        carryover_evidence_deficiency=carryover_evidence_deficiency,
     )
 
-    rejection_reasons = trim_reasons(
-        blockers
-        if blockers
-        else _collect_breakout_gate_misses(
-            breakout_freshness=breakout_freshness,
-            trend_acceleration=trend_acceleration,
-            breakout_min=float(profile.near_miss_breakout_freshness_min),
-            trend_min=float(profile.near_miss_trend_acceleration_min),
-            label="near_miss",
-        )
-        if decision == "rejected" and score_target >= effective_near_miss_threshold and not near_miss_breakout_gate_pass
-        else ["score_short_below_threshold"]
-        if decision == "rejected"
-        else []
+    top_reasons = _build_short_trade_top_reasons(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        raw_catalyst_freshness=raw_catalyst_freshness,
+        upstream_shadow_catalyst_relief_applied=upstream_shadow_catalyst_relief_applied,
+        upstream_shadow_catalyst_relief_reason=upstream_shadow_catalyst_relief_reason,
+        visibility_gap_continuation_relief=visibility_gap_continuation_relief,
+        merge_approved_continuation_relief=merge_approved_continuation_relief,
+        prepared_breakout_penalty_relief=prepared_breakout_penalty_relief,
+        prepared_breakout_catalyst_relief=prepared_breakout_catalyst_relief,
+        prepared_breakout_volume_relief=prepared_breakout_volume_relief,
+        prepared_breakout_continuation_relief=prepared_breakout_continuation_relief,
+        prepared_breakout_selected_catalyst_relief=prepared_breakout_selected_catalyst_relief,
+        profitability_relief_applied=profitability_relief_applied,
+        profitability_hard_cliff_boundary_relief=profitability_hard_cliff_boundary_relief,
+        historical_execution_relief=historical_execution_relief,
+        profitability_hard_cliff=profitability_hard_cliff,
+        breakout_stage=breakout_stage,
+        layer_c_avoid_penalty=layer_c_avoid_penalty,
+        stale_trend_repair_penalty=stale_trend_repair_penalty,
+        overhead_supply_penalty=overhead_supply_penalty,
+        extension_without_room_penalty=extension_without_room_penalty,
+        watchlist_zero_catalyst_guard=watchlist_zero_catalyst_guard,
+        watchlist_zero_catalyst_crowded_guard=watchlist_zero_catalyst_crowded_guard,
+        watchlist_zero_catalyst_flat_trend_guard=watchlist_zero_catalyst_flat_trend_guard,
+        carryover_evidence_deficiency=carryover_evidence_deficiency,
+        t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
+        score_target=score_target,
     )
-    if decision == "rejected" and carryover_evidence_deficiency["evidence_deficient"]:
-        rejection_reasons = trim_reasons(["evidence_deficient_broad_family_only", *rejection_reasons])
+    rejection_reasons = _build_short_trade_rejection_reasons(
+        decision=decision,
+        blockers=blockers,
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        score_target=score_target,
+        near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
+        profile=profile,
+        carryover_evidence_deficiency=carryover_evidence_deficiency,
+    )
     confidence = derive_confidence(score_target, breakout_freshness, trend_acceleration, catalyst_freshness, float(input_data.quality_score or 0.0))
 
     return TargetEvaluationResult(

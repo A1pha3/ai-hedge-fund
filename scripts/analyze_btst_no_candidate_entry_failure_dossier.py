@@ -810,6 +810,26 @@ def _build_next_actions(
     promising_priority_tickers: list[str],
 ) -> list[str]:
     actions: list[str] = []
+    actions.extend(_build_upstream_absence_actions(top_absent_from_candidate_pool_breakpoint_tickers, top_absent_from_watchlist_tickers, top_upstream_absence_tickers))
+    actions.extend(
+        _build_handoff_gap_actions(
+            top_watchlist_handoff_gap_tickers,
+            top_candidate_entry_to_target_gap_tickers,
+            top_outside_candidate_entry_tickers,
+        )
+    )
+    actions.extend(_build_semantic_probe_actions(top_semantic_miss_tickers, top_hotspot_semantic_miss_report_dirs, promising_priority_tickers))
+    if not actions:
+        actions.append("当前 failure dossier 没有发现可直接推进的 recall probe，继续保留 research-only。")
+    return actions[:4]
+
+
+def _build_upstream_absence_actions(
+    top_absent_from_candidate_pool_breakpoint_tickers: list[str],
+    top_absent_from_watchlist_tickers: list[str],
+    top_upstream_absence_tickers: list[str],
+) -> list[str]:
+    actions: list[str] = []
     if top_absent_from_candidate_pool_breakpoint_tickers:
         actions.append(
             f"先补 {top_absent_from_candidate_pool_breakpoint_tickers} 的 Layer A candidate_pool 召回观测，确认它们为何连 candidate_pool snapshot 都没进入。"
@@ -818,21 +838,111 @@ def _build_next_actions(
         actions.append(f"先补 {top_absent_from_watchlist_tickers} 的 candidate pool -> watchlist 召回观测，确认它们为何连 watchlist 都没进入。")
     if top_upstream_absence_tickers:
         actions.append(f"先补 {top_upstream_absence_tickers} 的 replay-input / selection_artifacts 观测，确认它们为何完全未进入候选证据层。")
+    return actions
+
+
+def _build_handoff_gap_actions(
+    top_watchlist_handoff_gap_tickers: list[str],
+    top_candidate_entry_to_target_gap_tickers: list[str],
+    top_outside_candidate_entry_tickers: list[str],
+) -> list[str]:
+    actions: list[str] = []
     if top_watchlist_handoff_gap_tickers:
         actions.append(f"回查 {top_watchlist_handoff_gap_tickers} 的 watchlist -> rejected_entries / supplemental_short_trade_entries handoff。")
     if top_candidate_entry_to_target_gap_tickers:
         actions.append(f"回查 {top_candidate_entry_to_target_gap_tickers} 的 candidate-entry -> selection_targets contract，确认目标附着为何丢失。")
     if top_outside_candidate_entry_tickers:
         actions.append(f"回查 {top_outside_candidate_entry_tickers} 的 watchlist -> rejected_entries / supplemental_short_trade_entries handoff，定位 no-entry 前的上游分流。")
+    return actions
+
+
+def _build_semantic_probe_actions(
+    top_semantic_miss_tickers: list[str],
+    top_hotspot_semantic_miss_report_dirs: list[str],
+    promising_priority_tickers: list[str],
+) -> list[str]:
+    actions: list[str] = []
     if top_semantic_miss_tickers:
         actions.append(f"仅把 {top_semantic_miss_tickers} 继续留在 candidate-entry semantic frontier 车道，因为它们已经进入候选源但仍未命中 focus。")
     if top_hotspot_semantic_miss_report_dirs:
         actions.append(f"优先复盘热点窗口 {top_hotspot_semantic_miss_report_dirs}，明确它们是窗口级 focus miss，而不是上游 absence。")
     if promising_priority_tickers:
         actions.append(f"把 {promising_priority_tickers} 接回 shadow governance，并持续核对 preserve_ticker 0 误伤。")
-    if not actions:
-        actions.append("当前 failure dossier 没有发现可直接推进的 recall probe，继续保留 research-only。")
-    return actions[:4]
+    return actions
+
+
+def _append_markdown_key_values(lines: list[str], title: str, pairs: list[tuple[str, Any]]) -> None:
+    lines.append(f"## {title}")
+    for key, value in pairs:
+        lines.append(f"- {key}: {value}")
+    lines.append("")
+
+
+def _append_priority_ticker_dossiers_markdown(lines: list[str], rows: list[dict[str, Any]]) -> None:
+    lines.append("## Priority Ticker Dossiers")
+    for row in rows:
+        lines.append(
+            f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} failure_class={row.get('primary_failure_class')} handoff_stage={row.get('handoff_stage')} frontier_status={row.get('frontier_status')} primary_report_dir={row.get('primary_report_dir')} replay_input_visible_reports={row.get('replay_input_visible_report_count')} candidate_entry_visible_reports={row.get('candidate_entry_visible_report_count')}"
+        )
+        lines.append(f"  watchlist_recall_stage: {row.get('watchlist_recall_stage')}")
+        lines.append(f"  source_presence_counts: {row.get('source_presence_counts')}")
+        lines.append(f"  candidate_sources: {row.get('candidate_sources')}")
+        lines.append(f"  failure_reason: {row.get('failure_reason')}")
+        lines.append(f"  next_step: {row.get('next_step')}")
+        for evidence_row in list(row.get("report_dir_evidence") or [])[:4]:
+            lines.append(
+                f"  report_evidence: report_dir={evidence_row.get('report_dir')} presence_class={evidence_row.get('presence_class')} replay_input_count={evidence_row.get('replay_input_count')} source_presence_counts={evidence_row.get('source_presence_counts')}"
+            )
+    if not rows:
+        lines.append("- none")
+    lines.append("")
+
+
+def _append_hotspot_report_dossiers_markdown(lines: list[str], rows: list[dict[str, Any]]) -> None:
+    lines.append("## Hotspot Report Dossiers")
+    for row in rows:
+        lines.append(
+            f"- rank={row.get('priority_rank')} report_dir={row.get('report_dir')} failure_class={row.get('primary_failure_class')} dominant_handoff_stage={row.get('dominant_handoff_stage')} frontier_status={row.get('frontier_status')} focus_tickers={row.get('focus_tickers')}"
+        )
+        lines.append(f"  failure_reason: {row.get('failure_reason')}")
+        lines.append(f"  next_step: {row.get('next_step')}")
+        lines.append(f"  focus_ticker_handoff_stage_counts: {row.get('focus_ticker_handoff_stage_counts')}")
+        for evidence_row in list(row.get("focus_ticker_evidence") or []):
+            lines.append(
+                f"  focus_evidence: ticker={evidence_row.get('ticker')} presence_class={evidence_row.get('presence_class')} handoff_stage={evidence_row.get('handoff_stage')} replay_input_count={evidence_row.get('replay_input_count')} source_presence_counts={evidence_row.get('source_presence_counts')}"
+            )
+    if not rows:
+        lines.append("- none")
+    lines.append("")
+
+
+def _append_handoff_action_queue_markdown(
+    lines: list[str],
+    priority_rows: list[dict[str, Any]],
+    hotspot_rows: list[dict[str, Any]],
+) -> None:
+    lines.append("## Handoff Action Queue")
+    for row in priority_rows:
+        lines.append(
+            f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} handoff_stage={row.get('handoff_stage')}"
+        )
+        lines.append(f"  why_now: {row.get('why_now')}")
+        lines.append(f"  next_step: {row.get('next_step')}")
+    for row in hotspot_rows:
+        lines.append(
+            f"- hotspot_task_id={row.get('task_id')} report_dir={row.get('report_dir')} action_tier={row.get('action_tier')} handoff_stage={row.get('handoff_stage')}"
+        )
+        lines.append(f"  why_now: {row.get('why_now')}")
+        lines.append(f"  next_step: {row.get('next_step')}")
+    if not priority_rows and not hotspot_rows:
+        lines.append("- none")
+    lines.append("")
+
+
+def _append_next_actions_markdown(lines: list[str], items: list[str]) -> None:
+    lines.append("## Next Actions")
+    for item in items:
+        lines.append(f"- {item}")
 
 
 def analyze_btst_no_candidate_entry_failure_dossier(
@@ -970,75 +1080,36 @@ def render_btst_no_candidate_entry_failure_dossier_markdown(analysis: dict[str, 
     lines: list[str] = []
     lines.append("# BTST No Candidate Entry Failure Dossier")
     lines.append("")
-    lines.append("## Overview")
-    lines.append(f"- tradeable_opportunity_pool_path: {analysis.get('tradeable_opportunity_pool_path')}")
-    lines.append(f"- action_board_path: {analysis.get('action_board_path')}")
-    lines.append(f"- replay_bundle_path: {analysis.get('replay_bundle_path')}")
-    lines.append(f"- watchlist_recall_dossier_path: {analysis.get('watchlist_recall_dossier_path')}")
-    lines.append(f"- priority_failure_class_counts: {analysis.get('priority_failure_class_counts')}")
-    lines.append(f"- hotspot_failure_class_counts: {analysis.get('hotspot_failure_class_counts')}")
-    lines.append(f"- priority_handoff_stage_counts: {analysis.get('priority_handoff_stage_counts')}")
-    lines.append(f"- hotspot_handoff_stage_counts: {analysis.get('hotspot_handoff_stage_counts')}")
-    lines.append(f"- top_upstream_absence_tickers: {analysis.get('top_upstream_absence_tickers')}")
-    lines.append(f"- top_absent_from_watchlist_tickers: {analysis.get('top_absent_from_watchlist_tickers')}")
-    lines.append(f"- top_absent_from_candidate_pool_breakpoint_tickers: {analysis.get('top_absent_from_candidate_pool_breakpoint_tickers')}")
-    lines.append(f"- top_watchlist_visible_but_not_candidate_entry_tickers: {analysis.get('top_watchlist_visible_but_not_candidate_entry_tickers')}")
-    lines.append(f"- top_candidate_entry_visible_but_not_selection_target_tickers: {analysis.get('top_candidate_entry_visible_but_not_selection_target_tickers')}")
-    lines.append(f"- top_present_but_outside_candidate_entry_tickers: {analysis.get('top_present_but_outside_candidate_entry_tickers')}")
-    lines.append(f"- top_candidate_entry_semantic_miss_tickers: {analysis.get('top_candidate_entry_semantic_miss_tickers')}")
-    lines.append(f"- recommendation: {analysis.get('recommendation')}")
-    lines.append("")
-    lines.append("## Priority Ticker Dossiers")
-    for row in list(analysis.get("priority_ticker_dossiers") or []):
-        lines.append(
-            f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} failure_class={row.get('primary_failure_class')} handoff_stage={row.get('handoff_stage')} frontier_status={row.get('frontier_status')} primary_report_dir={row.get('primary_report_dir')} replay_input_visible_reports={row.get('replay_input_visible_report_count')} candidate_entry_visible_reports={row.get('candidate_entry_visible_report_count')}"
-        )
-        lines.append(f"  watchlist_recall_stage: {row.get('watchlist_recall_stage')}")
-        lines.append(f"  source_presence_counts: {row.get('source_presence_counts')}")
-        lines.append(f"  candidate_sources: {row.get('candidate_sources')}")
-        lines.append(f"  failure_reason: {row.get('failure_reason')}")
-        lines.append(f"  next_step: {row.get('next_step')}")
-        for evidence_row in list(row.get("report_dir_evidence") or [])[:4]:
-            lines.append(
-                f"  report_evidence: report_dir={evidence_row.get('report_dir')} presence_class={evidence_row.get('presence_class')} replay_input_count={evidence_row.get('replay_input_count')} source_presence_counts={evidence_row.get('source_presence_counts')}"
-            )
-    if not list(analysis.get("priority_ticker_dossiers") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Hotspot Report Dossiers")
-    for row in list(analysis.get("hotspot_report_dossiers") or []):
-        lines.append(
-            f"- rank={row.get('priority_rank')} report_dir={row.get('report_dir')} failure_class={row.get('primary_failure_class')} dominant_handoff_stage={row.get('dominant_handoff_stage')} frontier_status={row.get('frontier_status')} focus_tickers={row.get('focus_tickers')}"
-        )
-        lines.append(f"  failure_reason: {row.get('failure_reason')}")
-        lines.append(f"  next_step: {row.get('next_step')}")
-        lines.append(f"  focus_ticker_handoff_stage_counts: {row.get('focus_ticker_handoff_stage_counts')}")
-        for evidence_row in list(row.get("focus_ticker_evidence") or []):
-            lines.append(
-                f"  focus_evidence: ticker={evidence_row.get('ticker')} presence_class={evidence_row.get('presence_class')} handoff_stage={evidence_row.get('handoff_stage')} replay_input_count={evidence_row.get('replay_input_count')} source_presence_counts={evidence_row.get('source_presence_counts')}"
-            )
-    if not list(analysis.get("hotspot_report_dossiers") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Handoff Action Queue")
-    for row in list(analysis.get("priority_handoff_action_queue") or []):
-        lines.append(
-            f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} handoff_stage={row.get('handoff_stage')}"
-        )
-        lines.append(f"  why_now: {row.get('why_now')}")
-        lines.append(f"  next_step: {row.get('next_step')}")
-    for row in list(analysis.get("hotspot_handoff_action_queue") or []):
-        lines.append(
-            f"- hotspot_task_id={row.get('task_id')} report_dir={row.get('report_dir')} action_tier={row.get('action_tier')} handoff_stage={row.get('handoff_stage')}"
-        )
-        lines.append(f"  why_now: {row.get('why_now')}")
-        lines.append(f"  next_step: {row.get('next_step')}")
-    if not list(analysis.get("priority_handoff_action_queue") or []) and not list(analysis.get("hotspot_handoff_action_queue") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Next Actions")
-    for item in list(analysis.get("next_actions") or []):
-        lines.append(f"- {item}")
+    _append_markdown_key_values(
+        lines,
+        "Overview",
+        [
+            ("tradeable_opportunity_pool_path", analysis.get("tradeable_opportunity_pool_path")),
+            ("action_board_path", analysis.get("action_board_path")),
+            ("replay_bundle_path", analysis.get("replay_bundle_path")),
+            ("watchlist_recall_dossier_path", analysis.get("watchlist_recall_dossier_path")),
+            ("priority_failure_class_counts", analysis.get("priority_failure_class_counts")),
+            ("hotspot_failure_class_counts", analysis.get("hotspot_failure_class_counts")),
+            ("priority_handoff_stage_counts", analysis.get("priority_handoff_stage_counts")),
+            ("hotspot_handoff_stage_counts", analysis.get("hotspot_handoff_stage_counts")),
+            ("top_upstream_absence_tickers", analysis.get("top_upstream_absence_tickers")),
+            ("top_absent_from_watchlist_tickers", analysis.get("top_absent_from_watchlist_tickers")),
+            ("top_absent_from_candidate_pool_breakpoint_tickers", analysis.get("top_absent_from_candidate_pool_breakpoint_tickers")),
+            ("top_watchlist_visible_but_not_candidate_entry_tickers", analysis.get("top_watchlist_visible_but_not_candidate_entry_tickers")),
+            ("top_candidate_entry_visible_but_not_selection_target_tickers", analysis.get("top_candidate_entry_visible_but_not_selection_target_tickers")),
+            ("top_present_but_outside_candidate_entry_tickers", analysis.get("top_present_but_outside_candidate_entry_tickers")),
+            ("top_candidate_entry_semantic_miss_tickers", analysis.get("top_candidate_entry_semantic_miss_tickers")),
+            ("recommendation", analysis.get("recommendation")),
+        ],
+    )
+    _append_priority_ticker_dossiers_markdown(lines, list(analysis.get("priority_ticker_dossiers") or []))
+    _append_hotspot_report_dossiers_markdown(lines, list(analysis.get("hotspot_report_dossiers") or []))
+    _append_handoff_action_queue_markdown(
+        lines,
+        list(analysis.get("priority_handoff_action_queue") or []),
+        list(analysis.get("hotspot_handoff_action_queue") or []),
+    )
+    _append_next_actions_markdown(lines, list(analysis.get("next_actions") or []))
     return "\n".join(lines) + "\n"
 
 

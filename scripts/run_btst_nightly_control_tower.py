@@ -5,7 +5,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from scripts.analyze_btst_latest_close_validation import generate_btst_latest_close_validation_artifacts
 from scripts.btst_latest_followup_utils import load_latest_upstream_shadow_followup_summary
@@ -1070,61 +1070,69 @@ def _build_lane_priority_task(
     }
 
 
-def _build_carryover_contract_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+def _extract_carryover_contract_context(control_tower_snapshot: dict[str, Any]) -> dict[str, Any]:
     selected_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
     audit_summary = dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {})
     peer_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_harvest_summary") or {})
     peer_expansion_summary = dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {})
     peer_proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
     peer_promotion_gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+    return {
+        "audit_summary": audit_summary,
+        "formal_selected_ticker": str(selected_summary.get("focus_ticker") or audit_summary.get("selected_ticker") or "").strip(),
+        "overall_contract_verdict": str(selected_summary.get("focus_overall_contract_verdict") or "").strip(),
+        "peer_focus_ticker": str(peer_expansion_summary.get("focus_ticker") or peer_summary.get("focus_ticker") or "").strip(),
+        "peer_focus_status": str(peer_expansion_summary.get("focus_status") or peer_summary.get("focus_status") or "").strip(),
+        "peer_proof_focus_ticker": str(peer_proof_summary.get("focus_ticker") or "").strip(),
+        "peer_proof_focus_verdict": str(peer_proof_summary.get("focus_promotion_review_verdict") or "").strip(),
+        "peer_promotion_gate_focus_ticker": str(peer_promotion_gate_summary.get("focus_ticker") or "").strip(),
+        "peer_promotion_gate_focus_verdict": str(peer_promotion_gate_summary.get("focus_gate_verdict") or "").strip(),
+        "priority_expansion_tickers": list(peer_expansion_summary.get("priority_expansion_tickers") or []),
+        "watch_with_risk_tickers": list(peer_expansion_summary.get("watch_with_risk_tickers") or []),
+        "ready_for_promotion_review_tickers": list(peer_proof_summary.get("ready_for_promotion_review_tickers") or []),
+        "promotion_gate_ready_tickers": list(peer_promotion_gate_summary.get("ready_tickers") or []),
+    }
 
-    formal_selected_ticker = str(selected_summary.get("focus_ticker") or audit_summary.get("selected_ticker") or "").strip()
-    if not formal_selected_ticker:
-        return None
 
-    overall_contract_verdict = str(selected_summary.get("focus_overall_contract_verdict") or "").strip()
-    peer_focus_ticker = str(peer_expansion_summary.get("focus_ticker") or peer_summary.get("focus_ticker") or "").strip()
-    peer_focus_status = str(peer_expansion_summary.get("focus_status") or peer_summary.get("focus_status") or "").strip()
-    peer_proof_focus_ticker = str(peer_proof_summary.get("focus_ticker") or "").strip()
-    peer_proof_focus_verdict = str(peer_proof_summary.get("focus_promotion_review_verdict") or "").strip()
-    peer_promotion_gate_focus_ticker = str(peer_promotion_gate_summary.get("focus_ticker") or "").strip()
-    peer_promotion_gate_focus_verdict = str(peer_promotion_gate_summary.get("focus_gate_verdict") or "").strip()
-    priority_expansion_tickers = list(peer_expansion_summary.get("priority_expansion_tickers") or [])
-    watch_with_risk_tickers = list(peer_expansion_summary.get("watch_with_risk_tickers") or [])
-    ready_for_promotion_review_tickers = list(peer_proof_summary.get("ready_for_promotion_review_tickers") or [])
-    promotion_gate_ready_tickers = list(peer_promotion_gate_summary.get("ready_tickers") or [])
-
-    why_now_parts = [f"formal_selected={formal_selected_ticker}"]
-    if overall_contract_verdict:
-        why_now_parts.append(f"contract_verdict={overall_contract_verdict}")
+def _build_carryover_contract_why_now_parts(context: dict[str, Any]) -> list[str]:
+    audit_summary = dict(context.get("audit_summary") or {})
+    why_now_parts = [f"formal_selected={context.get('formal_selected_ticker')}"]
+    optional_segments = [
+        (context.get("overall_contract_verdict"), "contract_verdict"),
+        (context.get("peer_focus_ticker"), "peer_focus"),
+        (context.get("peer_focus_status"), "peer_status"),
+        (context.get("peer_proof_focus_ticker"), "peer_proof_focus"),
+        (context.get("peer_proof_focus_verdict"), "peer_proof_verdict"),
+        (context.get("peer_promotion_gate_focus_ticker"), "peer_gate_focus"),
+        (context.get("peer_promotion_gate_focus_verdict"), "peer_gate_verdict"),
+    ]
+    for value, label in optional_segments:
+        if value:
+            why_now_parts.append(f"{label}={value}")
     if audit_summary.get("selected_path_t2_bias_only"):
         why_now_parts.append("t_plus_2_bias_only")
     if audit_summary.get("broad_family_only_multiday_unsupported"):
         why_now_parts.append("broad_family_only_not_multiday_ready")
-    if peer_focus_ticker:
-        why_now_parts.append(f"peer_focus={peer_focus_ticker}")
-    if peer_focus_status:
-        why_now_parts.append(f"peer_status={peer_focus_status}")
-    if peer_proof_focus_ticker:
-        why_now_parts.append(f"peer_proof_focus={peer_proof_focus_ticker}")
-    if peer_proof_focus_verdict:
-        why_now_parts.append(f"peer_proof_verdict={peer_proof_focus_verdict}")
-    if peer_promotion_gate_focus_ticker:
-        why_now_parts.append(f"peer_gate_focus={peer_promotion_gate_focus_ticker}")
-    if peer_promotion_gate_focus_verdict:
-        why_now_parts.append(f"peer_gate_verdict={peer_promotion_gate_focus_verdict}")
-    if watch_with_risk_tickers:
-        why_now_parts.append(f"watch_with_risk={watch_with_risk_tickers}")
+    if context.get("watch_with_risk_tickers"):
+        why_now_parts.append(f"watch_with_risk={context.get('watch_with_risk_tickers')}")
+    return why_now_parts
 
-    next_steps = [
-        f"继续把 {formal_selected_ticker} 作为 confirm-then-hold + T+2 bias 合约管理，不把它包装成稳定 T+3/T+4 continuation。"
-    ]
+
+def _build_carryover_contract_next_steps(context: dict[str, Any]) -> list[str]:
+    audit_summary = dict(context.get("audit_summary") or {})
+    formal_selected_ticker = str(context.get("formal_selected_ticker") or "").strip()
+    peer_focus_ticker = str(context.get("peer_focus_ticker") or "").strip()
+    peer_focus_status = str(context.get("peer_focus_status") or "").strip()
+    priority_expansion_tickers = list(context.get("priority_expansion_tickers") or [])
+    ready_for_promotion_review_tickers = list(context.get("ready_for_promotion_review_tickers") or [])
+    promotion_gate_ready_tickers = list(context.get("promotion_gate_ready_tickers") or [])
+    watch_with_risk_tickers = list(context.get("watch_with_risk_tickers") or [])
+
+    next_steps = [f"继续把 {formal_selected_ticker} 作为 confirm-then-hold + T+2 bias 合约管理，不把它包装成稳定 T+3/T+4 continuation。"]
     if audit_summary.get("broad_family_only_multiday_unsupported"):
         next_steps.append("broad_family_only carryover 仅保留 evidence-deficient / diagnostic 语义，不进入多日 continuation contract。")
     if peer_focus_ticker:
-        next_steps.append(
-            f"优先盯 {peer_focus_ticker} 的 {peer_focus_status or 'peer_harvest'} 闭环；只有第二个 aligned peer 完成 closed-cycle 转强后才讨论 lane 扩容。"
-        )
+        next_steps.append(f"优先盯 {peer_focus_ticker} 的 {peer_focus_status or 'peer_harvest'} 闭环；只有第二个 aligned peer 完成 closed-cycle 转强后才讨论 lane 扩容。")
     if priority_expansion_tickers:
         next_steps.append(f"当前 priority expansion 队列先看 {priority_expansion_tickers}。")
     if ready_for_promotion_review_tickers:
@@ -1133,17 +1141,22 @@ def _build_carryover_contract_task(control_tower_snapshot: dict[str, Any]) -> di
         next_steps.append(f"当前已通过 promotion gate 的 peers: {promotion_gate_ready_tickers}，只允许在极窄 carryover lane 里讨论扩容。")
     if watch_with_risk_tickers:
         next_steps.append(f"{watch_with_risk_tickers} 仅保留 watch-with-risk 语义，不作为扩容依据。")
+    return next_steps
 
-    title = (
-        f"固化 {formal_selected_ticker} carryover 合约并盯 {peer_focus_ticker} 闭环"
-        if peer_focus_ticker
-        else f"固化 {formal_selected_ticker} carryover 合约"
-    )
+
+def _build_carryover_contract_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    context = _extract_carryover_contract_context(control_tower_snapshot)
+    formal_selected_ticker = str(context.get("formal_selected_ticker") or "").strip()
+    if not formal_selected_ticker:
+        return None
+
+    peer_focus_ticker = str(context.get("peer_focus_ticker") or "").strip()
+    title = f"固化 {formal_selected_ticker} carryover 合约并盯 {peer_focus_ticker} 闭环" if peer_focus_ticker else f"固化 {formal_selected_ticker} carryover 合约"
     return {
         "task_id": "carryover_contract_priority",
         "title": title,
-        "why_now": " | ".join(why_now_parts),
-        "next_step": "；".join(next_steps),
+        "why_now": " | ".join(_build_carryover_contract_why_now_parts(context)),
+        "next_step": "；".join(_build_carryover_contract_next_steps(context)),
         "source": "carryover_contract",
     }
 
@@ -2115,19 +2128,12 @@ def _build_material_change_anchor(
     return {}
 
 
-def build_btst_open_ready_delta_payload(
-    current_payload: dict[str, Any],
+def _resolve_open_ready_previous_context(
     *,
+    latest_btst_run: dict[str, Any],
+    previous_payload: dict[str, Any],
     reports_root: str | Path,
-    current_nightly_json_path: str | Path,
-    previous_payload: dict[str, Any] | None = None,
-    previous_payload_path: str | None = None,
-    historical_payload_candidates: list[tuple[dict[str, Any], str | None]] | None = None,
-    enable_material_anchor: bool = True,
-) -> dict[str, Any]:
-    latest_btst_run = dict(current_payload.get("latest_btst_run") or {})
-    current_priority_snapshot = dict(current_payload.get("latest_priority_board_snapshot") or {})
-    previous_payload = dict(previous_payload or {})
+) -> tuple[dict[str, Any], dict[str, Any], str, dict[str, Any]]:
     previous_report_snapshot = {} if previous_payload else _select_previous_btst_report_snapshot(
         reports_root,
         current_report_dir=latest_btst_run.get("report_dir_abs"),
@@ -2135,97 +2141,115 @@ def build_btst_open_ready_delta_payload(
     )
     if previous_payload:
         previous_priority_board = dict(previous_payload.get("latest_priority_board_snapshot") or {})
-        comparison_basis = "nightly_history"
         previous_reference = dict(previous_payload.get("latest_btst_run") or {})
         previous_reference["generated_at"] = previous_payload.get("generated_at")
         previous_reference["reference_kind"] = "nightly_history"
-    elif previous_report_snapshot:
-        previous_priority_board = dict(previous_report_snapshot.get("priority_board") or {})
-        comparison_basis = "previous_btst_report"
-        previous_reference = {
-            "report_dir": previous_report_snapshot.get("report_dir"),
-            "report_dir_abs": previous_report_snapshot.get("report_dir_abs"),
-            "selection_target": previous_report_snapshot.get("selection_target"),
-            "trade_date": previous_report_snapshot.get("trade_date"),
-            "next_trade_date": previous_report_snapshot.get("next_trade_date"),
-            "generated_at": None,
-            "reference_kind": "previous_btst_report",
-        }
-    else:
-        previous_priority_board = {}
-        comparison_basis = "baseline_captured"
-        previous_reference = {}
-
-    comparison_scope = "baseline_captured"
-    if comparison_basis == "nightly_history":
-        comparison_scope = (
-            "same_report_rerun"
-            if str(previous_reference.get("report_dir") or "") == str(latest_btst_run.get("report_dir") or "")
-            else "report_rollforward"
+        return previous_report_snapshot, previous_priority_board, "nightly_history", previous_reference
+    if previous_report_snapshot:
+        return (
+            previous_report_snapshot,
+            dict(previous_report_snapshot.get("priority_board") or {}),
+            "previous_btst_report",
+            {
+                "report_dir": previous_report_snapshot.get("report_dir"),
+                "report_dir_abs": previous_report_snapshot.get("report_dir_abs"),
+                "selection_target": previous_report_snapshot.get("selection_target"),
+                "trade_date": previous_report_snapshot.get("trade_date"),
+                "next_trade_date": previous_report_snapshot.get("next_trade_date"),
+                "generated_at": None,
+                "reference_kind": "previous_btst_report",
+            },
         )
-    elif comparison_basis == "previous_btst_report":
-        comparison_scope = "previous_btst_report"
+    return previous_report_snapshot, {}, "baseline_captured", {}
 
-    priority_delta = _diff_priority_board(
-        current_priority_snapshot,
-        previous_priority_board,
-        previous_summary_source=(previous_payload.get("latest_btst_snapshot") or {}).get("brief_summary") if previous_payload else previous_report_snapshot.get("brief_summary"),
-    )
-    governance_delta = _diff_governance(current_payload, previous_payload)
-    replay_delta = _diff_replay(current_payload, previous_payload, previous_report_snapshot)
-    catalyst_frontier_delta = _diff_catalyst_frontier(current_payload, previous_payload, previous_report_snapshot)
-    score_fail_frontier_delta = _diff_score_fail_frontier(current_payload, previous_payload)
-    top_priority_action_delta = _diff_top_priority_action(current_payload, previous_payload)
-    selected_outcome_contract_delta = _diff_selected_outcome_contract(current_payload, previous_payload)
-    carryover_peer_proof_delta = _diff_carryover_peer_proof(current_payload, previous_payload)
-    carryover_promotion_gate_delta = _diff_carryover_promotion_gate(current_payload, previous_payload)
 
-    operator_focus: list[str] = []
+def _resolve_open_ready_comparison_scope(comparison_basis: str, previous_reference: dict[str, Any], latest_btst_run: dict[str, Any]) -> str:
+    if comparison_basis == "nightly_history":
+        if str(previous_reference.get("report_dir") or "") == str(latest_btst_run.get("report_dir") or ""):
+            return "same_report_rerun"
+        return "report_rollforward"
+    if comparison_basis == "previous_btst_report":
+        return "previous_btst_report"
+    return "baseline_captured"
+
+
+def _build_open_ready_deltas(
+    *,
+    current_payload: dict[str, Any],
+    previous_payload: dict[str, Any],
+    previous_report_snapshot: dict[str, Any],
+    current_priority_snapshot: dict[str, Any],
+    previous_priority_board: dict[str, Any],
+) -> dict[str, Any]:
+    previous_summary_source = (previous_payload.get("latest_btst_snapshot") or {}).get("brief_summary") if previous_payload else previous_report_snapshot.get("brief_summary")
+    return {
+        "priority_delta": _diff_priority_board(current_priority_snapshot, previous_priority_board, previous_summary_source=previous_summary_source),
+        "governance_delta": _diff_governance(current_payload, previous_payload),
+        "replay_delta": _diff_replay(current_payload, previous_payload, previous_report_snapshot),
+        "catalyst_frontier_delta": _diff_catalyst_frontier(current_payload, previous_payload, previous_report_snapshot),
+        "score_fail_frontier_delta": _diff_score_fail_frontier(current_payload, previous_payload),
+        "top_priority_action_delta": _diff_top_priority_action(current_payload, previous_payload),
+        "selected_outcome_contract_delta": _diff_selected_outcome_contract(current_payload, previous_payload),
+        "carryover_peer_proof_delta": _diff_carryover_peer_proof(current_payload, previous_payload),
+        "carryover_promotion_gate_delta": _diff_carryover_promotion_gate(current_payload, previous_payload),
+    }
+
+
+def _append_open_ready_basis_focus(operator_focus: list[str], comparison_basis: str, comparison_scope: str) -> None:
     if comparison_basis == "baseline_captured":
         operator_focus.append("首个 open-ready delta 基线已捕获；下一轮 nightly 后将开始提供完整 lane / replay 差分。")
     elif comparison_basis == "previous_btst_report":
         operator_focus.append("当前已生成 report 级 delta；完整治理 lane 差分将在下一轮 nightly 历史快照后可用。")
     elif comparison_scope == "same_report_rerun":
         operator_focus.append("当前 delta 对比的是同一份 report 的上一版 nightly 快照，用于识别复刷变化，而不是跨 report 切换。")
+
+
+def _append_open_ready_priority_focus(operator_focus: list[str], priority_delta: dict[str, Any]) -> None:
     if priority_delta.get("headline_changed"):
         operator_focus.append(f"开盘 headline 已变化：{priority_delta.get('previous_headline') or 'n/a'} -> {priority_delta.get('current_headline') or 'n/a'}")
     if priority_delta.get("added_tickers"):
         operator_focus.append("新增观察对象: " + ", ".join(item.get("ticker") or "" for item in priority_delta.get("added_tickers") or []))
     if priority_delta.get("removed_tickers"):
         operator_focus.append("移出观察对象: " + ", ".join(item.get("ticker") or "" for item in priority_delta.get("removed_tickers") or []))
+
+
+def _append_open_ready_governance_focus(operator_focus: list[str], governance_delta: dict[str, Any]) -> None:
     if governance_delta.get("available") and governance_delta.get("changed_lane_count"):
         operator_focus.append("治理 lane 发生变化: " + ", ".join(change.get("lane_id") or "" for change in governance_delta.get("lane_changes") or []))
-    if replay_delta.get("available") and replay_delta.get("has_changes"):
-        if replay_delta.get("comparison_basis") == "nightly_history":
-            operator_focus.append(
-                f"replay cohort 变化: report_count {replay_delta.get('report_count_delta'):+d}, short_trade_only {replay_delta.get('short_trade_only_report_count_delta'):+d}。"
-            )
-        elif replay_delta.get("comparison_basis") == "previous_btst_report":
-            summary_delta = dict(replay_delta.get("summary_delta") or {})
-            operator_focus.append(
-                "本轮相对上一份 BTST 报告的观察层变化: "
-                + ", ".join(f"{key} {int(value):+d}" for key, value in summary_delta.items() if int(value) != 0)
-            )
-    if catalyst_frontier_delta.get("available") and catalyst_frontier_delta.get("has_changes"):
-        if catalyst_frontier_delta.get("added_promoted_tickers"):
-            operator_focus.append("题材催化前沿新增可晋级票: " + ", ".join(catalyst_frontier_delta.get("added_promoted_tickers") or []))
-        elif catalyst_frontier_delta.get("status_changed"):
-            operator_focus.append(
-                f"题材催化前沿状态变化: {catalyst_frontier_delta.get('previous_status') or 'n/a'} -> {catalyst_frontier_delta.get('current_status') or 'n/a'}。"
-            )
-        elif catalyst_frontier_delta.get("comparison_note"):
-            operator_focus.append(str(catalyst_frontier_delta.get("comparison_note")))
-    if score_fail_frontier_delta.get("available") and score_fail_frontier_delta.get("has_changes"):
-        if score_fail_frontier_delta.get("added_priority_tickers"):
-            operator_focus.append("score-fail recurring 队列新增重点票: " + ", ".join(score_fail_frontier_delta.get("added_priority_tickers") or []))
-        elif score_fail_frontier_delta.get("added_top_rescue_tickers"):
-            operator_focus.append("score-fail frontier 新增 near-miss rescue 票: " + ", ".join(score_fail_frontier_delta.get("added_top_rescue_tickers") or []))
-        elif score_fail_frontier_delta.get("status_changed"):
-            operator_focus.append(
-                f"score-fail frontier 状态变化: {score_fail_frontier_delta.get('previous_status') or 'n/a'} -> {score_fail_frontier_delta.get('current_status') or 'n/a'}。"
-            )
-        elif score_fail_frontier_delta.get("comparison_note"):
-            operator_focus.append(str(score_fail_frontier_delta.get("comparison_note")))
+
+
+def _append_open_ready_replay_focus(operator_focus: list[str], replay_delta: dict[str, Any]) -> None:
+    if not (replay_delta.get("available") and replay_delta.get("has_changes")):
+        return
+    if replay_delta.get("comparison_basis") == "nightly_history":
+        operator_focus.append(
+            f"replay cohort 变化: report_count {replay_delta.get('report_count_delta'):+d}, short_trade_only {replay_delta.get('short_trade_only_report_count_delta'):+d}。"
+        )
+        return
+    if replay_delta.get("comparison_basis") == "previous_btst_report":
+        summary_delta = dict(replay_delta.get("summary_delta") or {})
+        operator_focus.append("本轮相对上一份 BTST 报告的观察层变化: " + ", ".join(f"{key} {int(value):+d}" for key, value in summary_delta.items() if int(value) != 0))
+
+
+def _append_open_ready_frontier_focus(operator_focus: list[str], delta: dict[str, Any], *, label: str, added_key: str, status_label: str) -> None:
+    if not (delta.get("available") and delta.get("has_changes")):
+        return
+    added_values = list(delta.get(added_key) or [])
+    if added_values:
+        operator_focus.append(f"{label}: " + ", ".join(added_values))
+        return
+    if delta.get("status_changed"):
+        operator_focus.append(f"{status_label}: {delta.get('previous_status') or 'n/a'} -> {delta.get('current_status') or 'n/a'}。")
+        return
+    if delta.get("comparison_note"):
+        operator_focus.append(str(delta.get("comparison_note")))
+
+
+def _append_open_ready_action_focus(operator_focus: list[str], delta_sections: dict[str, Any]) -> None:
+    top_priority_action_delta = dict(delta_sections.get("top_priority_action_delta") or {})
+    selected_outcome_contract_delta = dict(delta_sections.get("selected_outcome_contract_delta") or {})
+    carryover_peer_proof_delta = dict(delta_sections.get("carryover_peer_proof_delta") or {})
+    carryover_promotion_gate_delta = dict(delta_sections.get("carryover_promotion_gate_delta") or {})
     if top_priority_action_delta.get("available") and top_priority_action_delta.get("has_changes"):
         operator_focus.append(
             f"control tower 顶级动作切换: {top_priority_action_delta.get('previous_source') or 'n/a'} -> {top_priority_action_delta.get('current_source') or 'n/a'} "
@@ -2248,26 +2272,149 @@ def build_btst_open_ready_delta_payload(
             f"carryover promotion gate 变化: focus {carryover_promotion_gate_delta.get('previous_focus_ticker') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_focus_ticker') or 'n/a'}, "
             f"verdict {carryover_promotion_gate_delta.get('previous_focus_gate_verdict') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_focus_gate_verdict') or 'n/a'}。"
         )
+
+
+def _build_open_ready_operator_focus(comparison_basis: str, comparison_scope: str, delta_sections: dict[str, Any]) -> list[str]:
+    operator_focus: list[str] = []
+    _append_open_ready_basis_focus(operator_focus, comparison_basis, comparison_scope)
+    _append_open_ready_priority_focus(operator_focus, dict(delta_sections.get("priority_delta") or {}))
+    _append_open_ready_governance_focus(operator_focus, dict(delta_sections.get("governance_delta") or {}))
+    _append_open_ready_replay_focus(operator_focus, dict(delta_sections.get("replay_delta") or {}))
+    _append_open_ready_frontier_focus(
+        operator_focus,
+        dict(delta_sections.get("catalyst_frontier_delta") or {}),
+        label="题材催化前沿新增可晋级票",
+        added_key="added_promoted_tickers",
+        status_label="题材催化前沿状态变化",
+    )
+    _append_open_ready_frontier_focus(
+        operator_focus,
+        dict(delta_sections.get("score_fail_frontier_delta") or {}),
+        label="score-fail recurring 队列新增重点票",
+        added_key="added_priority_tickers",
+        status_label="score-fail frontier 状态变化",
+    )
+    score_fail_delta = dict(delta_sections.get("score_fail_frontier_delta") or {})
+    if score_fail_delta.get("available") and score_fail_delta.get("has_changes") and not score_fail_delta.get("added_priority_tickers"):
+        if score_fail_delta.get("added_top_rescue_tickers"):
+            operator_focus.append("score-fail frontier 新增 near-miss rescue 票: " + ", ".join(score_fail_delta.get("added_top_rescue_tickers") or []))
+        elif score_fail_delta.get("comparison_note") and not score_fail_delta.get("status_changed"):
+            operator_focus.append(str(score_fail_delta.get("comparison_note")))
+    _append_open_ready_action_focus(operator_focus, delta_sections)
     if not operator_focus:
         operator_focus.append("本轮相对上一轮没有检测到 priority / governance / replay / score-fail frontier / top priority action / selected contract / carryover peer proof / carryover promotion gate 的结构变化，可视为稳定复跑。")
+    return operator_focus
 
-    overall_delta_verdict = "baseline_captured"
-    if comparison_basis != "baseline_captured":
-        overall_delta_verdict = "changed" if any([priority_delta.get("has_changes"), governance_delta.get("has_changes"), replay_delta.get("has_changes"), catalyst_frontier_delta.get("has_changes"), score_fail_frontier_delta.get("has_changes"), top_priority_action_delta.get("has_changes"), selected_outcome_contract_delta.get("has_changes"), carryover_peer_proof_delta.get("has_changes"), carryover_promotion_gate_delta.get("has_changes")]) else "stable"
 
-    material_change_anchor: dict[str, Any] = {}
-    if enable_material_anchor and historical_payload_candidates and comparison_scope == "same_report_rerun" and overall_delta_verdict == "stable":
-        material_change_anchor = _build_material_change_anchor(
-            current_payload,
-            reports_root=reports_root,
-            current_nightly_json_path=current_nightly_json_path,
-            historical_payload_candidates=historical_payload_candidates,
-        )
-        if material_change_anchor:
-            changed_sections = ", ".join(material_change_anchor.get("changed_sections") or []) or "n/a"
-            operator_focus.append(
-                f"最近一次实质变化锚点: {material_change_anchor.get('reference_generated_at') or 'n/a'} | sections={changed_sections}。"
-            )
+def _resolve_open_ready_overall_delta_verdict(comparison_basis: str, delta_sections: dict[str, Any]) -> str:
+    if comparison_basis == "baseline_captured":
+        return "baseline_captured"
+    has_changes = any(
+        dict(delta_sections.get(section) or {}).get("has_changes")
+        for section in [
+            "priority_delta",
+            "governance_delta",
+            "replay_delta",
+            "catalyst_frontier_delta",
+            "score_fail_frontier_delta",
+            "top_priority_action_delta",
+            "selected_outcome_contract_delta",
+            "carryover_peer_proof_delta",
+            "carryover_promotion_gate_delta",
+        ]
+    )
+    return "changed" if has_changes else "stable"
+
+
+def _build_open_ready_material_change_anchor(
+    *,
+    current_payload: dict[str, Any],
+    reports_root: str | Path,
+    current_nightly_json_path: str | Path,
+    historical_payload_candidates: list[tuple[dict[str, Any], str | None]] | None,
+    enable_material_anchor: bool,
+    comparison_scope: str,
+    overall_delta_verdict: str,
+    operator_focus: list[str],
+) -> dict[str, Any]:
+    if not (enable_material_anchor and historical_payload_candidates and comparison_scope == "same_report_rerun" and overall_delta_verdict == "stable"):
+        return {}
+    material_change_anchor = _build_material_change_anchor(
+        current_payload,
+        reports_root=reports_root,
+        current_nightly_json_path=current_nightly_json_path,
+        historical_payload_candidates=historical_payload_candidates,
+    )
+    if material_change_anchor:
+        changed_sections = ", ".join(material_change_anchor.get("changed_sections") or []) or "n/a"
+        operator_focus.append(f"最近一次实质变化锚点: {material_change_anchor.get('reference_generated_at') or 'n/a'} | sections={changed_sections}。")
+    return material_change_anchor
+
+
+def _build_open_ready_source_paths(
+    *,
+    current_payload: dict[str, Any],
+    current_nightly_json_path: str | Path,
+    previous_payload: dict[str, Any],
+    previous_payload_path: str | None,
+    previous_report_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    latest_btst_snapshot = dict(current_payload.get("latest_btst_snapshot") or {})
+    previous_btst_snapshot = dict(previous_payload.get("latest_btst_snapshot") or {})
+    return {
+        "current_nightly_control_tower_json": str(Path(current_nightly_json_path).expanduser().resolve()),
+        "previous_nightly_control_tower_json": previous_payload_path,
+        "current_priority_board_json": latest_btst_snapshot.get("priority_board_json_path"),
+        "previous_priority_board_json": previous_btst_snapshot.get("priority_board_json_path") if previous_payload else previous_report_snapshot.get("priority_board_json_path"),
+        "current_catalyst_theme_frontier_markdown": latest_btst_snapshot.get("catalyst_theme_frontier_markdown_path"),
+        "previous_catalyst_theme_frontier_markdown": previous_btst_snapshot.get("catalyst_theme_frontier_markdown_path") if previous_payload else previous_report_snapshot.get("catalyst_theme_frontier_markdown_path"),
+        "current_score_fail_frontier_markdown": latest_btst_snapshot.get("score_fail_frontier_markdown_path"),
+        "previous_score_fail_frontier_markdown": previous_btst_snapshot.get("score_fail_frontier_markdown_path") if previous_payload else None,
+        "current_score_fail_recurring_markdown": latest_btst_snapshot.get("score_fail_recurring_markdown_path"),
+        "previous_score_fail_recurring_markdown": previous_btst_snapshot.get("score_fail_recurring_markdown_path") if previous_payload else None,
+        "report_manifest_json": dict(current_payload.get("source_paths") or {}).get("report_manifest_json"),
+        "report_manifest_markdown": dict(current_payload.get("source_paths") or {}).get("report_manifest_markdown"),
+    }
+
+
+def build_btst_open_ready_delta_payload(
+    current_payload: dict[str, Any],
+    *,
+    reports_root: str | Path,
+    current_nightly_json_path: str | Path,
+    previous_payload: dict[str, Any] | None = None,
+    previous_payload_path: str | None = None,
+    historical_payload_candidates: list[tuple[dict[str, Any], str | None]] | None = None,
+    enable_material_anchor: bool = True,
+) -> dict[str, Any]:
+    latest_btst_run = dict(current_payload.get("latest_btst_run") or {})
+    current_priority_snapshot = dict(current_payload.get("latest_priority_board_snapshot") or {})
+    previous_payload = dict(previous_payload or {})
+    previous_report_snapshot, previous_priority_board, comparison_basis, previous_reference = _resolve_open_ready_previous_context(
+        latest_btst_run=latest_btst_run,
+        previous_payload=previous_payload,
+        reports_root=reports_root,
+    )
+    comparison_scope = _resolve_open_ready_comparison_scope(comparison_basis, previous_reference, latest_btst_run)
+    delta_sections = _build_open_ready_deltas(
+        current_payload=current_payload,
+        previous_payload=previous_payload,
+        previous_report_snapshot=previous_report_snapshot,
+        current_priority_snapshot=current_priority_snapshot,
+        previous_priority_board=previous_priority_board,
+    )
+    operator_focus = _build_open_ready_operator_focus(comparison_basis, comparison_scope, delta_sections)
+    overall_delta_verdict = _resolve_open_ready_overall_delta_verdict(comparison_basis, delta_sections)
+    material_change_anchor = _build_open_ready_material_change_anchor(
+        current_payload=current_payload,
+        reports_root=reports_root,
+        current_nightly_json_path=current_nightly_json_path,
+        historical_payload_candidates=historical_payload_candidates,
+        enable_material_anchor=enable_material_anchor,
+        comparison_scope=comparison_scope,
+        overall_delta_verdict=overall_delta_verdict,
+        operator_focus=operator_focus,
+    )
 
     return {
         "generated_at": current_payload.get("generated_at"),
@@ -2277,31 +2424,347 @@ def build_btst_open_ready_delta_payload(
         "current_reference": latest_btst_run,
         "previous_reference": previous_reference,
         "operator_focus": operator_focus[:6],
-        "priority_delta": priority_delta,
-        "catalyst_frontier_delta": catalyst_frontier_delta,
-        "score_fail_frontier_delta": score_fail_frontier_delta,
-        "top_priority_action_delta": top_priority_action_delta,
-        "selected_outcome_contract_delta": selected_outcome_contract_delta,
-        "carryover_peer_proof_delta": carryover_peer_proof_delta,
-        "carryover_promotion_gate_delta": carryover_promotion_gate_delta,
-        "governance_delta": governance_delta,
-        "replay_delta": replay_delta,
+        "priority_delta": delta_sections["priority_delta"],
+        "catalyst_frontier_delta": delta_sections["catalyst_frontier_delta"],
+        "score_fail_frontier_delta": delta_sections["score_fail_frontier_delta"],
+        "top_priority_action_delta": delta_sections["top_priority_action_delta"],
+        "selected_outcome_contract_delta": delta_sections["selected_outcome_contract_delta"],
+        "carryover_peer_proof_delta": delta_sections["carryover_peer_proof_delta"],
+        "carryover_promotion_gate_delta": delta_sections["carryover_promotion_gate_delta"],
+        "governance_delta": delta_sections["governance_delta"],
+        "replay_delta": delta_sections["replay_delta"],
         "material_change_anchor": material_change_anchor,
-        "source_paths": {
-            "current_nightly_control_tower_json": str(Path(current_nightly_json_path).expanduser().resolve()),
-            "previous_nightly_control_tower_json": previous_payload_path,
-            "current_priority_board_json": dict(current_payload.get("latest_btst_snapshot") or {}).get("priority_board_json_path"),
-            "previous_priority_board_json": previous_payload.get("latest_btst_snapshot", {}).get("priority_board_json_path") if previous_payload else previous_report_snapshot.get("priority_board_json_path"),
-            "current_catalyst_theme_frontier_markdown": dict(current_payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_markdown_path"),
-            "previous_catalyst_theme_frontier_markdown": previous_payload.get("latest_btst_snapshot", {}).get("catalyst_theme_frontier_markdown_path") if previous_payload else previous_report_snapshot.get("catalyst_theme_frontier_markdown_path"),
-            "current_score_fail_frontier_markdown": dict(current_payload.get("latest_btst_snapshot") or {}).get("score_fail_frontier_markdown_path"),
-            "previous_score_fail_frontier_markdown": previous_payload.get("latest_btst_snapshot", {}).get("score_fail_frontier_markdown_path") if previous_payload else None,
-            "current_score_fail_recurring_markdown": dict(current_payload.get("latest_btst_snapshot") or {}).get("score_fail_recurring_markdown_path"),
-            "previous_score_fail_recurring_markdown": previous_payload.get("latest_btst_snapshot", {}).get("score_fail_recurring_markdown_path") if previous_payload else None,
-            "report_manifest_json": dict(current_payload.get("source_paths") or {}).get("report_manifest_json"),
-            "report_manifest_markdown": dict(current_payload.get("source_paths") or {}).get("report_manifest_markdown"),
-        },
+        "source_paths": _build_open_ready_source_paths(
+            current_payload=current_payload,
+            current_nightly_json_path=current_nightly_json_path,
+            previous_payload=previous_payload,
+            previous_payload_path=previous_payload_path,
+            previous_report_snapshot=previous_report_snapshot,
+        ),
     }
+
+
+def _append_open_ready_overview_markdown(
+    lines: list[str],
+    payload: dict[str, Any],
+    current_reference: dict[str, Any],
+    previous_reference: dict[str, Any],
+) -> None:
+    lines.append("# BTST Open-Ready Delta")
+    lines.append("")
+    lines.append("## Overview")
+    lines.append(f"- generated_at: {payload.get('generated_at')}")
+    lines.append(f"- comparison_basis: {payload.get('comparison_basis')}")
+    lines.append(f"- comparison_scope: {payload.get('comparison_scope')}")
+    lines.append(f"- overall_delta_verdict: {payload.get('overall_delta_verdict')}")
+    lines.append(f"- current_report_dir: {current_reference.get('report_dir')}")
+    lines.append(f"- previous_report_dir: {previous_reference.get('report_dir') or 'n/a'}")
+    lines.append(f"- current_trade_date: {current_reference.get('trade_date')}")
+    lines.append(f"- previous_trade_date: {previous_reference.get('trade_date') or 'n/a'}")
+    lines.append(f"- previous_snapshot_generated_at: {previous_reference.get('generated_at') or 'n/a'}")
+    lines.append("")
+    lines.append("## Operator Focus")
+    for item in list(payload.get("operator_focus") or []):
+        lines.append(f"- {item}")
+    lines.append("")
+
+
+def _append_material_change_anchor_markdown(lines: list[str], anchor: dict[str, Any], output_parent: Path) -> None:
+    if not anchor:
+        return
+    lines.append("## Last Material Change Anchor")
+    lines.append(f"- reference_generated_at: {anchor.get('reference_generated_at') or 'n/a'}")
+    lines.append(f"- reference_report_dir: {anchor.get('reference_report_dir') or 'n/a'}")
+    lines.append(f"- comparison_basis: {anchor.get('comparison_basis')}")
+    lines.append(f"- comparison_scope: {anchor.get('comparison_scope')}")
+    lines.append(f"- overall_delta_verdict: {anchor.get('overall_delta_verdict')}")
+    lines.append(f"- skipped_same_report_rerun_snapshots: {anchor.get('skipped_snapshot_count') or 0}")
+    changed_sections = list(anchor.get("changed_sections") or [])
+    lines.append(f"- changed_sections: {', '.join(changed_sections) if changed_sections else 'none'}")
+    reference_snapshot_path = anchor.get("reference_snapshot_path")
+    relative_anchor_target = _relative_link(reference_snapshot_path, output_parent)
+    if relative_anchor_target:
+        lines.append(f"- reference_snapshot_json: [{Path(reference_snapshot_path).name}]({relative_anchor_target})")
+    elif reference_snapshot_path:
+        lines.append(f"- reference_snapshot_json: {reference_snapshot_path}")
+    for item in list(anchor.get("operator_focus") or []):
+        lines.append(f"- anchor_focus: {item}")
+    lines.append("")
+
+
+def _append_priority_delta_list(
+    lines: list[str],
+    items: list[Any],
+    formatter: Callable[[Any], str],
+) -> None:
+    for item in items:
+        lines.append(formatter(item))
+
+
+def _append_priority_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Priority Delta")
+    lines.append(f"- previous_headline: {delta.get('previous_headline') or 'n/a'}")
+    lines.append(f"- current_headline: {delta.get('current_headline') or 'n/a'}")
+    lines.append(f"- summary_delta: {delta.get('summary_delta')}")
+    _append_priority_delta_list(
+        lines,
+        list(delta.get("added_tickers") or []),
+        lambda item: f"- added_ticker: {item.get('ticker')} | lane={item.get('lane')} | actionability={item.get('actionability')}",
+    )
+    _append_priority_delta_list(
+        lines,
+        list(delta.get("removed_tickers") or []),
+        lambda item: f"- removed_ticker: {item.get('ticker')} | lane={item.get('lane')} | actionability={item.get('actionability')}",
+    )
+    _append_priority_delta_list(lines, list(delta.get("lane_changes") or []), lambda item: f"- lane_change: {item.get('ticker')} | {item.get('previous_lane')} -> {item.get('current_lane')}")
+    _append_priority_delta_list(
+        lines,
+        list(delta.get("actionability_changes") or []),
+        lambda item: f"- actionability_change: {item.get('ticker')} | {item.get('previous_actionability')} -> {item.get('current_actionability')}",
+    )
+    _append_priority_delta_list(
+        lines,
+        list(delta.get("execution_quality_changes") or []),
+        lambda item: f"- execution_quality_change: {item.get('ticker')} | {item.get('previous_execution_quality_label')} -> {item.get('current_execution_quality_label')}",
+    )
+    _append_priority_delta_list(lines, list(delta.get("rank_changes") or []), lambda item: f"- rank_change: {item.get('ticker')} | {item.get('previous_rank')} -> {item.get('current_rank')}")
+    _append_priority_delta_list(
+        lines,
+        list(delta.get("score_changes") or []),
+        lambda item: f"- score_change: {item.get('ticker')} | {item.get('previous_score_target')} -> {item.get('current_score_target')} (delta={item.get('score_target_delta')})",
+    )
+    _append_priority_delta_list(lines, list(delta.get("guardrails_added") or []), lambda item: f"- guardrail_added: {item}")
+    _append_priority_delta_list(lines, list(delta.get("guardrails_removed") or []), lambda item: f"- guardrail_removed: {item}")
+    if not delta.get("has_changes"):
+        lines.append("- no_priority_change_detected")
+    lines.append("")
+
+
+def _append_catalyst_frontier_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Catalyst Theme Frontier Delta")
+    if not delta.get("available"):
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- comparison_basis: {delta.get('comparison_basis')}")
+        lines.append(f"- previous_data_available: {delta.get('previous_data_available')}")
+        lines.append(f"- previous_status: {delta.get('previous_status') or 'n/a'}")
+        lines.append(f"- current_status: {delta.get('current_status') or 'n/a'}")
+        lines.append(f"- shadow_candidate_count_delta: {delta.get('shadow_candidate_count_delta')}")
+        lines.append(f"- promoted_shadow_count_delta: {delta.get('promoted_shadow_count_delta')}")
+        lines.append(f"- baseline_selected_count_delta: {delta.get('baseline_selected_count_delta')}")
+        lines.append(f"- previous_recommended_variant_name: {delta.get('previous_recommended_variant_name') or 'n/a'}")
+        lines.append(f"- current_recommended_variant_name: {delta.get('current_recommended_variant_name') or 'n/a'}")
+        if delta.get("comparison_note"):
+            lines.append(f"- note: {delta.get('comparison_note')}")
+        previous_promoted_tickers = list(delta.get("previous_promoted_tickers") or [])
+        current_promoted_tickers = list(delta.get("current_promoted_tickers") or [])
+        lines.append(f"- previous_promoted_tickers: {', '.join(previous_promoted_tickers) if previous_promoted_tickers else 'none'}")
+        lines.append(f"- current_promoted_tickers: {', '.join(current_promoted_tickers) if current_promoted_tickers else 'none'}")
+        for ticker in list(delta.get("added_promoted_tickers") or []):
+            lines.append(f"- added_promoted_ticker: {ticker}")
+        for ticker in list(delta.get("removed_promoted_tickers") or []):
+            lines.append(f"- removed_promoted_ticker: {ticker}")
+        if not delta.get("has_changes"):
+            lines.append("- no_catalyst_frontier_change_detected")
+    lines.append("")
+
+
+def _append_score_fail_frontier_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Score-Fail Frontier Delta")
+    if not delta.get("available"):
+        lines.append(f"- unavailable: {delta.get('reason')}")
+    else:
+        lines.append(f"- previous_data_available: {delta.get('previous_data_available')}")
+        lines.append(f"- previous_status: {delta.get('previous_status') or 'n/a'}")
+        lines.append(f"- current_status: {delta.get('current_status') or 'n/a'}")
+        lines.append(f"- rejected_case_count_delta: {delta.get('rejected_case_count_delta')}")
+        lines.append(f"- rescueable_case_count_delta: {delta.get('rescueable_case_count_delta')}")
+        lines.append(f"- threshold_only_rescue_count_delta: {delta.get('threshold_only_rescue_count_delta')}")
+        lines.append(f"- recurring_case_count_delta: {delta.get('recurring_case_count_delta')}")
+        lines.append(f"- transition_candidate_count_delta: {delta.get('transition_candidate_count_delta')}")
+        if delta.get("comparison_note"):
+            lines.append(f"- note: {delta.get('comparison_note')}")
+        previous_priority_queue = list(delta.get("previous_priority_queue_tickers") or [])
+        current_priority_queue = list(delta.get("current_priority_queue_tickers") or [])
+        lines.append(f"- previous_priority_queue_tickers: {', '.join(previous_priority_queue) if previous_priority_queue else 'none'}")
+        lines.append(f"- current_priority_queue_tickers: {', '.join(current_priority_queue) if current_priority_queue else 'none'}")
+        for ticker in list(delta.get("added_priority_tickers") or []):
+            lines.append(f"- added_priority_ticker: {ticker}")
+        for ticker in list(delta.get("removed_priority_tickers") or []):
+            lines.append(f"- removed_priority_ticker: {ticker}")
+        for ticker in list(delta.get("added_top_rescue_tickers") or []):
+            lines.append(f"- added_top_rescue_ticker: {ticker}")
+        for ticker in list(delta.get("removed_top_rescue_tickers") or []):
+            lines.append(f"- removed_top_rescue_ticker: {ticker}")
+        if not delta.get("has_changes"):
+            lines.append("- no_score_fail_frontier_change_detected")
+    lines.append("")
+
+
+def _append_top_priority_action_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Top Priority Action Delta")
+    if not delta.get("available"):
+        lines.append(f"- unavailable: {delta.get('reason')}")
+    else:
+        lines.append(f"- previous_task_id: {delta.get('previous_task_id') or 'n/a'}")
+        lines.append(f"- current_task_id: {delta.get('current_task_id') or 'n/a'}")
+        lines.append(f"- previous_source: {delta.get('previous_source') or 'n/a'}")
+        lines.append(f"- current_source: {delta.get('current_source') or 'n/a'}")
+        lines.append(f"- previous_title: {delta.get('previous_title') or 'n/a'}")
+        lines.append(f"- current_title: {delta.get('current_title') or 'n/a'}")
+        if not delta.get("has_changes"):
+            lines.append("- no_top_priority_action_change_detected")
+    lines.append("")
+
+
+def _append_selected_outcome_contract_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Selected Outcome Contract Delta")
+    if not delta.get("available"):
+        lines.append(f"- unavailable: {delta.get('reason')}")
+    else:
+        fields = [
+            "previous_focus_ticker",
+            "current_focus_ticker",
+            "previous_focus_cycle_status",
+            "current_focus_cycle_status",
+            "previous_focus_overall_contract_verdict",
+            "current_focus_overall_contract_verdict",
+            "previous_focus_next_day_contract_verdict",
+            "current_focus_next_day_contract_verdict",
+            "previous_focus_t_plus_2_contract_verdict",
+            "current_focus_t_plus_2_contract_verdict",
+        ]
+        for field in fields:
+            lines.append(f"- {field}: {delta.get(field) or 'n/a'}")
+        if not delta.get("has_changes"):
+            lines.append("- no_selected_outcome_contract_change_detected")
+    lines.append("")
+
+
+def _append_carryover_peer_proof_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Carryover Peer Proof Delta")
+    if not delta.get("available"):
+        lines.append(f"- unavailable: {delta.get('reason')}")
+    else:
+        fields = [
+            "previous_focus_ticker",
+            "current_focus_ticker",
+            "previous_focus_proof_verdict",
+            "current_focus_proof_verdict",
+            "previous_focus_promotion_review_verdict",
+            "current_focus_promotion_review_verdict",
+            "previous_ready_for_promotion_review_tickers",
+            "current_ready_for_promotion_review_tickers",
+        ]
+        for field in fields:
+            lines.append(f"- {field}: {delta.get(field) or 'n/a'}")
+        for ticker in list(delta.get("added_ready_for_promotion_review_tickers") or []):
+            lines.append(f"- added_ready_for_promotion_review_ticker: {ticker}")
+        for ticker in list(delta.get("removed_ready_for_promotion_review_tickers") or []):
+            lines.append(f"- removed_ready_for_promotion_review_ticker: {ticker}")
+        if not delta.get("has_changes"):
+            lines.append("- no_carryover_peer_proof_change_detected")
+    lines.append("")
+
+
+def _append_carryover_promotion_gate_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Carryover Promotion Gate Delta")
+    if not delta.get("available"):
+        lines.append(f"- unavailable: {delta.get('reason')}")
+    else:
+        fields = [
+            "previous_focus_ticker",
+            "current_focus_ticker",
+            "previous_focus_gate_verdict",
+            "current_focus_gate_verdict",
+            "previous_selected_contract_verdict",
+            "current_selected_contract_verdict",
+            "previous_ready_tickers",
+            "current_ready_tickers",
+        ]
+        for field in fields:
+            lines.append(f"- {field}: {delta.get(field) or 'n/a'}")
+        for ticker in list(delta.get("added_ready_tickers") or []):
+            lines.append(f"- added_promotion_gate_ready_ticker: {ticker}")
+        for ticker in list(delta.get("removed_ready_tickers") or []):
+            lines.append(f"- removed_promotion_gate_ready_ticker: {ticker}")
+        for ticker in list(delta.get("added_pending_t_plus_2_tickers") or []):
+            lines.append(f"- added_pending_t_plus_2_ticker: {ticker}")
+        for ticker in list(delta.get("removed_pending_t_plus_2_tickers") or []):
+            lines.append(f"- removed_pending_t_plus_2_ticker: {ticker}")
+        if not delta.get("has_changes"):
+            lines.append("- no_carryover_promotion_gate_change_detected")
+    lines.append("")
+
+
+def _append_governance_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Governance Delta")
+    if not delta.get("available"):
+        lines.append(f"- unavailable: {delta.get('reason')}")
+    else:
+        lines.append(f"- previous_overall_verdict: {delta.get('previous_overall_verdict')}")
+        lines.append(f"- current_overall_verdict: {delta.get('current_overall_verdict')}")
+        lines.append(f"- waiting_lane_count_delta: {delta.get('waiting_lane_count_delta')}")
+        lines.append(f"- ready_lane_count_delta: {delta.get('ready_lane_count_delta')}")
+        lines.append(f"- warn_count_delta: {delta.get('warn_count_delta')}")
+        lines.append(f"- fail_count_delta: {delta.get('fail_count_delta')}")
+        lane_changes = list(delta.get("lane_changes") or [])
+        if lane_changes:
+            for item in lane_changes:
+                extra_segments: list[str] = []
+                if item.get("previous_missing_window_count") is not None or item.get("current_missing_window_count") is not None:
+                    extra_segments.append(f"missing_window_count {item.get('previous_missing_window_count')} -> {item.get('current_missing_window_count')}")
+                if item.get("previous_distinct_window_count_with_filtered_entries") is not None or item.get("current_distinct_window_count_with_filtered_entries") is not None:
+                    extra_segments.append(
+                        f"distinct_window_count {item.get('previous_distinct_window_count_with_filtered_entries')} -> {item.get('current_distinct_window_count_with_filtered_entries')}"
+                    )
+                if item.get("previous_preserve_misfire_report_count") is not None or item.get("current_preserve_misfire_report_count") is not None:
+                    extra_segments.append(
+                        f"preserve_misfire_report_count {item.get('previous_preserve_misfire_report_count')} -> {item.get('current_preserve_misfire_report_count')}"
+                    )
+                if item.get("previous_filtered_report_count") is not None or item.get("current_filtered_report_count") is not None:
+                    extra_segments.append(f"filtered_report_count {item.get('previous_filtered_report_count')} -> {item.get('current_filtered_report_count')}")
+                if item.get("previous_upgrade_gap") or item.get("current_upgrade_gap"):
+                    extra_segments.append(f"upgrade_gap {item.get('previous_upgrade_gap')} -> {item.get('current_upgrade_gap')}")
+                extra_suffix = f" | {' | '.join(extra_segments)}" if extra_segments else ""
+                lines.append(
+                    f"- lane_delta: {item.get('lane_id')} | status {item.get('previous_lane_status')} -> {item.get('current_lane_status')} | blocker {item.get('previous_blocker')} -> {item.get('current_blocker')}{extra_suffix}"
+                )
+        else:
+            lines.append("- no_governance_change_detected")
+    lines.append("")
+
+
+def _append_replay_delta_markdown(lines: list[str], delta: dict[str, Any]) -> None:
+    lines.append("## Replay Delta")
+    if not delta.get("available"):
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- comparison_basis: {delta.get('comparison_basis')}")
+        if delta.get("comparison_basis") == "nightly_history":
+            lines.append(f"- report_count_delta: {delta.get('report_count_delta')}")
+            lines.append(f"- short_trade_only_report_count_delta: {delta.get('short_trade_only_report_count_delta')}")
+            lines.append(f"- dual_target_report_count_delta: {delta.get('dual_target_report_count_delta')}")
+            lines.append(f"- previous_latest_short_trade_report: {delta.get('previous_latest_short_trade_report')}")
+            lines.append(f"- current_latest_short_trade_report: {delta.get('current_latest_short_trade_report')}")
+            lines.append(f"- latest_near_miss_delta: {delta.get('latest_near_miss_delta')}")
+            lines.append(f"- latest_opportunity_pool_delta: {delta.get('latest_opportunity_pool_delta')}")
+        else:
+            lines.append(f"- current_report_dir: {delta.get('current_report_dir')}")
+            lines.append(f"- previous_report_dir: {delta.get('previous_report_dir')}")
+            lines.append(f"- summary_delta: {delta.get('summary_delta')}")
+    lines.append("")
+
+
+def _append_open_ready_fast_links_markdown(lines: list[str], source_paths: dict[str, Any], output_parent: Path) -> None:
+    lines.append("## Fast Links")
+    for label, source_path in source_paths.items():
+        relative_target = _relative_link(source_path, output_parent)
+        if relative_target:
+            lines.append(f"- {label}: [{Path(source_path).name}]({relative_target})")
+        else:
+            lines.append(f"- {label}: {source_path}")
+    lines.append("")
 
 
 def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_parent: str | Path) -> str:
@@ -2321,296 +2784,18 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
     source_paths = dict(payload.get("source_paths") or {})
 
     lines: list[str] = []
-    lines.append("# BTST Open-Ready Delta")
-    lines.append("")
-    lines.append("## Overview")
-    lines.append(f"- generated_at: {payload.get('generated_at')}")
-    lines.append(f"- comparison_basis: {payload.get('comparison_basis')}")
-    lines.append(f"- comparison_scope: {payload.get('comparison_scope')}")
-    lines.append(f"- overall_delta_verdict: {payload.get('overall_delta_verdict')}")
-    lines.append(f"- current_report_dir: {current_reference.get('report_dir')}")
-    lines.append(f"- previous_report_dir: {previous_reference.get('report_dir') or 'n/a'}")
-    lines.append(f"- current_trade_date: {current_reference.get('trade_date')}")
-    lines.append(f"- previous_trade_date: {previous_reference.get('trade_date') or 'n/a'}")
-    lines.append(f"- previous_snapshot_generated_at: {previous_reference.get('generated_at') or 'n/a'}")
-    lines.append("")
-
-    lines.append("## Operator Focus")
-    for item in list(payload.get("operator_focus") or []):
-        lines.append(f"- {item}")
-    lines.append("")
-
-    if material_change_anchor:
-        lines.append("## Last Material Change Anchor")
-        lines.append(f"- reference_generated_at: {material_change_anchor.get('reference_generated_at') or 'n/a'}")
-        lines.append(f"- reference_report_dir: {material_change_anchor.get('reference_report_dir') or 'n/a'}")
-        lines.append(f"- comparison_basis: {material_change_anchor.get('comparison_basis')}")
-        lines.append(f"- comparison_scope: {material_change_anchor.get('comparison_scope')}")
-        lines.append(f"- overall_delta_verdict: {material_change_anchor.get('overall_delta_verdict')}")
-        lines.append(f"- skipped_same_report_rerun_snapshots: {material_change_anchor.get('skipped_snapshot_count') or 0}")
-        changed_sections = list(material_change_anchor.get("changed_sections") or [])
-        lines.append(f"- changed_sections: {', '.join(changed_sections) if changed_sections else 'none'}")
-        reference_snapshot_path = material_change_anchor.get("reference_snapshot_path")
-        relative_anchor_target = _relative_link(reference_snapshot_path, resolved_output_parent)
-        if relative_anchor_target:
-            lines.append(f"- reference_snapshot_json: [{Path(reference_snapshot_path).name}]({relative_anchor_target})")
-        elif reference_snapshot_path:
-            lines.append(f"- reference_snapshot_json: {reference_snapshot_path}")
-        for item in list(material_change_anchor.get("operator_focus") or []):
-            lines.append(f"- anchor_focus: {item}")
-        lines.append("")
-
-    lines.append("## Priority Delta")
-    lines.append(f"- previous_headline: {priority_delta.get('previous_headline') or 'n/a'}")
-    lines.append(f"- current_headline: {priority_delta.get('current_headline') or 'n/a'}")
-    lines.append(f"- summary_delta: {priority_delta.get('summary_delta')}")
-    if priority_delta.get("added_tickers"):
-        for item in list(priority_delta.get("added_tickers") or []):
-            lines.append(f"- added_ticker: {item.get('ticker')} | lane={item.get('lane')} | actionability={item.get('actionability')}")
-    if priority_delta.get("removed_tickers"):
-        for item in list(priority_delta.get("removed_tickers") or []):
-            lines.append(f"- removed_ticker: {item.get('ticker')} | lane={item.get('lane')} | actionability={item.get('actionability')}")
-    if priority_delta.get("lane_changes"):
-        for item in list(priority_delta.get("lane_changes") or []):
-            lines.append(f"- lane_change: {item.get('ticker')} | {item.get('previous_lane')} -> {item.get('current_lane')}")
-    if priority_delta.get("actionability_changes"):
-        for item in list(priority_delta.get("actionability_changes") or []):
-            lines.append(f"- actionability_change: {item.get('ticker')} | {item.get('previous_actionability')} -> {item.get('current_actionability')}")
-    if priority_delta.get("execution_quality_changes"):
-        for item in list(priority_delta.get("execution_quality_changes") or []):
-            lines.append(f"- execution_quality_change: {item.get('ticker')} | {item.get('previous_execution_quality_label')} -> {item.get('current_execution_quality_label')}")
-    if priority_delta.get("rank_changes"):
-        for item in list(priority_delta.get("rank_changes") or []):
-            lines.append(f"- rank_change: {item.get('ticker')} | {item.get('previous_rank')} -> {item.get('current_rank')}")
-    if priority_delta.get("score_changes"):
-        for item in list(priority_delta.get("score_changes") or []):
-            lines.append(f"- score_change: {item.get('ticker')} | {item.get('previous_score_target')} -> {item.get('current_score_target')} (delta={item.get('score_target_delta')})")
-    if priority_delta.get("guardrails_added"):
-        for item in list(priority_delta.get("guardrails_added") or []):
-            lines.append(f"- guardrail_added: {item}")
-    if priority_delta.get("guardrails_removed"):
-        for item in list(priority_delta.get("guardrails_removed") or []):
-            lines.append(f"- guardrail_removed: {item}")
-    if not priority_delta.get("has_changes"):
-        lines.append("- no_priority_change_detected")
-    lines.append("")
-
-    lines.append("## Catalyst Theme Frontier Delta")
-    if not catalyst_frontier_delta.get("available"):
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- comparison_basis: {catalyst_frontier_delta.get('comparison_basis')}")
-        lines.append(f"- previous_data_available: {catalyst_frontier_delta.get('previous_data_available')}")
-        lines.append(f"- previous_status: {catalyst_frontier_delta.get('previous_status') or 'n/a'}")
-        lines.append(f"- current_status: {catalyst_frontier_delta.get('current_status') or 'n/a'}")
-        lines.append(f"- shadow_candidate_count_delta: {catalyst_frontier_delta.get('shadow_candidate_count_delta')}")
-        lines.append(f"- promoted_shadow_count_delta: {catalyst_frontier_delta.get('promoted_shadow_count_delta')}")
-        lines.append(f"- baseline_selected_count_delta: {catalyst_frontier_delta.get('baseline_selected_count_delta')}")
-        lines.append(f"- previous_recommended_variant_name: {catalyst_frontier_delta.get('previous_recommended_variant_name') or 'n/a'}")
-        lines.append(f"- current_recommended_variant_name: {catalyst_frontier_delta.get('current_recommended_variant_name') or 'n/a'}")
-        if catalyst_frontier_delta.get("comparison_note"):
-            lines.append(f"- note: {catalyst_frontier_delta.get('comparison_note')}")
-        previous_promoted_tickers = list(catalyst_frontier_delta.get("previous_promoted_tickers") or [])
-        current_promoted_tickers = list(catalyst_frontier_delta.get("current_promoted_tickers") or [])
-        lines.append(f"- previous_promoted_tickers: {', '.join(previous_promoted_tickers) if previous_promoted_tickers else 'none'}")
-        lines.append(f"- current_promoted_tickers: {', '.join(current_promoted_tickers) if current_promoted_tickers else 'none'}")
-        for ticker in list(catalyst_frontier_delta.get("added_promoted_tickers") or []):
-            lines.append(f"- added_promoted_ticker: {ticker}")
-        for ticker in list(catalyst_frontier_delta.get("removed_promoted_tickers") or []):
-            lines.append(f"- removed_promoted_ticker: {ticker}")
-        if not catalyst_frontier_delta.get("has_changes"):
-            lines.append("- no_catalyst_frontier_change_detected")
-    lines.append("")
-
-    lines.append("## Score-Fail Frontier Delta")
-    if not score_fail_frontier_delta.get("available"):
-        lines.append(f"- unavailable: {score_fail_frontier_delta.get('reason')}")
-    else:
-        lines.append(f"- previous_data_available: {score_fail_frontier_delta.get('previous_data_available')}")
-        lines.append(f"- previous_status: {score_fail_frontier_delta.get('previous_status') or 'n/a'}")
-        lines.append(f"- current_status: {score_fail_frontier_delta.get('current_status') or 'n/a'}")
-        lines.append(f"- rejected_case_count_delta: {score_fail_frontier_delta.get('rejected_case_count_delta')}")
-        lines.append(f"- rescueable_case_count_delta: {score_fail_frontier_delta.get('rescueable_case_count_delta')}")
-        lines.append(f"- threshold_only_rescue_count_delta: {score_fail_frontier_delta.get('threshold_only_rescue_count_delta')}")
-        lines.append(f"- recurring_case_count_delta: {score_fail_frontier_delta.get('recurring_case_count_delta')}")
-        lines.append(f"- transition_candidate_count_delta: {score_fail_frontier_delta.get('transition_candidate_count_delta')}")
-        if score_fail_frontier_delta.get("comparison_note"):
-            lines.append(f"- note: {score_fail_frontier_delta.get('comparison_note')}")
-        previous_priority_queue = list(score_fail_frontier_delta.get("previous_priority_queue_tickers") or [])
-        current_priority_queue = list(score_fail_frontier_delta.get("current_priority_queue_tickers") or [])
-        lines.append(f"- previous_priority_queue_tickers: {', '.join(previous_priority_queue) if previous_priority_queue else 'none'}")
-        lines.append(f"- current_priority_queue_tickers: {', '.join(current_priority_queue) if current_priority_queue else 'none'}")
-        for ticker in list(score_fail_frontier_delta.get("added_priority_tickers") or []):
-            lines.append(f"- added_priority_ticker: {ticker}")
-        for ticker in list(score_fail_frontier_delta.get("removed_priority_tickers") or []):
-            lines.append(f"- removed_priority_ticker: {ticker}")
-        for ticker in list(score_fail_frontier_delta.get("added_top_rescue_tickers") or []):
-            lines.append(f"- added_top_rescue_ticker: {ticker}")
-        for ticker in list(score_fail_frontier_delta.get("removed_top_rescue_tickers") or []):
-            lines.append(f"- removed_top_rescue_ticker: {ticker}")
-        if not score_fail_frontier_delta.get("has_changes"):
-            lines.append("- no_score_fail_frontier_change_detected")
-    lines.append("")
-
-    lines.append("## Top Priority Action Delta")
-    if not top_priority_action_delta.get("available"):
-        lines.append(f"- unavailable: {top_priority_action_delta.get('reason')}")
-    else:
-        lines.append(f"- previous_task_id: {top_priority_action_delta.get('previous_task_id') or 'n/a'}")
-        lines.append(f"- current_task_id: {top_priority_action_delta.get('current_task_id') or 'n/a'}")
-        lines.append(f"- previous_source: {top_priority_action_delta.get('previous_source') or 'n/a'}")
-        lines.append(f"- current_source: {top_priority_action_delta.get('current_source') or 'n/a'}")
-        lines.append(f"- previous_title: {top_priority_action_delta.get('previous_title') or 'n/a'}")
-        lines.append(f"- current_title: {top_priority_action_delta.get('current_title') or 'n/a'}")
-        if not top_priority_action_delta.get("has_changes"):
-            lines.append("- no_top_priority_action_change_detected")
-    lines.append("")
-
-    lines.append("## Selected Outcome Contract Delta")
-    if not selected_outcome_contract_delta.get("available"):
-        lines.append(f"- unavailable: {selected_outcome_contract_delta.get('reason')}")
-    else:
-        lines.append(f"- previous_focus_ticker: {selected_outcome_contract_delta.get('previous_focus_ticker') or 'n/a'}")
-        lines.append(f"- current_focus_ticker: {selected_outcome_contract_delta.get('current_focus_ticker') or 'n/a'}")
-        lines.append(f"- previous_focus_cycle_status: {selected_outcome_contract_delta.get('previous_focus_cycle_status') or 'n/a'}")
-        lines.append(f"- current_focus_cycle_status: {selected_outcome_contract_delta.get('current_focus_cycle_status') or 'n/a'}")
-        lines.append(
-            f"- previous_focus_overall_contract_verdict: {selected_outcome_contract_delta.get('previous_focus_overall_contract_verdict') or 'n/a'}"
-        )
-        lines.append(
-            f"- current_focus_overall_contract_verdict: {selected_outcome_contract_delta.get('current_focus_overall_contract_verdict') or 'n/a'}"
-        )
-        lines.append(
-            f"- previous_focus_next_day_contract_verdict: {selected_outcome_contract_delta.get('previous_focus_next_day_contract_verdict') or 'n/a'}"
-        )
-        lines.append(
-            f"- current_focus_next_day_contract_verdict: {selected_outcome_contract_delta.get('current_focus_next_day_contract_verdict') or 'n/a'}"
-        )
-        lines.append(
-            f"- previous_focus_t_plus_2_contract_verdict: {selected_outcome_contract_delta.get('previous_focus_t_plus_2_contract_verdict') or 'n/a'}"
-        )
-        lines.append(
-            f"- current_focus_t_plus_2_contract_verdict: {selected_outcome_contract_delta.get('current_focus_t_plus_2_contract_verdict') or 'n/a'}"
-        )
-        if not selected_outcome_contract_delta.get("has_changes"):
-            lines.append("- no_selected_outcome_contract_change_detected")
-    lines.append("")
-
-    lines.append("## Carryover Peer Proof Delta")
-    if not carryover_peer_proof_delta.get("available"):
-        lines.append(f"- unavailable: {carryover_peer_proof_delta.get('reason')}")
-    else:
-        lines.append(f"- previous_focus_ticker: {carryover_peer_proof_delta.get('previous_focus_ticker') or 'n/a'}")
-        lines.append(f"- current_focus_ticker: {carryover_peer_proof_delta.get('current_focus_ticker') or 'n/a'}")
-        lines.append(f"- previous_focus_proof_verdict: {carryover_peer_proof_delta.get('previous_focus_proof_verdict') or 'n/a'}")
-        lines.append(f"- current_focus_proof_verdict: {carryover_peer_proof_delta.get('current_focus_proof_verdict') or 'n/a'}")
-        lines.append(
-            f"- previous_focus_promotion_review_verdict: {carryover_peer_proof_delta.get('previous_focus_promotion_review_verdict') or 'n/a'}"
-        )
-        lines.append(
-            f"- current_focus_promotion_review_verdict: {carryover_peer_proof_delta.get('current_focus_promotion_review_verdict') or 'n/a'}"
-        )
-        lines.append(
-            f"- previous_ready_for_promotion_review_tickers: {carryover_peer_proof_delta.get('previous_ready_for_promotion_review_tickers') or []}"
-        )
-        lines.append(
-            f"- current_ready_for_promotion_review_tickers: {carryover_peer_proof_delta.get('current_ready_for_promotion_review_tickers') or []}"
-        )
-        for ticker in list(carryover_peer_proof_delta.get("added_ready_for_promotion_review_tickers") or []):
-            lines.append(f"- added_ready_for_promotion_review_ticker: {ticker}")
-        for ticker in list(carryover_peer_proof_delta.get("removed_ready_for_promotion_review_tickers") or []):
-            lines.append(f"- removed_ready_for_promotion_review_ticker: {ticker}")
-        if not carryover_peer_proof_delta.get("has_changes"):
-            lines.append("- no_carryover_peer_proof_change_detected")
-    lines.append("")
-
-    lines.append("## Carryover Promotion Gate Delta")
-    if not carryover_promotion_gate_delta.get("available"):
-        lines.append(f"- unavailable: {carryover_promotion_gate_delta.get('reason')}")
-    else:
-        lines.append(f"- previous_focus_ticker: {carryover_promotion_gate_delta.get('previous_focus_ticker') or 'n/a'}")
-        lines.append(f"- current_focus_ticker: {carryover_promotion_gate_delta.get('current_focus_ticker') or 'n/a'}")
-        lines.append(f"- previous_focus_gate_verdict: {carryover_promotion_gate_delta.get('previous_focus_gate_verdict') or 'n/a'}")
-        lines.append(f"- current_focus_gate_verdict: {carryover_promotion_gate_delta.get('current_focus_gate_verdict') or 'n/a'}")
-        lines.append(f"- previous_selected_contract_verdict: {carryover_promotion_gate_delta.get('previous_selected_contract_verdict') or 'n/a'}")
-        lines.append(f"- current_selected_contract_verdict: {carryover_promotion_gate_delta.get('current_selected_contract_verdict') or 'n/a'}")
-        lines.append(f"- previous_ready_tickers: {carryover_promotion_gate_delta.get('previous_ready_tickers') or []}")
-        lines.append(f"- current_ready_tickers: {carryover_promotion_gate_delta.get('current_ready_tickers') or []}")
-        for ticker in list(carryover_promotion_gate_delta.get("added_ready_tickers") or []):
-            lines.append(f"- added_promotion_gate_ready_ticker: {ticker}")
-        for ticker in list(carryover_promotion_gate_delta.get("removed_ready_tickers") or []):
-            lines.append(f"- removed_promotion_gate_ready_ticker: {ticker}")
-        for ticker in list(carryover_promotion_gate_delta.get("added_pending_t_plus_2_tickers") or []):
-            lines.append(f"- added_pending_t_plus_2_ticker: {ticker}")
-        for ticker in list(carryover_promotion_gate_delta.get("removed_pending_t_plus_2_tickers") or []):
-            lines.append(f"- removed_pending_t_plus_2_ticker: {ticker}")
-        if not carryover_promotion_gate_delta.get("has_changes"):
-            lines.append("- no_carryover_promotion_gate_change_detected")
-    lines.append("")
-
-    lines.append("## Governance Delta")
-    if not governance_delta.get("available"):
-        lines.append(f"- unavailable: {governance_delta.get('reason')}")
-    else:
-        lines.append(f"- previous_overall_verdict: {governance_delta.get('previous_overall_verdict')}")
-        lines.append(f"- current_overall_verdict: {governance_delta.get('current_overall_verdict')}")
-        lines.append(f"- waiting_lane_count_delta: {governance_delta.get('waiting_lane_count_delta')}")
-        lines.append(f"- ready_lane_count_delta: {governance_delta.get('ready_lane_count_delta')}")
-        lines.append(f"- warn_count_delta: {governance_delta.get('warn_count_delta')}")
-        lines.append(f"- fail_count_delta: {governance_delta.get('fail_count_delta')}")
-        if governance_delta.get("lane_changes"):
-            for item in list(governance_delta.get("lane_changes") or []):
-                extra_segments: list[str] = []
-                if item.get("previous_missing_window_count") is not None or item.get("current_missing_window_count") is not None:
-                    extra_segments.append(f"missing_window_count {item.get('previous_missing_window_count')} -> {item.get('current_missing_window_count')}")
-                if item.get("previous_distinct_window_count_with_filtered_entries") is not None or item.get("current_distinct_window_count_with_filtered_entries") is not None:
-                    extra_segments.append(
-                        f"distinct_window_count {item.get('previous_distinct_window_count_with_filtered_entries')} -> {item.get('current_distinct_window_count_with_filtered_entries')}"
-                    )
-                if item.get("previous_preserve_misfire_report_count") is not None or item.get("current_preserve_misfire_report_count") is not None:
-                    extra_segments.append(
-                        f"preserve_misfire_report_count {item.get('previous_preserve_misfire_report_count')} -> {item.get('current_preserve_misfire_report_count')}"
-                    )
-                if item.get("previous_filtered_report_count") is not None or item.get("current_filtered_report_count") is not None:
-                    extra_segments.append(f"filtered_report_count {item.get('previous_filtered_report_count')} -> {item.get('current_filtered_report_count')}")
-                if item.get("previous_upgrade_gap") or item.get("current_upgrade_gap"):
-                    extra_segments.append(f"upgrade_gap {item.get('previous_upgrade_gap')} -> {item.get('current_upgrade_gap')}")
-
-                extra_suffix = f" | {' | '.join(extra_segments)}" if extra_segments else ""
-                lines.append(
-                    f"- lane_delta: {item.get('lane_id')} | status {item.get('previous_lane_status')} -> {item.get('current_lane_status')} | blocker {item.get('previous_blocker')} -> {item.get('current_blocker')}{extra_suffix}"
-                )
-        else:
-            lines.append("- no_governance_change_detected")
-    lines.append("")
-
-    lines.append("## Replay Delta")
-    if not replay_delta.get("available"):
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- comparison_basis: {replay_delta.get('comparison_basis')}")
-        if replay_delta.get("comparison_basis") == "nightly_history":
-            lines.append(f"- report_count_delta: {replay_delta.get('report_count_delta')}")
-            lines.append(f"- short_trade_only_report_count_delta: {replay_delta.get('short_trade_only_report_count_delta')}")
-            lines.append(f"- dual_target_report_count_delta: {replay_delta.get('dual_target_report_count_delta')}")
-            lines.append(f"- previous_latest_short_trade_report: {replay_delta.get('previous_latest_short_trade_report')}")
-            lines.append(f"- current_latest_short_trade_report: {replay_delta.get('current_latest_short_trade_report')}")
-            lines.append(f"- latest_near_miss_delta: {replay_delta.get('latest_near_miss_delta')}")
-            lines.append(f"- latest_opportunity_pool_delta: {replay_delta.get('latest_opportunity_pool_delta')}")
-        else:
-            lines.append(f"- current_report_dir: {replay_delta.get('current_report_dir')}")
-            lines.append(f"- previous_report_dir: {replay_delta.get('previous_report_dir')}")
-            lines.append(f"- summary_delta: {replay_delta.get('summary_delta')}")
-    lines.append("")
-
-    lines.append("## Fast Links")
-    for label, source_path in source_paths.items():
-        relative_target = _relative_link(source_path, resolved_output_parent)
-        if relative_target:
-            lines.append(f"- {label}: [{Path(source_path).name}]({relative_target})")
-        else:
-            lines.append(f"- {label}: {source_path}")
-    lines.append("")
+    _append_open_ready_overview_markdown(lines, payload, current_reference, previous_reference)
+    _append_material_change_anchor_markdown(lines, material_change_anchor, resolved_output_parent)
+    _append_priority_delta_markdown(lines, priority_delta)
+    _append_catalyst_frontier_delta_markdown(lines, catalyst_frontier_delta)
+    _append_score_fail_frontier_delta_markdown(lines, score_fail_frontier_delta)
+    _append_top_priority_action_delta_markdown(lines, top_priority_action_delta)
+    _append_selected_outcome_contract_delta_markdown(lines, selected_outcome_contract_delta)
+    _append_carryover_peer_proof_delta_markdown(lines, carryover_peer_proof_delta)
+    _append_carryover_promotion_gate_delta_markdown(lines, carryover_promotion_gate_delta)
+    _append_governance_delta_markdown(lines, governance_delta)
+    _append_replay_delta_markdown(lines, replay_delta)
+    _append_open_ready_fast_links_markdown(lines, source_paths, resolved_output_parent)
     return "\n".join(lines) + "\n"
 
 
@@ -2754,6 +2939,707 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
     }
 
 
+
+def _append_nightly_overview_candidate_pool_priority_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
+    branch_experiment_queue = list(control_tower_snapshot.get("candidate_pool_recall_priority_handoff_branch_experiment_queue") or [])
+    lines.append("- candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
+    lines.append(f"- candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
+    for experiment in branch_experiment_queue[:3]:
+        lines.append(f"- candidate_pool_recall_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}")
+        lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
+        lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
+        lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
+    lines.append(f"- candidate_pool_branch_priority_board_status: {control_tower_snapshot.get('candidate_pool_branch_priority_board_status')}")
+    lines.append(f"- candidate_pool_branch_priority_alignment_status: {control_tower_snapshot.get('candidate_pool_branch_priority_alignment_status')}")
+    if control_tower_snapshot.get("candidate_pool_branch_priority_alignment_summary"):
+        lines.append(f"- candidate_pool_branch_priority_alignment_summary: {control_tower_snapshot.get('candidate_pool_branch_priority_alignment_summary')}")
+    for row in list(control_tower_snapshot.get("candidate_pool_branch_priority_board_rows") or [])[:3]:
+        lines.append(f"- candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}")
+    lines.append(f"- candidate_pool_lane_objective_support_status: {control_tower_snapshot.get('candidate_pool_lane_objective_support_status')}")
+    for row in list(control_tower_snapshot.get("candidate_pool_lane_objective_support_rows") or [])[:3]:
+        lines.append(f"- candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}")
+
+
+def _append_nightly_overview_candidate_pool_corridor_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
+    lines.append(f"- candidate_pool_corridor_validation_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_validation_pack_status')}")
+    corridor_validation_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_validation_pack_summary") or {})
+    if corridor_validation_summary:
+        lines.append(f"- candidate_pool_corridor_validation_pack_summary: pack_status={corridor_validation_summary.get('pack_status')} primary_validation_ticker={corridor_validation_summary.get('primary_validation_ticker')} parallel_watch_tickers={corridor_validation_summary.get('parallel_watch_tickers')}")
+    lines.append(f"- candidate_pool_corridor_shadow_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_shadow_pack_status')}")
+    corridor_shadow_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_shadow_pack_summary") or {})
+    if corridor_shadow_summary:
+        lines.append(f"- candidate_pool_corridor_shadow_pack_summary: shadow_status={corridor_shadow_summary.get('shadow_status')} primary_shadow_replay={corridor_shadow_summary.get('primary_shadow_replay')} parallel_watch_tickers={corridor_shadow_summary.get('parallel_watch_tickers')}")
+    lines.append(f"- candidate_pool_rebucket_shadow_pack_status: {control_tower_snapshot.get('candidate_pool_rebucket_shadow_pack_status')}")
+    rebucket_experiment = dict(control_tower_snapshot.get("candidate_pool_rebucket_shadow_pack_experiment") or {})
+    if rebucket_experiment:
+        lines.append(f"- candidate_pool_rebucket_shadow_pack_experiment: handoff={rebucket_experiment.get('priority_handoff')} readiness={rebucket_experiment.get('prototype_readiness')} tickers={rebucket_experiment.get('tickers')}")
+    lines.append(f"- candidate_pool_rebucket_objective_validation_status: {control_tower_snapshot.get('candidate_pool_rebucket_objective_validation_status')}")
+    rebucket_validation_summary = dict(control_tower_snapshot.get("candidate_pool_rebucket_objective_validation_summary") or {})
+    if rebucket_validation_summary:
+        lines.append(f"- candidate_pool_rebucket_objective_validation_summary: validation_status={rebucket_validation_summary.get('validation_status')} support_verdict={rebucket_validation_summary.get('support_verdict')} mean_t_plus_2_return={rebucket_validation_summary.get('mean_t_plus_2_return')}")
+    lines.append(f"- candidate_pool_rebucket_comparison_bundle_status: {control_tower_snapshot.get('candidate_pool_rebucket_comparison_bundle_status')}")
+    rebucket_comparison_summary = dict(control_tower_snapshot.get("candidate_pool_rebucket_comparison_bundle_summary") or {})
+    if rebucket_comparison_summary:
+        lines.append(f"- candidate_pool_rebucket_comparison_bundle_summary: bundle_status={rebucket_comparison_summary.get('bundle_status')} structural_leader={rebucket_comparison_summary.get('structural_leader')} objective_leader={rebucket_comparison_summary.get('objective_leader')}")
+    lines.append(f"- candidate_pool_lane_pair_board_status: {control_tower_snapshot.get('candidate_pool_lane_pair_board_status')}")
+    lane_pair_board_summary = dict(control_tower_snapshot.get("candidate_pool_lane_pair_board_summary") or {})
+    if lane_pair_board_summary:
+        lines.append(f"- candidate_pool_lane_pair_board_summary: pair_status={lane_pair_board_summary.get('pair_status')} board_leader={lane_pair_board_summary.get('board_leader')} leader_lane_family={lane_pair_board_summary.get('leader_lane_family')} leader_governance_status={lane_pair_board_summary.get('leader_governance_status')} leader_governance_execution_quality={lane_pair_board_summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={lane_pair_board_summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={lane_pair_board_summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={lane_pair_board_summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={lane_pair_board_summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={lane_pair_board_summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={lane_pair_board_summary.get('parallel_watch_next_close_return_mean')}")
+
+
+
+def _append_nightly_overview_candidate_pool_continuation_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
+    continuation_focus_summary = dict(control_tower_snapshot.get("continuation_focus_summary") or {})
+    if continuation_focus_summary:
+        lines.append(f"- continuation_focus_summary: focus_ticker={continuation_focus_summary.get('focus_ticker')} promotion_review_verdict={continuation_focus_summary.get('promotion_review_verdict')} promotion_gate_verdict={continuation_focus_summary.get('promotion_gate_verdict')} watchlist_execution_verdict={continuation_focus_summary.get('watchlist_execution_verdict')} focus_watch_validation_status={continuation_focus_summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={continuation_focus_summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={continuation_focus_summary.get('eligible_gate_verdict')} execution_gate_verdict={continuation_focus_summary.get('execution_gate_verdict')} execution_gate_blockers={continuation_focus_summary.get('execution_gate_blockers')} execution_overlay_verdict={continuation_focus_summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={continuation_focus_summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={continuation_focus_summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={continuation_focus_summary.get('execution_overlay_lane_support_ratio')} governance_status={continuation_focus_summary.get('governance_status')}")
+    continuation_promotion_ready_summary = dict(control_tower_snapshot.get("continuation_promotion_ready_summary") or {})
+    if continuation_promotion_ready_summary:
+        lines.append(f"- continuation_promotion_ready_summary: focus_ticker={continuation_promotion_ready_summary.get('focus_ticker')} promotion_path_status={continuation_promotion_ready_summary.get('promotion_path_status')} blockers_remaining_count={continuation_promotion_ready_summary.get('blockers_remaining_count')} observed_independent_window_count={continuation_promotion_ready_summary.get('observed_independent_window_count')} missing_independent_window_count={continuation_promotion_ready_summary.get('missing_independent_window_count')} candidate_dossier_support_trade_date_count={continuation_promotion_ready_summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={continuation_promotion_ready_summary.get('candidate_dossier_same_trade_date_variant_count')} persistence_verdict={continuation_promotion_ready_summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={continuation_promotion_ready_summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={continuation_promotion_ready_summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={continuation_promotion_ready_summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={continuation_promotion_ready_summary.get('ready_after_next_qualifying_window')} next_window_requirement={continuation_promotion_ready_summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={continuation_promotion_ready_summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={continuation_promotion_ready_summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={continuation_promotion_ready_summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={continuation_promotion_ready_summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_mean_return_delta_vs_default_btst')}")
+    corridor_window_diagnostics_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_window_diagnostics_summary") or {})
+    if corridor_window_diagnostics_summary:
+        near_miss_window = dict(corridor_window_diagnostics_summary.get("near_miss_upgrade_window") or {})
+        visibility_gap_window = dict(corridor_window_diagnostics_summary.get("visibility_gap_window") or {})
+        lines.append(f"- candidate_pool_corridor_window_diagnostics_summary: focus_ticker={corridor_window_diagnostics_summary.get('focus_ticker')} near_miss_trade_date={near_miss_window.get('trade_date')} near_miss_verdict={near_miss_window.get('verdict')} visibility_gap_verdict={visibility_gap_window.get('verdict')} recoverable_report_dir_count={visibility_gap_window.get('recoverable_report_dir_count')}")
+    corridor_narrow_probe_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_narrow_probe_summary") or {})
+    if corridor_narrow_probe_summary:
+        deepest_corridor_focus_tickers = list(corridor_narrow_probe_summary.get("deepest_corridor_focus_tickers") or [])
+        if deepest_corridor_focus_tickers:
+            lines.append(f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={corridor_narrow_probe_summary.get('focus_ticker')} verdict={corridor_narrow_probe_summary.get('verdict')} deepest_corridor_focus_tickers={deepest_corridor_focus_tickers} excluded_low_gate_tail_tickers={corridor_narrow_probe_summary.get('excluded_low_gate_tail_tickers')} low_gate_focus_max_cutoff_share={corridor_narrow_probe_summary.get('low_gate_focus_max_cutoff_share')}")
+        else:
+            lines.append(f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={corridor_narrow_probe_summary.get('focus_ticker')} verdict={corridor_narrow_probe_summary.get('verdict')} threshold_override_gap_vs_anchor={corridor_narrow_probe_summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={corridor_narrow_probe_summary.get('target_gap_to_selected')}")
+    default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
+    if default_merge_review_summary:
+        counterfactual = dict(default_merge_review_summary.get("counterfactual_validation") or {})
+        lines.append(f"- default_merge_review_summary: focus_ticker={default_merge_review_summary.get('focus_ticker')} merge_review_verdict={default_merge_review_summary.get('merge_review_verdict')} operator_action={default_merge_review_summary.get('operator_action')} counterfactual_verdict={counterfactual.get('counterfactual_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={default_merge_review_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_positive_rate_margin_vs_threshold={counterfactual.get('t_plus_2_positive_rate_margin_vs_threshold')} t_plus_2_mean_return_delta_vs_default_btst={default_merge_review_summary.get('t_plus_2_mean_return_delta_vs_default_btst')} t_plus_2_mean_return_margin_vs_threshold={counterfactual.get('t_plus_2_mean_return_margin_vs_threshold')}")
+    default_merge_historical_counterfactual_summary = dict(control_tower_snapshot.get("default_merge_historical_counterfactual_summary") or {})
+    if default_merge_historical_counterfactual_summary:
+        uplift = dict(default_merge_historical_counterfactual_summary.get("uplift_vs_default_btst") or {})
+        lines.append(f"- default_merge_historical_counterfactual_summary: focus_ticker={default_merge_historical_counterfactual_summary.get('focus_ticker')} counterfactual_verdict={default_merge_historical_counterfactual_summary.get('counterfactual_verdict')} merged_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} merged_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}")
+
+
+def _append_nightly_overview_candidate_pool_followup_tail_markdown(
+    lines: list[str],
+    control_tower_snapshot: dict[str, Any],
+    replay_cohort_snapshot: dict[str, Any],
+    catalyst_theme_frontier_summary: dict[str, Any],
+    score_fail_frontier_summary: dict[str, Any],
+    llm_error_digest: dict[str, Any],
+) -> None:
+    continuation_merge_candidate_ranking_summary = dict(control_tower_snapshot.get("continuation_merge_candidate_ranking_summary") or {})
+    if continuation_merge_candidate_ranking_summary:
+        top_candidate = dict(continuation_merge_candidate_ranking_summary.get("top_candidate") or {})
+        lines.append(f"- continuation_merge_candidate_ranking_summary: candidate_count={continuation_merge_candidate_ranking_summary.get('candidate_count')} top_ticker={top_candidate.get('ticker')} top_stage={top_candidate.get('promotion_path_status') or top_candidate.get('promotion_readiness_verdict')} top_positive_rate_delta={top_candidate.get('t_plus_2_positive_rate_delta_vs_default_btst')} top_mean_return_delta={top_candidate.get('mean_t_plus_2_return_delta_vs_default_btst')}")
+    default_merge_strict_counterfactual_summary = dict(control_tower_snapshot.get("default_merge_strict_counterfactual_summary") or {})
+    if default_merge_strict_counterfactual_summary:
+        uplift = dict(default_merge_strict_counterfactual_summary.get("strict_uplift_vs_default_btst") or {})
+        overlap = dict(default_merge_strict_counterfactual_summary.get("overlap_diagnostics") or {})
+        lines.append(f"- default_merge_strict_counterfactual_summary: focus_ticker={default_merge_strict_counterfactual_summary.get('focus_ticker')} strict_counterfactual_verdict={default_merge_strict_counterfactual_summary.get('strict_counterfactual_verdict')} overlap_case_count={overlap.get('overlap_case_count')} strict_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} strict_mean_return_uplift={uplift.get('t_plus_2_mean_return_uplift')}")
+    merge_replay_validation_summary = dict(control_tower_snapshot.get("merge_replay_validation_summary") or {})
+    if merge_replay_validation_summary:
+        lines.append(f"- merge_replay_validation_summary: overall_verdict={merge_replay_validation_summary.get('overall_verdict')} focus_tickers={merge_replay_validation_summary.get('focus_tickers')} promoted_to_selected_count={merge_replay_validation_summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={merge_replay_validation_summary.get('promoted_to_near_miss_count')} relief_applied_count={merge_replay_validation_summary.get('relief_applied_count')} relief_actionable_applied_count={merge_replay_validation_summary.get('relief_actionable_applied_count')} relief_already_selected_count={merge_replay_validation_summary.get('relief_already_selected_count')} relief_positive_promotion_precision={merge_replay_validation_summary.get('relief_positive_promotion_precision')} relief_actionable_positive_promotion_precision={merge_replay_validation_summary.get('relief_actionable_positive_promotion_precision')} relief_no_promotion_ratio={merge_replay_validation_summary.get('relief_no_promotion_ratio')} relief_actionable_no_promotion_ratio={merge_replay_validation_summary.get('relief_actionable_no_promotion_ratio')} relief_decision_deteriorated_count={merge_replay_validation_summary.get('relief_decision_deteriorated_count')} recommended_next_lever={merge_replay_validation_summary.get('recommended_next_lever')} recommended_signal_levers={merge_replay_validation_summary.get('recommended_signal_levers')}")
+    transient_probe_summary = dict(control_tower_snapshot.get("transient_probe_summary") or {})
+    if transient_probe_summary:
+        lines.append(f"- transient_probe_summary: ticker={transient_probe_summary.get('ticker')} status={transient_probe_summary.get('status')} blocker={transient_probe_summary.get('blocker')} candidate_source={transient_probe_summary.get('candidate_source')} score_state={transient_probe_summary.get('score_state')} downstream_bottleneck={transient_probe_summary.get('downstream_bottleneck')} historical_sample_count={transient_probe_summary.get('historical_sample_count')} historical_next_close_positive_rate={transient_probe_summary.get('historical_next_close_positive_rate')}")
+    execution_constraint_rollup = dict(control_tower_snapshot.get("execution_constraint_rollup") or {})
+    if execution_constraint_rollup:
+        lines.append(f"- execution_constraint_rollup: constraint_count={execution_constraint_rollup.get('constraint_count')} continuation_focus_tickers={execution_constraint_rollup.get('continuation_focus_tickers')} continuation_blockers={execution_constraint_rollup.get('continuation_blockers')} shadow_focus_tickers={execution_constraint_rollup.get('shadow_focus_tickers')} shadow_blockers={execution_constraint_rollup.get('shadow_blockers')}")
+    lines.append(f"- candidate_pool_upstream_handoff_board_status: {control_tower_snapshot.get('candidate_pool_upstream_handoff_board_status')}")
+    upstream_handoff_summary = dict(control_tower_snapshot.get("candidate_pool_upstream_handoff_board_summary") or {})
+    if upstream_handoff_summary:
+        lines.append(f"- candidate_pool_upstream_handoff_board_summary: board_status={upstream_handoff_summary.get('board_status')} focus_tickers={upstream_handoff_summary.get('focus_tickers')} first_broken_handoff_counts={upstream_handoff_summary.get('first_broken_handoff_counts')}")
+    lines.append(f"- candidate_pool_upstream_handoff_focus_tickers_active: {control_tower_snapshot.get('active_candidate_pool_upstream_handoff_focus_tickers')}")
+    lines.append(f"- upstream_shadow_followup_validated_tickers: {control_tower_snapshot.get('upstream_shadow_followup_validated_tickers')}")
+    lines.append(f"- upstream_shadow_followup_decision_counts: {control_tower_snapshot.get('upstream_shadow_followup_decision_counts')}")
+    lines.append(f"- upstream_shadow_followup_near_miss_tickers: {control_tower_snapshot.get('upstream_shadow_followup_near_miss_tickers')}")
+    lines.append(f"- upstream_shadow_followup_rejected_profitability_tickers: {control_tower_snapshot.get('upstream_shadow_followup_rejected_profitability_tickers')}")
+    lines.append(f"- candidate_pool_corridor_uplift_runbook_status: {control_tower_snapshot.get('candidate_pool_corridor_uplift_runbook_status')}")
+    corridor_uplift_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_uplift_runbook_summary") or {})
+    if corridor_uplift_summary:
+        lines.append(f"- candidate_pool_corridor_uplift_runbook_summary: runbook_status={corridor_uplift_summary.get('runbook_status')} primary_shadow_replay={corridor_uplift_summary.get('primary_shadow_replay')} parallel_watch_tickers={corridor_uplift_summary.get('parallel_watch_tickers')}")
+    lines.append(f"- replay_report_count: {replay_cohort_snapshot.get('report_count')}")
+    lines.append(f"- replay_selection_target_counts: {replay_cohort_snapshot.get('selection_target_counts')}")
+    lines.append(f"- catalyst_frontier_status: {catalyst_theme_frontier_summary.get('status') or 'unavailable'}")
+    lines.append(f"- catalyst_frontier_promoted_shadow_count: {catalyst_theme_frontier_summary.get('recommended_promoted_shadow_count')}")
+    lines.append(f"- score_fail_frontier_status: {score_fail_frontier_summary.get('status') or 'unavailable'}")
+    lines.append(f"- score_fail_rejected_case_count: {score_fail_frontier_summary.get('rejected_short_trade_boundary_count')}")
+    lines.append(f"- score_fail_recurring_case_count: {score_fail_frontier_summary.get('recurring_case_count')}")
+    lines.append(f"- llm_health_status: {llm_error_digest.get('status')}")
+    lines.append(f"- llm_error_count: {llm_error_digest.get('error_count')}")
+    lines.append(f"- llm_fallback_attempt_count: {llm_error_digest.get('fallback_attempt_count')}")
+
+
+def _append_nightly_overview_candidate_pool_followup_markdown(
+    lines: list[str],
+    control_tower_snapshot: dict[str, Any],
+    replay_cohort_snapshot: dict[str, Any],
+    catalyst_theme_frontier_summary: dict[str, Any],
+    score_fail_frontier_summary: dict[str, Any],
+    llm_error_digest: dict[str, Any],
+) -> None:
+    _append_nightly_overview_candidate_pool_continuation_markdown(lines, control_tower_snapshot)
+    _append_nightly_overview_candidate_pool_followup_tail_markdown(
+        lines,
+        control_tower_snapshot,
+        replay_cohort_snapshot,
+        catalyst_theme_frontier_summary,
+        score_fail_frontier_summary,
+        llm_error_digest,
+    )
+
+
+def _append_nightly_overview_markdown(
+    lines: list[str],
+    payload: dict[str, Any],
+    latest_btst_run: dict[str, Any],
+    control_tower_snapshot: dict[str, Any],
+    replay_cohort_snapshot: dict[str, Any],
+    catalyst_theme_frontier_summary: dict[str, Any],
+    score_fail_frontier_summary: dict[str, Any],
+    llm_error_digest: dict[str, Any],
+) -> None:
+    lines.append("## Overview")
+    lines.extend(
+        [
+            f"- generated_at: {payload.get('generated_at')}",
+            f"- latest_btst_report_dir: {latest_btst_run.get('report_dir')}",
+            f"- latest_trade_date: {latest_btst_run.get('trade_date')}",
+            f"- latest_next_trade_date: {latest_btst_run.get('next_trade_date')}",
+            f"- latest_selection_target: {latest_btst_run.get('selection_target')}",
+            f"- governance_verdict: {control_tower_snapshot.get('overall_verdict')}",
+            f"- waiting_lane_count: {control_tower_snapshot.get('waiting_lane_count')}",
+            f"- ready_lane_count: {control_tower_snapshot.get('ready_lane_count')}",
+            f"- independent_window_ready_lane_count: {control_tower_snapshot.get('independent_window_ready_lane_count')}",
+            f"- independent_window_waiting_lane_count: {control_tower_snapshot.get('independent_window_waiting_lane_count')}",
+            f"- tplus1_tplus2_tradeable_positive_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_positive_rate')}",
+            f"- tplus1_tplus2_tradeable_return_hit_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_return_hit_rate')}",
+            f"- tplus1_tplus2_tradeable_mean_return: {control_tower_snapshot.get('tplus1_tplus2_tradeable_mean_return')}",
+            f"- tplus1_tplus2_tradeable_verdict: {control_tower_snapshot.get('tplus1_tplus2_tradeable_verdict')}",
+            f"- tradeable_opportunity_pool_count: {control_tower_snapshot.get('tradeable_opportunity_pool_count')}",
+            f"- tradeable_opportunity_capture_rate: {control_tower_snapshot.get('tradeable_opportunity_capture_rate')}",
+            f"- tradeable_opportunity_selected_or_near_miss_rate: {control_tower_snapshot.get('tradeable_opportunity_selected_or_near_miss_rate')}",
+            f"- tradeable_opportunity_top_kill_switches: {control_tower_snapshot.get('tradeable_opportunity_top_kill_switches')}",
+            f"- no_candidate_entry_priority_queue_count: {control_tower_snapshot.get('no_candidate_entry_priority_queue_count')}",
+            f"- no_candidate_entry_priority_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_priority_tickers')}",
+            f"- no_candidate_entry_priority_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_priority_tickers')}",
+            f"- no_candidate_entry_recall_probe_tickers: {control_tower_snapshot.get('no_candidate_entry_recall_probe_tickers')}",
+            f"- no_candidate_entry_failure_class_counts: {control_tower_snapshot.get('no_candidate_entry_failure_class_counts')}",
+            f"- no_candidate_entry_handoff_stage_counts: {control_tower_snapshot.get('no_candidate_entry_handoff_stage_counts')}",
+            f"- no_candidate_entry_absent_from_watchlist_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_absent_from_watchlist_tickers')}",
+            f"- no_candidate_entry_absent_from_watchlist_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_absent_from_watchlist_tickers')}",
+            f"- no_candidate_entry_watchlist_handoff_gap_tickers: {control_tower_snapshot.get('no_candidate_entry_watchlist_handoff_gap_tickers')}",
+            f"- no_candidate_entry_upstream_absence_tickers: {control_tower_snapshot.get('no_candidate_entry_upstream_absence_tickers')}",
+            f"- watchlist_recall_stage_counts: {control_tower_snapshot.get('watchlist_recall_stage_counts')}",
+            f"- watchlist_recall_absent_from_candidate_pool_tickers_historical: {control_tower_snapshot.get('watchlist_recall_absent_from_candidate_pool_tickers')}",
+            f"- watchlist_recall_absent_from_candidate_pool_tickers_active: {control_tower_snapshot.get('active_watchlist_recall_absent_from_candidate_pool_tickers')}",
+            f"- watchlist_recall_candidate_pool_layer_b_gap_tickers: {control_tower_snapshot.get('watchlist_recall_candidate_pool_layer_b_gap_tickers')}",
+            f"- watchlist_recall_layer_b_watchlist_gap_tickers: {control_tower_snapshot.get('watchlist_recall_layer_b_watchlist_gap_tickers')}",
+            f"- candidate_pool_recall_stage_counts: {control_tower_snapshot.get('candidate_pool_recall_stage_counts')}",
+            f"- candidate_pool_recall_dominant_stage: {control_tower_snapshot.get('candidate_pool_recall_dominant_stage')}",
+            f"- candidate_pool_recall_top_stage_tickers: {control_tower_snapshot.get('candidate_pool_recall_top_stage_tickers')}",
+            f"- candidate_pool_recall_truncation_frontier_summary: {control_tower_snapshot.get('candidate_pool_recall_truncation_frontier_summary')}",
+            f"- candidate_pool_recall_dominant_ranking_driver: {control_tower_snapshot.get('candidate_pool_recall_dominant_ranking_driver')}",
+            f"- candidate_pool_recall_dominant_liquidity_gap_mode: {control_tower_snapshot.get('candidate_pool_recall_dominant_liquidity_gap_mode')}",
+            f"- candidate_pool_recall_focus_liquidity_profiles: {control_tower_snapshot.get('candidate_pool_recall_focus_liquidity_profiles')}",
+            f"- candidate_pool_recall_priority_handoff_counts: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_counts')}",
+            f"- candidate_pool_recall_priority_handoff_branch_diagnoses: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_diagnoses')}",
+            f"- candidate_pool_recall_priority_handoff_branch_mechanisms: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_mechanisms')}",
+        ]
+    )
+    _append_nightly_overview_candidate_pool_priority_markdown(lines, control_tower_snapshot)
+    _append_nightly_overview_candidate_pool_corridor_markdown(lines, control_tower_snapshot)
+    _append_nightly_overview_candidate_pool_followup_markdown(
+        lines,
+        control_tower_snapshot,
+        replay_cohort_snapshot,
+        catalyst_theme_frontier_summary,
+        score_fail_frontier_summary,
+        llm_error_digest,
+    )
+    lines.append("")
+
+
+def _append_nightly_summary_markdown(
+    lines: list[str],
+    control_tower_snapshot: dict[str, Any],
+    latest_priority_board_snapshot: dict[str, Any],
+    replay_cohort_snapshot: dict[str, Any],
+    tradeable_opportunity_pool_summary: dict[str, Any],
+    no_candidate_entry_action_board_summary: dict[str, Any],
+    no_candidate_entry_replay_bundle_summary: dict[str, Any],
+    no_candidate_entry_failure_dossier_summary: dict[str, Any],
+    watchlist_recall_dossier_summary: dict[str, Any],
+    candidate_pool_recall_dossier_summary: dict[str, Any],
+    upstream_shadow_followup_overlay: dict[str, Any],
+    catalyst_theme_frontier_summary: dict[str, Any],
+    score_fail_frontier_summary: dict[str, Any],
+    llm_error_digest: dict[str, Any],
+) -> None:
+    lines.append("## Nightly Summary")
+    lines.append(f"- control_tower_recommendation: {control_tower_snapshot.get('recommendation')}")
+    lines.append(f"- priority_board_headline: {latest_priority_board_snapshot.get('headline')}")
+    lines.append(f"- replay_recommendation: {replay_cohort_snapshot.get('recommendation')}")
+    lines.append(f"- tradeable_opportunity_recommendation: {tradeable_opportunity_pool_summary.get('recommendation')}")
+    lines.append(f"- no_candidate_entry_action_recommendation: {no_candidate_entry_action_board_summary.get('recommendation')}")
+    lines.append(f"- no_candidate_entry_replay_recommendation: {no_candidate_entry_replay_bundle_summary.get('recommendation')}")
+    lines.append(f"- no_candidate_entry_failure_dossier_recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}")
+    lines.append(f"- watchlist_recall_dossier_recommendation: {watchlist_recall_dossier_summary.get('recommendation')}")
+    lines.append(f"- candidate_pool_recall_dossier_recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}")
+    selected_outcome_refresh_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
+    if selected_outcome_refresh_summary:
+        lines.append(f"- selected_outcome_refresh_summary: focus_ticker={selected_outcome_refresh_summary.get('focus_ticker')} focus_cycle_status={selected_outcome_refresh_summary.get('focus_cycle_status')} focus_overall_contract_verdict={selected_outcome_refresh_summary.get('focus_overall_contract_verdict')}")
+    carryover_multiday_continuation_audit_summary = dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {})
+    if carryover_multiday_continuation_audit_summary:
+        lines.append(f"- carryover_multiday_continuation_audit_summary: selected_ticker={carryover_multiday_continuation_audit_summary.get('selected_ticker')} selected_path_t2_bias_only={carryover_multiday_continuation_audit_summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={carryover_multiday_continuation_audit_summary.get('broad_family_only_multiday_unsupported')} aligned_peer_multiday_ready={carryover_multiday_continuation_audit_summary.get('aligned_peer_multiday_ready')}")
+    carryover_aligned_peer_harvest_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_harvest_summary") or {})
+    if carryover_aligned_peer_harvest_summary:
+        lines.append(f"- carryover_aligned_peer_harvest_summary: focus_ticker={carryover_aligned_peer_harvest_summary.get('focus_ticker')} focus_status={carryover_aligned_peer_harvest_summary.get('focus_status')} fresh_open_cycle_tickers={carryover_aligned_peer_harvest_summary.get('fresh_open_cycle_tickers')}")
+    carryover_peer_expansion_summary = dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {})
+    if carryover_peer_expansion_summary:
+        lines.append(f"- carryover_peer_expansion_summary: focus_ticker={carryover_peer_expansion_summary.get('focus_ticker')} focus_status={carryover_peer_expansion_summary.get('focus_status')} priority_expansion_tickers={carryover_peer_expansion_summary.get('priority_expansion_tickers')} watch_with_risk_tickers={carryover_peer_expansion_summary.get('watch_with_risk_tickers')}")
+    carryover_aligned_peer_proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
+    if carryover_aligned_peer_proof_summary:
+        lines.append(f"- carryover_aligned_peer_proof_summary: focus_ticker={carryover_aligned_peer_proof_summary.get('focus_ticker')} focus_proof_verdict={carryover_aligned_peer_proof_summary.get('focus_proof_verdict')} focus_promotion_review_verdict={carryover_aligned_peer_proof_summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={carryover_aligned_peer_proof_summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={carryover_aligned_peer_proof_summary.get('risk_review_tickers')}")
+    carryover_peer_promotion_gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+    if carryover_peer_promotion_gate_summary:
+        lines.append(f"- carryover_peer_promotion_gate_summary: focus_ticker={carryover_peer_promotion_gate_summary.get('focus_ticker')} focus_gate_verdict={carryover_peer_promotion_gate_summary.get('focus_gate_verdict')} ready_tickers={carryover_peer_promotion_gate_summary.get('ready_tickers')} blocked_open_tickers={carryover_peer_promotion_gate_summary.get('blocked_open_tickers')} pending_t_plus_2_tickers={carryover_peer_promotion_gate_summary.get('pending_t_plus_2_tickers')}")
+    lines.append(f"- upstream_shadow_followup_overlay_recommendation: {control_tower_snapshot.get('upstream_shadow_followup_recommendation')}")
+    if upstream_shadow_followup_overlay.get("validated_tickers"):
+        lines.append(f"- upstream_backlog_interpretation_note: 以下 no-entry/watchlist/candidate-pool 建议仍是历史 backlog 画像；当前 active upstream recall 已收敛到 {upstream_shadow_followup_overlay.get('active_no_candidate_entry_priority_tickers')}。")
+    lines.append(f"- candidate_pool_recall_dossier_truncation_frontier_summary: {candidate_pool_recall_dossier_summary.get('truncation_frontier_summary')}")
+    lines.append(f"- catalyst_frontier_recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
+    lines.append(f"- score_fail_frontier_recommendation: {score_fail_frontier_summary.get('recommendation')}")
+    lines.append(f"- llm_recommendation: {llm_error_digest.get('recommendation')}")
+    lines.append("")
+
+
+def _append_latest_upstream_shadow_followup_overlay_markdown(lines: list[str], upstream_shadow_followup_overlay: dict[str, Any]) -> None:
+    lines.append("## Latest Upstream Shadow Followup Overlay")
+    lines.append(f"- status: {upstream_shadow_followup_overlay.get('status')}")
+    lines.append(f"- report_dir: {upstream_shadow_followup_overlay.get('report_dir')}")
+    lines.append(f"- trade_date: {upstream_shadow_followup_overlay.get('trade_date')}")
+    lines.append(f"- validated_tickers: {upstream_shadow_followup_overlay.get('validated_tickers')}")
+    lines.append(f"- near_miss_tickers: {upstream_shadow_followup_overlay.get('near_miss_tickers')}")
+    lines.append(f"- rejected_profitability_tickers: {upstream_shadow_followup_overlay.get('rejected_profitability_tickers')}")
+    lines.append(f"- decision_counts: {upstream_shadow_followup_overlay.get('decision_counts')}")
+    lines.append(f"- active_no_candidate_entry_priority_tickers: {upstream_shadow_followup_overlay.get('active_no_candidate_entry_priority_tickers')}")
+    lines.append(f"- active_absent_from_watchlist_tickers: {upstream_shadow_followup_overlay.get('active_absent_from_watchlist_tickers')}")
+    lines.append(f"- active_watchlist_absent_from_candidate_pool_tickers: {upstream_shadow_followup_overlay.get('active_watchlist_absent_from_candidate_pool_tickers')}")
+    lines.append(f"- active_upstream_handoff_focus_tickers: {upstream_shadow_followup_overlay.get('active_upstream_handoff_focus_tickers')}")
+    lines.append(f"- recommendation: {upstream_shadow_followup_overlay.get('recommendation')}")
+    for row in list(upstream_shadow_followup_overlay.get("rows") or [])[:3]:
+        lines.append(f"- followup_row: ticker={row.get('ticker')} decision={row.get('decision')} downstream_bottleneck={row.get('downstream_bottleneck')} top_reasons={row.get('top_reasons')}")
+    lines.append("")
+
+
+def _append_control_tower_snapshot_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
+    lines.append("## Control Tower Snapshot")
+    lines.append(f"- lane_status_counts: {control_tower_snapshot.get('lane_status_counts')}")
+    lines.append(f"- warn_count: {control_tower_snapshot.get('warn_count')}")
+    lines.append(f"- fail_count: {control_tower_snapshot.get('fail_count')}")
+    selected_outcome_refresh_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
+    if selected_outcome_refresh_summary:
+        lines.append(f"- selected_outcome_contract: focus_ticker={selected_outcome_refresh_summary.get('focus_ticker')} overall_contract_verdict={selected_outcome_refresh_summary.get('focus_overall_contract_verdict')} focus_cycle_status={selected_outcome_refresh_summary.get('focus_cycle_status')}")
+    carryover_multiday_continuation_audit_summary = dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {})
+    if carryover_multiday_continuation_audit_summary:
+        lines.append(f"- carryover_multiday_contract: selected_ticker={carryover_multiday_continuation_audit_summary.get('selected_ticker')} selected_path_t2_bias_only={carryover_multiday_continuation_audit_summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={carryover_multiday_continuation_audit_summary.get('broad_family_only_multiday_unsupported')}")
+    carryover_aligned_peer_harvest_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_harvest_summary") or {})
+    if carryover_aligned_peer_harvest_summary:
+        lines.append(f"- carryover_peer_harvest_focus: focus_ticker={carryover_aligned_peer_harvest_summary.get('focus_ticker')} focus_status={carryover_aligned_peer_harvest_summary.get('focus_status')} fresh_open_cycle_tickers={carryover_aligned_peer_harvest_summary.get('fresh_open_cycle_tickers')}")
+    carryover_peer_expansion_summary = dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {})
+    if carryover_peer_expansion_summary:
+        lines.append(f"- carryover_peer_expansion_focus: focus_ticker={carryover_peer_expansion_summary.get('focus_ticker')} focus_status={carryover_peer_expansion_summary.get('focus_status')} priority_expansion_tickers={carryover_peer_expansion_summary.get('priority_expansion_tickers')} watch_with_risk_tickers={carryover_peer_expansion_summary.get('watch_with_risk_tickers')}")
+    carryover_aligned_peer_proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
+    if carryover_aligned_peer_proof_summary:
+        lines.append(f"- carryover_peer_proof_focus: focus_ticker={carryover_aligned_peer_proof_summary.get('focus_ticker')} focus_promotion_review_verdict={carryover_aligned_peer_proof_summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={carryover_aligned_peer_proof_summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={carryover_aligned_peer_proof_summary.get('risk_review_tickers')}")
+    carryover_peer_promotion_gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+    if carryover_peer_promotion_gate_summary:
+        lines.append(f"- carryover_peer_promotion_gate_focus: focus_ticker={carryover_peer_promotion_gate_summary.get('focus_ticker')} focus_gate_verdict={carryover_peer_promotion_gate_summary.get('focus_gate_verdict')} ready_tickers={carryover_peer_promotion_gate_summary.get('ready_tickers')} blocked_open_tickers={carryover_peer_promotion_gate_summary.get('blocked_open_tickers')} pending_t_plus_2_tickers={carryover_peer_promotion_gate_summary.get('pending_t_plus_2_tickers')}")
+    for frontier in list(control_tower_snapshot.get("closed_frontiers") or []):
+        lines.append(f"- closed_frontier: {frontier.get('frontier_id')} status={frontier.get('status')} passing_variant_count={frontier.get('passing_variant_count')}")
+        lines.append(f"  headline: {frontier.get('headline')}")
+        lines.append(f"  best_variant: {frontier.get('best_variant_name')}")
+    for task in list(control_tower_snapshot.get("next_actions") or []):
+        lines.append(f"- next_action: {task.get('title')}")
+        lines.append(f"  why_now: {task.get('why_now')}")
+        lines.append(f"  next_step: {task.get('next_step')}")
+    lines.append("")
+
+
+def _append_rollout_lanes_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
+    lines.append("## Rollout Lanes")
+    rollout_lanes = list(control_tower_snapshot.get("rollout_lanes") or [])
+    if not rollout_lanes:
+        lines.append("- unavailable")
+    else:
+        for row in rollout_lanes:
+            lines.append(f"- lane_id={row.get('lane_id')} ticker={row.get('ticker')} governance_tier={row.get('governance_tier')} lane_status={row.get('lane_status')} blocker={row.get('blocker')}")
+            lines.append(f"  validation_verdict: {row.get('validation_verdict')}")
+            lines.append(f"  missing_window_count: {row.get('missing_window_count')}")
+            lines.append(f"  next_step: {row.get('next_step')}")
+    lines.append("")
+
+
+def _append_independent_window_monitor_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
+    lines.append("## Independent Window Monitor")
+    independent_window_monitor = dict(control_tower_snapshot.get("independent_window_monitor") or {})
+    if not independent_window_monitor:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- report_dir_count: {independent_window_monitor.get('report_dir_count')}")
+        lines.append(f"- recommendation: {independent_window_monitor.get('recommendation')}")
+        for row in list(independent_window_monitor.get("rows") or []):
+            lines.append(f"- ticker={row.get('ticker')} lane_id={row.get('lane_id')} readiness={row.get('readiness')} distinct_window_count={row.get('distinct_window_count')} missing_window_count={row.get('missing_window_count')}")
+            lines.append(f"  next_step: {row.get('next_step')}")
+    lines.append("")
+
+
+def _append_tplus1_tplus2_objective_monitor_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
+    lines.append("## T+1/T+2 Objective Monitor")
+    tplus1_tplus2_objective_monitor = dict(control_tower_snapshot.get("tplus1_tplus2_objective_monitor") or {})
+    if not tplus1_tplus2_objective_monitor:
+        lines.append("- unavailable")
+    else:
+        tradeable_surface = dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {})
+        lines.append(f"- report_dir_count: {tplus1_tplus2_objective_monitor.get('report_dir_count')}")
+        lines.append(f"- recommendation: {tplus1_tplus2_objective_monitor.get('recommendation')}")
+        lines.append(f"- tradeable_closed_cycle_count: {tradeable_surface.get('closed_cycle_count')}")
+        lines.append(f"- tradeable_positive_rate: {tradeable_surface.get('t_plus_2_positive_rate')}")
+        lines.append(f"- tradeable_return_hit_rate_at_target: {tradeable_surface.get('t_plus_2_return_hit_rate_at_target')}")
+        lines.append(f"- tradeable_mean_t_plus_2_return: {tradeable_surface.get('mean_t_plus_2_return')}")
+        lines.append(f"- tradeable_verdict: {tradeable_surface.get('verdict')}")
+        for row in list(tplus1_tplus2_objective_monitor.get("ticker_leaderboard") or [])[:3]:
+            lines.append(f"- ticker_objective_leader: {row.get('group_label')} closed_cycle_count={row.get('closed_cycle_count')} positive_rate={row.get('t_plus_2_positive_rate')} return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}")
+    lines.append("")
+
+
+def _append_tradeable_opportunity_pool_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    lines.append("## Tradeable Opportunity Pool")
+    if not summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {summary.get('status')}")
+        lines.append(f"- result_truth_pool_count: {summary.get('result_truth_pool_count')}")
+        lines.append(f"- tradeable_opportunity_pool_count: {summary.get('tradeable_opportunity_pool_count')}")
+        lines.append(f"- system_recall_count: {summary.get('system_recall_count')}")
+        lines.append(f"- selected_or_near_miss_count: {summary.get('selected_or_near_miss_count')}")
+        lines.append(f"- main_execution_pool_count: {summary.get('main_execution_pool_count')}")
+        lines.append(f"- strict_goal_case_count: {summary.get('strict_goal_case_count')}")
+        lines.append(f"- strict_goal_false_negative_count: {summary.get('strict_goal_false_negative_count')}")
+        lines.append(f"- tradeable_pool_capture_rate: {summary.get('tradeable_pool_capture_rate')}")
+        lines.append(f"- tradeable_pool_selected_or_near_miss_rate: {summary.get('tradeable_pool_selected_or_near_miss_rate')}")
+        lines.append(f"- tradeable_pool_main_execution_rate: {summary.get('tradeable_pool_main_execution_rate')}")
+        lines.append(f"- no_candidate_entry_count: {summary.get('no_candidate_entry_count')}")
+        lines.append(f"- no_candidate_entry_share_of_tradeable_pool: {summary.get('no_candidate_entry_share_of_tradeable_pool')}")
+        lines.append(f"- top_no_candidate_entry_industries: {summary.get('top_no_candidate_entry_industries')}")
+        lines.append(f"- top_no_candidate_entry_tickers: {summary.get('top_no_candidate_entry_tickers')}")
+        lines.append(f"- top_tradeable_kill_switch_labels: {summary.get('top_tradeable_kill_switch_labels')}")
+        for row in list(summary.get("top_tradeable_kill_switches") or []):
+            lines.append(f"- top_tradeable_kill_switch: {row.get('kill_switch')} count={row.get('count')}")
+        for row in list(summary.get("top_strict_goal_false_negative_rows") or []):
+            lines.append(f"- top_strict_goal_false_negative: {row.get('trade_date')} {row.get('ticker')} kill_switch={row.get('first_kill_switch')} t_plus_2_close_return={row.get('t_plus_2_close_return')}")
+        lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+def _append_no_candidate_entry_action_board_markdown(lines: list[str], summary: dict[str, Any], overlay: dict[str, Any]) -> None:
+    lines.append("## No Candidate Entry Action Board")
+    if overlay.get("validated_tickers"):
+        lines.append(f"- note: 本 section 保留历史 no-entry backlog 排名；当前 active upstream recall 已收敛到 {overlay.get('active_no_candidate_entry_priority_tickers')}，已正式 followup 验证的票请转看上面的 Latest Upstream Shadow Followup Overlay。")
+    if not summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {summary.get('status')}")
+        lines.append(f"- priority_queue_count: {summary.get('priority_queue_count')}")
+        lines.append(f"- top_priority_tickers: {summary.get('top_priority_tickers')}")
+        lines.append(f"- top_hotspot_report_dirs: {summary.get('top_hotspot_report_dirs')}")
+        for row in list(summary.get("priority_queue") or []):
+            lines.append(f"- no_candidate_entry_priority: {row.get('ticker')} action_tier={row.get('action_tier')} strict_goal_case_count={row.get('strict_goal_case_count')} occurrence_count={row.get('occurrence_count')}")
+        for task in list(summary.get("next_tasks") or []):
+            lines.append(f"- next_task: {task.get('task_id')} | {task.get('title')}")
+            lines.append(f"  next_step: {task.get('next_step')}")
+        lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+def _append_no_candidate_entry_replay_bundle_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    lines.append("## No Candidate Entry Replay Bundle")
+    if not summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {summary.get('status')}")
+        lines.append(f"- promising_priority_tickers: {summary.get('promising_priority_tickers')}")
+        lines.append(f"- promising_hotspot_report_dirs: {summary.get('promising_hotspot_report_dirs')}")
+        lines.append(f"- candidate_entry_status_counts: {summary.get('candidate_entry_status_counts')}")
+        lines.append(f"- global_window_scan_rollout_readiness: {summary.get('global_window_scan_rollout_readiness')}")
+        lines.append(f"- global_window_scan_focus_hit_report_count: {summary.get('global_window_scan_focus_hit_report_count')}")
+        for item in list(summary.get("next_actions") or []):
+            lines.append(f"- next_action: {item}")
+        lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+def _append_no_candidate_entry_failure_dossier_markdown(lines: list[str], summary: dict[str, Any], overlay: dict[str, Any]) -> None:
+    lines.append("## No Candidate Entry Failure Dossier")
+    if overlay.get("validated_tickers"):
+        lines.append(f"- note: 本 section 反映历史 failure dossier 断点；当前 active absent_from_watchlist 只剩 {overlay.get('active_absent_from_watchlist_tickers')}。")
+    if not summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {summary.get('status')}")
+        lines.append(f"- priority_failure_class_counts: {summary.get('priority_failure_class_counts')}")
+        lines.append(f"- hotspot_failure_class_counts: {summary.get('hotspot_failure_class_counts')}")
+        lines.append(f"- priority_handoff_stage_counts: {summary.get('priority_handoff_stage_counts')}")
+        lines.append(f"- top_absent_from_watchlist_tickers: {summary.get('top_absent_from_watchlist_tickers')}")
+        lines.append(f"- top_watchlist_visible_but_not_candidate_entry_tickers: {summary.get('top_watchlist_visible_but_not_candidate_entry_tickers')}")
+        lines.append(f"- top_candidate_entry_visible_but_not_selection_target_tickers: {summary.get('top_candidate_entry_visible_but_not_selection_target_tickers')}")
+        lines.append(f"- top_upstream_absence_tickers: {summary.get('top_upstream_absence_tickers')}")
+        lines.append(f"- top_candidate_entry_semantic_miss_tickers: {summary.get('top_candidate_entry_semantic_miss_tickers')}")
+        lines.append(f"- top_present_but_outside_candidate_entry_tickers: {summary.get('top_present_but_outside_candidate_entry_tickers')}")
+        lines.append(f"- top_missing_replay_input_tickers: {summary.get('top_missing_replay_input_tickers')}")
+        for row in list(summary.get("handoff_action_queue") or []):
+            lines.append(f"- handoff_task: {row.get('task_id')} stage={row.get('handoff_stage')} tier={row.get('action_tier')}")
+            lines.append(f"  next_step: {row.get('next_step')}")
+        for item in list(summary.get("next_actions") or []):
+            lines.append(f"- next_action: {item}")
+        lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+def _append_watchlist_recall_dossier_markdown(lines: list[str], summary: dict[str, Any], overlay: dict[str, Any]) -> None:
+    lines.append("## Watchlist Recall Dossier")
+    if overlay.get("validated_tickers"):
+        lines.append(f"- note: 本 section 保留历史 watchlist recall backlog；当前 active absent_from_candidate_pool 只剩 {overlay.get('active_watchlist_absent_from_candidate_pool_tickers')}。")
+    if not summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {summary.get('status')}")
+        lines.append(f"- priority_recall_stage_counts: {summary.get('priority_recall_stage_counts')}")
+        lines.append(f"- top_absent_from_candidate_pool_tickers: {summary.get('top_absent_from_candidate_pool_tickers')}")
+        lines.append(f"- top_candidate_pool_visible_but_missing_layer_b_tickers: {summary.get('top_candidate_pool_visible_but_missing_layer_b_tickers')}")
+        lines.append(f"- top_layer_b_visible_but_missing_watchlist_tickers: {summary.get('top_layer_b_visible_but_missing_watchlist_tickers')}")
+        for row in list(summary.get("action_queue") or []):
+            lines.append(f"- watchlist_recall_task: {row.get('task_id')} stage={row.get('dominant_recall_stage')} tier={row.get('action_tier')}")
+            lines.append(f"  next_step: {row.get('next_step')}")
+        for item in list(summary.get("next_actions") or []):
+            lines.append(f"- next_action: {item}")
+        lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+
+def _append_candidate_pool_recall_priority_details_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    branch_experiment_queue = list(summary.get("priority_handoff_branch_experiment_queue") or [])
+    lines.append("- priority_handoff_branch_experiment_queue: structured_summary")
+    lines.append(f"- priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
+    for experiment in branch_experiment_queue[:3]:
+        lines.append(f"- branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}")
+        lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
+        lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
+        lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
+    lines.append(f"- branch_priority_board_status: {summary.get('branch_priority_board_status')}")
+    lines.append(f"- branch_priority_alignment_status: {summary.get('branch_priority_alignment_status')}")
+    if summary.get("branch_priority_alignment_summary"):
+        lines.append(f"- branch_priority_alignment_summary: {summary.get('branch_priority_alignment_summary')}")
+    for row in list(summary.get("branch_priority_board_rows") or [])[:3]:
+        lines.append(f"- branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}")
+    lines.append(f"- lane_objective_support_status: {summary.get('lane_objective_support_status')}")
+    for row in list(summary.get("lane_objective_support_rows") or [])[:3]:
+        lines.append(f"- lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}")
+
+
+def _append_candidate_pool_recall_corridor_details_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    lines.append(f"- corridor_validation_pack_status: {summary.get('corridor_validation_pack_status')}")
+    corridor_summary = dict(summary.get("corridor_validation_pack_summary") or {})
+    if corridor_summary:
+        lines.append(f"- corridor_validation_pack_summary: pack_status={corridor_summary.get('pack_status')} primary_validation_ticker={corridor_summary.get('primary_validation_ticker')} parallel_watch_tickers={corridor_summary.get('parallel_watch_tickers')}")
+    lines.append(f"- corridor_shadow_pack_status: {summary.get('corridor_shadow_pack_status')}")
+    corridor_shadow_summary = dict(summary.get("corridor_shadow_pack_summary") or {})
+    if corridor_shadow_summary:
+        lines.append(f"- corridor_shadow_pack_summary: shadow_status={corridor_shadow_summary.get('shadow_status')} primary_shadow_replay={corridor_shadow_summary.get('primary_shadow_replay')} parallel_watch_tickers={corridor_shadow_summary.get('parallel_watch_tickers')}")
+    lines.append(f"- rebucket_shadow_pack_status: {summary.get('rebucket_shadow_pack_status')}")
+    rebucket_experiment = dict(summary.get("rebucket_shadow_pack_experiment") or {})
+    if rebucket_experiment:
+        lines.append(f"- rebucket_shadow_pack_experiment: handoff={rebucket_experiment.get('priority_handoff')} readiness={rebucket_experiment.get('prototype_readiness')} tickers={rebucket_experiment.get('tickers')}")
+    lines.append(f"- rebucket_objective_validation_status: {summary.get('rebucket_objective_validation_status')}")
+    rebucket_validation_summary = dict(summary.get("rebucket_objective_validation_summary") or {})
+    if rebucket_validation_summary:
+        lines.append(f"- rebucket_objective_validation_summary: validation_status={rebucket_validation_summary.get('validation_status')} support_verdict={rebucket_validation_summary.get('support_verdict')} mean_t_plus_2_return={rebucket_validation_summary.get('mean_t_plus_2_return')}")
+    lines.append(f"- rebucket_comparison_bundle_status: {summary.get('rebucket_comparison_bundle_status')}")
+    rebucket_comparison_summary = dict(summary.get("rebucket_comparison_bundle_summary") or {})
+    if rebucket_comparison_summary:
+        lines.append(f"- rebucket_comparison_bundle_summary: bundle_status={rebucket_comparison_summary.get('bundle_status')} structural_leader={rebucket_comparison_summary.get('structural_leader')} objective_leader={rebucket_comparison_summary.get('objective_leader')}")
+    lines.append(f"- lane_pair_board_status: {summary.get('lane_pair_board_status')}")
+    lane_pair_summary = dict(summary.get("lane_pair_board_summary") or {})
+    if lane_pair_summary:
+        lines.append(f"- lane_pair_board_summary: pair_status={lane_pair_summary.get('pair_status')} board_leader={lane_pair_summary.get('board_leader')} leader_lane_family={lane_pair_summary.get('leader_lane_family')} leader_governance_status={lane_pair_summary.get('leader_governance_status')} leader_governance_execution_quality={lane_pair_summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={lane_pair_summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={lane_pair_summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={lane_pair_summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={lane_pair_summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={lane_pair_summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={lane_pair_summary.get('parallel_watch_next_close_return_mean')}")
+
+
+def _append_candidate_pool_recall_followup_details_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    continuation_focus_summary = dict(summary.get("continuation_focus_summary") or {})
+    if continuation_focus_summary:
+        lines.append(f"- continuation_focus_summary: focus_ticker={continuation_focus_summary.get('focus_ticker')} promotion_review_verdict={continuation_focus_summary.get('promotion_review_verdict')} promotion_gate_verdict={continuation_focus_summary.get('promotion_gate_verdict')} watchlist_execution_verdict={continuation_focus_summary.get('watchlist_execution_verdict')} focus_watch_validation_status={continuation_focus_summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={continuation_focus_summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={continuation_focus_summary.get('eligible_gate_verdict')} execution_gate_verdict={continuation_focus_summary.get('execution_gate_verdict')} execution_gate_blockers={continuation_focus_summary.get('execution_gate_blockers')} execution_overlay_verdict={continuation_focus_summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={continuation_focus_summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={continuation_focus_summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={continuation_focus_summary.get('execution_overlay_lane_support_ratio')} governance_status={continuation_focus_summary.get('governance_status')}")
+    continuation_promotion_ready_summary = dict(summary.get("continuation_promotion_ready_summary") or {})
+    if continuation_promotion_ready_summary:
+        lines.append(f"- continuation_promotion_ready_summary: focus_ticker={continuation_promotion_ready_summary.get('focus_ticker')} promotion_path_status={continuation_promotion_ready_summary.get('promotion_path_status')} blockers_remaining_count={continuation_promotion_ready_summary.get('blockers_remaining_count')} observed_independent_window_count={continuation_promotion_ready_summary.get('observed_independent_window_count')} missing_independent_window_count={continuation_promotion_ready_summary.get('missing_independent_window_count')} candidate_dossier_support_trade_date_count={continuation_promotion_ready_summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={continuation_promotion_ready_summary.get('candidate_dossier_same_trade_date_variant_count')} persistence_verdict={continuation_promotion_ready_summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={continuation_promotion_ready_summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={continuation_promotion_ready_summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={continuation_promotion_ready_summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={continuation_promotion_ready_summary.get('ready_after_next_qualifying_window')} next_window_requirement={continuation_promotion_ready_summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={continuation_promotion_ready_summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={continuation_promotion_ready_summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={continuation_promotion_ready_summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={continuation_promotion_ready_summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_mean_return_delta_vs_default_btst')}")
+    transient_probe_summary = dict(summary.get("transient_probe_summary") or {})
+    if transient_probe_summary:
+        lines.append(f"- transient_probe_summary: ticker={transient_probe_summary.get('ticker')} status={transient_probe_summary.get('status')} blocker={transient_probe_summary.get('blocker')} candidate_source={transient_probe_summary.get('candidate_source')} score_state={transient_probe_summary.get('score_state')} downstream_bottleneck={transient_probe_summary.get('downstream_bottleneck')} historical_sample_count={transient_probe_summary.get('historical_sample_count')} historical_next_close_positive_rate={transient_probe_summary.get('historical_next_close_positive_rate')}")
+    execution_constraint_rollup = dict(summary.get("execution_constraint_rollup") or {})
+    if execution_constraint_rollup:
+        lines.append(f"- execution_constraint_rollup: constraint_count={execution_constraint_rollup.get('constraint_count')} continuation_focus_tickers={execution_constraint_rollup.get('continuation_focus_tickers')} continuation_blockers={execution_constraint_rollup.get('continuation_blockers')} shadow_focus_tickers={execution_constraint_rollup.get('shadow_focus_tickers')} shadow_blockers={execution_constraint_rollup.get('shadow_blockers')}")
+    lines.append(f"- upstream_handoff_board_status: {summary.get('upstream_handoff_board_status')}")
+    upstream_handoff_summary = dict(summary.get("upstream_handoff_board_summary") or {})
+    if upstream_handoff_summary:
+        lines.append(f"- upstream_handoff_board_summary: board_status={upstream_handoff_summary.get('board_status')} focus_tickers={upstream_handoff_summary.get('focus_tickers')} first_broken_handoff_counts={upstream_handoff_summary.get('first_broken_handoff_counts')}")
+    lines.append(f"- corridor_uplift_runbook_status: {summary.get('corridor_uplift_runbook_status')}")
+    corridor_uplift_summary = dict(summary.get("corridor_uplift_runbook_summary") or {})
+    if corridor_uplift_summary:
+        lines.append(f"- corridor_uplift_runbook_summary: runbook_status={corridor_uplift_summary.get('runbook_status')} primary_shadow_replay={corridor_uplift_summary.get('primary_shadow_replay')} parallel_watch_tickers={corridor_uplift_summary.get('parallel_watch_tickers')}")
+    for row in list(summary.get("action_queue") or []):
+        lines.append(f"- candidate_pool_recall_task: {row.get('task_id')} stage={row.get('dominant_blocking_stage')} tier={row.get('action_tier')}")
+        lines.append(f"  next_step: {row.get('next_step')}")
+    for item in list(summary.get("next_actions") or []):
+        lines.append(f"- next_action: {item}")
+    lines.append(f"- recommendation: {summary.get('recommendation')}")
+
+
+def _append_candidate_pool_recall_dossier_markdown(lines: list[str], summary: dict[str, Any], overlay: dict[str, Any]) -> None:
+    lines.append("## Candidate Pool Recall Dossier")
+    if overlay.get("validated_tickers"):
+        lines.append(f"- note: 本 section 的 Layer A 截断画像保留为历史 lane 背景；当前 active upstream handoff focus 已收敛到 {overlay.get('active_upstream_handoff_focus_tickers')}。")
+    if not summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {summary.get('status')}")
+        lines.append(f"- priority_stage_counts: {summary.get('priority_stage_counts')}")
+        lines.append(f"- dominant_stage: {summary.get('dominant_stage')}")
+        lines.append(f"- top_stage_tickers: {summary.get('top_stage_tickers')}")
+        lines.append(f"- priority_handoff_branch_diagnoses: {summary.get('priority_handoff_branch_diagnoses')}")
+        lines.append(f"- priority_handoff_branch_mechanisms: {summary.get('priority_handoff_branch_mechanisms')}")
+        _append_candidate_pool_recall_priority_details_markdown(lines, summary)
+        _append_candidate_pool_recall_corridor_details_markdown(lines, summary)
+        _append_candidate_pool_recall_followup_details_markdown(lines, summary)
+    lines.append("")
+
+
+def _append_priority_board_snapshot_markdown(lines: list[str], snapshot: dict[str, Any]) -> None:
+    lines.append("## Priority Board Snapshot")
+    lines.append(f"- summary: {snapshot.get('summary')}")
+    lines.append(f"- brief_recommendation: {snapshot.get('brief_recommendation')}")
+    for index, row in enumerate(list(snapshot.get("priority_rows") or []), start=1):
+        lines.append(f"- {index}. {row.get('ticker')}: lane={row.get('lane')} actionability={row.get('actionability')} execution_quality_label={row.get('execution_quality_label')}")
+        lines.append(f"  why_now: {row.get('why_now')}")
+        lines.append(f"  suggested_action: {row.get('suggested_action')}")
+        lines.append(f"  historical_summary: {row.get('historical_summary')}")
+    for guardrail in list(snapshot.get("global_guardrails") or []):
+        lines.append(f"- guardrail: {guardrail}")
+    lines.append("")
+
+
+def _append_catalyst_theme_frontier_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    lines.append("## Catalyst Theme Frontier")
+    if not summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {summary.get('status')}")
+        lines.append(f"- shadow_candidate_count: {summary.get('shadow_candidate_count')}")
+        lines.append(f"- baseline_selected_count: {summary.get('baseline_selected_count')}")
+        lines.append(f"- recommended_variant_name: {summary.get('recommended_variant_name')}")
+        lines.append(f"- recommended_promoted_shadow_count: {summary.get('recommended_promoted_shadow_count')}")
+        lines.append(f"- recommended_relaxation_cost: {summary.get('recommended_relaxation_cost')}")
+        lines.append(f"- recommended_thresholds: {summary.get('recommended_thresholds')}")
+        promoted_tickers = list(summary.get("recommended_promoted_tickers") or [])
+        lines.append(f"- recommended_promoted_tickers: {', '.join(promoted_tickers) if promoted_tickers else 'none'}")
+        lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+def _append_score_fail_frontier_queue_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    lines.append("## Score-Fail Frontier Queue")
+    if not summary:
+        lines.append("- unavailable")
+    else:
+        lines.append(f"- status: {summary.get('status')}")
+        lines.append(f"- rejected_short_trade_boundary_count: {summary.get('rejected_short_trade_boundary_count')}")
+        lines.append(f"- rescueable_case_count: {summary.get('rescueable_case_count')}")
+        lines.append(f"- threshold_only_rescue_count: {summary.get('threshold_only_rescue_count')}")
+        lines.append(f"- recurring_case_count: {summary.get('recurring_case_count')}")
+        lines.append(f"- transition_candidate_count: {summary.get('transition_candidate_count')}")
+        lines.append(f"- recurring_shadow_refresh_status: {summary.get('recurring_shadow_refresh_status')}")
+        priority_queue_tickers = list(summary.get("priority_queue_tickers") or [])
+        lines.append(f"- priority_queue_tickers: {', '.join(priority_queue_tickers) if priority_queue_tickers else 'none'}")
+        top_rescue_tickers = list(summary.get("top_rescue_tickers") or [])
+        lines.append(f"- top_rescue_tickers: {', '.join(top_rescue_tickers) if top_rescue_tickers else 'none'}")
+        for row in list(summary.get("priority_queue") or []):
+            lines.append(f"- recurring_priority: {row.get('ticker')} occurrence_count={row.get('occurrence_count')} minimal_adjustment_cost={row.get('minimal_adjustment_cost')} gap_to_near_miss_mean={row.get('gap_to_near_miss_mean')}")
+        for row in list(summary.get("top_rescue_rows") or []):
+            lines.append(f"- top_rescue_row: {row.get('trade_date')} {row.get('ticker')} baseline_score={row.get('baseline_score_target')} replayed_score={row.get('replayed_score_target')} adjustment_cost={row.get('adjustment_cost')}")
+        lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+def _append_nightly_llm_health_markdown(lines: list[str], llm_error_digest: dict[str, Any]) -> None:
+    lines.append("## LLM Health")
+    lines.append(f"- status: {llm_error_digest.get('status')}")
+    lines.append(f"- error_count: {llm_error_digest.get('error_count')}")
+    lines.append(f"- rate_limit_error_count: {llm_error_digest.get('rate_limit_error_count')}")
+    lines.append(f"- fallback_attempt_count: {llm_error_digest.get('fallback_attempt_count')}")
+    lines.append(f"- affected_provider_count: {llm_error_digest.get('affected_provider_count')}")
+    lines.append(f"- fallback_gap_detected: {llm_error_digest.get('fallback_gap_detected')}")
+    top_error_types = list(llm_error_digest.get("top_error_types") or [])
+    if top_error_types:
+        for row in top_error_types:
+            lines.append(f"- top_error_type: {row.get('error_type')} count={row.get('count')}")
+    else:
+        lines.append("- top_error_type: none")
+    affected_providers = list(llm_error_digest.get("affected_providers") or [])
+    if affected_providers:
+        for row in affected_providers:
+            lines.append(f"- provider_health: {row.get('provider')} errors={row.get('errors')} attempts={row.get('attempts')} error_rate={row.get('error_rate')} fallback_attempts={row.get('fallback_attempts')}")
+    else:
+        lines.append("- provider_health: none")
+    sample_errors = list(llm_error_digest.get("sample_errors") or [])
+    if sample_errors:
+        for row in sample_errors:
+            lines.append(f"- sample_error: {row.get('provider')} {row.get('error_type')} stage={row.get('pipeline_stage')} tier={row.get('model_tier')} message={row.get('message')}")
+    else:
+        lines.append("- sample_error: none")
+    lines.append("")
+
+
+def _append_replay_cohort_snapshot_markdown(lines: list[str], replay_cohort_snapshot: dict[str, Any]) -> None:
+    lines.append("## Replay Cohort Snapshot")
+    lines.append(f"- short_trade_summary: {replay_cohort_snapshot.get('short_trade_summary')}")
+    lines.append(f"- frozen_summary: {replay_cohort_snapshot.get('frozen_summary')}")
+    latest_short_trade_row = dict(replay_cohort_snapshot.get("latest_short_trade_row") or {})
+    if latest_short_trade_row:
+        lines.append(f"- latest_short_trade_report: {latest_short_trade_row.get('report_dir_name')}")
+        lines.append(f"  total_return_pct: {latest_short_trade_row.get('total_return_pct')}")
+        lines.append(f"  near_miss_count: {latest_short_trade_row.get('near_miss_count')}")
+        lines.append(f"  opportunity_pool_count: {latest_short_trade_row.get('opportunity_pool_count')}")
+    for row in list(replay_cohort_snapshot.get("top_return_rows") or []):
+        lines.append(f"- top_return_row: {row.get('report_dir_name')} | selection_target={row.get('selection_target')} | total_return_pct={row.get('total_return_pct')} | near_miss_count={row.get('near_miss_count')}")
+    lines.append("")
+
+
+def _append_nightly_reading_order_markdown(lines: list[str], payload: dict[str, Any]) -> None:
+    lines.append("## Reading Order")
+    for item in list(payload.get("recommended_reading_order") or []):
+        lines.append(f"- {item.get('entry_id')}: {item.get('question')} | {item.get('report_path')}")
+    lines.append("")
+
+
+def _append_nightly_fast_links_markdown(lines: list[str], source_paths: dict[str, Any], output_parent: Path) -> None:
+    lines.append("## Fast Links")
+    for label, source_path in source_paths.items():
+        relative_target = _relative_link(source_path, output_parent)
+        if relative_target:
+            lines.append(f"- {label}: [{Path(source_path).name}]({relative_target})")
+        else:
+            lines.append(f"- {label}: {source_path}")
+    lines.append("")
+
+
 def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, output_parent: str | Path) -> str:
     resolved_output_parent = Path(output_parent).expanduser().resolve()
     latest_btst_run = dict(payload.get("latest_btst_run") or {})
@@ -2776,706 +3662,51 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines: list[str] = []
     lines.append("# BTST Nightly Control Tower")
     lines.append("")
-    lines.append("## Overview")
-    lines.append(f"- generated_at: {payload.get('generated_at')}")
-    lines.append(f"- latest_btst_report_dir: {latest_btst_run.get('report_dir')}")
-    lines.append(f"- latest_trade_date: {latest_btst_run.get('trade_date')}")
-    lines.append(f"- latest_next_trade_date: {latest_btst_run.get('next_trade_date')}")
-    lines.append(f"- latest_selection_target: {latest_btst_run.get('selection_target')}")
-    lines.append(f"- governance_verdict: {control_tower_snapshot.get('overall_verdict')}")
-    lines.append(f"- waiting_lane_count: {control_tower_snapshot.get('waiting_lane_count')}")
-    lines.append(f"- ready_lane_count: {control_tower_snapshot.get('ready_lane_count')}")
-    lines.append(f"- independent_window_ready_lane_count: {control_tower_snapshot.get('independent_window_ready_lane_count')}")
-    lines.append(f"- independent_window_waiting_lane_count: {control_tower_snapshot.get('independent_window_waiting_lane_count')}")
-    lines.append(f"- tplus1_tplus2_tradeable_positive_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_positive_rate')}")
-    lines.append(f"- tplus1_tplus2_tradeable_return_hit_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_return_hit_rate')}")
-    lines.append(f"- tplus1_tplus2_tradeable_mean_return: {control_tower_snapshot.get('tplus1_tplus2_tradeable_mean_return')}")
-    lines.append(f"- tplus1_tplus2_tradeable_verdict: {control_tower_snapshot.get('tplus1_tplus2_tradeable_verdict')}")
-    lines.append(f"- tradeable_opportunity_pool_count: {control_tower_snapshot.get('tradeable_opportunity_pool_count')}")
-    lines.append(f"- tradeable_opportunity_capture_rate: {control_tower_snapshot.get('tradeable_opportunity_capture_rate')}")
-    lines.append(f"- tradeable_opportunity_selected_or_near_miss_rate: {control_tower_snapshot.get('tradeable_opportunity_selected_or_near_miss_rate')}")
-    lines.append(f"- tradeable_opportunity_top_kill_switches: {control_tower_snapshot.get('tradeable_opportunity_top_kill_switches')}")
-    lines.append(f"- no_candidate_entry_priority_queue_count: {control_tower_snapshot.get('no_candidate_entry_priority_queue_count')}")
-    lines.append(f"- no_candidate_entry_priority_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_priority_tickers')}")
-    lines.append(f"- no_candidate_entry_priority_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_priority_tickers')}")
-    lines.append(f"- no_candidate_entry_recall_probe_tickers: {control_tower_snapshot.get('no_candidate_entry_recall_probe_tickers')}")
-    lines.append(f"- no_candidate_entry_failure_class_counts: {control_tower_snapshot.get('no_candidate_entry_failure_class_counts')}")
-    lines.append(f"- no_candidate_entry_handoff_stage_counts: {control_tower_snapshot.get('no_candidate_entry_handoff_stage_counts')}")
-    lines.append(f"- no_candidate_entry_absent_from_watchlist_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_absent_from_watchlist_tickers')}")
-    lines.append(f"- no_candidate_entry_absent_from_watchlist_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_absent_from_watchlist_tickers')}")
-    lines.append(f"- no_candidate_entry_watchlist_handoff_gap_tickers: {control_tower_snapshot.get('no_candidate_entry_watchlist_handoff_gap_tickers')}")
-    lines.append(f"- no_candidate_entry_upstream_absence_tickers: {control_tower_snapshot.get('no_candidate_entry_upstream_absence_tickers')}")
-    lines.append(f"- watchlist_recall_stage_counts: {control_tower_snapshot.get('watchlist_recall_stage_counts')}")
-    lines.append(f"- watchlist_recall_absent_from_candidate_pool_tickers_historical: {control_tower_snapshot.get('watchlist_recall_absent_from_candidate_pool_tickers')}")
-    lines.append(f"- watchlist_recall_absent_from_candidate_pool_tickers_active: {control_tower_snapshot.get('active_watchlist_recall_absent_from_candidate_pool_tickers')}")
-    lines.append(f"- watchlist_recall_candidate_pool_layer_b_gap_tickers: {control_tower_snapshot.get('watchlist_recall_candidate_pool_layer_b_gap_tickers')}")
-    lines.append(f"- watchlist_recall_layer_b_watchlist_gap_tickers: {control_tower_snapshot.get('watchlist_recall_layer_b_watchlist_gap_tickers')}")
-    lines.append(f"- candidate_pool_recall_stage_counts: {control_tower_snapshot.get('candidate_pool_recall_stage_counts')}")
-    lines.append(f"- candidate_pool_recall_dominant_stage: {control_tower_snapshot.get('candidate_pool_recall_dominant_stage')}")
-    lines.append(f"- candidate_pool_recall_top_stage_tickers: {control_tower_snapshot.get('candidate_pool_recall_top_stage_tickers')}")
-    lines.append(f"- candidate_pool_recall_truncation_frontier_summary: {control_tower_snapshot.get('candidate_pool_recall_truncation_frontier_summary')}")
-    lines.append(f"- candidate_pool_recall_dominant_ranking_driver: {control_tower_snapshot.get('candidate_pool_recall_dominant_ranking_driver')}")
-    lines.append(f"- candidate_pool_recall_dominant_liquidity_gap_mode: {control_tower_snapshot.get('candidate_pool_recall_dominant_liquidity_gap_mode')}")
-    lines.append(f"- candidate_pool_recall_focus_liquidity_profiles: {control_tower_snapshot.get('candidate_pool_recall_focus_liquidity_profiles')}")
-    lines.append(f"- candidate_pool_recall_priority_handoff_counts: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_counts')}")
-    lines.append(f"- candidate_pool_recall_priority_handoff_branch_diagnoses: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_diagnoses')}")
-    lines.append(f"- candidate_pool_recall_priority_handoff_branch_mechanisms: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_mechanisms')}")
-    branch_experiment_queue = list(control_tower_snapshot.get("candidate_pool_recall_priority_handoff_branch_experiment_queue") or [])
-    lines.append("- candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
-    lines.append(f"- candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
-    for experiment in branch_experiment_queue[:3]:
-        lines.append(
-            f"- candidate_pool_recall_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
-        )
-        lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
-        lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
-        lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
-    lines.append(f"- candidate_pool_branch_priority_board_status: {control_tower_snapshot.get('candidate_pool_branch_priority_board_status')}")
-    lines.append(f"- candidate_pool_branch_priority_alignment_status: {control_tower_snapshot.get('candidate_pool_branch_priority_alignment_status')}")
-    if control_tower_snapshot.get("candidate_pool_branch_priority_alignment_summary"):
-        lines.append(f"- candidate_pool_branch_priority_alignment_summary: {control_tower_snapshot.get('candidate_pool_branch_priority_alignment_summary')}")
-    for row in list(control_tower_snapshot.get("candidate_pool_branch_priority_board_rows") or [])[:3]:
-        lines.append(
-            f"- candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
-        )
-    lines.append(f"- candidate_pool_lane_objective_support_status: {control_tower_snapshot.get('candidate_pool_lane_objective_support_status')}")
-    for row in list(control_tower_snapshot.get("candidate_pool_lane_objective_support_rows") or [])[:3]:
-        lines.append(
-            f"- candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
-        )
-    lines.append(f"- candidate_pool_corridor_validation_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_validation_pack_status')}")
-    corridor_validation_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_validation_pack_summary") or {})
-    if corridor_validation_summary:
-        lines.append(
-            f"- candidate_pool_corridor_validation_pack_summary: pack_status={corridor_validation_summary.get('pack_status')} primary_validation_ticker={corridor_validation_summary.get('primary_validation_ticker')} parallel_watch_tickers={corridor_validation_summary.get('parallel_watch_tickers')}"
-        )
-    lines.append(f"- candidate_pool_corridor_shadow_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_shadow_pack_status')}")
-    corridor_shadow_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_shadow_pack_summary") or {})
-    if corridor_shadow_summary:
-        lines.append(
-            f"- candidate_pool_corridor_shadow_pack_summary: shadow_status={corridor_shadow_summary.get('shadow_status')} primary_shadow_replay={corridor_shadow_summary.get('primary_shadow_replay')} parallel_watch_tickers={corridor_shadow_summary.get('parallel_watch_tickers')}"
-        )
-    lines.append(f"- candidate_pool_rebucket_shadow_pack_status: {control_tower_snapshot.get('candidate_pool_rebucket_shadow_pack_status')}")
-    rebucket_experiment = dict(control_tower_snapshot.get("candidate_pool_rebucket_shadow_pack_experiment") or {})
-    if rebucket_experiment:
-        lines.append(
-            f"- candidate_pool_rebucket_shadow_pack_experiment: handoff={rebucket_experiment.get('priority_handoff')} readiness={rebucket_experiment.get('prototype_readiness')} tickers={rebucket_experiment.get('tickers')}"
-        )
-    lines.append(f"- candidate_pool_rebucket_objective_validation_status: {control_tower_snapshot.get('candidate_pool_rebucket_objective_validation_status')}")
-    rebucket_validation_summary = dict(control_tower_snapshot.get("candidate_pool_rebucket_objective_validation_summary") or {})
-    if rebucket_validation_summary:
-        lines.append(
-            f"- candidate_pool_rebucket_objective_validation_summary: validation_status={rebucket_validation_summary.get('validation_status')} support_verdict={rebucket_validation_summary.get('support_verdict')} mean_t_plus_2_return={rebucket_validation_summary.get('mean_t_plus_2_return')}"
-        )
-    lines.append(f"- candidate_pool_rebucket_comparison_bundle_status: {control_tower_snapshot.get('candidate_pool_rebucket_comparison_bundle_status')}")
-    rebucket_comparison_summary = dict(control_tower_snapshot.get("candidate_pool_rebucket_comparison_bundle_summary") or {})
-    if rebucket_comparison_summary:
-        lines.append(
-            f"- candidate_pool_rebucket_comparison_bundle_summary: bundle_status={rebucket_comparison_summary.get('bundle_status')} structural_leader={rebucket_comparison_summary.get('structural_leader')} objective_leader={rebucket_comparison_summary.get('objective_leader')}"
-        )
-    lines.append(f"- candidate_pool_lane_pair_board_status: {control_tower_snapshot.get('candidate_pool_lane_pair_board_status')}")
-    lane_pair_board_summary = dict(control_tower_snapshot.get("candidate_pool_lane_pair_board_summary") or {})
-    if lane_pair_board_summary:
-        lines.append(
-            f"- candidate_pool_lane_pair_board_summary: pair_status={lane_pair_board_summary.get('pair_status')} board_leader={lane_pair_board_summary.get('board_leader')} leader_lane_family={lane_pair_board_summary.get('leader_lane_family')} leader_governance_status={lane_pair_board_summary.get('leader_governance_status')} leader_governance_execution_quality={lane_pair_board_summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={lane_pair_board_summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={lane_pair_board_summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={lane_pair_board_summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={lane_pair_board_summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={lane_pair_board_summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={lane_pair_board_summary.get('parallel_watch_next_close_return_mean')}"
-        )
-    continuation_focus_summary = dict(control_tower_snapshot.get("continuation_focus_summary") or {})
-    if continuation_focus_summary:
-        lines.append(
-            f"- continuation_focus_summary: focus_ticker={continuation_focus_summary.get('focus_ticker')} promotion_review_verdict={continuation_focus_summary.get('promotion_review_verdict')} promotion_gate_verdict={continuation_focus_summary.get('promotion_gate_verdict')} watchlist_execution_verdict={continuation_focus_summary.get('watchlist_execution_verdict')} focus_watch_validation_status={continuation_focus_summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={continuation_focus_summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={continuation_focus_summary.get('eligible_gate_verdict')} execution_gate_verdict={continuation_focus_summary.get('execution_gate_verdict')} execution_gate_blockers={continuation_focus_summary.get('execution_gate_blockers')} execution_overlay_verdict={continuation_focus_summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={continuation_focus_summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={continuation_focus_summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={continuation_focus_summary.get('execution_overlay_lane_support_ratio')} governance_status={continuation_focus_summary.get('governance_status')}"
-        )
-    continuation_promotion_ready_summary = dict(control_tower_snapshot.get("continuation_promotion_ready_summary") or {})
-    if continuation_promotion_ready_summary:
-        lines.append(
-            f"- continuation_promotion_ready_summary: focus_ticker={continuation_promotion_ready_summary.get('focus_ticker')} promotion_path_status={continuation_promotion_ready_summary.get('promotion_path_status')} blockers_remaining_count={continuation_promotion_ready_summary.get('blockers_remaining_count')} observed_independent_window_count={continuation_promotion_ready_summary.get('observed_independent_window_count')} missing_independent_window_count={continuation_promotion_ready_summary.get('missing_independent_window_count')} candidate_dossier_support_trade_date_count={continuation_promotion_ready_summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={continuation_promotion_ready_summary.get('candidate_dossier_same_trade_date_variant_count')} persistence_verdict={continuation_promotion_ready_summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={continuation_promotion_ready_summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={continuation_promotion_ready_summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={continuation_promotion_ready_summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={continuation_promotion_ready_summary.get('ready_after_next_qualifying_window')} next_window_requirement={continuation_promotion_ready_summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={continuation_promotion_ready_summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={continuation_promotion_ready_summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={continuation_promotion_ready_summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={continuation_promotion_ready_summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_mean_return_delta_vs_default_btst')}"
-        )
-    corridor_window_diagnostics_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_window_diagnostics_summary") or {})
-    if corridor_window_diagnostics_summary:
-        near_miss_window = dict(corridor_window_diagnostics_summary.get("near_miss_upgrade_window") or {})
-        visibility_gap_window = dict(corridor_window_diagnostics_summary.get("visibility_gap_window") or {})
-        lines.append(
-            f"- candidate_pool_corridor_window_diagnostics_summary: focus_ticker={corridor_window_diagnostics_summary.get('focus_ticker')} near_miss_trade_date={near_miss_window.get('trade_date')} near_miss_verdict={near_miss_window.get('verdict')} visibility_gap_verdict={visibility_gap_window.get('verdict')} recoverable_report_dir_count={visibility_gap_window.get('recoverable_report_dir_count')}"
-        )
-    corridor_narrow_probe_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_narrow_probe_summary") or {})
-    if corridor_narrow_probe_summary:
-        deepest_corridor_focus_tickers = list(corridor_narrow_probe_summary.get("deepest_corridor_focus_tickers") or [])
-        if deepest_corridor_focus_tickers:
-            lines.append(
-                f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={corridor_narrow_probe_summary.get('focus_ticker')} verdict={corridor_narrow_probe_summary.get('verdict')} deepest_corridor_focus_tickers={deepest_corridor_focus_tickers} excluded_low_gate_tail_tickers={corridor_narrow_probe_summary.get('excluded_low_gate_tail_tickers')} low_gate_focus_max_cutoff_share={corridor_narrow_probe_summary.get('low_gate_focus_max_cutoff_share')}"
-            )
-        else:
-            lines.append(
-                f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={corridor_narrow_probe_summary.get('focus_ticker')} verdict={corridor_narrow_probe_summary.get('verdict')} threshold_override_gap_vs_anchor={corridor_narrow_probe_summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={corridor_narrow_probe_summary.get('target_gap_to_selected')}"
-            )
-    default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
-    if default_merge_review_summary:
-        counterfactual = dict(default_merge_review_summary.get("counterfactual_validation") or {})
-        lines.append(
-            f"- default_merge_review_summary: focus_ticker={default_merge_review_summary.get('focus_ticker')} merge_review_verdict={default_merge_review_summary.get('merge_review_verdict')} operator_action={default_merge_review_summary.get('operator_action')} counterfactual_verdict={counterfactual.get('counterfactual_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={default_merge_review_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_positive_rate_margin_vs_threshold={counterfactual.get('t_plus_2_positive_rate_margin_vs_threshold')} t_plus_2_mean_return_delta_vs_default_btst={default_merge_review_summary.get('t_plus_2_mean_return_delta_vs_default_btst')} t_plus_2_mean_return_margin_vs_threshold={counterfactual.get('t_plus_2_mean_return_margin_vs_threshold')}"
-        )
-    default_merge_historical_counterfactual_summary = dict(control_tower_snapshot.get("default_merge_historical_counterfactual_summary") or {})
-    if default_merge_historical_counterfactual_summary:
-        uplift = dict(default_merge_historical_counterfactual_summary.get("uplift_vs_default_btst") or {})
-        lines.append(
-            f"- default_merge_historical_counterfactual_summary: focus_ticker={default_merge_historical_counterfactual_summary.get('focus_ticker')} counterfactual_verdict={default_merge_historical_counterfactual_summary.get('counterfactual_verdict')} merged_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} merged_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}"
-        )
-    continuation_merge_candidate_ranking_summary = dict(control_tower_snapshot.get("continuation_merge_candidate_ranking_summary") or {})
-    if continuation_merge_candidate_ranking_summary:
-        top_candidate = dict(continuation_merge_candidate_ranking_summary.get("top_candidate") or {})
-        lines.append(
-            f"- continuation_merge_candidate_ranking_summary: candidate_count={continuation_merge_candidate_ranking_summary.get('candidate_count')} top_ticker={top_candidate.get('ticker')} top_stage={top_candidate.get('promotion_path_status') or top_candidate.get('promotion_readiness_verdict')} top_positive_rate_delta={top_candidate.get('t_plus_2_positive_rate_delta_vs_default_btst')} top_mean_return_delta={top_candidate.get('mean_t_plus_2_return_delta_vs_default_btst')}"
-        )
-    default_merge_strict_counterfactual_summary = dict(control_tower_snapshot.get("default_merge_strict_counterfactual_summary") or {})
-    if default_merge_strict_counterfactual_summary:
-        uplift = dict(default_merge_strict_counterfactual_summary.get("strict_uplift_vs_default_btst") or {})
-        overlap = dict(default_merge_strict_counterfactual_summary.get("overlap_diagnostics") or {})
-        lines.append(
-            f"- default_merge_strict_counterfactual_summary: focus_ticker={default_merge_strict_counterfactual_summary.get('focus_ticker')} strict_counterfactual_verdict={default_merge_strict_counterfactual_summary.get('strict_counterfactual_verdict')} overlap_case_count={overlap.get('overlap_case_count')} strict_positive_rate_uplift={uplift.get('t_plus_2_positive_rate_uplift')} strict_mean_return_uplift={uplift.get('mean_t_plus_2_return_uplift')}"
-        )
-    merge_replay_validation_summary = dict(control_tower_snapshot.get("merge_replay_validation_summary") or {})
-    if merge_replay_validation_summary:
-        lines.append(
-            f"- merge_replay_validation_summary: overall_verdict={merge_replay_validation_summary.get('overall_verdict')} focus_tickers={merge_replay_validation_summary.get('focus_tickers')} promoted_to_selected_count={merge_replay_validation_summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={merge_replay_validation_summary.get('promoted_to_near_miss_count')} relief_applied_count={merge_replay_validation_summary.get('relief_applied_count')} relief_actionable_applied_count={merge_replay_validation_summary.get('relief_actionable_applied_count')} relief_already_selected_count={merge_replay_validation_summary.get('relief_already_selected_count')} relief_positive_promotion_precision={merge_replay_validation_summary.get('relief_positive_promotion_precision')} relief_actionable_positive_promotion_precision={merge_replay_validation_summary.get('relief_actionable_positive_promotion_precision')} relief_no_promotion_ratio={merge_replay_validation_summary.get('relief_no_promotion_ratio')} relief_actionable_no_promotion_ratio={merge_replay_validation_summary.get('relief_actionable_no_promotion_ratio')} relief_decision_deteriorated_count={merge_replay_validation_summary.get('relief_decision_deteriorated_count')} recommended_next_lever={merge_replay_validation_summary.get('recommended_next_lever')} recommended_signal_levers={merge_replay_validation_summary.get('recommended_signal_levers')}"
-        )
-    transient_probe_summary = dict(control_tower_snapshot.get("transient_probe_summary") or {})
-    if transient_probe_summary:
-        lines.append(
-            f"- transient_probe_summary: ticker={transient_probe_summary.get('ticker')} status={transient_probe_summary.get('status')} blocker={transient_probe_summary.get('blocker')} candidate_source={transient_probe_summary.get('candidate_source')} score_state={transient_probe_summary.get('score_state')} downstream_bottleneck={transient_probe_summary.get('downstream_bottleneck')} historical_sample_count={transient_probe_summary.get('historical_sample_count')} historical_next_close_positive_rate={transient_probe_summary.get('historical_next_close_positive_rate')}"
-        )
-    execution_constraint_rollup = dict(control_tower_snapshot.get("execution_constraint_rollup") or {})
-    if execution_constraint_rollup:
-        lines.append(
-            f"- execution_constraint_rollup: constraint_count={execution_constraint_rollup.get('constraint_count')} continuation_focus_tickers={execution_constraint_rollup.get('continuation_focus_tickers')} continuation_blockers={execution_constraint_rollup.get('continuation_blockers')} shadow_focus_tickers={execution_constraint_rollup.get('shadow_focus_tickers')} shadow_blockers={execution_constraint_rollup.get('shadow_blockers')}"
-        )
-    lines.append(f"- candidate_pool_upstream_handoff_board_status: {control_tower_snapshot.get('candidate_pool_upstream_handoff_board_status')}")
-    upstream_handoff_summary = dict(control_tower_snapshot.get("candidate_pool_upstream_handoff_board_summary") or {})
-    if upstream_handoff_summary:
-        lines.append(
-            f"- candidate_pool_upstream_handoff_board_summary: board_status={upstream_handoff_summary.get('board_status')} focus_tickers={upstream_handoff_summary.get('focus_tickers')} first_broken_handoff_counts={upstream_handoff_summary.get('first_broken_handoff_counts')}"
-        )
-    lines.append(f"- candidate_pool_upstream_handoff_focus_tickers_active: {control_tower_snapshot.get('active_candidate_pool_upstream_handoff_focus_tickers')}")
-    lines.append(f"- upstream_shadow_followup_validated_tickers: {control_tower_snapshot.get('upstream_shadow_followup_validated_tickers')}")
-    lines.append(f"- upstream_shadow_followup_decision_counts: {control_tower_snapshot.get('upstream_shadow_followup_decision_counts')}")
-    lines.append(f"- upstream_shadow_followup_near_miss_tickers: {control_tower_snapshot.get('upstream_shadow_followup_near_miss_tickers')}")
-    lines.append(f"- upstream_shadow_followup_rejected_profitability_tickers: {control_tower_snapshot.get('upstream_shadow_followup_rejected_profitability_tickers')}")
-    lines.append(f"- candidate_pool_corridor_uplift_runbook_status: {control_tower_snapshot.get('candidate_pool_corridor_uplift_runbook_status')}")
-    corridor_uplift_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_uplift_runbook_summary") or {})
-    if corridor_uplift_summary:
-        lines.append(
-            f"- candidate_pool_corridor_uplift_runbook_summary: runbook_status={corridor_uplift_summary.get('runbook_status')} primary_shadow_replay={corridor_uplift_summary.get('primary_shadow_replay')} parallel_watch_tickers={corridor_uplift_summary.get('parallel_watch_tickers')}"
-        )
-    lines.append(f"- replay_report_count: {replay_cohort_snapshot.get('report_count')}")
-    lines.append(f"- replay_selection_target_counts: {replay_cohort_snapshot.get('selection_target_counts')}")
-    lines.append(f"- catalyst_frontier_status: {catalyst_theme_frontier_summary.get('status') or 'unavailable'}")
-    lines.append(f"- catalyst_frontier_promoted_shadow_count: {catalyst_theme_frontier_summary.get('recommended_promoted_shadow_count')}")
-    lines.append(f"- score_fail_frontier_status: {score_fail_frontier_summary.get('status') or 'unavailable'}")
-    lines.append(f"- score_fail_rejected_case_count: {score_fail_frontier_summary.get('rejected_short_trade_boundary_count')}")
-    lines.append(f"- score_fail_recurring_case_count: {score_fail_frontier_summary.get('recurring_case_count')}")
-    lines.append(f"- llm_health_status: {llm_error_digest.get('status')}")
-    lines.append(f"- llm_error_count: {llm_error_digest.get('error_count')}")
-    lines.append(f"- llm_fallback_attempt_count: {llm_error_digest.get('fallback_attempt_count')}")
-    lines.append("")
-
-    lines.append("## Nightly Summary")
-    lines.append(f"- control_tower_recommendation: {control_tower_snapshot.get('recommendation')}")
-    lines.append(f"- priority_board_headline: {latest_priority_board_snapshot.get('headline')}")
-    lines.append(f"- replay_recommendation: {replay_cohort_snapshot.get('recommendation')}")
-    lines.append(f"- tradeable_opportunity_recommendation: {tradeable_opportunity_pool_summary.get('recommendation')}")
-    lines.append(f"- no_candidate_entry_action_recommendation: {no_candidate_entry_action_board_summary.get('recommendation')}")
-    lines.append(f"- no_candidate_entry_replay_recommendation: {no_candidate_entry_replay_bundle_summary.get('recommendation')}")
-    lines.append(f"- no_candidate_entry_failure_dossier_recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}")
-    lines.append(f"- watchlist_recall_dossier_recommendation: {watchlist_recall_dossier_summary.get('recommendation')}")
-    lines.append(f"- candidate_pool_recall_dossier_recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}")
-    selected_outcome_refresh_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
-    if selected_outcome_refresh_summary:
-        lines.append(
-            f"- selected_outcome_refresh_summary: focus_ticker={selected_outcome_refresh_summary.get('focus_ticker')} focus_cycle_status={selected_outcome_refresh_summary.get('focus_cycle_status')} focus_overall_contract_verdict={selected_outcome_refresh_summary.get('focus_overall_contract_verdict')}"
-        )
-    carryover_multiday_continuation_audit_summary = dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {})
-    if carryover_multiday_continuation_audit_summary:
-        lines.append(
-            f"- carryover_multiday_continuation_audit_summary: selected_ticker={carryover_multiday_continuation_audit_summary.get('selected_ticker')} selected_path_t2_bias_only={carryover_multiday_continuation_audit_summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={carryover_multiday_continuation_audit_summary.get('broad_family_only_multiday_unsupported')} aligned_peer_multiday_ready={carryover_multiday_continuation_audit_summary.get('aligned_peer_multiday_ready')}"
-        )
-    carryover_aligned_peer_harvest_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_harvest_summary") or {})
-    if carryover_aligned_peer_harvest_summary:
-        lines.append(
-            f"- carryover_aligned_peer_harvest_summary: focus_ticker={carryover_aligned_peer_harvest_summary.get('focus_ticker')} focus_status={carryover_aligned_peer_harvest_summary.get('focus_status')} fresh_open_cycle_tickers={carryover_aligned_peer_harvest_summary.get('fresh_open_cycle_tickers')}"
-        )
-    carryover_peer_expansion_summary = dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {})
-    if carryover_peer_expansion_summary:
-        lines.append(
-            f"- carryover_peer_expansion_summary: focus_ticker={carryover_peer_expansion_summary.get('focus_ticker')} focus_status={carryover_peer_expansion_summary.get('focus_status')} priority_expansion_tickers={carryover_peer_expansion_summary.get('priority_expansion_tickers')} watch_with_risk_tickers={carryover_peer_expansion_summary.get('watch_with_risk_tickers')}"
-        )
-    carryover_aligned_peer_proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
-    if carryover_aligned_peer_proof_summary:
-        lines.append(
-            f"- carryover_aligned_peer_proof_summary: focus_ticker={carryover_aligned_peer_proof_summary.get('focus_ticker')} focus_proof_verdict={carryover_aligned_peer_proof_summary.get('focus_proof_verdict')} focus_promotion_review_verdict={carryover_aligned_peer_proof_summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={carryover_aligned_peer_proof_summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={carryover_aligned_peer_proof_summary.get('risk_review_tickers')}"
-        )
-    carryover_peer_promotion_gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
-    if carryover_peer_promotion_gate_summary:
-        lines.append(
-            f"- carryover_peer_promotion_gate_summary: focus_ticker={carryover_peer_promotion_gate_summary.get('focus_ticker')} focus_gate_verdict={carryover_peer_promotion_gate_summary.get('focus_gate_verdict')} ready_tickers={carryover_peer_promotion_gate_summary.get('ready_tickers')} blocked_open_tickers={carryover_peer_promotion_gate_summary.get('blocked_open_tickers')} pending_t_plus_2_tickers={carryover_peer_promotion_gate_summary.get('pending_t_plus_2_tickers')}"
-        )
-    lines.append(f"- upstream_shadow_followup_overlay_recommendation: {control_tower_snapshot.get('upstream_shadow_followup_recommendation')}")
-    if upstream_shadow_followup_overlay.get("validated_tickers"):
-        lines.append(
-            f"- upstream_backlog_interpretation_note: 以下 no-entry/watchlist/candidate-pool 建议仍是历史 backlog 画像；当前 active upstream recall 已收敛到 {upstream_shadow_followup_overlay.get('active_no_candidate_entry_priority_tickers')}。"
-        )
-    lines.append(f"- candidate_pool_recall_dossier_truncation_frontier_summary: {candidate_pool_recall_dossier_summary.get('truncation_frontier_summary')}")
-    lines.append(f"- catalyst_frontier_recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
-    lines.append(f"- score_fail_frontier_recommendation: {score_fail_frontier_summary.get('recommendation')}")
-    lines.append(f"- llm_recommendation: {llm_error_digest.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## Latest Upstream Shadow Followup Overlay")
-    lines.append(f"- status: {upstream_shadow_followup_overlay.get('status')}")
-    lines.append(f"- report_dir: {upstream_shadow_followup_overlay.get('report_dir')}")
-    lines.append(f"- trade_date: {upstream_shadow_followup_overlay.get('trade_date')}")
-    lines.append(f"- validated_tickers: {upstream_shadow_followup_overlay.get('validated_tickers')}")
-    lines.append(f"- near_miss_tickers: {upstream_shadow_followup_overlay.get('near_miss_tickers')}")
-    lines.append(f"- rejected_profitability_tickers: {upstream_shadow_followup_overlay.get('rejected_profitability_tickers')}")
-    lines.append(f"- decision_counts: {upstream_shadow_followup_overlay.get('decision_counts')}")
-    lines.append(f"- active_no_candidate_entry_priority_tickers: {upstream_shadow_followup_overlay.get('active_no_candidate_entry_priority_tickers')}")
-    lines.append(f"- active_absent_from_watchlist_tickers: {upstream_shadow_followup_overlay.get('active_absent_from_watchlist_tickers')}")
-    lines.append(f"- active_watchlist_absent_from_candidate_pool_tickers: {upstream_shadow_followup_overlay.get('active_watchlist_absent_from_candidate_pool_tickers')}")
-    lines.append(f"- active_upstream_handoff_focus_tickers: {upstream_shadow_followup_overlay.get('active_upstream_handoff_focus_tickers')}")
-    lines.append(f"- recommendation: {upstream_shadow_followup_overlay.get('recommendation')}")
-    for row in list(upstream_shadow_followup_overlay.get("rows") or [])[:3]:
-        lines.append(
-            f"- followup_row: ticker={row.get('ticker')} decision={row.get('decision')} downstream_bottleneck={row.get('downstream_bottleneck')} top_reasons={row.get('top_reasons')}"
-        )
-    lines.append("")
-
-    lines.append("## Control Tower Snapshot")
-    lines.append(f"- lane_status_counts: {control_tower_snapshot.get('lane_status_counts')}")
-    lines.append(f"- warn_count: {control_tower_snapshot.get('warn_count')}")
-    lines.append(f"- fail_count: {control_tower_snapshot.get('fail_count')}")
-    if selected_outcome_refresh_summary:
-        lines.append(
-            f"- selected_outcome_contract: focus_ticker={selected_outcome_refresh_summary.get('focus_ticker')} overall_contract_verdict={selected_outcome_refresh_summary.get('focus_overall_contract_verdict')} focus_cycle_status={selected_outcome_refresh_summary.get('focus_cycle_status')}"
-        )
-    if carryover_multiday_continuation_audit_summary:
-        lines.append(
-            f"- carryover_multiday_contract: selected_ticker={carryover_multiday_continuation_audit_summary.get('selected_ticker')} selected_path_t2_bias_only={carryover_multiday_continuation_audit_summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={carryover_multiday_continuation_audit_summary.get('broad_family_only_multiday_unsupported')}"
-        )
-    if carryover_aligned_peer_harvest_summary:
-        lines.append(
-            f"- carryover_peer_harvest_focus: focus_ticker={carryover_aligned_peer_harvest_summary.get('focus_ticker')} focus_status={carryover_aligned_peer_harvest_summary.get('focus_status')} fresh_open_cycle_tickers={carryover_aligned_peer_harvest_summary.get('fresh_open_cycle_tickers')}"
-        )
-    if carryover_peer_expansion_summary:
-        lines.append(
-            f"- carryover_peer_expansion_focus: focus_ticker={carryover_peer_expansion_summary.get('focus_ticker')} focus_status={carryover_peer_expansion_summary.get('focus_status')} priority_expansion_tickers={carryover_peer_expansion_summary.get('priority_expansion_tickers')} watch_with_risk_tickers={carryover_peer_expansion_summary.get('watch_with_risk_tickers')}"
-        )
-    if carryover_aligned_peer_proof_summary:
-        lines.append(
-            f"- carryover_peer_proof_focus: focus_ticker={carryover_aligned_peer_proof_summary.get('focus_ticker')} focus_promotion_review_verdict={carryover_aligned_peer_proof_summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={carryover_aligned_peer_proof_summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={carryover_aligned_peer_proof_summary.get('risk_review_tickers')}"
-        )
-    if carryover_peer_promotion_gate_summary:
-        lines.append(
-            f"- carryover_peer_promotion_gate_focus: focus_ticker={carryover_peer_promotion_gate_summary.get('focus_ticker')} focus_gate_verdict={carryover_peer_promotion_gate_summary.get('focus_gate_verdict')} ready_tickers={carryover_peer_promotion_gate_summary.get('ready_tickers')} blocked_open_tickers={carryover_peer_promotion_gate_summary.get('blocked_open_tickers')} pending_t_plus_2_tickers={carryover_peer_promotion_gate_summary.get('pending_t_plus_2_tickers')}"
-        )
-    for frontier in list(control_tower_snapshot.get("closed_frontiers") or []):
-        lines.append(
-            f"- closed_frontier: {frontier.get('frontier_id')} status={frontier.get('status')} passing_variant_count={frontier.get('passing_variant_count')}"
-        )
-        lines.append(f"  headline: {frontier.get('headline')}")
-        lines.append(f"  best_variant: {frontier.get('best_variant_name')}")
-    for task in list(control_tower_snapshot.get("next_actions") or []):
-        lines.append(f"- next_action: {task.get('title')}")
-        lines.append(f"  why_now: {task.get('why_now')}")
-        lines.append(f"  next_step: {task.get('next_step')}")
-    lines.append("")
-
-    lines.append("## Rollout Lanes")
-    rollout_lanes = list(control_tower_snapshot.get("rollout_lanes") or [])
-    if not rollout_lanes:
-        lines.append("- unavailable")
-    else:
-        for row in rollout_lanes:
-            lines.append(
-                f"- lane_id={row.get('lane_id')} ticker={row.get('ticker')} governance_tier={row.get('governance_tier')} lane_status={row.get('lane_status')} blocker={row.get('blocker')}"
-            )
-            lines.append(f"  validation_verdict: {row.get('validation_verdict')}")
-            lines.append(f"  missing_window_count: {row.get('missing_window_count')}")
-            lines.append(f"  next_step: {row.get('next_step')}")
-    lines.append("")
-
-    lines.append("## Independent Window Monitor")
-    independent_window_monitor = dict(control_tower_snapshot.get("independent_window_monitor") or {})
-    if not independent_window_monitor:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- report_dir_count: {independent_window_monitor.get('report_dir_count')}")
-        lines.append(f"- recommendation: {independent_window_monitor.get('recommendation')}")
-        for row in list(independent_window_monitor.get("rows") or []):
-            lines.append(
-                f"- ticker={row.get('ticker')} lane_id={row.get('lane_id')} readiness={row.get('readiness')} distinct_window_count={row.get('distinct_window_count')} missing_window_count={row.get('missing_window_count')}"
-            )
-            lines.append(f"  next_step: {row.get('next_step')}")
-    lines.append("")
-
-    lines.append("## T+1/T+2 Objective Monitor")
-    tplus1_tplus2_objective_monitor = dict(control_tower_snapshot.get("tplus1_tplus2_objective_monitor") or {})
-    if not tplus1_tplus2_objective_monitor:
-        lines.append("- unavailable")
-    else:
-        tradeable_surface = dict(tplus1_tplus2_objective_monitor.get("tradeable_surface") or {})
-        lines.append(f"- report_dir_count: {tplus1_tplus2_objective_monitor.get('report_dir_count')}")
-        lines.append(f"- recommendation: {tplus1_tplus2_objective_monitor.get('recommendation')}")
-        lines.append(f"- tradeable_closed_cycle_count: {tradeable_surface.get('closed_cycle_count')}")
-        lines.append(f"- tradeable_positive_rate: {tradeable_surface.get('t_plus_2_positive_rate')}")
-        lines.append(f"- tradeable_return_hit_rate_at_target: {tradeable_surface.get('t_plus_2_return_hit_rate_at_target')}")
-        lines.append(f"- tradeable_mean_t_plus_2_return: {tradeable_surface.get('mean_t_plus_2_return')}")
-        lines.append(f"- tradeable_verdict: {tradeable_surface.get('verdict')}")
-        for row in list(tplus1_tplus2_objective_monitor.get("ticker_leaderboard") or [])[:3]:
-            lines.append(
-                f"- ticker_objective_leader: {row.get('group_label')} closed_cycle_count={row.get('closed_cycle_count')} positive_rate={row.get('t_plus_2_positive_rate')} return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
-            )
-    lines.append("")
-
-    lines.append("## Tradeable Opportunity Pool")
-    if not tradeable_opportunity_pool_summary:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- status: {tradeable_opportunity_pool_summary.get('status')}")
-        lines.append(f"- result_truth_pool_count: {tradeable_opportunity_pool_summary.get('result_truth_pool_count')}")
-        lines.append(f"- tradeable_opportunity_pool_count: {tradeable_opportunity_pool_summary.get('tradeable_opportunity_pool_count')}")
-        lines.append(f"- system_recall_count: {tradeable_opportunity_pool_summary.get('system_recall_count')}")
-        lines.append(f"- selected_or_near_miss_count: {tradeable_opportunity_pool_summary.get('selected_or_near_miss_count')}")
-        lines.append(f"- main_execution_pool_count: {tradeable_opportunity_pool_summary.get('main_execution_pool_count')}")
-        lines.append(f"- strict_goal_case_count: {tradeable_opportunity_pool_summary.get('strict_goal_case_count')}")
-        lines.append(f"- strict_goal_false_negative_count: {tradeable_opportunity_pool_summary.get('strict_goal_false_negative_count')}")
-        lines.append(f"- tradeable_pool_capture_rate: {tradeable_opportunity_pool_summary.get('tradeable_pool_capture_rate')}")
-        lines.append(f"- tradeable_pool_selected_or_near_miss_rate: {tradeable_opportunity_pool_summary.get('tradeable_pool_selected_or_near_miss_rate')}")
-        lines.append(f"- tradeable_pool_main_execution_rate: {tradeable_opportunity_pool_summary.get('tradeable_pool_main_execution_rate')}")
-        lines.append(f"- no_candidate_entry_count: {tradeable_opportunity_pool_summary.get('no_candidate_entry_count')}")
-        lines.append(f"- no_candidate_entry_share_of_tradeable_pool: {tradeable_opportunity_pool_summary.get('no_candidate_entry_share_of_tradeable_pool')}")
-        lines.append(f"- top_no_candidate_entry_industries: {tradeable_opportunity_pool_summary.get('top_no_candidate_entry_industries')}")
-        lines.append(f"- top_no_candidate_entry_tickers: {tradeable_opportunity_pool_summary.get('top_no_candidate_entry_tickers')}")
-        lines.append(f"- top_tradeable_kill_switch_labels: {tradeable_opportunity_pool_summary.get('top_tradeable_kill_switch_labels')}")
-        for row in list(tradeable_opportunity_pool_summary.get("top_tradeable_kill_switches") or []):
-            lines.append(f"- top_tradeable_kill_switch: {row.get('kill_switch')} count={row.get('count')}")
-        for row in list(tradeable_opportunity_pool_summary.get("top_strict_goal_false_negative_rows") or []):
-            lines.append(
-                f"- top_strict_goal_false_negative: {row.get('trade_date')} {row.get('ticker')} kill_switch={row.get('first_kill_switch')} t_plus_2_close_return={row.get('t_plus_2_close_return')}"
-            )
-        lines.append(f"- recommendation: {tradeable_opportunity_pool_summary.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## No Candidate Entry Action Board")
-    if upstream_shadow_followup_overlay.get("validated_tickers"):
-        lines.append(
-            f"- note: 本 section 保留历史 no-entry backlog 排名；当前 active upstream recall 已收敛到 {upstream_shadow_followup_overlay.get('active_no_candidate_entry_priority_tickers')}，已正式 followup 验证的票请转看上面的 Latest Upstream Shadow Followup Overlay。"
-        )
-    if not no_candidate_entry_action_board_summary:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- status: {no_candidate_entry_action_board_summary.get('status')}")
-        lines.append(f"- priority_queue_count: {no_candidate_entry_action_board_summary.get('priority_queue_count')}")
-        lines.append(f"- top_priority_tickers: {no_candidate_entry_action_board_summary.get('top_priority_tickers')}")
-        lines.append(f"- top_hotspot_report_dirs: {no_candidate_entry_action_board_summary.get('top_hotspot_report_dirs')}")
-        for row in list(no_candidate_entry_action_board_summary.get("priority_queue") or []):
-            lines.append(
-                f"- no_candidate_entry_priority: {row.get('ticker')} action_tier={row.get('action_tier')} strict_goal_case_count={row.get('strict_goal_case_count')} occurrence_count={row.get('occurrence_count')}"
-            )
-        for task in list(no_candidate_entry_action_board_summary.get("next_tasks") or []):
-            lines.append(f"- next_task: {task.get('task_id')} | {task.get('title')}")
-            lines.append(f"  next_step: {task.get('next_step')}")
-        lines.append(f"- recommendation: {no_candidate_entry_action_board_summary.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## No Candidate Entry Replay Bundle")
-    if not no_candidate_entry_replay_bundle_summary:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- status: {no_candidate_entry_replay_bundle_summary.get('status')}")
-        lines.append(f"- promising_priority_tickers: {no_candidate_entry_replay_bundle_summary.get('promising_priority_tickers')}")
-        lines.append(f"- promising_hotspot_report_dirs: {no_candidate_entry_replay_bundle_summary.get('promising_hotspot_report_dirs')}")
-        lines.append(f"- candidate_entry_status_counts: {no_candidate_entry_replay_bundle_summary.get('candidate_entry_status_counts')}")
-        lines.append(f"- global_window_scan_rollout_readiness: {no_candidate_entry_replay_bundle_summary.get('global_window_scan_rollout_readiness')}")
-        lines.append(f"- global_window_scan_focus_hit_report_count: {no_candidate_entry_replay_bundle_summary.get('global_window_scan_focus_hit_report_count')}")
-        for item in list(no_candidate_entry_replay_bundle_summary.get("next_actions") or []):
-            lines.append(f"- next_action: {item}")
-        lines.append(f"- recommendation: {no_candidate_entry_replay_bundle_summary.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## No Candidate Entry Failure Dossier")
-    if upstream_shadow_followup_overlay.get("validated_tickers"):
-        lines.append(
-            f"- note: 本 section 反映历史 failure dossier 断点；当前 active absent_from_watchlist 只剩 {upstream_shadow_followup_overlay.get('active_absent_from_watchlist_tickers')}。"
-        )
-    if not no_candidate_entry_failure_dossier_summary:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- status: {no_candidate_entry_failure_dossier_summary.get('status')}")
-        lines.append(f"- priority_failure_class_counts: {no_candidate_entry_failure_dossier_summary.get('priority_failure_class_counts')}")
-        lines.append(f"- hotspot_failure_class_counts: {no_candidate_entry_failure_dossier_summary.get('hotspot_failure_class_counts')}")
-        lines.append(f"- priority_handoff_stage_counts: {no_candidate_entry_failure_dossier_summary.get('priority_handoff_stage_counts')}")
-        lines.append(f"- top_absent_from_watchlist_tickers: {no_candidate_entry_failure_dossier_summary.get('top_absent_from_watchlist_tickers')}")
-        lines.append(f"- top_watchlist_visible_but_not_candidate_entry_tickers: {no_candidate_entry_failure_dossier_summary.get('top_watchlist_visible_but_not_candidate_entry_tickers')}")
-        lines.append(f"- top_candidate_entry_visible_but_not_selection_target_tickers: {no_candidate_entry_failure_dossier_summary.get('top_candidate_entry_visible_but_not_selection_target_tickers')}")
-        lines.append(f"- top_upstream_absence_tickers: {no_candidate_entry_failure_dossier_summary.get('top_upstream_absence_tickers')}")
-        lines.append(f"- top_candidate_entry_semantic_miss_tickers: {no_candidate_entry_failure_dossier_summary.get('top_candidate_entry_semantic_miss_tickers')}")
-        lines.append(f"- top_present_but_outside_candidate_entry_tickers: {no_candidate_entry_failure_dossier_summary.get('top_present_but_outside_candidate_entry_tickers')}")
-        lines.append(f"- top_missing_replay_input_tickers: {no_candidate_entry_failure_dossier_summary.get('top_missing_replay_input_tickers')}")
-        for row in list(no_candidate_entry_failure_dossier_summary.get("handoff_action_queue") or []):
-            lines.append(f"- handoff_task: {row.get('task_id')} stage={row.get('handoff_stage')} tier={row.get('action_tier')}")
-            lines.append(f"  next_step: {row.get('next_step')}")
-        for item in list(no_candidate_entry_failure_dossier_summary.get("next_actions") or []):
-            lines.append(f"- next_action: {item}")
-        lines.append(f"- recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## Watchlist Recall Dossier")
-    if upstream_shadow_followup_overlay.get("validated_tickers"):
-        lines.append(
-            f"- note: 本 section 保留历史 watchlist recall backlog；当前 active absent_from_candidate_pool 只剩 {upstream_shadow_followup_overlay.get('active_watchlist_absent_from_candidate_pool_tickers')}。"
-        )
-    if not watchlist_recall_dossier_summary:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- status: {watchlist_recall_dossier_summary.get('status')}")
-        lines.append(f"- priority_recall_stage_counts: {watchlist_recall_dossier_summary.get('priority_recall_stage_counts')}")
-        lines.append(f"- top_absent_from_candidate_pool_tickers: {watchlist_recall_dossier_summary.get('top_absent_from_candidate_pool_tickers')}")
-        lines.append(f"- top_candidate_pool_visible_but_missing_layer_b_tickers: {watchlist_recall_dossier_summary.get('top_candidate_pool_visible_but_missing_layer_b_tickers')}")
-        lines.append(f"- top_layer_b_visible_but_missing_watchlist_tickers: {watchlist_recall_dossier_summary.get('top_layer_b_visible_but_missing_watchlist_tickers')}")
-        for row in list(watchlist_recall_dossier_summary.get("action_queue") or []):
-            lines.append(f"- watchlist_recall_task: {row.get('task_id')} stage={row.get('dominant_recall_stage')} tier={row.get('action_tier')}")
-            lines.append(f"  next_step: {row.get('next_step')}")
-        for item in list(watchlist_recall_dossier_summary.get("next_actions") or []):
-            lines.append(f"- next_action: {item}")
-        lines.append(f"- recommendation: {watchlist_recall_dossier_summary.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## Candidate Pool Recall Dossier")
-    if upstream_shadow_followup_overlay.get("validated_tickers"):
-        lines.append(
-            f"- note: 本 section 的 Layer A 截断画像保留为历史 lane 背景；当前 active upstream handoff focus 已收敛到 {upstream_shadow_followup_overlay.get('active_upstream_handoff_focus_tickers')}。"
-        )
-    if not candidate_pool_recall_dossier_summary:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- status: {candidate_pool_recall_dossier_summary.get('status')}")
-        lines.append(f"- priority_stage_counts: {candidate_pool_recall_dossier_summary.get('priority_stage_counts')}")
-        lines.append(f"- dominant_stage: {candidate_pool_recall_dossier_summary.get('dominant_stage')}")
-        lines.append(f"- top_stage_tickers: {candidate_pool_recall_dossier_summary.get('top_stage_tickers')}")
-        lines.append(f"- priority_handoff_branch_diagnoses: {candidate_pool_recall_dossier_summary.get('priority_handoff_branch_diagnoses')}")
-        lines.append(f"- priority_handoff_branch_mechanisms: {candidate_pool_recall_dossier_summary.get('priority_handoff_branch_mechanisms')}")
-        branch_experiment_queue = list(candidate_pool_recall_dossier_summary.get("priority_handoff_branch_experiment_queue") or [])
-        lines.append("- priority_handoff_branch_experiment_queue: structured_summary")
-        lines.append(f"- priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
-        for experiment in branch_experiment_queue[:3]:
-            lines.append(
-                f"- branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
-            )
-            lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
-            lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
-            lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
-        lines.append(f"- branch_priority_board_status: {candidate_pool_recall_dossier_summary.get('branch_priority_board_status')}")
-        lines.append(f"- branch_priority_alignment_status: {candidate_pool_recall_dossier_summary.get('branch_priority_alignment_status')}")
-        if candidate_pool_recall_dossier_summary.get("branch_priority_alignment_summary"):
-            lines.append(f"- branch_priority_alignment_summary: {candidate_pool_recall_dossier_summary.get('branch_priority_alignment_summary')}")
-        for row in list(candidate_pool_recall_dossier_summary.get("branch_priority_board_rows") or [])[:3]:
-            lines.append(
-                f"- branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
-            )
-        lines.append(f"- lane_objective_support_status: {candidate_pool_recall_dossier_summary.get('lane_objective_support_status')}")
-        for row in list(candidate_pool_recall_dossier_summary.get("lane_objective_support_rows") or [])[:3]:
-            lines.append(
-                f"- lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
-            )
-        lines.append(f"- corridor_validation_pack_status: {candidate_pool_recall_dossier_summary.get('corridor_validation_pack_status')}")
-        corridor_summary = dict(candidate_pool_recall_dossier_summary.get("corridor_validation_pack_summary") or {})
-        if corridor_summary:
-            lines.append(
-                f"- corridor_validation_pack_summary: pack_status={corridor_summary.get('pack_status')} primary_validation_ticker={corridor_summary.get('primary_validation_ticker')} parallel_watch_tickers={corridor_summary.get('parallel_watch_tickers')}"
-            )
-        lines.append(f"- corridor_shadow_pack_status: {candidate_pool_recall_dossier_summary.get('corridor_shadow_pack_status')}")
-        corridor_shadow_summary = dict(candidate_pool_recall_dossier_summary.get("corridor_shadow_pack_summary") or {})
-        if corridor_shadow_summary:
-            lines.append(
-                f"- corridor_shadow_pack_summary: shadow_status={corridor_shadow_summary.get('shadow_status')} primary_shadow_replay={corridor_shadow_summary.get('primary_shadow_replay')} parallel_watch_tickers={corridor_shadow_summary.get('parallel_watch_tickers')}"
-            )
-        lines.append(f"- rebucket_shadow_pack_status: {candidate_pool_recall_dossier_summary.get('rebucket_shadow_pack_status')}")
-        rebucket_experiment = dict(candidate_pool_recall_dossier_summary.get("rebucket_shadow_pack_experiment") or {})
-        if rebucket_experiment:
-            lines.append(
-                f"- rebucket_shadow_pack_experiment: handoff={rebucket_experiment.get('priority_handoff')} readiness={rebucket_experiment.get('prototype_readiness')} tickers={rebucket_experiment.get('tickers')}"
-            )
-        lines.append(f"- rebucket_objective_validation_status: {candidate_pool_recall_dossier_summary.get('rebucket_objective_validation_status')}")
-        rebucket_validation_summary = dict(candidate_pool_recall_dossier_summary.get("rebucket_objective_validation_summary") or {})
-        if rebucket_validation_summary:
-            lines.append(
-                f"- rebucket_objective_validation_summary: validation_status={rebucket_validation_summary.get('validation_status')} support_verdict={rebucket_validation_summary.get('support_verdict')} mean_t_plus_2_return={rebucket_validation_summary.get('mean_t_plus_2_return')}"
-            )
-        lines.append(f"- rebucket_comparison_bundle_status: {candidate_pool_recall_dossier_summary.get('rebucket_comparison_bundle_status')}")
-        rebucket_comparison_summary = dict(candidate_pool_recall_dossier_summary.get("rebucket_comparison_bundle_summary") or {})
-        if rebucket_comparison_summary:
-            lines.append(
-                f"- rebucket_comparison_bundle_summary: bundle_status={rebucket_comparison_summary.get('bundle_status')} structural_leader={rebucket_comparison_summary.get('structural_leader')} objective_leader={rebucket_comparison_summary.get('objective_leader')}"
-            )
-        lines.append(f"- lane_pair_board_status: {candidate_pool_recall_dossier_summary.get('lane_pair_board_status')}")
-        lane_pair_summary = dict(candidate_pool_recall_dossier_summary.get("lane_pair_board_summary") or {})
-        if lane_pair_summary:
-            lines.append(
-                f"- lane_pair_board_summary: pair_status={lane_pair_summary.get('pair_status')} board_leader={lane_pair_summary.get('board_leader')} leader_lane_family={lane_pair_summary.get('leader_lane_family')} leader_governance_status={lane_pair_summary.get('leader_governance_status')} leader_governance_execution_quality={lane_pair_summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={lane_pair_summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={lane_pair_summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={lane_pair_summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={lane_pair_summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={lane_pair_summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={lane_pair_summary.get('parallel_watch_next_close_return_mean')}"
-            )
-        continuation_focus_summary = dict(candidate_pool_recall_dossier_summary.get("continuation_focus_summary") or {})
-        if continuation_focus_summary:
-            lines.append(
-                f"- continuation_focus_summary: focus_ticker={continuation_focus_summary.get('focus_ticker')} promotion_review_verdict={continuation_focus_summary.get('promotion_review_verdict')} promotion_gate_verdict={continuation_focus_summary.get('promotion_gate_verdict')} watchlist_execution_verdict={continuation_focus_summary.get('watchlist_execution_verdict')} focus_watch_validation_status={continuation_focus_summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={continuation_focus_summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={continuation_focus_summary.get('eligible_gate_verdict')} execution_gate_verdict={continuation_focus_summary.get('execution_gate_verdict')} execution_gate_blockers={continuation_focus_summary.get('execution_gate_blockers')} execution_overlay_verdict={continuation_focus_summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={continuation_focus_summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={continuation_focus_summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={continuation_focus_summary.get('execution_overlay_lane_support_ratio')} governance_status={continuation_focus_summary.get('governance_status')}"
-            )
-        continuation_promotion_ready_summary = dict(candidate_pool_recall_dossier_summary.get("continuation_promotion_ready_summary") or {})
-        if continuation_promotion_ready_summary:
-            lines.append(
-                f"- continuation_promotion_ready_summary: focus_ticker={continuation_promotion_ready_summary.get('focus_ticker')} promotion_path_status={continuation_promotion_ready_summary.get('promotion_path_status')} blockers_remaining_count={continuation_promotion_ready_summary.get('blockers_remaining_count')} observed_independent_window_count={continuation_promotion_ready_summary.get('observed_independent_window_count')} missing_independent_window_count={continuation_promotion_ready_summary.get('missing_independent_window_count')} candidate_dossier_support_trade_date_count={continuation_promotion_ready_summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={continuation_promotion_ready_summary.get('candidate_dossier_same_trade_date_variant_count')} persistence_verdict={continuation_promotion_ready_summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={continuation_promotion_ready_summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={continuation_promotion_ready_summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={continuation_promotion_ready_summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={continuation_promotion_ready_summary.get('ready_after_next_qualifying_window')} next_window_requirement={continuation_promotion_ready_summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={continuation_promotion_ready_summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={continuation_promotion_ready_summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={continuation_promotion_ready_summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={continuation_promotion_ready_summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={continuation_promotion_ready_summary.get('t_plus_2_mean_return_delta_vs_default_btst')}"
-            )
-        transient_probe_summary = dict(candidate_pool_recall_dossier_summary.get("transient_probe_summary") or {})
-        if transient_probe_summary:
-            lines.append(
-                f"- transient_probe_summary: ticker={transient_probe_summary.get('ticker')} status={transient_probe_summary.get('status')} blocker={transient_probe_summary.get('blocker')} candidate_source={transient_probe_summary.get('candidate_source')} score_state={transient_probe_summary.get('score_state')} downstream_bottleneck={transient_probe_summary.get('downstream_bottleneck')} historical_sample_count={transient_probe_summary.get('historical_sample_count')} historical_next_close_positive_rate={transient_probe_summary.get('historical_next_close_positive_rate')}"
-            )
-        execution_constraint_rollup = dict(candidate_pool_recall_dossier_summary.get("execution_constraint_rollup") or {})
-        if execution_constraint_rollup:
-            lines.append(
-                f"- execution_constraint_rollup: constraint_count={execution_constraint_rollup.get('constraint_count')} continuation_focus_tickers={execution_constraint_rollup.get('continuation_focus_tickers')} continuation_blockers={execution_constraint_rollup.get('continuation_blockers')} shadow_focus_tickers={execution_constraint_rollup.get('shadow_focus_tickers')} shadow_blockers={execution_constraint_rollup.get('shadow_blockers')}"
-            )
-        lines.append(f"- upstream_handoff_board_status: {candidate_pool_recall_dossier_summary.get('upstream_handoff_board_status')}")
-        upstream_handoff_summary = dict(candidate_pool_recall_dossier_summary.get("upstream_handoff_board_summary") or {})
-        if upstream_handoff_summary:
-            lines.append(
-                f"- upstream_handoff_board_summary: board_status={upstream_handoff_summary.get('board_status')} focus_tickers={upstream_handoff_summary.get('focus_tickers')} first_broken_handoff_counts={upstream_handoff_summary.get('first_broken_handoff_counts')}"
-            )
-        lines.append(f"- corridor_uplift_runbook_status: {candidate_pool_recall_dossier_summary.get('corridor_uplift_runbook_status')}")
-        corridor_uplift_summary = dict(candidate_pool_recall_dossier_summary.get("corridor_uplift_runbook_summary") or {})
-        if corridor_uplift_summary:
-            lines.append(
-                f"- corridor_uplift_runbook_summary: runbook_status={corridor_uplift_summary.get('runbook_status')} primary_shadow_replay={corridor_uplift_summary.get('primary_shadow_replay')} parallel_watch_tickers={corridor_uplift_summary.get('parallel_watch_tickers')}"
-            )
-        for row in list(candidate_pool_recall_dossier_summary.get("action_queue") or []):
-            lines.append(f"- candidate_pool_recall_task: {row.get('task_id')} stage={row.get('dominant_blocking_stage')} tier={row.get('action_tier')}")
-            lines.append(f"  next_step: {row.get('next_step')}")
-        for item in list(candidate_pool_recall_dossier_summary.get("next_actions") or []):
-            lines.append(f"- next_action: {item}")
-        lines.append(f"- recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## Priority Board Snapshot")
-    lines.append(f"- summary: {latest_priority_board_snapshot.get('summary')}")
-    lines.append(f"- brief_recommendation: {latest_priority_board_snapshot.get('brief_recommendation')}")
-    for index, row in enumerate(list(latest_priority_board_snapshot.get("priority_rows") or []), start=1):
-        lines.append(
-            f"- {index}. {row.get('ticker')}: lane={row.get('lane')} actionability={row.get('actionability')} execution_quality_label={row.get('execution_quality_label')}"
-        )
-        lines.append(f"  why_now: {row.get('why_now')}")
-        lines.append(f"  suggested_action: {row.get('suggested_action')}")
-        lines.append(f"  historical_summary: {row.get('historical_summary')}")
-    for guardrail in list(latest_priority_board_snapshot.get("global_guardrails") or []):
-        lines.append(f"- guardrail: {guardrail}")
-    lines.append("")
-
-    lines.append("## Catalyst Theme Frontier")
-    if not catalyst_theme_frontier_summary:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- status: {catalyst_theme_frontier_summary.get('status')}")
-        lines.append(f"- shadow_candidate_count: {catalyst_theme_frontier_summary.get('shadow_candidate_count')}")
-        lines.append(f"- baseline_selected_count: {catalyst_theme_frontier_summary.get('baseline_selected_count')}")
-        lines.append(f"- recommended_variant_name: {catalyst_theme_frontier_summary.get('recommended_variant_name')}")
-        lines.append(f"- recommended_promoted_shadow_count: {catalyst_theme_frontier_summary.get('recommended_promoted_shadow_count')}")
-        lines.append(f"- recommended_relaxation_cost: {catalyst_theme_frontier_summary.get('recommended_relaxation_cost')}")
-        lines.append(f"- recommended_thresholds: {catalyst_theme_frontier_summary.get('recommended_thresholds')}")
-        promoted_tickers = list(catalyst_theme_frontier_summary.get("recommended_promoted_tickers") or [])
-        lines.append(f"- recommended_promoted_tickers: {', '.join(promoted_tickers) if promoted_tickers else 'none'}")
-        lines.append(f"- recommendation: {catalyst_theme_frontier_summary.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## Score-Fail Frontier Queue")
-    if not score_fail_frontier_summary:
-        lines.append("- unavailable")
-    else:
-        lines.append(f"- status: {score_fail_frontier_summary.get('status')}")
-        lines.append(f"- rejected_short_trade_boundary_count: {score_fail_frontier_summary.get('rejected_short_trade_boundary_count')}")
-        lines.append(f"- rescueable_case_count: {score_fail_frontier_summary.get('rescueable_case_count')}")
-        lines.append(f"- threshold_only_rescue_count: {score_fail_frontier_summary.get('threshold_only_rescue_count')}")
-        lines.append(f"- recurring_case_count: {score_fail_frontier_summary.get('recurring_case_count')}")
-        lines.append(f"- transition_candidate_count: {score_fail_frontier_summary.get('transition_candidate_count')}")
-        lines.append(f"- recurring_shadow_refresh_status: {score_fail_frontier_summary.get('recurring_shadow_refresh_status')}")
-        priority_queue_tickers = list(score_fail_frontier_summary.get("priority_queue_tickers") or [])
-        lines.append(f"- priority_queue_tickers: {', '.join(priority_queue_tickers) if priority_queue_tickers else 'none'}")
-        top_rescue_tickers = list(score_fail_frontier_summary.get("top_rescue_tickers") or [])
-        lines.append(f"- top_rescue_tickers: {', '.join(top_rescue_tickers) if top_rescue_tickers else 'none'}")
-        for row in list(score_fail_frontier_summary.get("priority_queue") or []):
-            lines.append(
-                f"- recurring_priority: {row.get('ticker')} occurrence_count={row.get('occurrence_count')} minimal_adjustment_cost={row.get('minimal_adjustment_cost')} gap_to_near_miss_mean={row.get('gap_to_near_miss_mean')}"
-            )
-        for row in list(score_fail_frontier_summary.get("top_rescue_rows") or []):
-            lines.append(
-                f"- top_rescue_row: {row.get('trade_date')} {row.get('ticker')} baseline_score={row.get('baseline_score_target')} replayed_score={row.get('replayed_score_target')} adjustment_cost={row.get('adjustment_cost')}"
-            )
-        lines.append(f"- recommendation: {score_fail_frontier_summary.get('recommendation')}")
-    lines.append("")
-
-    lines.append("## LLM Health")
-    lines.append(f"- status: {llm_error_digest.get('status')}")
-    lines.append(f"- error_count: {llm_error_digest.get('error_count')}")
-    lines.append(f"- rate_limit_error_count: {llm_error_digest.get('rate_limit_error_count')}")
-    lines.append(f"- fallback_attempt_count: {llm_error_digest.get('fallback_attempt_count')}")
-    lines.append(f"- affected_provider_count: {llm_error_digest.get('affected_provider_count')}")
-    lines.append(f"- fallback_gap_detected: {llm_error_digest.get('fallback_gap_detected')}")
-    top_error_types = list(llm_error_digest.get("top_error_types") or [])
-    if top_error_types:
-        for row in top_error_types:
-            lines.append(f"- top_error_type: {row.get('error_type')} count={row.get('count')}")
-    else:
-        lines.append("- top_error_type: none")
-    affected_providers = list(llm_error_digest.get("affected_providers") or [])
-    if affected_providers:
-        for row in affected_providers:
-            lines.append(
-                f"- provider_health: {row.get('provider')} errors={row.get('errors')} attempts={row.get('attempts')} error_rate={row.get('error_rate')} fallback_attempts={row.get('fallback_attempts')}"
-            )
-    else:
-        lines.append("- provider_health: none")
-    sample_errors = list(llm_error_digest.get("sample_errors") or [])
-    if sample_errors:
-        for row in sample_errors:
-            lines.append(
-                f"- sample_error: {row.get('provider')} {row.get('error_type')} stage={row.get('pipeline_stage')} tier={row.get('model_tier')} message={row.get('message')}"
-            )
-    else:
-        lines.append("- sample_error: none")
-    lines.append("")
-
-    lines.append("## Replay Cohort Snapshot")
-    lines.append(f"- short_trade_summary: {replay_cohort_snapshot.get('short_trade_summary')}")
-    lines.append(f"- frozen_summary: {replay_cohort_snapshot.get('frozen_summary')}")
-    latest_short_trade_row = dict(replay_cohort_snapshot.get("latest_short_trade_row") or {})
-    if latest_short_trade_row:
-        lines.append(f"- latest_short_trade_report: {latest_short_trade_row.get('report_dir_name')}")
-        lines.append(f"  total_return_pct: {latest_short_trade_row.get('total_return_pct')}")
-        lines.append(f"  near_miss_count: {latest_short_trade_row.get('near_miss_count')}")
-        lines.append(f"  opportunity_pool_count: {latest_short_trade_row.get('opportunity_pool_count')}")
-    for row in list(replay_cohort_snapshot.get("top_return_rows") or []):
-        lines.append(
-            f"- top_return_row: {row.get('report_dir_name')} | selection_target={row.get('selection_target')} | total_return_pct={row.get('total_return_pct')} | near_miss_count={row.get('near_miss_count')}"
-        )
-    lines.append("")
-
-    lines.append("## Reading Order")
-    for item in list(payload.get("recommended_reading_order") or []):
-        lines.append(f"- {item.get('entry_id')}: {item.get('question')} | {item.get('report_path')}")
-    lines.append("")
-
-    lines.append("## Fast Links")
-    for label, source_path in source_paths.items():
-        relative_target = _relative_link(source_path, resolved_output_parent)
-        if relative_target:
-            lines.append(f"- {label}: [{Path(source_path).name}]({relative_target})")
-        else:
-            lines.append(f"- {label}: {source_path}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
+    _append_nightly_overview_markdown(
+        lines,
+        payload,
+        latest_btst_run,
+        control_tower_snapshot,
+        replay_cohort_snapshot,
+        catalyst_theme_frontier_summary,
+        score_fail_frontier_summary,
+        llm_error_digest,
+    )
+    _append_nightly_summary_markdown(
+        lines,
+        control_tower_snapshot,
+        latest_priority_board_snapshot,
+        replay_cohort_snapshot,
+        tradeable_opportunity_pool_summary,
+        no_candidate_entry_action_board_summary,
+        no_candidate_entry_replay_bundle_summary,
+        no_candidate_entry_failure_dossier_summary,
+        watchlist_recall_dossier_summary,
+        candidate_pool_recall_dossier_summary,
+        upstream_shadow_followup_overlay,
+        catalyst_theme_frontier_summary,
+        score_fail_frontier_summary,
+        llm_error_digest,
+    )
+    _append_latest_upstream_shadow_followup_overlay_markdown(lines, upstream_shadow_followup_overlay)
+    _append_control_tower_snapshot_markdown(lines, control_tower_snapshot)
+    _append_rollout_lanes_markdown(lines, control_tower_snapshot)
+    _append_independent_window_monitor_markdown(lines, control_tower_snapshot)
+    _append_tplus1_tplus2_objective_monitor_markdown(lines, control_tower_snapshot)
+    _append_tradeable_opportunity_pool_markdown(lines, tradeable_opportunity_pool_summary)
+    _append_no_candidate_entry_action_board_markdown(lines, no_candidate_entry_action_board_summary, upstream_shadow_followup_overlay)
+    _append_no_candidate_entry_replay_bundle_markdown(lines, no_candidate_entry_replay_bundle_summary)
+    _append_no_candidate_entry_failure_dossier_markdown(lines, no_candidate_entry_failure_dossier_summary, upstream_shadow_followup_overlay)
+    _append_watchlist_recall_dossier_markdown(lines, watchlist_recall_dossier_summary, upstream_shadow_followup_overlay)
+    _append_candidate_pool_recall_dossier_markdown(lines, candidate_pool_recall_dossier_summary, upstream_shadow_followup_overlay)
+    _append_priority_board_snapshot_markdown(lines, latest_priority_board_snapshot)
+    _append_catalyst_theme_frontier_markdown(lines, catalyst_theme_frontier_summary)
+    _append_score_fail_frontier_queue_markdown(lines, score_fail_frontier_summary)
+    _append_nightly_llm_health_markdown(lines, llm_error_digest)
+    _append_replay_cohort_snapshot_markdown(lines, replay_cohort_snapshot)
+    _append_nightly_reading_order_markdown(lines, payload)
+    _append_nightly_fast_links_markdown(lines, source_paths, resolved_output_parent)
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def generate_btst_nightly_control_tower_artifacts(

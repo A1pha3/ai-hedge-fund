@@ -185,18 +185,21 @@ def _recommendation(
     return "当前 closed-cycle 证据不足或整体未达标，默认结论应继续保持观察优先，不应为了覆盖而主动放松执行阈值。"
 
 
-def render_btst_tplus1_tplus2_objective_monitor_markdown(analysis: dict[str, Any]) -> str:
-    lines: list[str] = []
-    lines.append("# BTST T+1 Buy / T+2 Sell Objective Monitor")
-    lines.append("")
+def _append_objective_monitor_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Objective")
-    lines.append(f"- generated_at: {analysis.get('generated_at')}")
-    lines.append(f"- reports_root: {analysis.get('reports_root')}")
-    lines.append(f"- report_dir_count: {analysis.get('report_dir_count')}")
-    lines.append(f"- positive_rate_target: {analysis.get('positive_rate_target')}")
-    lines.append(f"- t_plus_2_return_target: {analysis.get('t_plus_2_return_target')}")
-    lines.append(f"- leaderboard_min_closed_cycle_count: {analysis.get('leaderboard_min_closed_cycle_count')}")
+    for key in (
+        "generated_at",
+        "reports_root",
+        "report_dir_count",
+        "positive_rate_target",
+        "t_plus_2_return_target",
+        "leaderboard_min_closed_cycle_count",
+    ):
+        lines.append(f"- {key}: {analysis.get(key)}")
     lines.append("")
+
+
+def _append_objective_monitor_surface_summary_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Surface Summary")
     for label in ("all_surface", "tradeable_surface", "selected_surface", "near_miss_surface", "non_tradeable_surface"):
         summary = dict(analysis.get(label) or {})
@@ -204,49 +207,48 @@ def render_btst_tplus1_tplus2_objective_monitor_markdown(analysis: dict[str, Any
             f"- {label}: closed_cycle_count={summary.get('closed_cycle_count')}, positive_rate={summary.get('t_plus_2_positive_rate')}, return_hit_rate={summary.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={summary.get('mean_t_plus_2_return')}, verdict={summary.get('verdict')}, objective_fit_score={summary.get('objective_fit_score')}"
         )
     lines.append("")
-    lines.append("## Decision Leaderboard")
-    for row in list(analysis.get("decision_leaderboard") or []):
+
+
+def _append_objective_monitor_leaderboard_markdown(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
+    lines.append(f"## {title}")
+    for row in rows:
         lines.append(
             f"- {row.get('group_label')}: closed_cycle_count={row.get('closed_cycle_count')}, positive_rate={row.get('t_plus_2_positive_rate')}, return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={row.get('mean_t_plus_2_return')}, verdict={row.get('verdict')}, objective_fit_score={row.get('objective_fit_score')}"
         )
-    if not list(analysis.get("decision_leaderboard") or []):
+    if not rows:
         lines.append("- none")
     lines.append("")
-    lines.append("## Candidate Source Leaderboard")
-    for row in list(analysis.get("candidate_source_leaderboard") or []):
-        lines.append(
-            f"- {row.get('group_label')}: closed_cycle_count={row.get('closed_cycle_count')}, positive_rate={row.get('t_plus_2_positive_rate')}, return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={row.get('mean_t_plus_2_return')}, verdict={row.get('verdict')}, objective_fit_score={row.get('objective_fit_score')}"
-        )
-    if not list(analysis.get("candidate_source_leaderboard") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Ticker Leaderboard")
-    for row in list(analysis.get("ticker_leaderboard") or []):
-        lines.append(
-            f"- {row.get('group_label')}: closed_cycle_count={row.get('closed_cycle_count')}, positive_rate={row.get('t_plus_2_positive_rate')}, return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={row.get('mean_t_plus_2_return')}, verdict={row.get('verdict')}, objective_fit_score={row.get('objective_fit_score')}"
-        )
-    if not list(analysis.get("ticker_leaderboard") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Strict Goal Cases")
-    for row in list(analysis.get("strict_goal_rows") or []):
+
+
+def _append_objective_monitor_goal_rows_markdown(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
+    lines.append(f"## {title}")
+    for row in rows:
         lines.append(
             f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, source={row.get('candidate_source')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, score_target={row.get('score_target')}"
         )
-    if not list(analysis.get("strict_goal_rows") or []):
+    if not rows:
         lines.append("- none")
     lines.append("")
-    lines.append("## False Negative Strict Goal Cases")
-    for row in list(analysis.get("false_negative_strict_goal_rows") or []):
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, source={row.get('candidate_source')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, score_target={row.get('score_target')}"
-        )
-    if not list(analysis.get("false_negative_strict_goal_rows") or []):
-        lines.append("- none")
-    lines.append("")
+
+
+def _append_objective_monitor_recommendation_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Recommendation")
     lines.append(f"- {analysis.get('recommendation')}")
     lines.append("")
+
+
+def render_btst_tplus1_tplus2_objective_monitor_markdown(analysis: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# BTST T+1 Buy / T+2 Sell Objective Monitor")
+    lines.append("")
+    _append_objective_monitor_overview_markdown(lines, analysis)
+    _append_objective_monitor_surface_summary_markdown(lines, analysis)
+    _append_objective_monitor_leaderboard_markdown(lines, "Decision Leaderboard", list(analysis.get("decision_leaderboard") or []))
+    _append_objective_monitor_leaderboard_markdown(lines, "Candidate Source Leaderboard", list(analysis.get("candidate_source_leaderboard") or []))
+    _append_objective_monitor_leaderboard_markdown(lines, "Ticker Leaderboard", list(analysis.get("ticker_leaderboard") or []))
+    _append_objective_monitor_goal_rows_markdown(lines, "Strict Goal Cases", list(analysis.get("strict_goal_rows") or []))
+    _append_objective_monitor_goal_rows_markdown(lines, "False Negative Strict Goal Cases", list(analysis.get("false_negative_strict_goal_rows") or []))
+    _append_objective_monitor_recommendation_markdown(lines, analysis)
     return "\n".join(lines)
 
 

@@ -653,6 +653,16 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append("# BTST Governance Synthesis")
     lines.append("")
+    _append_governance_synthesis_overview_markdown(lines, analysis)
+    _append_governance_synthesis_latest_followup_markdown(lines, analysis)
+    _append_governance_synthesis_constraints_markdown(lines, analysis)
+    _append_governance_synthesis_lane_matrix_markdown(lines, analysis)
+    _append_governance_synthesis_closed_frontiers_markdown(lines, analysis)
+    _append_governance_synthesis_next_actions_markdown(lines, analysis)
+    return "\n".join(lines) + "\n"
+
+
+def _append_governance_synthesis_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Overview")
     lines.append(f"- recommendation: {analysis.get('recommendation')}")
     lines.append(f"- ready_lane_count: {analysis.get('ready_lane_count')}")
@@ -660,6 +670,8 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- lane_status_counts: {analysis.get('lane_status_counts')}")
     lines.append("")
 
+
+def _append_governance_synthesis_latest_followup_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     latest_followup = dict(analysis.get("latest_btst_followup") or {})
     lines.append("## Latest BTST Followup")
     if not latest_followup:
@@ -685,6 +697,8 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
         lines.append(f"- evidence_followup_count: {len(evidence_followups)}")
     lines.append("")
 
+
+def _append_governance_synthesis_constraints_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Execution Surface Constraints")
     execution_surface_constraints = list(analysis.get("execution_surface_constraints") or [])
     if not execution_surface_constraints:
@@ -699,32 +713,36 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
             lines.append(f"  recommendation: {row.get('recommendation')}")
     lines.append("")
 
+
+def _append_governance_synthesis_lane_matrix_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Lane Matrix")
     for row in list(analysis.get("lane_matrix") or []):
         lines.append(
             f"- lane_id={row.get('lane_id')} ticker={row.get('ticker')} governance_tier={row.get('governance_tier')} lane_status={row.get('lane_status')} blocker={row.get('blocker')}"
         )
-        lines.append(f"  action_tier: {row.get('action_tier')}")
-        lines.append(f"  validation_verdict: {row.get('validation_verdict')}")
-        if row.get("missing_window_count") is not None:
-            lines.append(f"  missing_window_count: {row.get('missing_window_count')}")
-        if row.get("target_window_count") is not None:
-            lines.append(f"  target_window_count: {row.get('target_window_count')}")
-        if row.get("distinct_window_count_with_filtered_entries") is not None:
-            lines.append(f"  distinct_window_count_with_filtered_entries: {row.get('distinct_window_count_with_filtered_entries')}")
-        if row.get("preserve_misfire_report_count") is not None:
-            lines.append(f"  preserve_misfire_report_count: {row.get('preserve_misfire_report_count')}")
-        if row.get("filtered_report_count") is not None:
-            lines.append(f"  filtered_report_count: {row.get('filtered_report_count')}")
-        if row.get("focus_hit_report_count") is not None:
-            lines.append(f"  focus_hit_report_count: {row.get('focus_hit_report_count')}")
-        if row.get("upgrade_gap"):
-            lines.append(f"  upgrade_gap: {row.get('upgrade_gap')}")
-        if row.get("recommended_structural_variant"):
-            lines.append(f"  recommended_structural_variant: {row.get('recommended_structural_variant')}")
-        lines.append(f"  next_step: {row.get('next_step')}")
+        _append_governance_synthesis_lane_detail(lines, row, "action_tier")
+        _append_governance_synthesis_lane_detail(lines, row, "validation_verdict")
+        for key in (
+            "missing_window_count",
+            "target_window_count",
+            "distinct_window_count_with_filtered_entries",
+            "preserve_misfire_report_count",
+            "filtered_report_count",
+            "focus_hit_report_count",
+        ):
+            if row.get(key) is not None:
+                _append_governance_synthesis_lane_detail(lines, row, key)
+        for key in ("upgrade_gap", "recommended_structural_variant", "next_step"):
+            if row.get(key):
+                _append_governance_synthesis_lane_detail(lines, row, key)
     lines.append("")
 
+
+def _append_governance_synthesis_lane_detail(lines: list[str], row: dict[str, Any], key: str) -> None:
+    lines.append(f"  {key}: {row.get(key)}")
+
+
+def _append_governance_synthesis_closed_frontiers_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Closed Frontiers")
     closed_frontiers = list(analysis.get("closed_frontiers") or [])
     if not closed_frontiers:
@@ -739,6 +757,8 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
             lines.append(f"  focus_released_tickers: {row.get('best_variant_focus_released_tickers')}")
     lines.append("")
 
+
+def _append_governance_synthesis_next_actions_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Next Actions")
     for task in list(analysis.get("next_actions") or []):
         lines.append(f"- {task.get('task_id')}: {task.get('title')}")
@@ -746,7 +766,7 @@ def render_btst_governance_synthesis_markdown(analysis: dict[str, Any]) -> str:
         lines.append(f"  next_step: {task.get('next_step')}")
         lines.append(f"  source: {task.get('source')}")
     lines.append("")
-    return "\n".join(lines) + "\n"
+
 
 
 def main() -> None:

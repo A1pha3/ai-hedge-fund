@@ -259,29 +259,29 @@ def build_btst_latest_close_validation_payload(nightly_payload: dict[str, Any], 
     }
 
 
-def render_btst_latest_close_validation_markdown(payload: dict[str, Any], *, output_path: str | Path) -> str:
-    resolved_output_path = Path(output_path).expanduser().resolve()
+def _append_latest_close_overview_markdown(lines: list[str], payload: dict[str, Any]) -> None:
     validation_scope = dict(payload.get("validation_scope") or {})
-    current_followup = dict(payload.get("current_followup") or {})
-    current_summary = dict(current_followup.get("summary") or {})
-    rollforward_delta = dict(payload.get("rollforward_delta") or {})
-    governance_check = dict(payload.get("governance_check") or {})
+    lines.extend(
+        [
+            f"- generated_at: {payload.get('generated_at')}",
+            f"- trade_date: {validation_scope.get('current_trade_date') or 'unknown'}",
+            f"- next_trade_date: {validation_scope.get('next_trade_date') or 'unknown'}",
+            f"- comparison_scope: {validation_scope.get('comparison_scope') or 'unknown'}",
+            f"- same_report_delta_verdict: {validation_scope.get('same_report_delta_verdict') or 'unknown'}",
+            "",
+        ]
+    )
 
-    lines = [
-        "# BTST Latest Close Validation",
-        "",
-        f"- generated_at: {payload.get('generated_at')}",
-        f"- trade_date: {validation_scope.get('current_trade_date') or 'unknown'}",
-        f"- next_trade_date: {validation_scope.get('next_trade_date') or 'unknown'}",
-        f"- comparison_scope: {validation_scope.get('comparison_scope') or 'unknown'}",
-        f"- same_report_delta_verdict: {validation_scope.get('same_report_delta_verdict') or 'unknown'}",
-        "",
-        "## Tonight Verdict",
-        "",
-    ]
+
+def _append_latest_close_tonight_verdict_markdown(lines: list[str], payload: dict[str, Any]) -> None:
+    lines.extend(["## Tonight Verdict", ""])
     for item in list(payload.get("key_conclusions") or []):
         lines.append(f"- {item}")
 
+
+def _append_latest_close_current_followup_markdown(lines: list[str], payload: dict[str, Any]) -> None:
+    current_followup = dict(payload.get("current_followup") or {})
+    current_summary = dict(current_followup.get("summary") or {})
     lines.extend(
         [
             "",
@@ -298,11 +298,13 @@ def render_btst_latest_close_validation_markdown(payload: dict[str, Any], *, out
             "",
         ]
     )
-
     if current_followup.get("brief_recommendation"):
         lines.append(f"- brief_recommendation: {current_followup.get('brief_recommendation')}")
         lines.append("")
 
+
+def _append_latest_close_focus_rows_markdown(lines: list[str], payload: dict[str, Any]) -> None:
+    current_followup = dict(payload.get("current_followup") or {})
     lines.extend(["## Focus Rows", ""])
     for row in list(current_followup.get("focus_rows") or []):
         lines.append(
@@ -311,32 +313,30 @@ def render_btst_latest_close_validation_markdown(payload: dict[str, Any], *, out
     if not list(current_followup.get("focus_rows") or []):
         lines.append("- none")
 
-    lines.extend(["", "## Upstream Shadow Recall", ""])
+
+def _append_latest_close_upstream_shadow_markdown(lines: list[str], payload: dict[str, Any]) -> None:
+    current_followup = dict(payload.get("current_followup") or {})
     upstream_shadow_context = dict(current_followup.get("upstream_shadow_context") or {})
+    lines.extend(["", "## Upstream Shadow Recall", ""])
     if not upstream_shadow_context.get("shadow_candidate_count"):
         lines.append("- none")
-    else:
-        lines.append(f"- shadow_candidate_count: {upstream_shadow_context.get('shadow_candidate_count')}")
-        lines.append(f"- promotable_count: {upstream_shadow_context.get('promotable_count')}")
-        lane_counts = dict(upstream_shadow_context.get("lane_counts") or {})
+        return
+    lines.append(f"- shadow_candidate_count: {upstream_shadow_context.get('shadow_candidate_count')}")
+    lines.append(f"- promotable_count: {upstream_shadow_context.get('promotable_count')}")
+    lane_counts = dict(upstream_shadow_context.get("lane_counts") or {})
+    lines.append("- lane_counts: " + (", ".join(f"{key}={value}" for key, value in lane_counts.items()) if lane_counts else "none"))
+    for row in list(upstream_shadow_context.get("entries") or []):
         lines.append(
-            "- lane_counts: "
-            + (
-                ", ".join(f"{key}={value}" for key, value in lane_counts.items())
-                if lane_counts
-                else "none"
-            )
+            f"- {row.get('ticker')}: lane={row.get('candidate_pool_lane')}, source={row.get('candidate_source')}, decision={row.get('decision')}, score_target={row.get('score_target')}, promotion_trigger={row.get('promotion_trigger')}"
         )
-        for row in list(upstream_shadow_context.get("entries") or []):
-            lines.append(
-                f"- {row.get('ticker')}: lane={row.get('candidate_pool_lane')}, source={row.get('candidate_source')}, decision={row.get('decision')}, score_target={row.get('score_target')}, promotion_trigger={row.get('promotion_trigger')}"
-            )
 
+
+def _append_latest_close_rollforward_delta_markdown(lines: list[str], payload: dict[str, Any]) -> None:
+    rollforward_delta = dict(payload.get("rollforward_delta") or {})
     lines.extend(["", "## Rollforward Delta", ""])
     lines.append(f"- previous_headline: {rollforward_delta.get('previous_headline') or 'unknown'}")
     lines.append(f"- current_headline: {rollforward_delta.get('current_headline') or 'unknown'}")
-    summary_delta = dict(rollforward_delta.get("summary_delta") or {})
-    for key, value in summary_delta.items():
+    for key, value in dict(rollforward_delta.get("summary_delta") or {}).items():
         lines.append(f"- summary_delta {key}: {value}")
     for item in list(rollforward_delta.get("added_tickers") or []):
         lines.append(f"- added_ticker: {item.get('ticker')} ({item.get('lane')}, {item.get('actionability')})")
@@ -347,24 +347,42 @@ def render_btst_latest_close_validation_markdown(payload: dict[str, Any], *, out
     for item in list(rollforward_delta.get("operator_focus") or []):
         lines.append(f"- operator_focus: {item}")
 
+
+def _append_latest_close_governance_markdown(lines: list[str], payload: dict[str, Any]) -> None:
+    governance_check = dict(payload.get("governance_check") or {})
     lines.extend(["", "## Governance Check", ""])
-    lines.append(f"- overall_verdict: {governance_check.get('overall_verdict') or 'unknown'}")
-    lines.append(f"- pass_count: {governance_check.get('pass_count') or 0}")
-    lines.append(f"- warn_count: {governance_check.get('warn_count') or 0}")
-    lines.append(f"- fail_count: {governance_check.get('fail_count') or 0}")
-    lines.append(f"- waiting_lane_count: {governance_check.get('waiting_lane_count') or 0}")
-    lines.append(f"- ready_lane_count: {governance_check.get('ready_lane_count') or 0}")
+    for key in ("overall_verdict", "pass_count", "warn_count", "fail_count", "waiting_lane_count", "ready_lane_count"):
+        default = "unknown" if key == "overall_verdict" else 0
+        lines.append(f"- {key}: {governance_check.get(key) or default}")
     for row in list(governance_check.get("lane_focus") or []):
         lines.append(
             f"- lane {row.get('lane_id')}: ticker={row.get('ticker')}, status={row.get('lane_status')}, validation_verdict={row.get('validation_verdict')}, missing_window_count={row.get('missing_window_count')}, next_step={row.get('next_step')}"
         )
 
+
+def _append_latest_close_recommendation_markdown(lines: list[str], payload: dict[str, Any]) -> None:
     lines.extend(["", "## Recommendation", "", f"- {payload.get('recommendation') or 'unknown'}", ""])
 
+
+def _append_latest_close_source_paths_markdown(lines: list[str], payload: dict[str, Any], resolved_output_path: Path) -> None:
     lines.extend(["## Source Paths", ""])
     for label, source_path in dict(payload.get("source_paths") or {}).items():
         lines.append(f"- {label}: {_relative_link(source_path, resolved_output_path) or source_path or 'unknown'}")
     lines.append("")
+
+
+def render_btst_latest_close_validation_markdown(payload: dict[str, Any], *, output_path: str | Path) -> str:
+    resolved_output_path = Path(output_path).expanduser().resolve()
+    lines = ["# BTST Latest Close Validation", ""]
+    _append_latest_close_overview_markdown(lines, payload)
+    _append_latest_close_tonight_verdict_markdown(lines, payload)
+    _append_latest_close_current_followup_markdown(lines, payload)
+    _append_latest_close_focus_rows_markdown(lines, payload)
+    _append_latest_close_upstream_shadow_markdown(lines, payload)
+    _append_latest_close_rollforward_delta_markdown(lines, payload)
+    _append_latest_close_governance_markdown(lines, payload)
+    _append_latest_close_recommendation_markdown(lines, payload)
+    _append_latest_close_source_paths_markdown(lines, payload, resolved_output_path)
     return "\n".join(lines)
 
 

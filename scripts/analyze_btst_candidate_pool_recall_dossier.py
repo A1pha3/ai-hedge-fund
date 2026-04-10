@@ -230,41 +230,54 @@ def _build_focus_tickers(
     priority_limit = max(int(priority_limit), 0)
     focus_tickers: list[str] = []
 
-    def _extend_unique(candidates: list[str]) -> None:
-        for value in candidates:
-            ticker = str(value or "").strip()
-            if not ticker or ticker in focus_tickers:
-                continue
-            focus_tickers.append(ticker)
-            if len(focus_tickers) >= priority_limit:
-                break
-
-    top_absent_from_candidate_pool = [
-        str(value)
-        for value in list(watchlist_recall_dossier.get("top_absent_from_candidate_pool_tickers") or [])
-        if str(value or "").strip()
-    ]
-    _extend_unique(top_absent_from_candidate_pool)
+    _extend_unique_focus_tickers(
+        focus_tickers,
+        list(watchlist_recall_dossier.get("top_absent_from_candidate_pool_tickers") or []),
+        priority_limit=priority_limit,
+    )
     if len(focus_tickers) >= priority_limit:
         return focus_tickers[:priority_limit]
 
-    top_absent_from_watchlist = [
-        str(value)
-        for value in list(failure_dossier.get("top_absent_from_watchlist_tickers") or [])
-        if str(value or "").strip()
-    ]
-    _extend_unique(top_absent_from_watchlist)
+    _extend_unique_focus_tickers(
+        focus_tickers,
+        list(failure_dossier.get("top_absent_from_watchlist_tickers") or []),
+        priority_limit=priority_limit,
+    )
     if len(focus_tickers) >= priority_limit:
         return focus_tickers[:priority_limit]
 
+    _extend_unique_focus_tickers(
+        focus_tickers,
+        _rank_high_value_focus_tickers(tradeable_pool),
+        priority_limit=priority_limit,
+    )
+    if len(focus_tickers) >= priority_limit:
+        return focus_tickers[:priority_limit]
+
+    top_ticker_rows = list(dict(tradeable_pool.get("no_candidate_entry_summary") or {}).get("top_ticker_rows") or [])
+    _extend_unique_focus_tickers(
+        focus_tickers,
+        [str(row.get("ticker") or "") for row in top_ticker_rows],
+        priority_limit=priority_limit,
+    )
+    return focus_tickers[:priority_limit]
+
+
+def _extend_unique_focus_tickers(focus_tickers: list[str], candidates: list[Any], *, priority_limit: int) -> None:
+    for value in candidates:
+        ticker = str(value or "").strip()
+        if not ticker or ticker in focus_tickers:
+            continue
+        focus_tickers.append(ticker)
+        if len(focus_tickers) >= priority_limit:
+            break
+
+
+def _collect_high_value_focus_ticker_metrics(tradeable_pool: dict[str, Any]) -> dict[str, dict[str, Any]]:
     high_value_ticker_metrics: dict[str, dict[str, Any]] = {}
     for row in list(tradeable_pool.get("rows") or []):
         ticker = str(row.get("ticker") or "").strip()
-        if not ticker:
-            continue
-        if str(row.get("first_kill_switch") or "") != "no_candidate_entry":
-            continue
-        if not bool(row.get("strict_btst_goal_case")):
+        if not ticker or str(row.get("first_kill_switch") or "") != "no_candidate_entry" or not bool(row.get("strict_btst_goal_case")):
             continue
         metrics = high_value_ticker_metrics.setdefault(
             ticker,
@@ -277,20 +290,27 @@ def _build_focus_tickers(
             },
         )
         metrics["occurrence_count"] += 1
-        t_plus_2_close_return = _safe_float(row.get("t_plus_2_close_return"))
-        next_high_return = _safe_float(row.get("next_high_return"))
-        if t_plus_2_close_return is not None:
-            metrics["max_t_plus_2_close_return"] = max(float(metrics["max_t_plus_2_close_return"]), float(t_plus_2_close_return))
-        if next_high_return is not None:
-            metrics["max_next_high_return"] = max(float(metrics["max_next_high_return"]), float(next_high_return))
-        compact_trade_date = _compact_trade_date(str(row.get("trade_date") or ""))
-        if compact_trade_date:
-            metrics["latest_trade_date"] = max(int(metrics["latest_trade_date"]), int(compact_trade_date))
+        _update_high_value_focus_ticker_metrics(metrics, row)
+    return high_value_ticker_metrics
 
-    high_value_focus_tickers = [
+
+def _update_high_value_focus_ticker_metrics(metrics: dict[str, Any], row: dict[str, Any]) -> None:
+    t_plus_2_close_return = _safe_float(row.get("t_plus_2_close_return"))
+    next_high_return = _safe_float(row.get("next_high_return"))
+    if t_plus_2_close_return is not None:
+        metrics["max_t_plus_2_close_return"] = max(float(metrics["max_t_plus_2_close_return"]), float(t_plus_2_close_return))
+    if next_high_return is not None:
+        metrics["max_next_high_return"] = max(float(metrics["max_next_high_return"]), float(next_high_return))
+    compact_trade_date = _compact_trade_date(str(row.get("trade_date") or ""))
+    if compact_trade_date:
+        metrics["latest_trade_date"] = max(int(metrics["latest_trade_date"]), int(compact_trade_date))
+
+
+def _rank_high_value_focus_tickers(tradeable_pool: dict[str, Any]) -> list[str]:
+    return [
         str(row.get("ticker") or "")
         for row in sorted(
-            high_value_ticker_metrics.values(),
+            _collect_high_value_focus_ticker_metrics(tradeable_pool).values(),
             key=lambda current: (
                 -float(current.get("max_t_plus_2_close_return") if current.get("max_t_plus_2_close_return") != float("-inf") else -999.0),
                 -float(current.get("max_next_high_return") if current.get("max_next_high_return") != float("-inf") else -999.0),
@@ -301,17 +321,6 @@ def _build_focus_tickers(
         )
         if str(row.get("ticker") or "").strip()
     ]
-    _extend_unique(high_value_focus_tickers)
-    if len(focus_tickers) >= priority_limit:
-        return focus_tickers[:priority_limit]
-
-    top_ticker_rows = [
-        dict(row)
-        for row in list(dict(tradeable_pool.get("no_candidate_entry_summary") or {}).get("top_ticker_rows") or [])
-        if str(row.get("ticker") or "").strip()
-    ]
-    _extend_unique([str(row.get("ticker") or "") for row in top_ticker_rows])
-    return focus_tickers[:priority_limit]
 
 
 def _build_trade_date_allowlist(watchlist_recall_dossier: dict[str, Any]) -> dict[str, set[str]]:
@@ -964,6 +973,82 @@ def _build_priority_handoff_branch_experiment_queue(
 
 
 def _build_priority_handoff_branch_mechanisms(priority_ticker_dossiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped_occurrences, grouped_tickers = _group_priority_handoff_occurrences(priority_ticker_dossiers)
+
+    if not grouped_occurrences:
+        return []
+
+    handoff_priority_order = {
+        "layer_a_liquidity_corridor": 0,
+        "post_gate_liquidity_competition": 1,
+        "post_gate_liquidity_gap_review": 2,
+        "top300_boundary_micro_tuning": 3,
+        "cutoff_market_cap_tie_break": 4,
+        "candidate_pool_truncation_unknown": 5,
+    }
+    mechanisms: list[dict[str, Any]] = []
+    for priority_handoff, occurrences in sorted(grouped_occurrences.items(), key=lambda item: (handoff_priority_order.get(item[0], 99), item[0])):
+        tickers = sorted(grouped_tickers.get(priority_handoff) or set())
+        summary = _summarize_priority_handoff_occurrences(occurrences)
+        pressure_peer_cluster_type, pressure_cluster_summary = _describe_pressure_peer_cluster(
+            priority_handoff,
+            occurrence_count=len(occurrences),
+            peer_avg_amount_multiple_mean=summary["peer_avg_amount_multiple_mean"],
+            peer_market_cap_multiple_mean=summary["peer_market_cap_multiple_mean"],
+            lower_market_cap_higher_liquidity_peer_share=summary["lower_market_cap_higher_liquidity_peer_share"],
+            recurring_top5_peer_share=summary["recurring_top5_peer_share"],
+        )
+        repair_hypothesis_type, repair_hypothesis_summary = _describe_branch_repair_hypothesis(
+            priority_handoff,
+            nearest_frontier_peer_amount_multiple_mean=summary["nearest_frontier_peer_amount_multiple_mean"],
+            nearest_frontier_peer_amount_multiple_min=summary["nearest_frontier_peer_amount_multiple_min"],
+            lower_market_cap_higher_liquidity_peer_share=summary["lower_market_cap_higher_liquidity_peer_share"],
+            top_lower_market_cap_hot_peers=summary["top_lower_market_cap_hot_peers"],
+            top_larger_market_cap_wall_peers=summary["top_larger_market_cap_wall_peers"],
+        )
+        mechanism_summary = _build_priority_handoff_mechanism_summary(
+            priority_handoff,
+            tickers=tickers,
+            avg_amount_share_of_cutoff_mean=summary["avg_amount_share_of_cutoff_mean"],
+            cutoff_to_candidate_liquidity_multiple_mean=summary["cutoff_to_candidate_liquidity_multiple_mean"],
+            min_rank_gap_to_cutoff=summary["min_rank_gap_to_cutoff"],
+        )
+        mechanisms.append(
+            {
+                "priority_handoff": priority_handoff,
+                "ticker_count": len(tickers),
+                "tickers": tickers,
+                "occurrence_count": len(occurrences),
+                "avg_amount_share_of_cutoff_mean": summary["avg_amount_share_of_cutoff_mean"],
+                "avg_amount_gap_to_cutoff_mean": summary["avg_amount_gap_to_cutoff_mean"],
+                "avg_amount_share_of_min_gate_mean": summary["avg_amount_share_of_min_gate_mean"],
+                "cutoff_avg_amount_share_of_min_gate_mean": summary["cutoff_avg_amount_share_of_min_gate_mean"],
+                "cutoff_to_candidate_liquidity_multiple_mean": summary["cutoff_to_candidate_liquidity_multiple_mean"],
+                "min_rank_gap_to_cutoff": summary["min_rank_gap_to_cutoff"],
+                "peer_avg_amount_multiple_mean": summary["peer_avg_amount_multiple_mean"],
+                "peer_market_cap_multiple_mean": summary["peer_market_cap_multiple_mean"],
+                "nearest_frontier_peer_amount_multiple_mean": summary["nearest_frontier_peer_amount_multiple_mean"],
+                "nearest_frontier_peer_amount_multiple_min": summary["nearest_frontier_peer_amount_multiple_min"],
+                "nearest_frontier_peer_amount_multiple_median": summary["nearest_frontier_peer_amount_multiple_median"],
+                "lower_market_cap_higher_liquidity_peer_share": summary["lower_market_cap_higher_liquidity_peer_share"],
+                "cutoff_lower_market_cap_share": summary["cutoff_lower_market_cap_share"],
+                "recurring_top5_peer_share": summary["recurring_top5_peer_share"],
+                "pressure_peer_cluster_type": pressure_peer_cluster_type,
+                "top_cutoff_tickers": summary["top_cutoff_tickers"],
+                "top_frontier_peers": summary["top_frontier_peers"],
+                "top_lower_market_cap_hot_peers": summary["top_lower_market_cap_hot_peers"],
+                "top_larger_market_cap_wall_peers": summary["top_larger_market_cap_wall_peers"],
+                "representative_cases": summary["representative_cases"],
+                "mechanism_summary": mechanism_summary,
+                "pressure_cluster_summary": pressure_cluster_summary,
+                "repair_hypothesis_type": repair_hypothesis_type,
+                "repair_hypothesis_summary": repair_hypothesis_summary,
+            }
+        )
+    return mechanisms
+
+
+def _group_priority_handoff_occurrences(priority_ticker_dossiers: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, set[str]]]:
     profiles_by_ticker = {
         str(row.get("ticker") or ""): dict(row.get("truncation_liquidity_profile") or {})
         for row in priority_ticker_dossiers
@@ -986,170 +1071,196 @@ def _build_priority_handoff_branch_mechanisms(priority_ticker_dossiers: list[dic
             continue
         grouped_occurrences.setdefault(priority_handoff, []).extend(truncation_occurrences)
         grouped_tickers.setdefault(priority_handoff, set()).add(ticker)
+    return grouped_occurrences, grouped_tickers
 
-    if not grouped_occurrences:
-        return []
 
-    handoff_priority_order = {
-        "layer_a_liquidity_corridor": 0,
-        "post_gate_liquidity_competition": 1,
-        "post_gate_liquidity_gap_review": 2,
-        "top300_boundary_micro_tuning": 3,
-        "cutoff_market_cap_tie_break": 4,
-        "candidate_pool_truncation_unknown": 5,
+def _summarize_priority_handoff_occurrences(occurrences: list[dict[str, Any]]) -> dict[str, Any]:
+    avg_amount_share_values = [_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) for row in occurrences]
+    avg_amount_share_values = [value for value in avg_amount_share_values if value is not None and value > 0]
+    avg_amount_gap_values = [_safe_float(row.get("pre_truncation_avg_amount_gap_to_cutoff")) for row in occurrences]
+    avg_amount_gap_values = [value for value in avg_amount_gap_values if value is not None]
+    gate_share_values = [_safe_float(row.get("avg_amount_share_of_min_gate")) for row in occurrences]
+    gate_share_values = [value for value in gate_share_values if value is not None]
+    cutoff_gate_share_values = [_safe_float(row.get("pre_truncation_cutoff_avg_amount_share_of_min_gate")) for row in occurrences]
+    cutoff_gate_share_values = [value for value in cutoff_gate_share_values if value is not None]
+    rank_gap_values = [int(row.get("pre_truncation_rank_gap_to_cutoff") or 0) for row in occurrences if row.get("pre_truncation_rank_gap_to_cutoff") is not None]
+    cutoff_ticker_counts = Counter(str(row.get("pre_truncation_cutoff_ticker") or "unknown") for row in occurrences if str(row.get("pre_truncation_cutoff_ticker") or "").strip())
+    peer_stats = _collect_priority_handoff_peer_stats(occurrences)
+    liquidity_multiple_values = [round(1.0 / value, 4) for value in avg_amount_share_values if value > 0]
+    return {
+        "avg_amount_share_of_cutoff_mean": round(sum(avg_amount_share_values) / len(avg_amount_share_values), 4) if avg_amount_share_values else None,
+        "avg_amount_gap_to_cutoff_mean": round(sum(avg_amount_gap_values) / len(avg_amount_gap_values), 4) if avg_amount_gap_values else None,
+        "avg_amount_share_of_min_gate_mean": round(sum(gate_share_values) / len(gate_share_values), 4) if gate_share_values else None,
+        "cutoff_avg_amount_share_of_min_gate_mean": round(sum(cutoff_gate_share_values) / len(cutoff_gate_share_values), 4) if cutoff_gate_share_values else None,
+        "cutoff_to_candidate_liquidity_multiple_mean": round(sum(liquidity_multiple_values) / len(liquidity_multiple_values), 4) if liquidity_multiple_values else None,
+        "min_rank_gap_to_cutoff": min(rank_gap_values) if rank_gap_values else None,
+        "top_cutoff_tickers": [{"ticker": key, "count": int(value)} for key, value in cutoff_ticker_counts.most_common(5)],
+        "representative_cases": _build_priority_handoff_representative_cases(occurrences),
+        **peer_stats,
     }
-    mechanisms: list[dict[str, Any]] = []
-    for priority_handoff, occurrences in sorted(grouped_occurrences.items(), key=lambda item: (handoff_priority_order.get(item[0], 99), item[0])):
-        tickers = sorted(grouped_tickers.get(priority_handoff) or set())
-        avg_amount_share_values = [_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) for row in occurrences]
-        avg_amount_share_values = [value for value in avg_amount_share_values if value is not None and value > 0]
-        avg_amount_gap_values = [_safe_float(row.get("pre_truncation_avg_amount_gap_to_cutoff")) for row in occurrences]
-        avg_amount_gap_values = [value for value in avg_amount_gap_values if value is not None]
-        gate_share_values = [_safe_float(row.get("avg_amount_share_of_min_gate")) for row in occurrences]
-        gate_share_values = [value for value in gate_share_values if value is not None]
-        cutoff_gate_share_values = [_safe_float(row.get("pre_truncation_cutoff_avg_amount_share_of_min_gate")) for row in occurrences]
-        cutoff_gate_share_values = [value for value in cutoff_gate_share_values if value is not None]
-        rank_gap_values = [int(row.get("pre_truncation_rank_gap_to_cutoff") or 0) for row in occurrences if row.get("pre_truncation_rank_gap_to_cutoff") is not None]
-        cutoff_ticker_counts = Counter(str(row.get("pre_truncation_cutoff_ticker") or "unknown") for row in occurrences if str(row.get("pre_truncation_cutoff_ticker") or "").strip())
-        frontier_peer_counts: Counter[str] = Counter()
-        lower_market_cap_hot_peer_counts: Counter[str] = Counter()
-        larger_market_cap_wall_peer_counts: Counter[str] = Counter()
-        peer_avg_amount_multiple_values: list[float] = []
-        peer_market_cap_multiple_values: list[float] = []
-        lower_market_cap_higher_liquidity_peer_count = 0
-        peer_observation_count = 0
-        cutoff_lower_market_cap_count = 0
-        cutoff_market_cap_observation_count = 0
-        nearest_frontier_peer_amount_multiples: list[float] = []
-        for row in occurrences:
-            current_ticker = str(row.get("ticker") or "").strip()
-            candidate_avg_amount = _safe_float(row.get("avg_amount_20d"))
-            candidate_market_cap = _safe_float(row.get("market_cap"))
-            cutoff_market_cap = _safe_float(row.get("pre_truncation_cutoff_market_cap"))
-            if candidate_market_cap is not None and candidate_market_cap > 0 and cutoff_market_cap is not None:
-                cutoff_market_cap_observation_count += 1
-                if cutoff_market_cap <= candidate_market_cap:
-                    cutoff_lower_market_cap_count += 1
-            frontier_window = [dict(item) for item in list(row.get("pre_truncation_frontier_window") or [])]
-            frontier_row_multiples: list[float] = []
-            for peer in frontier_window:
-                peer_ticker = str(peer.get("ticker") or "").strip()
-                if not peer_ticker or peer_ticker == current_ticker:
-                    continue
-                frontier_peer_counts[peer_ticker] += 1
-                peer_observation_count += 1
-                peer_avg_amount = _safe_float(peer.get("avg_amount_20d"))
-                peer_market_cap = _safe_float(peer.get("market_cap"))
-                if candidate_avg_amount is not None and candidate_avg_amount > 0 and peer_avg_amount is not None:
-                    peer_amount_multiple = round(peer_avg_amount / candidate_avg_amount, 4)
-                    peer_avg_amount_multiple_values.append(peer_amount_multiple)
-                    frontier_row_multiples.append(peer_amount_multiple)
-                if candidate_market_cap is not None and candidate_market_cap > 0 and peer_market_cap is not None:
-                    peer_market_cap_multiple_values.append(round(peer_market_cap / candidate_market_cap, 4))
-                    if peer_market_cap <= candidate_market_cap and peer_avg_amount is not None and candidate_avg_amount is not None and peer_avg_amount > candidate_avg_amount:
-                        lower_market_cap_higher_liquidity_peer_count += 1
-                        lower_market_cap_hot_peer_counts[peer_ticker] += 1
-                    elif peer_avg_amount is not None and candidate_avg_amount is not None and peer_avg_amount > candidate_avg_amount:
-                        larger_market_cap_wall_peer_counts[peer_ticker] += 1
-            if frontier_row_multiples:
-                nearest_frontier_peer_amount_multiples.append(min(frontier_row_multiples))
-        liquidity_multiple_values = [round(1.0 / value, 4) for value in avg_amount_share_values if value > 0]
-        representative_cases = sorted(
-            [
-                {
-                    "ticker": str(row.get("ticker") or "").strip(),
-                    "trade_date": row.get("trade_date"),
-                    "pre_truncation_rank": row.get("pre_truncation_rank"),
-                    "pre_truncation_rank_gap_to_cutoff": row.get("pre_truncation_rank_gap_to_cutoff"),
-                    "pre_truncation_avg_amount_share_of_cutoff": row.get("pre_truncation_avg_amount_share_of_cutoff"),
-                    "avg_amount_share_of_min_gate": row.get("avg_amount_share_of_min_gate"),
-                    "pre_truncation_cutoff_ticker": row.get("pre_truncation_cutoff_ticker"),
-                    "pre_truncation_ranking_driver": row.get("pre_truncation_ranking_driver"),
-                }
-                for row in occurrences
-            ],
-            key=lambda row: (
-                int(row.get("pre_truncation_rank_gap_to_cutoff") or 10**9),
-                str(row.get("ticker") or ""),
-                str(row.get("trade_date") or ""),
-            ),
-        )[:5]
-        avg_amount_share_of_cutoff_mean = round(sum(avg_amount_share_values) / len(avg_amount_share_values), 4) if avg_amount_share_values else None
-        avg_amount_gap_to_cutoff_mean = round(sum(avg_amount_gap_values) / len(avg_amount_gap_values), 4) if avg_amount_gap_values else None
-        avg_amount_share_of_min_gate_mean = round(sum(gate_share_values) / len(gate_share_values), 4) if gate_share_values else None
-        cutoff_avg_amount_share_of_min_gate_mean = round(sum(cutoff_gate_share_values) / len(cutoff_gate_share_values), 4) if cutoff_gate_share_values else None
-        cutoff_to_candidate_liquidity_multiple_mean = round(sum(liquidity_multiple_values) / len(liquidity_multiple_values), 4) if liquidity_multiple_values else None
-        min_rank_gap_to_cutoff = min(rank_gap_values) if rank_gap_values else None
-        peer_avg_amount_multiple_mean = round(sum(peer_avg_amount_multiple_values) / len(peer_avg_amount_multiple_values), 4) if peer_avg_amount_multiple_values else None
-        peer_market_cap_multiple_mean = round(sum(peer_market_cap_multiple_values) / len(peer_market_cap_multiple_values), 4) if peer_market_cap_multiple_values else None
-        nearest_frontier_peer_amount_multiple_mean = round(sum(nearest_frontier_peer_amount_multiples) / len(nearest_frontier_peer_amount_multiples), 4) if nearest_frontier_peer_amount_multiples else None
-        nearest_frontier_peer_amount_multiple_min = round(min(nearest_frontier_peer_amount_multiples), 4) if nearest_frontier_peer_amount_multiples else None
-        nearest_frontier_peer_amount_multiple_median = round(sorted(nearest_frontier_peer_amount_multiples)[len(nearest_frontier_peer_amount_multiples) // 2], 4) if nearest_frontier_peer_amount_multiples else None
-        lower_market_cap_higher_liquidity_peer_share = round(lower_market_cap_higher_liquidity_peer_count / peer_observation_count, 4) if peer_observation_count else None
-        cutoff_lower_market_cap_share = round(cutoff_lower_market_cap_count / cutoff_market_cap_observation_count, 4) if cutoff_market_cap_observation_count else None
-        recurring_top5_peer_share = round(sum(value for _, value in frontier_peer_counts.most_common(5)) / peer_observation_count, 4) if peer_observation_count else None
-        pressure_peer_cluster_type, pressure_cluster_summary = _describe_pressure_peer_cluster(
-            priority_handoff,
-            occurrence_count=len(occurrences),
-            peer_avg_amount_multiple_mean=peer_avg_amount_multiple_mean,
-            peer_market_cap_multiple_mean=peer_market_cap_multiple_mean,
-            lower_market_cap_higher_liquidity_peer_share=lower_market_cap_higher_liquidity_peer_share,
-            recurring_top5_peer_share=recurring_top5_peer_share,
+
+
+def _collect_priority_handoff_peer_stats(occurrences: list[dict[str, Any]]) -> dict[str, Any]:
+    frontier_peer_counts: Counter[str] = Counter()
+    lower_market_cap_hot_peer_counts: Counter[str] = Counter()
+    larger_market_cap_wall_peer_counts: Counter[str] = Counter()
+    peer_avg_amount_multiple_values: list[float] = []
+    peer_market_cap_multiple_values: list[float] = []
+    nearest_frontier_peer_amount_multiples: list[float] = []
+    lower_market_cap_higher_liquidity_peer_count = 0
+    peer_observation_count = 0
+    cutoff_lower_market_cap_count = 0
+    cutoff_market_cap_observation_count = 0
+    for row in occurrences:
+        lower_market_cap_higher_liquidity_peer_count, peer_observation_count, cutoff_lower_market_cap_count, cutoff_market_cap_observation_count = _collect_priority_handoff_row_peer_stats(
+            row,
+            frontier_peer_counts=frontier_peer_counts,
+            lower_market_cap_hot_peer_counts=lower_market_cap_hot_peer_counts,
+            larger_market_cap_wall_peer_counts=larger_market_cap_wall_peer_counts,
+            peer_avg_amount_multiple_values=peer_avg_amount_multiple_values,
+            peer_market_cap_multiple_values=peer_market_cap_multiple_values,
+            nearest_frontier_peer_amount_multiples=nearest_frontier_peer_amount_multiples,
+            lower_market_cap_higher_liquidity_peer_count=lower_market_cap_higher_liquidity_peer_count,
+            peer_observation_count=peer_observation_count,
+            cutoff_lower_market_cap_count=cutoff_lower_market_cap_count,
+            cutoff_market_cap_observation_count=cutoff_market_cap_observation_count,
         )
-        top_lower_market_cap_hot_peers = [{"ticker": key, "count": int(value)} for key, value in lower_market_cap_hot_peer_counts.most_common(5)]
-        top_larger_market_cap_wall_peers = [{"ticker": key, "count": int(value)} for key, value in larger_market_cap_wall_peer_counts.most_common(5)]
-        repair_hypothesis_type, repair_hypothesis_summary = _describe_branch_repair_hypothesis(
-            priority_handoff,
-            nearest_frontier_peer_amount_multiple_mean=nearest_frontier_peer_amount_multiple_mean,
-            nearest_frontier_peer_amount_multiple_min=nearest_frontier_peer_amount_multiple_min,
-            lower_market_cap_higher_liquidity_peer_share=lower_market_cap_higher_liquidity_peer_share,
-            top_lower_market_cap_hot_peers=top_lower_market_cap_hot_peers,
-            top_larger_market_cap_wall_peers=top_larger_market_cap_wall_peers,
+    return {
+        "peer_avg_amount_multiple_mean": round(sum(peer_avg_amount_multiple_values) / len(peer_avg_amount_multiple_values), 4) if peer_avg_amount_multiple_values else None,
+        "peer_market_cap_multiple_mean": round(sum(peer_market_cap_multiple_values) / len(peer_market_cap_multiple_values), 4) if peer_market_cap_multiple_values else None,
+        "nearest_frontier_peer_amount_multiple_mean": round(sum(nearest_frontier_peer_amount_multiples) / len(nearest_frontier_peer_amount_multiples), 4) if nearest_frontier_peer_amount_multiples else None,
+        "nearest_frontier_peer_amount_multiple_min": round(min(nearest_frontier_peer_amount_multiples), 4) if nearest_frontier_peer_amount_multiples else None,
+        "nearest_frontier_peer_amount_multiple_median": round(sorted(nearest_frontier_peer_amount_multiples)[len(nearest_frontier_peer_amount_multiples) // 2], 4) if nearest_frontier_peer_amount_multiples else None,
+        "lower_market_cap_higher_liquidity_peer_share": round(lower_market_cap_higher_liquidity_peer_count / peer_observation_count, 4) if peer_observation_count else None,
+        "cutoff_lower_market_cap_share": round(cutoff_lower_market_cap_count / cutoff_market_cap_observation_count, 4) if cutoff_market_cap_observation_count else None,
+        "recurring_top5_peer_share": round(sum(value for _, value in frontier_peer_counts.most_common(5)) / peer_observation_count, 4) if peer_observation_count else None,
+        "top_frontier_peers": [{"ticker": key, "count": int(value)} for key, value in frontier_peer_counts.most_common(5)],
+        "top_lower_market_cap_hot_peers": [{"ticker": key, "count": int(value)} for key, value in lower_market_cap_hot_peer_counts.most_common(5)],
+        "top_larger_market_cap_wall_peers": [{"ticker": key, "count": int(value)} for key, value in larger_market_cap_wall_peer_counts.most_common(5)],
+    }
+
+
+def _collect_priority_handoff_row_peer_stats(
+    row: dict[str, Any],
+    *,
+    frontier_peer_counts: Counter[str],
+    lower_market_cap_hot_peer_counts: Counter[str],
+    larger_market_cap_wall_peer_counts: Counter[str],
+    peer_avg_amount_multiple_values: list[float],
+    peer_market_cap_multiple_values: list[float],
+    nearest_frontier_peer_amount_multiples: list[float],
+    lower_market_cap_higher_liquidity_peer_count: int,
+    peer_observation_count: int,
+    cutoff_lower_market_cap_count: int,
+    cutoff_market_cap_observation_count: int,
+) -> tuple[int, int, int, int]:
+    current_ticker = str(row.get("ticker") or "").strip()
+    candidate_avg_amount = _safe_float(row.get("avg_amount_20d"))
+    candidate_market_cap = _safe_float(row.get("market_cap"))
+    cutoff_market_cap = _safe_float(row.get("pre_truncation_cutoff_market_cap"))
+    if candidate_market_cap is not None and candidate_market_cap > 0 and cutoff_market_cap is not None:
+        cutoff_market_cap_observation_count += 1
+        if cutoff_market_cap <= candidate_market_cap:
+            cutoff_lower_market_cap_count += 1
+    frontier_row_multiples: list[float] = []
+    for peer in [dict(item) for item in list(row.get("pre_truncation_frontier_window") or [])]:
+        lower_market_cap_higher_liquidity_peer_count, peer_observation_count = _collect_priority_handoff_peer_row(
+            current_ticker,
+            peer,
+            candidate_avg_amount=candidate_avg_amount,
+            candidate_market_cap=candidate_market_cap,
+            frontier_peer_counts=frontier_peer_counts,
+            lower_market_cap_hot_peer_counts=lower_market_cap_hot_peer_counts,
+            larger_market_cap_wall_peer_counts=larger_market_cap_wall_peer_counts,
+            peer_avg_amount_multiple_values=peer_avg_amount_multiple_values,
+            peer_market_cap_multiple_values=peer_market_cap_multiple_values,
+            frontier_row_multiples=frontier_row_multiples,
+            lower_market_cap_higher_liquidity_peer_count=lower_market_cap_higher_liquidity_peer_count,
+            peer_observation_count=peer_observation_count,
         )
-        mechanism_summary = "当前分支还缺足够样本解释其截断机制。"
-        if priority_handoff == "layer_a_liquidity_corridor":
-            mechanism_summary = (
-                f"{tickers} 在通过最低流动性门槛后，平均仍只达到 cutoff 成交额的 {avg_amount_share_of_cutoff_mean}，"
-                f"对应 cutoff 对候选的流动性压力倍数约为 {cutoff_to_candidate_liquidity_multiple_mean} 倍，说明主问题是 gate 以上到 cutoff 以下的长尾走廊。"
-            )
-        elif priority_handoff == "post_gate_liquidity_competition":
-            mechanism_summary = (
-                f"{tickers} 已明显过 gate，但 cutoff 竞争者平均仍有约 {cutoff_to_candidate_liquidity_multiple_mean} 倍流动性优势，"
-                f"且最近仍差 {min_rank_gap_to_cutoff} 名，说明主问题是过 gate 后的竞争集压力，而不是 gate 本身。"
-            )
-        mechanisms.append(
+    if frontier_row_multiples:
+        nearest_frontier_peer_amount_multiples.append(min(frontier_row_multiples))
+    return lower_market_cap_higher_liquidity_peer_count, peer_observation_count, cutoff_lower_market_cap_count, cutoff_market_cap_observation_count
+
+
+def _collect_priority_handoff_peer_row(
+    current_ticker: str,
+    peer: dict[str, Any],
+    *,
+    candidate_avg_amount: float | None,
+    candidate_market_cap: float | None,
+    frontier_peer_counts: Counter[str],
+    lower_market_cap_hot_peer_counts: Counter[str],
+    larger_market_cap_wall_peer_counts: Counter[str],
+    peer_avg_amount_multiple_values: list[float],
+    peer_market_cap_multiple_values: list[float],
+    frontier_row_multiples: list[float],
+    lower_market_cap_higher_liquidity_peer_count: int,
+    peer_observation_count: int,
+) -> tuple[int, int]:
+    peer_ticker = str(peer.get("ticker") or "").strip()
+    if not peer_ticker or peer_ticker == current_ticker:
+        return lower_market_cap_higher_liquidity_peer_count, peer_observation_count
+    frontier_peer_counts[peer_ticker] += 1
+    peer_observation_count += 1
+    peer_avg_amount = _safe_float(peer.get("avg_amount_20d"))
+    peer_market_cap = _safe_float(peer.get("market_cap"))
+    if candidate_avg_amount is not None and candidate_avg_amount > 0 and peer_avg_amount is not None:
+        peer_amount_multiple = round(peer_avg_amount / candidate_avg_amount, 4)
+        peer_avg_amount_multiple_values.append(peer_amount_multiple)
+        frontier_row_multiples.append(peer_amount_multiple)
+    if candidate_market_cap is not None and candidate_market_cap > 0 and peer_market_cap is not None:
+        peer_market_cap_multiple_values.append(round(peer_market_cap / candidate_market_cap, 4))
+        if peer_market_cap <= candidate_market_cap and peer_avg_amount is not None and candidate_avg_amount is not None and peer_avg_amount > candidate_avg_amount:
+            lower_market_cap_higher_liquidity_peer_count += 1
+            lower_market_cap_hot_peer_counts[peer_ticker] += 1
+        elif peer_avg_amount is not None and candidate_avg_amount is not None and peer_avg_amount > candidate_avg_amount:
+            larger_market_cap_wall_peer_counts[peer_ticker] += 1
+    return lower_market_cap_higher_liquidity_peer_count, peer_observation_count
+
+
+def _build_priority_handoff_representative_cases(occurrences: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        [
             {
-                "priority_handoff": priority_handoff,
-                "ticker_count": len(tickers),
-                "tickers": tickers,
-                "occurrence_count": len(occurrences),
-                "avg_amount_share_of_cutoff_mean": avg_amount_share_of_cutoff_mean,
-                "avg_amount_gap_to_cutoff_mean": avg_amount_gap_to_cutoff_mean,
-                "avg_amount_share_of_min_gate_mean": avg_amount_share_of_min_gate_mean,
-                "cutoff_avg_amount_share_of_min_gate_mean": cutoff_avg_amount_share_of_min_gate_mean,
-                "cutoff_to_candidate_liquidity_multiple_mean": cutoff_to_candidate_liquidity_multiple_mean,
-                "min_rank_gap_to_cutoff": min_rank_gap_to_cutoff,
-                "peer_avg_amount_multiple_mean": peer_avg_amount_multiple_mean,
-                "peer_market_cap_multiple_mean": peer_market_cap_multiple_mean,
-                "nearest_frontier_peer_amount_multiple_mean": nearest_frontier_peer_amount_multiple_mean,
-                "nearest_frontier_peer_amount_multiple_min": nearest_frontier_peer_amount_multiple_min,
-                "nearest_frontier_peer_amount_multiple_median": nearest_frontier_peer_amount_multiple_median,
-                "lower_market_cap_higher_liquidity_peer_share": lower_market_cap_higher_liquidity_peer_share,
-                "cutoff_lower_market_cap_share": cutoff_lower_market_cap_share,
-                "recurring_top5_peer_share": recurring_top5_peer_share,
-                "pressure_peer_cluster_type": pressure_peer_cluster_type,
-                "top_cutoff_tickers": [{"ticker": key, "count": int(value)} for key, value in cutoff_ticker_counts.most_common(5)],
-                "top_frontier_peers": [{"ticker": key, "count": int(value)} for key, value in frontier_peer_counts.most_common(5)],
-                "top_lower_market_cap_hot_peers": top_lower_market_cap_hot_peers,
-                "top_larger_market_cap_wall_peers": top_larger_market_cap_wall_peers,
-                "representative_cases": representative_cases,
-                "mechanism_summary": mechanism_summary,
-                "pressure_cluster_summary": pressure_cluster_summary,
-                "repair_hypothesis_type": repair_hypothesis_type,
-                "repair_hypothesis_summary": repair_hypothesis_summary,
+                "ticker": str(row.get("ticker") or "").strip(),
+                "trade_date": row.get("trade_date"),
+                "pre_truncation_rank": row.get("pre_truncation_rank"),
+                "pre_truncation_rank_gap_to_cutoff": row.get("pre_truncation_rank_gap_to_cutoff"),
+                "pre_truncation_avg_amount_share_of_cutoff": row.get("pre_truncation_avg_amount_share_of_cutoff"),
+                "avg_amount_share_of_min_gate": row.get("avg_amount_share_of_min_gate"),
+                "pre_truncation_cutoff_ticker": row.get("pre_truncation_cutoff_ticker"),
+                "pre_truncation_ranking_driver": row.get("pre_truncation_ranking_driver"),
             }
+            for row in occurrences
+        ],
+        key=lambda row: (
+            int(row.get("pre_truncation_rank_gap_to_cutoff") or 10**9),
+            str(row.get("ticker") or ""),
+            str(row.get("trade_date") or ""),
+        ),
+    )[:5]
+
+
+def _build_priority_handoff_mechanism_summary(
+    priority_handoff: str,
+    *,
+    tickers: list[str],
+    avg_amount_share_of_cutoff_mean: float | None,
+    cutoff_to_candidate_liquidity_multiple_mean: float | None,
+    min_rank_gap_to_cutoff: int | None,
+) -> str:
+    if priority_handoff == "layer_a_liquidity_corridor":
+        return (
+            f"{tickers} 在通过最低流动性门槛后，平均仍只达到 cutoff 成交额的 {avg_amount_share_of_cutoff_mean}，"
+            f"对应 cutoff 对候选的流动性压力倍数约为 {cutoff_to_candidate_liquidity_multiple_mean} 倍，说明主问题是 gate 以上到 cutoff 以下的长尾走廊。"
         )
-    return mechanisms
+    if priority_handoff == "post_gate_liquidity_competition":
+        return (
+            f"{tickers} 已明显过 gate，但 cutoff 竞争者平均仍有约 {cutoff_to_candidate_liquidity_multiple_mean} 倍流动性优势，"
+            f"且最近仍差 {min_rank_gap_to_cutoff} 名，说明主问题是过 gate 后的竞争集压力，而不是 gate 本身。"
+        )
+    return "当前分支还缺足够样本解释其截断机制。"
 
 
 def _build_pre_truncation_frontier_context(
@@ -1166,17 +1277,58 @@ def _build_pre_truncation_frontier_context(
         return cached
 
     if stock_basic_universe.empty or pro is None:
-        cached = {
-            "status": "missing_market_context",
-            "pre_truncation_total_candidates": 0,
-            "pre_truncation_cutoff_rank": None,
-            "cutoff_row": None,
-            "frontier_window": [],
-            "ranking_by_ticker": {},
-        }
+        cached = _build_missing_pre_truncation_frontier_context()
         frontier_cache[compact_trade_date] = cached
         return cached
 
+    working_df = _filter_pre_truncation_stock_basic_universe(
+        stock_basic_universe,
+        compact_trade_date=compact_trade_date,
+        trade_date_context=trade_date_context,
+    )
+    estimated_amount_map, market_cap_map = _build_pre_truncation_market_maps(trade_date_context)
+    working_df = _filter_low_estimated_amount_rows(working_df, estimated_amount_map)
+
+    remaining_codes = working_df["ts_code"].astype(str).tolist()
+    amount_map = _get_avg_amount_20d_map(pro, remaining_codes, compact_trade_date) if remaining_codes else {}
+    if amount_map is None:
+        amount_map = {}
+
+    ranking_rows = _build_pre_truncation_ranking_rows(working_df, amount_map=amount_map, market_cap_map=market_cap_map)
+    ranking_rows.sort(key=lambda row: (float(row.get("avg_amount_20d") or 0.0), float(row.get("market_cap") or 0.0)), reverse=True)
+    ranking_by_ticker: dict[str, dict[str, Any]] = {}
+    for index, row in enumerate(ranking_rows, start=1):
+        row["rank"] = index
+        ranking_by_ticker[str(row.get("ticker") or "")] = dict(row)
+
+    cutoff_rank = min(MAX_CANDIDATE_POOL_SIZE, len(ranking_rows)) if ranking_rows else None
+    cutoff_row = dict(ranking_rows[cutoff_rank - 1]) if cutoff_rank else None
+    frontier_window = _build_frontier_window(ranking_rows, center_rank=cutoff_rank)
+
+    cached = {
+        "status": "ready",
+        "pre_truncation_total_candidates": len(ranking_rows),
+        "pre_truncation_cutoff_rank": cutoff_rank,
+        "cutoff_row": cutoff_row,
+        "frontier_window": frontier_window,
+        "ranking_by_ticker": ranking_by_ticker,
+    }
+    frontier_cache[compact_trade_date] = cached
+    return cached
+
+
+def _build_missing_pre_truncation_frontier_context() -> dict[str, Any]:
+    return {
+        "status": "missing_market_context",
+        "pre_truncation_total_candidates": 0,
+        "pre_truncation_cutoff_rank": None,
+        "cutoff_row": None,
+        "frontier_window": [],
+        "ranking_by_ticker": {},
+    }
+
+
+def _filter_pre_truncation_stock_basic_universe(stock_basic_universe: pd.DataFrame, *, compact_trade_date: str, trade_date_context: dict[str, Any]) -> pd.DataFrame:
     working_df = stock_basic_universe.copy()
     mask_st = working_df["name"].astype(str).str.contains("ST", case=False, na=False)
     working_df = working_df[~mask_st].copy()
@@ -1198,7 +1350,10 @@ def _build_pre_truncation_frontier_context(
     cooldown_tickers = set(trade_date_context.get("cooldown_tickers") or set())
     if cooldown_tickers:
         working_df = working_df[~working_df["symbol"].astype(str).isin(cooldown_tickers)].copy()
+    return working_df
 
+
+def _build_pre_truncation_market_maps(trade_date_context: dict[str, Any]) -> tuple[dict[str, float], dict[str, float]]:
     daily_basic_by_ts = dict(trade_date_context.get("daily_basic_by_ts") or {})
     estimated_amount_map: dict[str, float] = {}
     market_cap_map: dict[str, float] = {}
@@ -1208,21 +1363,23 @@ def _build_pre_truncation_frontier_context(
         total_mv = _safe_float(row.get("total_mv"))
         if total_mv is not None:
             market_cap_map[str(ts_code)] = total_mv / 10000.0
+    return estimated_amount_map, market_cap_map
 
-    if estimated_amount_map:
-        low_estimated_codes = {
-            ts_code
-            for ts_code in working_df["ts_code"].astype(str).tolist()
-            if 0.0 < float(estimated_amount_map.get(ts_code, 0.0)) < MIN_ESTIMATED_AMOUNT_1D
-        }
-        if low_estimated_codes:
-            working_df = working_df[~working_df["ts_code"].astype(str).isin(low_estimated_codes)].copy()
 
-    remaining_codes = working_df["ts_code"].astype(str).tolist()
-    amount_map = _get_avg_amount_20d_map(pro, remaining_codes, compact_trade_date) if remaining_codes else {}
-    if amount_map is None:
-        amount_map = {}
+def _filter_low_estimated_amount_rows(working_df: pd.DataFrame, estimated_amount_map: dict[str, float]) -> pd.DataFrame:
+    if not estimated_amount_map:
+        return working_df
+    low_estimated_codes = {
+        ts_code
+        for ts_code in working_df["ts_code"].astype(str).tolist()
+        if 0.0 < float(estimated_amount_map.get(ts_code, 0.0)) < MIN_ESTIMATED_AMOUNT_1D
+    }
+    if not low_estimated_codes:
+        return working_df
+    return working_df[~working_df["ts_code"].astype(str).isin(low_estimated_codes)].copy()
 
+
+def _build_pre_truncation_ranking_rows(working_df: pd.DataFrame, *, amount_map: dict[str, float], market_cap_map: dict[str, float]) -> list[dict[str, Any]]:
     ranking_rows: list[dict[str, Any]] = []
     for _, row in working_df.iterrows():
         ts_code = str(row.get("ts_code") or "").strip()
@@ -1242,27 +1399,7 @@ def _build_pre_truncation_frontier_context(
                 "market_cap": round(float(market_cap_map.get(ts_code, 0.0)), 4),
             }
         )
-
-    ranking_rows.sort(key=lambda row: (float(row.get("avg_amount_20d") or 0.0), float(row.get("market_cap") or 0.0)), reverse=True)
-    ranking_by_ticker: dict[str, dict[str, Any]] = {}
-    for index, row in enumerate(ranking_rows, start=1):
-        row["rank"] = index
-        ranking_by_ticker[str(row.get("ticker") or "")] = dict(row)
-
-    cutoff_rank = min(MAX_CANDIDATE_POOL_SIZE, len(ranking_rows)) if ranking_rows else None
-    cutoff_row = dict(ranking_rows[cutoff_rank - 1]) if cutoff_rank else None
-    frontier_window = _build_frontier_window(ranking_rows, center_rank=cutoff_rank)
-
-    cached = {
-        "status": "ready",
-        "pre_truncation_total_candidates": len(ranking_rows),
-        "pre_truncation_cutoff_rank": cutoff_rank,
-        "cutoff_row": cutoff_row,
-        "frontier_window": frontier_window,
-        "ranking_by_ticker": ranking_by_ticker,
-    }
-    frontier_cache[compact_trade_date] = cached
-    return cached
+    return ranking_rows
 
 
 def _build_trade_date_context(
@@ -1404,201 +1541,99 @@ def _evaluate_ticker_stage(
     compact_trade_date = _compact_trade_date(trade_date)
     override = (diagnostics_override or {}).get((ticker, compact_trade_date))
     if override is not None:
-        payload = dict(override)
-        payload.setdefault("ticker", ticker)
-        payload.setdefault("trade_date", compact_trade_date)
-        payload.setdefault("blocking_stage", "missing_market_context")
-        payload.setdefault("pre_truncation_total_candidates", None)
-        payload.setdefault("pre_truncation_cutoff_rank", None)
-        payload.setdefault("pre_truncation_rank", None)
-        payload.setdefault("pre_truncation_rank_gap_to_cutoff", None)
-        payload.setdefault("pre_truncation_cutoff_ticker", None)
-        payload.setdefault("pre_truncation_cutoff_avg_amount_20d", None)
-        payload.setdefault("pre_truncation_cutoff_market_cap", None)
-        payload.setdefault("pre_truncation_avg_amount_gap_to_cutoff", None)
-        payload.setdefault("pre_truncation_avg_amount_share_of_cutoff", None)
-        payload.setdefault("pre_truncation_market_cap_gap_to_cutoff", None)
-        payload.setdefault("pre_truncation_market_cap_share_of_cutoff", None)
-        payload.setdefault("pre_truncation_ranking_driver", None)
-        payload.setdefault("avg_amount_share_of_min_gate", None)
-        payload.setdefault("pre_truncation_cutoff_avg_amount_share_of_min_gate", None)
-        payload.setdefault("pre_truncation_liquidity_gap_mode", None)
-        payload.setdefault("market_cap", None)
-        if payload.get("avg_amount_share_of_min_gate") is None:
-            payload["avg_amount_share_of_min_gate"] = _avg_amount_share_of_min_gate(payload.get("avg_amount_20d"))
-        if payload.get("pre_truncation_cutoff_avg_amount_share_of_min_gate") is None:
-            payload["pre_truncation_cutoff_avg_amount_share_of_min_gate"] = _avg_amount_share_of_min_gate(
-                payload.get("pre_truncation_cutoff_avg_amount_20d")
-            )
-        if payload.get("pre_truncation_avg_amount_gap_to_cutoff") is None:
-            avg_amount_20d = _safe_float(payload.get("avg_amount_20d"))
-            cutoff_avg_amount_20d = _safe_float(payload.get("pre_truncation_cutoff_avg_amount_20d"))
-            if avg_amount_20d is not None and cutoff_avg_amount_20d is not None:
-                payload["pre_truncation_avg_amount_gap_to_cutoff"] = round(cutoff_avg_amount_20d - avg_amount_20d, 4)
-        if payload.get("pre_truncation_avg_amount_share_of_cutoff") is None:
-            payload["pre_truncation_avg_amount_share_of_cutoff"] = _safe_ratio(
-                payload.get("avg_amount_20d"),
-                payload.get("pre_truncation_cutoff_avg_amount_20d"),
-            )
-        if payload.get("pre_truncation_market_cap_gap_to_cutoff") is None:
-            market_cap = _safe_float(payload.get("market_cap"))
-            cutoff_market_cap = _safe_float(payload.get("pre_truncation_cutoff_market_cap"))
-            if market_cap is not None and cutoff_market_cap is not None:
-                payload["pre_truncation_market_cap_gap_to_cutoff"] = round(cutoff_market_cap - market_cap, 4)
-        if payload.get("pre_truncation_market_cap_share_of_cutoff") is None:
-            payload["pre_truncation_market_cap_share_of_cutoff"] = _safe_ratio(
-                payload.get("market_cap"),
-                payload.get("pre_truncation_cutoff_market_cap"),
-            )
-        if payload.get("pre_truncation_ranking_driver") is None:
-            payload["pre_truncation_ranking_driver"] = _classify_pre_truncation_ranking_driver(
-                pre_truncation_rank_gap_to_cutoff=payload.get("pre_truncation_rank_gap_to_cutoff"),
-                avg_amount_share_of_cutoff=payload.get("pre_truncation_avg_amount_share_of_cutoff"),
-                market_cap_share_of_cutoff=payload.get("pre_truncation_market_cap_share_of_cutoff"),
-            )
-        if payload.get("pre_truncation_liquidity_gap_mode") is None:
-            payload["pre_truncation_liquidity_gap_mode"] = _classify_pre_truncation_liquidity_gap_mode(
-                avg_amount_share_of_min_gate=payload.get("avg_amount_share_of_min_gate"),
-                avg_amount_share_of_cutoff=payload.get("pre_truncation_avg_amount_share_of_cutoff"),
-            )
-        payload.setdefault("pre_truncation_frontier_window", [])
-        payload.setdefault("top300_higher_liquidity_peer_count", None)
-        payload.setdefault("top300_lower_market_cap_hot_peer_count", None)
-        payload.setdefault("top300_lower_market_cap_hot_peer_examples", [])
-        payload.setdefault("estimated_rank_gap_after_rebucket", None)
-        return payload
+        return _build_override_ticker_stage_payload(ticker, compact_trade_date, override)
 
-    snapshot = dict(trade_date_context.get("snapshot") or {})
-    ranking_by_ticker = dict(frontier_context.get("ranking_by_ticker") or {})
-    frontier_row = dict(ranking_by_ticker.get(ticker) or {})
-    cutoff_row = dict(frontier_context.get("cutoff_row") or {})
-    snapshot_cutoff_ticker = snapshot.get("selected_cutoff_ticker")
-    snapshot_cutoff_avg_amount_20d = _safe_float(snapshot.get("selected_cutoff_avg_volume_20d"))
-    pre_truncation_rank = frontier_row.get("rank")
-    pre_truncation_cutoff_rank = frontier_context.get("pre_truncation_cutoff_rank")
-    pre_truncation_rank_gap_to_cutoff = None
-    if pre_truncation_rank is not None and pre_truncation_cutoff_rank is not None:
-        pre_truncation_rank_gap_to_cutoff = max(0, int(pre_truncation_rank) - int(pre_truncation_cutoff_rank))
-    pre_truncation_frontier_window = list(frontier_context.get("frontier_window") or [])
-    pre_truncation_avg_amount_gap_to_cutoff = None
-    cutoff_avg_amount_20d = _safe_float(cutoff_row.get("avg_amount_20d"))
-    if cutoff_avg_amount_20d is None:
-        cutoff_avg_amount_20d = snapshot_cutoff_avg_amount_20d
-    current_avg_amount_20d = frontier_row.get("avg_amount_20d")
-    avg_amount_share_of_min_gate = _avg_amount_share_of_min_gate(current_avg_amount_20d)
-    pre_truncation_cutoff_avg_amount_share_of_min_gate = _avg_amount_share_of_min_gate(cutoff_avg_amount_20d)
-    if cutoff_avg_amount_20d is not None and current_avg_amount_20d is not None:
-        pre_truncation_avg_amount_gap_to_cutoff = round(float(cutoff_avg_amount_20d) - float(current_avg_amount_20d), 4)
-    pre_truncation_avg_amount_share_of_cutoff = _safe_ratio(current_avg_amount_20d, cutoff_avg_amount_20d)
-    pre_truncation_market_cap_gap_to_cutoff = None
-    cutoff_market_cap = cutoff_row.get("market_cap")
-    current_market_cap = frontier_row.get("market_cap")
-    if cutoff_market_cap is not None and current_market_cap is not None:
-        pre_truncation_market_cap_gap_to_cutoff = round(float(cutoff_market_cap) - float(current_market_cap), 4)
-    pre_truncation_market_cap_share_of_cutoff = _safe_ratio(current_market_cap, cutoff_market_cap)
-    top300_higher_liquidity_peer_count = None
-    top300_lower_market_cap_hot_peer_count = None
-    top300_lower_market_cap_hot_peer_examples: list[str] = []
-    estimated_rank_gap_after_rebucket = None
-    if current_avg_amount_20d is not None and current_market_cap is not None and pre_truncation_cutoff_rank is not None:
-        top300_higher_liquidity_peer_count = 0
-        top300_lower_market_cap_hot_peer_count = 0
-        for peer in ranking_by_ticker.values():
-            peer_ticker = str(peer.get("ticker") or "").strip()
-            peer_rank = peer.get("rank")
-            if not peer_ticker or peer_ticker == ticker or peer_rank is None or int(peer_rank) > int(pre_truncation_cutoff_rank):
-                continue
-            peer_avg_amount = _safe_float(peer.get("avg_amount_20d"))
-            peer_market_cap = _safe_float(peer.get("market_cap"))
-            if peer_avg_amount is None or peer_avg_amount <= float(current_avg_amount_20d):
-                continue
-            top300_higher_liquidity_peer_count += 1
-            if peer_market_cap is not None and peer_market_cap <= float(current_market_cap):
-                top300_lower_market_cap_hot_peer_count += 1
-                if len(top300_lower_market_cap_hot_peer_examples) < 5:
-                    top300_lower_market_cap_hot_peer_examples.append(peer_ticker)
-        if pre_truncation_rank_gap_to_cutoff is not None:
-            estimated_rank_gap_after_rebucket = max(
-                int(pre_truncation_rank_gap_to_cutoff) - int(top300_lower_market_cap_hot_peer_count or 0),
-                0,
-            )
-    pre_truncation_ranking_driver = _classify_pre_truncation_ranking_driver(
-        pre_truncation_rank_gap_to_cutoff=pre_truncation_rank_gap_to_cutoff,
-        avg_amount_share_of_cutoff=pre_truncation_avg_amount_share_of_cutoff,
-        market_cap_share_of_cutoff=pre_truncation_market_cap_share_of_cutoff,
+    stage_context = _build_ticker_stage_context(
+        ticker,
+        trade_date_context=trade_date_context,
+        frontier_context=frontier_context,
     )
-    pre_truncation_liquidity_gap_mode = _classify_pre_truncation_liquidity_gap_mode(
-        avg_amount_share_of_min_gate=avg_amount_share_of_min_gate,
-        avg_amount_share_of_cutoff=pre_truncation_avg_amount_share_of_cutoff,
-    )
+    snapshot = stage_context["snapshot"]
+    frontier_row = stage_context["frontier_row"]
+    cutoff_row = stage_context["cutoff_row"]
+    snapshot_cutoff_ticker = stage_context["snapshot_cutoff_ticker"]
+    snapshot_cutoff_avg_amount_20d = stage_context["snapshot_cutoff_avg_amount_20d"]
+    candidate_pool_rank = stage_context["candidate_pool_rank"]
+    pre_truncation_frontier_window = stage_context["pre_truncation_frontier_window"]
+    pre_truncation_cutoff_rank = stage_context["pre_truncation_cutoff_rank"]
+    current_avg_amount_20d = stage_context["current_avg_amount_20d"]
+    cutoff_avg_amount_20d = stage_context["cutoff_avg_amount_20d"]
+    current_market_cap = stage_context["current_market_cap"]
+    pre_truncation_rank = stage_context["pre_truncation_rank"]
+    pre_truncation_rank_gap_to_cutoff = stage_context["pre_truncation_rank_gap_to_cutoff"]
+    avg_amount_share_of_min_gate = stage_context["avg_amount_share_of_min_gate"]
+    pre_truncation_cutoff_avg_amount_share_of_min_gate = stage_context["pre_truncation_cutoff_avg_amount_share_of_min_gate"]
+    pre_truncation_avg_amount_gap_to_cutoff = stage_context["pre_truncation_avg_amount_gap_to_cutoff"]
+    pre_truncation_avg_amount_share_of_cutoff = stage_context["pre_truncation_avg_amount_share_of_cutoff"]
+    pre_truncation_market_cap_gap_to_cutoff = stage_context["pre_truncation_market_cap_gap_to_cutoff"]
+    pre_truncation_market_cap_share_of_cutoff = stage_context["pre_truncation_market_cap_share_of_cutoff"]
+    top300_higher_liquidity_peer_count = stage_context["top300_higher_liquidity_peer_count"]
+    top300_lower_market_cap_hot_peer_count = stage_context["top300_lower_market_cap_hot_peer_count"]
+    top300_lower_market_cap_hot_peer_examples = stage_context["top300_lower_market_cap_hot_peer_examples"]
+    estimated_rank_gap_after_rebucket = stage_context["estimated_rank_gap_after_rebucket"]
+    pre_truncation_ranking_driver = stage_context["pre_truncation_ranking_driver"]
+    pre_truncation_liquidity_gap_mode = stage_context["pre_truncation_liquidity_gap_mode"]
+
     candidate_pool_rank = dict(snapshot.get("ticker_ranks") or {}).get(ticker)
     stock_row = dict(stock_basic_by_symbol.get(ticker) or {})
     if not stock_basic_by_symbol:
-        return {
-            "ticker": ticker,
-            "trade_date": compact_trade_date,
-            "blocking_stage": "missing_market_context",
-            "candidate_pool_visible": candidate_pool_rank is not None,
-            "candidate_pool_rank": candidate_pool_rank,
-            "candidate_pool_snapshot": snapshot.get("snapshot_name"),
-            "candidate_pool_snapshot_path": snapshot.get("snapshot_path"),
-            "candidate_pool_snapshot_size": snapshot.get("snapshot_size"),
-            "pre_truncation_total_candidates": frontier_context.get("pre_truncation_total_candidates"),
-            "pre_truncation_cutoff_rank": pre_truncation_cutoff_rank,
-            "pre_truncation_rank": pre_truncation_rank,
-            "pre_truncation_rank_gap_to_cutoff": pre_truncation_rank_gap_to_cutoff,
-            "pre_truncation_cutoff_ticker": cutoff_row.get("ticker") or snapshot_cutoff_ticker,
-            "pre_truncation_cutoff_avg_amount_20d": cutoff_avg_amount_20d,
-            "pre_truncation_cutoff_market_cap": cutoff_row.get("market_cap"),
-            "pre_truncation_avg_amount_gap_to_cutoff": pre_truncation_avg_amount_gap_to_cutoff,
-            "pre_truncation_avg_amount_share_of_cutoff": pre_truncation_avg_amount_share_of_cutoff,
-            "avg_amount_share_of_min_gate": avg_amount_share_of_min_gate,
-            "pre_truncation_cutoff_avg_amount_share_of_min_gate": pre_truncation_cutoff_avg_amount_share_of_min_gate,
-            "pre_truncation_market_cap_gap_to_cutoff": pre_truncation_market_cap_gap_to_cutoff,
-            "pre_truncation_market_cap_share_of_cutoff": pre_truncation_market_cap_share_of_cutoff,
-            "pre_truncation_ranking_driver": pre_truncation_ranking_driver,
-            "pre_truncation_liquidity_gap_mode": pre_truncation_liquidity_gap_mode,
-            "market_cap": current_market_cap,
-            "pre_truncation_frontier_window": pre_truncation_frontier_window,
-            "top300_higher_liquidity_peer_count": top300_higher_liquidity_peer_count,
-            "top300_lower_market_cap_hot_peer_count": top300_lower_market_cap_hot_peer_count,
-            "top300_lower_market_cap_hot_peer_examples": top300_lower_market_cap_hot_peer_examples,
-            "estimated_rank_gap_after_rebucket": estimated_rank_gap_after_rebucket,
-            "failed_filters": [],
-        }
+        return _build_missing_stage_payload(
+            ticker=ticker,
+            compact_trade_date=compact_trade_date,
+            blocking_stage="missing_market_context",
+            snapshot=snapshot,
+            frontier_context=frontier_context,
+            cutoff_row=cutoff_row,
+            snapshot_cutoff_ticker=snapshot_cutoff_ticker,
+            cutoff_avg_amount_20d=cutoff_avg_amount_20d,
+            pre_truncation_cutoff_rank=pre_truncation_cutoff_rank,
+            pre_truncation_rank=pre_truncation_rank,
+            pre_truncation_rank_gap_to_cutoff=pre_truncation_rank_gap_to_cutoff,
+            pre_truncation_avg_amount_gap_to_cutoff=pre_truncation_avg_amount_gap_to_cutoff,
+            pre_truncation_avg_amount_share_of_cutoff=pre_truncation_avg_amount_share_of_cutoff,
+            avg_amount_share_of_min_gate=avg_amount_share_of_min_gate,
+            pre_truncation_cutoff_avg_amount_share_of_min_gate=pre_truncation_cutoff_avg_amount_share_of_min_gate,
+            pre_truncation_market_cap_gap_to_cutoff=pre_truncation_market_cap_gap_to_cutoff,
+            pre_truncation_market_cap_share_of_cutoff=pre_truncation_market_cap_share_of_cutoff,
+            pre_truncation_ranking_driver=pre_truncation_ranking_driver,
+            pre_truncation_liquidity_gap_mode=pre_truncation_liquidity_gap_mode,
+            current_market_cap=current_market_cap,
+            pre_truncation_frontier_window=pre_truncation_frontier_window,
+            top300_higher_liquidity_peer_count=top300_higher_liquidity_peer_count,
+            top300_lower_market_cap_hot_peer_count=top300_lower_market_cap_hot_peer_count,
+            top300_lower_market_cap_hot_peer_examples=top300_lower_market_cap_hot_peer_examples,
+            estimated_rank_gap_after_rebucket=estimated_rank_gap_after_rebucket,
+            candidate_pool_rank=candidate_pool_rank,
+        )
     if not stock_row:
-        return {
-            "ticker": ticker,
-            "trade_date": compact_trade_date,
-            "blocking_stage": "missing_stock_basic",
-            "candidate_pool_visible": candidate_pool_rank is not None,
-            "candidate_pool_rank": candidate_pool_rank,
-            "candidate_pool_snapshot": snapshot.get("snapshot_name"),
-            "candidate_pool_snapshot_path": snapshot.get("snapshot_path"),
-            "candidate_pool_snapshot_size": snapshot.get("snapshot_size"),
-            "pre_truncation_total_candidates": frontier_context.get("pre_truncation_total_candidates"),
-            "pre_truncation_cutoff_rank": pre_truncation_cutoff_rank,
-            "pre_truncation_rank": pre_truncation_rank,
-            "pre_truncation_rank_gap_to_cutoff": pre_truncation_rank_gap_to_cutoff,
-            "pre_truncation_cutoff_ticker": cutoff_row.get("ticker") or snapshot_cutoff_ticker,
-            "pre_truncation_cutoff_avg_amount_20d": cutoff_avg_amount_20d,
-            "pre_truncation_cutoff_market_cap": cutoff_row.get("market_cap"),
-            "pre_truncation_avg_amount_gap_to_cutoff": pre_truncation_avg_amount_gap_to_cutoff,
-            "pre_truncation_avg_amount_share_of_cutoff": pre_truncation_avg_amount_share_of_cutoff,
-            "avg_amount_share_of_min_gate": avg_amount_share_of_min_gate,
-            "pre_truncation_cutoff_avg_amount_share_of_min_gate": pre_truncation_cutoff_avg_amount_share_of_min_gate,
-            "pre_truncation_market_cap_gap_to_cutoff": pre_truncation_market_cap_gap_to_cutoff,
-            "pre_truncation_market_cap_share_of_cutoff": pre_truncation_market_cap_share_of_cutoff,
-            "pre_truncation_ranking_driver": pre_truncation_ranking_driver,
-            "pre_truncation_liquidity_gap_mode": pre_truncation_liquidity_gap_mode,
-            "market_cap": current_market_cap,
-            "pre_truncation_frontier_window": pre_truncation_frontier_window,
-            "top300_higher_liquidity_peer_count": top300_higher_liquidity_peer_count,
-            "top300_lower_market_cap_hot_peer_count": top300_lower_market_cap_hot_peer_count,
-            "top300_lower_market_cap_hot_peer_examples": top300_lower_market_cap_hot_peer_examples,
-            "estimated_rank_gap_after_rebucket": estimated_rank_gap_after_rebucket,
-            "failed_filters": [],
-        }
+        return _build_missing_stage_payload(
+            ticker=ticker,
+            compact_trade_date=compact_trade_date,
+            blocking_stage="missing_stock_basic",
+            snapshot=snapshot,
+            frontier_context=frontier_context,
+            cutoff_row=cutoff_row,
+            snapshot_cutoff_ticker=snapshot_cutoff_ticker,
+            cutoff_avg_amount_20d=cutoff_avg_amount_20d,
+            pre_truncation_cutoff_rank=pre_truncation_cutoff_rank,
+            pre_truncation_rank=pre_truncation_rank,
+            pre_truncation_rank_gap_to_cutoff=pre_truncation_rank_gap_to_cutoff,
+            pre_truncation_avg_amount_gap_to_cutoff=pre_truncation_avg_amount_gap_to_cutoff,
+            pre_truncation_avg_amount_share_of_cutoff=pre_truncation_avg_amount_share_of_cutoff,
+            avg_amount_share_of_min_gate=avg_amount_share_of_min_gate,
+            pre_truncation_cutoff_avg_amount_share_of_min_gate=pre_truncation_cutoff_avg_amount_share_of_min_gate,
+            pre_truncation_market_cap_gap_to_cutoff=pre_truncation_market_cap_gap_to_cutoff,
+            pre_truncation_market_cap_share_of_cutoff=pre_truncation_market_cap_share_of_cutoff,
+            pre_truncation_ranking_driver=pre_truncation_ranking_driver,
+            pre_truncation_liquidity_gap_mode=pre_truncation_liquidity_gap_mode,
+            current_market_cap=current_market_cap,
+            pre_truncation_frontier_window=pre_truncation_frontier_window,
+            top300_higher_liquidity_peer_count=top300_higher_liquidity_peer_count,
+            top300_lower_market_cap_hot_peer_count=top300_lower_market_cap_hot_peer_count,
+            top300_lower_market_cap_hot_peer_examples=top300_lower_market_cap_hot_peer_examples,
+            estimated_rank_gap_after_rebucket=estimated_rank_gap_after_rebucket,
+            candidate_pool_rank=candidate_pool_rank,
+        )
 
     ts_code = str(stock_row.get("ts_code") or "").strip()
     name = str(stock_row.get("name") or "").strip()
@@ -1612,79 +1647,31 @@ def _evaluate_ticker_stage(
     is_cooldown = ticker in set(trade_date_context.get("cooldown_tickers") or set())
     daily_row = dict(dict(trade_date_context.get("daily_basic_by_ts") or {}).get(ts_code) or {})
 
-    failed_filters: list[str] = []
-    if is_st:
-        failed_filters.append("st_excluded")
-    if is_bj:
-        failed_filters.append("beijing_exchange_excluded")
-    if listing_days < MIN_LISTING_DAYS:
-        failed_filters.append("new_listing_excluded")
-    if is_suspended:
-        failed_filters.append("suspended")
-    if is_limit_up:
-        failed_filters.append("limit_up_excluded")
-    if is_cooldown:
-        failed_filters.append("cooldown_excluded")
+    failed_filters = _build_ticker_stage_failed_filters(
+        is_st=is_st,
+        is_bj=is_bj,
+        listing_days=listing_days,
+        is_suspended=is_suspended,
+        is_limit_up=is_limit_up,
+        is_cooldown=is_cooldown,
+    )
+    stage_resolution = _resolve_ticker_stage_resolution(
+        ticker,
+        compact_trade_date=compact_trade_date,
+        snapshots_root=snapshots_root,
+        snapshot=snapshot,
+        candidate_pool_rank=candidate_pool_rank,
+        failed_filters=failed_filters,
+        daily_row=daily_row,
+        pro=pro,
+        ts_code=ts_code,
+    )
+    blocking_stage = stage_resolution["blocking_stage"]
+    estimated_amount_1d = stage_resolution["estimated_amount_1d"]
+    avg_amount_20d = stage_resolution["avg_amount_20d"]
+    local_prices_snapshot_path = stage_resolution["local_prices_snapshot_path"]
+    failed_filters = list(stage_resolution["failed_filters"])
 
-    if candidate_pool_rank is not None:
-        blocking_stage = "candidate_pool_visible_or_later_stage"
-        avg_amount_20d = None
-        estimated_amount_1d = None
-        if daily_row:
-            turnover_rate = _safe_float(daily_row.get("turnover_rate"))
-            circ_mv = _safe_float(daily_row.get("circ_mv"))
-            if turnover_rate is not None and circ_mv is not None:
-                estimated_amount_1d = round(max(0.0, circ_mv * turnover_rate / 100.0), 4)
-    elif failed_filters:
-        blocking_stage = failed_filters[0]
-        estimated_amount_1d = None
-        avg_amount_20d = None
-    else:
-        shadow_recall_status = str(snapshot.get("shadow_recall_status") or "").strip()
-        if shadow_recall_status == "legacy_unknown":
-            blocking_stage = "shadow_snapshot_legacy_unknown"
-            estimated_amount_1d = None
-            avg_amount_20d = None
-        elif not daily_row or pro is None:
-            local_avg_amount_20d, local_prices_snapshot_path = _estimate_avg_amount_20d_from_local_prices(
-                snapshots_root,
-                ticker,
-                compact_trade_date,
-            )
-            if local_avg_amount_20d is not None:
-                avg_amount_20d = local_avg_amount_20d
-                estimated_amount_1d = None
-                if avg_amount_20d < MIN_AVG_AMOUNT_20D:
-                    blocking_stage = "low_avg_amount_20d"
-                    failed_filters.append("low_avg_amount_20d")
-                else:
-                    blocking_stage = "candidate_pool_truncated_after_filters"
-            else:
-                blocking_stage = "missing_market_context"
-                estimated_amount_1d = None
-                avg_amount_20d = None
-                local_prices_snapshot_path = None
-        else:
-            turnover_rate = _safe_float(daily_row.get("turnover_rate"))
-            circ_mv = _safe_float(daily_row.get("circ_mv"))
-            estimated_amount_1d = None
-            local_prices_snapshot_path = None
-            if turnover_rate is not None and circ_mv is not None:
-                estimated_amount_1d = round(max(0.0, circ_mv * turnover_rate / 100.0), 4)
-            if estimated_amount_1d is not None and 0.0 < estimated_amount_1d < MIN_ESTIMATED_AMOUNT_1D:
-                blocking_stage = "low_estimated_liquidity"
-                avg_amount_20d = None
-                failed_filters.append("low_estimated_liquidity")
-            else:
-                avg_amount_value = _get_avg_amount_20d(pro, ts_code, compact_trade_date)
-                avg_amount_20d = round(float(avg_amount_value), 4)
-                if avg_amount_20d < MIN_AVG_AMOUNT_20D:
-                    blocking_stage = "low_avg_amount_20d"
-                    failed_filters.append("low_avg_amount_20d")
-                else:
-                    blocking_stage = "candidate_pool_truncated_after_filters"
-    if "local_prices_snapshot_path" not in locals():
-        local_prices_snapshot_path = None
     if avg_amount_share_of_min_gate is None:
         avg_amount_share_of_min_gate = _avg_amount_share_of_min_gate(avg_amount_20d)
     if pre_truncation_avg_amount_gap_to_cutoff is None and cutoff_avg_amount_20d is not None and avg_amount_20d is not None:
@@ -1757,6 +1744,358 @@ def _evaluate_ticker_stage(
         "failed_filters": failed_filters,
         "blocking_stage": blocking_stage,
     }
+
+
+def _build_override_ticker_stage_payload(ticker: str, compact_trade_date: str, override: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(override)
+    _apply_override_ticker_stage_defaults(payload, ticker=ticker, compact_trade_date=compact_trade_date)
+    _apply_override_ticker_stage_derived_fields(payload)
+    return payload
+
+
+def _apply_override_ticker_stage_defaults(payload: dict[str, Any], *, ticker: str, compact_trade_date: str) -> None:
+    payload.setdefault("ticker", ticker)
+    payload.setdefault("trade_date", compact_trade_date)
+    payload.setdefault("blocking_stage", "missing_market_context")
+    payload.setdefault("pre_truncation_total_candidates", None)
+    payload.setdefault("pre_truncation_cutoff_rank", None)
+    payload.setdefault("pre_truncation_rank", None)
+    payload.setdefault("pre_truncation_rank_gap_to_cutoff", None)
+    payload.setdefault("pre_truncation_cutoff_ticker", None)
+    payload.setdefault("pre_truncation_cutoff_avg_amount_20d", None)
+    payload.setdefault("pre_truncation_cutoff_market_cap", None)
+    payload.setdefault("pre_truncation_avg_amount_gap_to_cutoff", None)
+    payload.setdefault("pre_truncation_avg_amount_share_of_cutoff", None)
+    payload.setdefault("pre_truncation_market_cap_gap_to_cutoff", None)
+    payload.setdefault("pre_truncation_market_cap_share_of_cutoff", None)
+    payload.setdefault("pre_truncation_ranking_driver", None)
+    payload.setdefault("avg_amount_share_of_min_gate", None)
+    payload.setdefault("pre_truncation_cutoff_avg_amount_share_of_min_gate", None)
+    payload.setdefault("pre_truncation_liquidity_gap_mode", None)
+    payload.setdefault("market_cap", None)
+    payload.setdefault("pre_truncation_frontier_window", [])
+    payload.setdefault("top300_higher_liquidity_peer_count", None)
+    payload.setdefault("top300_lower_market_cap_hot_peer_count", None)
+    payload.setdefault("top300_lower_market_cap_hot_peer_examples", [])
+    payload.setdefault("estimated_rank_gap_after_rebucket", None)
+
+
+def _apply_override_ticker_stage_derived_fields(payload: dict[str, Any]) -> None:
+    _apply_override_ticker_stage_amount_fields(payload)
+    _apply_override_ticker_stage_ranking_fields(payload)
+
+
+def _apply_override_ticker_stage_amount_fields(payload: dict[str, Any]) -> None:
+    if payload.get("avg_amount_share_of_min_gate") is None:
+        payload["avg_amount_share_of_min_gate"] = _avg_amount_share_of_min_gate(payload.get("avg_amount_20d"))
+    if payload.get("pre_truncation_cutoff_avg_amount_share_of_min_gate") is None:
+        payload["pre_truncation_cutoff_avg_amount_share_of_min_gate"] = _avg_amount_share_of_min_gate(payload.get("pre_truncation_cutoff_avg_amount_20d"))
+    if payload.get("pre_truncation_avg_amount_gap_to_cutoff") is None:
+        avg_amount_20d = _safe_float(payload.get("avg_amount_20d"))
+        cutoff_avg_amount_20d = _safe_float(payload.get("pre_truncation_cutoff_avg_amount_20d"))
+        if avg_amount_20d is not None and cutoff_avg_amount_20d is not None:
+            payload["pre_truncation_avg_amount_gap_to_cutoff"] = round(cutoff_avg_amount_20d - avg_amount_20d, 4)
+    if payload.get("pre_truncation_avg_amount_share_of_cutoff") is None:
+        payload["pre_truncation_avg_amount_share_of_cutoff"] = _safe_ratio(payload.get("avg_amount_20d"), payload.get("pre_truncation_cutoff_avg_amount_20d"))
+    if payload.get("pre_truncation_market_cap_gap_to_cutoff") is None:
+        market_cap = _safe_float(payload.get("market_cap"))
+        cutoff_market_cap = _safe_float(payload.get("pre_truncation_cutoff_market_cap"))
+        if market_cap is not None and cutoff_market_cap is not None:
+            payload["pre_truncation_market_cap_gap_to_cutoff"] = round(cutoff_market_cap - market_cap, 4)
+    if payload.get("pre_truncation_market_cap_share_of_cutoff") is None:
+        payload["pre_truncation_market_cap_share_of_cutoff"] = _safe_ratio(payload.get("market_cap"), payload.get("pre_truncation_cutoff_market_cap"))
+
+
+def _apply_override_ticker_stage_ranking_fields(payload: dict[str, Any]) -> None:
+    if payload.get("pre_truncation_ranking_driver") is None:
+        payload["pre_truncation_ranking_driver"] = _classify_pre_truncation_ranking_driver(
+            pre_truncation_rank_gap_to_cutoff=payload.get("pre_truncation_rank_gap_to_cutoff"),
+            avg_amount_share_of_cutoff=payload.get("pre_truncation_avg_amount_share_of_cutoff"),
+            market_cap_share_of_cutoff=payload.get("pre_truncation_market_cap_share_of_cutoff"),
+        )
+    if payload.get("pre_truncation_liquidity_gap_mode") is None:
+        payload["pre_truncation_liquidity_gap_mode"] = _classify_pre_truncation_liquidity_gap_mode(
+            avg_amount_share_of_min_gate=payload.get("avg_amount_share_of_min_gate"),
+            avg_amount_share_of_cutoff=payload.get("pre_truncation_avg_amount_share_of_cutoff"),
+        )
+
+
+def _build_ticker_stage_context(ticker: str, *, trade_date_context: dict[str, Any], frontier_context: dict[str, Any]) -> dict[str, Any]:
+    snapshot = dict(trade_date_context.get("snapshot") or {})
+    ranking_by_ticker = dict(frontier_context.get("ranking_by_ticker") or {})
+    frontier_row = dict(ranking_by_ticker.get(ticker) or {})
+    cutoff_row = dict(frontier_context.get("cutoff_row") or {})
+    snapshot_cutoff_ticker = snapshot.get("selected_cutoff_ticker")
+    snapshot_cutoff_avg_amount_20d = _safe_float(snapshot.get("selected_cutoff_avg_volume_20d"))
+    pre_truncation_rank = frontier_row.get("rank")
+    pre_truncation_cutoff_rank = frontier_context.get("pre_truncation_cutoff_rank")
+    pre_truncation_rank_gap_to_cutoff = None
+    if pre_truncation_rank is not None and pre_truncation_cutoff_rank is not None:
+        pre_truncation_rank_gap_to_cutoff = max(0, int(pre_truncation_rank) - int(pre_truncation_cutoff_rank))
+    current_avg_amount_20d = frontier_row.get("avg_amount_20d")
+    cutoff_avg_amount_20d = _safe_float(cutoff_row.get("avg_amount_20d")) or snapshot_cutoff_avg_amount_20d
+    current_market_cap = frontier_row.get("market_cap")
+    cutoff_market_cap = cutoff_row.get("market_cap")
+    return {
+        "snapshot": snapshot,
+        "frontier_row": frontier_row,
+        "cutoff_row": cutoff_row,
+        "snapshot_cutoff_ticker": snapshot_cutoff_ticker,
+        "snapshot_cutoff_avg_amount_20d": snapshot_cutoff_avg_amount_20d,
+        "candidate_pool_rank": dict(snapshot.get("ticker_ranks") or {}).get(ticker),
+        "pre_truncation_rank": pre_truncation_rank,
+        "pre_truncation_cutoff_rank": pre_truncation_cutoff_rank,
+        "pre_truncation_rank_gap_to_cutoff": pre_truncation_rank_gap_to_cutoff,
+        "pre_truncation_frontier_window": list(frontier_context.get("frontier_window") or []),
+        "current_avg_amount_20d": current_avg_amount_20d,
+        "cutoff_avg_amount_20d": cutoff_avg_amount_20d,
+        "current_market_cap": current_market_cap,
+        "avg_amount_share_of_min_gate": _avg_amount_share_of_min_gate(current_avg_amount_20d),
+        "pre_truncation_cutoff_avg_amount_share_of_min_gate": _avg_amount_share_of_min_gate(cutoff_avg_amount_20d),
+        "pre_truncation_avg_amount_gap_to_cutoff": round(float(cutoff_avg_amount_20d) - float(current_avg_amount_20d), 4) if cutoff_avg_amount_20d is not None and current_avg_amount_20d is not None else None,
+        "pre_truncation_avg_amount_share_of_cutoff": _safe_ratio(current_avg_amount_20d, cutoff_avg_amount_20d),
+        "pre_truncation_market_cap_gap_to_cutoff": round(float(cutoff_market_cap) - float(current_market_cap), 4) if cutoff_market_cap is not None and current_market_cap is not None else None,
+        "pre_truncation_market_cap_share_of_cutoff": _safe_ratio(current_market_cap, cutoff_market_cap),
+        **_build_top300_peer_metrics(
+            ticker,
+            ranking_by_ticker=ranking_by_ticker,
+            current_avg_amount_20d=current_avg_amount_20d,
+            current_market_cap=current_market_cap,
+            pre_truncation_cutoff_rank=pre_truncation_cutoff_rank,
+            pre_truncation_rank_gap_to_cutoff=pre_truncation_rank_gap_to_cutoff,
+        ),
+        "pre_truncation_ranking_driver": _classify_pre_truncation_ranking_driver(
+            pre_truncation_rank_gap_to_cutoff=pre_truncation_rank_gap_to_cutoff,
+            avg_amount_share_of_cutoff=_safe_ratio(current_avg_amount_20d, cutoff_avg_amount_20d),
+            market_cap_share_of_cutoff=_safe_ratio(current_market_cap, cutoff_market_cap),
+        ),
+        "pre_truncation_liquidity_gap_mode": _classify_pre_truncation_liquidity_gap_mode(
+            avg_amount_share_of_min_gate=_avg_amount_share_of_min_gate(current_avg_amount_20d),
+            avg_amount_share_of_cutoff=_safe_ratio(current_avg_amount_20d, cutoff_avg_amount_20d),
+        ),
+    }
+
+
+def _build_top300_peer_metrics(
+    ticker: str,
+    *,
+    ranking_by_ticker: dict[str, dict[str, Any]],
+    current_avg_amount_20d: Any,
+    current_market_cap: Any,
+    pre_truncation_cutoff_rank: Any,
+    pre_truncation_rank_gap_to_cutoff: Any,
+) -> dict[str, Any]:
+    top300_higher_liquidity_peer_count = None
+    top300_lower_market_cap_hot_peer_count = None
+    top300_lower_market_cap_hot_peer_examples: list[str] = []
+    estimated_rank_gap_after_rebucket = None
+    if current_avg_amount_20d is not None and current_market_cap is not None and pre_truncation_cutoff_rank is not None:
+        top300_higher_liquidity_peer_count = 0
+        top300_lower_market_cap_hot_peer_count = 0
+        for peer in ranking_by_ticker.values():
+            peer_ticker = str(peer.get("ticker") or "").strip()
+            peer_rank = peer.get("rank")
+            if not peer_ticker or peer_ticker == ticker or peer_rank is None or int(peer_rank) > int(pre_truncation_cutoff_rank):
+                continue
+            peer_avg_amount = _safe_float(peer.get("avg_amount_20d"))
+            peer_market_cap = _safe_float(peer.get("market_cap"))
+            if peer_avg_amount is None or peer_avg_amount <= float(current_avg_amount_20d):
+                continue
+            top300_higher_liquidity_peer_count += 1
+            if peer_market_cap is not None and peer_market_cap <= float(current_market_cap):
+                top300_lower_market_cap_hot_peer_count += 1
+                if len(top300_lower_market_cap_hot_peer_examples) < 5:
+                    top300_lower_market_cap_hot_peer_examples.append(peer_ticker)
+        if pre_truncation_rank_gap_to_cutoff is not None:
+            estimated_rank_gap_after_rebucket = max(int(pre_truncation_rank_gap_to_cutoff) - int(top300_lower_market_cap_hot_peer_count or 0), 0)
+    return {
+        "top300_higher_liquidity_peer_count": top300_higher_liquidity_peer_count,
+        "top300_lower_market_cap_hot_peer_count": top300_lower_market_cap_hot_peer_count,
+        "top300_lower_market_cap_hot_peer_examples": top300_lower_market_cap_hot_peer_examples,
+        "estimated_rank_gap_after_rebucket": estimated_rank_gap_after_rebucket,
+    }
+
+
+def _build_missing_stage_payload(
+    *,
+    ticker: str,
+    compact_trade_date: str,
+    blocking_stage: str,
+    snapshot: dict[str, Any],
+    frontier_context: dict[str, Any],
+    cutoff_row: dict[str, Any],
+    snapshot_cutoff_ticker: Any,
+    cutoff_avg_amount_20d: Any,
+    pre_truncation_cutoff_rank: Any,
+    pre_truncation_rank: Any,
+    pre_truncation_rank_gap_to_cutoff: Any,
+    pre_truncation_avg_amount_gap_to_cutoff: Any,
+    pre_truncation_avg_amount_share_of_cutoff: Any,
+    avg_amount_share_of_min_gate: Any,
+    pre_truncation_cutoff_avg_amount_share_of_min_gate: Any,
+    pre_truncation_market_cap_gap_to_cutoff: Any,
+    pre_truncation_market_cap_share_of_cutoff: Any,
+    pre_truncation_ranking_driver: Any,
+    pre_truncation_liquidity_gap_mode: Any,
+    current_market_cap: Any,
+    pre_truncation_frontier_window: list[dict[str, Any]],
+    top300_higher_liquidity_peer_count: Any,
+    top300_lower_market_cap_hot_peer_count: Any,
+    top300_lower_market_cap_hot_peer_examples: list[str],
+    estimated_rank_gap_after_rebucket: Any,
+    candidate_pool_rank: Any,
+) -> dict[str, Any]:
+    return {
+        "ticker": ticker,
+        "trade_date": compact_trade_date,
+        "blocking_stage": blocking_stage,
+        "candidate_pool_visible": candidate_pool_rank is not None,
+        "candidate_pool_rank": candidate_pool_rank,
+        "candidate_pool_snapshot": snapshot.get("snapshot_name"),
+        "candidate_pool_snapshot_path": snapshot.get("snapshot_path"),
+        "candidate_pool_snapshot_size": snapshot.get("snapshot_size"),
+        "pre_truncation_total_candidates": frontier_context.get("pre_truncation_total_candidates"),
+        "pre_truncation_cutoff_rank": pre_truncation_cutoff_rank,
+        "pre_truncation_rank": pre_truncation_rank,
+        "pre_truncation_rank_gap_to_cutoff": pre_truncation_rank_gap_to_cutoff,
+        "pre_truncation_cutoff_ticker": cutoff_row.get("ticker") or snapshot_cutoff_ticker,
+        "pre_truncation_cutoff_avg_amount_20d": cutoff_avg_amount_20d,
+        "pre_truncation_cutoff_market_cap": cutoff_row.get("market_cap"),
+        "pre_truncation_avg_amount_gap_to_cutoff": pre_truncation_avg_amount_gap_to_cutoff,
+        "pre_truncation_avg_amount_share_of_cutoff": pre_truncation_avg_amount_share_of_cutoff,
+        "avg_amount_share_of_min_gate": avg_amount_share_of_min_gate,
+        "pre_truncation_cutoff_avg_amount_share_of_min_gate": pre_truncation_cutoff_avg_amount_share_of_min_gate,
+        "pre_truncation_market_cap_gap_to_cutoff": pre_truncation_market_cap_gap_to_cutoff,
+        "pre_truncation_market_cap_share_of_cutoff": pre_truncation_market_cap_share_of_cutoff,
+        "pre_truncation_ranking_driver": pre_truncation_ranking_driver,
+        "pre_truncation_liquidity_gap_mode": pre_truncation_liquidity_gap_mode,
+        "market_cap": current_market_cap,
+        "pre_truncation_frontier_window": pre_truncation_frontier_window,
+        "top300_higher_liquidity_peer_count": top300_higher_liquidity_peer_count,
+        "top300_lower_market_cap_hot_peer_count": top300_lower_market_cap_hot_peer_count,
+        "top300_lower_market_cap_hot_peer_examples": top300_lower_market_cap_hot_peer_examples,
+        "estimated_rank_gap_after_rebucket": estimated_rank_gap_after_rebucket,
+        "failed_filters": [],
+    }
+
+
+def _build_ticker_stage_failed_filters(
+    *,
+    is_st: bool,
+    is_bj: bool,
+    listing_days: int,
+    is_suspended: bool,
+    is_limit_up: bool,
+    is_cooldown: bool,
+) -> list[str]:
+    failed_filters: list[str] = []
+    if is_st:
+        failed_filters.append("st_excluded")
+    if is_bj:
+        failed_filters.append("beijing_exchange_excluded")
+    if listing_days < MIN_LISTING_DAYS:
+        failed_filters.append("new_listing_excluded")
+    if is_suspended:
+        failed_filters.append("suspended")
+    if is_limit_up:
+        failed_filters.append("limit_up_excluded")
+    if is_cooldown:
+        failed_filters.append("cooldown_excluded")
+    return failed_filters
+
+
+def _resolve_ticker_stage_resolution(
+    ticker: str,
+    *,
+    compact_trade_date: str,
+    snapshots_root: Path,
+    snapshot: dict[str, Any],
+    candidate_pool_rank: Any,
+    failed_filters: list[str],
+    daily_row: dict[str, Any],
+    pro: Any,
+    ts_code: str,
+) -> dict[str, Any]:
+    if candidate_pool_rank is not None:
+        estimated_amount_1d = _estimate_amount_from_daily_row(daily_row)
+        return {
+            "blocking_stage": "candidate_pool_visible_or_later_stage",
+            "estimated_amount_1d": estimated_amount_1d,
+            "avg_amount_20d": None,
+            "local_prices_snapshot_path": None,
+            "failed_filters": failed_filters,
+        }
+    if failed_filters:
+        return {
+            "blocking_stage": failed_filters[0],
+            "estimated_amount_1d": None,
+            "avg_amount_20d": None,
+            "local_prices_snapshot_path": None,
+            "failed_filters": failed_filters,
+        }
+    shadow_recall_status = str(snapshot.get("shadow_recall_status") or "").strip()
+    if shadow_recall_status == "legacy_unknown":
+        return {
+            "blocking_stage": "shadow_snapshot_legacy_unknown",
+            "estimated_amount_1d": None,
+            "avg_amount_20d": None,
+            "local_prices_snapshot_path": None,
+            "failed_filters": failed_filters,
+        }
+    if not daily_row or pro is None:
+        local_avg_amount_20d, local_prices_snapshot_path = _estimate_avg_amount_20d_from_local_prices(snapshots_root, ticker, compact_trade_date)
+        if local_avg_amount_20d is None:
+            return {
+                "blocking_stage": "missing_market_context",
+                "estimated_amount_1d": None,
+                "avg_amount_20d": None,
+                "local_prices_snapshot_path": None,
+                "failed_filters": failed_filters,
+            }
+        resolved_failed_filters = list(failed_filters)
+        blocking_stage = "candidate_pool_truncated_after_filters"
+        if local_avg_amount_20d < MIN_AVG_AMOUNT_20D:
+            blocking_stage = "low_avg_amount_20d"
+            resolved_failed_filters.append("low_avg_amount_20d")
+        return {
+            "blocking_stage": blocking_stage,
+            "estimated_amount_1d": None,
+            "avg_amount_20d": local_avg_amount_20d,
+            "local_prices_snapshot_path": local_prices_snapshot_path,
+            "failed_filters": resolved_failed_filters,
+        }
+    estimated_amount_1d = _estimate_amount_from_daily_row(daily_row)
+    if estimated_amount_1d is not None and 0.0 < estimated_amount_1d < MIN_ESTIMATED_AMOUNT_1D:
+        resolved_failed_filters = list(failed_filters)
+        resolved_failed_filters.append("low_estimated_liquidity")
+        return {
+            "blocking_stage": "low_estimated_liquidity",
+            "estimated_amount_1d": estimated_amount_1d,
+            "avg_amount_20d": None,
+            "local_prices_snapshot_path": None,
+            "failed_filters": resolved_failed_filters,
+        }
+    avg_amount_20d = round(float(_get_avg_amount_20d(pro, ts_code, compact_trade_date)), 4)
+    resolved_failed_filters = list(failed_filters)
+    blocking_stage = "candidate_pool_truncated_after_filters"
+    if avg_amount_20d < MIN_AVG_AMOUNT_20D:
+        blocking_stage = "low_avg_amount_20d"
+        resolved_failed_filters.append("low_avg_amount_20d")
+    return {
+        "blocking_stage": blocking_stage,
+        "estimated_amount_1d": estimated_amount_1d,
+        "avg_amount_20d": avg_amount_20d,
+        "local_prices_snapshot_path": None,
+        "failed_filters": resolved_failed_filters,
+    }
+
+
+def _estimate_amount_from_daily_row(daily_row: dict[str, Any]) -> float | None:
+    turnover_rate = _safe_float(daily_row.get("turnover_rate"))
+    circ_mv = _safe_float(daily_row.get("circ_mv"))
+    if turnover_rate is None or circ_mv is None:
+        return None
+    return round(max(0.0, circ_mv * turnover_rate / 100.0), 4)
 
 
 def _build_priority_ticker_dossiers(
@@ -1888,44 +2227,7 @@ def _build_priority_ticker_dossiers(
 
 
 def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, Any]]) -> dict[str, Any]:
-    truncation_case_count = 0
-    truncation_rows: list[dict[str, Any]] = []
-    for row in priority_ticker_dossiers:
-        ticker = str(row.get("ticker") or "").strip()
-        for occurrence in list(row.get("occurrence_evidence") or []):
-            if str(occurrence.get("blocking_stage") or "") != "candidate_pool_truncated_after_filters":
-                continue
-            truncation_case_count += 1
-            rank_gap = occurrence.get("pre_truncation_rank_gap_to_cutoff")
-            rank_value = occurrence.get("pre_truncation_rank")
-            cutoff_rank = occurrence.get("pre_truncation_cutoff_rank")
-            share_of_cutoff = occurrence.get("pre_truncation_avg_amount_share_of_cutoff")
-            if rank_gap is None and rank_value is None and cutoff_rank is None and share_of_cutoff is None:
-                continue
-            truncation_rows.append(
-                {
-                    "ticker": ticker,
-                    "trade_date": occurrence.get("trade_date"),
-                    "pre_truncation_rank": rank_value,
-                    "pre_truncation_cutoff_rank": cutoff_rank,
-                    "pre_truncation_rank_gap_to_cutoff": rank_gap,
-                    "pre_truncation_total_candidates": occurrence.get("pre_truncation_total_candidates"),
-                    "pre_truncation_cutoff_ticker": occurrence.get("pre_truncation_cutoff_ticker"),
-                    "pre_truncation_cutoff_avg_amount_20d": occurrence.get("pre_truncation_cutoff_avg_amount_20d"),
-                    "pre_truncation_cutoff_avg_amount_share_of_min_gate": occurrence.get("pre_truncation_cutoff_avg_amount_share_of_min_gate"),
-                    "pre_truncation_cutoff_market_cap": occurrence.get("pre_truncation_cutoff_market_cap"),
-                    "pre_truncation_avg_amount_gap_to_cutoff": occurrence.get("pre_truncation_avg_amount_gap_to_cutoff"),
-                    "pre_truncation_avg_amount_share_of_cutoff": share_of_cutoff,
-                    "avg_amount_share_of_min_gate": occurrence.get("avg_amount_share_of_min_gate"),
-                    "pre_truncation_market_cap_gap_to_cutoff": occurrence.get("pre_truncation_market_cap_gap_to_cutoff"),
-                    "pre_truncation_market_cap_share_of_cutoff": occurrence.get("pre_truncation_market_cap_share_of_cutoff"),
-                    "pre_truncation_ranking_driver": occurrence.get("pre_truncation_ranking_driver"),
-                    "pre_truncation_liquidity_gap_mode": occurrence.get("pre_truncation_liquidity_gap_mode"),
-                    "avg_amount_20d": occurrence.get("avg_amount_20d"),
-                    "market_cap": occurrence.get("market_cap"),
-                    "pre_truncation_frontier_window": occurrence.get("pre_truncation_frontier_window") or [],
-                }
-            )
+    truncation_case_count, truncation_rows = _collect_truncation_frontier_rows(priority_ticker_dossiers)
     ordered_rows = sorted(
         truncation_rows,
         key=lambda current: (
@@ -1938,14 +2240,7 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
         ),
     )
     rank_gaps = [int(row.get("pre_truncation_rank_gap_to_cutoff") or 0) for row in ordered_rows if row.get("pre_truncation_rank_gap_to_cutoff") is not None]
-    distinct_ticker_cases: list[dict[str, Any]] = []
-    seen_tickers: set[str] = set()
-    for row in ordered_rows:
-        ticker = str(row.get("ticker") or "").strip()
-        if not ticker or ticker in seen_tickers:
-            continue
-        seen_tickers.add(ticker)
-        distinct_ticker_cases.append(dict(row))
+    distinct_ticker_cases = _collect_distinct_truncation_ticker_cases(ordered_rows)
 
     min_rank_gap = min(rank_gaps) if rank_gaps else None
     avg_amount_shares = [_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) for row in ordered_rows]
@@ -1960,20 +2255,7 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
     dominant_ranking_driver = ranking_driver_counts.most_common(1)[0][0] if ranking_driver_counts else None
     liquidity_gap_mode_counts = Counter(str(row.get("pre_truncation_liquidity_gap_mode") or "unknown") for row in ordered_rows)
     dominant_liquidity_gap_mode = liquidity_gap_mode_counts.most_common(1)[0][0] if liquidity_gap_mode_counts else None
-    if min_rank_gap is None:
-        max_share = max(avg_amount_shares) if avg_amount_shares else None
-        if max_share is not None and max_share < 0.65:
-            frontier_verdict = "far_below_cutoff_not_boundary"
-        elif max_share is not None and max_share < 0.85:
-            frontier_verdict = "mid_cutoff_gap"
-        else:
-            frontier_verdict = "no_rank_observability"
-    elif min_rank_gap <= 20:
-        frontier_verdict = "near_cutoff_boundary"
-    elif min_rank_gap <= 100:
-        frontier_verdict = "mid_cutoff_gap"
-    else:
-        frontier_verdict = "far_below_cutoff_not_boundary"
+    frontier_verdict = _resolve_truncation_frontier_verdict(min_rank_gap=min_rank_gap, avg_amount_shares=avg_amount_shares)
 
     return {
         "observed_case_count": truncation_case_count,
@@ -2001,6 +2283,79 @@ def _build_truncation_frontier_summary(priority_ticker_dossiers: list[dict[str, 
         "max_rank_gap_to_cutoff": max(rank_gaps) if rank_gaps else None,
         "avg_rank_gap_to_cutoff": round(sum(rank_gaps) / len(rank_gaps), 4) if rank_gaps else None,
     }
+
+
+def _collect_truncation_frontier_rows(priority_ticker_dossiers: list[dict[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+    truncation_case_count = 0
+    truncation_rows: list[dict[str, Any]] = []
+    for row in priority_ticker_dossiers:
+        ticker = str(row.get("ticker") or "").strip()
+        for occurrence in list(row.get("occurrence_evidence") or []):
+            if str(occurrence.get("blocking_stage") or "") != "candidate_pool_truncated_after_filters":
+                continue
+            truncation_case_count += 1
+            truncation_row = _build_truncation_frontier_row(ticker, occurrence)
+            if truncation_row is not None:
+                truncation_rows.append(truncation_row)
+    return truncation_case_count, truncation_rows
+
+
+def _build_truncation_frontier_row(ticker: str, occurrence: dict[str, Any]) -> dict[str, Any] | None:
+    rank_gap = occurrence.get("pre_truncation_rank_gap_to_cutoff")
+    rank_value = occurrence.get("pre_truncation_rank")
+    cutoff_rank = occurrence.get("pre_truncation_cutoff_rank")
+    share_of_cutoff = occurrence.get("pre_truncation_avg_amount_share_of_cutoff")
+    if rank_gap is None and rank_value is None and cutoff_rank is None and share_of_cutoff is None:
+        return None
+    return {
+        "ticker": ticker,
+        "trade_date": occurrence.get("trade_date"),
+        "pre_truncation_rank": rank_value,
+        "pre_truncation_cutoff_rank": cutoff_rank,
+        "pre_truncation_rank_gap_to_cutoff": rank_gap,
+        "pre_truncation_total_candidates": occurrence.get("pre_truncation_total_candidates"),
+        "pre_truncation_cutoff_ticker": occurrence.get("pre_truncation_cutoff_ticker"),
+        "pre_truncation_cutoff_avg_amount_20d": occurrence.get("pre_truncation_cutoff_avg_amount_20d"),
+        "pre_truncation_cutoff_avg_amount_share_of_min_gate": occurrence.get("pre_truncation_cutoff_avg_amount_share_of_min_gate"),
+        "pre_truncation_cutoff_market_cap": occurrence.get("pre_truncation_cutoff_market_cap"),
+        "pre_truncation_avg_amount_gap_to_cutoff": occurrence.get("pre_truncation_avg_amount_gap_to_cutoff"),
+        "pre_truncation_avg_amount_share_of_cutoff": share_of_cutoff,
+        "avg_amount_share_of_min_gate": occurrence.get("avg_amount_share_of_min_gate"),
+        "pre_truncation_market_cap_gap_to_cutoff": occurrence.get("pre_truncation_market_cap_gap_to_cutoff"),
+        "pre_truncation_market_cap_share_of_cutoff": occurrence.get("pre_truncation_market_cap_share_of_cutoff"),
+        "pre_truncation_ranking_driver": occurrence.get("pre_truncation_ranking_driver"),
+        "pre_truncation_liquidity_gap_mode": occurrence.get("pre_truncation_liquidity_gap_mode"),
+        "avg_amount_20d": occurrence.get("avg_amount_20d"),
+        "market_cap": occurrence.get("market_cap"),
+        "pre_truncation_frontier_window": occurrence.get("pre_truncation_frontier_window") or [],
+    }
+
+
+def _collect_distinct_truncation_ticker_cases(ordered_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    distinct_ticker_cases: list[dict[str, Any]] = []
+    seen_tickers: set[str] = set()
+    for row in ordered_rows:
+        ticker = str(row.get("ticker") or "").strip()
+        if not ticker or ticker in seen_tickers:
+            continue
+        seen_tickers.add(ticker)
+        distinct_ticker_cases.append(dict(row))
+    return distinct_ticker_cases
+
+
+def _resolve_truncation_frontier_verdict(*, min_rank_gap: int | None, avg_amount_shares: list[float]) -> str:
+    if min_rank_gap is None:
+        max_share = max(avg_amount_shares) if avg_amount_shares else None
+        if max_share is not None and max_share < 0.65:
+            return "far_below_cutoff_not_boundary"
+        if max_share is not None and max_share < 0.85:
+            return "mid_cutoff_gap"
+        return "no_rank_observability"
+    if min_rank_gap <= 20:
+        return "near_cutoff_boundary"
+    if min_rank_gap <= 100:
+        return "mid_cutoff_gap"
+    return "far_below_cutoff_not_boundary"
 
 
 def _build_action_queue(priority_ticker_dossiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2037,6 +2392,134 @@ def _build_recommendation(
     priority_handoff_branch_mechanisms: list[dict[str, Any]] | None = None,
     priority_handoff_branch_experiment_queue: list[dict[str, Any]] | None = None,
 ) -> str:
+    if dominant_stage == "candidate_pool_truncated_after_filters":
+        return _build_truncation_stage_recommendation(
+            top_stage_tickers=top_stage_tickers,
+            truncation_frontier_summary=truncation_frontier_summary,
+            focus_liquidity_profile_summary=focus_liquidity_profile_summary,
+            priority_handoff_branch_diagnoses=priority_handoff_branch_diagnoses,
+            priority_handoff_branch_mechanisms=priority_handoff_branch_mechanisms,
+            priority_handoff_branch_experiment_queue=priority_handoff_branch_experiment_queue,
+        )
+    return _build_non_truncation_stage_recommendation(dominant_stage, top_stage_tickers=top_stage_tickers)
+
+
+def _build_truncation_stage_recommendation(
+    *,
+    top_stage_tickers: dict[str, list[str]],
+    truncation_frontier_summary: dict[str, Any] | None,
+    focus_liquidity_profile_summary: dict[str, Any] | None,
+    priority_handoff_branch_diagnoses: list[dict[str, Any]] | None,
+    priority_handoff_branch_mechanisms: list[dict[str, Any]] | None,
+    priority_handoff_branch_experiment_queue: list[dict[str, Any]] | None,
+) -> str:
+    frontier_summary = dict(truncation_frontier_summary or {})
+    focus_profile_summary = dict(focus_liquidity_profile_summary or {})
+    branch_diagnoses = [dict(row) for row in list(priority_handoff_branch_diagnoses or [])]
+    if branch_diagnoses:
+        return _build_branch_split_recommendation(
+            branch_diagnoses,
+            branch_mechanisms=[dict(row) for row in list(priority_handoff_branch_mechanisms or [])],
+            branch_experiment_queue=[dict(row) for row in list(priority_handoff_branch_experiment_queue or [])],
+        )
+
+    frontier_verdict = str(frontier_summary.get("frontier_verdict") or "").strip()
+    closest_distinct = list(frontier_summary.get("closest_distinct_ticker_cases") or [])
+    closest_case = dict(closest_distinct[0]) if closest_distinct else {}
+    if frontier_verdict == "far_below_cutoff_not_boundary" and closest_case:
+        return _build_far_below_cutoff_recommendation(
+            closest_case,
+            dominant_ranking_driver=str(frontier_summary.get("dominant_ranking_driver") or "").strip(),
+            dominant_liquidity_gap_mode=str(frontier_summary.get("dominant_liquidity_gap_mode") or "").strip(),
+            primary_focus_tickers=[dict(row) for row in list(focus_profile_summary.get("primary_focus_tickers") or [])],
+        )
+    return (
+        f"当前 Layer A candidate_pool recall backlog 的主矛盾更像 top300 截断：{top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 通过过滤后仍未进入 snapshot。"
+        "下一步应优先补 pre-truncation 排名观测与 frontier，而不是继续下游 recall 诊断。"
+    )
+
+
+def _build_branch_split_recommendation(
+    branch_diagnoses: list[dict[str, Any]],
+    *,
+    branch_mechanisms: list[dict[str, Any]],
+    branch_experiment_queue: list[dict[str, Any]],
+) -> str:
+    mechanism_suffix = _build_branch_recommendation_suffix(branch_mechanisms, branch_experiment_queue)
+    return (
+        f"当前 Layer A candidate_pool recall backlog 的主矛盾虽然都落在 top300 截断，但已拆成分支车道："
+        f"{[(row.get('priority_handoff'), row.get('tickers')) for row in branch_diagnoses[:3]]}。"
+        f" {branch_diagnoses[0].get('diagnosis_summary')}{mechanism_suffix}"
+    )
+
+
+def _build_branch_recommendation_suffix(branch_mechanisms: list[dict[str, Any]], branch_experiment_queue: list[dict[str, Any]]) -> str:
+    mechanism_suffix = ""
+    if branch_mechanisms:
+        pressure_summary = str(branch_mechanisms[0].get("pressure_cluster_summary") or "").strip()
+        repair_summary = str(branch_mechanisms[0].get("repair_hypothesis_summary") or "").strip()
+        mechanism_suffix = f" 当前最重要的机制摘要是：{branch_mechanisms[0].get('mechanism_summary')}"
+        if pressure_summary:
+            mechanism_suffix = f"{mechanism_suffix} 压力同伴结构显示：{pressure_summary}"
+        if repair_summary:
+            mechanism_suffix = f"{mechanism_suffix} 当前优先修复假设是：{repair_summary}"
+    if branch_experiment_queue:
+        experiment_summary = str(branch_experiment_queue[0].get("prototype_summary") or "").strip()
+        guardrail_summary = str(branch_experiment_queue[0].get("guardrail_summary") or "").strip()
+        evaluation_summary = str(branch_experiment_queue[0].get("evaluation_summary") or "").strip()
+        if experiment_summary:
+            mechanism_suffix = f"{mechanism_suffix} 当前优先实验原型是：{experiment_summary}"
+        if evaluation_summary:
+            mechanism_suffix = f"{mechanism_suffix} 当前实验评估是：{evaluation_summary}"
+        if guardrail_summary:
+            mechanism_suffix = f"{mechanism_suffix} 守门条件是：{guardrail_summary}"
+    return mechanism_suffix
+
+
+def _build_far_below_cutoff_recommendation(
+    closest_case: dict[str, Any],
+    *,
+    dominant_ranking_driver: str,
+    dominant_liquidity_gap_mode: str,
+    primary_focus_tickers: list[dict[str, Any]],
+) -> str:
+    ranking_reason = _build_far_below_cutoff_ranking_reason(dominant_ranking_driver)
+    gap_mode_reason = _build_far_below_cutoff_gap_mode_reason(dominant_liquidity_gap_mode)
+    focus_profile_summary = f" 当前焦点 ticker 画像为 {[(row.get('ticker'), row.get('dominant_liquidity_gap_mode'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。"
+    if closest_case.get("pre_truncation_rank") is None:
+        share_of_cutoff = closest_case.get("pre_truncation_avg_amount_share_of_cutoff")
+        cutoff_target = closest_case.get("pre_truncation_cutoff_avg_amount_20d")
+        return (
+            f"当前 Layer A candidate_pool recall backlog 虽然都落在 top300 截断后，但最近 distinct ticker {closest_case.get('ticker')}@{closest_case.get('trade_date')} "
+            f"在缺 rank 观测时，avg_amount/cutoff 也只有 {share_of_cutoff}，目标 cutoff 成交额约为 {cutoff_target}。"
+            f"这说明当前主矛盾已经不是小幅 top300 边界调参，而是{ranking_reason}，下一步应优先拆解 liquidity / ranking source，而不是直接放宽 top300。{gap_mode_reason}"
+            f"{focus_profile_summary}"
+        )
+    return (
+        f"当前 Layer A candidate_pool recall backlog 虽然都落在 top300 截断后，但最近的 distinct ticker 也只有 {closest_case.get('ticker')}@{closest_case.get('trade_date')}，"
+        f"pre-truncation rank={closest_case.get('pre_truncation_rank')}，距 cutoff 仍有 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
+        f"这说明当前主矛盾已经不是小幅 top300 边界调参，而是{ranking_reason}，下一步应优先拆解 liquidity / ranking source，而不是直接放宽 top300。{gap_mode_reason}"
+        f"{focus_profile_summary}"
+    )
+
+
+def _build_far_below_cutoff_ranking_reason(dominant_ranking_driver: str) -> str:
+    if dominant_ranking_driver in {"avg_amount_20d_gap_dominant", "avg_amount_20d_gap"}:
+        return "过滤后排序弱势仍主要由 20 日成交额落后于 cutoff 驱动"
+    if dominant_ranking_driver == "market_cap_tie_break_gap":
+        return "过滤后排序弱势更像是 cutoff 附近的市值 tie-break 差距"
+    return "过滤后排序仍明显偏弱"
+
+
+def _build_far_below_cutoff_gap_mode_reason(dominant_liquidity_gap_mode: str) -> str:
+    if dominant_liquidity_gap_mode == "well_above_gate_but_far_below_cutoff":
+        return " 这些票已经明显高于最低流动性门槛，问题更像是通过 gate 后仍打不过 cutoff 竞争集。"
+    if dominant_liquidity_gap_mode == "barely_above_gate_and_far_below_cutoff":
+        return " 这些票多数只是勉强高于最低流动性门槛，说明 gate 与 top300 cutoff 之间存在很长的质量走廊。"
+    return ""
+
+
+def _build_non_truncation_stage_recommendation(dominant_stage: str | None, *, top_stage_tickers: dict[str, list[str]]) -> str:
     if dominant_stage == "shadow_snapshot_legacy_unknown":
         return (
             f"当前 Layer A candidate_pool recall backlog 里至少有一部分样本仍停留在 legacy 空 shadow 快照状态："
@@ -2047,73 +2530,6 @@ def _build_recommendation(
         return (
             f"当前 Layer A candidate_pool recall backlog 的主矛盾落在 20 日均成交额门槛：{top_stage_tickers.get('low_avg_amount_20d', [])} 持续卡在 {MIN_AVG_AMOUNT_20D} 万流动性线下。"
             "下一步应先审 liquidity gate，而不是继续调 watchlist 或 candidate-entry。"
-        )
-    if dominant_stage == "candidate_pool_truncated_after_filters":
-        frontier_summary = dict(truncation_frontier_summary or {})
-        focus_profile_summary = dict(focus_liquidity_profile_summary or {})
-        branch_diagnoses = [dict(row) for row in list(priority_handoff_branch_diagnoses or [])]
-        branch_mechanisms = [dict(row) for row in list(priority_handoff_branch_mechanisms or [])]
-        branch_experiment_queue = [dict(row) for row in list(priority_handoff_branch_experiment_queue or [])]
-        frontier_verdict = str(frontier_summary.get("frontier_verdict") or "").strip()
-        dominant_ranking_driver = str(frontier_summary.get("dominant_ranking_driver") or "").strip()
-        dominant_liquidity_gap_mode = str(frontier_summary.get("dominant_liquidity_gap_mode") or "").strip()
-        primary_focus_tickers = [dict(row) for row in list(focus_profile_summary.get("primary_focus_tickers") or [])]
-        closest_distinct = list(frontier_summary.get("closest_distinct_ticker_cases") or [])
-        closest_case = dict(closest_distinct[0]) if closest_distinct else {}
-        if branch_diagnoses:
-            mechanism_suffix = ""
-            if branch_mechanisms:
-                pressure_summary = str(branch_mechanisms[0].get("pressure_cluster_summary") or "").strip()
-                repair_summary = str(branch_mechanisms[0].get("repair_hypothesis_summary") or "").strip()
-                mechanism_suffix = f" 当前最重要的机制摘要是：{branch_mechanisms[0].get('mechanism_summary')}"
-                if pressure_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 压力同伴结构显示：{pressure_summary}"
-                if repair_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 当前优先修复假设是：{repair_summary}"
-            if branch_experiment_queue:
-                experiment_summary = str(branch_experiment_queue[0].get("prototype_summary") or "").strip()
-                guardrail_summary = str(branch_experiment_queue[0].get("guardrail_summary") or "").strip()
-                evaluation_summary = str(branch_experiment_queue[0].get("evaluation_summary") or "").strip()
-                if experiment_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 当前优先实验原型是：{experiment_summary}"
-                if evaluation_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 当前实验评估是：{evaluation_summary}"
-                if guardrail_summary:
-                    mechanism_suffix = f"{mechanism_suffix} 守门条件是：{guardrail_summary}"
-            return (
-                f"当前 Layer A candidate_pool recall backlog 的主矛盾虽然都落在 top300 截断，但已拆成分支车道："
-                f"{[(row.get('priority_handoff'), row.get('tickers')) for row in branch_diagnoses[:3]]}。"
-                f" {branch_diagnoses[0].get('diagnosis_summary')}{mechanism_suffix}"
-            )
-        if frontier_verdict == "far_below_cutoff_not_boundary" and closest_case:
-            ranking_reason = "过滤后排序仍明显偏弱"
-            if dominant_ranking_driver in {"avg_amount_20d_gap_dominant", "avg_amount_20d_gap"}:
-                ranking_reason = "过滤后排序弱势仍主要由 20 日成交额落后于 cutoff 驱动"
-            elif dominant_ranking_driver == "market_cap_tie_break_gap":
-                ranking_reason = "过滤后排序弱势更像是 cutoff 附近的市值 tie-break 差距"
-            gap_mode_reason = ""
-            if dominant_liquidity_gap_mode == "well_above_gate_but_far_below_cutoff":
-                gap_mode_reason = " 这些票已经明显高于最低流动性门槛，问题更像是通过 gate 后仍打不过 cutoff 竞争集。"
-            elif dominant_liquidity_gap_mode == "barely_above_gate_and_far_below_cutoff":
-                gap_mode_reason = " 这些票多数只是勉强高于最低流动性门槛，说明 gate 与 top300 cutoff 之间存在很长的质量走廊。"
-            if closest_case.get("pre_truncation_rank") is None:
-                share_of_cutoff = closest_case.get("pre_truncation_avg_amount_share_of_cutoff")
-                cutoff_target = closest_case.get("pre_truncation_cutoff_avg_amount_20d")
-                return (
-                    f"当前 Layer A candidate_pool recall backlog 虽然都落在 top300 截断后，但最近 distinct ticker {closest_case.get('ticker')}@{closest_case.get('trade_date')} "
-                    f"在缺 rank 观测时，avg_amount/cutoff 也只有 {share_of_cutoff}，目标 cutoff 成交额约为 {cutoff_target}。"
-                    f"这说明当前主矛盾已经不是小幅 top300 边界调参，而是{ranking_reason}，下一步应优先拆解 liquidity / ranking source，而不是直接放宽 top300。{gap_mode_reason}"
-                    f" 当前焦点 ticker 画像为 {[(row.get('ticker'), row.get('dominant_liquidity_gap_mode'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。"
-                )
-            return (
-                f"当前 Layer A candidate_pool recall backlog 虽然都落在 top300 截断后，但最近的 distinct ticker 也只有 {closest_case.get('ticker')}@{closest_case.get('trade_date')}，"
-                f"pre-truncation rank={closest_case.get('pre_truncation_rank')}，距 cutoff 仍有 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
-                f"这说明当前主矛盾已经不是小幅 top300 边界调参，而是{ranking_reason}，下一步应优先拆解 liquidity / ranking source，而不是直接放宽 top300。{gap_mode_reason}"
-                f" 当前焦点 ticker 画像为 {[(row.get('ticker'), row.get('dominant_liquidity_gap_mode'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。"
-            )
-        return (
-            f"当前 Layer A candidate_pool recall backlog 的主矛盾更像 top300 截断：{top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 通过过滤后仍未进入 snapshot。"
-            "下一步应优先补 pre-truncation 排名观测与 frontier，而不是继续下游 recall 诊断。"
         )
     if dominant_stage == "low_estimated_liquidity":
         return (
@@ -2141,81 +2557,157 @@ def _build_next_actions(
     priority_handoff_branch_experiment_queue: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     actions: list[str] = []
-    if dominant_stage == "shadow_snapshot_legacy_unknown":
-        actions.append(f"先补 {top_stage_tickers.get('shadow_snapshot_legacy_unknown', [])} 的默认 shadow 快照证据，再判断是否存在真实 candidate_pool absence。")
-    elif dominant_stage == "low_avg_amount_20d":
-        actions.append(f"优先回查 {top_stage_tickers.get('low_avg_amount_20d', [])} 的 20 日均成交额门槛与 liquidity gate。")
-    elif dominant_stage == "candidate_pool_truncated_after_filters":
-        frontier_summary = dict(truncation_frontier_summary or {})
-        focus_profile_summary = dict(focus_liquidity_profile_summary or {})
-        branch_diagnoses = [dict(row) for row in list(priority_handoff_branch_diagnoses or [])]
-        branch_mechanisms = [dict(row) for row in list(priority_handoff_branch_mechanisms or [])]
-        branch_experiment_queue = [dict(row) for row in list(priority_handoff_branch_experiment_queue or [])]
-        frontier_verdict = str(frontier_summary.get("frontier_verdict") or "").strip()
-        dominant_ranking_driver = str(frontier_summary.get("dominant_ranking_driver") or "").strip()
-        dominant_liquidity_gap_mode = str(frontier_summary.get("dominant_liquidity_gap_mode") or "").strip()
-        primary_focus_tickers = [dict(row) for row in list(focus_profile_summary.get("primary_focus_tickers") or [])]
-        closest_distinct = list(frontier_summary.get("closest_distinct_ticker_cases") or [])
-        if branch_diagnoses:
-            if primary_focus_tickers:
-                actions.append(f"按焦点 ticker 画像拆分后续 handoff：{[(row.get('ticker'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。")
-            for diagnosis in branch_diagnoses[:2]:
-                next_step = str(dict(diagnosis).get("next_step") or "").strip()
-                if next_step:
-                    actions.append(next_step)
-            for mechanism in branch_mechanisms[:2]:
-                summary = str(dict(mechanism).get("mechanism_summary") or "").strip()
-                if summary:
-                    actions.append(summary)
-                pressure_summary = str(dict(mechanism).get("pressure_cluster_summary") or "").strip()
-                if pressure_summary:
-                    actions.append(pressure_summary)
-                repair_summary = str(dict(mechanism).get("repair_hypothesis_summary") or "").strip()
-                if repair_summary:
-                    actions.append(repair_summary)
-            for experiment in branch_experiment_queue[:2]:
-                prototype_summary = str(dict(experiment).get("prototype_summary") or "").strip()
-                if prototype_summary:
-                    actions.append(prototype_summary)
-                evaluation_summary = str(dict(experiment).get("evaluation_summary") or "").strip()
-                if evaluation_summary:
-                    actions.append(evaluation_summary)
-                success_signal = str(dict(experiment).get("success_signal") or "").strip()
-                if success_signal:
-                    actions.append(success_signal)
-        elif frontier_verdict == "far_below_cutoff_not_boundary" and closest_distinct:
-            closest_case = dict(closest_distinct[0])
-            if closest_case.get("pre_truncation_rank_gap_to_cutoff") is None:
-                actions.append(
-                    f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 的 avg_amount/cutoff 也只有 {closest_case.get('pre_truncation_avg_amount_share_of_cutoff')}。"
-                )
-            else:
-                actions.append(
-                    f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 也还差 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
-                )
-            if dominant_ranking_driver in {"avg_amount_20d_gap_dominant", "avg_amount_20d_gap"}:
-                actions.append("优先拆解过滤后排序里的 20 日成交额落差，而不是先调 MAX_CANDIDATE_POOL_SIZE。")
-            elif dominant_ranking_driver == "market_cap_tie_break_gap":
-                actions.append("优先复核 cutoff 附近的市值 tie-break，而不是直接扩大候选池上限。")
-            else:
-                actions.append("优先拆解过滤后排序为何仍然明显弱于 cutoff，而不是先调 MAX_CANDIDATE_POOL_SIZE。")
-            if dominant_liquidity_gap_mode == "well_above_gate_but_far_below_cutoff":
-                actions.append("这些票多数已显著高于最低流动性门槛，下一步不要优先放松 MIN_AVG_AMOUNT_20D，而要查上游流动性来源与竞争集。")
-            elif dominant_liquidity_gap_mode == "barely_above_gate_and_far_below_cutoff":
-                actions.append("这些票多数只是勉强高于最低流动性门槛，下一步应同时复核 liquidity gate 与 cutoff 竞争强度。")
-            if primary_focus_tickers:
-                actions.append(f"按焦点 ticker 画像拆分后续 handoff：{[(row.get('ticker'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。")
-        else:
-            actions.append(f"优先补 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 的 pre-truncation 排名观测与 top300 frontier。")
-    elif dominant_stage == "low_estimated_liquidity":
-        actions.append(f"优先回查 {top_stage_tickers.get('low_estimated_liquidity', [])} 的 turnover_rate / circ_mv 与当日粗筛门槛。")
-    elif dominant_stage in {"st_excluded", "beijing_exchange_excluded", "new_listing_excluded", "suspended", "limit_up_excluded", "cooldown_excluded"}:
-        actions.append(f"优先核对 {top_stage_tickers.get(dominant_stage, [])} 的 Layer A 硬过滤规则是否需要调整。")
-    elif dominant_stage == "missing_market_context":
-        actions.append("优先补齐 stock_basic / daily_basic / limit / cooldown 数据，再继续 Layer A root-cause 诊断。")
+    if dominant_stage == "candidate_pool_truncated_after_filters":
+        actions.extend(
+            _build_truncation_stage_next_actions(
+                top_stage_tickers=top_stage_tickers,
+                truncation_frontier_summary=truncation_frontier_summary,
+                focus_liquidity_profile_summary=focus_liquidity_profile_summary,
+                priority_handoff_branch_diagnoses=priority_handoff_branch_diagnoses,
+                priority_handoff_branch_mechanisms=priority_handoff_branch_mechanisms,
+                priority_handoff_branch_experiment_queue=priority_handoff_branch_experiment_queue,
+            )
+        )
+    else:
+        actions.extend(_build_non_truncation_stage_next_actions(dominant_stage, top_stage_tickers=top_stage_tickers))
     if not actions:
         actions.append("继续保留 Layer A candidate_pool recall 观察，并累积更多 absent_from_candidate_pool occurrence。")
     return actions[:4]
+
+
+def _build_truncation_stage_next_actions(
+    *,
+    top_stage_tickers: dict[str, list[str]],
+    truncation_frontier_summary: dict[str, Any] | None,
+    focus_liquidity_profile_summary: dict[str, Any] | None,
+    priority_handoff_branch_diagnoses: list[dict[str, Any]] | None,
+    priority_handoff_branch_mechanisms: list[dict[str, Any]] | None,
+    priority_handoff_branch_experiment_queue: list[dict[str, Any]] | None,
+) -> list[str]:
+    frontier_summary = dict(truncation_frontier_summary or {})
+    focus_profile_summary = dict(focus_liquidity_profile_summary or {})
+    branch_diagnoses = [dict(row) for row in list(priority_handoff_branch_diagnoses or [])]
+    primary_focus_tickers = [dict(row) for row in list(focus_profile_summary.get("primary_focus_tickers") or [])]
+    if branch_diagnoses:
+        return _build_branch_split_next_actions(
+            primary_focus_tickers=primary_focus_tickers,
+            branch_diagnoses=branch_diagnoses,
+            branch_mechanisms=[dict(row) for row in list(priority_handoff_branch_mechanisms or [])],
+            branch_experiment_queue=[dict(row) for row in list(priority_handoff_branch_experiment_queue or [])],
+        )
+
+    frontier_verdict = str(frontier_summary.get("frontier_verdict") or "").strip()
+    closest_distinct = list(frontier_summary.get("closest_distinct_ticker_cases") or [])
+    if frontier_verdict == "far_below_cutoff_not_boundary" and closest_distinct:
+        return _build_far_below_cutoff_next_actions(
+            top_stage_tickers=top_stage_tickers,
+            closest_case=dict(closest_distinct[0]),
+            dominant_ranking_driver=str(frontier_summary.get("dominant_ranking_driver") or "").strip(),
+            dominant_liquidity_gap_mode=str(frontier_summary.get("dominant_liquidity_gap_mode") or "").strip(),
+            primary_focus_tickers=primary_focus_tickers,
+        )
+    return [f"优先补 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 的 pre-truncation 排名观测与 top300 frontier。"]
+
+
+def _build_branch_split_next_actions(
+    *,
+    primary_focus_tickers: list[dict[str, Any]],
+    branch_diagnoses: list[dict[str, Any]],
+    branch_mechanisms: list[dict[str, Any]],
+    branch_experiment_queue: list[dict[str, Any]],
+) -> list[str]:
+    actions: list[str] = []
+    if primary_focus_tickers:
+        actions.append(f"按焦点 ticker 画像拆分后续 handoff：{[(row.get('ticker'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。")
+    actions.extend(_collect_branch_diagnosis_next_steps(branch_diagnoses))
+    actions.extend(_collect_branch_mechanism_next_actions(branch_mechanisms))
+    actions.extend(_collect_branch_experiment_next_actions(branch_experiment_queue))
+    return actions
+
+
+def _collect_branch_diagnosis_next_steps(branch_diagnoses: list[dict[str, Any]]) -> list[str]:
+    actions: list[str] = []
+    for diagnosis in branch_diagnoses[:2]:
+        next_step = str(dict(diagnosis).get("next_step") or "").strip()
+        if next_step:
+            actions.append(next_step)
+    return actions
+
+
+def _collect_branch_mechanism_next_actions(branch_mechanisms: list[dict[str, Any]]) -> list[str]:
+    actions: list[str] = []
+    for mechanism in branch_mechanisms[:2]:
+        for key in ("mechanism_summary", "pressure_cluster_summary", "repair_hypothesis_summary"):
+            summary = str(dict(mechanism).get(key) or "").strip()
+            if summary:
+                actions.append(summary)
+    return actions
+
+
+def _collect_branch_experiment_next_actions(branch_experiment_queue: list[dict[str, Any]]) -> list[str]:
+    actions: list[str] = []
+    for experiment in branch_experiment_queue[:2]:
+        for key in ("prototype_summary", "evaluation_summary", "success_signal"):
+            summary = str(dict(experiment).get(key) or "").strip()
+            if summary:
+                actions.append(summary)
+    return actions
+
+
+def _build_far_below_cutoff_next_actions(
+    *,
+    top_stage_tickers: dict[str, list[str]],
+    closest_case: dict[str, Any],
+    dominant_ranking_driver: str,
+    dominant_liquidity_gap_mode: str,
+    primary_focus_tickers: list[dict[str, Any]],
+) -> list[str]:
+    actions: list[str] = []
+    if closest_case.get("pre_truncation_rank_gap_to_cutoff") is None:
+        actions.append(
+            f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 的 avg_amount/cutoff 也只有 {closest_case.get('pre_truncation_avg_amount_share_of_cutoff')}。"
+        )
+    else:
+        actions.append(
+            f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 也还差 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
+        )
+    actions.append(_build_far_below_cutoff_ranking_action(dominant_ranking_driver))
+    gap_mode_action = _build_far_below_cutoff_gap_mode_action(dominant_liquidity_gap_mode)
+    if gap_mode_action:
+        actions.append(gap_mode_action)
+    if primary_focus_tickers:
+        actions.append(f"按焦点 ticker 画像拆分后续 handoff：{[(row.get('ticker'), row.get('priority_handoff')) for row in primary_focus_tickers[:3]]}。")
+    return actions
+
+
+def _build_far_below_cutoff_ranking_action(dominant_ranking_driver: str) -> str:
+    if dominant_ranking_driver in {"avg_amount_20d_gap_dominant", "avg_amount_20d_gap"}:
+        return "优先拆解过滤后排序里的 20 日成交额落差，而不是先调 MAX_CANDIDATE_POOL_SIZE。"
+    if dominant_ranking_driver == "market_cap_tie_break_gap":
+        return "优先复核 cutoff 附近的市值 tie-break，而不是直接扩大候选池上限。"
+    return "优先拆解过滤后排序为何仍然明显弱于 cutoff，而不是先调 MAX_CANDIDATE_POOL_SIZE。"
+
+
+def _build_far_below_cutoff_gap_mode_action(dominant_liquidity_gap_mode: str) -> str:
+    if dominant_liquidity_gap_mode == "well_above_gate_but_far_below_cutoff":
+        return "这些票多数已显著高于最低流动性门槛，下一步不要优先放松 MIN_AVG_AMOUNT_20D，而要查上游流动性来源与竞争集。"
+    if dominant_liquidity_gap_mode == "barely_above_gate_and_far_below_cutoff":
+        return "这些票多数只是勉强高于最低流动性门槛，下一步应同时复核 liquidity gate 与 cutoff 竞争强度。"
+    return ""
+
+
+def _build_non_truncation_stage_next_actions(dominant_stage: str | None, *, top_stage_tickers: dict[str, list[str]]) -> list[str]:
+    if dominant_stage == "shadow_snapshot_legacy_unknown":
+        return [f"先补 {top_stage_tickers.get('shadow_snapshot_legacy_unknown', [])} 的默认 shadow 快照证据，再判断是否存在真实 candidate_pool absence。"]
+    if dominant_stage == "low_avg_amount_20d":
+        return [f"优先回查 {top_stage_tickers.get('low_avg_amount_20d', [])} 的 20 日均成交额门槛与 liquidity gate。"]
+    if dominant_stage == "low_estimated_liquidity":
+        return [f"优先回查 {top_stage_tickers.get('low_estimated_liquidity', [])} 的 turnover_rate / circ_mv 与当日粗筛门槛。"]
+    if dominant_stage in {"st_excluded", "beijing_exchange_excluded", "new_listing_excluded", "suspended", "limit_up_excluded", "cooldown_excluded"}:
+        return [f"优先核对 {top_stage_tickers.get(dominant_stage, [])} 的 Layer A 硬过滤规则是否需要调整。"]
+    if dominant_stage == "missing_market_context":
+        return ["优先补齐 stock_basic / daily_basic / limit / cooldown 数据，再继续 Layer A root-cause 诊断。"]
+    return []
 
 
 def analyze_btst_candidate_pool_recall_dossier(

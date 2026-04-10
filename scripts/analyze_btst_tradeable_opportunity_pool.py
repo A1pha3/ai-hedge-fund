@@ -552,116 +552,222 @@ def _build_trade_date_rows(
     price_batches_by_trade_date: dict[str, dict[str, dict[str, Any]]] | None = None,
     future_trade_dates_by_trade_date: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
-    normalized_daily_basic = daily_basic if daily_basic is not None else pd.DataFrame()
-    normalized_limit_list = limit_list if limit_list is not None else pd.DataFrame()
-    normalized_suspend_list = suspend_list if suspend_list is not None else pd.DataFrame()
-    daily_basic_by_ts = {
-        str(row["ts_code"]): row.to_dict()
-        for _, row in normalized_daily_basic.iterrows()
-        if str(row.get("ts_code") or "").strip()
-    }
-    suspend_codes = {str(value) for value in list(normalized_suspend_list.get("ts_code", [])) if str(value).strip()}
-    limit_up_codes = {
-        str(row.get("ts_code") or "")
-        for _, row in normalized_limit_list.iterrows()
-        if str(row.get("limit") or "") == "U" and str(row.get("ts_code") or "").strip()
-    }
-
+    trade_date_context = _build_trade_date_context(daily_basic, limit_list, suspend_list)
     rows: list[dict[str, Any]] = []
     compact_trade_date = _compact_trade_date(trade_date)
     for _, stock_row in stock_basic.iterrows():
-        symbol = str(stock_row.get("symbol") or "").strip()
-        ts_code = str(stock_row.get("ts_code") or "").strip()
-        if not symbol or not ts_code:
-            continue
-
-        if price_batches_by_trade_date:
-            price_outcome = _extract_batched_btst_price_outcome(
-                ts_code,
-                trade_date,
-                price_batches_by_trade_date,
-                future_trade_dates_by_trade_date or {},
-            )
-        else:
-            price_outcome = extract_btst_price_outcome(symbol, trade_date, price_cache)
-        result_truth_labels = _build_result_truth_labels(price_outcome)
-        if not result_truth_labels:
-            continue
-
-        name = str(stock_row.get("name") or "")
-        market = str(stock_row.get("market") or "")
-        list_date = _compact_trade_date(stock_row.get("list_date"))
-        estimated_amount_1d = _estimate_amount_from_daily_basic(daily_basic_by_ts.get(ts_code))
-        prefilter_reasons: list[str] = []
-        if "ST" in name.upper():
-            prefilter_reasons.append("st")
-        if is_beijing_exchange_stock(ts_code=ts_code, symbol=symbol, market=market):
-            prefilter_reasons.append("beijing_market")
-        if _estimate_listing_days(list_date, compact_trade_date) < MIN_LISTING_DAYS:
-            prefilter_reasons.append("new_listing")
-        if ts_code in suspend_codes:
-            prefilter_reasons.append("suspended")
-        if symbol in cooled_tickers:
-            prefilter_reasons.append("cooldown")
-        if estimated_amount_1d is not None and estimated_amount_1d < MIN_ESTIMATED_AMOUNT_1D:
-            prefilter_reasons.append("low_estimated_liquidity")
-
-        tradeability_notes = _detect_tradeability_notes(price_outcome)
-        day0_limit_up_excluded = ts_code in limit_up_codes
-        pool_b_tradeable = not prefilter_reasons and not day0_limit_up_excluded and not tradeability_notes
-
-        system_view = _resolve_system_view(symbol, report_context)
-        first_kill_switch = None
-        if prefilter_reasons:
-            first_kill_switch = "universe_prefilter"
-        elif day0_limit_up_excluded:
-            first_kill_switch = "day0_limit_up_excluded"
-        elif tradeability_notes:
-            first_kill_switch = "execution_contract_only"
-        else:
-            first_kill_switch = _classify_system_kill_switch(system_view)
-
-        selected_or_near_miss = bool(system_view.get("selected_or_near_miss"))
-        row = {
-            "trade_date": trade_date,
-            "ticker": symbol,
-            "ts_code": ts_code,
-            "name": name,
-            "industry": stock_row.get("industry"),
-            "market": market,
-            "list_date": normalize_trade_date(list_date),
-            "estimated_amount_1d": round_or_none(estimated_amount_1d),
-            "result_truth_labels": result_truth_labels,
-            "intraday_strong": "intraday_strong" in result_truth_labels,
-            "close_continuation_strong": "close_continuation_strong" in result_truth_labels,
-            "strict_btst_goal_case": "strict_btst_goal_case" in result_truth_labels,
-            "pool_a": True,
-            "pool_b_tradeable": pool_b_tradeable,
-            "pool_c_system_recalled": bool(pool_b_tradeable and system_view.get("system_recalled")),
-            "selected_or_near_miss": selected_or_near_miss,
-            "pool_d_main_execution_eligible": bool(pool_b_tradeable and first_kill_switch == "selected_or_near_miss"),
-            "first_kill_switch": first_kill_switch,
-            "universe_prefilter_reasons": prefilter_reasons,
-            "tradeability_notes": tradeability_notes,
-            "day0_limit_up_excluded": day0_limit_up_excluded,
-            "system_seen_stage": system_view.get("system_seen_stage"),
-            "candidate_source": system_view.get("candidate_source"),
-            "candidate_reason_codes": list(system_view.get("candidate_reason_codes") or []),
-            "short_trade_decision": system_view.get("decision"),
-            "score_target": system_view.get("score_target"),
-            "preferred_entry_mode": system_view.get("preferred_entry_mode"),
-            "delta_classification": system_view.get("delta_classification"),
-            "blockers": list(system_view.get("blockers") or []),
-            "gate_status": dict(system_view.get("gate_status") or {}),
-            "blocked_buy_details": dict(system_view.get("blocked_buy_details") or {}),
-            "buy_order_filter": dict(system_view.get("buy_order_filter") or {}),
-            "report_dir": system_view.get("report_dir_name"),
-            "report_selection_target": system_view.get("selection_target"),
-            "report_mode": system_view.get("mode"),
-            **price_outcome,
-        }
-        rows.append(row)
+        row = _build_trade_date_row(
+            trade_date=trade_date,
+            compact_trade_date=compact_trade_date,
+            stock_row=stock_row,
+            cooled_tickers=cooled_tickers,
+            report_context=report_context,
+            price_cache=price_cache,
+            price_batches_by_trade_date=price_batches_by_trade_date,
+            future_trade_dates_by_trade_date=future_trade_dates_by_trade_date,
+            trade_date_context=trade_date_context,
+        )
+        if row:
+            rows.append(row)
     return rows
+
+
+def _build_trade_date_context(
+    daily_basic: pd.DataFrame | None,
+    limit_list: pd.DataFrame | None,
+    suspend_list: pd.DataFrame | None,
+) -> dict[str, Any]:
+    normalized_daily_basic = daily_basic if daily_basic is not None else pd.DataFrame()
+    normalized_limit_list = limit_list if limit_list is not None else pd.DataFrame()
+    normalized_suspend_list = suspend_list if suspend_list is not None else pd.DataFrame()
+    return {
+        "daily_basic_by_ts": {
+            str(row["ts_code"]): row.to_dict()
+            for _, row in normalized_daily_basic.iterrows()
+            if str(row.get("ts_code") or "").strip()
+        },
+        "suspend_codes": {str(value) for value in list(normalized_suspend_list.get("ts_code", [])) if str(value).strip()},
+        "limit_up_codes": {
+            str(row.get("ts_code") or "")
+            for _, row in normalized_limit_list.iterrows()
+            if str(row.get("limit") or "") == "U" and str(row.get("ts_code") or "").strip()
+        },
+    }
+
+
+def _build_trade_date_row(
+    *,
+    trade_date: str,
+    compact_trade_date: str,
+    stock_row: pd.Series,
+    cooled_tickers: set[str],
+    report_context: dict[str, Any] | None,
+    price_cache: dict[tuple[str, str], pd.DataFrame],
+    price_batches_by_trade_date: dict[str, dict[str, dict[str, Any]]] | None,
+    future_trade_dates_by_trade_date: dict[str, list[str]] | None,
+    trade_date_context: dict[str, Any],
+) -> dict[str, Any] | None:
+    symbol = str(stock_row.get("symbol") or "").strip()
+    ts_code = str(stock_row.get("ts_code") or "").strip()
+    if not symbol or not ts_code:
+        return None
+    price_outcome = _resolve_trade_date_price_outcome(
+        symbol=symbol,
+        ts_code=ts_code,
+        trade_date=trade_date,
+        price_cache=price_cache,
+        price_batches_by_trade_date=price_batches_by_trade_date,
+        future_trade_dates_by_trade_date=future_trade_dates_by_trade_date,
+    )
+    result_truth_labels = _build_result_truth_labels(price_outcome)
+    if not result_truth_labels:
+        return None
+    stock_context = _build_trade_date_stock_context(
+        stock_row=stock_row,
+        symbol=symbol,
+        ts_code=ts_code,
+        compact_trade_date=compact_trade_date,
+        cooled_tickers=cooled_tickers,
+        trade_date_context=trade_date_context,
+    )
+    system_view = _resolve_system_view(symbol, report_context)
+    return _assemble_trade_date_row(
+        trade_date=trade_date,
+        symbol=symbol,
+        ts_code=ts_code,
+        stock_row=stock_row,
+        stock_context=stock_context,
+        system_view=system_view,
+        result_truth_labels=result_truth_labels,
+        price_outcome=price_outcome,
+    )
+
+
+def _resolve_trade_date_price_outcome(
+    *,
+    symbol: str,
+    ts_code: str,
+    trade_date: str,
+    price_cache: dict[tuple[str, str], pd.DataFrame],
+    price_batches_by_trade_date: dict[str, dict[str, dict[str, Any]]] | None,
+    future_trade_dates_by_trade_date: dict[str, list[str]] | None,
+) -> dict[str, Any]:
+    if price_batches_by_trade_date:
+        return _extract_batched_btst_price_outcome(
+            ts_code,
+            trade_date,
+            price_batches_by_trade_date,
+            future_trade_dates_by_trade_date or {},
+        )
+    return extract_btst_price_outcome(symbol, trade_date, price_cache)
+
+
+def _build_trade_date_stock_context(
+    *,
+    stock_row: pd.Series,
+    symbol: str,
+    ts_code: str,
+    compact_trade_date: str,
+    cooled_tickers: set[str],
+    trade_date_context: dict[str, Any],
+) -> dict[str, Any]:
+    name = str(stock_row.get("name") or "")
+    market = str(stock_row.get("market") or "")
+    list_date = _compact_trade_date(stock_row.get("list_date"))
+    estimated_amount_1d = _estimate_amount_from_daily_basic(dict(trade_date_context["daily_basic_by_ts"]).get(ts_code))
+    prefilter_reasons: list[str] = []
+    if "ST" in name.upper():
+        prefilter_reasons.append("st")
+    if is_beijing_exchange_stock(ts_code=ts_code, symbol=symbol, market=market):
+        prefilter_reasons.append("beijing_market")
+    if _estimate_listing_days(list_date, compact_trade_date) < MIN_LISTING_DAYS:
+        prefilter_reasons.append("new_listing")
+    if ts_code in set(trade_date_context["suspend_codes"]):
+        prefilter_reasons.append("suspended")
+    if symbol in cooled_tickers:
+        prefilter_reasons.append("cooldown")
+    if estimated_amount_1d is not None and estimated_amount_1d < MIN_ESTIMATED_AMOUNT_1D:
+        prefilter_reasons.append("low_estimated_liquidity")
+    return {
+        "name": name,
+        "market": market,
+        "list_date": list_date,
+        "estimated_amount_1d": estimated_amount_1d,
+        "prefilter_reasons": prefilter_reasons,
+        "day0_limit_up_excluded": ts_code in set(trade_date_context["limit_up_codes"]),
+    }
+
+
+def _assemble_trade_date_row(
+    *,
+    trade_date: str,
+    symbol: str,
+    ts_code: str,
+    stock_row: pd.Series,
+    stock_context: dict[str, Any],
+    system_view: dict[str, Any],
+    result_truth_labels: list[str],
+    price_outcome: dict[str, Any],
+) -> dict[str, Any]:
+    tradeability_notes = _detect_tradeability_notes(price_outcome)
+    prefilter_reasons = list(stock_context["prefilter_reasons"])
+    day0_limit_up_excluded = bool(stock_context["day0_limit_up_excluded"])
+    pool_b_tradeable = not prefilter_reasons and not day0_limit_up_excluded and not tradeability_notes
+    first_kill_switch = _resolve_first_kill_switch(prefilter_reasons, day0_limit_up_excluded, tradeability_notes, system_view)
+    selected_or_near_miss = bool(system_view.get("selected_or_near_miss"))
+    return {
+        "trade_date": trade_date,
+        "ticker": symbol,
+        "ts_code": ts_code,
+        "name": stock_context["name"],
+        "industry": stock_row.get("industry"),
+        "market": stock_context["market"],
+        "list_date": normalize_trade_date(stock_context["list_date"]),
+        "estimated_amount_1d": round_or_none(stock_context["estimated_amount_1d"]),
+        "result_truth_labels": result_truth_labels,
+        "intraday_strong": "intraday_strong" in result_truth_labels,
+        "close_continuation_strong": "close_continuation_strong" in result_truth_labels,
+        "strict_btst_goal_case": "strict_btst_goal_case" in result_truth_labels,
+        "pool_a": True,
+        "pool_b_tradeable": pool_b_tradeable,
+        "pool_c_system_recalled": bool(pool_b_tradeable and system_view.get("system_recalled")),
+        "selected_or_near_miss": selected_or_near_miss,
+        "pool_d_main_execution_eligible": bool(pool_b_tradeable and first_kill_switch == "selected_or_near_miss"),
+        "first_kill_switch": first_kill_switch,
+        "universe_prefilter_reasons": prefilter_reasons,
+        "tradeability_notes": tradeability_notes,
+        "day0_limit_up_excluded": day0_limit_up_excluded,
+        "system_seen_stage": system_view.get("system_seen_stage"),
+        "candidate_source": system_view.get("candidate_source"),
+        "candidate_reason_codes": list(system_view.get("candidate_reason_codes") or []),
+        "short_trade_decision": system_view.get("decision"),
+        "score_target": system_view.get("score_target"),
+        "preferred_entry_mode": system_view.get("preferred_entry_mode"),
+        "delta_classification": system_view.get("delta_classification"),
+        "blockers": list(system_view.get("blockers") or []),
+        "gate_status": dict(system_view.get("gate_status") or {}),
+        "blocked_buy_details": dict(system_view.get("blocked_buy_details") or {}),
+        "buy_order_filter": dict(system_view.get("buy_order_filter") or {}),
+        "report_dir": system_view.get("report_dir_name"),
+        "report_selection_target": system_view.get("selection_target"),
+        "report_mode": system_view.get("mode"),
+        **price_outcome,
+    }
+
+
+def _resolve_first_kill_switch(
+    prefilter_reasons: list[str],
+    day0_limit_up_excluded: bool,
+    tradeability_notes: list[str],
+    system_view: dict[str, Any],
+) -> str:
+    if prefilter_reasons:
+        return "universe_prefilter"
+    if day0_limit_up_excluded:
+        return "day0_limit_up_excluded"
+    if tradeability_notes:
+        return "execution_contract_only"
+    return _classify_system_kill_switch(system_view)
 
 
 def _summarize_counter(counter: Counter[str], *, limit: int | None = None) -> dict[str, int]:
@@ -1065,81 +1171,117 @@ def render_btst_tradeable_opportunity_pool_markdown(analysis: dict[str, Any]) ->
     lines: list[str] = []
     lines.append("# BTST Tradeable Opportunity Pool Review")
     lines.append("")
-    lines.append("## Overview")
-    lines.append(f"- generated_at: {analysis.get('generated_at')}")
-    lines.append(f"- trade_dates: {analysis.get('trade_dates')}")
-    lines.append(f"- result_truth_pool_count: {analysis.get('result_truth_pool_count')}")
-    lines.append(f"- tradeable_opportunity_pool_count: {analysis.get('tradeable_opportunity_pool_count')}")
-    lines.append(f"- system_recall_count: {analysis.get('system_recall_count')}")
-    lines.append(f"- selected_or_near_miss_count: {analysis.get('selected_or_near_miss_count')}")
-    lines.append(f"- main_execution_pool_count: {analysis.get('main_execution_pool_count')}")
-    lines.append(f"- strict_goal_case_count: {analysis.get('strict_goal_case_count')}")
-    lines.append(f"- strict_goal_false_negative_count: {analysis.get('strict_goal_false_negative_count')}")
-    lines.append(f"- tradeable_pool_capture_rate: {analysis.get('tradeable_pool_capture_rate')}")
-    lines.append(f"- tradeable_pool_selected_or_near_miss_rate: {analysis.get('tradeable_pool_selected_or_near_miss_rate')}")
-    lines.append(f"- tradeable_pool_main_execution_rate: {analysis.get('tradeable_pool_main_execution_rate')}")
-    lines.append(f"- recommendation: {analysis.get('recommendation')}")
-    lines.append("")
-    lines.append("## Report Contexts")
-    for trade_date, context in sorted(dict(analysis.get("trade_date_contexts") or {}).items()):
-        lines.append(
-            f"- {trade_date}: report_dir={context.get('report_dir')}, selection_target={context.get('selection_target')}, mode={context.get('mode')}"
-        )
-    if not analysis.get("trade_date_contexts"):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Pool Semantics")
-    for key, description in dict(analysis.get("pool_semantics") or {}).items():
-        lines.append(f"- {key}: {description}")
-    lines.append("")
-    lines.append("## Kill Switch Summary")
-    lines.append(f"- first_kill_switch_counts: {analysis.get('first_kill_switch_counts')}")
-    lines.append(f"- tradeable_pool_first_kill_switch_counts: {analysis.get('tradeable_pool_first_kill_switch_counts')}")
-    lines.append(f"- first_kill_switch_strict_goal_case_counts: {analysis.get('first_kill_switch_strict_goal_case_counts')}")
-    lines.append("")
-    lines.append("## False Negative Clusters")
-    lines.append(f"- candidate_source_false_negative_counts: {analysis.get('candidate_source_false_negative_counts')}")
-    lines.append(f"- industry_false_negative_counts: {analysis.get('industry_false_negative_counts')}")
-    lines.append("")
-    lines.append("## No Candidate Entry Breakdown")
-    if int(no_candidate_entry_summary.get("count") or 0) <= 0:
-        lines.append("- none")
-    else:
-        lines.append(f"- count: {no_candidate_entry_summary.get('count')}")
-        lines.append(f"- share_of_tradeable_pool: {no_candidate_entry_summary.get('share_of_tradeable_pool')}")
-        lines.append(f"- strict_goal_case_count: {no_candidate_entry_summary.get('strict_goal_case_count')}")
-        lines.append(f"- strict_goal_case_share: {no_candidate_entry_summary.get('strict_goal_case_share')}")
-        lines.append(f"- industry_counts: {no_candidate_entry_summary.get('industry_counts')}")
-        lines.append(f"- trade_date_counts: {no_candidate_entry_summary.get('trade_date_counts')}")
-        lines.append(f"- estimated_amount_bucket_counts: {no_candidate_entry_summary.get('estimated_amount_bucket_counts')}")
-        lines.append(f"- truth_pattern_counts: {no_candidate_entry_summary.get('truth_pattern_counts')}")
-        for row in list(no_candidate_entry_summary.get("top_ticker_rows") or []):
-            lines.append(
-                f"- recurring_ticker: {row.get('ticker')} occurrences={row.get('occurrence_count')}, strict_goal_case_count={row.get('strict_goal_case_count')}, industry={row.get('industry')}, mean_next_high_return={row.get('mean_next_high_return')}, mean_t_plus_2_close_return={row.get('mean_t_plus_2_close_return')}"
-            )
-        for row in list(no_candidate_entry_summary.get("top_priority_rows") or []):
-            lines.append(
-                f"- priority_case: {row.get('trade_date')} {row.get('ticker')} next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}"
-            )
-        lines.append(f"- recommendation: {no_candidate_entry_summary.get('recommendation')}")
-    lines.append("")
-    lines.append("## Top Tradeable False Negatives")
-    for row in list(analysis.get("top_false_negative_rows") or []):
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: kill_switch={row.get('first_kill_switch')}, source={row.get('candidate_source')}, next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}"
-        )
-    if not list(analysis.get("top_false_negative_rows") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Top Strict Goal False Negatives")
-    for row in list(analysis.get("top_strict_goal_false_negative_rows") or []):
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: kill_switch={row.get('first_kill_switch')}, source={row.get('candidate_source')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, preferred_entry_mode={row.get('preferred_entry_mode')}"
-        )
-    if not list(analysis.get("top_strict_goal_false_negative_rows") or []):
-        lines.append("- none")
-    lines.append("")
+    _append_tradeable_pool_overview_markdown(lines, analysis)
+    _append_tradeable_pool_report_contexts_markdown(lines, dict(analysis.get("trade_date_contexts") or {}))
+    _append_tradeable_pool_dict_section_markdown(lines, "Pool Semantics", dict(analysis.get("pool_semantics") or {}))
+    _append_tradeable_pool_kill_switch_summary_markdown(lines, analysis)
+    _append_tradeable_pool_false_negative_clusters_markdown(lines, analysis)
+    _append_tradeable_pool_no_candidate_entry_markdown(lines, no_candidate_entry_summary)
+    _append_tradeable_pool_row_section_markdown(lines, "Top Tradeable False Negatives", list(analysis.get("top_false_negative_rows") or []), strict=False)
+    _append_tradeable_pool_row_section_markdown(lines, "Top Strict Goal False Negatives", list(analysis.get("top_strict_goal_false_negative_rows") or []), strict=True)
     return "\n".join(lines) + "\n"
+
+
+def _append_tradeable_pool_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
+    lines.append("## Overview")
+    for key in (
+        "generated_at",
+        "trade_dates",
+        "result_truth_pool_count",
+        "tradeable_opportunity_pool_count",
+        "system_recall_count",
+        "selected_or_near_miss_count",
+        "main_execution_pool_count",
+        "strict_goal_case_count",
+        "strict_goal_false_negative_count",
+        "tradeable_pool_capture_rate",
+        "tradeable_pool_selected_or_near_miss_rate",
+        "tradeable_pool_main_execution_rate",
+        "recommendation",
+    ):
+        lines.append(f"- {key}: {analysis.get(key)}")
+    lines.append("")
+
+
+def _append_tradeable_pool_report_contexts_markdown(lines: list[str], contexts: dict[str, Any]) -> None:
+    lines.append("## Report Contexts")
+    for trade_date, context in sorted(contexts.items()):
+        lines.append(f"- {trade_date}: report_dir={context.get('report_dir')}, selection_target={context.get('selection_target')}, mode={context.get('mode')}")
+    if not contexts:
+        lines.append("- none")
+    lines.append("")
+
+
+def _append_tradeable_pool_dict_section_markdown(lines: list[str], title: str, payload: dict[str, Any]) -> None:
+    lines.append(f"## {title}")
+    for key, value in payload.items():
+        lines.append(f"- {key}: {value}")
+    lines.append("")
+
+
+def _append_tradeable_pool_kill_switch_summary_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
+    lines.append("## Kill Switch Summary")
+    for key in ("first_kill_switch_counts", "tradeable_pool_first_kill_switch_counts", "first_kill_switch_strict_goal_case_counts"):
+        lines.append(f"- {key}: {analysis.get(key)}")
+    lines.append("")
+
+
+def _append_tradeable_pool_false_negative_clusters_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
+    lines.append("## False Negative Clusters")
+    for key in ("candidate_source_false_negative_counts", "industry_false_negative_counts"):
+        lines.append(f"- {key}: {analysis.get(key)}")
+    lines.append("")
+
+
+def _append_tradeable_pool_no_candidate_entry_markdown(lines: list[str], summary: dict[str, Any]) -> None:
+    lines.append("## No Candidate Entry Breakdown")
+    if int(summary.get("count") or 0) <= 0:
+        lines.append("- none")
+        lines.append("")
+        return
+    for key in (
+        "count",
+        "share_of_tradeable_pool",
+        "strict_goal_case_count",
+        "strict_goal_case_share",
+        "industry_counts",
+        "trade_date_counts",
+        "estimated_amount_bucket_counts",
+        "truth_pattern_counts",
+    ):
+        lines.append(f"- {key}: {summary.get(key)}")
+    for row in list(summary.get("top_ticker_rows") or []):
+        lines.append(
+            f"- recurring_ticker: {row.get('ticker')} occurrences={row.get('occurrence_count')}, strict_goal_case_count={row.get('strict_goal_case_count')}, industry={row.get('industry')}, mean_next_high_return={row.get('mean_next_high_return')}, mean_t_plus_2_close_return={row.get('mean_t_plus_2_close_return')}"
+        )
+    for row in list(summary.get("top_priority_rows") or []):
+        lines.append(
+            f"- priority_case: {row.get('trade_date')} {row.get('ticker')} next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}"
+        )
+    lines.append(f"- recommendation: {summary.get('recommendation')}")
+    lines.append("")
+
+
+def _append_tradeable_pool_row_section_markdown(
+    lines: list[str],
+    title: str,
+    rows: list[dict[str, Any]],
+    *,
+    strict: bool,
+) -> None:
+    lines.append(f"## {title}")
+    for row in rows:
+        if strict:
+            lines.append(
+                f"- {row.get('trade_date')} {row.get('ticker')}: kill_switch={row.get('first_kill_switch')}, source={row.get('candidate_source')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, preferred_entry_mode={row.get('preferred_entry_mode')}"
+            )
+        else:
+            lines.append(
+                f"- {row.get('trade_date')} {row.get('ticker')}: kill_switch={row.get('first_kill_switch')}, source={row.get('candidate_source')}, next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}"
+            )
+    if not rows:
+        lines.append("- none")
+    lines.append("")
 
 
 def render_btst_tradeable_opportunity_reason_waterfall_markdown(waterfall: dict[str, Any]) -> str:

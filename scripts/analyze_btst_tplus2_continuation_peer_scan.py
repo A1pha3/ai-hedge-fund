@@ -257,6 +257,92 @@ def _summarize_tier_rows(
     return summaries
 
 
+def _classify_peer_candidate_rows(
+    rows: list[dict[str, Any]],
+    *,
+    anchor_ticker: str,
+    anchor_profile: dict[str, Any],
+    similarity_threshold: float,
+    near_similarity_threshold: float,
+    observation_similarity_threshold: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    strict_peer_rows: list[dict[str, Any]] = []
+    near_peer_rows: list[dict[str, Any]] = []
+    observation_candidate_rows: list[dict[str, Any]] = []
+    rejected_rows: list[dict[str, Any]] = []
+    grouped_all_candidate_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        ticker = str(row.get("ticker") or "")
+        if not ticker or ticker == anchor_ticker or str(row.get("candidate_source") or "") != "layer_c_watchlist":
+            continue
+        candidate_row = _build_peer_candidate_row(
+            row,
+            anchor_profile=anchor_profile,
+            observation_similarity_threshold=observation_similarity_threshold,
+        )
+        if not candidate_row:
+            continue
+        grouped_all_candidate_rows.setdefault(ticker, []).append(candidate_row)
+        peer_tier = _classify_peer_tier(
+            candidate_row,
+            structure_match=bool(candidate_row.get("structure_match")),
+            similarity_score=float(candidate_row.get("similarity_score") or 999.0),
+            strict_similarity_threshold=similarity_threshold,
+            near_similarity_threshold=near_similarity_threshold,
+            observation_similarity_threshold=observation_similarity_threshold,
+        )
+        if peer_tier is None:
+            rejected_rows.append(candidate_row)
+            continue
+        candidate_row["peer_tier"] = peer_tier
+        if peer_tier == "strict_peer":
+            strict_peer_rows.append(candidate_row)
+        elif peer_tier == "near_cluster_peer":
+            near_peer_rows.append(candidate_row)
+        else:
+            observation_candidate_rows.append(candidate_row)
+    return strict_peer_rows, near_peer_rows, observation_candidate_rows, rejected_rows, grouped_all_candidate_rows
+
+
+def _build_peer_candidate_row(
+    row: dict[str, Any],
+    *,
+    anchor_profile: dict[str, Any],
+    observation_similarity_threshold: float,
+) -> dict[str, Any] | None:
+    similarity_score, metric_distances, structure_match = _row_similarity(row, anchor_profile=anchor_profile, tolerances=DEFAULT_TOLERANCES)
+    if not metric_distances or similarity_score > observation_similarity_threshold:
+        return None
+    return {
+        **row,
+        "similarity_score": similarity_score,
+        "metric_distances": metric_distances,
+        "peer_outcome_edge": _is_peer_outcome_edge(row),
+        "structure_match": structure_match,
+    }
+
+
+def _group_rows_by_ticker(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped_rows.setdefault(str(row.get("ticker") or ""), []).append(row)
+    return grouped_rows
+
+
+def _build_peer_scan_recommendation(
+    *,
+    peer_summaries: list[dict[str, Any]],
+    near_peer_summaries: list[dict[str, Any]],
+    observation_candidate_summaries: list[dict[str, Any]],
+    anchor_ticker: str,
+) -> str:
+    if peer_summaries:
+        return "Found same-cluster continuation peers. Next step should promote them into a dedicated T+2 observation lane and validate pooled outcomes."
+    if near_peer_summaries or observation_candidate_summaries:
+        return f"No strict same-cluster peer passed around {anchor_ticker}, but tiered expansion found near-cluster / observation candidates worth tracking outside the default BTST surface."
+    return f"No same-cluster peer passed the structural + T+2 edge scan around {anchor_ticker}. Treat the current continuation lane as a single-ticker pattern until more windows accumulate."
+
+
 def analyze_btst_tplus2_continuation_peer_scan(
     reports_root: str | Path,
     *,
@@ -276,83 +362,41 @@ def analyze_btst_tplus2_continuation_peer_scan(
         next_high_hit_threshold=next_high_hit_threshold,
     )
     anchor_profile = _build_anchor_profile(rows, anchor_ticker=anchor_ticker)
-
-    strict_peer_rows: list[dict[str, Any]] = []
-    near_peer_rows: list[dict[str, Any]] = []
-    observation_candidate_rows: list[dict[str, Any]] = []
-    rejected_rows: list[dict[str, Any]] = []
-    grouped_all_candidate_rows: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        ticker = str(row.get("ticker") or "")
-        if not ticker or ticker == anchor_ticker or str(row.get("candidate_source") or "") != "layer_c_watchlist":
-            continue
-        similarity_score, metric_distances, structure_match = _row_similarity(row, anchor_profile=anchor_profile, tolerances=DEFAULT_TOLERANCES)
-        if not metric_distances or similarity_score > observation_similarity_threshold:
-            continue
-        candidate_row = {
-            **row,
-            "similarity_score": similarity_score,
-            "metric_distances": metric_distances,
-            "peer_outcome_edge": _is_peer_outcome_edge(row),
-            "structure_match": structure_match,
-        }
-        grouped_all_candidate_rows.setdefault(ticker, []).append(candidate_row)
-        peer_tier = _classify_peer_tier(
-            candidate_row,
-            structure_match=structure_match,
-            similarity_score=similarity_score,
-            strict_similarity_threshold=similarity_threshold,
-            near_similarity_threshold=near_similarity_threshold,
-            observation_similarity_threshold=observation_similarity_threshold,
-        )
-        if peer_tier is None:
-            rejected_rows.append(candidate_row)
-            continue
-        candidate_row["peer_tier"] = peer_tier
-        if peer_tier == "strict_peer":
-            strict_peer_rows.append(candidate_row)
-        elif peer_tier == "near_cluster_peer":
-            near_peer_rows.append(candidate_row)
-        else:
-            observation_candidate_rows.append(candidate_row)
-
-    grouped_strict_rows: dict[str, list[dict[str, Any]]] = {}
-    grouped_near_rows: dict[str, list[dict[str, Any]]] = {}
-    grouped_observation_rows: dict[str, list[dict[str, Any]]] = {}
-    for row in strict_peer_rows:
-        grouped_strict_rows.setdefault(str(row.get("ticker") or ""), []).append(row)
-    for row in near_peer_rows:
-        grouped_near_rows.setdefault(str(row.get("ticker") or ""), []).append(row)
-    for row in observation_candidate_rows:
-        grouped_observation_rows.setdefault(str(row.get("ticker") or ""), []).append(row)
+    strict_peer_rows, near_peer_rows, observation_candidate_rows, rejected_rows, grouped_all_candidate_rows = _classify_peer_candidate_rows(
+        rows,
+        anchor_ticker=anchor_ticker,
+        anchor_profile=anchor_profile,
+        similarity_threshold=similarity_threshold,
+        near_similarity_threshold=near_similarity_threshold,
+        observation_similarity_threshold=observation_similarity_threshold,
+    )
 
     peer_summaries = _summarize_tier_rows(
-        grouped_strict_rows,
+        _group_rows_by_ticker(strict_peer_rows),
         next_high_hit_threshold=next_high_hit_threshold,
         grouped_all_candidate_rows=grouped_all_candidate_rows,
         recent_window_limit=recent_window_limit,
     )
     near_peer_summaries = _summarize_tier_rows(
-        grouped_near_rows,
+        _group_rows_by_ticker(near_peer_rows),
         next_high_hit_threshold=next_high_hit_threshold,
         grouped_all_candidate_rows=grouped_all_candidate_rows,
         recent_window_limit=recent_window_limit,
     )
     observation_candidate_summaries = _summarize_tier_rows(
-        grouped_observation_rows,
+        _group_rows_by_ticker(observation_candidate_rows),
         next_high_hit_threshold=next_high_hit_threshold,
         grouped_all_candidate_rows=grouped_all_candidate_rows,
         recent_window_limit=recent_window_limit,
     )
 
     rejected_rows.sort(key=lambda row: (float(row.get("similarity_score") or 999.0), str(row.get("ticker") or ""), str(row.get("trade_date") or "")))
-
-    if peer_summaries:
-        recommendation = "Found same-cluster continuation peers. Next step should promote them into a dedicated T+2 observation lane and validate pooled outcomes."
-    elif near_peer_summaries or observation_candidate_summaries:
-        recommendation = f"No strict same-cluster peer passed around {anchor_ticker}, but tiered expansion found near-cluster / observation candidates worth tracking outside the default BTST surface."
-    else:
-        recommendation = f"No same-cluster peer passed the structural + T+2 edge scan around {anchor_ticker}. Treat the current continuation lane as a single-ticker pattern until more windows accumulate."
+    recommendation = _build_peer_scan_recommendation(
+        peer_summaries=peer_summaries,
+        near_peer_summaries=near_peer_summaries,
+        observation_candidate_summaries=observation_candidate_summaries,
+        anchor_ticker=anchor_ticker,
+    )
 
     return {
         "reports_root": str(Path(reports_root).expanduser().resolve()),
