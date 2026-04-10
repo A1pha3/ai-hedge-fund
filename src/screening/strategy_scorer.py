@@ -190,22 +190,16 @@ def derive_completeness(sub_factors: Iterable[SubFactor]) -> float:
 
 def aggregate_sub_factors(sub_factors: list[SubFactor]) -> StrategySignal:
     """按 Phase 2.2 的规则聚合子因子。"""
-    available = [factor for factor in sub_factors if factor.completeness > 0]
-    sub_factor_map = {factor.name: factor.model_dump() for factor in sub_factors}
+    available = _filter_available_sub_factors(sub_factors)
+    sub_factor_map = _build_sub_factor_map(sub_factors)
     if not available:
         return StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors=sub_factor_map)
 
-    total_weight = sum(factor.weight for factor in available)
-    normalized = [(factor, factor.weight / total_weight) for factor in available if total_weight > 0]
-
-    score = sum(weight * factor.direction * (factor.confidence / 100.0) for factor, weight in normalized)
+    normalized = _normalize_sub_factor_weights(available)
+    score = _calculate_weighted_sub_factor_score(normalized)
     direction = 1 if score > 0 else -1 if score < 0 else 0
-
-    majority_count = sum(1 for factor, _ in normalized if factor.direction == direction)
-    if direction == 0:
-        majority_count = sum(1 for factor, _ in normalized if factor.direction == 0)
-    consistency = majority_count / len(normalized) if normalized else 0.0
-    confidence = sum(weight * factor.confidence for factor, weight in normalized) * consistency
+    consistency = _calculate_sub_factor_consistency(normalized, direction)
+    confidence = _calculate_weighted_sub_factor_confidence(normalized, consistency)
     completeness = derive_completeness(sub_factors)
 
     return StrategySignal(
@@ -214,6 +208,37 @@ def aggregate_sub_factors(sub_factors: list[SubFactor]) -> StrategySignal:
         completeness=completeness,
         sub_factors=sub_factor_map,
     )
+
+
+def _filter_available_sub_factors(sub_factors: list[SubFactor]) -> list[SubFactor]:
+    return [factor for factor in sub_factors if factor.completeness > 0]
+
+
+def _build_sub_factor_map(sub_factors: list[SubFactor]) -> dict[str, dict]:
+    return {factor.name: factor.model_dump() for factor in sub_factors}
+
+
+def _normalize_sub_factor_weights(available: list[SubFactor]) -> list[tuple[SubFactor, float]]:
+    total_weight = sum(factor.weight for factor in available)
+    if total_weight <= 0:
+        return []
+    return [(factor, factor.weight / total_weight) for factor in available]
+
+
+def _calculate_weighted_sub_factor_score(normalized: list[tuple[SubFactor, float]]) -> float:
+    return sum(weight * factor.direction * (factor.confidence / 100.0) for factor, weight in normalized)
+
+
+def _calculate_sub_factor_consistency(normalized: list[tuple[SubFactor, float]], direction: int) -> float:
+    if not normalized:
+        return 0.0
+    majority_direction = 0 if direction == 0 else direction
+    majority_count = sum(1 for factor, _ in normalized if factor.direction == majority_direction)
+    return majority_count / len(normalized)
+
+
+def _calculate_weighted_sub_factor_confidence(normalized: list[tuple[SubFactor, float]], consistency: float) -> float:
+    return sum(weight * factor.confidence for factor, weight in normalized) * consistency
 
 
 def _make_sub_factor(
@@ -338,22 +363,34 @@ def _score_adx_strength(prices_df: pd.DataFrame, weight: float) -> SubFactor:
         return _make_sub_factor("adx_strength", 0, 0.0, weight, completeness=0.0)
 
     adx_df = calculate_adx(prices_df.copy(), 20)
-    adx = float(adx_df["adx"].iloc[-1]) if pd.notna(adx_df["adx"].iloc[-1]) else 0.0
-    plus_di = float(adx_df["+di"].iloc[-1]) if pd.notna(adx_df["+di"].iloc[-1]) else 0.0
-    minus_di = float(adx_df["-di"].iloc[-1]) if pd.notna(adx_df["-di"].iloc[-1]) else 0.0
-
-    if adx < 20:
-        direction = 0
-    else:
-        direction = 1 if plus_di > minus_di else -1 if minus_di > plus_di else 0
+    adx_metrics = _extract_adx_strength_metrics(adx_df)
+    direction = _resolve_adx_strength_direction(adx_metrics)
 
     return _make_sub_factor(
         "adx_strength",
         direction,
-        adx,
+        adx_metrics["adx"],
         weight,
-        metrics={"adx": adx, "+di": plus_di, "-di": minus_di},
+        metrics=adx_metrics,
     )
+
+
+def _extract_adx_strength_metrics(adx_df: pd.DataFrame) -> dict[str, float]:
+    return {
+        "adx": float(adx_df["adx"].iloc[-1]) if pd.notna(adx_df["adx"].iloc[-1]) else 0.0,
+        "+di": float(adx_df["+di"].iloc[-1]) if pd.notna(adx_df["+di"].iloc[-1]) else 0.0,
+        "-di": float(adx_df["-di"].iloc[-1]) if pd.notna(adx_df["-di"].iloc[-1]) else 0.0,
+    }
+
+
+def _resolve_adx_strength_direction(adx_metrics: dict[str, float]) -> int:
+    if adx_metrics["adx"] < 20:
+        return 0
+    if adx_metrics["+di"] > adx_metrics["-di"]:
+        return 1
+    if adx_metrics["-di"] > adx_metrics["+di"]:
+        return -1
+    return 0
 
 
 def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
@@ -364,26 +401,27 @@ def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
     sub_factors = [
         _score_ema_alignment(prices_df, trend_weights["ema_alignment"]),
         _score_adx_strength(prices_df, trend_weights["adx_strength"]),
-        _make_sub_factor(
-            "momentum",
-            _signal_to_direction(momentum_signal["signal"]) if momentum_signal else 0,
-            (momentum_signal["confidence"] * 100.0) if momentum_signal else 0.0,
-            trend_weights["momentum"],
-            completeness=1.0 if momentum_signal else 0.0,
-            metrics=(momentum_signal["metrics"] if momentum_signal else {}),
-        ),
-        _make_sub_factor(
-            "volatility",
-            _signal_to_direction(volatility_signal["signal"]) if volatility_signal else 0,
-            (volatility_signal["confidence"] * 100.0) if volatility_signal else 0.0,
-            trend_weights["volatility"],
-            completeness=1.0 if volatility_signal else 0.0,
-            metrics=(volatility_signal["metrics"] if volatility_signal else {}),
-        ),
+        _build_optional_trend_factor("momentum", momentum_signal, trend_weights["momentum"]),
+        _build_optional_trend_factor("volatility", volatility_signal, trend_weights["volatility"]),
     ]
     if "long_trend_alignment" in trend_weights:
-        sub_factors.append(_score_long_trend_alignment(prices_df, trend_weights["long_trend_alignment"]))
+        _append_long_trend_factor(sub_factors, prices_df, trend_weights["long_trend_alignment"])
     return aggregate_sub_factors(sub_factors)
+
+
+def _build_optional_trend_factor(name: str, signal: dict | None, weight: float) -> SubFactor:
+    return _make_sub_factor(
+        name,
+        _signal_to_direction(signal["signal"]) if signal else 0,
+        (signal["confidence"] * 100.0) if signal else 0.0,
+        weight,
+        completeness=1.0 if signal else 0.0,
+        metrics=(signal["metrics"] if signal else {}),
+    )
+
+
+def _append_long_trend_factor(sub_factors: list[SubFactor], prices_df: pd.DataFrame, weight: float) -> None:
+    sub_factors.append(_score_long_trend_alignment(prices_df, weight))
 
 
 def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
@@ -470,21 +508,14 @@ def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
     metric_map = _build_profitability_metric_map(metrics)
     available, positive = _count_profitability_passes(metric_map)
     if available == 0:
-        return _make_sub_factor("profitability", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"], completeness=0.0)
+        return _build_incomplete_profitability_factor()
 
     metrics_payload = _build_profitability_metrics_payload(metric_map, available, positive, zero_pass_mode)
     if positive == 0 and zero_pass_mode == "inactive":
-        return _make_sub_factor(
-            "profitability",
-            0,
-            0.0,
-            FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
-            completeness=0.0,
-            metrics=metrics_payload,
-        )
+        return _build_inactive_profitability_factor(metrics_payload)
 
     direction = _resolve_profitability_direction(positive, zero_pass_mode)
-    confidence = 100.0 * positive / available if direction >= 0 else 100.0 * (available - positive) / available
+    confidence = _calculate_profitability_confidence(available=available, positive=positive, direction=direction)
     return _make_sub_factor(
         "profitability",
         direction,
@@ -493,6 +524,25 @@ def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
         completeness=available / 3.0,
         metrics=metrics_payload,
     )
+
+
+def _build_incomplete_profitability_factor() -> SubFactor:
+    return _make_sub_factor("profitability", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"], completeness=0.0)
+
+
+def _build_inactive_profitability_factor(metrics_payload: dict[str, float | int | str | None]) -> SubFactor:
+    return _make_sub_factor(
+        "profitability",
+        0,
+        0.0,
+        FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
+        completeness=0.0,
+        metrics=metrics_payload,
+    )
+
+
+def _calculate_profitability_confidence(*, available: int, positive: int, direction: int) -> float:
+    return 100.0 * positive / available if direction >= 0 else 100.0 * (available - positive) / available
 
 
 def _build_profitability_metric_map(metrics: FinancialMetrics) -> dict[str, tuple[float | None, float]]:
@@ -579,23 +629,13 @@ def _score_growth_valuation(metrics: FinancialMetrics) -> SubFactor:
 
 
 def _score_industry_pe(metrics: FinancialMetrics, industry_name: str, industry_pe_medians: Optional[dict[str, float]]) -> SubFactor:
-    if not industry_name or not industry_pe_medians or metrics.price_to_earnings_ratio is None:
-        return _make_sub_factor("industry_pe", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["industry_pe"], completeness=0.0)
-    industry_median = industry_pe_medians.get(industry_name)
-    current_pe = metrics.price_to_earnings_ratio
-    if industry_median is None or industry_median <= 0:
+    premium_inputs = _resolve_industry_pe_inputs(metrics, industry_name, industry_pe_medians)
+    if premium_inputs is None:
         return _make_sub_factor("industry_pe", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["industry_pe"], completeness=0.0)
 
+    current_pe, industry_median = premium_inputs
     premium = current_pe / industry_median
-    if premium <= 0.8:
-        direction = 1
-        confidence = min(100.0, (1.0 - premium) * 250.0)
-    elif premium >= 1.2:
-        direction = -1
-        confidence = min(100.0, (premium - 1.0) * 150.0)
-    else:
-        direction = 0
-        confidence = 50.0
+    direction, confidence = _resolve_industry_pe_direction_and_confidence(premium)
     return _make_sub_factor(
         "industry_pe",
         direction,
@@ -605,27 +645,33 @@ def _score_industry_pe(metrics: FinancialMetrics, industry_name: str, industry_p
     )
 
 
+def _resolve_industry_pe_inputs(
+    metrics: FinancialMetrics,
+    industry_name: str,
+    industry_pe_medians: Optional[dict[str, float]],
+) -> tuple[float, float] | None:
+    if not industry_name or not industry_pe_medians or metrics.price_to_earnings_ratio is None:
+        return None
+    industry_median = industry_pe_medians.get(industry_name)
+    if industry_median is None or industry_median <= 0:
+        return None
+    return metrics.price_to_earnings_ratio, industry_median
+
+
+def _resolve_industry_pe_direction_and_confidence(premium: float) -> tuple[int, float]:
+    if premium <= 0.8:
+        return 1, min(100.0, (1.0 - premium) * 250.0)
+    if premium >= 1.2:
+        return -1, min(100.0, (premium - 1.0) * 150.0)
+    return 0, 50.0
+
+
 def _apply_fundamental_quality_cap(signal: StrategySignal) -> StrategySignal:
-    if signal.direction <= 0 or signal.completeness <= 0:
-        return signal
-
-    profitability = signal.sub_factors.get("profitability", {})
-    financial_health = signal.sub_factors.get("financial_health", {})
-    if not isinstance(profitability, dict) or not isinstance(financial_health, dict):
-        return signal
-
-    profitability_direction = int(profitability.get("direction", 0) or 0)
-    financial_health_direction = int(financial_health.get("direction", 0) or 0)
-    if profitability_direction > 0 or financial_health_direction > 0:
+    if not _should_apply_fundamental_quality_cap(signal):
         return signal
 
     capped_sub_factors = dict(signal.sub_factors)
-    capped_sub_factors["quality_cap"] = {
-        "applied": True,
-        "reason": "profitability_and_financial_health_not_bullish",
-        "original_direction": signal.direction,
-        "original_confidence": signal.confidence,
-    }
+    capped_sub_factors["quality_cap"] = _build_fundamental_quality_cap_payload(signal)
     return StrategySignal(
         direction=0,
         confidence=min(signal.confidence, 45.0),
@@ -634,25 +680,70 @@ def _apply_fundamental_quality_cap(signal: StrategySignal) -> StrategySignal:
     )
 
 
+def _should_apply_fundamental_quality_cap(signal: StrategySignal) -> bool:
+    if signal.direction <= 0 or signal.completeness <= 0:
+        return False
+
+    profitability = signal.sub_factors.get("profitability", {})
+    financial_health = signal.sub_factors.get("financial_health", {})
+    if not isinstance(profitability, dict) or not isinstance(financial_health, dict):
+        return False
+
+    profitability_direction = int(profitability.get("direction", 0) or 0)
+    financial_health_direction = int(financial_health.get("direction", 0) or 0)
+    return profitability_direction <= 0 and financial_health_direction <= 0
+
+
+def _build_fundamental_quality_cap_payload(signal: StrategySignal) -> dict:
+    return {
+        "applied": True,
+        "reason": "profitability_and_financial_health_not_bullish",
+        "original_direction": signal.direction,
+        "original_confidence": signal.confidence,
+    }
+
+
 def score_fundamental_strategy(
     ticker: str,
     trade_date: str,
     industry_name: str = "",
     industry_pe_medians: Optional[dict[str, float]] = None,
 ) -> StrategySignal:
-    metrics_list = get_financial_metrics(ticker=ticker, end_date=trade_date, period="ttm", limit=8)
+    metrics_list = _load_fundamental_metrics_history(ticker=ticker, trade_date=trade_date)
     if not metrics_list:
-        return StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={})
+        return _build_empty_strategy_signal()
 
+    sub_factors = _build_fundamental_sub_factors(
+        metrics_list=metrics_list,
+        industry_name=industry_name,
+        industry_pe_medians=industry_pe_medians,
+    )
+    aggregated_signal = aggregate_sub_factors(sub_factors)
+    return _apply_fundamental_quality_cap(aggregated_signal)
+
+
+def _load_fundamental_metrics_history(*, ticker: str, trade_date: str) -> list[FinancialMetrics]:
+    return get_financial_metrics(ticker=ticker, end_date=trade_date, period="ttm", limit=8)
+
+
+def _build_empty_strategy_signal() -> StrategySignal:
+    return StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={})
+
+
+def _build_fundamental_sub_factors(
+    *,
+    metrics_list: list[FinancialMetrics],
+    industry_name: str,
+    industry_pe_medians: Optional[dict[str, float]],
+) -> list[SubFactor]:
     latest = metrics_list[0]
-    sub_factors = [
+    return [
         _score_profitability(latest),
         _score_growth(metrics_list),
         _score_financial_health(latest),
         _score_growth_valuation(latest),
         _score_industry_pe(latest, industry_name, industry_pe_medians),
     ]
-    return _apply_fundamental_quality_cap(aggregate_sub_factors(sub_factors))
 
 
 def _score_news_sentiment(news_items: list[CompanyNews], trade_date: str) -> SubFactor:
@@ -762,17 +853,34 @@ def _score_event_freshness(news_items: list[CompanyNews], trade_date: str) -> Su
 
 
 def score_event_sentiment_strategy(ticker: str, trade_date: str) -> StrategySignal:
-    start_date = (datetime.strptime(trade_date, "%Y%m%d") - timedelta(days=30)).strftime("%Y-%m-%d")
-    end_date = datetime.strptime(trade_date, "%Y%m%d").strftime("%Y-%m-%d")
+    start_date, end_date = _resolve_event_sentiment_date_window(trade_date)
+    news_items, trades = _load_event_sentiment_inputs(ticker=ticker, start_date=start_date, end_date=end_date)
+    sub_factors = _build_event_sentiment_sub_factors(news_items=news_items, trades=trades, trade_date=trade_date)
+    return aggregate_sub_factors(sub_factors)
+
+
+def _resolve_event_sentiment_date_window(trade_date: str) -> tuple[str, str]:
+    trade_dt = datetime.strptime(trade_date, "%Y%m%d")
+    return (trade_dt - timedelta(days=30)).strftime("%Y-%m-%d"), trade_dt.strftime("%Y-%m-%d")
+
+
+def _load_event_sentiment_inputs(*, ticker: str, start_date: str, end_date: str) -> tuple[list[CompanyNews], list[InsiderTrade]]:
     news_items = get_company_news(ticker=ticker, start_date=start_date, end_date=end_date, limit=50)
     trades = get_insider_trades(ticker=ticker, end_date=end_date, start_date=start_date, limit=100)
+    return news_items, trades
 
-    sub_factors = [
+
+def _build_event_sentiment_sub_factors(
+    *,
+    news_items: list[CompanyNews],
+    trades: list[InsiderTrade],
+    trade_date: str,
+) -> list[SubFactor]:
+    return [
         _score_news_sentiment(news_items, trade_date),
         _score_insider_conviction(trades),
         _score_event_freshness(news_items, trade_date),
     ]
-    return aggregate_sub_factors(sub_factors)
 
 
 def _build_industry_pe_medians(trade_date: str) -> dict[str, float]:

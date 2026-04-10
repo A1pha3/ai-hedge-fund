@@ -193,8 +193,8 @@ def test_trend_market_weights():
          patch("src.screening.market_state.get_limit_list", return_value=limit_df), \
          patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic), \
          patch("src.screening.market_state.get_northbound_flow", return_value=northbound), \
-         patch("src.screening.market_state.calculate_adx", return_value=pd.DataFrame({"adx": [35.0], "+di": [40.0], "-di": [20.0]})), \
-         patch("src.screening.market_state.calculate_atr", return_value=pd.Series([0.1])):
+         patch("src.screening.market_state_helpers.calculate_adx", return_value=pd.DataFrame({"adx": [35.0], "+di": [40.0], "-di": [20.0]})), \
+         patch("src.screening.market_state_helpers.calculate_atr", return_value=pd.Series([0.1])):
         state = detect_market_state("20260305")
     assert state.state_type == MarketStateType.TREND
     assert abs(sum(state.adjusted_weights.values()) - 1.0) < 1e-6

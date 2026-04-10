@@ -9,7 +9,7 @@ import pandas as pd
 
 from src.execution.models import ExecutionPlan
 from src.execution.models import LayerCResult
-from src.paper_trading.runtime import _build_dual_target_session_summary, _build_llm_error_digest, _build_llm_observability_summary, _build_llm_route_provenance, _prepare_session_runtime_context, run_paper_trading_session
+from src.paper_trading.runtime import _build_dual_target_session_summary, _build_llm_error_digest, _build_llm_observability_summary, _build_llm_route_provenance, _build_paper_trading_engine, _build_runtime_recorder_and_engine, _finalize_paper_trading_session, _prepare_session_runtime_context, run_paper_trading_session
 from src.portfolio.models import PositionPlan
 from src.targets.models import DualTargetEvaluation, DualTargetSummary
 
@@ -394,6 +394,176 @@ def test_prepare_session_runtime_context_wires_helpers(monkeypatch, tmp_path: Pa
             "selection_artifact_root": session_paths.selection_artifact_root,
         }
     ]
+
+
+def test_finalize_paper_trading_session_writes_summary(monkeypatch, tmp_path: Path):
+    summary_path = tmp_path / "summary.json"
+    session_paths = type(
+        "SessionPaths",
+        (),
+        {
+            "selection_artifact_root": tmp_path / "artifacts",
+            "daily_events_path": tmp_path / "daily_events.jsonl",
+            "timing_log_path": tmp_path / "timings.jsonl",
+            "summary_path": summary_path,
+            "output_dir_path": tmp_path,
+            "frozen_plan_source_path": None,
+        },
+    )()
+    feedback_summary_path = tmp_path / "artifacts" / "research_feedback_summary.json"
+    engine = type(
+        "EngineStub",
+        (),
+        {
+            "_pipeline": object(),
+            "get_portfolio_values": lambda self: [{"Date": pd.Timestamp("2024-03-01"), "Portfolio Value": 101000.0}],
+            "get_portfolio_snapshot": lambda self: {"cash": 1000.0},
+        },
+    )()
+    context = type(
+        "Context",
+        (),
+        {
+            "session_paths": session_paths,
+            "engine": engine,
+            "resolved_model_name": "model-x",
+            "resolved_model_provider": "provider-y",
+            "cache_stats_before_run": {"hits": 1},
+            "recorder": type("Recorder", (), {"day_count": 2, "executed_trade_days": 1, "total_executed_orders": 3})(),
+        },
+    )()
+
+    monkeypatch.setattr("src.paper_trading.runtime._write_research_feedback_summary", lambda root: ({"feedback_file_count": 1}, feedback_summary_path))
+    monkeypatch.setattr("src.paper_trading.runtime._build_llm_route_provenance", lambda: ({"summary_available": True}, {"llm_metrics_jsonl": "metrics.jsonl"}))
+    monkeypatch.setattr("src.paper_trading.runtime._build_llm_observability_summary", lambda path: {"jsonl_available": True})
+    monkeypatch.setattr("src.paper_trading.runtime._build_llm_error_digest", lambda route, observability: {"status": "healthy"})
+    monkeypatch.setattr("src.paper_trading.runtime._build_execution_plan_provenance_summary", lambda pipeline: {"observation_count": 1})
+    monkeypatch.setattr("src.paper_trading.runtime._build_dual_target_session_summary", lambda path: {"day_count": 2})
+    monkeypatch.setattr("src.paper_trading.runtime.get_cache_runtime_info", lambda: {"stats": {"hits": 9}})
+    monkeypatch.setattr("src.paper_trading.runtime.diff_cache_stats", lambda before, after: {"hit_rate": 0.5})
+    monkeypatch.setattr(
+        "src.paper_trading.runtime.run_optional_cache_benchmark",
+        lambda **kwargs: ({"duration": 1.0}, {"benchmark": "artifact"}, "skipped"),
+    )
+    captured: dict[str, dict] = {}
+
+    def fake_build_session_summary(**kwargs):
+        captured["summary_kwargs"] = kwargs
+        return {
+            "mode": "paper_trading",
+            "llm_error_digest": kwargs["llm_error_digest"],
+            "data_cache": kwargs["data_cache_summary"],
+            "research_feedback_summary": kwargs["research_feedback_summary"],
+        }
+
+    monkeypatch.setattr("src.paper_trading.runtime.build_session_summary", fake_build_session_summary)
+
+    summary, written_feedback_path = _finalize_paper_trading_session(
+        context=context,
+        metrics={"sharpe_ratio": 1.2},
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        tickers=["AAPL"],
+        initial_capital=100000.0,
+        selected_analysts=["a"],
+        fast_selected_analysts=["b"],
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={"x": 1},
+        selection_target="research_only",
+        cache_benchmark=False,
+        cache_benchmark_ticker=None,
+        cache_benchmark_clear_first=False,
+    )
+
+    assert written_feedback_path == feedback_summary_path
+    assert summary["llm_error_digest"] == {"status": "healthy"}
+    assert summary["data_cache"]["session_stats"] == {"hit_rate": 0.5}
+    assert captured["summary_kwargs"]["resolved_model_name"] == "model-x"
+    assert captured["summary_kwargs"]["cache_benchmark_artifacts"] == {"benchmark": "artifact"}
+    assert captured["summary_kwargs"]["llm_metrics_artifacts"] == {"llm_metrics_jsonl": "metrics.jsonl"}
+    assert summary_path.exists()
+    assert json.loads(summary_path.read_text(encoding="utf-8")) == summary
+
+
+def test_build_paper_trading_engine_wires_writer_and_engine(monkeypatch, tmp_path: Path):
+    engine_calls: list[dict] = []
+    writer_calls: list[dict] = []
+
+    class WriterStub:
+        def __init__(self, *, artifact_root, run_id):
+            writer_calls.append({"artifact_root": artifact_root, "run_id": run_id})
+
+    class EngineStub:
+        def __init__(self, **kwargs):
+            engine_calls.append(kwargs)
+
+    session_paths = type(
+        "SessionPaths",
+        (),
+        {
+            "checkpoint_path": tmp_path / "checkpoint.json",
+            "selection_artifact_root": tmp_path / "artifacts",
+            "output_dir_path": tmp_path / "paper_run",
+        },
+    )()
+    recorder = type("Recorder", (), {"record": lambda self, payload: None})()
+
+    monkeypatch.setattr("src.paper_trading.runtime.FileSelectionArtifactWriter", WriterStub)
+    monkeypatch.setattr("src.paper_trading.runtime.BacktestEngine", EngineStub)
+
+    engine = _build_paper_trading_engine(
+        agent=lambda **kwargs: {},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        resolved_model_name="model-x",
+        resolved_model_provider="provider-y",
+        selected_analysts=["a"],
+        initial_margin_requirement=0.1,
+        pipeline=object(),
+        session_paths=session_paths,
+        recorder=recorder,
+    )
+
+    assert isinstance(engine, EngineStub)
+    assert writer_calls == [{"artifact_root": session_paths.selection_artifact_root, "run_id": session_paths.output_dir_path.name}]
+    assert engine_calls[0]["checkpoint_path"] == str(session_paths.checkpoint_path)
+    assert engine_calls[0]["selection_artifact_writer"].__class__.__name__ == "WriterStub"
+
+
+def test_build_runtime_recorder_and_engine_reuses_recorder_path(monkeypatch, tmp_path: Path):
+    build_calls: list[dict] = []
+
+    class RecorderStub:
+        def __init__(self, path):
+            self.path = path
+
+    monkeypatch.setattr("src.paper_trading.runtime.JsonlPaperTradingRecorder", RecorderStub)
+    monkeypatch.setattr(
+        "src.paper_trading.runtime._build_paper_trading_engine",
+        lambda **kwargs: build_calls.append(kwargs) or "engine-stub",
+    )
+
+    session_paths = type("SessionPaths", (), {"daily_events_path": tmp_path / "daily_events.jsonl"})()
+    recorder, engine = _build_runtime_recorder_and_engine(
+        agent=lambda **kwargs: {},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        resolved_model_name="model-x",
+        resolved_model_provider="provider-y",
+        selected_analysts=["a"],
+        initial_margin_requirement=0.1,
+        pipeline=object(),
+        session_paths=session_paths,
+    )
+
+    assert recorder.path == session_paths.daily_events_path
+    assert engine == "engine-stub"
+    assert build_calls[0]["recorder"] is recorder
+    assert build_calls[0]["session_paths"] is session_paths
 
 
 def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]]) -> None:

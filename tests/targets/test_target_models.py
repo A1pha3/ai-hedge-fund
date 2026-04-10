@@ -1878,6 +1878,7 @@ def test_selected_score_tolerance_only_applies_to_strong_carryover_close_continu
         historical_prior={
             "execution_quality_label": "close_continuation",
             "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 3,
         },
     )
 
@@ -1890,6 +1891,7 @@ def test_selected_score_tolerance_only_applies_to_strong_carryover_close_continu
         historical_prior={
             "execution_quality_label": "balanced_confirmation",
             "entry_timing_bias": "confirm_then_review",
+            "evaluable_count": 3,
         },
     ) == 0.0
     assert _resolve_selected_score_tolerance(
@@ -1900,6 +1902,17 @@ def test_selected_score_tolerance_only_applies_to_strong_carryover_close_continu
         historical_prior={
             "execution_quality_label": "close_continuation",
             "entry_timing_bias": "confirm_then_hold",
+        },
+    ) == 0.0
+    assert _resolve_selected_score_tolerance(
+        score_target=0.44934181968680575,
+        effective_select_threshold=0.45,
+        upstream_shadow_catalyst_relief_applied=True,
+        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+        historical_prior={
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 2,
         },
     ) == 0.0
 

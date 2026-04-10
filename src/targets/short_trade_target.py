@@ -9,6 +9,7 @@ from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
 from src.targets.profiles import get_active_short_trade_target_profile, use_short_trade_target_profile
 
 STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE = 0.001
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT = 3
 
 
 def _normalize_score(value: float) -> float:
@@ -142,6 +143,7 @@ def _resolve_selected_score_tolerance(
     upstream_shadow_catalyst_relief_reason: str,
     historical_prior: dict[str, Any],
 ) -> float:
+    evaluable_count = int(historical_prior.get("evaluable_count") or 0)
     gap_to_selected = float(effective_select_threshold) - float(score_target)
     if gap_to_selected <= 0.0:
         return 0.0
@@ -152,6 +154,8 @@ def _resolve_selected_score_tolerance(
     if str(historical_prior.get("execution_quality_label") or "") != "close_continuation":
         return 0.0
     if str(historical_prior.get("entry_timing_bias") or "") != "confirm_then_hold":
+        return 0.0
+    if evaluable_count < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT:
         return 0.0
     return STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE if gap_to_selected <= STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE else 0.0
 

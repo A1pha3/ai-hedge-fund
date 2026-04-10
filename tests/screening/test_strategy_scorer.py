@@ -5,9 +5,9 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from src.data.models import CompanyNews, FinancialMetrics
-from src.screening.models import CandidateStock, StrategySignal
-from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_ema_alignment, _score_long_trend_alignment, _score_news_sentiment, _score_profitability, score_batch, score_event_sentiment_strategy, score_mean_reversion_strategy
+from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade
+from src.screening.models import CandidateStock, StrategySignal, SubFactor
+from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_adx_strength, _score_ema_alignment, _score_long_trend_alignment, _score_news_sentiment, _score_profitability, aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
 import src.screening.strategy_scorer as strategy_scorer_module
 
 
@@ -258,6 +258,108 @@ def test_profitability_two_positive_metrics_is_bullish():
     assert factor.metrics["positive_count"] == 2
 
 
+def test_score_industry_pe_returns_incomplete_without_industry_context():
+    factor = strategy_scorer_module._score_industry_pe(
+        _financial_metrics(price_to_earnings_ratio=12.0),
+        "",
+        {"银行": 8.0},
+    )
+
+    assert factor.direction == 0
+    assert factor.confidence == 0.0
+    assert factor.completeness == 0.0
+
+
+def test_score_industry_pe_marks_discounted_pe_as_bullish():
+    factor = strategy_scorer_module._score_industry_pe(
+        _financial_metrics(price_to_earnings_ratio=6.0),
+        "银行",
+        {"银行": 10.0},
+    )
+
+    assert factor.direction == 1
+    assert factor.confidence == 100.0
+    assert factor.metrics == {
+        "industry": "银行",
+        "current_pe": 6.0,
+        "industry_pe_median": 10.0,
+        "premium_ratio": 0.6,
+    }
+
+
+def test_aggregate_sub_factors_returns_empty_signal_when_all_incomplete():
+    factors = [
+        SubFactor(name="a", direction=1, confidence=80.0, completeness=0.0, weight=0.6, metrics={"x": 1}),
+        SubFactor(name="b", direction=-1, confidence=20.0, completeness=0.0, weight=0.4, metrics={"y": 2}),
+    ]
+
+    signal = aggregate_sub_factors(factors)
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.completeness == 0.0
+    assert signal.sub_factors["a"]["metrics"] == {"x": 1}
+    assert signal.sub_factors["b"]["metrics"] == {"y": 2}
+
+
+def test_aggregate_sub_factors_applies_weighted_consistency_penalty():
+    factors = [
+        SubFactor(name="trend", direction=1, confidence=90.0, completeness=1.0, weight=0.5),
+        SubFactor(name="fundamental", direction=1, confidence=60.0, completeness=1.0, weight=0.3),
+        SubFactor(name="event", direction=-1, confidence=30.0, completeness=1.0, weight=0.2),
+    ]
+
+    signal = aggregate_sub_factors(factors)
+
+    assert signal.direction == 1
+    assert signal.confidence == pytest.approx(46.0)
+    assert signal.completeness == 1.0
+
+
+def test_score_fundamental_strategy_returns_empty_signal_when_metrics_missing(monkeypatch):
+    monkeypatch.setattr(strategy_scorer_module, "get_financial_metrics", lambda **kwargs: [])
+
+    signal = score_fundamental_strategy("000001", "20260305")
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.completeness == 0.0
+    assert signal.sub_factors == {}
+
+
+def test_score_fundamental_strategy_builds_and_caps_sub_factors(monkeypatch):
+    latest = _financial_metrics(return_on_equity=0.18)
+    older = _financial_metrics(report_period="20240930", revenue_growth=0.25)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(strategy_scorer_module, "get_financial_metrics", lambda **kwargs: [latest, older])
+    monkeypatch.setattr(strategy_scorer_module, "_score_profitability", lambda metrics: SubFactor(name="profitability", direction=1, confidence=80.0, weight=0.25, metrics={"metric": metrics.report_period}))
+    monkeypatch.setattr(strategy_scorer_module, "_score_growth", lambda metrics_list: SubFactor(name="growth", direction=1, confidence=75.0, weight=0.25, metrics={"periods": len(metrics_list)}))
+    monkeypatch.setattr(strategy_scorer_module, "_score_financial_health", lambda metrics: SubFactor(name="financial_health", direction=1, confidence=70.0, weight=0.20, metrics={"metric": metrics.report_period}))
+    monkeypatch.setattr(strategy_scorer_module, "_score_growth_valuation", lambda metrics: SubFactor(name="growth_valuation", direction=0, confidence=50.0, weight=0.15, metrics={"metric": metrics.report_period}))
+    monkeypatch.setattr(strategy_scorer_module, "_score_industry_pe", lambda metrics, industry_name, medians: SubFactor(name="industry_pe", direction=-1, confidence=20.0, weight=0.15, metrics={"industry": industry_name, "median_count": len(medians or {})}))
+
+    def fake_aggregate(factors):
+        captured["factors"] = factors
+        return StrategySignal(direction=1, confidence=88.0, completeness=1.0, sub_factors={})
+
+    monkeypatch.setattr(strategy_scorer_module, "aggregate_sub_factors", fake_aggregate)
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "_apply_fundamental_quality_cap",
+        lambda signal: captured.setdefault("pre_cap_signal", signal) or StrategySignal(direction=1, confidence=45.0, completeness=1.0, sub_factors={"capped": {}}),
+    )
+
+    score_fundamental_strategy("000001", "20260305", industry_name="银行", industry_pe_medians={"银行": 6.5})
+
+    factor_names = [factor.name for factor in captured["factors"]]
+    assert factor_names == ["profitability", "growth", "financial_health", "growth_valuation", "industry_pe"]
+    assert captured["factors"][0].metrics == {"metric": "20251231"}
+    assert captured["factors"][1].metrics == {"periods": 2}
+    assert captured["factors"][-1].metrics == {"industry": "银行", "median_count": 1}
+    assert captured["pre_cap_signal"] == StrategySignal(direction=1, confidence=88.0, completeness=1.0, sub_factors={})
+
+
 def test_score_ema_alignment_returns_bullish_for_stacked_emas():
     prices_df = pd.DataFrame({"close": [10.0] * 59 + [12.0]})
 
@@ -311,6 +413,71 @@ def test_score_long_trend_alignment_returns_incomplete_for_short_history():
     assert factor.completeness == 0.0
 
 
+def test_score_adx_strength_returns_bullish_when_plus_di_leads():
+    prices_df = pd.DataFrame({"close": [10.0] * 30})
+
+    with patch.object(
+        strategy_scorer_module,
+        "calculate_adx",
+        return_value=pd.DataFrame({"adx": [28.0], "+di": [35.0], "-di": [12.0]}),
+    ):
+        factor = _score_adx_strength(prices_df, weight=0.21)
+
+    assert factor.direction == 1
+    assert factor.confidence == 28.0
+    assert factor.metrics == {"adx": 28.0, "+di": 35.0, "-di": 12.0}
+
+
+def test_score_adx_strength_returns_neutral_below_threshold():
+    prices_df = pd.DataFrame({"close": [10.0] * 30})
+
+    with patch.object(
+        strategy_scorer_module,
+        "calculate_adx",
+        return_value=pd.DataFrame({"adx": [18.0], "+di": [35.0], "-di": [12.0]}),
+    ):
+        factor = _score_adx_strength(prices_df, weight=0.21)
+
+    assert factor.direction == 0
+    assert factor.confidence == 18.0
+
+
+def test_score_trend_strategy_builds_optional_sub_factors(monkeypatch):
+    prices_df = pd.DataFrame({"close": [10.0] * 130})
+    captured: dict[str, list] = {}
+
+    def fake_aggregate(factors):
+        captured["factors"] = factors
+        return StrategySignal(direction=1, confidence=66.0, completeness=1.0, sub_factors={})
+
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "_get_trend_subfactor_weights",
+        lambda: {
+            "ema_alignment": 0.3,
+            "adx_strength": 0.2,
+            "momentum": 0.25,
+            "volatility": 0.15,
+            "long_trend_alignment": 0.1,
+        },
+    )
+    monkeypatch.setattr(strategy_scorer_module, "calculate_momentum_signals", lambda df: {"signal": "bullish", "confidence": 0.7, "metrics": {"mom": 1}})
+    monkeypatch.setattr(strategy_scorer_module, "calculate_volatility_signals", lambda df: {"signal": "bearish", "confidence": 0.4, "metrics": {"vol": 2}})
+    monkeypatch.setattr(strategy_scorer_module, "_score_ema_alignment", lambda df, weight: SubFactor(name="ema_alignment", direction=1, confidence=80.0, completeness=1.0, weight=weight, metrics={}))
+    monkeypatch.setattr(strategy_scorer_module, "_score_adx_strength", lambda df, weight: SubFactor(name="adx_strength", direction=1, confidence=25.0, completeness=1.0, weight=weight, metrics={}))
+    monkeypatch.setattr(strategy_scorer_module, "_score_long_trend_alignment", lambda df, weight: SubFactor(name="long_trend_alignment", direction=1, confidence=30.0, completeness=1.0, weight=weight, metrics={}))
+    monkeypatch.setattr(strategy_scorer_module, "aggregate_sub_factors", fake_aggregate)
+
+    score_trend_strategy(prices_df)
+
+    factor_names = [factor.name for factor in captured["factors"]]
+    assert factor_names == ["ema_alignment", "adx_strength", "momentum", "volatility", "long_trend_alignment"]
+    momentum = captured["factors"][2]
+    volatility = captured["factors"][3]
+    assert momentum.direction == 1 and momentum.confidence == 70.0 and momentum.completeness == 1.0
+    assert volatility.direction == -1 and volatility.confidence == 40.0 and volatility.completeness == 1.0
+
+
 def _news_item(title: str, date: str, content: str = "") -> CompanyNews:
     return CompanyNews(
         ticker="000001",
@@ -345,6 +512,55 @@ def test_event_sentiment_keeps_fresh_multi_keyword_news_actionable():
     assert signal.direction == 1
     assert signal.confidence > 0
     assert signal.sub_factors["news_sentiment"]["metrics"]["informative_articles"] == 1
+
+
+def test_score_event_sentiment_strategy_builds_sub_factors_from_loaded_data(monkeypatch):
+    news = [_news_item("profit growth beat upgrade", "2026-03-05", "record order growth and profit beat")]
+    trades = [
+        InsiderTrade(
+            ticker="000001",
+            issuer="issuer",
+            name="tester",
+            title="CEO",
+            is_board_director=False,
+            transaction_date="2026-03-01",
+            transaction_shares=1000.0,
+            transaction_price_per_share=10.0,
+            transaction_value=10000.0,
+            shares_owned_before_transaction=5000.0,
+            shares_owned_after_transaction=6000.0,
+            security_title="common",
+            filing_date="2026-03-02",
+        )
+    ]
+    captured: dict[str, object] = {}
+
+    def fake_news_loader(*, ticker, start_date, end_date, limit):
+        captured["news_loader"] = {"ticker": ticker, "start_date": start_date, "end_date": end_date, "limit": limit}
+        return news
+
+    def fake_trades_loader(*, ticker, start_date, end_date, limit):
+        captured["trade_loader"] = {"ticker": ticker, "start_date": start_date, "end_date": end_date, "limit": limit}
+        return trades
+
+    monkeypatch.setattr(strategy_scorer_module, "get_company_news", fake_news_loader)
+    monkeypatch.setattr(strategy_scorer_module, "get_insider_trades", fake_trades_loader)
+    monkeypatch.setattr(strategy_scorer_module, "_score_news_sentiment", lambda items, trade_date: SubFactor(name="news_sentiment", direction=1, confidence=80.0, weight=0.55, metrics={"news_count": len(items), "trade_date": trade_date}))
+    monkeypatch.setattr(strategy_scorer_module, "_score_insider_conviction", lambda items: SubFactor(name="insider_conviction", direction=1, confidence=40.0, weight=0.25, metrics={"trade_count": len(items)}))
+    monkeypatch.setattr(strategy_scorer_module, "_score_event_freshness", lambda items, trade_date: SubFactor(name="event_freshness", direction=0, confidence=25.0, weight=0.20, metrics={"fresh_news_count": len(items), "trade_date": trade_date}))
+
+    def fake_aggregate(factors):
+        captured["factors"] = factors
+        return StrategySignal(direction=1, confidence=61.0, completeness=1.0, sub_factors={})
+
+    monkeypatch.setattr(strategy_scorer_module, "aggregate_sub_factors", fake_aggregate)
+
+    signal = score_event_sentiment_strategy("000001", "20260305")
+
+    assert captured["news_loader"] == {"ticker": "000001", "start_date": "2026-02-03", "end_date": "2026-03-05", "limit": 50}
+    assert captured["trade_loader"] == {"ticker": "000001", "start_date": "2026-02-03", "end_date": "2026-03-05", "limit": 100}
+    assert [factor.name for factor in captured["factors"]] == ["news_sentiment", "insider_conviction", "event_freshness"]
+    assert signal == StrategySignal(direction=1, confidence=61.0, completeness=1.0, sub_factors={})
 
 
 def test_score_news_sentiment_tracks_recent_and_informative_articles():

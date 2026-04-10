@@ -507,9 +507,9 @@ def _prepare_session_runtime_context(
     initial_margin_requirement: float,
 ) -> SessionRuntimeContext:
     resolved_model_name, resolved_model_provider = _resolve_runtime_model_config(model_name=model_name, model_provider=model_provider)
-    session_paths = resolve_session_paths(output_dir=output_dir, frozen_plan_source=frozen_plan_source)
-    _reset_runtime_outputs(session_paths)
-    resolved_pipeline = _resolve_runtime_pipeline(
+    session_paths, resolved_pipeline = _resolve_runtime_session_dependencies(
+        output_dir=output_dir,
+        frozen_plan_source=frozen_plan_source,
         pipeline=pipeline,
         resolved_model_name=resolved_model_name,
         resolved_model_provider=resolved_model_provider,
@@ -518,7 +518,6 @@ def _prepare_session_runtime_context(
         short_trade_target_profile_name=short_trade_target_profile_name,
         short_trade_target_profile_overrides=short_trade_target_profile_overrides,
         selection_target=selection_target,
-        frozen_plan_source_path=session_paths.frozen_plan_source_path,
     )
     recorder, engine = _build_runtime_recorder_and_engine(
         agent=agent,
@@ -533,12 +532,11 @@ def _prepare_session_runtime_context(
         pipeline=resolved_pipeline,
         session_paths=session_paths,
     )
-    return SessionRuntimeContext(
+    return _build_session_runtime_context(
         resolved_model_name=resolved_model_name,
         resolved_model_provider=resolved_model_provider,
         session_paths=session_paths,
         pipeline=resolved_pipeline,
-        cache_stats_before_run=snapshot_cache_stats(),
         recorder=recorder,
         engine=engine,
     )
@@ -554,6 +552,55 @@ def _reset_runtime_outputs(session_paths: Any) -> None:
         daily_events_path=session_paths.daily_events_path,
         timing_log_path=session_paths.timing_log_path,
         selection_artifact_root=session_paths.selection_artifact_root,
+    )
+
+
+def _resolve_runtime_session_dependencies(
+    *,
+    output_dir: str | Path,
+    frozen_plan_source: str | Path | None,
+    pipeline: DailyPipeline | None,
+    resolved_model_name: str,
+    resolved_model_provider: str,
+    selected_analysts: list[str] | None,
+    fast_selected_analysts: list[str] | None,
+    short_trade_target_profile_name: str,
+    short_trade_target_profile_overrides: dict[str, object] | None,
+    selection_target: str,
+) -> tuple[Any, DailyPipeline]:
+    session_paths = resolve_session_paths(output_dir=output_dir, frozen_plan_source=frozen_plan_source)
+    _reset_runtime_outputs(session_paths)
+    resolved_pipeline = _resolve_runtime_pipeline(
+        pipeline=pipeline,
+        resolved_model_name=resolved_model_name,
+        resolved_model_provider=resolved_model_provider,
+        selected_analysts=selected_analysts,
+        fast_selected_analysts=fast_selected_analysts,
+        short_trade_target_profile_name=short_trade_target_profile_name,
+        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+        selection_target=selection_target,
+        frozen_plan_source_path=session_paths.frozen_plan_source_path,
+    )
+    return session_paths, resolved_pipeline
+
+
+def _build_session_runtime_context(
+    *,
+    resolved_model_name: str,
+    resolved_model_provider: str,
+    session_paths: Any,
+    pipeline: DailyPipeline,
+    recorder: JsonlPaperTradingRecorder,
+    engine: BacktestEngine,
+) -> SessionRuntimeContext:
+    return SessionRuntimeContext(
+        resolved_model_name=resolved_model_name,
+        resolved_model_provider=resolved_model_provider,
+        session_paths=session_paths,
+        pipeline=pipeline,
+        cache_stats_before_run=snapshot_cache_stats(),
+        recorder=recorder,
+        engine=engine,
     )
 
 
@@ -598,7 +645,7 @@ def _build_runtime_recorder_and_engine(
     pipeline: DailyPipeline,
     session_paths: Any,
 ) -> tuple[JsonlPaperTradingRecorder, BacktestEngine]:
-    recorder = JsonlPaperTradingRecorder(session_paths.daily_events_path)
+    recorder = _build_runtime_recorder(session_paths)
     engine = _build_paper_trading_engine(
         agent=agent,
         tickers=tickers,
@@ -616,6 +663,10 @@ def _build_runtime_recorder_and_engine(
     return recorder, engine
 
 
+def _build_runtime_recorder(session_paths: Any) -> JsonlPaperTradingRecorder:
+    return JsonlPaperTradingRecorder(session_paths.daily_events_path)
+
+
 def _build_paper_trading_engine(
     *,
     agent: Callable,
@@ -631,6 +682,7 @@ def _build_paper_trading_engine(
     session_paths,
     recorder: JsonlPaperTradingRecorder,
 ) -> BacktestEngine:
+    selection_artifact_writer = _build_selection_artifact_writer(session_paths)
     return BacktestEngine(
         agent=agent,
         tickers=tickers or [],
@@ -645,10 +697,14 @@ def _build_paper_trading_engine(
         pipeline=pipeline,
         checkpoint_path=str(session_paths.checkpoint_path),
         pipeline_event_recorder=recorder.record,
-        selection_artifact_writer=FileSelectionArtifactWriter(
-            artifact_root=session_paths.selection_artifact_root,
-            run_id=session_paths.output_dir_path.name,
-        ),
+        selection_artifact_writer=selection_artifact_writer,
+    )
+
+
+def _build_selection_artifact_writer(session_paths: Any) -> FileSelectionArtifactWriter:
+    return FileSelectionArtifactWriter(
+        artifact_root=session_paths.selection_artifact_root,
+        run_id=session_paths.output_dir_path.name,
     )
 
 
@@ -670,14 +726,188 @@ def _finalize_paper_trading_session(
     cache_benchmark_clear_first: bool,
 ) -> tuple[dict, Path]:
     research_feedback_summary, feedback_summary_path = _write_research_feedback_summary(context.session_paths.selection_artifact_root)
+    monitoring_summary = _build_runtime_monitoring_summary(context)
+    data_cache_summary = _build_runtime_data_cache_summary(context)
+    cache_benchmark_summary, cache_benchmark_artifacts, cache_benchmark_status = _run_runtime_cache_benchmark(
+        context=context,
+        cache_benchmark=cache_benchmark,
+        cache_benchmark_ticker=cache_benchmark_ticker,
+        tickers=tickers,
+        end_date=end_date,
+        cache_benchmark_clear_first=cache_benchmark_clear_first,
+    )
+    summary = build_session_summary(
+        **_build_runtime_session_summary_inputs(
+            context=context,
+            metrics=metrics,
+            start_date=start_date,
+            end_date=end_date,
+            tickers=tickers,
+            initial_capital=initial_capital,
+            selected_analysts=selected_analysts,
+            fast_selected_analysts=fast_selected_analysts,
+            short_trade_target_profile_name=short_trade_target_profile_name,
+            short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+            selection_target=selection_target,
+            research_feedback_summary=research_feedback_summary,
+            feedback_summary_path=feedback_summary_path,
+            monitoring_summary=monitoring_summary,
+            data_cache_summary=data_cache_summary,
+            cache_benchmark_summary=cache_benchmark_summary,
+            cache_benchmark_artifacts=cache_benchmark_artifacts,
+            cache_benchmark_status=cache_benchmark_status,
+        )
+    )
+    _write_runtime_summary(context.session_paths.summary_path, summary)
+    return summary, feedback_summary_path
+
+
+def _build_runtime_session_summary_inputs(
+    *,
+    context: SessionRuntimeContext,
+    metrics: PerformanceMetrics,
+    start_date: str,
+    end_date: str,
+    tickers: list[str] | None,
+    initial_capital: float,
+    selected_analysts: list[str] | None,
+    fast_selected_analysts: list[str] | None,
+    short_trade_target_profile_name: str,
+    short_trade_target_profile_overrides: dict[str, object] | None,
+    selection_target: str,
+    research_feedback_summary: dict,
+    feedback_summary_path: Path,
+    monitoring_summary: dict,
+    data_cache_summary: dict,
+    cache_benchmark_summary: dict,
+    cache_benchmark_artifacts: dict,
+    cache_benchmark_status: str,
+) -> dict:
+    return {
+        **_build_runtime_session_summary_metadata(
+            context=context,
+            start_date=start_date,
+            end_date=end_date,
+            tickers=tickers,
+            initial_capital=initial_capital,
+            selected_analysts=selected_analysts,
+            fast_selected_analysts=fast_selected_analysts,
+            short_trade_target_profile_name=short_trade_target_profile_name,
+            short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+            selection_target=selection_target,
+        ),
+        "metrics": dict(metrics),
+        "portfolio_values": _serialize_portfolio_values(context.engine.get_portfolio_values()),
+        "final_portfolio_snapshot": context.engine.get_portfolio_snapshot(),
+        **_build_runtime_session_monitoring_inputs(monitoring_summary),
+        "data_cache_summary": data_cache_summary,
+        "cache_benchmark_summary": cache_benchmark_summary,
+        "cache_benchmark_status": cache_benchmark_status,
+        "research_feedback_summary": research_feedback_summary,
+        **_build_runtime_session_recorder_inputs(context),
+        **_build_runtime_session_artifact_inputs(
+            context=context,
+            feedback_summary_path=feedback_summary_path,
+            cache_benchmark_artifacts=cache_benchmark_artifacts,
+            llm_metrics_artifacts=monitoring_summary["llm_metrics_artifacts"],
+        ),
+    }
+
+
+def _build_runtime_session_summary_metadata(
+    *,
+    context: SessionRuntimeContext,
+    start_date: str,
+    end_date: str,
+    tickers: list[str] | None,
+    initial_capital: float,
+    selected_analysts: list[str] | None,
+    fast_selected_analysts: list[str] | None,
+    short_trade_target_profile_name: str,
+    short_trade_target_profile_overrides: dict[str, object] | None,
+    selection_target: str,
+) -> dict:
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "tickers": tickers,
+        "initial_capital": initial_capital,
+        "resolved_model_name": context.resolved_model_name,
+        "resolved_model_provider": context.resolved_model_provider,
+        "selected_analysts": selected_analysts,
+        "fast_selected_analysts": fast_selected_analysts,
+        "short_trade_target_profile_name": short_trade_target_profile_name,
+        "short_trade_target_profile_overrides": short_trade_target_profile_overrides,
+        "frozen_plan_source_path": context.session_paths.frozen_plan_source_path,
+        "selection_target": selection_target,
+    }
+
+
+def _build_runtime_session_monitoring_inputs(monitoring_summary: dict) -> dict:
+    return {
+        "llm_route_provenance": monitoring_summary["llm_route_provenance"],
+        "execution_plan_provenance": monitoring_summary["execution_plan_provenance"],
+        "dual_target_summary": monitoring_summary["dual_target_summary"],
+        "llm_observability_summary": monitoring_summary["llm_observability_summary"],
+        "llm_error_digest": monitoring_summary["llm_error_digest"],
+    }
+
+
+def _build_runtime_session_recorder_inputs(context: SessionRuntimeContext) -> dict:
+    return {
+        "recorder_day_count": context.recorder.day_count,
+        "recorder_executed_trade_days": context.recorder.executed_trade_days,
+        "recorder_total_executed_orders": context.recorder.total_executed_orders,
+    }
+
+
+def _build_runtime_session_artifact_inputs(
+    *,
+    context: SessionRuntimeContext,
+    feedback_summary_path: Path,
+    cache_benchmark_artifacts: dict,
+    llm_metrics_artifacts: dict,
+) -> dict:
+    return {
+        "daily_events_path": context.session_paths.daily_events_path,
+        "timing_log_path": context.session_paths.timing_log_path,
+        "summary_path": context.session_paths.summary_path,
+        "selection_artifact_root": context.session_paths.selection_artifact_root,
+        "feedback_summary_path": feedback_summary_path,
+        "cache_benchmark_artifacts": cache_benchmark_artifacts,
+        "llm_metrics_artifacts": llm_metrics_artifacts,
+    }
+
+
+def _build_runtime_monitoring_summary(context: SessionRuntimeContext) -> dict:
     llm_route_provenance, llm_metrics_artifacts = _build_llm_route_provenance()
     llm_observability_summary = _build_llm_observability_summary(Path(llm_metrics_artifacts["llm_metrics_jsonl"]))
-    llm_error_digest = _build_llm_error_digest(llm_route_provenance, llm_observability_summary)
-    execution_plan_provenance = _build_execution_plan_provenance_summary(getattr(context.engine, "_pipeline", None))
-    dual_target_summary = _build_dual_target_session_summary(context.session_paths.daily_events_path)
+    return {
+        "llm_route_provenance": llm_route_provenance,
+        "llm_metrics_artifacts": llm_metrics_artifacts,
+        "llm_observability_summary": llm_observability_summary,
+        "llm_error_digest": _build_llm_error_digest(llm_route_provenance, llm_observability_summary),
+        "execution_plan_provenance": _build_execution_plan_provenance_summary(getattr(context.engine, "_pipeline", None)),
+        "dual_target_summary": _build_dual_target_session_summary(context.session_paths.daily_events_path),
+    }
+
+
+def _build_runtime_data_cache_summary(context: SessionRuntimeContext) -> dict:
     data_cache_summary = get_cache_runtime_info()
     data_cache_summary["session_stats"] = diff_cache_stats(context.cache_stats_before_run, data_cache_summary.get("stats", {}))
-    cache_benchmark_summary, cache_benchmark_artifacts, cache_benchmark_status = run_optional_cache_benchmark(
+    return data_cache_summary
+
+
+def _run_runtime_cache_benchmark(
+    *,
+    context: SessionRuntimeContext,
+    cache_benchmark: bool,
+    cache_benchmark_ticker: str | None,
+    tickers: list[str] | None,
+    end_date: str,
+    cache_benchmark_clear_first: bool,
+) -> tuple[dict, dict, str]:
+    return run_optional_cache_benchmark(
         cache_benchmark=cache_benchmark,
         cache_benchmark_ticker=cache_benchmark_ticker,
         tickers=tickers,
@@ -688,44 +918,75 @@ def _finalize_paper_trading_session(
         repo_root=Path(__file__).resolve().parents[2],
         python_executable=sys.executable,
     )
-    summary = build_session_summary(
-        start_date=start_date,
-        end_date=end_date,
-        tickers=tickers,
-        initial_capital=initial_capital,
-        resolved_model_name=context.resolved_model_name,
-        resolved_model_provider=context.resolved_model_provider,
-        selected_analysts=selected_analysts,
-        fast_selected_analysts=fast_selected_analysts,
-        short_trade_target_profile_name=short_trade_target_profile_name,
-        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
-        frozen_plan_source_path=context.session_paths.frozen_plan_source_path,
-        selection_target=selection_target,
-        metrics=dict(metrics),
-        portfolio_values=_serialize_portfolio_values(context.engine.get_portfolio_values()),
-        final_portfolio_snapshot=context.engine.get_portfolio_snapshot(),
-        llm_route_provenance=llm_route_provenance,
-        execution_plan_provenance=execution_plan_provenance,
-        dual_target_summary=dual_target_summary,
-        llm_observability_summary=llm_observability_summary,
-        llm_error_digest=llm_error_digest,
-        data_cache_summary=data_cache_summary,
-        cache_benchmark_summary=cache_benchmark_summary,
-        cache_benchmark_status=cache_benchmark_status,
-        research_feedback_summary=research_feedback_summary,
-        recorder_day_count=context.recorder.day_count,
-        recorder_executed_trade_days=context.recorder.executed_trade_days,
-        recorder_total_executed_orders=context.recorder.total_executed_orders,
+
+
+def _write_runtime_summary(summary_path: Path, summary: dict) -> None:
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _promote_runtime_timing_log(context: SessionRuntimeContext) -> None:
+    engine_timing_log_path = context.engine._timing_log_path
+    session_timing_log_path = context.session_paths.timing_log_path
+    if engine_timing_log_path is None:
+        return
+    if engine_timing_log_path == session_timing_log_path:
+        return
+    if not engine_timing_log_path.exists():
+        return
+    engine_timing_log_path.replace(session_timing_log_path)
+
+
+def _build_runtime_artifacts(context: SessionRuntimeContext, feedback_summary_path: Path) -> PaperTradingArtifacts:
+    return PaperTradingArtifacts(
+        output_dir=context.session_paths.output_dir_path,
         daily_events_path=context.session_paths.daily_events_path,
         timing_log_path=context.session_paths.timing_log_path,
         summary_path=context.session_paths.summary_path,
         selection_artifact_root=context.session_paths.selection_artifact_root,
         feedback_summary_path=feedback_summary_path,
-        cache_benchmark_artifacts=cache_benchmark_artifacts,
-        llm_metrics_artifacts=llm_metrics_artifacts,
     )
-    context.session_paths.summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    return summary, feedback_summary_path
+
+
+def _run_runtime_backtest(context: SessionRuntimeContext) -> PerformanceMetrics:
+    metrics: PerformanceMetrics = context.engine.run_backtest()
+    _promote_runtime_timing_log(context)
+    return metrics
+
+
+def _finalize_runtime_run(
+    *,
+    context: SessionRuntimeContext,
+    metrics: PerformanceMetrics,
+    start_date: str,
+    end_date: str,
+    tickers: list[str] | None,
+    initial_capital: float,
+    selected_analysts: list[str] | None,
+    fast_selected_analysts: list[str] | None,
+    short_trade_target_profile_name: str,
+    short_trade_target_profile_overrides: dict[str, object] | None,
+    selection_target: str,
+    cache_benchmark: bool,
+    cache_benchmark_ticker: str | None,
+    cache_benchmark_clear_first: bool,
+) -> PaperTradingArtifacts:
+    _, feedback_summary_path = _finalize_paper_trading_session(
+        context=context,
+        metrics=metrics,
+        start_date=start_date,
+        end_date=end_date,
+        tickers=tickers,
+        initial_capital=initial_capital,
+        selected_analysts=selected_analysts,
+        fast_selected_analysts=fast_selected_analysts,
+        short_trade_target_profile_name=short_trade_target_profile_name,
+        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+        selection_target=selection_target,
+        cache_benchmark=cache_benchmark,
+        cache_benchmark_ticker=cache_benchmark_ticker,
+        cache_benchmark_clear_first=cache_benchmark_clear_first,
+    )
+    return _build_runtime_artifacts(context, feedback_summary_path)
 
 
 def run_paper_trading_session(
@@ -768,10 +1029,8 @@ def run_paper_trading_session(
         initial_capital=initial_capital,
         initial_margin_requirement=initial_margin_requirement,
     )
-    metrics: PerformanceMetrics = context.engine.run_backtest()
-    if context.engine._timing_log_path is not None and context.engine._timing_log_path != context.session_paths.timing_log_path and context.engine._timing_log_path.exists():
-        context.engine._timing_log_path.replace(context.session_paths.timing_log_path)
-    _, feedback_summary_path = _finalize_paper_trading_session(
+    metrics = _run_runtime_backtest(context)
+    return _finalize_runtime_run(
         context=context,
         metrics=metrics,
         start_date=start_date,
@@ -786,13 +1045,4 @@ def run_paper_trading_session(
         cache_benchmark=cache_benchmark,
         cache_benchmark_ticker=cache_benchmark_ticker,
         cache_benchmark_clear_first=cache_benchmark_clear_first,
-    )
-
-    return PaperTradingArtifacts(
-        output_dir=context.session_paths.output_dir_path,
-        daily_events_path=context.session_paths.daily_events_path,
-        timing_log_path=context.session_paths.timing_log_path,
-        summary_path=context.session_paths.summary_path,
-        selection_artifact_root=context.session_paths.selection_artifact_root,
-        feedback_summary_path=feedback_summary_path,
     )
