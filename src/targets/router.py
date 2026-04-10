@@ -4,6 +4,13 @@ from typing import Any
 
 from src.execution.models import LayerCResult
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
+from src.targets.router_build_helpers import (
+    add_rejected_selection_targets,
+    add_short_trade_only_selection_targets,
+    add_watchlist_selection_targets,
+    build_dual_target_summary,
+    build_remaining_supplemental_short_trade_entries,
+)
 from src.targets.research_target import evaluate_research_rejected_target, evaluate_research_selected_target
 from src.targets.short_trade_target import evaluate_short_trade_rejected_target, evaluate_short_trade_selected_target
 
@@ -52,31 +59,7 @@ def _merge_reason_codes(*code_lists: list[str]) -> list[str]:
 
 
 def summarize_selection_targets(*, selection_targets: dict[str, DualTargetEvaluation], target_mode: TargetMode) -> DualTargetSummary:
-    summary = DualTargetSummary(target_mode=target_mode, selection_target_count=len(selection_targets))
-    for evaluation in selection_targets.values():
-        if evaluation.research is not None:
-            summary.research_target_count += 1
-            if evaluation.research.decision == "selected":
-                summary.research_selected_count += 1
-            elif evaluation.research.decision == "near_miss":
-                summary.research_near_miss_count += 1
-            else:
-                summary.research_rejected_count += 1
-        if evaluation.short_trade is not None:
-            summary.short_trade_target_count += 1
-            if evaluation.short_trade.decision == "selected":
-                summary.short_trade_selected_count += 1
-            elif evaluation.short_trade.decision == "near_miss":
-                summary.short_trade_near_miss_count += 1
-            elif evaluation.short_trade.decision == "blocked":
-                summary.short_trade_blocked_count += 1
-            else:
-                summary.short_trade_rejected_count += 1
-        if evaluation.research is None and evaluation.short_trade is None:
-            summary.shell_target_count += 1
-        if evaluation.delta_classification:
-            summary.delta_classification_counts[evaluation.delta_classification] = int(summary.delta_classification_counts.get(evaluation.delta_classification) or 0) + 1
-    return summary
+    return build_dual_target_summary(selection_targets=selection_targets, target_mode=target_mode)
 
 
 def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint: int, included_in_buy_orders: bool, target_mode: TargetMode) -> DualTargetEvaluation:
@@ -193,57 +176,33 @@ def build_selection_targets(
 ) -> tuple[dict[str, DualTargetEvaluation], DualTargetSummary]:
     buy_order_tickers = set(buy_order_tickers or set())
     selection_targets: dict[str, DualTargetEvaluation] = {}
-    remaining_supplemental_short_trade_entries: dict[str, dict[str, Any]] = {}
-
-    if target_mode != "research_only":
-        sorted_supplemental_entries = sorted(
-            list(supplemental_short_trade_entries or []),
-            key=lambda current: float(current.get("score_final", current.get("score_b", 0.0)) or 0.0),
-            reverse=True,
-        )
-        for entry in sorted_supplemental_entries:
-            ticker = str(entry.get("ticker") or "")
-            if ticker and ticker not in remaining_supplemental_short_trade_entries:
-                remaining_supplemental_short_trade_entries[ticker] = entry
-
-    for rank_hint, item in enumerate(sorted(watchlist, key=lambda current: current.score_final, reverse=True), start=1):
-        selection_targets[item.ticker] = _build_selected_evaluation(
-            trade_date=trade_date,
-            item=item,
-            rank_hint=rank_hint,
-            included_in_buy_orders=item.ticker in buy_order_tickers,
-            target_mode=target_mode,
-        )
-
-    for rank_hint, entry in enumerate(sorted(list(rejected_entries or []), key=lambda current: float(current.get("score_final", current.get("score_b", 0.0)) or 0.0), reverse=True), start=1):
-        ticker = str(entry.get("ticker") or "")
-        if not ticker or ticker in selection_targets:
-            continue
-        supplemental_entry = remaining_supplemental_short_trade_entries.pop(ticker, None) if target_mode != "research_only" else None
-        if supplemental_entry is not None:
-            selection_targets[ticker] = _build_rejected_with_supplemental_short_trade_evaluation(
-                trade_date=trade_date,
-                rejected_entry=entry,
-                supplemental_entry=supplemental_entry,
-                rank_hint=rank_hint,
-            )
-        else:
-            selection_targets[ticker] = _build_rejected_evaluation(
-                trade_date=trade_date,
-                entry=entry,
-                rank_hint=rank_hint,
-                target_mode=target_mode,
-            )
-
-    if target_mode != "research_only":
-        for rank_hint, entry in enumerate(remaining_supplemental_short_trade_entries.values(), start=1):
-            ticker = str(entry.get("ticker") or "")
-            if not ticker or ticker in selection_targets:
-                continue
-            selection_targets[ticker] = _build_short_trade_only_evaluation(
-                trade_date=trade_date,
-                entry=entry,
-                rank_hint=rank_hint,
-            )
+    remaining_supplemental_short_trade_entries = build_remaining_supplemental_short_trade_entries(
+        supplemental_short_trade_entries=supplemental_short_trade_entries,
+        target_mode=target_mode,
+    )
+    add_watchlist_selection_targets(
+        selection_targets=selection_targets,
+        watchlist=watchlist,
+        buy_order_tickers=buy_order_tickers,
+        trade_date=trade_date,
+        target_mode=target_mode,
+        build_selected_evaluation=_build_selected_evaluation,
+    )
+    add_rejected_selection_targets(
+        selection_targets=selection_targets,
+        rejected_entries=rejected_entries,
+        remaining_supplemental_short_trade_entries=remaining_supplemental_short_trade_entries,
+        trade_date=trade_date,
+        target_mode=target_mode,
+        build_rejected_with_supplemental_evaluation=_build_rejected_with_supplemental_short_trade_evaluation,
+        build_rejected_evaluation=_build_rejected_evaluation,
+    )
+    add_short_trade_only_selection_targets(
+        selection_targets=selection_targets,
+        remaining_supplemental_short_trade_entries=remaining_supplemental_short_trade_entries,
+        target_mode=target_mode,
+        trade_date=trade_date,
+        build_short_trade_only_evaluation=_build_short_trade_only_evaluation,
+    )
 
     return selection_targets, summarize_selection_targets(selection_targets=selection_targets, target_mode=target_mode)

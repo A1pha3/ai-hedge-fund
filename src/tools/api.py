@@ -9,11 +9,9 @@ from src.data.enhanced_cache import get_cache
 from src.data.models import (
     CompanyFactsResponse,
     CompanyNews,
-    CompanyNewsResponse,
     FinancialMetrics,
     FinancialMetricsResponse,
     InsiderTrade,
-    InsiderTradeResponse,
     LineItem,
     LineItemResponse,
     Price,
@@ -23,6 +21,8 @@ from src.data.snapshot import get_snapshot_exporter
 
 # Import A-share data module
 from src.tools.akshare_api import get_ashare_company_news, is_ashare
+from src.tools.api_company_news_helpers import build_company_news_cache_key, cache_company_news, fetch_remote_company_news, load_cached_company_news
+from src.tools.api_insider_trade_helpers import build_financial_datasets_headers, build_insider_trade_cache_key, cache_insider_trades, fetch_remote_insider_trades, load_cached_insider_trades
 from src.tools.tushare_api import (
     get_ashare_financial_metrics_with_tushare,
     get_ashare_insider_trades_with_tushare,
@@ -276,71 +276,32 @@ def get_insider_trades(
     api_key: str = None,
 ) -> list[InsiderTrade]:
     """Fetch insider trades from cache or API."""
-    # A-share stocks: use tushare stk_holdertrade (with caching)
+    cache_key = build_insider_trade_cache_key(ticker, start_date, end_date, limit)
+
     if is_ashare(ticker):
-        cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
-        if cached_data := _cache.get_insider_trades(cache_key):
-            return [InsiderTrade(**trade) for trade in cached_data]
+        if cached_trades := load_cached_insider_trades(_cache, cache_key):
+            return cached_trades
         trades = get_ashare_insider_trades_with_tushare(ticker, end_date, start_date, limit)
         if trades:
-            _cache.set_insider_trades(cache_key, [t.model_dump() for t in trades])
+            cache_insider_trades(_cache, cache_key, trades)
         return trades
 
-    # Create a cache key that includes all parameters to ensure exact matches
-    cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
+    if cached_trades := load_cached_insider_trades(_cache, cache_key):
+        return cached_trades
 
-    # Check cache first - simple exact match
-    if cached_data := _cache.get_insider_trades(cache_key):
-        return [InsiderTrade(**trade) for trade in cached_data]
-
-    # If not in cache, fetch from API
-    headers = {}
-    financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
-    if financial_api_key:
-        headers["X-API-KEY"] = financial_api_key
-
-    all_trades = []
-    current_end_date = end_date
-
-    while True:
-        url = f"https://api.financialdatasets.ai/insider-trades/?ticker={ticker}&filing_date_lte={current_end_date}"
-        if start_date:
-            url += f"&filing_date_gte={start_date}"
-        url += f"&limit={limit}"
-
-        response = _make_api_request(url, headers)
-        if response.status_code != 200:
-            break
-
-        try:
-            data = response.json()
-            response_model = InsiderTradeResponse(**data)
-            insider_trades = response_model.insider_trades
-        except:
-            break  # Parsing error, exit loop
-
-        if not insider_trades:
-            break
-
-        all_trades.extend(insider_trades)
-
-        # Only continue pagination if we have a start_date and got a full page
-        if not start_date or len(insider_trades) < limit:
-            break
-
-        # Update end_date to the oldest filing date from current batch for next iteration
-        current_end_date = min(trade.filing_date for trade in insider_trades).split("T")[0]
-
-        # If we've reached or passed the start_date, we can stop
-        if current_end_date <= start_date:
-            break
+    all_trades = fetch_remote_insider_trades(
+        _make_api_request,
+        ticker,
+        end_date,
+        start_date,
+        limit,
+        build_financial_datasets_headers(api_key),
+    )
 
     if not all_trades:
         return []
 
-    # Cache the results using the comprehensive cache key
-    _cache.set_insider_trades(cache_key, [trade.model_dump() for trade in all_trades])
-    return all_trades
+    return cache_insider_trades(_cache, cache_key, all_trades)
 
 
 def get_company_news(
@@ -351,74 +312,32 @@ def get_company_news(
     api_key: str = None,
 ) -> list[CompanyNews]:
     """Fetch company news from cache or API."""
-    # A-share stocks: use AKShare news API
     if is_ashare(ticker):
-        cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}_ashare"
-        if cached_data := _cache.get_company_news(cache_key):
-            return [CompanyNews(**news) for news in cached_data]
+        cache_key = build_company_news_cache_key(ticker, start_date, end_date, limit, ashare=True)
+        if cached_news := load_cached_company_news(_cache, cache_key):
+            return cached_news
         news = get_ashare_company_news(ticker, end_date, start_date, limit)
         if news:
-            _cache.set_company_news(cache_key, [n.model_dump() for n in news])
+            cache_company_news(_cache, cache_key, news)
         return news
 
-    # Create a cache key that includes all parameters to ensure exact matches
-    cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
+    cache_key = build_company_news_cache_key(ticker, start_date, end_date, limit)
+    if cached_news := load_cached_company_news(_cache, cache_key):
+        return cached_news
 
-    # Check cache first - simple exact match
-    if cached_data := _cache.get_company_news(cache_key):
-        return [CompanyNews(**news) for news in cached_data]
-
-    # If not in cache, fetch from API
-    headers = {}
-    financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
-    if financial_api_key:
-        headers["X-API-KEY"] = financial_api_key
-
-    all_news = []
-    current_end_date = end_date
-
-    while True:
-        url = f"https://api.financialdatasets.ai/news/?ticker={ticker}&end_date={current_end_date}"
-        if start_date:
-            url += f"&start_date={start_date}"
-        url += f"&limit={limit}"
-
-        response = _make_api_request(url, headers)
-        if response.status_code != 200:
-            break
-
-        try:
-            data = response.json()
-            response_model = CompanyNewsResponse(**data)
-            company_news = response_model.news
-        except:
-            break  # Parsing error, exit loop
-
-        if not company_news:
-            break
-
-        all_news.extend(company_news)
-
-        # Only continue pagination if we have a start_date and got a full page
-        if not start_date or len(company_news) < limit:
-            break
-
-        # Update end_date to the oldest date from current batch for next iteration
-        current_end_date = min(news.date for news in company_news).split("T")[0]
-
-        # If we've reached or passed the start_date, we can stop
-        if current_end_date <= start_date:
-            break
+    all_news = fetch_remote_company_news(
+        _make_api_request,
+        ticker,
+        end_date,
+        start_date,
+        limit,
+        build_financial_datasets_headers(api_key),
+    )
 
     if not all_news:
         return []
 
-    # Sort by date descending (newest first) to ensure most recent news is prioritized
-    all_news.sort(key=lambda n: n.date, reverse=True)
-
-    # Cache the results using the comprehensive cache key
-    _cache.set_company_news(cache_key, [news.model_dump() for news in all_news])
-    return all_news
+    return cache_company_news(_cache, cache_key, all_news)
 
 
 def get_market_cap(

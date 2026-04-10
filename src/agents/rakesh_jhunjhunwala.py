@@ -5,10 +5,25 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from typing_extensions import Literal
 
+from src.agents.rakesh_jhunjhunwala_helpers import (
+    _calculate_rakesh_projected_dcf_value,
+    _resolve_rakesh_discount_profile,
+    _resolve_rakesh_historical_growth,
+    _resolve_rakesh_sustainable_growth,
+    _score_rakesh_eps_cagr,
+    _score_rakesh_growth_consistency,
+    _score_rakesh_income_cagr,
+    _score_rakesh_operating_margin,
+    _score_rakesh_quality_debt_factor,
+    _score_rakesh_quality_growth_consistency,
+    _score_rakesh_quality_roe_factor,
+    _score_rakesh_revenue_cagr,
+    _score_rakesh_roe,
+)
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context
@@ -158,71 +173,17 @@ def analyze_profitability(financial_line_items: list) -> dict[str, any]:
     latest = financial_line_items[0]
     score = 0
     reasoning = []
+    roe_score, roe_reasoning = _score_rakesh_roe(latest)
+    score += roe_score
+    reasoning.append(roe_reasoning)
 
-    # Calculate ROE (Return on Equity) - Jhunjhunwala's key metric
-    if getattr(latest, "net_income", None) and latest.net_income > 0 and getattr(latest, "total_assets", None) and getattr(latest, "total_liabilities", None) and latest.total_assets and latest.total_liabilities:
+    margin_score, margin_reasoning = _score_rakesh_operating_margin(latest)
+    score += margin_score
+    reasoning.append(margin_reasoning)
 
-        shareholders_equity = latest.total_assets - latest.total_liabilities
-        if shareholders_equity > 0:
-            roe = (latest.net_income / shareholders_equity) * 100
-            if roe > 20:  # Excellent ROE
-                score += 3
-                reasoning.append(f"Excellent ROE: {roe:.1f}%")
-            elif roe > 15:  # Good ROE
-                score += 2
-                reasoning.append(f"Good ROE: {roe:.1f}%")
-            elif roe > 10:  # Decent ROE
-                score += 1
-                reasoning.append(f"Decent ROE: {roe:.1f}%")
-            else:
-                reasoning.append(f"Low ROE: {roe:.1f}%")
-        else:
-            reasoning.append("Negative shareholders equity")
-    else:
-        reasoning.append("Unable to calculate ROE - missing data")
-
-    # Operating Margin Analysis
-    if getattr(latest, "operating_income", None) and latest.operating_income and getattr(latest, "revenue", None) and latest.revenue and latest.revenue > 0:
-        operating_margin = (latest.operating_income / latest.revenue) * 100
-        if operating_margin > 20:  # Excellent margin
-            score += 2
-            reasoning.append(f"Excellent operating margin: {operating_margin:.1f}%")
-        elif operating_margin > 15:  # Good margin
-            score += 1
-            reasoning.append(f"Good operating margin: {operating_margin:.1f}%")
-        elif operating_margin > 0:
-            reasoning.append(f"Positive operating margin: {operating_margin:.1f}%")
-        else:
-            reasoning.append(f"Negative operating margin: {operating_margin:.1f}%")
-    else:
-        reasoning.append("Unable to calculate operating margin")
-
-    # EPS Growth Consistency (3-year trend)
-    eps_values = [getattr(item, "earnings_per_share", None) for item in financial_line_items if getattr(item, "earnings_per_share", None) is not None and getattr(item, "earnings_per_share", None) > 0]
-
-    if len(eps_values) >= 3:
-        # Calculate CAGR for EPS
-        initial_eps = eps_values[-1]  # Oldest value
-        final_eps = eps_values[0]  # Latest value
-        years = len(eps_values) - 1
-
-        if initial_eps > 0:
-            eps_cagr = ((final_eps / initial_eps) ** (1 / years) - 1) * 100
-            if eps_cagr > 20:  # High growth
-                score += 3
-                reasoning.append(f"High EPS CAGR: {eps_cagr:.1f}%")
-            elif eps_cagr > 15:  # Good growth
-                score += 2
-                reasoning.append(f"Good EPS CAGR: {eps_cagr:.1f}%")
-            elif eps_cagr > 10:  # Moderate growth
-                score += 1
-                reasoning.append(f"Moderate EPS CAGR: {eps_cagr:.1f}%")
-            else:
-                reasoning.append(f"Low EPS CAGR: {eps_cagr:.1f}%")
-        else:
-            reasoning.append("Cannot calculate EPS growth from negative base")
-    else:
-        reasoning.append("Insufficient EPS data for growth analysis")
+    eps_score, eps_reasoning = _score_rakesh_eps_cagr(financial_line_items)
+    score += eps_score
+    reasoning.append(eps_reasoning)
 
     return {"score": score, "details": "; ".join(reasoning)}
 
@@ -237,66 +198,21 @@ def analyze_growth(financial_line_items: list) -> dict[str, any]:
 
     score = 0
     reasoning = []
-
-    # Revenue CAGR Analysis - 使用统一的计算方法(处理A股YTD累计数据)
     revenue_cagr = calculate_cagr_from_line_items(financial_line_items, field="revenue")
+    revenue_score, revenue_reasoning = _score_rakesh_revenue_cagr(revenue_cagr)
+    score += revenue_score
+    reasoning.append(revenue_reasoning)
 
-    if revenue_cagr is not None:
-        revenue_cagr_pct = revenue_cagr * 100
-        if revenue_cagr_pct > 20:  # High growth
-            score += 3
-            reasoning.append(f"Excellent revenue CAGR: {revenue_cagr_pct:.1f}%")
-        elif revenue_cagr_pct > 15:  # Good growth
-            score += 2
-            reasoning.append(f"Good revenue CAGR: {revenue_cagr_pct:.1f}%")
-        elif revenue_cagr_pct > 10:  # Moderate growth
-            score += 1
-            reasoning.append(f"Moderate revenue CAGR: {revenue_cagr_pct:.1f}%")
-        else:
-            reasoning.append(f"Low revenue CAGR: {revenue_cagr_pct:.1f}%")
-    else:
-        reasoning.append("Insufficient revenue data for CAGR calculation")
-
-    # Revenue Consistency Check (year-over-year) - extract revenues list
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
+    income_score, income_reasoning = _score_rakesh_income_cagr(financial_line_items)
+    score += income_score
+    reasoning.append(income_reasoning)
 
-    # Net Income CAGR Analysis
-    net_incomes = [getattr(item, "net_income", None) for item in financial_line_items if getattr(item, "net_income", None) is not None and getattr(item, "net_income", None) > 0]
-
-    if len(net_incomes) >= 3:
-        initial_income = net_incomes[-1]  # Oldest
-        final_income = net_incomes[0]  # Latest
-        years = len(net_incomes) - 1
-
-        if initial_income > 0:  # Fixed: Add zero check
-            income_cagr = ((final_income / initial_income) ** (1 / years) - 1) * 100
-
-            if income_cagr > 25:  # Very high growth
-                score += 3
-                reasoning.append(f"Excellent income CAGR: {income_cagr:.1f}%")
-            elif income_cagr > 20:  # High growth
-                score += 2
-                reasoning.append(f"High income CAGR: {income_cagr:.1f}%")
-            elif income_cagr > 15:  # Good growth
-                score += 1
-                reasoning.append(f"Good income CAGR: {income_cagr:.1f}%")
-            else:
-                reasoning.append(f"Moderate income CAGR: {income_cagr:.1f}%")
-        else:
-            reasoning.append("Cannot calculate income CAGR from zero base")
-    else:
-        reasoning.append("Insufficient net income data for CAGR calculation")
-
-    # Revenue Consistency Check (year-over-year)
-    if len(revenues) >= 3:
-        declining_years = sum(1 for i in range(1, len(revenues)) if revenues[i - 1] > revenues[i])
-        consistency_ratio = 1 - (declining_years / (len(revenues) - 1))
-
-        if consistency_ratio >= 0.8:  # 80% or more years with growth
-            score += 1
-            reasoning.append(f"Consistent growth pattern ({consistency_ratio*100:.0f}% of years)")
-        else:
-            reasoning.append(f"Inconsistent growth pattern ({consistency_ratio*100:.0f}% of years)")
+    consistency_result = _score_rakesh_growth_consistency(revenues)
+    if consistency_result is not None:
+        consistency_score, consistency_reasoning = consistency_result
+        score += consistency_score
+        reasoning.append(consistency_reasoning)
 
     return {"score": score, "details": "; ".join(reasoning)}
 
@@ -416,52 +332,11 @@ def assess_quality_metrics(financial_line_items: list) -> float:
         return 0.5  # Neutral score
 
     latest = financial_line_items[0]
-    quality_factors = []
-
-    # ROE consistency and level
-    if getattr(latest, "net_income", None) and getattr(latest, "total_assets", None) and getattr(latest, "total_liabilities", None) and latest.total_assets and latest.total_liabilities:
-
-        shareholders_equity = latest.total_assets - latest.total_liabilities
-        if shareholders_equity > 0 and latest.net_income:
-            roe = latest.net_income / shareholders_equity
-            if roe > 0.20:  # ROE > 20%
-                quality_factors.append(1.0)
-            elif roe > 0.15:  # ROE > 15%
-                quality_factors.append(0.8)
-            elif roe > 0.10:  # ROE > 10%
-                quality_factors.append(0.6)
-            else:
-                quality_factors.append(0.3)
-        else:
-            quality_factors.append(0.0)
-    else:
-        quality_factors.append(0.5)
-
-    # Debt levels (lower is better)
-    if getattr(latest, "total_assets", None) and getattr(latest, "total_liabilities", None) and latest.total_assets and latest.total_liabilities:
-        debt_ratio = latest.total_liabilities / latest.total_assets
-        if debt_ratio < 0.3:  # Low debt
-            quality_factors.append(1.0)
-        elif debt_ratio < 0.5:  # Moderate debt
-            quality_factors.append(0.7)
-        elif debt_ratio < 0.7:  # High debt
-            quality_factors.append(0.4)
-        else:  # Very high debt
-            quality_factors.append(0.1)
-    else:
-        quality_factors.append(0.5)
-
-    # Growth consistency
-    net_incomes = [getattr(item, "net_income", None) for item in financial_line_items[:4] if getattr(item, "net_income", None) is not None and getattr(item, "net_income", None) > 0]
-
-    if len(net_incomes) >= 3:
-        declining_years = sum(1 for i in range(1, len(net_incomes)) if net_incomes[i - 1] > net_incomes[i])
-        consistency = 1 - (declining_years / (len(net_incomes) - 1))
-        quality_factors.append(consistency)
-    else:
-        quality_factors.append(0.5)
-
-    # Return average quality score
+    quality_factors = [
+        _score_rakesh_quality_roe_factor(latest),
+        _score_rakesh_quality_debt_factor(latest),
+        _score_rakesh_quality_growth_consistency(financial_line_items),
+    ]
     return sum(quality_factors) / len(quality_factors) if quality_factors else 0.5
 
 
@@ -489,59 +364,11 @@ def calculate_intrinsic_value(financial_line_items: list, market_cap: float) -> 
             # Use current earnings with conservative multiple for stable companies
             return latest.net_income * 12  # Conservative P/E of 12
 
-        # Calculate sustainable growth rate using historical data
-        initial_income = net_incomes[-1]  # Oldest
-        final_income = net_incomes[0]  # Latest
-        years = len(net_incomes) - 1
-
-        # Calculate historical CAGR
-        if initial_income > 0:  # Fixed: Add zero check
-            historical_growth = (final_income / initial_income) ** (1 / years) - 1
-        else:
-            historical_growth = 0.05  # Default to 5%
-
-        # Conservative growth assumptions (Jhunjhunwala style)
-        if historical_growth > 0.25:  # Cap at 25% for sustainability
-            sustainable_growth = 0.20  # Conservative 20%
-        elif historical_growth > 0.15:
-            sustainable_growth = historical_growth * 0.8  # 80% of historical
-        elif historical_growth > 0.05:
-            sustainable_growth = historical_growth * 0.9  # 90% of historical
-        else:
-            sustainable_growth = 0.05  # Minimum 5% for inflation
-
-        # Quality assessment affects discount rate
+        historical_growth = _resolve_rakesh_historical_growth(net_incomes)
+        sustainable_growth = _resolve_rakesh_sustainable_growth(historical_growth)
         quality_score = assess_quality_metrics(financial_line_items)
-
-        # Discount rate based on quality (Jhunjhunwala preferred quality)
-        if quality_score >= 0.8:  # High quality
-            discount_rate = 0.12  # 12% for high quality companies
-            terminal_multiple = 18
-        elif quality_score >= 0.6:  # Medium quality
-            discount_rate = 0.15  # 15% for medium quality
-            terminal_multiple = 15
-        else:  # Lower quality
-            discount_rate = 0.18  # 18% for riskier companies
-            terminal_multiple = 12
-
-        # Simple DCF with terminal value
-        current_earnings = latest.net_income
-        terminal_value = 0
-        dcf_value = 0
-
-        # Project 5 years of earnings
-        for year in range(1, 6):
-            projected_earnings = current_earnings * ((1 + sustainable_growth) ** year)
-            present_value = projected_earnings / ((1 + discount_rate) ** year)
-            dcf_value += present_value
-
-        # Terminal value (year 5 earnings * terminal multiple)
-        year_5_earnings = current_earnings * ((1 + sustainable_growth) ** 5)
-        terminal_value = (year_5_earnings * terminal_multiple) / ((1 + discount_rate) ** 5)
-
-        total_intrinsic_value = dcf_value + terminal_value
-
-        return total_intrinsic_value
+        discount_rate, terminal_multiple = _resolve_rakesh_discount_profile(quality_score)
+        return _calculate_rakesh_projected_dcf_value(latest.net_income, sustainable_growth, discount_rate, terminal_multiple)
 
     except Exception:
         # Fallback to simple earnings multiple

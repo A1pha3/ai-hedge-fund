@@ -14,14 +14,11 @@ import pandas as pd
 from src.agents.growth_agent import (
     analyze_growth_trends,
     analyze_insider_conviction,
-    analyze_margin_trends,
     analyze_valuation,
     check_financial_health,
 )
 from src.agents.technicals import (
     calculate_adx,
-    calculate_atr,
-    calculate_bollinger_bands,
     calculate_ema,
     calculate_hurst_exponent,
     calculate_mean_reversion_signals,
@@ -258,31 +255,40 @@ def _score_ema_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
     ema_30 = calculate_ema(prices_df, 30)
     ema_60 = calculate_ema(prices_df, 60)
     close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
-
-    if ema_10.iloc[-1] > ema_30.iloc[-1] > ema_60.iloc[-1]:
-        direction = 1
-    elif ema_10.iloc[-1] < ema_30.iloc[-1] < ema_60.iloc[-1]:
-        direction = -1
-    else:
-        direction = 0
-
-    if close > 0:
-        spread = abs((ema_10.iloc[-1] - ema_30.iloc[-1]) / close) + abs((ema_30.iloc[-1] - ema_60.iloc[-1]) / close)
-        confidence = _clip(spread * 2500, 0.0, 100.0)
-    else:
-        confidence = 0.0
+    ema_values = _extract_latest_ema_values(ema_10, ema_30, ema_60)
+    direction = _resolve_ema_alignment_direction(ema_values)
+    confidence = _calculate_ema_alignment_confidence(ema_values, close)
 
     return _make_sub_factor(
         "ema_alignment",
         direction,
         confidence,
         weight,
-        metrics={
-            "ema_10": float(ema_10.iloc[-1]),
-            "ema_30": float(ema_30.iloc[-1]),
-            "ema_60": float(ema_60.iloc[-1]),
-        },
+        metrics=ema_values,
     )
+
+
+def _extract_latest_ema_values(ema_10: pd.Series, ema_30: pd.Series, ema_60: pd.Series) -> dict[str, float]:
+    return {
+        "ema_10": float(ema_10.iloc[-1]),
+        "ema_30": float(ema_30.iloc[-1]),
+        "ema_60": float(ema_60.iloc[-1]),
+    }
+
+
+def _resolve_ema_alignment_direction(ema_values: dict[str, float]) -> int:
+    if ema_values["ema_10"] > ema_values["ema_30"] > ema_values["ema_60"]:
+        return 1
+    if ema_values["ema_10"] < ema_values["ema_30"] < ema_values["ema_60"]:
+        return -1
+    return 0
+
+
+def _calculate_ema_alignment_confidence(ema_values: dict[str, float], close: float) -> float:
+    if close <= 0:
+        return 0.0
+    spread = abs((ema_values["ema_10"] - ema_values["ema_30"]) / close) + abs((ema_values["ema_30"] - ema_values["ema_60"]) / close)
+    return _clip(spread * 2500, 0.0, 100.0)
 
 
 def _score_long_trend_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
@@ -292,30 +298,39 @@ def _score_long_trend_alignment(prices_df: pd.DataFrame, weight: float) -> SubFa
     ema_10 = calculate_ema(prices_df, 10)
     ema_200 = calculate_ema(prices_df, 200)
     close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
-
-    if ema_10.iloc[-1] > ema_200.iloc[-1]:
-        direction = 1
-    elif ema_10.iloc[-1] < ema_200.iloc[-1]:
-        direction = -1
-    else:
-        direction = 0
-
-    if close > 0:
-        spread = abs((ema_10.iloc[-1] - ema_200.iloc[-1]) / close)
-        confidence = _clip(spread * 400, 0.0, 100.0)
-    else:
-        confidence = 0.0
+    ema_values = _extract_latest_long_trend_ema_values(ema_10, ema_200)
+    direction = _resolve_long_trend_alignment_direction(ema_values)
+    confidence = _calculate_long_trend_alignment_confidence(ema_values, close)
 
     return _make_sub_factor(
         "long_trend_alignment",
         direction,
         confidence,
         weight,
-        metrics={
-            "ema_10": float(ema_10.iloc[-1]),
-            "ema_200": float(ema_200.iloc[-1]),
-        },
+        metrics=ema_values,
     )
+
+
+def _extract_latest_long_trend_ema_values(ema_10: pd.Series, ema_200: pd.Series) -> dict[str, float]:
+    return {
+        "ema_10": float(ema_10.iloc[-1]),
+        "ema_200": float(ema_200.iloc[-1]),
+    }
+
+
+def _resolve_long_trend_alignment_direction(ema_values: dict[str, float]) -> int:
+    if ema_values["ema_10"] > ema_values["ema_200"]:
+        return 1
+    if ema_values["ema_10"] < ema_values["ema_200"]:
+        return -1
+    return 0
+
+
+def _calculate_long_trend_alignment_confidence(ema_values: dict[str, float], close: float) -> float:
+    if close <= 0:
+        return 0.0
+    spread = abs((ema_values["ema_10"] - ema_values["ema_200"]) / close)
+    return _clip(spread * 400, 0.0, 100.0)
 
 
 def _score_adx_strength(prices_df: pd.DataFrame, weight: float) -> SubFactor:
@@ -374,7 +389,19 @@ def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
 def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
     mean_reversion_signal = calculate_mean_reversion_signals(prices_df) if len(prices_df) >= 50 else None
     stat_arb_signal = calculate_stat_arb_signals(prices_df) if len(prices_df) >= 80 else None
+    rsi_factor = _build_rsi_extreme_factor(prices_df)
+    hurst_factor = _build_hurst_regime_factor(prices_df)
 
+    sub_factors = [
+        _build_optional_mean_reversion_factor("zscore_bbands", mean_reversion_signal),
+        rsi_factor,
+        _build_optional_mean_reversion_factor("stat_arb", stat_arb_signal),
+        hurst_factor,
+    ]
+    return aggregate_sub_factors(sub_factors)
+
+
+def _build_rsi_extreme_factor(prices_df: pd.DataFrame) -> SubFactor:
     if len(prices_df) >= 28:
         rsi_14 = calculate_rsi(prices_df, 14)
         rsi_28 = calculate_rsi(prices_df, 28)
@@ -396,9 +423,11 @@ def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
             MEAN_REVERSION_SUBFACTOR_WEIGHTS["rsi_extreme"],
             metrics={"rsi_14": last_rsi_14, "rsi_28": last_rsi_28},
         )
-    else:
-        rsi_factor = _make_sub_factor("rsi_extreme", 0, 0.0, MEAN_REVERSION_SUBFACTOR_WEIGHTS["rsi_extreme"], completeness=0.0)
+        return rsi_factor
+    return _make_sub_factor("rsi_extreme", 0, 0.0, MEAN_REVERSION_SUBFACTOR_WEIGHTS["rsi_extreme"], completeness=0.0)
 
+
+def _build_hurst_regime_factor(prices_df: pd.DataFrame) -> SubFactor:
     hurst = calculate_hurst_exponent(prices_df["close"]) if len(prices_df) >= 80 else 0.5
     z_score = None
     if len(prices_df) >= 50:
@@ -415,53 +444,35 @@ def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
         hurst_direction = 0
         hurst_conf = 45.0
 
-    sub_factors = [
-        _make_sub_factor(
-            "zscore_bbands",
-            _signal_to_direction(mean_reversion_signal["signal"]) if mean_reversion_signal else 0,
-            (mean_reversion_signal["confidence"] * 100.0) if mean_reversion_signal else 0.0,
-            MEAN_REVERSION_SUBFACTOR_WEIGHTS["zscore_bbands"],
-            completeness=1.0 if mean_reversion_signal else 0.0,
-            metrics=(mean_reversion_signal["metrics"] if mean_reversion_signal else {}),
-        ),
-        rsi_factor,
-        _make_sub_factor(
-            "stat_arb",
-            _signal_to_direction(stat_arb_signal["signal"]) if stat_arb_signal else 0,
-            (stat_arb_signal["confidence"] * 100.0) if stat_arb_signal else 0.0,
-            MEAN_REVERSION_SUBFACTOR_WEIGHTS["stat_arb"],
-            completeness=1.0 if stat_arb_signal else 0.0,
-            metrics=(stat_arb_signal["metrics"] if stat_arb_signal else {}),
-        ),
-        _make_sub_factor(
-            "hurst_regime",
-            hurst_direction,
-            hurst_conf,
-            MEAN_REVERSION_SUBFACTOR_WEIGHTS["hurst_regime"],
-            completeness=1.0 if len(prices_df) >= 80 else 0.0,
-            metrics={"hurst_exponent": hurst, "z_score": z_score},
-        ),
-    ]
-    return aggregate_sub_factors(sub_factors)
+    return _make_sub_factor(
+        "hurst_regime",
+        hurst_direction,
+        hurst_conf,
+        MEAN_REVERSION_SUBFACTOR_WEIGHTS["hurst_regime"],
+        completeness=1.0 if len(prices_df) >= 80 else 0.0,
+        metrics={"hurst_exponent": hurst, "z_score": z_score},
+    )
+
+
+def _build_optional_mean_reversion_factor(name: str, signal: dict | None) -> SubFactor:
+    return _make_sub_factor(
+        name,
+        _signal_to_direction(signal["signal"]) if signal else 0,
+        (signal["confidence"] * 100.0) if signal else 0.0,
+        MEAN_REVERSION_SUBFACTOR_WEIGHTS[name],
+        completeness=1.0 if signal else 0.0,
+        metrics=(signal["metrics"] if signal else {}),
+    )
 
 
 def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
-    available = 0
-    positive = 0
     zero_pass_mode = _get_env_mode("LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE", "bearish")
-    metric_map = {
-        "return_on_equity": (metrics.return_on_equity, 0.15),
-        "net_margin": (metrics.net_margin, 0.20),
-        "operating_margin": (metrics.operating_margin, 0.15),
-    }
-    for value, threshold in metric_map.values():
-        if value is not None:
-            available += 1
-            if value >= threshold:
-                positive += 1
+    metric_map = _build_profitability_metric_map(metrics)
+    available, positive = _count_profitability_passes(metric_map)
     if available == 0:
         return _make_sub_factor("profitability", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"], completeness=0.0)
 
+    metrics_payload = _build_profitability_metrics_payload(metric_map, available, positive, zero_pass_mode)
     if positive == 0 and zero_pass_mode == "inactive":
         return _make_sub_factor(
             "profitability",
@@ -469,23 +480,10 @@ def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
             0.0,
             FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
             completeness=0.0,
-            metrics={
-                **{key: value for key, (value, _) in metric_map.items()},
-                "available_count": available,
-                "positive_count": positive,
-                "zero_pass_mode": zero_pass_mode,
-            },
+            metrics=metrics_payload,
         )
 
-    if positive >= 2:
-        direction = 1
-    elif positive == 0 and zero_pass_mode == "neutral":
-        direction = 0
-    elif positive == 0:
-        direction = -1
-    else:
-        direction = 0
-
+    direction = _resolve_profitability_direction(positive, zero_pass_mode)
     confidence = 100.0 * positive / available if direction >= 0 else 100.0 * (available - positive) / available
     return _make_sub_factor(
         "profitability",
@@ -493,13 +491,47 @@ def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
         confidence,
         FUNDAMENTAL_SUBFACTOR_WEIGHTS["profitability"],
         completeness=available / 3.0,
-        metrics={
-            **{key: value for key, (value, _) in metric_map.items()},
-            "available_count": available,
-            "positive_count": positive,
-            "zero_pass_mode": zero_pass_mode,
-        },
+        metrics=metrics_payload,
     )
+
+
+def _build_profitability_metric_map(metrics: FinancialMetrics) -> dict[str, tuple[float | None, float]]:
+    return {
+        "return_on_equity": (metrics.return_on_equity, 0.15),
+        "net_margin": (metrics.net_margin, 0.20),
+        "operating_margin": (metrics.operating_margin, 0.15),
+    }
+
+
+def _count_profitability_passes(metric_map: dict[str, tuple[float | None, float]]) -> tuple[int, int]:
+    available = 0
+    positive = 0
+    for value, threshold in metric_map.values():
+        if value is None:
+            continue
+        available += 1
+        if value >= threshold:
+            positive += 1
+    return available, positive
+
+
+def _build_profitability_metrics_payload(metric_map: dict[str, tuple[float | None, float]], available: int, positive: int, zero_pass_mode: str) -> dict[str, float | int | str | None]:
+    return {
+        **{key: value for key, (value, _) in metric_map.items()},
+        "available_count": available,
+        "positive_count": positive,
+        "zero_pass_mode": zero_pass_mode,
+    }
+
+
+def _resolve_profitability_direction(positive: int, zero_pass_mode: str) -> int:
+    if positive >= 2:
+        return 1
+    if positive == 0 and zero_pass_mode == "neutral":
+        return 0
+    if positive == 0:
+        return -1
+    return 0
 
 
 def _score_growth(metrics_list: list[FinancialMetrics]) -> SubFactor:
@@ -628,36 +660,8 @@ def _score_news_sentiment(news_items: list[CompanyNews], trade_date: str) -> Sub
         return _make_sub_factor("news_sentiment", 0, 0.0, EVENT_SUBFACTOR_WEIGHTS["news_sentiment"], completeness=0.0)
 
     trade_dt = datetime.strptime(trade_date, "%Y%m%d")
-    weighted_score = 0.0
-    total_weight = 0.0
-    recent_count = 0
-    informative_count = 0
-    metrics = []
-    for item in news_items[:20]:
-        item_dt = _safe_date(item.date)
-        days_old = (trade_dt - item_dt).days if item_dt else 0
-        decay = compute_event_decay(days_old)
-        text = f"{item.title or ''} {item.content or ''}".lower()
-        pos_hits = sum(1 for word in POSITIVE_NEWS_KEYWORDS if word in text)
-        neg_hits = sum(1 for word in NEGATIVE_NEWS_KEYWORDS if word in text)
-        if pos_hits > neg_hits:
-            direction = 1
-            strength = pos_hits - neg_hits
-        elif neg_hits > pos_hits:
-            direction = -1
-            strength = neg_hits - pos_hits
-        else:
-            direction = 0
-            strength = 0
-        effective_weight = decay * _event_weight_multiplier(days_old, strength)
-        confidence = min(100.0, 45.0 + strength * 18.0) if strength > 0 else 0.0
-        weighted_score += direction * (confidence / 100.0) * effective_weight
-        total_weight += effective_weight
-        recent_count += 1 if days_old <= 5 else 0
-        informative_count += 1 if effective_weight > 0 else 0
-        metrics.append({"title": item.title, "days_old": days_old, "decay": decay, "direction": direction, "confidence": confidence, "effective_weight": effective_weight})
-
-    normalized_score = weighted_score / total_weight if total_weight > 0 else 0.0
+    article_metrics = [_score_news_article(item, trade_dt) for item in news_items[:20]]
+    normalized_score, recent_count, informative_count = _aggregate_news_article_metrics(article_metrics)
     direction = 1 if normalized_score > 0.08 else -1 if normalized_score < -0.08 else 0
     confidence = min(100.0, abs(normalized_score) * 130.0)
     completeness = min(1.0, informative_count / 3.0)
@@ -667,8 +671,53 @@ def _score_news_sentiment(news_items: list[CompanyNews], trade_date: str) -> Sub
         confidence,
         EVENT_SUBFACTOR_WEIGHTS["news_sentiment"],
         completeness=completeness,
-        metrics={"weighted_score": normalized_score, "recent_articles": recent_count, "informative_articles": informative_count, "articles": metrics[:5]},
+        metrics={"weighted_score": normalized_score, "recent_articles": recent_count, "informative_articles": informative_count, "articles": article_metrics[:5]},
     )
+
+
+def _score_news_article(item: CompanyNews, trade_dt: datetime) -> dict:
+    item_dt = _safe_date(item.date)
+    days_old = (trade_dt - item_dt).days if item_dt else 0
+    decay = compute_event_decay(days_old)
+    text = f"{item.title or ''} {item.content or ''}".lower()
+    pos_hits = sum(1 for word in POSITIVE_NEWS_KEYWORDS if word in text)
+    neg_hits = sum(1 for word in NEGATIVE_NEWS_KEYWORDS if word in text)
+    direction, strength = _resolve_news_direction_and_strength(pos_hits, neg_hits)
+    effective_weight = decay * _event_weight_multiplier(days_old, strength)
+    confidence = min(100.0, 45.0 + strength * 18.0) if strength > 0 else 0.0
+    return {
+        "title": item.title,
+        "days_old": days_old,
+        "decay": decay,
+        "direction": direction,
+        "confidence": confidence,
+        "effective_weight": effective_weight,
+    }
+
+
+def _resolve_news_direction_and_strength(pos_hits: int, neg_hits: int) -> tuple[int, int]:
+    if pos_hits > neg_hits:
+        return 1, pos_hits - neg_hits
+    if neg_hits > pos_hits:
+        return -1, neg_hits - pos_hits
+    return 0, 0
+
+
+def _aggregate_news_article_metrics(article_metrics: list[dict]) -> tuple[float, int, int]:
+    weighted_score = 0.0
+    total_weight = 0.0
+    recent_count = 0
+    informative_count = 0
+    for metric in article_metrics:
+        effective_weight = float(metric["effective_weight"])
+        confidence = float(metric["confidence"])
+        direction = int(metric["direction"])
+        weighted_score += direction * (confidence / 100.0) * effective_weight
+        total_weight += effective_weight
+        recent_count += 1 if int(metric["days_old"]) <= 5 else 0
+        informative_count += 1 if effective_weight > 0 else 0
+    normalized_score = weighted_score / total_weight if total_weight > 0 else 0.0
+    return normalized_score, recent_count, informative_count
 
 
 def _score_insider_conviction(trades: list[InsiderTrade]) -> SubFactor:
@@ -800,9 +849,8 @@ def _rank_candidates_for_technical_stage(candidates: list[CandidateStock]) -> li
     )
 
 
-def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, dict[str, StrategySignal]]:
-    industry_pe_medians = _build_industry_pe_medians(trade_date)
-    results: dict[str, dict[str, StrategySignal]] = {
+def _initialize_score_batch_results(candidates: list[CandidateStock]) -> dict[str, dict[str, StrategySignal]]:
+    return {
         candidate.ticker: {
             "trend": _empty_signal(),
             "mean_reversion": _empty_signal(),
@@ -811,6 +859,13 @@ def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, 
         }
         for candidate in candidates
     }
+
+
+def _build_provisional_ranking(
+    candidates: list[CandidateStock],
+    trade_date: str,
+    results: dict[str, dict[str, StrategySignal]],
+) -> list[tuple[float, CandidateStock]]:
     provisional_ranking: list[tuple[float, CandidateStock]] = []
     technical_candidates = _rank_candidates_for_technical_stage(candidates)[:TECHNICAL_SCORE_MAX_CANDIDATES]
 
@@ -819,22 +874,36 @@ def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, 
         results[candidate.ticker] = light_signals
         provisional_ranking.append((_provisional_score(light_signals), candidate))
 
+    ranked_tickers = {ranked_candidate.ticker for _, ranked_candidate in provisional_ranking}
     for candidate in candidates:
-        if candidate.ticker not in {ranked_candidate.ticker for _, ranked_candidate in provisional_ranking}:
-            provisional_ranking.append((0.0, candidate))
+        if candidate.ticker in ranked_tickers:
+            continue
+        provisional_ranking.append((0.0, candidate))
+    return provisional_ranking
 
-    ranked_candidates = sorted(
+
+def _rank_candidates_for_heavy_scoring(provisional_ranking: list[tuple[float, CandidateStock]]) -> list[tuple[float, CandidateStock]]:
+    return sorted(
         provisional_ranking,
         key=lambda item: (item[0], item[1].avg_volume_20d, item[1].market_cap),
         reverse=True,
     )
 
-    fundamental_candidates = [
+
+def _select_fundamental_candidates(ranked_candidates: list[tuple[float, CandidateStock]]) -> list[CandidateStock]:
+    return [
         candidate
         for score, candidate in ranked_candidates
         if score >= HEAVY_SCORE_MIN_PROVISIONAL_SCORE
     ][:FUNDAMENTAL_SCORE_MAX_CANDIDATES]
 
+
+def _populate_heavy_signals(
+    results: dict[str, dict[str, StrategySignal]],
+    fundamental_candidates: list[CandidateStock],
+    trade_date: str,
+    industry_pe_medians: dict[str, float],
+) -> None:
     for candidate in fundamental_candidates:
         results[candidate.ticker]["fundamental"] = score_fundamental_strategy(
             candidate.ticker,
@@ -847,4 +916,12 @@ def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, 
     for candidate in event_candidates:
         results[candidate.ticker]["event_sentiment"] = score_event_sentiment_strategy(candidate.ticker, trade_date)
 
+
+def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, dict[str, StrategySignal]]:
+    industry_pe_medians = _build_industry_pe_medians(trade_date)
+    results = _initialize_score_batch_results(candidates)
+    provisional_ranking = _build_provisional_ranking(candidates, trade_date, results)
+    ranked_candidates = _rank_candidates_for_heavy_scoring(provisional_ranking)
+    fundamental_candidates = _select_fundamental_candidates(ranked_candidates)
+    _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians)
     return results

@@ -27,6 +27,8 @@ from src.data.models import (
     LineItem,
     Price,
 )
+from src.tools.akshare_news_helpers import build_company_news_entry, news_date_in_range, normalize_news_symbol, resolve_stock_name, sort_news_dataframe
+from src.tools.akshare_price_helpers import build_prices_from_dataframe, dump_prices_for_cache, hydrate_cached_prices
 
 # Global cache instance
 _cache = get_cache()
@@ -347,6 +349,34 @@ def _get_prices_from_tencent(ticker: str, start_date: str, end_date: str) -> Lis
     return prices
 
 
+def _get_cached_prices(cache_key: str) -> List[Price] | None:
+    cached_data = _cache.get_prices(cache_key)
+    if not cached_data:
+        return None
+    return hydrate_cached_prices(cached_data)
+
+
+def _fetch_prices_from_akshare(ak_module, ticker: str, start_date: str, end_date: str, period: str) -> List[Price] | None:
+    ashare = AShareTicker.from_symbol(ticker)
+    df = _cached_akshare_dataframe_call(
+        "stock_zh_a_hist",
+        ak_module.stock_zh_a_hist,
+        symbol=ashare.symbol,
+        period=period,
+        start_date=start_date.replace("-", ""),
+        end_date=end_date.replace("-", ""),
+        adjust="qfq",
+    )
+    if df is None or df.empty:
+        return None
+    return build_prices_from_dataframe(df)
+
+
+def _cache_prices(cache_key: str, prices: List[Price]) -> List[Price]:
+    _cache.set_prices(cache_key, dump_prices_for_cache(prices))
+    return prices
+
+
 def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily", use_mock: bool = False) -> List[Price]:
     """
     获取A股股票价格数据
@@ -366,11 +396,9 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
     """
     cache_key = f"ashare_{ticker}_{start_date}_{end_date}_{period}"
 
-    # 检查缓存
-    if cached_data := _cache.get_prices(cache_key):
-        return [Price(**price) for price in cached_data]
+    if cached_prices := _get_cached_prices(cache_key):
+        return cached_prices
 
-    # 如果指定使用模拟数据，直接返回
     if use_mock:
         return get_mock_prices(ticker, start_date, end_date)
 
@@ -378,46 +406,20 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
     if ak_module is None:
         raise AShareDataError("AKShare 模块不可用，无法获取 A 股数据。\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
 
-    # 禁用系统代理
     saved_proxies = _disable_system_proxies()
 
     try:
-        ashare = AShareTicker.from_symbol(ticker)
-        start_date_fmt = start_date.replace("-", "")
-        end_date_fmt = end_date.replace("-", "")
-
-        # 尝试使用 AKShare 获取数据
         try:
-            df = _cached_akshare_dataframe_call(
-                "stock_zh_a_hist",
-                ak_module.stock_zh_a_hist,
-                symbol=ashare.symbol,
-                period=period,
-                start_date=start_date_fmt,
-                end_date=end_date_fmt,
-                adjust="qfq",
-            )
-
-            if df is not None and not df.empty:
-                prices = []
-                for _, row in df.iterrows():
-                    price = Price(time=row["日期"], open=float(row["开盘"]), high=float(row["最高"]), low=float(row["最低"]), close=float(row["收盘"]), volume=int(row["成交量"]))
-                    prices.append(price)
-
-                # 缓存结果
-                _cache.set_prices(cache_key, [p.model_dump() for p in prices])
-                return prices
+            akshare_prices = _fetch_prices_from_akshare(ak_module, ticker, start_date, end_date, period)
+            if akshare_prices:
+                return _cache_prices(cache_key, akshare_prices)
         except Exception as e:
-            # AKShare 失败，尝试腾讯接口
             print(f"AKShare 获取数据失败，尝试腾讯接口: {e}")
 
-        # 尝试使用腾讯接口
         try:
             prices = _get_prices_from_tencent(ticker, start_date, end_date)
             if prices:
-                # 缓存结果
-                _cache.set_prices(cache_key, [p.model_dump() for p in prices])
-                return prices
+                return _cache_prices(cache_key, prices)
         except Exception as e:
             raise AShareDataError(f"无法获取股票 {ticker} 的历史数据（所有数据源都失败）。\n" f"AKShare 错误: {e}\n" f"腾讯接口错误: {e}\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
 
@@ -426,7 +428,6 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
     except Exception as e:
         raise AShareDataError(f"获取股票 {ticker} 的历史数据失败: {e}\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
     finally:
-        # 恢复系统代理设置
         _restore_proxies(saved_proxies)
 
 
@@ -1090,69 +1091,36 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
         return []
 
     try:
-        symbol = ticker.strip().lower()
-        # 移除可能的交易所前缀
-        if symbol.startswith(("sh", "sz", "bj")):
-            symbol = symbol[2:]
+        symbol = normalize_news_symbol(ticker)
 
         df = _cached_akshare_dataframe_call("stock_news_em", ak.stock_news_em, symbol=symbol)
         if df is None or df.empty:
             return []
 
-        # 获取股票名称，用于新闻相关性过滤
-        stock_name = ""
         try:
             from src.tools.tushare_api import get_stock_name
-            stock_name = get_stock_name(ticker)
-            if stock_name == ticker:  # get_stock_name 失败时返回代码本身
-                stock_name = ""
         except Exception:
-            pass
+            get_stock_name = lambda _ticker: ""
+        stock_name = resolve_stock_name(get_stock_name, ticker)
 
-        # 按发布时间从新到旧排序，确保优先获取最新新闻
-        try:
-            df["_pub_dt"] = pd.to_datetime(df["发布时间"], errors="coerce")
-            df = df.sort_values("_pub_dt", ascending=False).reset_index(drop=True)
-        except Exception:
-            pass  # 排序失败时保持原始顺序
+        df = sort_news_dataframe(df)
 
         results = []
         filtered_count = 0
         for _, row in df.iterrows():
             pub_time = str(row.get("发布时间", ""))
-            # 解析日期用于过滤
-            try:
-                news_date = pub_time[:10]  # "YYYY-MM-DD"
-                if end_date and news_date > end_date:
-                    continue
-                if start_date and news_date < start_date:
-                    continue
-            except (ValueError, IndexError):
-                news_date = end_date or ""
+            if not news_date_in_range(pub_time, start_date, end_date):
+                continue
 
             title = str(row.get("新闻标题", ""))
             content = str(row.get("新闻内容", ""))
-            source = str(row.get("文章来源", ""))
-            url = str(row.get("新闻链接", ""))
 
-            # 过滤与目标股票无直接关联的通用市场文章
             if not _is_news_relevant_to_stock(title, content, ticker, stock_name):
                 filtered_count += 1
                 continue
 
-            # 基于关键词的情感分类
             sentiment = _classify_news_sentiment(title, content)
-
-            news = CompanyNews(
-                ticker=ticker,
-                title=title,
-                author=source,
-                source=source,
-                date=pub_time,
-                url=url,
-                sentiment=sentiment,
-                content=content[:200] if content else None,
-            )
+            news = build_company_news_entry(ticker, row, sentiment)
             results.append(news)
 
             if len(results) >= limit:
@@ -1161,7 +1129,6 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
         if filtered_count > 0:
             print(f"[AKShare] 已过滤 {filtered_count} 篇与 {ticker}({stock_name}) 无直接关联的通用市场文章")
 
-        # 对新闻去重：移除同一事件不同来源的重复报道
         results = _deduplicate_news(results)
 
         return results

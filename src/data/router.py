@@ -4,20 +4,18 @@
 实现数据源路由、容错切换、缓存管理等功能
 """
 
-import asyncio
 import logging
-import time
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Type
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from src.data.base_provider import (
     BaseDataProvider,
-    DataProviderError,
     DataRequest,
     DataResponse,
     DataType,
 )
 from src.data.enhanced_cache import get_cache
+from src.data.router_helpers import build_router_failure_response, fetch_from_providers, serialize_cache_records
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -222,46 +220,23 @@ class DataRouter:
         if not providers:
             return DataResponse(data=[], source="router", error="No healthy providers available")
 
-        # 依次尝试每个提供商
-        last_error = None
+        response, last_error = await fetch_from_providers(
+            providers,
+            request_label=f"{ticker} prices",
+            logger=logger,
+            fetcher=lambda provider: provider.get_prices(ticker, start_date, end_date),
+        )
+        if response is None:
+            return build_router_failure_response(last_error)
 
-        for provider in providers:
+        if use_cache:
             try:
-                logger.info(f"Trying provider {provider.name} for {ticker} prices")
-
-                response = await provider.get_prices(ticker, start_date, end_date)
-
-                if response.error:
-                    logger.warning(f"Provider {provider.name} returned error: {response.error}")
-                    last_error = response.error
-                    continue
-
-                if response.data:
-                    # 缓存结果（转换为字典）
-                    if use_cache:
-                        try:
-                            cache_data = []
-                            for p in response.data:
-                                if hasattr(p, "model_dump"):
-                                    cache_data.append(p.model_dump())
-                                elif isinstance(p, dict):
-                                    cache_data.append(p)
-                                else:
-                                    cache_data.append(p.__dict__)
-                            self._set_to_cache(cache_key, DataType.PRICE, cache_data)
-                        except Exception as e:
-                            logger.warning(f"Failed to cache prices: {e}")
-
-                    logger.info(f"Successfully got prices from {provider.name}")
-                    return response
-
+                self._set_to_cache(cache_key, DataType.PRICE, serialize_cache_records(response.data))
             except Exception as e:
-                logger.warning(f"Provider {provider.name} failed: {e}")
-                last_error = str(e)
-                continue
+                logger.warning(f"Failed to cache prices: {e}")
 
-        # 所有提供商都失败
-        return DataResponse(data=[], source="router", error=f"All providers failed. Last error: {last_error}")
+        logger.info(f"Successfully got prices from {response.source}")
+        return response
 
     async def get_financial_metrics(self, ticker: str, end_date: str, limit: int = 10, use_cache: bool = True) -> DataResponse:
         """
@@ -293,45 +268,23 @@ class DataRouter:
         if not providers:
             return DataResponse(data=[], source="router", error="No healthy providers available")
 
-        # 依次尝试每个提供商
-        last_error = None
+        response, last_error = await fetch_from_providers(
+            providers,
+            request_label=f"{ticker} metrics",
+            logger=logger,
+            fetcher=lambda provider: provider.get_financial_metrics(ticker, end_date),
+        )
+        if response is None:
+            return build_router_failure_response(last_error)
 
-        for provider in providers:
+        data = response.data[:limit]
+        if use_cache:
             try:
-                logger.info(f"Trying provider {provider.name} for {ticker} metrics")
-
-                response = await provider.get_financial_metrics(ticker, end_date)
-
-                if response.error:
-                    last_error = response.error
-                    continue
-
-                if response.data:
-                    # 限制返回数量
-                    data = response.data[:limit]
-
-                    # 缓存结果（转换为字典）
-                    if use_cache:
-                        try:
-                            cache_data = []
-                            for m in data:
-                                if hasattr(m, "model_dump"):
-                                    cache_data.append(m.model_dump())
-                                elif isinstance(m, dict):
-                                    cache_data.append(m)
-                                else:
-                                    cache_data.append(m.__dict__)
-                            self._set_to_cache(cache_key, DataType.FUNDAMENTAL, cache_data)
-                        except Exception as e:
-                            logger.warning(f"Failed to cache metrics: {e}")
-
-                    return DataResponse(data=data, source=provider.name, latency_ms=response.latency_ms)
-
+                self._set_to_cache(cache_key, DataType.FUNDAMENTAL, serialize_cache_records(data))
             except Exception as e:
-                last_error = str(e)
-                continue
+                logger.warning(f"Failed to cache metrics: {e}")
 
-        return DataResponse(data=[], source="router", error=f"All providers failed. Last error: {last_error}")
+        return DataResponse(data=data, source=response.source, latency_ms=response.latency_ms)
 
     async def get_company_news(self, ticker: str, start_date: str, end_date: str, use_cache: bool = True) -> DataResponse:
         """

@@ -5,11 +5,11 @@
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from src.data.base_provider import ValidationError
 from src.data.models import CompanyNews, FinancialMetrics, Price
+from src.data.validator_metric_helpers import collect_metric_warning_messages, validate_metric_required_fields
+from src.data.validator_helpers import validate_price_row
 
 logger = logging.getLogger(__name__)
 
@@ -67,46 +67,10 @@ class DataValidator:
         for i, price in enumerate(prices):
             try:
                 get_attr = DataValidator._get_attr
-
-                # 检查必需字段
-                time_val = get_attr(price, "time")
-                if not time_val:
-                    errors.append(f"Price[{i}]: missing time")
+                is_valid, error = validate_price_row(price, i, get_attr)
+                if not is_valid:
+                    errors.append(str(error))
                     continue
-
-                # 获取价格字段
-                open_val = get_attr(price, "open", 0)
-                high_val = get_attr(price, "high", 0)
-                low_val = get_attr(price, "low", 0)
-                close_val = get_attr(price, "close", 0)
-                volume_val = get_attr(price, "volume", 0)
-
-                # 检查价格是否为正数
-                if open_val <= 0 or high_val <= 0 or low_val <= 0 or close_val <= 0:
-                    errors.append(f"Price[{i}]: prices must be positive")
-                    continue
-
-                # 检查价格逻辑关系
-                if high_val < max(open_val, close_val):
-                    errors.append(f"Price[{i}]: high < max(open, close)")
-                    continue
-
-                if low_val > min(open_val, close_val):
-                    errors.append(f"Price[{i}]: low > min(open, close)")
-                    continue
-
-                # 检查成交量
-                if volume_val < 0:
-                    errors.append(f"Price[{i}]: volume must be non-negative")
-                    continue
-
-                # 检查日期格式
-                try:
-                    datetime.strptime(str(time_val), "%Y-%m-%d")
-                except ValueError:
-                    errors.append(f"Price[{i}]: invalid date format")
-                    continue
-
                 valid_prices.append(price)
 
             except Exception as e:
@@ -142,35 +106,13 @@ class DataValidator:
 
         for i, metric in enumerate(metrics):
             try:
-                # 检查必需字段
-                ticker = get_attr(metric, "ticker")
-                if not ticker:
-                    errors.append(f"Metric[{i}]: missing ticker")
+                is_valid, error = validate_metric_required_fields(metric, i, get_attr)
+                if not is_valid:
+                    errors.append(str(error))
                     continue
 
-                report_period = get_attr(metric, "report_period")
-                if not report_period:
-                    errors.append(f"Metric[{i}]: missing report_period")
-                    continue
-
-                # 检查比率范围（如果存在）
-                pe = get_attr(metric, "price_to_earnings_ratio")
-                if pe is not None and pe < 0:
-                    logger.warning(f"Metric[{i}]: negative P/E ratio")
-
-                pb = get_attr(metric, "price_to_book_ratio")
-                if pb is not None and pb < 0:
-                    logger.warning(f"Metric[{i}]: negative P/B ratio")
-
-                roe = get_attr(metric, "return_on_equity")
-                if roe is not None:
-                    if not -1 <= roe <= 1:
-                        logger.warning(f"Metric[{i}]: ROE outside [-1, 1]")
-
-                debt_to_equity = get_attr(metric, "debt_to_equity")
-                if debt_to_equity is not None and debt_to_equity < 0:
-                    logger.warning(f"Metric[{i}]: negative debt_to_equity")
-
+                for warning in collect_metric_warning_messages(metric, i, get_attr):
+                    logger.warning(warning)
                 valid_metrics.append(metric)
 
             except Exception as e:

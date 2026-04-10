@@ -2,6 +2,14 @@ import json
 
 from langchain_core.messages import HumanMessage
 
+from src.agents.fundamentals_helpers import (
+    _analyze_fundamentals_growth,
+    _analyze_fundamentals_health,
+    _analyze_fundamentals_price_ratios,
+    _analyze_fundamentals_profitability,
+    _build_missing_fundamentals_result,
+    _finalize_fundamentals_signal,
+)
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics
 from src.utils.api_key import get_api_key_from_state
@@ -32,128 +40,35 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
 
         if not financial_metrics:
             progress.update_status(agent_id, ticker, "Failed: No financial metrics found")
-            fundamental_analysis[ticker] = {
-                "signal": "neutral",
-                "confidence": 0,
-                "reasoning": {"error": "No financial metrics available for fundamental analysis"},
-            }
+            fundamental_analysis[ticker] = _build_missing_fundamentals_result()
             continue
 
-        # Pull the most recent financial metrics
         metrics = financial_metrics[0]
-
-        # Initialize signals list for different fundamental aspects
         signals = []
         reasoning = {}
 
         progress.update_status(agent_id, ticker, "Analyzing profitability")
-        # 1. Profitability Analysis
-        return_on_equity = metrics.return_on_equity
-        net_margin = metrics.net_margin
-        operating_margin = metrics.operating_margin
-
-        thresholds = [
-            (return_on_equity, 0.15),  # Strong ROE above 15%
-            (net_margin, 0.20),  # Healthy profit margins
-            (operating_margin, 0.15),  # Strong operating efficiency
-        ]
-        profitability_score = sum(metric is not None and metric > threshold for metric, threshold in thresholds)
-
-        signals.append("bullish" if profitability_score >= 2 else "bearish" if profitability_score == 0 else "neutral")
-        reasoning["profitability_signal"] = {
-            "signal": signals[0],
-            "details": (f"ROE(TTM): {return_on_equity:.2%}" if return_on_equity is not None else "ROE: N/A") + ", " + (f"Net Margin(TTM): {net_margin:.2%}" if net_margin is not None else "Net Margin: N/A") + ", " + (f"Op Margin(TTM): {operating_margin:.2%}" if operating_margin is not None else "Op Margin: N/A"),
-        }
+        profitability_signal, profitability_reasoning = _analyze_fundamentals_profitability(metrics)
+        signals.append(profitability_signal)
+        reasoning["profitability_signal"] = profitability_reasoning
 
         progress.update_status(agent_id, ticker, "Analyzing growth")
-        # 2. Growth Analysis
-        revenue_growth = metrics.revenue_growth
-        earnings_growth = metrics.earnings_growth
-        book_value_growth = metrics.book_value_growth
-
-        # Clamp extreme growth values (zero-crossing artifacts) to meaningful range
-        if earnings_growth is not None:
-            earnings_growth = max(-1.0, min(5.0, earnings_growth))
-
-        thresholds = [
-            (revenue_growth, 0.10),  # 10% revenue growth
-            (earnings_growth, 0.10),  # 10% earnings growth
-            (book_value_growth, 0.10),  # 10% book value growth
-        ]
-        growth_score = sum(metric is not None and metric > threshold for metric, threshold in thresholds)
-
-        signals.append("bullish" if growth_score >= 2 else "bearish" if growth_score == 0 else "neutral")
-        reasoning["growth_signal"] = {
-            "signal": signals[1],
-            "details": (f"Revenue Growth(TTM YoY): {revenue_growth:.2%}" if revenue_growth is not None else "Revenue Growth: N/A") + ", " + (f"Earnings Growth(TTM YoY): {earnings_growth:.2%}" if earnings_growth is not None else "Earnings Growth: N/A"),
-        }
+        growth_signal, growth_reasoning = _analyze_fundamentals_growth(metrics)
+        signals.append(growth_signal)
+        reasoning["growth_signal"] = growth_reasoning
 
         progress.update_status(agent_id, ticker, "Analyzing financial health")
-        # 3. Financial Health
-        current_ratio = metrics.current_ratio
-        debt_to_equity = metrics.debt_to_equity
-        free_cash_flow_per_share = metrics.free_cash_flow_per_share
-        earnings_per_share = metrics.earnings_per_share
-
-        health_score = 0
-        if current_ratio and current_ratio > 1.5:  # Strong liquidity
-            health_score += 1
-        if debt_to_equity and debt_to_equity < 0.5:  # Conservative debt levels
-            health_score += 1
-        if free_cash_flow_per_share and earnings_per_share and free_cash_flow_per_share > earnings_per_share * 0.8:  # Strong FCF conversion
-            health_score += 1
-
-        signals.append("bullish" if health_score >= 2 else "bearish" if health_score == 0 else "neutral")
-        reasoning["financial_health_signal"] = {
-            "signal": signals[2],
-            "details": (f"Current Ratio: {current_ratio:.2f}" if current_ratio is not None else "Current Ratio: N/A") + ", " + (f"D/E: {debt_to_equity:.2f}" if debt_to_equity is not None else "D/E: N/A"),
-        }
+        health_signal, health_reasoning = _analyze_fundamentals_health(metrics)
+        signals.append(health_signal)
+        reasoning["financial_health_signal"] = health_reasoning
 
         progress.update_status(agent_id, ticker, "Analyzing valuation ratios")
-        # 4. Price to X ratios
-        pe_ratio = metrics.price_to_earnings_ratio
-        pb_ratio = metrics.price_to_book_ratio
-        ps_ratio = metrics.price_to_sales_ratio
-
-        thresholds = [
-            (pe_ratio, 25),  # Reasonable P/E ratio
-            (pb_ratio, 3),  # Reasonable P/B ratio
-            (ps_ratio, 5),  # Reasonable P/S ratio
-        ]
-        available_price_metrics = [metric for metric, _ in thresholds if metric is not None]
-        if not available_price_metrics:
-            price_ratio_signal = "neutral"
-        else:
-            price_ratio_score = sum(metric > threshold for metric, threshold in thresholds if metric is not None)
-            price_ratio_signal = "bearish" if price_ratio_score >= 2 else "bullish" if price_ratio_score == 0 else "neutral"
-
+        price_ratio_signal, price_ratio_reasoning = _analyze_fundamentals_price_ratios(metrics)
         signals.append(price_ratio_signal)
-        reasoning["price_ratios_signal"] = {
-            "signal": signals[3],
-            "details": (f"P/E(TTM): {pe_ratio:.2f}" if pe_ratio is not None else "P/E: N/A") + ", " + (f"P/B: {pb_ratio:.2f}" if pb_ratio is not None else "P/B: N/A") + ", " + (f"P/S: {ps_ratio:.2f}" if ps_ratio is not None else "P/S: N/A"),
-        }
+        reasoning["price_ratios_signal"] = price_ratio_reasoning
 
         progress.update_status(agent_id, ticker, "Calculating final signal")
-        # Determine overall signal
-        bullish_signals = signals.count("bullish")
-        bearish_signals = signals.count("bearish")
-
-        if bullish_signals > bearish_signals:
-            overall_signal = "bullish"
-        elif bearish_signals > bullish_signals:
-            overall_signal = "bearish"
-        else:
-            overall_signal = "neutral"
-
-        # Calculate confidence level
-        total_signals = len(signals)
-        confidence = round(max(bullish_signals, bearish_signals) / total_signals, 2) * 100
-
-        fundamental_analysis[ticker] = {
-            "signal": overall_signal,
-            "confidence": confidence,
-            "reasoning": reasoning,
-        }
+        fundamental_analysis[ticker] = _finalize_fundamentals_signal(signals, reasoning)
 
         progress.update_status(agent_id, ticker, "Done", analysis=json.dumps(reasoning, indent=4))
 

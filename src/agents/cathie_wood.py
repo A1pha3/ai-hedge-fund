@@ -12,7 +12,7 @@ from src.agents.cathie_wood_helpers import (
     _score_cathie_gross_margin_profile,
     _score_cathie_operating_efficiency,
     _score_cathie_operating_leverage,
-    _score_cathie_rd_trends,
+    _score_cathie_rnd_trends,
     _score_cathie_revenue_disruption,
     _score_cathie_reinvestment_focus,
     _score_cathie_rnd_intensity,
@@ -195,7 +195,7 @@ def analyze_innovation_growth(metrics: list, financial_line_items: list) -> dict
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze innovation-driven growth"}
 
-    rnd_score, rnd_details = _score_cathie_rd_trends(financial_line_items)
+    rnd_score, rnd_details = _score_cathie_rnd_trends(financial_line_items)
     score += rnd_score
     details.extend(rnd_details)
 

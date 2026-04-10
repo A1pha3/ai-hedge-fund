@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 import pandas as pd
 
 from src.execution.models import ExecutionPlan
 from src.execution.models import LayerCResult
-from src.paper_trading.runtime import run_paper_trading_session
+from src.paper_trading.runtime import _build_dual_target_session_summary, _build_llm_error_digest, _build_llm_observability_summary, _build_llm_route_provenance, _prepare_session_runtime_context, run_paper_trading_session
 from src.portfolio.models import PositionPlan
 from src.targets.models import DualTargetEvaluation, DualTargetSummary
 
@@ -30,6 +31,369 @@ class StubPipeline:
         if self.intraday_responses:
             return self.intraday_responses.pop(0)
         return [], [], {"pause_new_buys": False, "forced_reduce_ratio": 0.0}
+
+
+def test_build_llm_observability_summary_aggregates_entries(tmp_path: Path):
+    jsonl_path = tmp_path / "llm_metrics.jsonl"
+    jsonl_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "trade_date": "20240301",
+                        "pipeline_stage": "daily_pipeline_post_market",
+                        "model_tier": "fast",
+                        "model_provider": "MiniMax",
+                        "success": True,
+                        "duration_ms": 1200.0,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "trade_date": "20240301",
+                        "pipeline_stage": "daily_pipeline_post_market",
+                        "model_tier": "fast",
+                        "model_provider": "Volcengine Ark",
+                        "success": False,
+                        "is_rate_limit": True,
+                        "used_fallback": True,
+                        "duration_ms": 2200.0,
+                        "error_type": "RateLimitError",
+                        "error_message": "provider burst limit exceeded",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _build_llm_observability_summary(jsonl_path)
+
+    assert summary["jsonl_available"] is True
+    assert summary["entry_count"] == 2
+    assert summary["by_trade_date"]["20240301"]["attempts"] == 2
+    assert summary["by_provider"]["Volcengine Ark"]["errors"] == 1
+    assert summary["error_type_counts"] == {"RateLimitError": 1}
+    assert summary["sample_errors"] == [
+        {
+            "trade_date": "20240301",
+            "pipeline_stage": "daily_pipeline_post_market",
+            "model_tier": "fast",
+            "provider": "Volcengine Ark",
+            "error_type": "RateLimitError",
+            "message": "provider burst limit exceeded",
+        }
+    ]
+    assert summary["context_breakdown"] == [
+        {
+            "trade_date": "20240301",
+            "pipeline_stage": "daily_pipeline_post_market",
+            "model_tier": "fast",
+            "provider": "MiniMax",
+            "attempts": 1,
+            "successes": 1,
+            "errors": 0,
+            "rate_limit_errors": 0,
+            "fallback_attempts": 0,
+            "total_duration_ms": 1200.0,
+            "avg_duration_ms": 1200.0,
+            "error_types": {},
+        },
+        {
+            "trade_date": "20240301",
+            "pipeline_stage": "daily_pipeline_post_market",
+            "model_tier": "fast",
+            "provider": "Volcengine Ark",
+            "attempts": 1,
+            "successes": 0,
+            "errors": 1,
+            "rate_limit_errors": 1,
+            "fallback_attempts": 1,
+            "total_duration_ms": 2200.0,
+            "avg_duration_ms": 2200.0,
+            "error_types": {"RateLimitError": 1},
+        },
+    ]
+
+
+def test_build_llm_observability_summary_skips_bad_json_lines(tmp_path: Path):
+    jsonl_path = tmp_path / "llm_metrics.jsonl"
+    jsonl_path.write_text('{"trade_date":"20240301","model_provider":"MiniMax","success":true}\nnot-json\n', encoding="utf-8")
+
+    summary = _build_llm_observability_summary(jsonl_path)
+
+    assert summary["jsonl_available"] is True
+    assert summary["entry_count"] == 2
+    assert summary["by_trade_date"]["20240301"]["attempts"] == 1
+    assert summary["context_breakdown"] == [
+        {
+            "trade_date": "20240301",
+            "pipeline_stage": "unknown",
+            "model_tier": "unknown",
+            "provider": "MiniMax",
+            "attempts": 1,
+            "successes": 1,
+            "errors": 0,
+            "rate_limit_errors": 0,
+            "fallback_attempts": 0,
+            "total_duration_ms": 0.0,
+            "avg_duration_ms": 0.0,
+            "error_types": {},
+        }
+    ]
+
+
+def test_build_llm_error_digest_flags_fallback_gap():
+    digest = _build_llm_error_digest(
+        {
+            "summary_available": True,
+            "errors": 2,
+            "rate_limit_errors": 0,
+            "fallback_attempts": 0,
+            "providers_seen": ["MiniMax", "Volcengine Ark"],
+        },
+        {
+            "jsonl_available": True,
+            "error_type_counts": {"TimeoutError": 2},
+            "sample_errors": [{"provider": "MiniMax", "message": "timeout"}],
+            "by_provider": {
+                "MiniMax": {"attempts": 3, "errors": 2, "rate_limit_errors": 0, "fallback_attempts": 0, "error_types": {"TimeoutError": 2}},
+                "Volcengine Ark": {"attempts": 2, "errors": 0, "rate_limit_errors": 0, "fallback_attempts": 0, "error_types": {}},
+            },
+        },
+    )
+
+    assert digest["status"] == "degraded"
+    assert digest["fallback_gap_detected"] is True
+    assert digest["recommendation"] == "errors_detected_without_fallback_review_provider_routing"
+    assert digest["affected_providers"] == [
+        {
+            "provider": "MiniMax",
+            "attempts": 3,
+            "errors": 2,
+            "error_rate": 0.6667,
+            "rate_limit_errors": 0,
+            "fallback_attempts": 0,
+            "top_error_types": [{"error_type": "TimeoutError", "count": 2}],
+        }
+    ]
+
+
+def test_build_llm_error_digest_reports_no_data_when_sources_missing():
+    digest = _build_llm_error_digest({"summary_available": False}, {"jsonl_available": False})
+
+    assert digest["status"] == "no_data"
+    assert digest["recommendation"] == "no_llm_metrics_available"
+    assert digest["affected_provider_count"] == 0
+
+
+def test_build_dual_target_session_summary_aggregates_paper_trading_days(tmp_path: Path):
+    daily_events_path = tmp_path / "daily_events.jsonl"
+    daily_events_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "paper_trading_day",
+                        "current_plan": {
+                            "target_mode": "dual_target",
+                            "selection_targets": {"000001": {}, "000002": {}},
+                            "dual_target_summary": {
+                                "research_target_count": 3,
+                                "short_trade_target_count": 2,
+                                "research_selected_count": 1,
+                                "research_near_miss_count": 1,
+                                "research_rejected_count": 1,
+                                "short_trade_selected_count": 1,
+                                "short_trade_near_miss_count": 1,
+                                "short_trade_blocked_count": 0,
+                                "short_trade_rejected_count": 0,
+                                "shell_target_count": 1,
+                                "delta_classification_counts": {"upgraded": 2},
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "paper_trading_day",
+                        "current_plan": {
+                            "target_mode": "research_only",
+                            "selection_targets": {},
+                            "dual_target_summary": {
+                                "research_target_count": 1,
+                                "short_trade_target_count": 4,
+                                "research_selected_count": 0,
+                                "research_near_miss_count": 0,
+                                "research_rejected_count": 1,
+                                "short_trade_selected_count": 0,
+                                "short_trade_near_miss_count": 2,
+                                "short_trade_blocked_count": 1,
+                                "short_trade_rejected_count": 1,
+                                "shell_target_count": 0,
+                                "delta_classification_counts": {"upgraded": 1, "downgraded": 3},
+                            },
+                        },
+                    }
+                ),
+                json.dumps({"event": "other"}),
+                "{bad json}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = _build_dual_target_session_summary(daily_events_path)
+
+    assert summary["day_count"] == 2
+    assert summary["days_with_selection_targets"] == 1
+    assert summary["selection_target_count"] == 2
+    assert summary["research_target_count"] == 4
+    assert summary["short_trade_target_count"] == 6
+    assert summary["short_trade_near_miss_count"] == 3
+    assert summary["target_mode_counts"] == {"dual_target": 1, "research_only": 1}
+    assert summary["delta_classification_counts"] == {"upgraded": 3, "downgraded": 3}
+
+
+def test_build_dual_target_session_summary_returns_default_for_missing_file(tmp_path: Path):
+    summary = _build_dual_target_session_summary(tmp_path / "missing.jsonl")
+
+    assert summary["day_count"] == 0
+    assert summary["target_mode_counts"] == {}
+
+
+def test_build_llm_route_provenance_reads_summary_file(tmp_path: Path):
+    summary_path = tmp_path / "llm_metrics_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "totals": {
+                    "attempts": 5,
+                    "successes": 4,
+                    "errors": 1,
+                    "rate_limit_errors": 1,
+                    "fallback_attempts": 2,
+                },
+                "providers": {
+                    "MiniMax": {"attempts": 3},
+                    "Volcengine Ark": {"attempts": 0},
+                },
+                "models": {
+                    "abab7": {"attempts": 5},
+                    "unused": {"attempts": 0},
+                },
+                "routes": {
+                    "fast": {"attempts": 5},
+                    "slow": {"attempts": 0},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    jsonl_path = tmp_path / "llm_metrics.jsonl"
+
+    with patch(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        return_value={
+            "summary_path": str(summary_path),
+            "jsonl_path": str(jsonl_path),
+            "session_id": "session-123",
+        },
+    ):
+        provenance, artifacts = _build_llm_route_provenance()
+
+    assert artifacts == {
+        "llm_metrics_jsonl": str(jsonl_path),
+        "llm_metrics_summary": str(summary_path),
+    }
+    assert provenance["session_id"] == "session-123"
+    assert provenance["summary_available"] is True
+    assert provenance["fallback_observed"] is True
+    assert provenance["providers_seen"] == ["MiniMax"]
+    assert provenance["models_seen"] == ["abab7"]
+    assert provenance["routes_seen"] == ["fast"]
+
+
+def test_build_llm_route_provenance_records_read_error(tmp_path: Path):
+    summary_path = tmp_path / "llm_metrics_summary.json"
+    summary_path.write_text("{bad json}", encoding="utf-8")
+
+    with patch(
+        "src.paper_trading.runtime.get_llm_metrics_paths",
+        return_value={
+            "summary_path": str(summary_path),
+            "jsonl_path": str(tmp_path / "llm_metrics.jsonl"),
+            "session_id": "session-err",
+        },
+    ):
+        provenance, _ = _build_llm_route_provenance()
+
+    assert provenance["summary_available"] is False
+    assert "summary_read_error" in provenance
+
+
+def test_prepare_session_runtime_context_wires_helpers(monkeypatch, tmp_path: Path):
+    session_paths = type(
+        "SessionPaths",
+        (),
+        {
+            "checkpoint_path": tmp_path / "checkpoint.json",
+            "daily_events_path": tmp_path / "daily_events.jsonl",
+            "timing_log_path": tmp_path / "timings.jsonl",
+            "selection_artifact_root": tmp_path / "artifacts",
+            "frozen_plan_source_path": None,
+        },
+    )()
+    pipeline = object()
+    engine = object()
+    reset_calls: list[dict] = []
+
+    monkeypatch.setattr("src.paper_trading.runtime.get_default_model_config", lambda: ("fallback-model", "fallback-provider"))
+    monkeypatch.setattr("src.paper_trading.runtime.resolve_session_paths", lambda **kwargs: session_paths)
+    monkeypatch.setattr("src.paper_trading.runtime.resolve_pipeline", lambda **kwargs: pipeline)
+    monkeypatch.setattr("src.paper_trading.runtime.snapshot_cache_stats", lambda: {"hits": 7})
+    monkeypatch.setattr(
+        "src.paper_trading.runtime._reset_output_artifacts_for_fresh_run",
+        lambda **kwargs: reset_calls.append(kwargs),
+    )
+    monkeypatch.setattr("src.paper_trading.runtime._build_paper_trading_engine", lambda **kwargs: engine)
+
+    context = _prepare_session_runtime_context(
+        output_dir=tmp_path / "paper",
+        frozen_plan_source=None,
+        model_name=None,
+        model_provider=None,
+        pipeline=None,
+        selected_analysts=["a"],
+        fast_selected_analysts=["b"],
+        short_trade_target_profile_name="default",
+        short_trade_target_profile_overrides={"x": 1},
+        selection_target="research_only",
+        agent=lambda **kwargs: {},
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        initial_margin_requirement=0.1,
+    )
+
+    assert context.resolved_model_name == "fallback-model"
+    assert context.resolved_model_provider == "fallback-provider"
+    assert context.session_paths is session_paths
+    assert context.pipeline is pipeline
+    assert context.cache_stats_before_run == {"hits": 7}
+    assert context.engine is engine
+    assert context.recorder.path == session_paths.daily_events_path
+    assert reset_calls == [
+        {
+            "checkpoint_path": session_paths.checkpoint_path,
+            "daily_events_path": session_paths.daily_events_path,
+            "timing_log_path": session_paths.timing_log_path,
+            "selection_artifact_root": session_paths.selection_artifact_root,
+        }
+    ]
 
 
 def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]]) -> None:

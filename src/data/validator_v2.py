@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.data.validation_rules import FINANCIAL_METRICS_RULES, ValidationRule
+from src.data.validator_v2_helpers import evaluate_metric_rule
 
 logger = logging.getLogger(__name__)
 
@@ -62,56 +63,15 @@ class EnhancedDataValidator:
 
         for field_name, rule in self.rules.items():
             value = self._get_field_value(metric, field_name)
-
-            if value is None or (isinstance(value, float) and self._is_nan(value)):
-                if not rule.allow_null:
-                    result = ValidationResult(
-                        is_valid=False,
-                        field=field_name,
-                        value=value,
-                        rule=rule,
-                        message=f"{field_name} 不能为空",
-                    )
-                    results.append(result)
-                    if rule.severity == "error":
-                        has_error = True
-                continue
-
-            if rule.min_value is not None and value < rule.min_value:
-                result = ValidationResult(
-                    is_valid=False,
-                    field=field_name,
-                    value=value,
-                    rule=rule,
-                    message=f"{field_name}={value} 小于最小值 {rule.min_value}",
-                )
-                results.append(result)
-                if rule.severity == "error":
-                    has_error = True
-
-            if rule.max_value is not None and value > rule.max_value:
-                result = ValidationResult(
-                    is_valid=False,
-                    field=field_name,
-                    value=value,
-                    rule=rule,
-                    message=f"{field_name}={value} 大于最大值 {rule.max_value}",
-                )
-                results.append(result)
-                if rule.severity == "error":
-                    has_error = True
-
-            if rule.custom_validator and not rule.custom_validator(value):
-                result = ValidationResult(
-                    is_valid=False,
-                    field=field_name,
-                    value=value,
-                    rule=rule,
-                    message=f"{field_name}={value} 未通过自定义验证",
-                )
-                results.append(result)
-                if rule.severity == "error":
-                    has_error = True
+            field_results, field_has_error = evaluate_metric_rule(
+                field_name=field_name,
+                rule=rule,
+                value=value,
+                result_factory=ValidationResult,
+                is_nan=self._is_nan,
+            )
+            results.extend(field_results)
+            has_error = has_error or field_has_error
 
         return not has_error, results
 

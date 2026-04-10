@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .portfolio import Portfolio
+from .trader_helpers import coerce_trade_action, execute_buy_trade, execute_cover_trade, execute_sell_trade, execute_short_trade
+from .portfolio import Portfolio
 from .types import Action, ActionLiteral
 
 
@@ -42,49 +44,21 @@ class TradeExecutor:
         if quantity is None or quantity <= 0:
             return 0
 
-        # Coerce to enum if strings provided
-        try:
-            action_enum = Action(action) if not isinstance(action, Action) else action
-        except Exception:
-            action_enum = Action.HOLD
-
+        action_enum = coerce_trade_action(action)
         slippage_rate = _effective_slippage_rate(self._constraints, daily_turnover)
 
         if action_enum == Action.BUY:
             if is_limit_up:
                 return 0
-            executed_price = float(current_price) * (1 + slippage_rate)
-            max_affordable = int(portfolio.get_cash() / (executed_price * (1 + self._constraints.commission_rate))) if executed_price > 0 else 0
-            requested_quantity = min(int(quantity), max_affordable)
-            executed = portfolio.apply_long_buy(ticker, requested_quantity, executed_price)
-            if executed > 0:
-                commission = executed * executed_price * self._constraints.commission_rate
-                portfolio.adjust_cash(-commission)
-            return executed
+            return execute_buy_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
         if action_enum == Action.SELL:
             if is_limit_down:
                 return 0
-            executed_price = float(current_price) * (1 - slippage_rate)
-            executed = portfolio.apply_long_sell(ticker, int(quantity), executed_price)
-            if executed > 0:
-                gross_amount = executed * executed_price
-                fees = gross_amount * (self._constraints.commission_rate + self._constraints.stamp_duty_rate)
-                portfolio.adjust_cash(-fees)
-            return executed
+            return execute_sell_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate, self._constraints.stamp_duty_rate)
         if action_enum == Action.SHORT:
-            executed_price = float(current_price) * (1 - slippage_rate)
-            executed = portfolio.apply_short_open(ticker, int(quantity), executed_price)
-            if executed > 0:
-                commission = executed * executed_price * self._constraints.commission_rate
-                portfolio.adjust_cash(-commission)
-            return executed
+            return execute_short_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
         if action_enum == Action.COVER:
-            executed_price = float(current_price) * (1 + slippage_rate)
-            executed = portfolio.apply_short_cover(ticker, int(quantity), executed_price)
-            if executed > 0:
-                commission = executed * executed_price * self._constraints.commission_rate
-                portfolio.adjust_cash(-commission)
-            return executed
+            return execute_cover_trade(ticker, quantity, current_price, portfolio, slippage_rate, self._constraints.commission_rate)
 
         # hold or unknown action
         return 0

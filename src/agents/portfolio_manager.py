@@ -5,6 +5,18 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from typing_extensions import Literal
 
+from src.agents.portfolio_manager_helpers import (
+    _accumulate_signal_weights,
+    _build_buy_decision,
+    _build_short_or_sell_decision,
+    _collect_signal_counts,
+    _confidence_int,
+    _format_top_agents,
+    _prune_zero_actions,
+    _resolve_max_buy,
+    _resolve_max_short,
+    _resolve_portfolio_position,
+)
 from src.graph.state import AgentState, show_agent_reasoning
 from src.utils.llm import call_llm
 from src.utils.progress import progress
@@ -108,50 +120,24 @@ def compute_allowed_actions(
 
     for ticker in tickers:
         price = float(current_prices.get(ticker, 0.0))
-        pos = positions.get(
-            ticker,
-            {"long": 0, "long_cost_basis": 0.0, "short": 0, "short_cost_basis": 0.0},
-        )
-        long_shares = int(pos.get("long", 0) or 0)
-        short_shares = int(pos.get("short", 0) or 0)
+        long_shares, short_shares = _resolve_portfolio_position(positions, ticker)
         max_qty = int(max_shares.get(ticker, 0) or 0)
 
-        # Start with zeros
         actions = {"buy": 0, "sell": 0, "short": 0, "cover": 0, "hold": 0}
 
-        # Long side
         if long_shares > 0:
             actions["sell"] = long_shares
-        if cash > 0 and price > 0:
-            max_buy_cash = int(cash // price)
-            max_buy = max(0, min(max_qty, max_buy_cash))
-            if max_buy > 0:
-                actions["buy"] = max_buy
+        max_buy = _resolve_max_buy(cash, price, max_qty)
+        if max_buy > 0:
+            actions["buy"] = max_buy
 
-        # Short side
         if short_shares > 0:
             actions["cover"] = short_shares
-        if price > 0 and max_qty > 0:
-            if margin_requirement <= 0.0:
-                # If margin requirement is zero or unset, only cap by max_qty
-                max_short = max_qty
-            else:
-                available_margin = max(0.0, (equity / margin_requirement) - margin_used)
-                max_short_margin = int(available_margin // price)
-                max_short = max(0, min(max_qty, max_short_margin))
-            if max_short > 0:
-                actions["short"] = max_short
+        max_short = _resolve_max_short(price, max_qty, margin_requirement, margin_used, equity)
+        if max_short > 0:
+            actions["short"] = max_short
 
-        # Hold always valid
-        actions["hold"] = 0
-
-        # Prune zero-capacity actions to reduce tokens, keep hold
-        pruned = {"hold": 0}
-        for k, v in actions.items():
-            if k != "hold" and v > 0:
-                pruned[k] = v
-
-        allowed[ticker] = pruned
+        allowed[ticker] = _prune_zero_actions(actions)
 
     return allowed
 
@@ -161,29 +147,10 @@ def _make_decision_from_signals(ticker: str, signals: dict, allowed: dict) -> "P
     Make a trading decision based on analyst signals when LLM fails.
     Uses weighted voting based on confidence levels.
     """
-    def _confidence_int(value: float) -> int:
-        return max(0, min(100, int(round(value))))
-
     if not signals:
         return PortfolioDecision(action="hold", quantity=0, confidence=0, reasoning="无分析师信号，默认持有")
 
-    bullish_weight = 0.0
-    bearish_weight = 0.0
-    neutral_weight = 0.0
-    total_confidence = 0.0
-
-    for agent, payload in signals.items():
-        sig = payload.get("sig", "").lower()
-        conf = float(payload.get("conf", 0))
-        total_confidence += conf
-
-        if sig == "bullish":
-            bullish_weight += conf
-        elif sig == "bearish":
-            bearish_weight += conf
-        else:
-            neutral_weight += conf * 0.5
-
+    bullish_weight, bearish_weight, neutral_weight, total_confidence = _accumulate_signal_weights(signals)
     total_weight = bullish_weight + bearish_weight + neutral_weight
     if total_weight == 0:
         return PortfolioDecision(action="hold", quantity=0, confidence=0, reasoning="分析师信号权重为零")
@@ -191,18 +158,11 @@ def _make_decision_from_signals(ticker: str, signals: dict, allowed: dict) -> "P
     avg_confidence = total_confidence / len(signals) if signals else 0
 
     if bullish_weight > bearish_weight * 1.5 and "buy" in allowed:
-        qty = min(allowed.get("buy", 0), 100)
-        reasoning = f"多数分析师看涨(权重{bullish_weight:.0f} vs {bearish_weight:.0f})，建议买入"
-        return PortfolioDecision(action="buy", quantity=qty, confidence=_confidence_int(min(avg_confidence, 80)), reasoning=reasoning)
-    elif bearish_weight > bullish_weight * 1.5:
-        if "short" in allowed:
-            qty = min(allowed.get("short", 0), 100)
-            reasoning = f"多数分析师看跌(权重{bearish_weight:.0f} vs {bullish_weight:.0f})，建议做空"
-            return PortfolioDecision(action="short", quantity=qty, confidence=_confidence_int(min(avg_confidence, 80)), reasoning=reasoning)
-        elif "sell" in allowed:
-            qty = allowed.get("sell", 0)
-            reasoning = f"多数分析师看跌(权重{bearish_weight:.0f} vs {bullish_weight:.0f})，建议卖出"
-            return PortfolioDecision(action="sell", quantity=qty, confidence=_confidence_int(min(avg_confidence, 80)), reasoning=reasoning)
+        return _build_buy_decision(allowed, bullish_weight, bearish_weight, avg_confidence, PortfolioDecision)
+    if bearish_weight > bullish_weight * 1.5:
+        directional_decision = _build_short_or_sell_decision(allowed, bearish_weight, bullish_weight, avg_confidence, PortfolioDecision)
+        if directional_decision is not None:
+            return directional_decision
 
     return PortfolioDecision(action="hold", quantity=0, confidence=_confidence_int(avg_confidence * 0.5), reasoning=f"信号分歧(涨{bullish_weight:.0f}/跌{bearish_weight:.0f})，建议观望")
 
@@ -229,35 +189,16 @@ def _build_consistent_reasoning(signals: dict, action: str) -> str:
     if not signals:
         return "无分析师信号，保持观望"
 
-    counts = {"bullish": 0, "bearish": 0, "neutral": 0}
-    top_by_signal: dict[str, list[tuple[str, float]]] = {"bullish": [], "bearish": [], "neutral": []}
-
-    for agent, payload in signals.items():
-        sig = str(payload.get("sig", "neutral")).lower()
-        if sig not in counts:
-            sig = "neutral"
-        conf = float(payload.get("conf", 0) or 0)
-        counts[sig] += 1
-        top_by_signal[sig].append((agent, conf))
-
-    def _top_agents(sig: str) -> str:
-        ranked = sorted(top_by_signal[sig], key=lambda item: item[1], reverse=True)[:2]
-        if not ranked:
-            return ""
-
-        def _format_agent_name(agent_id: str) -> str:
-            return agent_id.replace("_agent", "").replace("_", " ").title()
-
-        return "、".join(f"{_format_agent_name(name)}({int(round(conf))}%)" for name, conf in ranked)
+    counts, top_by_signal = _collect_signal_counts(signals)
 
     if action in {"short", "sell"}:
-        top = _top_agents("bearish")
+        top = _format_top_agents(top_by_signal, "bearish")
         if top:
             return f"看跌{counts['bearish']}票/中性{counts['neutral']}票/看涨{counts['bullish']}票，{top}偏空"
         return f"看跌{counts['bearish']}票/中性{counts['neutral']}票/看涨{counts['bullish']}票，整体偏空"
 
     if action in {"buy", "cover"}:
-        top = _top_agents("bullish")
+        top = _format_top_agents(top_by_signal, "bullish")
         if top:
             return f"看涨{counts['bullish']}票/中性{counts['neutral']}票/看跌{counts['bearish']}票，{top}偏多"
         return f"看涨{counts['bullish']}票/中性{counts['neutral']}票/看跌{counts['bearish']}票，整体偏多"

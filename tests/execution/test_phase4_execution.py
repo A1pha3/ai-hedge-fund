@@ -10,7 +10,6 @@ import src.execution.daily_pipeline as daily_pipeline_module
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import (
     LAYER_C_AVOID_SCORE_C_THRESHOLD,
-    LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE,
     LAYER_C_BLEND_B_WEIGHT,
     LAYER_C_BLEND_C_WEIGHT,
     LAYER_C_INVESTOR_WEIGHT_SCALE,
@@ -1335,6 +1334,105 @@ def test_qualifies_short_trade_boundary_candidate_keeps_structural_blockers_in_m
     assert metrics_payload["gate_status"] == {"data": "pass", "structural": "fail", "score": "proxy_only"}
     assert metrics_payload["blockers"] == ["trend_not_constructive"]
     assert metrics_payload["candidate_score"] == 0.0068
+
+
+def test_build_short_trade_candidate_diagnostics_ranks_supportive_release_above_weak_shadow_observation():
+    original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    try:
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
+            "gate_status": {"data": "pass", "structural": "pass", "score": "proxy_only"},
+            "blockers": [],
+            "breakout_freshness": 0.16,
+            "trend_acceleration": 0.63,
+            "volume_expansion_quality": 0.46,
+            "catalyst_freshness": 0.51,
+            "close_strength": 0.72,
+        }
+        diagnostics = daily_pipeline_module._build_short_trade_candidate_diagnostics(
+            fused=[_fused("300757", 0.34), _fused("300720", 0.33)],
+            high_pool=[],
+            trade_date="20260305",
+            shadow_candidate_by_ticker={
+                "300757": CandidateStock(
+                    ticker="300757",
+                    name="good-shadow",
+                    industry_sw="机械设备",
+                    avg_volume_20d=4500,
+                    market_cap=80,
+                    listing_date="20190101",
+                    candidate_pool_rank=301,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.9132,
+                    candidate_pool_avg_amount_share_of_min_gate=1.0544,
+                ),
+                "300720": CandidateStock(
+                    ticker="300720",
+                    name="weak-shadow",
+                    industry_sw="机械设备",
+                    avg_volume_20d=4490,
+                    market_cap=79,
+                    listing_date="20190101",
+                    candidate_pool_rank=302,
+                    candidate_pool_lane="layer_a_liquidity_corridor",
+                    candidate_pool_shadow_reason="upstream_base_liquidity_uplift_shadow",
+                    candidate_pool_avg_amount_share_of_cutoff=0.912,
+                    candidate_pool_avg_amount_share_of_min_gate=1.052,
+                ),
+            },
+            historical_prior_by_ticker={
+                "300757": {
+                    "execution_quality_label": "gap_chase_risk",
+                    "evaluable_count": 6,
+                    "next_close_positive_rate": 0.6667,
+                    "next_high_hit_rate_at_threshold": 0.6667,
+                },
+                "300720": {
+                    "applied_scope": "same_ticker",
+                    "execution_quality_label": "intraday_only",
+                    "evaluable_count": 4,
+                    "next_close_positive_rate": 0.0,
+                    "next_high_hit_rate_at_threshold": 1.0,
+                },
+            },
+        )
+    finally:
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    assert diagnostics["candidate_count"] == 0
+    assert diagnostics["released_shadow_tickers"] == ["300757"]
+    assert diagnostics["shadow_observation_tickers"] == ["300757", "300720"]
+    assert diagnostics["filtered_reason_counts"] == {"breakout_freshness_below_short_trade_boundary_floor": 2}
+    assert diagnostics["released_shadow_entries"][0]["shadow_release_reason"] == "upstream_shadow_release_supported_by_historical_prior"
+    assert diagnostics["released_shadow_entries"][0]["shadow_release_historical_support"]["verdict"] == "supportive"
+
+
+def test_qualifies_catalyst_theme_candidate_applies_close_momentum_relief_to_metrics_payload():
+    original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    try:
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
+            "gate_status": {"data": "pass", "structural": "pass", "score": "proxy_only"},
+            "blockers": ["stale_trend_repair_penalty"],
+            "breakout_freshness": 0.40,
+            "trend_acceleration": 0.80,
+            "close_strength": 0.91,
+            "sector_resonance": 0.10,
+            "catalyst_freshness": 0.0,
+        }
+        qualified, filter_reason, metrics_payload = daily_pipeline_module._qualifies_catalyst_theme_candidate(
+            trade_date="20260305",
+            entry={"ticker": "000006"},
+        )
+    finally:
+        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    assert qualified is True
+    assert filter_reason == "catalyst_theme_candidate_score_ranked"
+    assert metrics_payload["blockers"] == ["stale_trend_repair_penalty"]
+    assert metrics_payload["close_momentum_catalyst_relief"]["applied"] is True
+    assert metrics_payload["effective_catalyst_freshness"] == round(daily_pipeline_module.CATALYST_THEME_CATALYST_MIN, 4)
+    assert metrics_payload["threshold_checks"]["sector_resonance"] == round(daily_pipeline_module.CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN, 4)
+    assert "close_momentum_catalyst_relief" in metrics_payload["theme_tags"]
 
 
 def test_run_post_market_releases_strong_upstream_shadow_into_supplemental_targets():

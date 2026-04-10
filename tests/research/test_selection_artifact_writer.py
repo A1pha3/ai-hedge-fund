@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.screening.models import MarketState, StrategySignal
 from src.portfolio.models import ExitSignal, PositionPlan

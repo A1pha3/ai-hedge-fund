@@ -6,10 +6,17 @@ Implements a growth-focused valuation methodology.
 """
 
 import json
-import statistics
 
 from langchain_core.messages import HumanMessage
 
+from src.agents.growth_agent_helpers import (
+    _build_growth_series,
+    _build_growth_trend_result,
+    _calculate_growth_trends,
+    _score_eps_growth,
+    _score_fcf_growth,
+    _score_revenue_growth,
+)
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
     get_financial_metrics,
@@ -190,51 +197,13 @@ def _clamp_growth(value, lower=-1.0, upper=5.0):
 
 def analyze_growth_trends(metrics: list) -> dict:
     """Analyzes historical growth trends."""
-
-    rev_growth = [m.revenue_growth for m in metrics]
-    # Clamp EPS/FCF growth to avoid extreme values from zero-crossing
-    eps_growth = [_clamp_growth(m.earnings_per_share_growth) for m in metrics]
-    fcf_growth = [_clamp_growth(m.free_cash_flow_growth) for m in metrics]
-
-    rev_trend = _calculate_trend(rev_growth)
-    eps_trend = _calculate_trend(eps_growth)
-    fcf_trend = _calculate_trend(fcf_growth)
-
-    # Score based on recent growth and trend
-    score = 0
-
-    # Revenue
-    if rev_growth[0] is not None:
-        if rev_growth[0] > 0.20:
-            score += 0.4
-        elif rev_growth[0] > 0.10:
-            score += 0.2
-        elif rev_growth[0] < -0.10:
-            score -= 0.2  # Penalize significant revenue decline
-        if rev_trend > 0:
-            score += 0.1  # Accelerating
-
-    # EPS
-    if eps_growth[0] is not None:
-        if eps_growth[0] > 0.20:
-            score += 0.25
-        elif eps_growth[0] > 0.10:
-            score += 0.1
-        elif eps_growth[0] < -0.50:
-            score -= 0.2  # Penalize severe EPS decline
-        elif eps_growth[0] < -0.10:
-            score -= 0.1  # Penalize moderate EPS decline
-        if eps_trend > 0:
-            score += 0.05
-
-    # FCF
-    if fcf_growth[0] is not None:
-        if fcf_growth[0] > 0.15:
-            score += 0.1
-
-    score = max(min(score, 1.0), 0.0)
-
-    return {"score": score, "revenue_growth": rev_growth[0], "revenue_trend": rev_trend, "eps_growth": eps_growth[0], "eps_trend": eps_trend, "fcf_growth": fcf_growth[0], "fcf_trend": fcf_trend}
+    revenue_growth, eps_growth, fcf_growth = _build_growth_series(metrics, _clamp_growth)
+    revenue_trend, eps_trend, fcf_trend = _calculate_growth_trends(revenue_growth, eps_growth, fcf_growth, _calculate_trend)
+    score = 0.0
+    score += _score_revenue_growth(revenue_growth, revenue_trend)
+    score += _score_eps_growth(eps_growth, eps_trend)
+    score += _score_fcf_growth(fcf_growth)
+    return _build_growth_trend_result(score, revenue_growth, revenue_trend, eps_growth, eps_trend, fcf_growth, fcf_trend)
 
 
 def analyze_valuation(metrics) -> dict:

@@ -26,11 +26,27 @@ import time
 
 import pandas as pd
 
+from src.screening.candidate_pool_compute_helpers import (
+    apply_estimated_liquidity_filter_with_logging,
+    apply_cooldown_filter,
+    build_candidate_stocks,
+    build_daily_basic_maps,
+    filter_low_liquidity_candidates,
+    load_amount_map_and_low_liquidity_codes,
+    normalize_sw_map,
+    resolve_cooldown_tickers,
+)
+from src.screening.candidate_pool_shadow_helpers import (
+    build_shadow_summary_payload,
+    build_cooldown_review_shadow_payload,
+    build_shadow_lane_payload,
+    classify_overflow_candidate,
+    select_shadow_rows,
+)
 from src.screening.models import CandidateStock
 from src.tools.tushare_api import (
     _get_pro,
     _cached_tushare_dataframe_call,
-    _to_ts_code,
     get_all_stock_basic,
     get_daily_basic_batch,
     get_limit_list,
@@ -224,64 +240,27 @@ def _build_shadow_candidate_pool_payload(
     shadow_candidates: list[CandidateStock] = []
     shadow_entries: list[dict[str, Any]] = []
 
-    def append_cooldown_review_shadow(rows: list[CandidateStock]) -> None:
-        if not rows:
-            return
-        review_focus_tickers = _resolve_cooldown_shadow_review_tickers()
-        for candidate in rows:
-            cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_reference, 4) if candidate.avg_volume_20d > 0 else 0.0
-            min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4) if candidate.avg_volume_20d > 0 else 0.0
-            shadow_candidate = candidate.model_copy(
-                update={
-                    "candidate_pool_rank": 0,
-                    "candidate_pool_lane": "cooldown_review",
-                    "candidate_pool_shadow_reason": "cooldown_review_shadow",
-                    "candidate_pool_avg_amount_share_of_cutoff": cutoff_share,
-                    "candidate_pool_avg_amount_share_of_min_gate": min_gate_share,
-                    "shadow_visibility_gap_selected": candidate.ticker in SHADOW_VISIBILITY_GAP_TICKERS,
-                    "shadow_visibility_gap_relaxed_band": False,
-                }
-            )
-            shadow_candidates.append(shadow_candidate)
-            shadow_entries.append(
-                {
-                    "ticker": shadow_candidate.ticker,
-                    "candidate_pool_rank": 0,
-                    "candidate_pool_lane": "cooldown_review",
-                    "candidate_pool_shadow_reason": "cooldown_review_shadow",
-                    "avg_volume_20d": round(float(shadow_candidate.avg_volume_20d), 4),
-                    "market_cap": round(float(shadow_candidate.market_cap), 4),
-                    "avg_amount_share_of_cutoff": cutoff_share,
-                    "avg_amount_share_of_min_gate": min_gate_share,
-                    "shadow_focus_selected": shadow_candidate.ticker in review_focus_tickers,
-                    "shadow_focus_relaxed_band": False,
-                    "shadow_visibility_gap_selected": shadow_candidate.ticker in SHADOW_VISIBILITY_GAP_TICKERS,
-                    "shadow_visibility_gap_relaxed_band": False,
-                    "cooldown_review": True,
-                }
-            )
-
-    append_cooldown_review_shadow(cooldown_review_candidates)
+    if cooldown_review_candidates:
+        cooldown_shadow_candidates, cooldown_shadow_entries = build_cooldown_review_shadow_payload(
+            candidates=cooldown_review_candidates,
+            cutoff_reference=cutoff_reference,
+            min_avg_amount_20d=float(MIN_AVG_AMOUNT_20D),
+            review_focus_tickers=_resolve_cooldown_shadow_review_tickers(),
+            visibility_gap_tickers=set(SHADOW_VISIBILITY_GAP_TICKERS),
+        )
+        shadow_candidates.extend(cooldown_shadow_candidates)
+        shadow_entries.extend(cooldown_shadow_entries)
 
     if len(ranked_candidates) <= pool_size:
-        lane_counts: dict[str, int] = {}
-        for entry in shadow_entries:
-            lane = str(entry.get("candidate_pool_lane") or "unknown")
-            lane_counts[lane] = lane_counts.get(lane, 0) + 1
-        return selected_candidates, shadow_candidates, {
-            "pool_size": pool_size,
-            "selected_count": len(selected_candidates),
-            "overflow_count": 0,
-            "selected_cutoff_avg_volume_20d": cutoff_avg_volume,
-            "lane_counts": lane_counts,
-            "selected_tickers": [candidate.ticker for candidate in shadow_candidates],
-            "focus_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_focus_selected")}),
-            "visibility_gap_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_visibility_gap_selected")}),
-            "focus_signature": _shadow_focus_signature(),
-            "shadow_recall_complete": True,
-            "shadow_recall_status": "computed",
-            "tickers": shadow_entries,
-        }
+        return selected_candidates, shadow_candidates, build_shadow_summary_payload(
+            pool_size=pool_size,
+            selected_count=len(selected_candidates),
+            overflow_count=0,
+            selected_cutoff_avg_volume_20d=cutoff_avg_volume,
+            shadow_candidates=shadow_candidates,
+            shadow_entries=shadow_entries,
+            focus_signature=_shadow_focus_signature(),
+        )
 
     cutoff_avg_volume = max(float(ranked_candidates[pool_size - 1].avg_volume_20d), 1.0)
     overflow_candidates = ranked_candidates[pool_size:]
@@ -295,156 +274,82 @@ def _build_shadow_candidate_pool_payload(
     for rank, candidate in enumerate(overflow_candidates, start=pool_size + 1):
         cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_avg_volume, 4)
         min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4)
-        if min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE:
-            corridor_candidates.append((min_gate_share, rank, candidate, False, False))
-        elif (
-            candidate.ticker in corridor_visibility_gap_tickers
-            and min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE
-            and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE
-        ):
-            corridor_candidates.append((min_gate_share, rank, candidate, False, True))
-        elif (
-            candidate.ticker in corridor_focus_tickers
-            and min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE
-            and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE
-        ):
-            corridor_candidates.append((min_gate_share, rank, candidate, True, False))
-        elif (
-            candidate.ticker in corridor_focus_tickers
-            and min_gate_share >= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE
-            and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE
-        ):
-            corridor_candidates.append((min_gate_share, rank, candidate, True, False))
-        elif (
-            min_gate_share >= SHADOW_REBUCKET_MIN_GATE_SHARE
-            and cutoff_share >= SHADOW_REBUCKET_MIN_CUTOFF_SHARE
-            and cutoff_share <= SHADOW_REBUCKET_MAX_CUTOFF_SHARE
-        ):
-            rebucket_candidates.append((cutoff_share, rank, candidate, False, False))
-        elif (
-            candidate.ticker in rebucket_visibility_gap_tickers
-            and min_gate_share >= SHADOW_REBUCKET_MIN_GATE_SHARE
-            and cutoff_share >= SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE
-            and cutoff_share <= SHADOW_REBUCKET_MAX_CUTOFF_SHARE
-        ):
-            rebucket_candidates.append((cutoff_share, rank, candidate, False, True))
-        elif (
-            candidate.ticker in rebucket_focus_tickers
-            and min_gate_share >= SHADOW_REBUCKET_MIN_GATE_SHARE
-            and cutoff_share >= SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE
-            and cutoff_share <= SHADOW_REBUCKET_MAX_CUTOFF_SHARE
-        ):
-            rebucket_candidates.append((cutoff_share, rank, candidate, True, False))
+        classified_row = classify_overflow_candidate(
+            candidate=candidate,
+            rank=rank,
+            cutoff_share=cutoff_share,
+            min_gate_share=min_gate_share,
+            corridor_focus_tickers=corridor_focus_tickers,
+            rebucket_focus_tickers=rebucket_focus_tickers,
+            corridor_visibility_gap_tickers=corridor_visibility_gap_tickers,
+            rebucket_visibility_gap_tickers=rebucket_visibility_gap_tickers,
+            corridor_min_gate_share=SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
+            corridor_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE,
+            corridor_focus_min_gate_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
+            corridor_focus_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE,
+            corridor_focus_low_gate_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+            corridor_visibility_gap_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE,
+            rebucket_min_gate_share=SHADOW_REBUCKET_MIN_GATE_SHARE,
+            rebucket_min_cutoff_share=SHADOW_REBUCKET_MIN_CUTOFF_SHARE,
+            rebucket_max_cutoff_share=SHADOW_REBUCKET_MAX_CUTOFF_SHARE,
+            rebucket_focus_min_cutoff_share=SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE,
+            rebucket_visibility_gap_min_cutoff_share=SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE,
+        )
+        if classified_row is None:
+            continue
+        lane, row = classified_row
+        if lane == "layer_a_liquidity_corridor":
+            corridor_candidates.append(row)
+        else:
+            rebucket_candidates.append(row)
 
-    def append_shadow(rows: list[tuple[float, int, CandidateStock, bool, bool]], *, max_tickers: int, lane: str, reason: str, rank_key: str) -> None:
+    for rows, max_tickers, lane, reason, rank_key in [
+        (
+            corridor_candidates,
+            SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS,
+            "layer_a_liquidity_corridor",
+            "upstream_base_liquidity_uplift_shadow",
+            "gate_share_score",
+        ),
+        (
+            rebucket_candidates,
+            SHADOW_REBUCKET_MAX_TICKERS,
+            "post_gate_liquidity_competition",
+            "post_gate_liquidity_competition_shadow",
+            "cutoff_share_score",
+        ),
+    ]:
         focus_tickers = _resolve_shadow_focus_tickers(lane=lane)
         visibility_gap_tickers = _resolve_shadow_visibility_gap_tickers(lane=lane)
-        ranked_rows = sorted(
-            rows,
-            key=lambda item: (0 if item[4] else 1, 0 if item[3] else 1, item[0], -item[1], _candidate_liquidity_sort_key(item[2])),
-            reverse=True,
+        selected_rows = select_shadow_rows(
+            rows=rows,
+            max_tickers=max_tickers,
+            focus_tickers=focus_tickers,
+            visibility_gap_tickers=visibility_gap_tickers,
+            liquidity_sort_key=_candidate_liquidity_sort_key,
         )
-        selected_rows: list[tuple[float, int, CandidateStock, bool, bool]] = []
-        selected_tickers: set[str] = set()
+        lane_shadow_candidates, lane_shadow_entries = build_shadow_lane_payload(
+            selected_rows=selected_rows,
+            cutoff_reference=cutoff_avg_volume,
+            min_avg_amount_20d=float(MIN_AVG_AMOUNT_20D),
+            lane=lane,
+            reason=reason,
+            rank_key=rank_key,
+            focus_tickers=focus_tickers,
+            visibility_gap_tickers=visibility_gap_tickers,
+        )
+        shadow_candidates.extend(lane_shadow_candidates)
+        shadow_entries.extend(lane_shadow_entries)
 
-        for score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band in ranked_rows:
-            if candidate.ticker not in visibility_gap_tickers:
-                continue
-            selected_rows.append((score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band))
-            selected_tickers.add(candidate.ticker)
-            if len(selected_rows) >= max_tickers:
-                break
-
-        if len(selected_rows) < max_tickers:
-            for score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band in ranked_rows:
-                if candidate.ticker not in focus_tickers or candidate.ticker in selected_tickers:
-                    continue
-                selected_rows.append((score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band))
-                selected_tickers.add(candidate.ticker)
-                if len(selected_rows) >= max_tickers:
-                    break
-
-        if len(selected_rows) < max_tickers:
-            for score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band in ranked_rows:
-                if candidate.ticker in selected_tickers:
-                    continue
-                selected_rows.append((score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band))
-                selected_tickers.add(candidate.ticker)
-                if len(selected_rows) >= max_tickers:
-                    break
-
-        for score, rank, candidate, focus_relaxed_band, visibility_gap_relaxed_band in selected_rows:
-            cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_avg_volume, 4)
-            min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4)
-            resolved_reason = reason
-            if visibility_gap_relaxed_band:
-                resolved_reason = f"{reason}_visibility_gap_relaxed_band"
-            elif focus_relaxed_band:
-                resolved_reason = f"{reason}_focus_relaxed_band"
-            shadow_candidate = candidate.model_copy(
-                update={
-                    "candidate_pool_rank": rank,
-                    "candidate_pool_lane": lane,
-                    "candidate_pool_shadow_reason": resolved_reason,
-                    "candidate_pool_avg_amount_share_of_cutoff": cutoff_share,
-                    "candidate_pool_avg_amount_share_of_min_gate": min_gate_share,
-                    "shadow_visibility_gap_selected": candidate.ticker in visibility_gap_tickers,
-                    "shadow_visibility_gap_relaxed_band": visibility_gap_relaxed_band,
-                }
-            )
-            shadow_candidates.append(shadow_candidate)
-            shadow_entries.append(
-                {
-                    "ticker": shadow_candidate.ticker,
-                    "candidate_pool_rank": rank,
-                    "candidate_pool_lane": lane,
-                    "candidate_pool_shadow_reason": resolved_reason,
-                    "avg_volume_20d": round(float(shadow_candidate.avg_volume_20d), 4),
-                    "market_cap": round(float(shadow_candidate.market_cap), 4),
-                    "avg_amount_share_of_cutoff": cutoff_share,
-                    "avg_amount_share_of_min_gate": min_gate_share,
-                    "shadow_focus_selected": shadow_candidate.ticker in focus_tickers,
-                    "shadow_focus_relaxed_band": focus_relaxed_band,
-                    "shadow_visibility_gap_selected": shadow_candidate.ticker in visibility_gap_tickers,
-                    "shadow_visibility_gap_relaxed_band": visibility_gap_relaxed_band,
-                    rank_key: round(float(score), 4),
-                }
-            )
-
-    append_shadow(
-        corridor_candidates,
-        max_tickers=SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS,
-        lane="layer_a_liquidity_corridor",
-        reason="upstream_base_liquidity_uplift_shadow",
-        rank_key="gate_share_score",
+    return selected_candidates, shadow_candidates, build_shadow_summary_payload(
+        pool_size=pool_size,
+        selected_count=len(selected_candidates),
+        overflow_count=len(overflow_candidates),
+        selected_cutoff_avg_volume_20d=round(cutoff_avg_volume, 4),
+        shadow_candidates=shadow_candidates,
+        shadow_entries=shadow_entries,
+        focus_signature=_shadow_focus_signature(),
     )
-    append_shadow(
-        rebucket_candidates,
-        max_tickers=SHADOW_REBUCKET_MAX_TICKERS,
-        lane="post_gate_liquidity_competition",
-        reason="post_gate_liquidity_competition_shadow",
-        rank_key="cutoff_share_score",
-    )
-
-    lane_counts: dict[str, int] = {}
-    for entry in shadow_entries:
-        lane = str(entry.get("candidate_pool_lane") or "unknown")
-        lane_counts[lane] = lane_counts.get(lane, 0) + 1
-
-    return selected_candidates, shadow_candidates, {
-        "pool_size": pool_size,
-        "selected_count": len(selected_candidates),
-        "overflow_count": len(overflow_candidates),
-        "selected_cutoff_avg_volume_20d": round(cutoff_avg_volume, 4),
-        "lane_counts": lane_counts,
-        "selected_tickers": [candidate.ticker for candidate in shadow_candidates],
-        "focus_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_focus_selected")}),
-        "visibility_gap_tickers": sorted({entry["ticker"] for entry in shadow_entries if entry.get("shadow_visibility_gap_selected")}),
-        "focus_signature": _shadow_focus_signature(),
-        "shadow_recall_complete": True,
-        "shadow_recall_status": "computed",
-        "tickers": shadow_entries,
-    }
 
 
 def _build_shadow_summary_from_selected_candidates(selected_candidates: List[CandidateStock], *, pool_size: int) -> dict[str, Any]:
@@ -511,127 +416,76 @@ def _compute_candidate_pool_candidates(
         stock_df = stock_df[~mask_limit_up].copy()
         print(f"[CandidatePool] 排除涨停后: {len(stock_df)} (过滤 {mask_limit_up.sum()})")
 
-    if cooldown_tickers is None:
-        cooldown_tickers = get_cooled_tickers(trade_date)
-    cooldown_review_df = stock_df.iloc[0:0].copy()
+    cooldown_tickers = resolve_cooldown_tickers(
+        cooldown_tickers=set(cooldown_tickers) if cooldown_tickers is not None else None,
+        trade_date=trade_date,
+        get_cooled_tickers_fn=get_cooled_tickers,
+    )
+    stock_df, cooldown_review_df, cooldown_filtered_count = apply_cooldown_filter(
+        stock_df=stock_df,
+        cooldown_tickers=set(cooldown_tickers),
+        cooldown_review_tickers=_resolve_cooldown_shadow_review_tickers(),
+    )
     if cooldown_tickers:
-        mask_cool = stock_df["symbol"].isin(cooldown_tickers)
-        cooldown_review_tickers = _resolve_cooldown_shadow_review_tickers()
-        if cooldown_review_tickers:
-            cooldown_review_df = stock_df[mask_cool & stock_df["symbol"].isin(cooldown_review_tickers)].copy()
-        stock_df = stock_df[~mask_cool].copy()
-        print(f"[CandidatePool] 排除冷却期后: {len(stock_df)} (过滤 {mask_cool.sum()})")
+        print(f"[CandidatePool] 排除冷却期后: {len(stock_df)} (过滤 {cooldown_filtered_count})")
         if not cooldown_review_df.empty:
             print(f"[CandidatePool] 保留冷却期 focus shadow review: {len(cooldown_review_df)}")
 
     daily_df = get_daily_basic_batch(trade_date)
     amount_map: Dict[str, float] = {}
-    estimated_amount_map: Dict[str, float] = {}
-    mv_map: Dict[str, float] = {}
+    estimated_amount_map, mv_map = build_daily_basic_maps(
+        daily_df=daily_df,
+        estimate_amount_fn=_estimate_amount_from_daily_basic,
+    )
 
-    if daily_df is not None and not daily_df.empty:
-        for _, row in daily_df.iterrows():
-            ts = str(row["ts_code"])
-            if pd.notna(row.get("total_mv")):
-                mv_map[ts] = float(row["total_mv"])
-            estimated_amount_map[ts] = _estimate_amount_from_daily_basic(row)
-
-    if estimated_amount_map:
-        low_estimated_liq_codes = {
-            ts_code
-            for ts_code in stock_df["ts_code"].tolist()
-            if 0.0 < estimated_amount_map.get(ts_code, 0.0) < MIN_ESTIMATED_AMOUNT_1D
-        }
-        if low_estimated_liq_codes:
-            mask_low_estimated_liq = stock_df["ts_code"].isin(low_estimated_liq_codes)
-            stock_df = stock_df[~mask_low_estimated_liq].copy()
-            if not cooldown_review_df.empty:
-                cooldown_review_df = cooldown_review_df[~cooldown_review_df["ts_code"].isin(low_estimated_liq_codes)].copy()
-            print(f"[CandidatePool] 排除低当日估算流动性后: {len(stock_df)} (过滤 {mask_low_estimated_liq.sum()})")
+    stock_df, cooldown_review_df = apply_estimated_liquidity_filter_with_logging(
+        stock_df=stock_df,
+        cooldown_review_df=cooldown_review_df,
+        estimated_amount_map=estimated_amount_map,
+        min_estimated_amount_1d=MIN_ESTIMATED_AMOUNT_1D,
+    )
 
     remaining_codes = stock_df["ts_code"].tolist() + cooldown_review_df["ts_code"].tolist()
     print(f"[CandidatePool] 开始计算 {len(remaining_codes)} 只标的的 20 日均成交额...")
 
-    low_liq_codes: Set[str] = set()
-    amount_map = _get_avg_amount_20d_map(pro, remaining_codes, trade_date)
-
-    if amount_map:
-        for ts_code in remaining_codes:
-            avg_amt = amount_map.get(ts_code, 0.0)
-            if avg_amt < MIN_AVG_AMOUNT_20D:
-                low_liq_codes.add(ts_code)
+    amount_map, low_liq_codes, used_batch_daily = load_amount_map_and_low_liquidity_codes(
+        pro=pro,
+        remaining_codes=remaining_codes,
+        trade_date=trade_date,
+        min_avg_amount_20d=MIN_AVG_AMOUNT_20D,
+        batch_size=TUSHARE_DAILY_BATCH_SIZE,
+        get_avg_amount_map_fn=_get_avg_amount_20d_map,
+        get_avg_amount_fn=_get_avg_amount_20d,
+        enforce_rate_limit_fn=_enforce_tushare_daily_rate_limit,
+    )
+    if used_batch_daily:
         print("[CandidatePool] 使用批量 daily 聚合完成 20 日均成交额计算")
-    else:
-        batch_size = TUSHARE_DAILY_BATCH_SIZE
-        for i in range(0, len(remaining_codes), batch_size):
-            batch = remaining_codes[i:i + batch_size]
-            batch_started_at = perf_counter()
-            for ts_code in batch:
-                avg_amt = _get_avg_amount_20d(pro, ts_code, trade_date)
-                amount_map[ts_code] = avg_amt
-                if avg_amt < MIN_AVG_AMOUNT_20D:
-                    low_liq_codes.add(ts_code)
-            _enforce_tushare_daily_rate_limit(
-                batch_started_at=batch_started_at,
-                processed_calls=len(batch),
-                has_more_batches=(i + batch_size) < len(remaining_codes),
-            )
-            progress_pct = min(100, int((i + batch_size) / len(remaining_codes) * 100))
-            print(f"[CandidatePool] 成交额计算进度: {progress_pct}%")
 
-    mask_low_liq = stock_df["ts_code"].isin(low_liq_codes)
-    stock_df = stock_df[~mask_low_liq].copy()
-    if not cooldown_review_df.empty:
-        cooldown_review_df = cooldown_review_df[~cooldown_review_df["ts_code"].isin(low_liq_codes)].copy()
-    print(f"[CandidatePool] 排除低流动性后: {len(stock_df)} (过滤 {mask_low_liq.sum()})")
+    stock_df, cooldown_review_df, low_liq_filtered_count = filter_low_liquidity_candidates(
+        stock_df=stock_df,
+        cooldown_review_df=cooldown_review_df,
+        low_liq_codes=low_liq_codes,
+    )
+    print(f"[CandidatePool] 排除低流动性后: {len(stock_df)} (过滤 {low_liq_filtered_count})")
 
-    sw_map = get_sw_industry_classification()
-    if sw_map is None:
-        sw_map = {}
+    sw_map = normalize_sw_map(get_sw_industry_classification())
 
     is_disclosure = _is_disclosure_window(trade_date)
-    candidates: List[CandidateStock] = []
-    cooldown_review_candidates: List[CandidateStock] = []
-
-    for _, row in stock_df.iterrows():
-        ts_code = str(row["ts_code"])
-        symbol = str(row["symbol"])
-        name = str(row["name"])
-        list_date = str(row["list_date"]) if pd.notna(row.get("list_date")) else ""
-        industry_sw = sw_map.get(ts_code, str(row.get("industry", "")))
-        market_cap = mv_map.get(ts_code, 0.0) / 10000.0
-        avg_vol = amount_map.get(ts_code, 0.0)
-
-        candidates.append(CandidateStock(
-            ticker=symbol,
-            name=name,
-            industry_sw=industry_sw,
-            market_cap=market_cap,
-            avg_volume_20d=avg_vol,
-            listing_date=list_date,
-            disclosure_risk=is_disclosure,
-        ))
-
-    for _, row in cooldown_review_df.iterrows():
-        ts_code = str(row["ts_code"])
-        symbol = str(row["symbol"])
-        name = str(row["name"])
-        list_date = str(row["list_date"]) if pd.notna(row.get("list_date")) else ""
-        industry_sw = sw_map.get(ts_code, str(row.get("industry", "")))
-        market_cap = mv_map.get(ts_code, 0.0) / 10000.0
-        avg_vol = amount_map.get(ts_code, 0.0)
-
-        cooldown_review_candidates.append(CandidateStock(
-            ticker=symbol,
-            name=name,
-            industry_sw=industry_sw,
-            market_cap=market_cap,
-            avg_volume_20d=avg_vol,
-            listing_date=list_date,
-            disclosure_risk=is_disclosure,
-            candidate_pool_lane="cooldown_review",
-            candidate_pool_shadow_reason="cooldown_review_shadow",
-        ))
+    candidates = build_candidate_stocks(
+        stock_df=stock_df,
+        sw_map=sw_map,
+        mv_map=mv_map,
+        amount_map=amount_map,
+        is_disclosure=is_disclosure,
+    )
+    cooldown_review_candidates = build_candidate_stocks(
+        stock_df=cooldown_review_df,
+        sw_map=sw_map,
+        mv_map=mv_map,
+        amount_map=amount_map,
+        is_disclosure=is_disclosure,
+        cooldown_review=True,
+    )
 
     return candidates, cooldown_review_candidates
 

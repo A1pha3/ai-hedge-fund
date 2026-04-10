@@ -14,6 +14,8 @@ from src.graph.state import AgentState
 from src.llm.defaults import get_default_model_config
 from src.llm.models import ProviderRoute, get_model, get_model_info, get_provider_concurrency_limit_env_var, get_provider_primary_route, get_provider_profile, get_provider_routes
 from src.monitoring.llm_metrics import record_llm_attempt
+from src.utils.llm_call_helpers import handle_llm_failure, resolve_llm_call_context, return_success_result
+from src.utils.llm_json_helpers import extract_balanced_json_candidates, extract_json_payload_from_content
 from src.utils.progress import progress
 
 
@@ -490,134 +492,67 @@ def call_llm(
         An instance of the specified Pydantic model
     """
 
-    # Extract model configuration if state is provided and agent_name is available
-    if state and agent_name:
-        model_name, model_provider = get_agent_model_config(state, agent_name)
-    else:
-        # Use system defaults when no state or agent_name is provided
-        model_name, model_provider = get_default_model_config()
-
-    # Extract API keys from state if available
-    api_keys = _extract_state_api_keys(state)
-    agent_override = _get_agent_llm_override(state, agent_name)
-    llm_observability = _get_llm_observability_context(state)
-
-    if agent_override:
-        model_name = str(agent_override.get("model_name") or model_name)
-        model_provider = str(agent_override.get("model_provider") or model_provider)
-        api_keys = _merge_api_keys(api_keys, agent_override.get("api_keys"))
-        fallback_chain = list(agent_override.get("fallback_chain") or [])
-        active_route_id = str(agent_override.get("route_id") or "") or None
-        active_transport_family = str(agent_override.get("transport_family") or _get_transport_family(model_provider, active_route_id, api_keys))
-    else:
-        model_name, model_provider, api_keys, fallback_chain, active_route_id, active_transport_family = _apply_priority_strategy(model_name, model_provider, api_keys)
-
-    llm, model_info = _build_llm(model_name, model_provider, api_keys, pydantic_model)
-    active_model_name = model_name
-    active_model_provider = model_provider
-    active_api_keys = api_keys
-    fallback_index = 0
+    context = resolve_llm_call_context(
+        state=state,
+        agent_name=agent_name,
+        get_agent_model_config=get_agent_model_config,
+        get_default_model_config=get_default_model_config,
+        extract_state_api_keys=_extract_state_api_keys,
+        get_agent_llm_override=_get_agent_llm_override,
+        get_llm_observability_context=_get_llm_observability_context,
+        merge_api_keys=_merge_api_keys,
+        apply_priority_strategy=_apply_priority_strategy,
+        get_transport_family=_get_transport_family,
+    )
+    llm, model_info = _build_llm(context.active_model_name, context.active_model_provider, context.active_api_keys, pydantic_model)
 
     # Call the LLM with retries
     for attempt in range(max_retries):
-        _wait_for_provider_rate_limit_cooldown(active_model_provider, active_route_id)
+        _wait_for_provider_rate_limit_cooldown(context.active_model_provider, context.active_route_id)
         attempt_started_at = perf_counter()
         try:
-            # Call the LLM
             result = llm.invoke(prompt)
-
-            # For non-JSON support models, we need to extract and parse the JSON manually
-            if model_info and not model_info.has_json_mode():
-                parsed_result = extract_json_from_response(result.content)
-                if parsed_result:
-                    _record_llm_attempt_safely(
-                        agent_name=agent_name,
-                        model_provider=active_model_provider,
-                        model_name=active_model_name,
-                        attempt_number=attempt + 1,
-                        success=True,
-                        duration_ms=(perf_counter() - attempt_started_at) * 1000,
-                        prompt=prompt,
-                        response=result.content,
-                        used_fallback=fallback_index > 0,
-                        route_id=active_route_id,
-                        transport_family=active_transport_family,
-                        trade_date=llm_observability.get("trade_date"),
-                        pipeline_stage=llm_observability.get("pipeline_stage"),
-                        model_tier=llm_observability.get("model_tier"),
-                    )
-                    return pydantic_model(**parsed_result)
-                else:
-                    raise ValueError(f"Could not extract valid JSON from response: {result.content[:200]}...")
-            else:
-                _record_llm_attempt_safely(
-                    agent_name=agent_name,
-                    model_provider=active_model_provider,
-                    model_name=active_model_name,
-                    attempt_number=attempt + 1,
-                    success=True,
-                    duration_ms=(perf_counter() - attempt_started_at) * 1000,
-                    prompt=prompt,
-                    response=getattr(result, "content", result),
-                    used_fallback=fallback_index > 0,
-                    route_id=active_route_id,
-                    transport_family=active_transport_family,
-                    trade_date=llm_observability.get("trade_date"),
-                    pipeline_stage=llm_observability.get("pipeline_stage"),
-                    model_tier=llm_observability.get("model_tier"),
-                )
-                return result
-
-        except Exception as e:
-            retry_delay = _compute_retry_delay(attempt, e)
-            _record_llm_attempt_safely(
-                agent_name=agent_name,
-                model_provider=active_model_provider,
-                model_name=active_model_name,
+            return return_success_result(
+                llm_result=result,
+                model_info=model_info,
+                pydantic_model=pydantic_model,
+                prompt=prompt,
                 attempt_number=attempt + 1,
-                success=False,
+                duration_ms=(perf_counter() - attempt_started_at) * 1000,
+                agent_name=agent_name,
+                context=context,
+                extract_json_from_response=extract_json_from_response,
+                record_llm_attempt_safely=_record_llm_attempt_safely,
+            )
+        except Exception as e:
+            outcome = handle_llm_failure(
+                error=e,
+                attempt_number=attempt + 1,
+                max_retries=max_retries,
                 duration_ms=(perf_counter() - attempt_started_at) * 1000,
                 prompt=prompt,
-                error=e,
-                is_rate_limit=_is_rate_limit_error(e),
-                used_fallback=fallback_index > 0,
-                route_id=active_route_id,
-                transport_family=active_transport_family,
-                trade_date=llm_observability.get("trade_date"),
-                pipeline_stage=llm_observability.get("pipeline_stage"),
-                model_tier=llm_observability.get("model_tier"),
+                agent_name=agent_name,
+                pydantic_model=pydantic_model,
+                context=context,
+                llm=llm,
+                model_info=model_info,
+                record_llm_attempt_safely=_record_llm_attempt_safely,
+                compute_retry_delay=_compute_retry_delay,
+                is_rate_limit_error=_is_rate_limit_error,
+                register_provider_rate_limit_cooldown=_register_provider_rate_limit_cooldown,
+                is_provider_fallback_disabled=_is_provider_fallback_disabled,
+                get_transport_family=_get_transport_family,
+                build_llm=_build_llm,
+                progress_update_status=progress.update_status,
+                create_default_response=(lambda _model: default_factory()) if default_factory else create_default_response,
+                sleep=time.sleep,
             )
-            if _is_rate_limit_error(e):
-                _register_provider_rate_limit_cooldown(active_model_provider, active_route_id, retry_delay)
-
-            if fallback_index < len(fallback_chain) and _is_rate_limit_error(e):
-                if _is_provider_fallback_disabled():
-                    fallback_chain = []
-                else:
-                    fallback_config = fallback_chain[fallback_index]
-                    fallback_index += 1
-                    active_model_name = fallback_config["model_name"]
-                    active_model_provider = fallback_config["model_provider"]
-                    active_api_keys = fallback_config.get("api_keys")
-                    active_route_id = str(fallback_config.get("route_id") or "") or None
-                    active_transport_family = str(fallback_config.get("transport_family") or _get_transport_family(active_model_provider, active_route_id, active_api_keys))
-                    llm, model_info = _build_llm(active_model_name, active_model_provider, active_api_keys, pydantic_model)
-                    if agent_name:
-                        progress.update_status(agent_name, None, str(fallback_config["status_message"]))
-                        continue
-
-            if agent_name:
-                progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
-
-            if attempt == max_retries - 1:
-                print(f"Error in LLM call after {max_retries} attempts: {e}")
-                # Use default_factory if provided, otherwise create a basic default
-                if default_factory:
-                    return default_factory()
-                return create_default_response(pydantic_model)
-
-            if not _is_rate_limit_error(e):
-                time.sleep(retry_delay)
+            llm = outcome.llm
+            model_info = outcome.model_info
+            if outcome.response is not None:
+                return outcome.response
+            if outcome.should_continue:
+                continue
 
     # This should never be reached due to the retry logic above
     return create_default_response(pydantic_model)
@@ -659,42 +594,7 @@ def _strip_reasoning_blocks(content: str) -> str:
 
 
 def _extract_balanced_json_candidates(content: str) -> list[str]:
-    """Finds balanced JSON object candidates while ignoring braces inside strings."""
-    candidates: list[str] = []
-    brace_count = 0
-    start_idx = -1
-    in_string = False
-    escape_next = False
-
-    for index, char in enumerate(content):
-        if in_string:
-            if escape_next:
-                escape_next = False
-                continue
-            if char == "\\":
-                escape_next = True
-                continue
-            if char == '"':
-                in_string = False
-            continue
-
-        if char == '"':
-            in_string = True
-            continue
-
-        if char == "{":
-            if brace_count == 0:
-                start_idx = index
-            brace_count += 1
-            continue
-
-        if char == "}" and brace_count > 0:
-            brace_count -= 1
-            if brace_count == 0 and start_idx != -1:
-                candidates.append(content[start_idx : index + 1])
-                start_idx = -1
-
-    return candidates
+    return extract_balanced_json_candidates(content)
 
 
 def _try_json_loads(payload: str) -> dict | None:
@@ -768,45 +668,11 @@ def extract_json_from_response(content: str) -> dict | None:
         # Remove model reasoning wrappers before attempting to parse JSON.
         content = _strip_reasoning_blocks(content)
         content = content.strip()
-
-        # Try direct JSON first after cleaning.
-        if content.startswith("{") or content.startswith("["):
-            parsed = _try_json_loads(content)
-            if parsed is not None:
-                return parsed
-
-        # Try to find JSON in markdown code block with 'json' marker
-        json_start = content.find("```json")
-        if json_start != -1:
-            json_text = content[json_start + 7 :]  # Skip past ```json
-            json_end = json_text.find("```")
-            if json_end != -1:
-                json_text = json_text[:json_end].strip()
-                parsed = _try_json_loads(json_text)
-                if parsed is not None:
-                    return parsed
-
-        # Try to find JSON in markdown code block without 'json' marker
-        json_start = content.find("```")
-        if json_start != -1:
-            json_text = content[json_start + 3 :]  # Skip past ```
-            json_end = json_text.find("```")
-            if json_end != -1:
-                json_text = json_text[:json_end].strip()
-                if json_text.startswith("{") or json_text.startswith("["):
-                    parsed = _try_json_loads(json_text)
-                    if parsed is not None:
-                        return parsed
-
-        # Try to find raw JSON object with balanced braces.
-        for json_str in _extract_balanced_json_candidates(content):
-            parsed = _try_json_loads(json_str)
-            if parsed is not None:
-                return parsed
-
-        repaired_signal_payload = _extract_common_signal_payload(content)
-        if repaired_signal_payload is not None:
-            return repaired_signal_payload
+        return extract_json_payload_from_content(
+            content=content,
+            try_json_loads=_try_json_loads,
+            extract_common_signal_payload=_extract_common_signal_payload,
+        )
 
     except Exception as e:
         print(f"Error extracting JSON from response: {e}")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.execution.models import PendingOrder
-from src.portfolio.correlation_cluster import build_correlation_clusters, correlation_threshold_for_market, compute_correlation_matrix, market_median_correlation
+from src.portfolio.correlation_cluster import build_correlation_clusters, correlation_threshold_for_market
 from src.portfolio.limit_handler import process_pending_buy, process_pending_sell, queue_pending_buy, queue_pending_sell
 from src.portfolio.models import HoldingState, PositionPlan
 from src.portfolio.position_calculator import enforce_daily_trade_limit, evaluate_portfolio_risk_guardrails

@@ -8,9 +8,12 @@ from typing import Optional
 
 from src.screening.candidate_pool import add_cooldown, get_cooled_tickers, load_cooldown_registry, save_cooldown_registry
 from src.screening.models import ArbitrationAction, DEFAULT_STRATEGY_WEIGHTS, FusedScore, MarketState, StrategySignal
-
-SHORT_HOLD_STRATEGIES = {"trend", "event_sentiment"}
-LONG_HOLD_STRATEGIES = {"fundamental"}
+from src.screening.signal_fusion_arbitration_helpers import (
+    apply_hold_hint,
+    apply_hurst_conflict_resolution,
+    initialize_arbitration_state,
+    maybe_apply_forced_avoid,
+)
 
 
 def _analysis_excludes_neutral_mean_reversion() -> bool:
@@ -330,68 +333,23 @@ def apply_arbitration_rules(
     market_state: MarketState,
     trade_date: Optional[str] = None,
 ) -> tuple[dict[str, StrategySignal], list[str], Optional[str], bool]:
-    weights = market_state.adjusted_weights or DEFAULT_STRATEGY_WEIGHTS.copy()
-    arbitration_applied: list[str] = []
-    hold_hint: Optional[str] = None
-    forced_avoid = False
-
-    fundamental_signal = signals.get("fundamental", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
-
-    if trade_date:
-        maybe_release_cooldown_early(ticker, trade_date, fundamental_signal)
-
-    if _has_quality_first_red_flag(signals):
-        arbitration_applied.append(ArbitrationAction.AVOID.value)
-        if trade_date:
-            add_cooldown(ticker, trade_date, days=15)
-        forced_avoid = True
-        return signals, arbitration_applied, hold_hint, forced_avoid
-
-    if fundamental_signal.direction == -1 and any(
-        signal.direction == -1 and signal.confidence >= 75
-        for signal in signals.values()
+    state = initialize_arbitration_state(market_state)
+    if maybe_apply_forced_avoid(
+        ticker=ticker,
+        signals=signals,
+        state=state,
+        trade_date=trade_date,
+        maybe_release_cooldown_early=maybe_release_cooldown_early,
+        has_quality_first_red_flag=_has_quality_first_red_flag,
+        add_cooldown=add_cooldown,
     ):
-        arbitration_applied.append(ArbitrationAction.AVOID.value)
-        if trade_date:
-            add_cooldown(ticker, trade_date, days=15)
-        forced_avoid = True
-        return signals, arbitration_applied, hold_hint, forced_avoid
-
-    short_contrib = sum(_signal_contribution(weights.get(name, 0.0), signal) for name, signal in signals.items() if name in SHORT_HOLD_STRATEGIES)
-    long_contrib = sum(_signal_contribution(weights.get(name, 0.0), signal) for name, signal in signals.items() if name in LONG_HOLD_STRATEGIES)
-    total_contrib = sum(_signal_contribution(weights.get(name, 0.0), signal) for name, signal in signals.items())
-    if total_contrib > 0:
-        if short_contrib / total_contrib >= 0.60:
-            arbitration_applied.append(ArbitrationAction.SHORT_HOLD.value)
-            hold_hint = ArbitrationAction.SHORT_HOLD.value
-        elif long_contrib / total_contrib >= 0.60:
-            arbitration_applied.append(ArbitrationAction.LONG_HOLD.value)
-            hold_hint = ArbitrationAction.LONG_HOLD.value
-
-    _apply_risk_off_short_term_demotion(signals, market_state, arbitration_applied)
-
-    trend_signal = signals.get("trend")
-    mean_reversion_signal = signals.get("mean_reversion")
-    if trend_signal and mean_reversion_signal and trend_signal.direction != 0 and mean_reversion_signal.direction != 0 and trend_signal.direction != mean_reversion_signal.direction:
-        hurst = None
-        sub_factor = mean_reversion_signal.sub_factors.get("hurst_regime", {})
-        metrics = sub_factor.get("metrics", {}) if isinstance(sub_factor, dict) else {}
-        hurst = metrics.get("hurst_exponent")
-        if hurst is not None and hurst > 0.55:
-            mean_reversion_signal.confidence *= 0.5
-            arbitration_applied.append(ArbitrationAction.TRUST_TREND.value)
-        elif hurst is not None and hurst < 0.45:
-            trend_signal.confidence *= 0.5
-            arbitration_applied.append(ArbitrationAction.TRUST_REVERSION.value)
-        else:
-            trend_signal.confidence *= 0.5
-            mean_reversion_signal.confidence *= 0.5
-            arbitration_applied.append(ArbitrationAction.BOTH_DEMOTE.value)
-
+        return signals, state.arbitration_applied, state.hold_hint, state.forced_avoid
+    apply_hold_hint(signals=signals, state=state, signal_contribution=_signal_contribution)
+    _apply_risk_off_short_term_demotion(signals, market_state, state.arbitration_applied)
+    apply_hurst_conflict_resolution(signals=signals, state=state)
     if _should_apply_consensus_bonus(signals, market_state):
-        arbitration_applied.append(ArbitrationAction.CONSENSUS_BONUS.value)
-
-    return signals, arbitration_applied, hold_hint, forced_avoid
+        state.arbitration_applied.append(ArbitrationAction.CONSENSUS_BONUS.value)
+    return signals, state.arbitration_applied, state.hold_hint, state.forced_avoid
 
 
 def compute_score_b(signals: dict[str, StrategySignal], weights: dict[str, float], arbitration_applied: list[str]) -> float:

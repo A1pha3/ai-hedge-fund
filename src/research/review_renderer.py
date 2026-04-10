@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.research.models import SelectionSnapshot
+from src.research.review_renderer_selected_helpers import render_selected_candidate
 
 
 def _format_layer_b_factor(factor: dict) -> str:
@@ -34,35 +35,7 @@ def _render_selected_section(snapshot: SelectionSnapshot) -> list[str]:
         return lines
 
     for index, candidate in enumerate(snapshot.selected, start=1):
-        lines.append(f"### {index}. {candidate.symbol} {candidate.name}".rstrip())
-        lines.append(f"- final_score: {candidate.score_final:.4f}")
-        lines.append(f"- buy_order: {'yes' if candidate.execution_bridge.get('included_in_buy_orders') else 'no'}")
-        research_target_summary = _format_target_decision(candidate, "research")
-        if research_target_summary:
-            lines.append(f"- research_target: {research_target_summary}")
-        short_trade_target_summary = _format_target_decision(candidate, "short_trade")
-        if short_trade_target_summary:
-            lines.append(f"- short_trade_target: {short_trade_target_summary}")
-        if candidate.execution_bridge.get("block_reason"):
-            blocker = str(candidate.execution_bridge.get("block_reason"))
-            constraint_binding = candidate.execution_bridge.get("constraint_binding")
-            if constraint_binding:
-                blocker = f"{blocker} (binding={constraint_binding})"
-            lines.append(f"- buy_order_blocker: {blocker}")
-        if candidate.execution_bridge.get("reentry_review_until"):
-            lines.append(f"- reentry_review_until: {candidate.execution_bridge.get('reentry_review_until')}")
-        top_factors = list((candidate.layer_b_summary or {}).get("top_factors", []) or [])
-        if top_factors:
-            lines.append("- Layer B 因子摘要:")
-            for factor in top_factors[:3]:
-                lines.append(f"  - {_format_layer_b_factor(factor)}")
-        lines.append("- 入选原因:")
-        for reason in list(candidate.research_prompts.get("why_selected", []))[:3]:
-            lines.append(f"  - {reason}")
-        lines.append("- 建议重点复核:")
-        for reason in list(candidate.research_prompts.get("what_to_check", []))[:2]:
-            lines.append(f"  - {reason}")
-        lines.append("")
+        lines.extend(render_selected_candidate(candidate, index, _format_target_decision, _format_layer_b_factor))
     return lines
 
 

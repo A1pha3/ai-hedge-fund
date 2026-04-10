@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 import pandas as pd
+from src.portfolio.correlation_cluster_helpers import build_cluster_groups, build_union_find_parent, merge_correlated_pairs
 
 
 def compute_correlation_matrix(price_frames: dict[str, pd.DataFrame], window: int = 60) -> pd.DataFrame:
@@ -26,32 +25,9 @@ def build_correlation_clusters(correlation_matrix: pd.DataFrame, threshold: floa
     if correlation_matrix.empty:
         return []
     tickers = list(correlation_matrix.index)
-    parent = {ticker: ticker for ticker in tickers}
-
-    def find(node: str) -> str:
-        while parent[node] != node:
-            parent[node] = parent[parent[node]]
-            node = parent[node]
-        return node
-
-    def union(left: str, right: str) -> None:
-        root_left = find(left)
-        root_right = find(right)
-        if root_left != root_right:
-            parent[root_right] = root_left
-
-    for row_ticker in tickers:
-        for col_ticker in tickers:
-            if row_ticker >= col_ticker:
-                continue
-            value = correlation_matrix.loc[row_ticker, col_ticker]
-            if pd.notna(value) and value > threshold:
-                union(row_ticker, col_ticker)
-
-    groups: dict[str, set[str]] = defaultdict(set)
-    for ticker in tickers:
-        groups[find(ticker)].add(ticker)
-    return list(groups.values())
+    parent = build_union_find_parent(tickers)
+    merge_correlated_pairs(correlation_matrix=correlation_matrix, tickers=tickers, threshold=threshold, parent=parent)
+    return build_cluster_groups(tickers=tickers, parent=parent)
 
 
 def market_median_correlation(correlation_matrix: pd.DataFrame) -> float:

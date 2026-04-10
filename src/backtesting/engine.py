@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, Dict, Sequence
+from typing import Any, Callable, Dict, Sequence
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta
@@ -22,12 +23,36 @@ from src.tools.api import (
     get_price_data,
     get_prices,
 )
+from .engine_pipeline_helpers import (
+    PipelineDayContext,
+    build_pipeline_active_tickers,
+    build_pipeline_day_context,
+    build_pipeline_event_payload,
+    build_pipeline_timing_payload,
+    collect_execution_plan_observations,
+    extract_plan_risk_metrics,
+    initialize_pipeline_day_state,
+)
 
 from .benchmarks import BenchmarkCalculator
 from .controller import AgentController
 from .metrics import PerformanceMetricsCalculator
 from .output import OutputBuilder
 from .portfolio import Portfolio
+
+
+@dataclass
+class PipelineModeDayState:
+    decisions: Dict[str, dict]
+    executed_trades: Dict[str, int]
+    pre_market_seconds: float = 0.0
+    intraday_seconds: float = 0.0
+    append_daily_state_seconds: float = 0.0
+    post_market_seconds: float = 0.0
+    previous_plan_counts: dict[str, int] = field(default_factory=dict)
+    previous_plan_timing: dict[str, float] = field(default_factory=dict)
+    previous_plan_funnel_diagnostics: dict = field(default_factory=dict)
+    prepared_plan: ExecutionPlan | None = None
 from .trader import TradeExecutor, TradingConstraints
 from .types import AgentOutput, BacktestMode, PerformanceMetrics, PortfolioValuePoint
 from .valuation import calculate_portfolio_value, compute_exposures
@@ -359,36 +384,17 @@ class BacktestEngine:
 
     def _run_agent_mode(self, dates: pd.DatetimeIndex) -> PerformanceMetrics:
         for current_date in dates:
-            lookback_start = (current_date - relativedelta(months=1)).strftime("%Y-%m-%d")
-            current_date_str = current_date.strftime("%Y-%m-%d")
-            previous_date_str = (current_date - relativedelta(days=1)).strftime("%Y-%m-%d")
-            if lookback_start == current_date_str:
+            day_window = self._resolve_agent_mode_day_window(current_date)
+            if day_window is None:
                 continue
+            lookback_start, current_date_str, previous_date_str = day_window
 
             current_prices = self._load_current_prices(self._tickers, previous_date_str, current_date_str)
             if current_prices is None:
                 continue
 
-            agent_output = self._agent_controller.run_agent(
-                self._agent,
-                tickers=self._tickers,
-                start_date=lookback_start,
-                end_date=current_date_str,
-                portfolio=self._portfolio,
-                model_name=self._model_name,
-                model_provider=self._model_provider,
-                selected_analysts=self._selected_analysts,
-            )
-            decisions = agent_output["decisions"]
-
-            executed_trades: Dict[str, int] = {}
-            for ticker in self._tickers:
-                d = decisions.get(ticker, {"action": "hold", "quantity": 0})
-                action = d.get("action", "hold")
-                qty = d.get("quantity", 0)
-                executed_qty = self._executor.execute_trade(ticker, action, qty, current_prices[ticker], self._portfolio)
-                executed_trades[ticker] = executed_qty
-
+            agent_output = self._run_agent_mode_agent(lookback_start=lookback_start, current_date_str=current_date_str)
+            executed_trades = self._execute_agent_mode_trades(agent_output["decisions"], current_prices)
             self._append_daily_state(
                 current_date=current_date,
                 current_date_str=current_date_str,
@@ -399,6 +405,39 @@ class BacktestEngine:
             )
 
         return self._performance_metrics
+
+    def _resolve_agent_mode_day_window(self, current_date: pd.Timestamp) -> tuple[str, str, str] | None:
+        lookback_start = (current_date - relativedelta(months=1)).strftime("%Y-%m-%d")
+        current_date_str = current_date.strftime("%Y-%m-%d")
+        if lookback_start == current_date_str:
+            return None
+        previous_date_str = (current_date - relativedelta(days=1)).strftime("%Y-%m-%d")
+        return lookback_start, current_date_str, previous_date_str
+
+    def _run_agent_mode_agent(self, *, lookback_start: str, current_date_str: str) -> AgentOutput:
+        return self._agent_controller.run_agent(
+            self._agent,
+            tickers=self._tickers,
+            start_date=lookback_start,
+            end_date=current_date_str,
+            portfolio=self._portfolio,
+            model_name=self._model_name,
+            model_provider=self._model_provider,
+            selected_analysts=self._selected_analysts,
+        )
+
+    def _execute_agent_mode_trades(self, decisions: Dict[str, dict], current_prices: Dict[str, float]) -> Dict[str, int]:
+        executed_trades: Dict[str, int] = {}
+        for ticker in self._tickers:
+            decision = decisions.get(ticker, {"action": "hold", "quantity": 0})
+            executed_trades[ticker] = self._executor.execute_trade(
+                ticker,
+                decision.get("action", "hold"),
+                decision.get("quantity", 0),
+                current_prices[ticker],
+                self._portfolio,
+            )
+        return executed_trades
 
     def _build_confirmation_inputs(self, plan: ExecutionPlan, current_prices: Dict[str, float]) -> Dict[str, dict]:
         confirmation_inputs: Dict[str, dict] = {}
@@ -433,6 +472,60 @@ class BacktestEngine:
             by_key[(order.ticker, order.order_type)] = order
         return list(by_key.values())
 
+    def _process_single_pending_buy(
+        self,
+        *,
+        order: PendingOrder,
+        current_prices: Dict[str, float],
+        limit_up: set[str],
+        watch_scores: Dict[str, float],
+        decisions: Dict[str, dict],
+        next_pending_buy: list[PendingOrder],
+        alerts: list[str],
+    ) -> None:
+        normalized_ticker = self._normalize_ticker(order.ticker)
+        price = current_prices.get(order.ticker)
+        if price is None:
+            next_pending_buy.append(order)
+            return
+        result = process_pending_buy(
+            order,
+            current_score=watch_scores.get(order.ticker, order.original_score),
+            is_limit_up=normalized_ticker in limit_up,
+            opened_board=normalized_ticker not in limit_up,
+            current_price=price,
+            reference_close=price,
+        )
+        if result["action"] == "execute" and order.shares > 0:
+            existing_qty = int(decisions.get(order.ticker, {}).get("quantity", 0))
+            decisions[order.ticker] = {"action": "buy", "quantity": max(existing_qty, order.shares)}
+            alerts.append(f"pending_buy_execute:{order.ticker}")
+        elif result["action"] == "keep":
+            next_pending_buy.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
+        elif result["action"] == "remove":
+            alerts.append(f"pending_buy_remove:{order.ticker}:{result['reason']}")
+
+    def _process_single_pending_sell(
+        self,
+        *,
+        order: PendingOrder,
+        limit_down: set[str],
+        decisions: Dict[str, dict],
+        next_pending_sell: list[PendingOrder],
+        alerts: list[str],
+    ) -> None:
+        normalized_ticker = self._normalize_ticker(order.ticker)
+        result = process_pending_sell(order, is_limit_down=normalized_ticker in limit_down)
+        if result["action"] == "execute" and order.shares > 0:
+            existing_qty = int(decisions.get(order.ticker, {}).get("quantity", 0))
+            decisions[order.ticker] = {"action": "sell", "quantity": max(existing_qty, order.shares), "reason": order.reason}
+            alerts.append(f"pending_sell_execute:{order.ticker}")
+        elif result["action"] == "keep":
+            next_pending_sell.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
+        elif result["action"] == "risk_reduce_others":
+            next_pending_sell.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
+            alerts.append(f"pending_sell_risk_reduce:{order.ticker}")
+
     def _process_pending_queues(
         self,
         *,
@@ -449,281 +542,511 @@ class BacktestEngine:
         watch_scores = {item.ticker: item.score_final for item in prepared_plan.watchlist}
 
         for order in self._pending_buy_queue:
-            normalized_ticker = self._normalize_ticker(order.ticker)
-            price = current_prices.get(order.ticker)
-            if price is None:
-                next_pending_buy.append(order)
-                continue
-            result = process_pending_buy(
-                order,
-                current_score=watch_scores.get(order.ticker, order.original_score),
-                is_limit_up=normalized_ticker in limit_up,
-                opened_board=normalized_ticker not in limit_up,
-                current_price=price,
-                reference_close=price,
+            self._process_single_pending_buy(
+                order=order,
+                current_prices=current_prices,
+                limit_up=limit_up,
+                watch_scores=watch_scores,
+                decisions=decisions,
+                next_pending_buy=next_pending_buy,
+                alerts=alerts,
             )
-            if result["action"] == "execute" and order.shares > 0:
-                existing_qty = int(decisions.get(order.ticker, {}).get("quantity", 0))
-                decisions[order.ticker] = {"action": "buy", "quantity": max(existing_qty, order.shares)}
-                alerts.append(f"pending_buy_execute:{order.ticker}")
-            elif result["action"] == "keep":
-                next_pending_buy.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
-            elif result["action"] == "remove":
-                alerts.append(f"pending_buy_remove:{order.ticker}:{result['reason']}")
 
         for order in self._pending_sell_queue:
-            normalized_ticker = self._normalize_ticker(order.ticker)
-            result = process_pending_sell(order, is_limit_down=normalized_ticker in limit_down)
-            if result["action"] == "execute" and order.shares > 0:
-                existing_qty = int(decisions.get(order.ticker, {}).get("quantity", 0))
-                decisions[order.ticker] = {"action": "sell", "quantity": max(existing_qty, order.shares), "reason": order.reason}
-                alerts.append(f"pending_sell_execute:{order.ticker}")
-            elif result["action"] == "keep":
-                next_pending_sell.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
-            elif result["action"] == "risk_reduce_others":
-                next_pending_sell.append(order.model_copy(update={"queue_days": int(result["queue_days"])}))
-                alerts.append(f"pending_sell_risk_reduce:{order.ticker}")
+            self._process_single_pending_sell(
+                order=order,
+                limit_down=limit_down,
+                decisions=decisions,
+                next_pending_sell=next_pending_sell,
+                alerts=alerts,
+            )
 
         return self._dedupe_pending_orders(next_pending_buy), self._dedupe_pending_orders(next_pending_sell), alerts
 
-    def _run_pipeline_mode(self, dates: pd.DatetimeIndex, pending_plan: ExecutionPlan | None = None) -> PerformanceMetrics:
+    def _load_pipeline_day_context(
+        self,
+        *,
+        current_date: pd.Timestamp,
+        pending_plan: ExecutionPlan | None,
+    ) -> PipelineDayContext | None:
+        active_tickers = build_pipeline_active_tickers(
+            base_tickers=self._tickers,
+            position_tickers=self._portfolio.get_positions().keys(),
+            pending_plan=pending_plan,
+        )
+        stage_started_at = perf_counter()
+        current_date_str = current_date.strftime("%Y-%m-%d")
+        previous_date_str = (current_date - relativedelta(days=1)).strftime("%Y-%m-%d")
+        current_prices = self._load_current_prices(active_tickers, previous_date_str, current_date_str)
+        if current_prices is None:
+            return None
+        current_prices = self._hydrate_position_prices(current_prices, previous_date_str, current_date_str)
+        daily_turnovers = self._get_daily_turnovers(active_tickers, previous_date_str, current_date_str)
+        limit_up, limit_down = self._get_limit_state(current_date.strftime("%Y%m%d"))
+        return build_pipeline_day_context(
+            current_date=current_date,
+            active_tickers=active_tickers,
+            current_prices=current_prices,
+            daily_turnovers=daily_turnovers,
+            limit_up=limit_up,
+            limit_down=limit_down,
+            load_market_data_seconds=perf_counter() - stage_started_at,
+        )
 
+    def _apply_pipeline_decisions(
+        self,
+        *,
+        prepared_plan: ExecutionPlan,
+        current_prices: Dict[str, float],
+        daily_turnovers: Dict[str, float],
+        limit_up: set[str],
+        limit_down: set[str],
+        trade_date_compact: str,
+        decisions: Dict[str, dict],
+        executed_trades: Dict[str, int],
+    ) -> None:
+        buy_order_by_ticker = {order.ticker: order for order in prepared_plan.buy_orders}
+        watchlist_by_ticker = {item.ticker: item for item in prepared_plan.watchlist}
+        for ticker, decision in decisions.items():
+            self._apply_single_pipeline_decision(
+                ticker=ticker,
+                decision=decision,
+                current_prices=current_prices,
+                daily_turnovers=daily_turnovers,
+                limit_up=limit_up,
+                limit_down=limit_down,
+                trade_date_compact=trade_date_compact,
+                buy_order_by_ticker=buy_order_by_ticker,
+                watchlist_by_ticker=watchlist_by_ticker,
+                executed_trades=executed_trades,
+            )
+        self._pending_buy_queue = self._dedupe_pending_orders(self._pending_buy_queue)
+        self._pending_sell_queue = self._dedupe_pending_orders(self._pending_sell_queue)
+
+    def _apply_single_pipeline_decision(
+        self,
+        *,
+        ticker: str,
+        decision: dict,
+        current_prices: Dict[str, float],
+        daily_turnovers: Dict[str, float],
+        limit_up: set[str],
+        limit_down: set[str],
+        trade_date_compact: str,
+        buy_order_by_ticker: dict[str, Any],
+        watchlist_by_ticker: dict[str, Any],
+        executed_trades: Dict[str, int],
+    ) -> None:
+        price = current_prices.get(ticker)
+        if price is None:
+            return
+        normalized_ticker = self._normalize_ticker(ticker)
+        if self._queue_limit_blocked_pipeline_decision(
+            ticker=ticker,
+            decision=decision,
+            normalized_ticker=normalized_ticker,
+            trade_date_compact=trade_date_compact,
+            limit_up=limit_up,
+            limit_down=limit_down,
+            buy_order_by_ticker=buy_order_by_ticker,
+            executed_trades=executed_trades,
+        ):
+            return
+        executed_qty = self._execute_pipeline_decision(
+            ticker=ticker,
+            decision=decision,
+            price=price,
+            normalized_ticker=normalized_ticker,
+            daily_turnovers=daily_turnovers,
+            limit_up=limit_up,
+            limit_down=limit_down,
+        )
+        executed_trades[ticker] = executed_qty
+        self._record_pipeline_execution_side_effects(
+            ticker=ticker,
+            decision=decision,
+            executed_qty=executed_qty,
+            trade_date_compact=trade_date_compact,
+            buy_order_by_ticker=buy_order_by_ticker,
+            watchlist_by_ticker=watchlist_by_ticker,
+        )
+
+    def _queue_limit_blocked_pipeline_decision(
+        self,
+        *,
+        ticker: str,
+        decision: dict,
+        normalized_ticker: str,
+        trade_date_compact: str,
+        limit_up: set[str],
+        limit_down: set[str],
+        buy_order_by_ticker: dict[str, Any],
+        executed_trades: Dict[str, int],
+    ) -> bool:
+        if decision["action"] == "buy" and normalized_ticker in limit_up:
+            self._pending_buy_queue.append(
+                queue_pending_buy(
+                    ticker,
+                    original_score=(buy_order_by_ticker.get(ticker).score_final if buy_order_by_ticker.get(ticker) is not None else 0.0),
+                    queue_date=trade_date_compact,
+                    shares=int(decision["quantity"]),
+                    amount=(buy_order_by_ticker.get(ticker).amount if buy_order_by_ticker.get(ticker) is not None else 0.0),
+                )
+            )
+            executed_trades[ticker] = 0
+            return True
+        if decision["action"] == "sell" and normalized_ticker in limit_down:
+            long_shares = self._portfolio.get_positions().get(ticker, {}).get("long", 0)
+            sell_ratio = (int(decision["quantity"]) / long_shares) if long_shares else 1.0
+            self._pending_sell_queue.append(
+                queue_pending_sell(
+                    ticker,
+                    original_score=-1.0,
+                    queue_date=trade_date_compact,
+                    reason=str(decision.get("reason") or "limit_down_block"),
+                    shares=int(decision["quantity"]),
+                    sell_ratio=sell_ratio,
+                )
+            )
+            executed_trades[ticker] = 0
+            return True
+        return False
+
+    def _execute_pipeline_decision(
+        self,
+        *,
+        ticker: str,
+        decision: dict,
+        price: float,
+        normalized_ticker: str,
+        daily_turnovers: Dict[str, float],
+        limit_up: set[str],
+        limit_down: set[str],
+    ) -> int:
+        return self._executor.execute_trade(
+            ticker,
+            decision["action"],
+            decision["quantity"],
+            price,
+            self._portfolio,
+            is_limit_up=normalized_ticker in limit_up,
+            is_limit_down=normalized_ticker in limit_down,
+            daily_turnover=daily_turnovers.get(ticker),
+        )
+
+    def _record_pipeline_execution_side_effects(
+        self,
+        *,
+        ticker: str,
+        decision: dict,
+        executed_qty: int,
+        trade_date_compact: str,
+        buy_order_by_ticker: dict[str, Any],
+        watchlist_by_ticker: dict[str, Any],
+    ) -> None:
+        if executed_qty <= 0:
+            return
+        if decision["action"] == "buy":
+            self._record_pipeline_buy_execution(
+                ticker=ticker,
+                executed_qty=executed_qty,
+                trade_date_compact=trade_date_compact,
+                buy_order_by_ticker=buy_order_by_ticker,
+                watchlist_by_ticker=watchlist_by_ticker,
+            )
+            return
+        if decision["action"] == "sell":
+            trigger_reason = str(decision.get("reason") or "")
+            self._portfolio.record_long_exit(ticker, trigger_reason=trigger_reason)
+            self._register_exit_reentry_cooldown(ticker, trade_date_compact, trigger_reason)
+
+    def _record_pipeline_buy_execution(
+        self,
+        *,
+        ticker: str,
+        executed_qty: int,
+        trade_date_compact: str,
+        buy_order_by_ticker: dict[str, Any],
+        watchlist_by_ticker: dict[str, Any],
+    ) -> None:
+        existing_long_before = int(self._portfolio.get_positions()[ticker]["long"]) - int(executed_qty)
+        watch_item = watchlist_by_ticker.get(ticker)
+        matching_order = buy_order_by_ticker.get(ticker)
+        self._portfolio.record_long_entry(
+            ticker,
+            trade_date_compact,
+            reset=existing_long_before <= 0,
+            entry_score=(matching_order.score_final if matching_order is not None else (watch_item.score_final if watch_item is not None else 0.0)),
+            quality_score=(matching_order.quality_score if matching_order is not None else (watch_item.quality_score if watch_item is not None else 0.5)),
+            industry_sw="",
+            is_fundamental_driven=False,
+        )
+
+    def _run_pending_pipeline_plan(
+        self,
+        *,
+        pending_plan: ExecutionPlan,
+        day_context: PipelineDayContext,
+        decisions: Dict[str, dict],
+        executed_trades: Dict[str, int],
+    ) -> tuple[ExecutionPlan, float, float, dict[str, int], dict[str, float], dict]:
+        (
+            prepared_plan,
+            pre_market_seconds,
+            previous_plan_counts,
+            previous_plan_timing,
+            previous_plan_funnel_diagnostics,
+        ) = self._prepare_pending_pipeline_plan(pending_plan=pending_plan, trade_date_compact=day_context.trade_date_compact)
+        confirmed_orders, exits, crisis_response, queue_alerts, intraday_seconds = self._run_pending_intraday_stage(
+            prepared_plan=prepared_plan,
+            day_context=day_context,
+            decisions=decisions,
+        )
+
+        self._merge_pending_intraday_decisions(decisions=decisions, confirmed_orders=confirmed_orders, exits=exits, crisis_response=crisis_response)
+
+        self._apply_pipeline_decisions(
+            prepared_plan=prepared_plan,
+            current_prices=day_context.current_prices,
+            daily_turnovers=day_context.daily_turnovers,
+            limit_up=day_context.limit_up,
+            limit_down=day_context.limit_down,
+            trade_date_compact=day_context.trade_date_compact,
+            decisions=decisions,
+            executed_trades=executed_trades,
+        )
+        prepared_plan.risk_alerts.extend(queue_alerts)
+        return (
+            prepared_plan,
+            pre_market_seconds,
+            intraday_seconds,
+            previous_plan_counts,
+            previous_plan_timing,
+            previous_plan_funnel_diagnostics,
+        )
+
+    def _prepare_pending_pipeline_plan(
+        self,
+        *,
+        pending_plan: ExecutionPlan,
+        trade_date_compact: str,
+    ) -> tuple[ExecutionPlan, float, dict[str, int], dict[str, float], dict]:
+        stage_started_at = perf_counter()
+        prepared_plan = self._pipeline.run_pre_market(pending_plan, trade_date_compact)
+        pre_market_seconds = perf_counter() - stage_started_at
+        previous_plan_counts, previous_plan_timing, previous_plan_funnel_diagnostics = extract_plan_risk_metrics(pending_plan)
+        return prepared_plan, pre_market_seconds, previous_plan_counts, previous_plan_timing, previous_plan_funnel_diagnostics
+
+    def _run_pending_intraday_stage(
+        self,
+        *,
+        prepared_plan: ExecutionPlan,
+        day_context: PipelineDayContext,
+        decisions: Dict[str, dict],
+    ) -> tuple[list, list, dict, list[str], float]:
+        stage_started_at = perf_counter()
+        confirmation_inputs = self._build_confirmation_inputs(prepared_plan, day_context.current_prices)
+        next_pending_buy, next_pending_sell, queue_alerts = self._process_pending_queues(
+            prepared_plan=prepared_plan,
+            trade_date_compact=day_context.trade_date_compact,
+            current_prices=day_context.current_prices,
+            limit_up=day_context.limit_up,
+            limit_down=day_context.limit_down,
+            decisions=decisions,
+        )
+        self._pending_buy_queue = next_pending_buy
+        self._pending_sell_queue = next_pending_sell
+        confirmed_orders, exits, crisis_response = self._pipeline.run_intraday(
+            prepared_plan,
+            day_context.trade_date_compact,
+            confirmation_inputs=confirmation_inputs,
+            crisis_inputs={"drawdown_pct": 0.0},
+        )
+        intraday_seconds = perf_counter() - stage_started_at
+        return confirmed_orders, exits, crisis_response, queue_alerts, intraday_seconds
+
+    def _merge_pending_intraday_decisions(self, *, decisions: Dict[str, dict], confirmed_orders: list, exits: list, crisis_response: dict) -> None:
+        if crisis_response.get("pause_new_buys"):
+            confirmed_orders = []
+        self._apply_confirmed_order_decisions(decisions=decisions, confirmed_orders=confirmed_orders)
+        self._apply_exit_signal_decisions(decisions=decisions, exits=exits)
+        self._apply_crisis_reduce_decisions(decisions=decisions, crisis_response=crisis_response)
+
+    def _apply_confirmed_order_decisions(self, *, decisions: Dict[str, dict], confirmed_orders: list) -> None:
+        for order in confirmed_orders:
+            self._portfolio.ensure_ticker(order.ticker)
+            decisions[order.ticker] = {"action": "buy", "quantity": order.shares}
+
+    def _apply_exit_signal_decisions(self, *, decisions: Dict[str, dict], exits: list) -> None:
+        for exit_signal in exits:
+            self._portfolio.ensure_ticker(exit_signal.ticker)
+            long_shares = self._portfolio.get_positions()[exit_signal.ticker]["long"]
+            sell_quantity = int(long_shares * exit_signal.sell_ratio)
+            if sell_quantity > 0:
+                decisions[exit_signal.ticker] = {"action": "sell", "quantity": sell_quantity, "reason": str(getattr(exit_signal, "trigger_reason", "") or "")}
+
+    def _apply_crisis_reduce_decisions(self, *, decisions: Dict[str, dict], crisis_response: dict) -> None:
+        reduce_ratio = float(crisis_response.get("forced_reduce_ratio", 0.0) or 0.0)
+        if reduce_ratio <= 0:
+            return
+        for ticker, position in self._portfolio.get_positions().items():
+            if position["long"] <= 0:
+                continue
+            sell_quantity = int(position["long"] * reduce_ratio)
+            if sell_quantity <= 0:
+                continue
+            decisions[ticker] = {"action": "sell", "quantity": max(sell_quantity, decisions.get(ticker, {}).get("quantity", 0))}
+
+    def _run_pipeline_mode(self, dates: pd.DatetimeIndex, pending_plan: ExecutionPlan | None = None) -> PerformanceMetrics:
         for current_date in dates:
             day_started_at = perf_counter()
-            current_date_str = current_date.strftime("%Y-%m-%d")
-            trade_date_compact = current_date.strftime("%Y%m%d")
-            previous_date_str = (current_date - relativedelta(days=1)).strftime("%Y-%m-%d")
-
-            active_ticker_set = set(self._tickers)
-            active_ticker_set.update(self._portfolio.get_positions().keys())
-            if pending_plan is not None:
-                active_ticker_set.update(order.ticker for order in pending_plan.buy_orders)
-                active_ticker_set.update(order.ticker for order in pending_plan.sell_orders)
-            active_tickers = sorted(active_ticker_set)
-
-            stage_started_at = perf_counter()
-            current_prices = self._load_current_prices(active_tickers, previous_date_str, current_date_str)
-            if current_prices is None:
+            day_context = self._load_pipeline_day_context(current_date=current_date, pending_plan=pending_plan)
+            if day_context is None:
                 continue
-            current_prices = self._hydrate_position_prices(current_prices, previous_date_str, current_date_str)
-            daily_turnovers = self._get_daily_turnovers(active_tickers, previous_date_str, current_date_str)
-            limit_up, limit_down = self._get_limit_state(trade_date_compact)
-            load_market_data_seconds = perf_counter() - stage_started_at
 
-            decisions: Dict[str, dict] = {}
-            executed_trades: Dict[str, int] = {ticker: 0 for ticker in active_tickers}
-            pre_market_seconds = 0.0
-            intraday_seconds = 0.0
-            append_daily_state_seconds = 0.0
-            post_market_seconds = 0.0
-            previous_plan_counts: dict[str, int] = {}
-            previous_plan_timing: dict[str, float] = {}
-            previous_plan_funnel_diagnostics: dict = {}
-            prepared_plan: ExecutionPlan | None = None
-
-            if pending_plan is not None and self._pipeline is not None:
-                stage_started_at = perf_counter()
-                prepared_plan = self._pipeline.run_pre_market(pending_plan, trade_date_compact)
-                pre_market_seconds = perf_counter() - stage_started_at
-
-                previous_plan_counts = dict((pending_plan.risk_metrics or {}).get("counts", {}))
-                previous_plan_timing = dict((pending_plan.risk_metrics or {}).get("timing_seconds", {}))
-                previous_plan_funnel_diagnostics = dict((pending_plan.risk_metrics or {}).get("funnel_diagnostics", {}))
-
-                stage_started_at = perf_counter()
-                confirmation_inputs = self._build_confirmation_inputs(prepared_plan, current_prices)
-                next_pending_buy, next_pending_sell, queue_alerts = self._process_pending_queues(
-                    prepared_plan=prepared_plan,
-                    trade_date_compact=trade_date_compact,
-                    current_prices=current_prices,
-                    limit_up=limit_up,
-                    limit_down=limit_down,
-                    decisions=decisions,
-                )
-                confirmed_orders, exits, crisis_response = self._pipeline.run_intraday(
-                    prepared_plan,
-                    trade_date_compact,
-                    confirmation_inputs=confirmation_inputs,
-                    crisis_inputs={"drawdown_pct": 0.0},
-                )
-                intraday_seconds = perf_counter() - stage_started_at
-                buy_order_by_ticker = {order.ticker: order for order in prepared_plan.buy_orders}
-                watchlist_by_ticker = {item.ticker: item for item in prepared_plan.watchlist}
-
-                if crisis_response.get("pause_new_buys"):
-                    confirmed_orders = []
-
-                for order in confirmed_orders:
-                    self._portfolio.ensure_ticker(order.ticker)
-                    decisions[order.ticker] = {"action": "buy", "quantity": order.shares}
-
-                for exit_signal in exits:
-                    self._portfolio.ensure_ticker(exit_signal.ticker)
-                    long_shares = self._portfolio.get_positions()[exit_signal.ticker]["long"]
-                    sell_quantity = int(long_shares * exit_signal.sell_ratio)
-                    if sell_quantity > 0:
-                        decisions[exit_signal.ticker] = {"action": "sell", "quantity": sell_quantity, "reason": str(getattr(exit_signal, "trigger_reason", "") or "")}
-
-                reduce_ratio = float(crisis_response.get("forced_reduce_ratio", 0.0) or 0.0)
-                if reduce_ratio > 0:
-                    for ticker, position in self._portfolio.get_positions().items():
-                        if position["long"] <= 0:
-                            continue
-                        sell_quantity = int(position["long"] * reduce_ratio)
-                        if sell_quantity <= 0:
-                            continue
-                        decisions[ticker] = {"action": "sell", "quantity": max(sell_quantity, decisions.get(ticker, {}).get("quantity", 0))}
-
-                for ticker, decision in decisions.items():
-                    price = current_prices.get(ticker)
-                    if price is None:
-                        continue
-                    normalized_ticker = self._normalize_ticker(ticker)
-                    if decision["action"] == "buy" and normalized_ticker in limit_up:
-                        matching_order = next((order for order in prepared_plan.buy_orders if order.ticker == ticker), None)
-                        next_pending_buy.append(
-                            queue_pending_buy(
-                                ticker,
-                                original_score=matching_order.score_final if matching_order is not None else 0.0,
-                                queue_date=trade_date_compact,
-                                shares=int(decision["quantity"]),
-                                amount=matching_order.amount if matching_order is not None else 0.0,
-                            )
-                        )
-                        executed_trades[ticker] = 0
-                        continue
-                    if decision["action"] == "sell" and normalized_ticker in limit_down:
-                        long_shares = self._portfolio.get_positions().get(ticker, {}).get("long", 0)
-                        sell_ratio = (int(decision["quantity"]) / long_shares) if long_shares else 1.0
-                        next_pending_sell.append(
-                            queue_pending_sell(
-                                ticker,
-                                original_score=-1.0,
-                                queue_date=trade_date_compact,
-                                reason=str(decision.get("reason") or "limit_down_block"),
-                                shares=int(decision["quantity"]),
-                                sell_ratio=sell_ratio,
-                            )
-                        )
-                        executed_trades[ticker] = 0
-                        continue
-                    executed_qty = self._executor.execute_trade(
-                        ticker,
-                        decision["action"],
-                        decision["quantity"],
-                        price,
-                        self._portfolio,
-                        is_limit_up=normalized_ticker in limit_up,
-                        is_limit_down=normalized_ticker in limit_down,
-                        daily_turnover=daily_turnovers.get(ticker),
-                    )
-                    executed_trades[ticker] = executed_qty
-                    if executed_qty > 0 and decision["action"] == "buy":
-                        existing_long_before = int(self._portfolio.get_positions()[ticker]["long"]) - int(executed_qty)
-                        watch_item = watchlist_by_ticker.get(ticker)
-                        matching_order = buy_order_by_ticker.get(ticker)
-                        self._portfolio.record_long_entry(
-                            ticker,
-                            trade_date_compact,
-                            reset=existing_long_before <= 0,
-                            entry_score=(matching_order.score_final if matching_order is not None else (watch_item.score_final if watch_item is not None else 0.0)),
-                            quality_score=(matching_order.quality_score if matching_order is not None else (watch_item.quality_score if watch_item is not None else 0.5)),
-                            industry_sw="",
-                            is_fundamental_driven=False,
-                        )
-                    elif executed_qty > 0 and decision["action"] == "sell":
-                        trigger_reason = str(decision.get("reason") or "")
-                        self._portfolio.record_long_exit(ticker, trigger_reason=trigger_reason)
-                        self._register_exit_reentry_cooldown(ticker, trade_date_compact, trigger_reason)
-                prepared_plan.risk_alerts.extend(queue_alerts)
-                self._pending_buy_queue = self._dedupe_pending_orders(next_pending_buy)
-                self._pending_sell_queue = self._dedupe_pending_orders(next_pending_sell)
-
-            self._portfolio.refresh_position_lifecycle(current_prices, trade_date_compact)
-            current_prices = self._hydrate_position_prices(current_prices, previous_date_str, current_date_str)
-
-            agent_output = self._build_pipeline_agent_output(decisions, active_tickers)
-            stage_started_at = perf_counter()
-            self._append_daily_state(
-                current_date=current_date,
-                current_date_str=current_date_str,
-                active_tickers=active_tickers,
-                agent_output=agent_output,
-                executed_trades=executed_trades,
+            day_state = self._initialize_pipeline_mode_day_state(day_context.active_tickers)
+            self._run_pipeline_mode_pending_plan_if_present(day_context=day_context, pending_plan=pending_plan, day_state=day_state)
+            current_prices = self._append_pipeline_mode_daily_state(day_context=day_context, day_state=day_state)
+            pending_plan = self._run_pipeline_mode_post_market(day_context=day_context, pending_plan=pending_plan, day_state=day_state)
+            self._record_pipeline_mode_day(
+                day_context=day_context,
+                day_state=day_state,
+                pending_plan=pending_plan,
                 current_prices=current_prices,
+                day_started_at=day_started_at,
             )
-            append_daily_state_seconds = perf_counter() - stage_started_at
-
-            if self._pipeline is not None:
-                stage_started_at = perf_counter()
-                pending_plan = self._pipeline.run_post_market(trade_date_compact, self._portfolio.get_snapshot(), blocked_buy_tickers=self._get_active_exit_reentry_cooldowns(trade_date_compact))
-                pending_plan.pending_buy_queue = list(self._pending_buy_queue)
-                pending_plan.pending_sell_queue = list(self._pending_sell_queue)
-                self._write_selection_artifacts(pending_plan, trade_date_compact)
-                post_market_seconds = perf_counter() - stage_started_at
-
-            executed_order_count = sum(1 for quantity in executed_trades.values() if quantity)
-            execution_plan_observations = [
-                dict(observation)
-                for observation in list(getattr(self._pipeline, "execution_plan_provenance_log", []) or [])
-                if str(observation.get("trade_date") or "") == trade_date_compact
-            ] if self._pipeline is not None else []
-            timing_payload = {
-                "event": "pipeline_day_timing",
-                "trade_date": trade_date_compact,
-                "active_ticker_count": len(active_tickers),
-                "pending_buy_queue_count": len(self._pending_buy_queue),
-                "pending_sell_queue_count": len(self._pending_sell_queue),
-                "executed_order_count": executed_order_count,
-                "execution_plan_provenance": execution_plan_observations,
-                "timing_seconds": {
-                    "load_market_data": round(load_market_data_seconds, 3),
-                    "pre_market": round(pre_market_seconds, 3),
-                    "intraday": round(intraday_seconds, 3),
-                    "append_daily_state": round(append_daily_state_seconds, 3),
-                    "post_market": round(post_market_seconds, 3),
-                    "total_day": round(perf_counter() - day_started_at, 3),
-                },
-                "current_plan": {
-                    "counts": dict((pending_plan.risk_metrics or {}).get("counts", {})) if pending_plan is not None else {},
-                    "timing_seconds": dict((pending_plan.risk_metrics or {}).get("timing_seconds", {})) if pending_plan is not None else {},
-                    "funnel_diagnostics": dict((pending_plan.risk_metrics or {}).get("funnel_diagnostics", {})) if pending_plan is not None else {},
-                    "target_mode": str(getattr(pending_plan, "target_mode", "research_only") or "research_only") if pending_plan is not None else "research_only",
-                    "selection_target_count": len(dict(getattr(pending_plan, "selection_targets", {}) or {})) if pending_plan is not None else 0,
-                    "dual_target_summary": pending_plan.dual_target_summary.model_dump(mode="json") if pending_plan is not None else {},
-                    "selection_artifacts": dict(getattr(pending_plan, "selection_artifacts", {}) or {}) if pending_plan is not None else {},
-                },
-                "previous_plan": {
-                    "counts": previous_plan_counts,
-                    "timing_seconds": previous_plan_timing,
-                    "funnel_diagnostics": previous_plan_funnel_diagnostics,
-                },
-            }
-            self._append_timing_log(timing_payload)
-            self._append_pipeline_event(
-                {
-                    "event": "paper_trading_day",
-                    "trade_date": trade_date_compact,
-                    "active_tickers": list(active_tickers),
-                    "executed_trades": dict(executed_trades),
-                    "decisions": dict(decisions),
-                    "current_prices": {ticker: float(price) for ticker, price in current_prices.items()},
-                    "portfolio_snapshot": self._portfolio.get_snapshot(),
-                    "pending_buy_queue": [order.model_dump() for order in self._pending_buy_queue],
-                    "pending_sell_queue": [order.model_dump() for order in self._pending_sell_queue],
-                    "exit_reentry_cooldowns": dict(self._exit_reentry_cooldowns),
-                    "prepared_plan": prepared_plan.model_dump() if prepared_plan is not None else None,
-                    "current_plan": pending_plan.model_dump() if pending_plan is not None else None,
-                    "execution_plan_provenance": execution_plan_observations,
-                    "timing_seconds": timing_payload["timing_seconds"],
-                }
-            )
-
-            self._save_checkpoint(current_date_str, pending_plan)
+            self._save_checkpoint(day_context.current_date_str, pending_plan)
 
         return self._performance_metrics
 
+    def _initialize_pipeline_mode_day_state(self, active_tickers: Sequence[str]) -> PipelineModeDayState:
+        decisions, executed_trades = initialize_pipeline_day_state(active_tickers)
+        return PipelineModeDayState(decisions=decisions, executed_trades=executed_trades)
+
+    def _run_pipeline_mode_pending_plan_if_present(
+        self,
+        *,
+        day_context: PipelineDayContext,
+        pending_plan: ExecutionPlan | None,
+        day_state: PipelineModeDayState,
+    ) -> None:
+        if pending_plan is None or self._pipeline is None:
+            return
+        (
+            day_state.prepared_plan,
+            day_state.pre_market_seconds,
+            day_state.intraday_seconds,
+            day_state.previous_plan_counts,
+            day_state.previous_plan_timing,
+            day_state.previous_plan_funnel_diagnostics,
+        ) = self._run_pending_pipeline_plan(
+            pending_plan=pending_plan,
+            day_context=day_context,
+            decisions=day_state.decisions,
+            executed_trades=day_state.executed_trades,
+        )
+
+    def _append_pipeline_mode_daily_state(
+        self,
+        *,
+        day_context: PipelineDayContext,
+        day_state: PipelineModeDayState,
+    ) -> Dict[str, float]:
+        self._portfolio.refresh_position_lifecycle(day_context.current_prices, day_context.trade_date_compact)
+        current_prices = self._hydrate_position_prices(
+            day_context.current_prices,
+            day_context.previous_date_str,
+            day_context.current_date_str,
+        )
+        agent_output = self._build_pipeline_agent_output(day_state.decisions, day_context.active_tickers)
+        stage_started_at = perf_counter()
+        self._append_daily_state(
+            current_date=day_context.current_date,
+            current_date_str=day_context.current_date_str,
+            active_tickers=day_context.active_tickers,
+            agent_output=agent_output,
+            executed_trades=day_state.executed_trades,
+            current_prices=current_prices,
+        )
+        day_state.append_daily_state_seconds = perf_counter() - stage_started_at
+        return current_prices
+
+    def _run_pipeline_mode_post_market(
+        self,
+        *,
+        day_context: PipelineDayContext,
+        pending_plan: ExecutionPlan | None,
+        day_state: PipelineModeDayState,
+    ) -> ExecutionPlan | None:
+        if self._pipeline is None:
+            return pending_plan
+        stage_started_at = perf_counter()
+        next_pending_plan = self._pipeline.run_post_market(
+            day_context.trade_date_compact,
+            self._portfolio.get_snapshot(),
+            blocked_buy_tickers=self._get_active_exit_reentry_cooldowns(day_context.trade_date_compact),
+        )
+        next_pending_plan.pending_buy_queue = list(self._pending_buy_queue)
+        next_pending_plan.pending_sell_queue = list(self._pending_sell_queue)
+        self._write_selection_artifacts(next_pending_plan, day_context.trade_date_compact)
+        day_state.post_market_seconds = perf_counter() - stage_started_at
+        return next_pending_plan
+
+    def _record_pipeline_mode_day(
+        self,
+        *,
+        day_context: PipelineDayContext,
+        day_state: PipelineModeDayState,
+        pending_plan: ExecutionPlan | None,
+        current_prices: Dict[str, float],
+        day_started_at: float,
+    ) -> None:
+        execution_plan_observations = collect_execution_plan_observations(self._pipeline, day_context.trade_date_compact) if self._pipeline is not None else []
+        timing_payload = build_pipeline_timing_payload(
+            trade_date_compact=day_context.trade_date_compact,
+            active_tickers=day_context.active_tickers,
+            pending_buy_queue_count=len(self._pending_buy_queue),
+            pending_sell_queue_count=len(self._pending_sell_queue),
+            executed_trades=day_state.executed_trades,
+            execution_plan_observations=execution_plan_observations,
+            load_market_data_seconds=day_context.load_market_data_seconds,
+            pre_market_seconds=day_state.pre_market_seconds,
+            intraday_seconds=day_state.intraday_seconds,
+            append_daily_state_seconds=day_state.append_daily_state_seconds,
+            post_market_seconds=day_state.post_market_seconds,
+            total_day_seconds=perf_counter() - day_started_at,
+            pending_plan=pending_plan,
+            previous_plan_counts=day_state.previous_plan_counts,
+            previous_plan_timing=day_state.previous_plan_timing,
+            previous_plan_funnel_diagnostics=day_state.previous_plan_funnel_diagnostics,
+        )
+        self._append_timing_log(timing_payload)
+        self._append_pipeline_event(
+            build_pipeline_event_payload(
+                trade_date_compact=day_context.trade_date_compact,
+                active_tickers=day_context.active_tickers,
+                executed_trades=day_state.executed_trades,
+                decisions=day_state.decisions,
+                current_prices=current_prices,
+                portfolio_snapshot=self._portfolio.get_snapshot(),
+                pending_buy_queue=self._pending_buy_queue,
+                pending_sell_queue=self._pending_sell_queue,
+                exit_reentry_cooldowns=self._exit_reentry_cooldowns,
+                prepared_plan=day_state.prepared_plan,
+                pending_plan=pending_plan,
+                execution_plan_observations=execution_plan_observations,
+                timing_seconds=timing_payload["timing_seconds"],
+            )
+        )
+
     def run_backtest(self) -> PerformanceMetrics:
+        self._prefetch_with_timing_log()
+        dates, pending_plan = self._prepare_run_dates_and_plan()
+        metrics = self._run_selected_backtest_mode(dates, pending_plan)
+        self._clear_checkpoint()
+        return metrics
+
+    def _prefetch_with_timing_log(self) -> None:
         prefetch_started_at = perf_counter()
         self._prefetch_data()
         self._append_timing_log(
@@ -736,6 +1059,7 @@ class BacktestEngine:
             }
         )
 
+    def _prepare_run_dates_and_plan(self) -> tuple[pd.DatetimeIndex, ExecutionPlan | None]:
         dates = self._iter_backtest_dates()
         last_processed_date, pending_plan = self._load_checkpoint()
         if last_processed_date is not None:
@@ -744,14 +1068,16 @@ class BacktestEngine:
             self._portfolio_values = [{"Date": dates[0], "Portfolio Value": self._initial_capital}]
         else:
             self._portfolio_values = []
+        return dates, pending_plan
 
+    def _run_selected_backtest_mode(
+        self,
+        dates: pd.DatetimeIndex,
+        pending_plan: ExecutionPlan | None,
+    ) -> PerformanceMetrics:
         if self._backtest_mode == "pipeline":
-            metrics = self._run_pipeline_mode(dates, pending_plan=pending_plan)
-        else:
-            metrics = self._run_agent_mode(dates)
-
-        self._clear_checkpoint()
-        return metrics
+            return self._run_pipeline_mode(dates, pending_plan=pending_plan)
+        return self._run_agent_mode(dates)
 
     def get_portfolio_values(self) -> Sequence[PortfolioValuePoint]:
         return list(self._portfolio_values)

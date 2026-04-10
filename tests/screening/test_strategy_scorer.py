@@ -2,9 +2,12 @@ import os
 import importlib
 from unittest.mock import patch
 
+import pandas as pd
+import pytest
+
 from src.data.models import CompanyNews, FinancialMetrics
 from src.screening.models import CandidateStock, StrategySignal
-from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_profitability, score_batch, score_event_sentiment_strategy
+from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_ema_alignment, _score_long_trend_alignment, _score_news_sentiment, _score_profitability, score_batch, score_event_sentiment_strategy, score_mean_reversion_strategy
 import src.screening.strategy_scorer as strategy_scorer_module
 
 
@@ -157,52 +160,53 @@ def test_scoring_stage_defaults_scale_with_candidate_pool_size(monkeypatch):
 
 
 def _financial_metrics(**overrides) -> FinancialMetrics:
-    return FinancialMetrics.model_construct(
-        ticker="300065",
-        report_period="20251231",
-        period="ttm",
-        currency="CNY",
-        market_cap=0.0,
-        enterprise_value=0.0,
-        price_to_earnings_ratio=0.0,
-        price_to_book_ratio=0.0,
-        price_to_sales_ratio=0.0,
-        enterprise_value_to_ebitda_ratio=0.0,
-        enterprise_value_to_revenue_ratio=0.0,
-        free_cash_flow_yield=0.0,
-        peg_ratio=0.0,
-        gross_margin=0.0,
-        operating_margin=0.06,
-        net_margin=0.08,
-        return_on_equity=0.05,
-        return_on_assets=0.0,
-        return_on_invested_capital=0.0,
-        asset_turnover=0.0,
-        inventory_turnover=0.0,
-        receivables_turnover=0.0,
-        days_sales_outstanding=0.0,
-        operating_cycle=0.0,
-        working_capital_turnover=0.0,
-        current_ratio=0.0,
-        quick_ratio=0.0,
-        cash_ratio=0.0,
-        operating_cash_flow_ratio=0.0,
-        debt_to_equity=0.0,
-        debt_to_assets=0.0,
-        interest_coverage=0.0,
-        revenue_growth=0.0,
-        earnings_growth=0.0,
-        book_value_growth=0.0,
-        earnings_per_share_growth=0.0,
-        free_cash_flow_growth=0.0,
-        operating_income_growth=0.0,
-        ebitda_growth=0.0,
-        payout_ratio=0.0,
-        earnings_per_share=0.0,
-        book_value_per_share=0.0,
-        free_cash_flow_per_share=0.0,
-        **overrides,
-    )
+    payload = {
+        "ticker": "300065",
+        "report_period": "20251231",
+        "period": "ttm",
+        "currency": "CNY",
+        "market_cap": 0.0,
+        "enterprise_value": 0.0,
+        "price_to_earnings_ratio": 0.0,
+        "price_to_book_ratio": 0.0,
+        "price_to_sales_ratio": 0.0,
+        "enterprise_value_to_ebitda_ratio": 0.0,
+        "enterprise_value_to_revenue_ratio": 0.0,
+        "free_cash_flow_yield": 0.0,
+        "peg_ratio": 0.0,
+        "gross_margin": 0.0,
+        "operating_margin": 0.06,
+        "net_margin": 0.08,
+        "return_on_equity": 0.05,
+        "return_on_assets": 0.0,
+        "return_on_invested_capital": 0.0,
+        "asset_turnover": 0.0,
+        "inventory_turnover": 0.0,
+        "receivables_turnover": 0.0,
+        "days_sales_outstanding": 0.0,
+        "operating_cycle": 0.0,
+        "working_capital_turnover": 0.0,
+        "current_ratio": 0.0,
+        "quick_ratio": 0.0,
+        "cash_ratio": 0.0,
+        "operating_cash_flow_ratio": 0.0,
+        "debt_to_equity": 0.0,
+        "debt_to_assets": 0.0,
+        "interest_coverage": 0.0,
+        "revenue_growth": 0.0,
+        "earnings_growth": 0.0,
+        "book_value_growth": 0.0,
+        "earnings_per_share_growth": 0.0,
+        "free_cash_flow_growth": 0.0,
+        "operating_income_growth": 0.0,
+        "ebitda_growth": 0.0,
+        "payout_ratio": 0.0,
+        "earnings_per_share": 0.0,
+        "book_value_per_share": 0.0,
+        "free_cash_flow_per_share": 0.0,
+    }
+    payload.update(overrides)
+    return FinancialMetrics.model_construct(**payload)
 
 
 def test_profitability_zero_pass_defaults_to_bearish():
@@ -242,6 +246,71 @@ def test_profitability_zero_pass_can_be_excluded_for_analysis():
     assert factor.metrics["zero_pass_mode"] == "inactive"
 
 
+def test_profitability_two_positive_metrics_is_bullish():
+    metrics = _financial_metrics(return_on_equity=0.16, net_margin=0.21, operating_margin=0.10)
+
+    factor = _score_profitability(metrics)
+
+    assert factor.direction == 1
+    assert factor.confidence == pytest.approx(66.6666666667)
+    assert factor.completeness == 1.0
+    assert factor.metrics["available_count"] == 3
+    assert factor.metrics["positive_count"] == 2
+
+
+def test_score_ema_alignment_returns_bullish_for_stacked_emas():
+    prices_df = pd.DataFrame({"close": [10.0] * 59 + [12.0]})
+
+    with patch.object(
+        strategy_scorer_module,
+        "calculate_ema",
+        side_effect=[
+            pd.Series([0.0] * 59 + [12.0]),
+            pd.Series([0.0] * 59 + [11.0]),
+            pd.Series([0.0] * 59 + [10.0]),
+        ],
+    ):
+        factor = _score_ema_alignment(prices_df, weight=0.4)
+
+    assert factor.direction == 1
+    assert factor.confidence == 100.0
+    assert factor.metrics == {"ema_10": 12.0, "ema_30": 11.0, "ema_60": 10.0}
+
+
+def test_score_ema_alignment_returns_incomplete_for_short_history():
+    factor = _score_ema_alignment(pd.DataFrame({"close": [10.0] * 10}), weight=0.4)
+
+    assert factor.direction == 0
+    assert factor.confidence == 0.0
+    assert factor.completeness == 0.0
+
+
+def test_score_long_trend_alignment_returns_bullish_for_ema_above_200():
+    prices_df = pd.DataFrame({"close": [10.0] * 199 + [20.0]})
+
+    with patch.object(
+        strategy_scorer_module,
+        "calculate_ema",
+        side_effect=[
+            pd.Series([0.0] * 199 + [18.0]),
+            pd.Series([0.0] * 199 + [12.0]),
+        ],
+    ):
+        factor = _score_long_trend_alignment(prices_df, weight=0.25)
+
+    assert factor.direction == 1
+    assert factor.confidence == 100.0
+    assert factor.metrics == {"ema_10": 18.0, "ema_200": 12.0}
+
+
+def test_score_long_trend_alignment_returns_incomplete_for_short_history():
+    factor = _score_long_trend_alignment(pd.DataFrame({"close": [10.0] * 20}), weight=0.25)
+
+    assert factor.direction == 0
+    assert factor.confidence == 0.0
+    assert factor.completeness == 0.0
+
+
 def _news_item(title: str, date: str, content: str = "") -> CompanyNews:
     return CompanyNews(
         ticker="000001",
@@ -276,6 +345,66 @@ def test_event_sentiment_keeps_fresh_multi_keyword_news_actionable():
     assert signal.direction == 1
     assert signal.confidence > 0
     assert signal.sub_factors["news_sentiment"]["metrics"]["informative_articles"] == 1
+
+
+def test_score_news_sentiment_tracks_recent_and_informative_articles():
+    factor = _score_news_sentiment(
+        [
+            _news_item("profit growth beat", "2026-03-05", "growth beat upgrade"),
+            _news_item("legacy headline", "2026-02-20", ""),
+        ],
+        "20260305",
+    )
+
+    assert factor.direction == 1
+    assert factor.metrics["recent_articles"] == 1
+    assert factor.metrics["informative_articles"] == 1
+    assert factor.metrics["articles"][0]["direction"] == 1
+    assert factor.metrics["articles"][1]["effective_weight"] == 0.0
+
+
+def test_score_news_sentiment_returns_incomplete_when_no_news():
+    factor = _score_news_sentiment([], "20260305")
+
+    assert factor.direction == 0
+    assert factor.confidence == 0.0
+    assert factor.completeness == 0.0
+
+
+def test_score_mean_reversion_strategy_marks_rsi_oversold_and_reversion_regime():
+    prices_df = pd.DataFrame({"close": [100.0] * 100})
+
+    with (
+        patch("src.screening.strategy_scorer.calculate_mean_reversion_signals", return_value={"signal": "bullish", "confidence": 0.7, "metrics": {"z": -2.1}}),
+        patch("src.screening.strategy_scorer.calculate_stat_arb_signals", return_value={"signal": "neutral", "confidence": 0.2, "metrics": {}}),
+        patch(
+            "src.screening.strategy_scorer.calculate_rsi",
+            side_effect=[
+                pd.Series([25.0] * len(prices_df)),
+                pd.Series([35.0] * len(prices_df)),
+            ],
+        ),
+        patch("src.screening.strategy_scorer.calculate_hurst_exponent", return_value=0.4),
+    ):
+        signal = score_mean_reversion_strategy(prices_df)
+
+    assert signal.sub_factors["rsi_extreme"]["direction"] == 1
+    assert signal.sub_factors["rsi_extreme"]["metrics"] == {"rsi_14": 25.0, "rsi_28": 35.0}
+    assert signal.sub_factors["hurst_regime"]["direction"] == 0
+    assert signal.sub_factors["hurst_regime"]["metrics"]["hurst_exponent"] == 0.4
+
+
+def test_score_mean_reversion_strategy_marks_insufficient_rsi_history_incomplete():
+    prices_df = pd.DataFrame({"close": [100.0] * 20})
+
+    with (
+        patch("src.screening.strategy_scorer.calculate_mean_reversion_signals", return_value=None),
+        patch("src.screening.strategy_scorer.calculate_stat_arb_signals", return_value=None),
+    ):
+        signal = score_mean_reversion_strategy(prices_df)
+
+    assert signal.sub_factors["rsi_extreme"]["completeness"] == 0.0
+    assert signal.sub_factors["hurst_regime"]["completeness"] == 0.0
 
 
 def test_fundamental_quality_cap_neutralizes_bullish_signal_without_quality_confirmation():

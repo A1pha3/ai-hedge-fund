@@ -11,6 +11,23 @@ import statistics
 
 from langchain_core.messages import HumanMessage
 
+from src.agents.valuation_helpers import (
+    _attach_method_gaps,
+    _build_all_non_positive_result,
+    _build_dcf_scenario_analysis,
+    _build_fallback_reasoning,
+    _build_insufficient_line_items_result,
+    _build_market_cap_unavailable_result,
+    _build_method_reasoning,
+    _build_method_values,
+    _build_missing_valuation_metrics_result,
+    _calculate_weighted_gap,
+    _calculate_working_capital_change,
+    _collect_free_cash_flow_history,
+    _resolve_valuation_confidence,
+    _resolve_valuation_signal,
+    _summarize_method_coverage,
+)
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
     get_financial_metrics,
@@ -44,11 +61,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         )
         if not financial_metrics:
             progress.update_status(agent_id, ticker, "Failed: No financial metrics found")
-            valuation_analysis[ticker] = {
-                "signal": "neutral",
-                "confidence": 0,
-                "reasoning": {"error": "No financial metrics available for valuation analysis"},
-            }
+            valuation_analysis[ticker] = _build_missing_valuation_metrics_result()
             continue
         most_recent_metrics = financial_metrics[0]
 
@@ -66,11 +79,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         )
         if len(line_items) < 2:
             progress.update_status(agent_id, ticker, "Failed: Insufficient financial line items")
-            valuation_analysis[ticker] = {
-                "signal": "neutral",
-                "confidence": 0,
-                "reasoning": {"error": f"Insufficient financial line items (found {len(line_items)}, need at least 2)"},
-            }
+            valuation_analysis[ticker] = _build_insufficient_line_items_result(len(line_items))
             continue
         li_curr, li_prev = line_items[0], line_items[1]
 
@@ -78,12 +87,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         # Valuation models
         # ------------------------------------------------------------------
         # Handle potential None values for working capital
-        wc_curr = getattr(li_curr, "working_capital", None)
-        wc_prev = getattr(li_prev, "working_capital", None)
-        if wc_curr is not None and wc_prev is not None:
-            wc_change = wc_curr - wc_prev
-        else:
-            wc_change = 0  # Default to 0 if working capital data is unavailable
+        wc_change = _calculate_working_capital_change(li_curr, li_prev)
 
         # Owner Earnings
         owner_val = calculate_owner_earnings_value(
@@ -107,10 +111,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         )
 
         # Prepare FCF history for enhanced DCF
-        fcf_history = []
-        for li in line_items:
-            if hasattr(li, "free_cash_flow") and li.free_cash_flow is not None:
-                fcf_history.append(li.free_cash_flow)
+        fcf_history = _collect_free_cash_flow_history(line_items)
 
         # Enhanced DCF with scenarios
         dcf_results = calculate_dcf_scenarios(fcf_history=fcf_history, growth_metrics={"revenue_growth": most_recent_metrics.revenue_growth, "fcf_growth": most_recent_metrics.free_cash_flow_growth, "earnings_growth": most_recent_metrics.earnings_growth}, wacc=wacc, market_cap=most_recent_metrics.market_cap or 0, revenue_growth=most_recent_metrics.revenue_growth)
@@ -134,90 +135,26 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
         market_cap = get_market_cap(ticker, end_date, api_key=api_key)
         if not market_cap:
             progress.update_status(agent_id, ticker, "Failed: Market cap unavailable")
-            valuation_analysis[ticker] = {
-                "signal": "neutral",
-                "confidence": 0,
-                "reasoning": {"error": "Market cap unavailable for valuation analysis"},
-            }
+            valuation_analysis[ticker] = _build_market_cap_unavailable_result()
             continue
 
-        method_values = {
-            "dcf": {"value": dcf_val, "weight": 0.35},
-            "owner_earnings": {"value": owner_val, "weight": 0.35},
-            "ev_ebitda": {"value": ev_ebitda_val, "weight": 0.20},
-            "residual_income": {"value": rim_val, "weight": 0.10},
-        }
-
+        method_values = _build_method_values(dcf_val, owner_val, ev_ebitda_val, rim_val)
         cs = get_currency_symbol(ticker)
-        total_weight = sum(v["weight"] for v in method_values.values() if v["value"] > 0)
-        methods_succeeded = sum(1 for v in method_values.values() if v["value"] > 0)
-        methods_total = len(method_values)
+        total_weight, methods_succeeded, methods_total = _summarize_method_coverage(method_values)
         if total_weight == 0:
             progress.update_status(agent_id, ticker, "All valuation methods non-positive")
-            method_value_summary = {name: vals["value"] for name, vals in method_values.items()}
-            valuation_analysis[ticker] = {
-                "signal": "bearish",
-                "confidence": 85,
-                "reasoning": {
-                    "summary": "All valuation methods returned non-positive intrinsic values while market cap is positive",
-                    "market_cap": market_cap,
-                    "method_values": method_value_summary,
-                    "details": f"DCF: {cs}{dcf_val:,.2f}, Owner Earnings: {cs}{owner_val:,.2f}, EV/EBITDA: {cs}{ev_ebitda_val:,.2f}, Residual Income: {cs}{rim_val:,.2f}",
-                },
-            }
+            valuation_analysis[ticker] = _build_all_non_positive_result(method_values, market_cap, cs)
             continue
 
-        for v in method_values.values():
-            v["gap"] = (v["value"] - market_cap) / market_cap if v["value"] > 0 else None
-
-        weighted_gap = sum(v["weight"] * v["gap"] for v in method_values.values() if v["gap"] is not None) / total_weight
-
-        signal = "bullish" if weighted_gap > 0.15 else "bearish" if weighted_gap < -0.15 else "neutral"
-        # Penalize confidence when most valuation methods fail (data unavailable)
-        coverage_ratio = methods_succeeded / methods_total  # e.g., 1/4 = 0.25
-        raw_confidence = abs(weighted_gap) / 0.30 * 100
-        confidence = round(min(raw_confidence * coverage_ratio, 100))
-
-        # Enhanced reasoning with DCF scenario details
-        reasoning = {}
-        for m, vals in method_values.items():
-            # Always include the method, even if value is 0 or negative
-            if vals['value'] <= 0:
-                # 区分"数据不足"和"计算结果为负/零"
-                if m == "owner_earnings":
-                    base_details = f"Value: N/A (owner earnings negative, business not generating positive owner earnings), Market Cap: {cs}{market_cap:,.2f}, "
-                elif m == "dcf" and any(isinstance(x, (int, float)) and x < 0 for x in fcf_history[:1]):
-                    base_details = f"Value: N/A (negative free cash flow), Market Cap: {cs}{market_cap:,.2f}, "
-                else:
-                    base_details = f"Value: N/A (insufficient data), Market Cap: {cs}{market_cap:,.2f}, "
-            else:
-                base_details = f"Value: {cs}{vals['value']:,.2f}, Market Cap: {cs}{market_cap:,.2f}, "
-            if vals["gap"] is not None:
-                base_details += f"Gap: {vals['gap']:.1%}, Weight: {vals['weight']*100:.0f}%"
-            else:
-                base_details += f"Gap: N/A (data unavailable), Weight: {vals['weight']*100:.0f}%"
-
-            # Add enhanced DCF details
-            if m == "dcf" and "dcf_results" in locals():
-                enhanced_details = f"{base_details}\n" f"  WACC: {wacc:.1%}, Bear: {cs}{dcf_results['downside']:,.2f}, " f"Bull: {cs}{dcf_results['upside']:,.2f}, Range: {cs}{dcf_results['range']:,.2f}"
-            else:
-                enhanced_details = base_details
-
-            reasoning[f"{m}_analysis"] = {
-                "signal": ("bullish" if vals["gap"] and vals["gap"] > 0.15 else "bearish" if vals["gap"] and vals["gap"] < -0.15 else "neutral"),
-                "details": enhanced_details,
-            }
-
-        # Add overall DCF scenario summary if available
-        if "dcf_results" in locals():
-            reasoning["dcf_scenario_analysis"] = {"bear_case": f"{cs}{dcf_results['downside']:,.2f}", "base_case": f"{cs}{dcf_results['scenarios']['base']:,.2f}", "bull_case": f"{cs}{dcf_results['upside']:,.2f}", "wacc_used": f"{wacc:.1%}", "fcf_periods_analyzed": len(fcf_history)}
-        
-        # Add summary if reasoning is still empty (fallback)
+        _attach_method_gaps(method_values, market_cap)
+        weighted_gap = _calculate_weighted_gap(method_values, total_weight)
+        signal = _resolve_valuation_signal(weighted_gap)
+        confidence = _resolve_valuation_confidence(weighted_gap, methods_succeeded, methods_total)
+        dcf_results["wacc"] = wacc
+        reasoning = _build_method_reasoning(method_values, market_cap, cs, fcf_history, wacc, dcf_results)
+        reasoning["dcf_scenario_analysis"] = _build_dcf_scenario_analysis(cs, dcf_results, fcf_history)
         if not reasoning:
-            reasoning["summary"] = {
-                "signal": signal,
-                "details": f"Weighted valuation gap: {weighted_gap:.1%}. Market Cap: {cs}{market_cap:,.2f}. All valuation methods returned zero or negative values.",
-            }
+            reasoning = _build_fallback_reasoning(signal, weighted_gap, market_cap, cs)
 
         valuation_analysis[ticker] = {
             "signal": signal,

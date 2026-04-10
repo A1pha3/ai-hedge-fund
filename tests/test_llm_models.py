@@ -292,6 +292,33 @@ def test_volcengine_doubao_model_disables_json_mode():
     assert model.has_json_mode() is False
 
 
+def test_get_model_builds_openai_client_with_env_base_url(monkeypatch):
+    captured = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.setenv("OPENAI_API_BASE", "https://openai.example/v1")
+
+    llm_models.get_model("gpt-4.1", llm_models.ModelProvider.OPENAI)
+
+    assert captured["model"] == "gpt-4.1"
+    assert captured["api_key"] == "openai-key"
+    assert captured["base_url"] == "https://openai.example/v1"
+
+
+def test_get_model_returns_registered_minimax_route(monkeypatch):
+    sentinel = object()
+    monkeypatch.setattr(llm_models, "get_registered_provider_model", lambda model_name, model_provider, api_keys=None: sentinel)
+
+    model = llm_models.get_model("MiniMax-M2.5", llm_models.ModelProvider.MINIMAX, {"MINIMAX_API_KEY": "minimax-key"})
+
+    assert model is sentinel
+
+
 def test_default_model_config_requires_explicit_global_model_name(monkeypatch):
     monkeypatch.setenv("LLM_DEFAULT_MODEL_PROVIDER", "MiniMax")
     monkeypatch.delenv("LLM_DEFAULT_MODEL_NAME", raising=False)

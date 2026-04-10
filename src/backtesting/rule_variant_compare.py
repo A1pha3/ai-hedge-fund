@@ -6,11 +6,15 @@ from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
-from statistics import mean
 from typing import Callable, Iterator, Mapping, Sequence
 
+from src.backtesting.rule_variant_compare_helpers import (
+    average_numeric_path,
+    count_positive_numeric_path,
+    load_pipeline_day_events,
+)
 from src.backtesting.engine import BacktestEngine
-from src.backtesting.types import PerformanceMetrics, PortfolioValuePoint
+from src.backtesting.types import PortfolioValuePoint
 from src.execution.daily_pipeline import DailyPipeline, _resolve_pipeline_model_config
 from src.main import run_hedge_fund
 
@@ -117,58 +121,23 @@ def summarize_timing_log(timing_log_path: Path) -> dict[str, float | int | None]
     if not timing_log_path.exists():
         return {"pipeline_days": 0}
 
-    pipeline_day_events = []
-    with timing_log_path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line:
-                continue
-            payload = json.loads(line)
-            if payload.get("event") == "pipeline_day_timing":
-                pipeline_day_events.append(payload)
-
+    pipeline_day_events = load_pipeline_day_events(timing_log_path)
     if not pipeline_day_events:
         return {"pipeline_days": 0}
 
-    def _avg(path: tuple[str, ...]) -> float | None:
-        values: list[float] = []
-        for event in pipeline_day_events:
-            current = event
-            for key in path:
-                if not isinstance(current, dict) or key not in current:
-                    current = None
-                    break
-                current = current[key]
-            if isinstance(current, (int, float)):
-                values.append(float(current))
-        return mean(values) if values else None
-
-    def _count_nonzero(path: tuple[str, ...]) -> int:
-        count = 0
-        for event in pipeline_day_events:
-            current = event
-            for key in path:
-                if not isinstance(current, dict) or key not in current:
-                    current = None
-                    break
-                current = current[key]
-            if isinstance(current, (int, float)) and float(current) > 0:
-                count += 1
-        return count
-
     return {
         "pipeline_days": len(pipeline_day_events),
-        "avg_total_day_seconds": _avg(("timing_seconds", "total_day")),
-        "avg_post_market_seconds": _avg(("timing_seconds", "post_market")),
-        "avg_layer_a_count": _avg(("current_plan", "counts", "layer_a_count")),
-        "avg_layer_b_count": _avg(("current_plan", "counts", "layer_b_count")),
-        "avg_layer_c_count": _avg(("current_plan", "counts", "layer_c_count")),
-        "avg_watchlist_count": _avg(("current_plan", "counts", "watchlist_count")),
-        "avg_buy_order_count": _avg(("current_plan", "counts", "buy_order_count")),
-        "avg_sell_order_count": _avg(("current_plan", "counts", "sell_order_count")),
-        "nonzero_layer_b_days": _count_nonzero(("current_plan", "counts", "layer_b_count")),
-        "nonzero_buy_order_days": _count_nonzero(("current_plan", "counts", "buy_order_count")),
-        "executed_order_days": _count_nonzero(("executed_order_count",)),
+        "avg_total_day_seconds": average_numeric_path(pipeline_day_events, ("timing_seconds", "total_day")),
+        "avg_post_market_seconds": average_numeric_path(pipeline_day_events, ("timing_seconds", "post_market")),
+        "avg_layer_a_count": average_numeric_path(pipeline_day_events, ("current_plan", "counts", "layer_a_count")),
+        "avg_layer_b_count": average_numeric_path(pipeline_day_events, ("current_plan", "counts", "layer_b_count")),
+        "avg_layer_c_count": average_numeric_path(pipeline_day_events, ("current_plan", "counts", "layer_c_count")),
+        "avg_watchlist_count": average_numeric_path(pipeline_day_events, ("current_plan", "counts", "watchlist_count")),
+        "avg_buy_order_count": average_numeric_path(pipeline_day_events, ("current_plan", "counts", "buy_order_count")),
+        "avg_sell_order_count": average_numeric_path(pipeline_day_events, ("current_plan", "counts", "sell_order_count")),
+        "nonzero_layer_b_days": count_positive_numeric_path(pipeline_day_events, ("current_plan", "counts", "layer_b_count")),
+        "nonzero_buy_order_days": count_positive_numeric_path(pipeline_day_events, ("current_plan", "counts", "buy_order_count")),
+        "executed_order_days": count_positive_numeric_path(pipeline_day_events, ("executed_order_count",)),
     }
 
 
