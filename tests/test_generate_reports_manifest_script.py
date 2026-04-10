@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 
 from scripts.generate_reports_manifest import (
+    _build_carryover_aligned_peer_harvest_summary,
+    _build_carryover_aligned_peer_proof_summary,
+    _build_carryover_peer_expansion_summary,
+    _build_carryover_peer_promotion_gate_summary,
+    _build_carryover_multiday_continuation_audit_summary,
     _build_continuation_promotion_ready_summary,
     _build_execution_constraint_rollup,
     _build_selected_outcome_refresh_summary,
@@ -315,12 +320,157 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
                     "current_t_plus_2_close_return": None,
                     "historical_next_close_positive_rate": 1.0,
                     "historical_t_plus_2_close_positive_rate": 1.0,
+                    "next_day_contract_verdict": "pending_next_day",
+                    "t_plus_2_contract_verdict": "pending_t_plus_2",
+                    "overall_contract_verdict": "pending_next_day",
                 }
             ],
             "recommendation": "formal selected still open case",
         },
     )
     (reports_root / "btst_selected_outcome_refresh_board_latest.md").write_text("# selected refresh board\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_carryover_multiday_continuation_audit_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_trade_date": "2026-04-09",
+            "supportive_case_count": 3,
+            "peer_status_counts": {"broad_family_only": 2, "same_ticker_ready": 1},
+            "selected_historical_proof_summary": {
+                "next_close_positive_rate": 1.0,
+                "t_plus_2_close_positive_rate": 1.0,
+                "t_plus_3_close_positive_rate": 0.0,
+            },
+            "broad_family_only_summary": {
+                "next_close_positive_rate": 0.0,
+                "t_plus_2_close_positive_rate": 0.0,
+            },
+            "policy_checks": {
+                "selected_path_t2_bias_only": True,
+                "broad_family_only_multiday_unsupported": True,
+                "aligned_peer_multiday_ready": False,
+                "open_selected_case_count": 1,
+            },
+            "policy_recommendations": [
+                "002001 只支持 T+2 bias。",
+                "broad_family_only 不支持多日 continuation。",
+            ],
+            "recommendation": "keep T+2 bias only",
+        },
+    )
+    (reports_root / "btst_carryover_multiday_continuation_audit_latest.md").write_text("# carryover multiday audit\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_carryover_aligned_peer_harvest_latest.json",
+        {
+            "ticker": "002001",
+            "peer_row_count": 18,
+            "peer_count": 13,
+            "status_counts": {"next_day_watch": 1, "fresh_open_cycle": 12},
+            "focus_ticker": "300408",
+            "focus_status": "next_day_watch",
+            "harvest_entries": [
+                {
+                    "ticker": "300408",
+                    "harvest_status": "next_day_watch",
+                    "latest_trade_date": "2026-04-08",
+                    "latest_scope": "same_family_source",
+                    "closed_cycle_count": 0,
+                    "next_day_available_count": 1,
+                    "recommendation": "watch 300408 T+2 close loop",
+                },
+                {
+                    "ticker": "301396",
+                    "harvest_status": "fresh_open_cycle",
+                },
+                {
+                    "ticker": "300620",
+                    "harvest_status": "fresh_open_cycle",
+                },
+            ],
+            "recommendation": "watch aligned peers",
+        },
+    )
+    (reports_root / "btst_carryover_aligned_peer_harvest_latest.md").write_text("# carryover aligned peer harvest\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_carryover_peer_expansion_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_path_t2_bias_only": True,
+            "broad_family_only_multiday_unsupported": True,
+            "peer_count": 3,
+            "expansion_status_counts": {"next_day_watch_priority": 1, "open_cycle_priority": 1, "open_cycle_with_history_risk": 1},
+            "priority_expansion_tickers": ["300408", "301396"],
+            "watch_with_risk_tickers": ["688498"],
+            "focus_ticker": "300408",
+            "focus_status": "next_day_watch_priority",
+            "entries": [
+                {
+                    "ticker": "300408",
+                    "expansion_status": "next_day_watch_priority",
+                    "latest_trade_date": "2026-04-08",
+                    "latest_scope": "same_family_source",
+                    "recommendation": "watch 300408 first",
+                }
+            ],
+            "recommendation": "watch 300408 first and keep 688498 watch-with-risk",
+        },
+    )
+    (reports_root / "btst_carryover_peer_expansion_latest.md").write_text("# carryover peer expansion\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_carryover_aligned_peer_proof_board_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_trade_date": "2026-04-09",
+            "selected_cycle_status": "missing_next_day",
+            "selected_contract_verdict": "pending_next_day",
+            "peer_count": 3,
+            "proof_verdict_counts": {"supportive_closed_cycle": 1, "pending_t_plus_2_close": 1, "supportive_with_history_risk": 1},
+            "promotion_review_verdict_counts": {"ready_for_promotion_review": 1, "await_t_plus_2_close": 1, "requires_history_risk_review": 1},
+            "ready_for_promotion_review_tickers": ["301396"],
+            "risk_review_tickers": ["688498"],
+            "pending_t_plus_2_tickers": ["300408"],
+            "focus_ticker": "301396",
+            "focus_proof_verdict": "supportive_closed_cycle",
+            "focus_promotion_review_verdict": "ready_for_promotion_review",
+            "entries": [
+                {
+                    "ticker": "301396",
+                    "latest_trade_date": "2026-04-10",
+                    "latest_scope": "same_family_source_score_catalyst",
+                    "proof_verdict": "supportive_closed_cycle",
+                    "promotion_review_verdict": "ready_for_promotion_review",
+                    "recommendation": "301396 ready",
+                }
+            ],
+            "recommendation": "301396 is ready for promotion review.",
+        },
+    )
+    (reports_root / "btst_carryover_aligned_peer_proof_board_latest.md").write_text("# carryover aligned peer proof board\n", encoding="utf-8")
+    _write_json(
+        reports_root / "btst_carryover_peer_promotion_gate_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_trade_date": "2026-04-09",
+            "selected_contract_verdict": "pending_next_day",
+            "peer_count": 3,
+            "gate_verdict_counts": {"blocked_selected_contract_open": 1, "await_peer_t_plus_2_close": 1, "await_peer_next_day_close": 1},
+            "ready_tickers": [],
+            "blocked_open_tickers": ["301396"],
+            "risk_review_tickers": [],
+            "pending_t_plus_2_tickers": ["300408"],
+            "focus_ticker": "301396",
+            "focus_gate_verdict": "blocked_selected_contract_open",
+            "entries": [
+                {
+                    "ticker": "301396",
+                    "gate_verdict": "blocked_selected_contract_open",
+                    "recommendation": "301396 blocked until 002001 closes.",
+                }
+            ],
+            "recommendation": "301396 proof is ready but blocked by 002001 open contract.",
+        },
+    )
+    (reports_root / "btst_carryover_peer_promotion_gate_latest.md").write_text("# carryover peer promotion gate\n", encoding="utf-8")
 
     manifest = generate_reports_manifest(reports_root=reports_root)
 
@@ -358,6 +508,20 @@ def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_pat
     assert manifest["selected_outcome_refresh_summary"]["focus_ticker"] == "002001"
     assert manifest["selected_outcome_refresh_summary"]["focus_cycle_status"] == "missing_next_day"
     assert manifest["selected_outcome_refresh_summary"]["focus_historical_t_plus_2_close_positive_rate"] == 1.0
+    assert manifest["selected_outcome_refresh_summary"]["focus_overall_contract_verdict"] == "pending_next_day"
+    assert manifest["carryover_multiday_continuation_audit_summary"]["selected_path_t2_bias_only"] is True
+    assert manifest["carryover_multiday_continuation_audit_summary"]["broad_family_only_multiday_unsupported"] is True
+    assert manifest["carryover_aligned_peer_harvest_summary"]["focus_ticker"] == "300408"
+    assert manifest["carryover_aligned_peer_harvest_summary"]["fresh_open_cycle_tickers"] == ["301396", "300620"]
+    assert manifest["carryover_peer_expansion_summary"]["focus_ticker"] == "300408"
+    assert manifest["carryover_peer_expansion_summary"]["priority_expansion_tickers"] == ["300408", "301396"]
+    assert manifest["carryover_peer_expansion_summary"]["watch_with_risk_tickers"] == ["688498"]
+    assert manifest["carryover_aligned_peer_proof_summary"]["focus_ticker"] == "301396"
+    assert manifest["carryover_aligned_peer_proof_summary"]["focus_promotion_review_verdict"] == "ready_for_promotion_review"
+    assert manifest["carryover_aligned_peer_proof_summary"]["ready_for_promotion_review_tickers"] == ["301396"]
+    assert manifest["carryover_peer_promotion_gate_summary"]["focus_ticker"] == "301396"
+    assert manifest["carryover_peer_promotion_gate_summary"]["focus_gate_verdict"] == "blocked_selected_contract_open"
+    assert manifest["carryover_peer_promotion_gate_summary"]["blocked_open_tickers"] == ["301396"]
     reading_paths = {reading_path["id"]: reading_path for reading_path in manifest["reading_paths"]}
     assert "btst_default_merge_review_latest" in reading_paths["btst_control_tower"]["entry_ids"]
     assert "btst_default_merge_historical_counterfactual_latest" in reading_paths["btst_control_tower"]["entry_ids"]
@@ -414,6 +578,188 @@ def test_build_selected_outcome_refresh_summary(tmp_path: Path) -> None:
     assert summary["focus_ticker"] == "002001"
     assert summary["focus_cycle_status"] == "missing_next_day"
     assert summary["current_cycle_status_counts"] == {"missing_next_day": 1}
+    assert summary["focus_overall_contract_verdict"] is None
+
+
+def test_build_carryover_multiday_continuation_audit_summary(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_carryover_multiday_continuation_audit_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_trade_date": "2026-04-09",
+            "supportive_case_count": 3,
+            "peer_status_counts": {"broad_family_only": 2, "same_ticker_ready": 1},
+            "selected_historical_proof_summary": {
+                "next_close_positive_rate": 1.0,
+                "t_plus_2_close_positive_rate": 1.0,
+                "t_plus_3_close_positive_rate": 0.0,
+            },
+            "broad_family_only_summary": {
+                "next_close_positive_rate": 0.0,
+                "t_plus_2_close_positive_rate": 0.0,
+            },
+            "policy_checks": {
+                "selected_path_t2_bias_only": True,
+                "broad_family_only_multiday_unsupported": True,
+                "aligned_peer_multiday_ready": False,
+                "open_selected_case_count": 1,
+            },
+            "policy_recommendations": ["keep T+2 bias"],
+            "recommendation": "keep T+2 bias",
+        },
+    )
+
+    summary = _build_carryover_multiday_continuation_audit_summary(reports_root)
+
+    assert summary["selected_ticker"] == "002001"
+    assert summary["selected_path_t2_bias_only"] is True
+    assert summary["broad_family_only_multiday_unsupported"] is True
+    assert summary["selected_t_plus_3_close_positive_rate"] == 0.0
+
+
+def test_build_carryover_aligned_peer_harvest_summary(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_carryover_aligned_peer_harvest_latest.json",
+        {
+            "ticker": "002001",
+            "peer_row_count": 18,
+            "peer_count": 13,
+            "status_counts": {"next_day_watch": 1, "fresh_open_cycle": 12},
+            "focus_ticker": "300408",
+            "focus_status": "next_day_watch",
+            "harvest_entries": [
+                {
+                    "ticker": "300408",
+                    "harvest_status": "next_day_watch",
+                    "latest_trade_date": "2026-04-08",
+                    "latest_scope": "same_family_source",
+                    "closed_cycle_count": 0,
+                    "next_day_available_count": 1,
+                    "recommendation": "watch 300408 T+2 close loop",
+                },
+                {"ticker": "301396", "harvest_status": "fresh_open_cycle"},
+                {"ticker": "300620", "harvest_status": "fresh_open_cycle"},
+            ],
+            "recommendation": "watch aligned peers",
+        },
+    )
+
+    summary = _build_carryover_aligned_peer_harvest_summary(reports_root)
+
+    assert summary["focus_ticker"] == "300408"
+    assert summary["focus_status"] == "next_day_watch"
+    assert summary["fresh_open_cycle_tickers"] == ["301396", "300620"]
+
+
+def test_build_carryover_peer_expansion_summary(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_carryover_peer_expansion_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_path_t2_bias_only": True,
+            "broad_family_only_multiday_unsupported": True,
+            "peer_count": 3,
+            "expansion_status_counts": {"next_day_watch_priority": 1, "open_cycle_priority": 1, "open_cycle_with_history_risk": 1},
+            "priority_expansion_tickers": ["300408", "301396"],
+            "watch_with_risk_tickers": ["688498"],
+            "focus_ticker": "300408",
+            "focus_status": "next_day_watch_priority",
+            "entries": [
+                {
+                    "ticker": "300408",
+                    "expansion_status": "next_day_watch_priority",
+                    "latest_trade_date": "2026-04-08",
+                    "latest_scope": "same_family_source",
+                    "recommendation": "watch 300408 first",
+                }
+            ],
+            "recommendation": "watch 300408 first and keep 688498 watch-with-risk",
+        },
+    )
+
+    summary = _build_carryover_peer_expansion_summary(reports_root)
+
+    assert summary["focus_ticker"] == "300408"
+    assert summary["focus_status"] == "next_day_watch_priority"
+    assert summary["priority_expansion_tickers"] == ["300408", "301396"]
+    assert summary["watch_with_risk_tickers"] == ["688498"]
+
+
+def test_build_carryover_aligned_peer_proof_summary(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_carryover_aligned_peer_proof_board_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_cycle_status": "missing_next_day",
+            "selected_contract_verdict": "pending_next_day",
+            "peer_count": 3,
+            "proof_verdict_counts": {"supportive_closed_cycle": 1, "supportive_with_history_risk": 1, "rejected_negative_t_plus_2": 1},
+            "promotion_review_verdict_counts": {"ready_for_promotion_review": 1, "requires_history_risk_review": 1, "not_promotion_ready": 1},
+            "ready_for_promotion_review_tickers": ["301396"],
+            "risk_review_tickers": ["688498"],
+            "pending_t_plus_2_tickers": [],
+            "focus_ticker": "301396",
+            "focus_proof_verdict": "supportive_closed_cycle",
+            "focus_promotion_review_verdict": "ready_for_promotion_review",
+            "entries": [
+                {
+                    "ticker": "301396",
+                    "latest_trade_date": "2026-04-10",
+                    "latest_scope": "same_family_source_score_catalyst",
+                    "proof_verdict": "supportive_closed_cycle",
+                    "promotion_review_verdict": "ready_for_promotion_review",
+                    "recommendation": "301396 ready",
+                }
+            ],
+            "recommendation": "301396 ready.",
+        },
+    )
+
+    summary = _build_carryover_aligned_peer_proof_summary(reports_root)
+
+    assert summary["focus_ticker"] == "301396"
+    assert summary["focus_promotion_review_verdict"] == "ready_for_promotion_review"
+    assert summary["ready_for_promotion_review_tickers"] == ["301396"]
+    assert summary["risk_review_tickers"] == ["688498"]
+
+
+def test_build_carryover_peer_promotion_gate_summary(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_carryover_peer_promotion_gate_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_trade_date": "2026-04-09",
+            "selected_contract_verdict": "pending_next_day",
+            "peer_count": 3,
+            "gate_verdict_counts": {"blocked_selected_contract_open": 1, "await_peer_t_plus_2_close": 1},
+            "ready_tickers": [],
+            "blocked_open_tickers": ["301396"],
+            "risk_review_tickers": [],
+            "pending_t_plus_2_tickers": ["300408"],
+            "focus_ticker": "301396",
+            "focus_gate_verdict": "blocked_selected_contract_open",
+            "entries": [
+                {
+                    "ticker": "301396",
+                    "gate_verdict": "blocked_selected_contract_open",
+                    "recommendation": "wait for 002001 first",
+                }
+            ],
+            "recommendation": "wait for 002001 first",
+        },
+    )
+
+    summary = _build_carryover_peer_promotion_gate_summary(reports_root)
+
+    assert summary["focus_ticker"] == "301396"
+    assert summary["focus_gate_verdict"] == "blocked_selected_contract_open"
+    assert summary["blocked_open_tickers"] == ["301396"]
+    assert summary["pending_t_plus_2_tickers"] == ["300408"]
 
 
 def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:

@@ -7,6 +7,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+from scripts.analyze_btst_carryover_selected_cohort import _peer_evidence_status
 from scripts.btst_analysis_utils import extract_btst_price_outcome
 
 
@@ -38,6 +39,17 @@ def _summarize(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
+def _infer_carryover_evidence_deficient(row: dict[str, Any]) -> bool:
+    return (
+        int(row.get("same_ticker_sample_count") or 0) < 2
+        and int(row.get("historical_evaluable_count") or 0) <= 1
+        and int(row.get("same_family_sample_count") or 0) > 0
+        and int(row.get("same_family_source_sample_count") or 0) == 0
+        and int(row.get("same_family_source_score_catalyst_sample_count") or 0) == 0
+        and int(row.get("same_source_score_sample_count") or 0) == 0
+    )
+
+
 def _build_row(snapshot_path: Path, ticker: str, payload: dict[str, Any], price_cache: dict[tuple[str, str], Any]) -> dict[str, Any] | None:
     short_trade = dict((payload or {}).get("short_trade") or {})
     if not short_trade:
@@ -61,8 +73,9 @@ def _build_row(snapshot_path: Path, ticker: str, payload: dict[str, Any], price_
 
     trade_date = str(snapshot_path.parent.name)
     metrics_payload = dict(short_trade.get("metrics_payload") or {})
+    carryover_evidence_deficiency = dict(metrics_payload.get("carryover_evidence_deficiency") or {})
     outcome = extract_btst_price_outcome(str(ticker), trade_date, price_cache)
-    return {
+    row = {
         "trade_date": trade_date,
         "ticker": str(ticker),
         "report_dir": str(snapshot_path.parents[2]),
@@ -72,16 +85,27 @@ def _build_row(snapshot_path: Path, ticker: str, payload: dict[str, Any], price_
         "preferred_entry_mode": str(short_trade.get("preferred_entry_mode") or ""),
         "score_target": round(_safe_float(short_trade.get("score_target")), 4),
         "relief_applied": bool(upstream_relief.get("applied")),
+        "historical_applied_scope": str(historical_prior.get("applied_scope") or ""),
         "historical_sample_count": int(historical_prior.get("sample_count") or 0),
         "historical_evaluable_count": int(historical_prior.get("evaluable_count") or 0),
         "historical_next_close_positive_rate": historical_prior.get("next_close_positive_rate"),
         "historical_next_open_to_close_return_mean": historical_prior.get("next_open_to_close_return_mean"),
+        "same_ticker_sample_count": int(historical_prior.get("same_ticker_sample_count") or 0),
+        "same_family_sample_count": int(historical_prior.get("same_family_sample_count") or 0),
+        "same_family_source_sample_count": int(historical_prior.get("same_family_source_sample_count") or 0),
+        "same_family_source_score_catalyst_sample_count": int(historical_prior.get("same_family_source_score_catalyst_sample_count") or 0),
+        "same_source_score_sample_count": int(historical_prior.get("same_source_score_sample_count") or 0),
         "stale_trend_repair_penalty": round(_safe_float(metrics_payload.get("stale_trend_repair_penalty")), 4),
         "extension_without_room_penalty": round(_safe_float(metrics_payload.get("extension_without_room_penalty")), 4),
         "overhead_supply_penalty": round(_safe_float(metrics_payload.get("overhead_supply_penalty")), 4),
+        "carryover_evidence_deficient": bool(carryover_evidence_deficiency.get("evidence_deficient")) if carryover_evidence_deficiency else None,
         "top_reasons": [str(reason) for reason in list(short_trade.get("top_reasons") or []) if str(reason or "").strip()],
         **outcome,
     }
+    row["peer_evidence_status"] = _peer_evidence_status(row)
+    if row["carryover_evidence_deficient"] is None:
+        row["carryover_evidence_deficient"] = _infer_carryover_evidence_deficient(row)
+    return row
 
 
 def _deduplicate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -122,16 +146,29 @@ def analyze_btst_carryover_false_negative_dossier(reports_root: str | Path) -> d
 
     rows = _deduplicate_rows(rows)
     top_reason_counts = Counter(reason for row in rows for reason in list(row.get("top_reasons") or []))
+    peer_status_counts = Counter(str(row.get("peer_evidence_status") or "unknown") for row in rows)
     next_close_values = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
     t_plus_2_values = [float(row["t_plus_2_close_return"]) for row in rows if row.get("t_plus_2_close_return") is not None]
     stale_penalties = [float(row["stale_trend_repair_penalty"]) for row in rows if row.get("stale_trend_repair_penalty") is not None]
     extension_penalties = [float(row["extension_without_room_penalty"]) for row in rows if row.get("extension_without_room_penalty") is not None]
+    evidence_deficient_count = sum(1 for row in rows if row.get("carryover_evidence_deficient"))
+    closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
+    closed_peer_status_counts = Counter(str(row.get("peer_evidence_status") or "unknown") for row in closed_rows)
 
     recommendation = "当前没有 strong carryover false negative 样本。"
     if rows:
         lead_row = rows[0]
         lead_reason = str(lead_row.get("top_reasons")[2] if len(lead_row.get("top_reasons") or []) >= 3 else "")
-        if next_close_values and max(next_close_values) <= 0:
+        if (
+            closed_rows
+            and all(float(row.get("next_close_return") or 0.0) <= 0.0 for row in closed_rows)
+            and all(str(row.get("peer_evidence_status") or "") == "broad_family_only" for row in closed_rows)
+        ):
+            recommendation = (
+                "当前 strong carryover false negatives 的已闭环样本全部属于 broad-family-only / evidence-deficient 低样本，"
+                "且没有兑现次日正收益，说明现阶段更像是 penalty 在保护胜率，而不是错杀了 aligned peer 机会。"
+            )
+        elif next_close_values and max(next_close_values) <= 0:
             recommendation = (
                 "当前 strong carryover false negatives 的已闭环样本没有兑现次日正收益，"
                 "说明现阶段更像是 penalty 在保护胜率，而不是错杀该放行的票。"
@@ -147,6 +184,9 @@ def analyze_btst_carryover_false_negative_dossier(reports_root: str | Path) -> d
         "false_negative_count": len(rows),
         "decision_counts": dict(Counter(str(row.get("decision") or "") for row in rows)),
         "top_reason_counts": dict(top_reason_counts.most_common()),
+        "peer_status_counts": dict(peer_status_counts),
+        "evidence_deficient_count": evidence_deficient_count,
+        "closed_cycle_peer_status_counts": dict(closed_peer_status_counts),
         "next_close_return_summary": _summarize(next_close_values),
         "t_plus_2_close_return_summary": _summarize(t_plus_2_values),
         "stale_trend_repair_penalty_summary": _summarize(stale_penalties),
@@ -164,6 +204,9 @@ def render_btst_carryover_false_negative_dossier_markdown(analysis: dict[str, An
     lines.append(f"- false_negative_count: {analysis.get('false_negative_count')}")
     lines.append(f"- decision_counts: {analysis.get('decision_counts')}")
     lines.append(f"- top_reason_counts: {analysis.get('top_reason_counts')}")
+    lines.append(f"- peer_status_counts: {analysis.get('peer_status_counts')}")
+    lines.append(f"- evidence_deficient_count: {analysis.get('evidence_deficient_count')}")
+    lines.append(f"- closed_cycle_peer_status_counts: {analysis.get('closed_cycle_peer_status_counts')}")
     lines.append("")
     lines.append("## Outcome Summary")
     lines.append(f"- next_close_return_summary: {analysis.get('next_close_return_summary')}")
@@ -174,7 +217,7 @@ def render_btst_carryover_false_negative_dossier_markdown(analysis: dict[str, An
     lines.append("## Rows")
     for row in list(analysis.get("rows") or []):
         lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, score_target={row.get('score_target')}, stale_penalty={row.get('stale_trend_repair_penalty')}, extension_penalty={row.get('extension_without_room_penalty')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, top_reasons={row.get('top_reasons')}"
+            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, peer_evidence_status={row.get('peer_evidence_status')}, carryover_evidence_deficient={row.get('carryover_evidence_deficient')}, score_target={row.get('score_target')}, stale_penalty={row.get('stale_trend_repair_penalty')}, extension_penalty={row.get('extension_without_room_penalty')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, top_reasons={row.get('top_reasons')}"
         )
     if not list(analysis.get("rows") or []):
         lines.append("- none")

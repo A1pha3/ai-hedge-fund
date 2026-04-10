@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+from scripts.analyze_btst_carryover_aligned_peer_harvest import analyze_btst_carryover_aligned_peer_harvest, render_btst_carryover_aligned_peer_harvest_markdown
+from scripts.analyze_btst_carryover_aligned_peer_proof_board import analyze_btst_carryover_aligned_peer_proof_board, render_btst_carryover_aligned_peer_proof_board_markdown
+from scripts.analyze_btst_carryover_anchor_probe import analyze_btst_carryover_anchor_probe, render_btst_carryover_anchor_probe_markdown
+from scripts.analyze_btst_carryover_multiday_continuation_audit import analyze_btst_carryover_multiday_continuation_audit, render_btst_carryover_multiday_continuation_audit_markdown
+from scripts.analyze_btst_carryover_peer_expansion import analyze_btst_carryover_peer_expansion, render_btst_carryover_peer_expansion_markdown
+from scripts.analyze_btst_carryover_peer_promotion_gate import analyze_btst_carryover_peer_promotion_gate, render_btst_carryover_peer_promotion_gate_markdown
+from scripts.analyze_btst_selected_outcome_refresh_board import analyze_btst_selected_outcome_refresh_board, render_btst_selected_outcome_refresh_board_markdown
+from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
+
+
+REPORTS_DIR = Path("data/reports")
+DEFAULT_BUNDLE_JSON = REPORTS_DIR / "btst_carryover_close_loop_refresh_latest.json"
+DEFAULT_BUNDLE_MD = REPORTS_DIR / "btst_carryover_close_loop_refresh_latest.md"
+
+
+def _write_artifact(json_path: Path, markdown_path: Path, payload: dict[str, Any], markdown: str) -> None:
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    markdown_path.write_text(markdown, encoding="utf-8")
+
+
+def refresh_btst_carryover_close_loop_bundle(
+    reports_root: str | Path,
+    *,
+    output_dir: str | Path | None = None,
+    refresh_control_tower: bool = True,
+) -> dict[str, Any]:
+    resolved_reports_root = Path(reports_root).expanduser().resolve()
+    resolved_output_dir = Path(output_dir).expanduser().resolve() if output_dir else resolved_reports_root
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+
+    selected_output_json = resolved_output_dir / "btst_selected_outcome_refresh_board_latest.json"
+    selected_output_md = resolved_output_dir / "btst_selected_outcome_refresh_board_latest.md"
+    anchor_output_json = resolved_output_dir / "btst_carryover_anchor_probe_latest.json"
+    anchor_output_md = resolved_output_dir / "btst_carryover_anchor_probe_latest.md"
+    harvest_output_json = resolved_output_dir / "btst_carryover_aligned_peer_harvest_latest.json"
+    harvest_output_md = resolved_output_dir / "btst_carryover_aligned_peer_harvest_latest.md"
+    multiday_output_json = resolved_output_dir / "btst_carryover_multiday_continuation_audit_latest.json"
+    multiday_output_md = resolved_output_dir / "btst_carryover_multiday_continuation_audit_latest.md"
+    expansion_output_json = resolved_output_dir / "btst_carryover_peer_expansion_latest.json"
+    expansion_output_md = resolved_output_dir / "btst_carryover_peer_expansion_latest.md"
+    proof_board_output_json = resolved_output_dir / "btst_carryover_aligned_peer_proof_board_latest.json"
+    proof_board_output_md = resolved_output_dir / "btst_carryover_aligned_peer_proof_board_latest.md"
+    promotion_gate_output_json = resolved_output_dir / "btst_carryover_peer_promotion_gate_latest.json"
+    promotion_gate_output_md = resolved_output_dir / "btst_carryover_peer_promotion_gate_latest.md"
+
+    selected_board = analyze_btst_selected_outcome_refresh_board(resolved_reports_root)
+    _write_artifact(selected_output_json, selected_output_md, selected_board, render_btst_selected_outcome_refresh_board_markdown(selected_board))
+
+    focus_entry = dict((selected_board.get("entries") or [None])[0] or {})
+    focus_ticker = str(focus_entry.get("ticker") or "")
+    if not focus_ticker:
+        bundle = {
+            "reports_root": str(resolved_reports_root),
+            "selected_ticker": None,
+            "status": "no_formal_selected",
+            "recommendation": "当前没有 formal selected，close-loop refresh bundle 仅刷新了 selected outcome board。",
+            "artifact_paths": {
+                "selected_outcome_refresh_json": str(selected_output_json),
+                "selected_outcome_refresh_markdown": str(selected_output_md),
+            },
+        }
+        return bundle
+
+    anchor_probe = analyze_btst_carryover_anchor_probe(resolved_reports_root, ticker=focus_ticker, report_dir=selected_board.get("report_dir"))
+    _write_artifact(anchor_output_json, anchor_output_md, anchor_probe, render_btst_carryover_anchor_probe_markdown(anchor_probe))
+
+    harvest = analyze_btst_carryover_aligned_peer_harvest(anchor_output_json)
+    _write_artifact(harvest_output_json, harvest_output_md, harvest, render_btst_carryover_aligned_peer_harvest_markdown(harvest))
+
+    multiday_audit = analyze_btst_carryover_multiday_continuation_audit(resolved_reports_root)
+    _write_artifact(multiday_output_json, multiday_output_md, multiday_audit, render_btst_carryover_multiday_continuation_audit_markdown(multiday_audit))
+
+    peer_expansion = analyze_btst_carryover_peer_expansion(harvest_output_json, multiday_output_json)
+    _write_artifact(expansion_output_json, expansion_output_md, peer_expansion, render_btst_carryover_peer_expansion_markdown(peer_expansion))
+
+    peer_proof_board = analyze_btst_carryover_aligned_peer_proof_board(harvest_output_json, expansion_output_json, selected_output_json)
+    _write_artifact(proof_board_output_json, proof_board_output_md, peer_proof_board, render_btst_carryover_aligned_peer_proof_board_markdown(peer_proof_board))
+
+    peer_promotion_gate = analyze_btst_carryover_peer_promotion_gate(proof_board_output_json, selected_output_json)
+    _write_artifact(promotion_gate_output_json, promotion_gate_output_md, peer_promotion_gate, render_btst_carryover_peer_promotion_gate_markdown(peer_promotion_gate))
+
+    control_tower_result: dict[str, Any] = {}
+    if refresh_control_tower:
+        control_tower_result = generate_btst_nightly_control_tower_artifacts(
+            reports_root=resolved_reports_root,
+            output_json=resolved_output_dir / "btst_nightly_control_tower_latest.json",
+            output_md=resolved_output_dir / "btst_nightly_control_tower_latest.md",
+            delta_output_json=resolved_output_dir / "btst_open_ready_delta_latest.json",
+            delta_output_md=resolved_output_dir / "btst_open_ready_delta_latest.md",
+            close_validation_output_json=resolved_output_dir / "btst_latest_close_validation_latest.json",
+            close_validation_output_md=resolved_output_dir / "btst_latest_close_validation_latest.md",
+            history_dir=resolved_output_dir / "archive" / "btst_nightly_control_tower_history",
+        )
+
+    bundle = {
+        "reports_root": str(resolved_reports_root),
+        "selected_ticker": focus_ticker,
+        "selected_cycle_status": focus_entry.get("current_cycle_status"),
+        "selected_contract_verdict": focus_entry.get("overall_contract_verdict"),
+        "peer_focus_ticker": peer_expansion.get("focus_ticker"),
+        "peer_focus_status": peer_expansion.get("focus_status"),
+        "peer_proof_focus_ticker": peer_proof_board.get("focus_ticker"),
+        "peer_proof_focus_verdict": peer_proof_board.get("focus_promotion_review_verdict"),
+        "peer_promotion_gate_focus_ticker": peer_promotion_gate.get("focus_ticker"),
+        "peer_promotion_gate_focus_verdict": peer_promotion_gate.get("focus_gate_verdict"),
+        "priority_expansion_tickers": list(peer_expansion.get("priority_expansion_tickers") or []),
+        "watch_with_risk_tickers": list(peer_expansion.get("watch_with_risk_tickers") or []),
+        "ready_for_promotion_review_tickers": list(peer_proof_board.get("ready_for_promotion_review_tickers") or []),
+        "promotion_gate_ready_tickers": list(peer_promotion_gate.get("ready_tickers") or []),
+        "refresh_control_tower": refresh_control_tower,
+        "artifact_paths": {
+            "selected_outcome_refresh_json": str(selected_output_json),
+            "selected_outcome_refresh_markdown": str(selected_output_md),
+            "carryover_anchor_probe_json": str(anchor_output_json),
+            "carryover_anchor_probe_markdown": str(anchor_output_md),
+            "carryover_aligned_peer_harvest_json": str(harvest_output_json),
+            "carryover_aligned_peer_harvest_markdown": str(harvest_output_md),
+            "carryover_multiday_continuation_audit_json": str(multiday_output_json),
+            "carryover_multiday_continuation_audit_markdown": str(multiday_output_md),
+            "carryover_peer_expansion_json": str(expansion_output_json),
+            "carryover_peer_expansion_markdown": str(expansion_output_md),
+            "carryover_aligned_peer_proof_board_json": str(proof_board_output_json),
+            "carryover_aligned_peer_proof_board_markdown": str(proof_board_output_md),
+            "carryover_peer_promotion_gate_json": str(promotion_gate_output_json),
+            "carryover_peer_promotion_gate_markdown": str(promotion_gate_output_md),
+            "nightly_control_tower_json": control_tower_result.get("json_path"),
+            "nightly_control_tower_markdown": control_tower_result.get("markdown_path"),
+        },
+        "recommendation": (
+            f"已刷新 {focus_ticker} 的 selected contract 与 peer close-loop 队列；"
+            f" 当前 peer focus={peer_expansion.get('focus_ticker')} ({peer_expansion.get('focus_status')})，"
+            f" proof_focus={peer_proof_board.get('focus_ticker')} ({peer_proof_board.get('focus_promotion_review_verdict')})，"
+            f" promotion_gate_focus={peer_promotion_gate.get('focus_ticker')} ({peer_promotion_gate.get('focus_gate_verdict')})，"
+            f" priority_expansion={peer_expansion.get('priority_expansion_tickers')}，"
+            f" ready_for_promotion_review={peer_proof_board.get('ready_for_promotion_review_tickers')}，"
+            f" promotion_gate_ready={peer_promotion_gate.get('ready_tickers')}，"
+            f" watch_with_risk={peer_expansion.get('watch_with_risk_tickers')}。"
+        ),
+    }
+    return bundle
+
+
+def render_btst_carryover_close_loop_refresh_markdown(bundle: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# BTST Carryover Close-Loop Refresh")
+    lines.append("")
+    lines.append("## Overview")
+    lines.append(f"- reports_root: {bundle.get('reports_root')}")
+    lines.append(f"- selected_ticker: {bundle.get('selected_ticker')}")
+    lines.append(f"- selected_cycle_status: {bundle.get('selected_cycle_status')}")
+    lines.append(f"- selected_contract_verdict: {bundle.get('selected_contract_verdict')}")
+    lines.append(f"- peer_focus_ticker: {bundle.get('peer_focus_ticker')}")
+    lines.append(f"- peer_focus_status: {bundle.get('peer_focus_status')}")
+    lines.append(f"- peer_proof_focus_ticker: {bundle.get('peer_proof_focus_ticker')}")
+    lines.append(f"- peer_proof_focus_verdict: {bundle.get('peer_proof_focus_verdict')}")
+    lines.append(f"- peer_promotion_gate_focus_ticker: {bundle.get('peer_promotion_gate_focus_ticker')}")
+    lines.append(f"- peer_promotion_gate_focus_verdict: {bundle.get('peer_promotion_gate_focus_verdict')}")
+    lines.append(f"- priority_expansion_tickers: {bundle.get('priority_expansion_tickers')}")
+    lines.append(f"- ready_for_promotion_review_tickers: {bundle.get('ready_for_promotion_review_tickers')}")
+    lines.append(f"- promotion_gate_ready_tickers: {bundle.get('promotion_gate_ready_tickers')}")
+    lines.append(f"- watch_with_risk_tickers: {bundle.get('watch_with_risk_tickers')}")
+    lines.append(f"- refresh_control_tower: {bundle.get('refresh_control_tower')}")
+    lines.append("")
+    lines.append("## Artifact Paths")
+    for label, artifact_path in dict(bundle.get("artifact_paths") or {}).items():
+        lines.append(f"- {label}: {artifact_path}")
+    lines.append("")
+    lines.append("## Recommendation")
+    lines.append(f"- {bundle.get('recommendation')}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Refresh the full BTST carryover close-loop chain so selected contract and peer expansion surfaces move together.")
+    parser.add_argument("--reports-root", default=str(REPORTS_DIR))
+    parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--output-json", default=str(DEFAULT_BUNDLE_JSON))
+    parser.add_argument("--output-md", default=str(DEFAULT_BUNDLE_MD))
+    parser.add_argument("--skip-control-tower", action="store_true")
+    args = parser.parse_args()
+
+    bundle = refresh_btst_carryover_close_loop_bundle(
+        args.reports_root,
+        output_dir=args.output_dir,
+        refresh_control_tower=not args.skip_control_tower,
+    )
+    output_json = Path(args.output_json).expanduser().resolve()
+    output_md = Path(args.output_md).expanduser().resolve()
+    _write_artifact(output_json, output_md, bundle, render_btst_carryover_close_loop_refresh_markdown(bundle))
+    print(json.dumps(bundle, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

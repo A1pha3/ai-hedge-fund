@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from src.paper_trading.btst_reporting import generate_btst_opening_watch_card_artifacts
+from scripts.generate_btst_opening_watch_card import generate_btst_opening_watch_card_artifacts
 
 
 def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(tmp_path, monkeypatch):

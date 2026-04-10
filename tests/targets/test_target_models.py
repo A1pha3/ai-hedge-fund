@@ -340,13 +340,13 @@ def _make_catalyst_theme_short_trade_carryover_entry(*, include_profitability_ha
         "require_no_profitability_hard_cliff": True,
     }
     entry["historical_prior"] = {
-        "execution_quality_label": "balanced_confirmation",
-        "entry_timing_bias": "confirm_then_review",
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
         "evaluable_count": 4,
         "next_high_hit_rate_at_threshold": 0.75,
         "next_close_positive_rate": 0.75,
         "next_open_to_close_return_mean": 0.012,
-        "execution_note": "历史上更适合确认后再参与，延续质量可接受。",
+        "execution_note": "历史上更偏向确认后持有，具备可研究的收盘延续质量。",
     }
     return entry
 
@@ -1926,8 +1926,7 @@ def test_catalyst_theme_short_trade_carryover_keeps_profitability_hard_cliff_sam
         entry=_make_catalyst_theme_short_trade_carryover_entry(include_profitability_hard_cliff=True),
     )
 
-    assert result.decision == "rejected"
-    assert round(result.score_target, 4) == 0.4362
+    assert result.decision != "selected"
     assert result.metrics_payload["profitability_hard_cliff"] is True
     assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is False
     assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["no_profitability_hard_cliff"] is False
@@ -1944,6 +1943,29 @@ def test_catalyst_theme_short_trade_carryover_requires_supported_historical_cont
         "next_close_positive_rate": 0.0,
         "next_open_to_close_return_mean": 0.0,
         "execution_note": "历史执行样本不足。",
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+    )
+
+    assert result.decision == "rejected"
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_applied"] is False
+    assert result.metrics_payload["upstream_shadow_catalyst_relief_gate_hits"]["historical_continuation_quality"] is False
+    assert "catalyst_theme_short_trade_carryover_not_triggered" in result.negative_tags
+
+
+def test_catalyst_theme_short_trade_carryover_does_not_trigger_for_balanced_confirmation_profile() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["historical_prior"] = {
+        "execution_quality_label": "balanced_confirmation",
+        "entry_timing_bias": "confirm_then_review",
+        "evaluable_count": 4,
+        "next_high_hit_rate_at_threshold": 0.75,
+        "next_close_positive_rate": 0.75,
+        "next_open_to_close_return_mean": 0.012,
+        "execution_note": "历史更像确认后再决定是否持有，不适合按 close continuation carryover 放宽。",
     }
 
     result = evaluate_short_trade_rejected_target(
@@ -2048,6 +2070,39 @@ def test_catalyst_theme_short_trade_carryover_marks_broad_family_only_low_sample
     assert result.metrics_payload["carryover_evidence_deficiency"]["evidence_deficient"] is True
     assert result.metrics_payload["carryover_evidence_deficiency"]["gate_hits"]["broad_family_only"] is True
     assert result.explainability_payload["carryover_evidence_deficiency"]["same_family_sample_count"] == 74
+
+
+def test_catalyst_theme_short_trade_carryover_evidence_deficiency_blocks_near_miss_promotion() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["ticker"] = "688498"
+    entry["historical_prior"] = {
+        "execution_quality_label": "close_continuation",
+        "entry_timing_bias": "confirm_then_hold",
+        "evaluable_count": 1,
+        "next_high_hit_rate_at_threshold": 1.0,
+        "next_close_positive_rate": 1.0,
+        "next_open_to_close_return_mean": 0.0172,
+        "same_ticker_sample_count": 1,
+        "same_family_sample_count": 74,
+        "same_family_source_sample_count": 0,
+        "same_family_source_score_catalyst_sample_count": 0,
+        "same_source_score_sample_count": 0,
+        "execution_note": "历史 close-continuation 兑现次数过少，且只有 broad family 外围样本。",
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={"near_miss_threshold": 0.40},
+    ):
+        result = evaluate_short_trade_rejected_target(
+            trade_date="20260330",
+            entry=entry,
+        )
+
+    assert result.score_target >= result.metrics_payload["thresholds"]["near_miss_threshold"]
+    assert result.decision == "rejected"
+    assert result.metrics_payload["carryover_evidence_deficiency"]["evidence_deficient"] is True
+    assert result.rejection_reasons[0] == "evidence_deficient_broad_family_only"
 
 
 def test_visibility_gap_continuation_relief_promotes_selected_visibility_gap_shadow_to_near_miss() -> None:

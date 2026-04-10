@@ -536,6 +536,181 @@ def _extract_default_merge_review_summary(manifest: dict[str, Any]) -> dict[str,
     return _safe_load_json(entry.get("absolute_path"))
 
 
+def _extract_selected_outcome_refresh_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("selected_outcome_refresh_summary") or {})
+    if summary:
+        return summary
+    reports_root = Path(manifest.get("reports_root") or REPORTS_DIR).expanduser().resolve()
+    refresh_board = _safe_load_json(reports_root / "btst_selected_outcome_refresh_board_latest.json")
+    entries = [dict(entry or {}) for entry in list(refresh_board.get("entries") or [])]
+    focus_entry = entries[0] if entries else {}
+    if not refresh_board and not focus_entry:
+        return {}
+    return {
+        "trade_date": refresh_board.get("trade_date"),
+        "selected_count": refresh_board.get("selected_count"),
+        "current_cycle_status_counts": dict(refresh_board.get("current_cycle_status_counts") or {}),
+        "focus_ticker": focus_entry.get("ticker"),
+        "focus_cycle_status": focus_entry.get("current_cycle_status"),
+        "focus_data_status": focus_entry.get("current_data_status"),
+        "focus_next_close_return": focus_entry.get("current_next_close_return"),
+        "focus_t_plus_2_close_return": focus_entry.get("current_t_plus_2_close_return"),
+        "focus_historical_next_close_positive_rate": focus_entry.get("historical_next_close_positive_rate"),
+        "focus_historical_t_plus_2_close_positive_rate": focus_entry.get("historical_t_plus_2_close_positive_rate"),
+        "focus_next_day_contract_verdict": focus_entry.get("next_day_contract_verdict"),
+        "focus_t_plus_2_contract_verdict": focus_entry.get("t_plus_2_contract_verdict"),
+        "focus_overall_contract_verdict": focus_entry.get("overall_contract_verdict"),
+        "recommendation": refresh_board.get("recommendation"),
+    }
+
+
+def _extract_carryover_multiday_continuation_audit_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("carryover_multiday_continuation_audit_summary") or {})
+    if summary:
+        return summary
+    reports_root = Path(manifest.get("reports_root") or REPORTS_DIR).expanduser().resolve()
+    audit = _safe_load_json(reports_root / "btst_carryover_multiday_continuation_audit_latest.json")
+    if not audit:
+        return {}
+    policy_checks = dict(audit.get("policy_checks") or {})
+    selected_historical = dict(audit.get("selected_historical_proof_summary") or {})
+    broad_family_only = dict(audit.get("broad_family_only_summary") or {})
+    return {
+        "selected_ticker": audit.get("selected_ticker"),
+        "selected_trade_date": audit.get("selected_trade_date"),
+        "supportive_case_count": audit.get("supportive_case_count"),
+        "peer_status_counts": dict(audit.get("peer_status_counts") or {}),
+        "selected_path_t2_bias_only": policy_checks.get("selected_path_t2_bias_only"),
+        "broad_family_only_multiday_unsupported": policy_checks.get("broad_family_only_multiday_unsupported"),
+        "aligned_peer_multiday_ready": policy_checks.get("aligned_peer_multiday_ready"),
+        "open_selected_case_count": policy_checks.get("open_selected_case_count"),
+        "selected_next_close_positive_rate": selected_historical.get("next_close_positive_rate"),
+        "selected_t_plus_2_close_positive_rate": selected_historical.get("t_plus_2_close_positive_rate"),
+        "selected_t_plus_3_close_positive_rate": selected_historical.get("t_plus_3_close_positive_rate"),
+        "broad_family_only_next_close_positive_rate": broad_family_only.get("next_close_positive_rate"),
+        "broad_family_only_t_plus_2_close_positive_rate": broad_family_only.get("t_plus_2_close_positive_rate"),
+        "policy_recommendations": list(audit.get("policy_recommendations") or [])[:3],
+        "recommendation": audit.get("recommendation"),
+    }
+
+
+def _extract_carryover_aligned_peer_harvest_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("carryover_aligned_peer_harvest_summary") or {})
+    if summary:
+        return summary
+    reports_root = Path(manifest.get("reports_root") or REPORTS_DIR).expanduser().resolve()
+    harvest = _safe_load_json(reports_root / "btst_carryover_aligned_peer_harvest_latest.json")
+    if not harvest:
+        return {}
+    entries = [dict(entry or {}) for entry in list(harvest.get("harvest_entries") or [])]
+    focus_entry = entries[0] if entries else {}
+    fresh_open_cycle_tickers = [
+        str(entry.get("ticker") or "")
+        for entry in entries
+        if str(entry.get("harvest_status") or "") == "fresh_open_cycle" and entry.get("ticker")
+    ][:4]
+    return {
+        "ticker": harvest.get("ticker"),
+        "peer_row_count": harvest.get("peer_row_count"),
+        "peer_count": harvest.get("peer_count"),
+        "status_counts": dict(harvest.get("status_counts") or {}),
+        "focus_ticker": harvest.get("focus_ticker") or focus_entry.get("ticker"),
+        "focus_status": harvest.get("focus_status") or focus_entry.get("harvest_status"),
+        "focus_latest_trade_date": focus_entry.get("latest_trade_date"),
+        "focus_latest_scope": focus_entry.get("latest_scope"),
+        "focus_closed_cycle_count": focus_entry.get("closed_cycle_count"),
+        "focus_next_day_available_count": focus_entry.get("next_day_available_count"),
+        "focus_recommendation": focus_entry.get("recommendation"),
+        "fresh_open_cycle_tickers": fresh_open_cycle_tickers,
+        "recommendation": harvest.get("recommendation"),
+    }
+
+
+def _extract_carryover_peer_expansion_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("carryover_peer_expansion_summary") or {})
+    if summary:
+        return summary
+    reports_root = Path(manifest.get("reports_root") or REPORTS_DIR).expanduser().resolve()
+    expansion = _safe_load_json(reports_root / "btst_carryover_peer_expansion_latest.json")
+    if not expansion:
+        return {}
+    entries = [dict(entry or {}) for entry in list(expansion.get("entries") or [])]
+    focus_entry = entries[0] if entries else {}
+    return {
+        "selected_ticker": expansion.get("selected_ticker"),
+        "selected_path_t2_bias_only": expansion.get("selected_path_t2_bias_only"),
+        "broad_family_only_multiday_unsupported": expansion.get("broad_family_only_multiday_unsupported"),
+        "peer_count": expansion.get("peer_count"),
+        "expansion_status_counts": dict(expansion.get("expansion_status_counts") or {}),
+        "priority_expansion_tickers": list(expansion.get("priority_expansion_tickers") or []),
+        "watch_with_risk_tickers": list(expansion.get("watch_with_risk_tickers") or []),
+        "focus_ticker": expansion.get("focus_ticker") or focus_entry.get("ticker"),
+        "focus_status": expansion.get("focus_status") or focus_entry.get("expansion_status"),
+        "focus_latest_trade_date": focus_entry.get("latest_trade_date"),
+        "focus_latest_scope": focus_entry.get("latest_scope"),
+        "focus_recommendation": focus_entry.get("recommendation"),
+        "recommendation": expansion.get("recommendation"),
+    }
+
+
+def _extract_carryover_aligned_peer_proof_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("carryover_aligned_peer_proof_summary") or {})
+    if summary:
+        return summary
+    reports_root = Path(manifest.get("reports_root") or REPORTS_DIR).expanduser().resolve()
+    proof_board = _safe_load_json(reports_root / "btst_carryover_aligned_peer_proof_board_latest.json")
+    if not proof_board:
+        return {}
+    entries = [dict(entry or {}) for entry in list(proof_board.get("entries") or [])]
+    focus_entry = entries[0] if entries else {}
+    return {
+        "selected_ticker": proof_board.get("selected_ticker"),
+        "selected_trade_date": proof_board.get("selected_trade_date"),
+        "selected_cycle_status": proof_board.get("selected_cycle_status"),
+        "selected_contract_verdict": proof_board.get("selected_contract_verdict"),
+        "peer_count": proof_board.get("peer_count"),
+        "proof_verdict_counts": dict(proof_board.get("proof_verdict_counts") or {}),
+        "promotion_review_verdict_counts": dict(proof_board.get("promotion_review_verdict_counts") or {}),
+        "ready_for_promotion_review_tickers": list(proof_board.get("ready_for_promotion_review_tickers") or []),
+        "risk_review_tickers": list(proof_board.get("risk_review_tickers") or []),
+        "pending_t_plus_2_tickers": list(proof_board.get("pending_t_plus_2_tickers") or []),
+        "focus_ticker": proof_board.get("focus_ticker") or focus_entry.get("ticker"),
+        "focus_proof_verdict": proof_board.get("focus_proof_verdict") or focus_entry.get("proof_verdict"),
+        "focus_promotion_review_verdict": proof_board.get("focus_promotion_review_verdict") or focus_entry.get("promotion_review_verdict"),
+        "focus_latest_trade_date": focus_entry.get("latest_trade_date"),
+        "focus_latest_scope": focus_entry.get("latest_scope"),
+        "focus_recommendation": focus_entry.get("recommendation"),
+        "recommendation": proof_board.get("recommendation"),
+    }
+
+
+def _extract_carryover_peer_promotion_gate_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(manifest.get("carryover_peer_promotion_gate_summary") or {})
+    if summary:
+        return summary
+    reports_root = Path(manifest.get("reports_root") or REPORTS_DIR).expanduser().resolve()
+    promotion_gate = _safe_load_json(reports_root / "btst_carryover_peer_promotion_gate_latest.json")
+    if not promotion_gate:
+        return {}
+    entries = [dict(entry or {}) for entry in list(promotion_gate.get("entries") or [])]
+    focus_entry = entries[0] if entries else {}
+    return {
+        "selected_ticker": promotion_gate.get("selected_ticker"),
+        "selected_trade_date": promotion_gate.get("selected_trade_date"),
+        "selected_contract_verdict": promotion_gate.get("selected_contract_verdict"),
+        "peer_count": promotion_gate.get("peer_count"),
+        "gate_verdict_counts": dict(promotion_gate.get("gate_verdict_counts") or {}),
+        "ready_tickers": list(promotion_gate.get("ready_tickers") or []),
+        "blocked_open_tickers": list(promotion_gate.get("blocked_open_tickers") or []),
+        "risk_review_tickers": list(promotion_gate.get("risk_review_tickers") or []),
+        "pending_t_plus_2_tickers": list(promotion_gate.get("pending_t_plus_2_tickers") or []),
+        "focus_ticker": promotion_gate.get("focus_ticker") or focus_entry.get("ticker"),
+        "focus_gate_verdict": promotion_gate.get("focus_gate_verdict") or focus_entry.get("gate_verdict"),
+        "focus_recommendation": focus_entry.get("recommendation"),
+        "recommendation": promotion_gate.get("recommendation"),
+    }
+
+
 def _extract_default_merge_historical_counterfactual_summary(manifest: dict[str, Any]) -> dict[str, Any]:
     summary = dict(manifest.get("default_merge_historical_counterfactual_summary") or {})
     if summary:
@@ -657,6 +832,12 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     no_candidate_entry_failure_dossier = _extract_no_candidate_entry_failure_dossier_summary(manifest)
     watchlist_recall_dossier = _extract_watchlist_recall_dossier_summary(manifest)
     candidate_pool_recall_dossier = _extract_candidate_pool_recall_dossier_summary(manifest)
+    selected_outcome_refresh_summary = _extract_selected_outcome_refresh_summary(manifest)
+    carryover_multiday_continuation_audit_summary = _extract_carryover_multiday_continuation_audit_summary(manifest)
+    carryover_aligned_peer_harvest_summary = _extract_carryover_aligned_peer_harvest_summary(manifest)
+    carryover_peer_expansion_summary = _extract_carryover_peer_expansion_summary(manifest)
+    carryover_aligned_peer_proof_summary = _extract_carryover_aligned_peer_proof_summary(manifest)
+    carryover_peer_promotion_gate_summary = _extract_carryover_peer_promotion_gate_summary(manifest)
     default_merge_review_summary = _extract_default_merge_review_summary(manifest)
     default_merge_historical_counterfactual_summary = _extract_default_merge_historical_counterfactual_summary(manifest)
     continuation_merge_candidate_ranking_summary = _extract_continuation_merge_candidate_ranking_summary(manifest)
@@ -691,6 +872,12 @@ def _extract_control_tower_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "no_candidate_entry_failure_dossier": no_candidate_entry_failure_dossier,
         "watchlist_recall_dossier": watchlist_recall_dossier,
         "candidate_pool_recall_dossier": candidate_pool_recall_dossier,
+        "selected_outcome_refresh_summary": selected_outcome_refresh_summary,
+        "carryover_multiday_continuation_audit_summary": carryover_multiday_continuation_audit_summary,
+        "carryover_aligned_peer_harvest_summary": carryover_aligned_peer_harvest_summary,
+        "carryover_peer_expansion_summary": carryover_peer_expansion_summary,
+        "carryover_aligned_peer_proof_summary": carryover_aligned_peer_proof_summary,
+        "carryover_peer_promotion_gate_summary": carryover_peer_promotion_gate_summary,
         "rollout_lanes": list(synthesis.get("lane_matrix") or []),
         "waiting_lane_count": synthesis.get("waiting_lane_count"),
         "ready_lane_count": synthesis.get("ready_lane_count"),
@@ -883,6 +1070,276 @@ def _build_lane_priority_task(
     }
 
 
+def _build_carryover_contract_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    selected_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
+    audit_summary = dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {})
+    peer_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_harvest_summary") or {})
+    peer_expansion_summary = dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {})
+    peer_proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
+    peer_promotion_gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+
+    formal_selected_ticker = str(selected_summary.get("focus_ticker") or audit_summary.get("selected_ticker") or "").strip()
+    if not formal_selected_ticker:
+        return None
+
+    overall_contract_verdict = str(selected_summary.get("focus_overall_contract_verdict") or "").strip()
+    peer_focus_ticker = str(peer_expansion_summary.get("focus_ticker") or peer_summary.get("focus_ticker") or "").strip()
+    peer_focus_status = str(peer_expansion_summary.get("focus_status") or peer_summary.get("focus_status") or "").strip()
+    peer_proof_focus_ticker = str(peer_proof_summary.get("focus_ticker") or "").strip()
+    peer_proof_focus_verdict = str(peer_proof_summary.get("focus_promotion_review_verdict") or "").strip()
+    peer_promotion_gate_focus_ticker = str(peer_promotion_gate_summary.get("focus_ticker") or "").strip()
+    peer_promotion_gate_focus_verdict = str(peer_promotion_gate_summary.get("focus_gate_verdict") or "").strip()
+    priority_expansion_tickers = list(peer_expansion_summary.get("priority_expansion_tickers") or [])
+    watch_with_risk_tickers = list(peer_expansion_summary.get("watch_with_risk_tickers") or [])
+    ready_for_promotion_review_tickers = list(peer_proof_summary.get("ready_for_promotion_review_tickers") or [])
+    promotion_gate_ready_tickers = list(peer_promotion_gate_summary.get("ready_tickers") or [])
+
+    why_now_parts = [f"formal_selected={formal_selected_ticker}"]
+    if overall_contract_verdict:
+        why_now_parts.append(f"contract_verdict={overall_contract_verdict}")
+    if audit_summary.get("selected_path_t2_bias_only"):
+        why_now_parts.append("t_plus_2_bias_only")
+    if audit_summary.get("broad_family_only_multiday_unsupported"):
+        why_now_parts.append("broad_family_only_not_multiday_ready")
+    if peer_focus_ticker:
+        why_now_parts.append(f"peer_focus={peer_focus_ticker}")
+    if peer_focus_status:
+        why_now_parts.append(f"peer_status={peer_focus_status}")
+    if peer_proof_focus_ticker:
+        why_now_parts.append(f"peer_proof_focus={peer_proof_focus_ticker}")
+    if peer_proof_focus_verdict:
+        why_now_parts.append(f"peer_proof_verdict={peer_proof_focus_verdict}")
+    if peer_promotion_gate_focus_ticker:
+        why_now_parts.append(f"peer_gate_focus={peer_promotion_gate_focus_ticker}")
+    if peer_promotion_gate_focus_verdict:
+        why_now_parts.append(f"peer_gate_verdict={peer_promotion_gate_focus_verdict}")
+    if watch_with_risk_tickers:
+        why_now_parts.append(f"watch_with_risk={watch_with_risk_tickers}")
+
+    next_steps = [
+        f"继续把 {formal_selected_ticker} 作为 confirm-then-hold + T+2 bias 合约管理，不把它包装成稳定 T+3/T+4 continuation。"
+    ]
+    if audit_summary.get("broad_family_only_multiday_unsupported"):
+        next_steps.append("broad_family_only carryover 仅保留 evidence-deficient / diagnostic 语义，不进入多日 continuation contract。")
+    if peer_focus_ticker:
+        next_steps.append(
+            f"优先盯 {peer_focus_ticker} 的 {peer_focus_status or 'peer_harvest'} 闭环；只有第二个 aligned peer 完成 closed-cycle 转强后才讨论 lane 扩容。"
+        )
+    if priority_expansion_tickers:
+        next_steps.append(f"当前 priority expansion 队列先看 {priority_expansion_tickers}。")
+    if ready_for_promotion_review_tickers:
+        next_steps.append(f"当前 ready-for-promotion-review peers: {ready_for_promotion_review_tickers}，应按第二个 aligned peer evidence 进入 promotion review。")
+    if promotion_gate_ready_tickers:
+        next_steps.append(f"当前已通过 promotion gate 的 peers: {promotion_gate_ready_tickers}，只允许在极窄 carryover lane 里讨论扩容。")
+    if watch_with_risk_tickers:
+        next_steps.append(f"{watch_with_risk_tickers} 仅保留 watch-with-risk 语义，不作为扩容依据。")
+
+    title = (
+        f"固化 {formal_selected_ticker} carryover 合约并盯 {peer_focus_ticker} 闭环"
+        if peer_focus_ticker
+        else f"固化 {formal_selected_ticker} carryover 合约"
+    )
+    return {
+        "task_id": "carryover_contract_priority",
+        "title": title,
+        "why_now": " | ".join(why_now_parts),
+        "next_step": "；".join(next_steps),
+        "source": "carryover_contract",
+    }
+
+
+def _build_selected_contract_resolution_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    selected_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
+    focus_ticker = str(selected_summary.get("focus_ticker") or "").strip()
+    overall_contract_verdict = str(selected_summary.get("focus_overall_contract_verdict") or "").strip()
+    focus_cycle_status = str(selected_summary.get("focus_cycle_status") or "").strip()
+    next_day_contract_verdict = str(selected_summary.get("focus_next_day_contract_verdict") or "").strip()
+    t_plus_2_contract_verdict = str(selected_summary.get("focus_t_plus_2_contract_verdict") or "").strip()
+    if not focus_ticker or not overall_contract_verdict or overall_contract_verdict.startswith("pending"):
+        return None
+
+    is_violated = "violated" in overall_contract_verdict
+    title = (
+        f"优先处置 {focus_ticker} selected contract 失效"
+        if is_violated
+        else f"优先复核 {focus_ticker} selected contract 已兑现"
+    )
+    why_now_parts = [f"focus_ticker={focus_ticker}", f"overall_contract_verdict={overall_contract_verdict}"]
+    if focus_cycle_status:
+        why_now_parts.append(f"focus_cycle_status={focus_cycle_status}")
+    if next_day_contract_verdict:
+        why_now_parts.append(f"next_day_contract_verdict={next_day_contract_verdict}")
+    if t_plus_2_contract_verdict:
+        why_now_parts.append(f"t_plus_2_contract_verdict={t_plus_2_contract_verdict}")
+
+    if is_violated:
+        next_steps = [
+            f"立刻把 {focus_ticker} 从 carryover 主合约语义中降级，停止把它当作次日/多日 continuation 锚点。"
+        ]
+        if focus_cycle_status:
+            next_steps.append(f"结合当前 cycle_status={focus_cycle_status} 复核是 next-day 失效还是 T+2 失效，并同步回看触发该票入选的 frontier 证据。")
+    else:
+        next_steps = [
+            f"立刻复核 {focus_ticker} 已兑现的 selected contract 是否足以支撑更高确信度的 BTST carryover 叙事，但仍避免把单票确认外推成过宽 lane。"
+        ]
+        if t_plus_2_contract_verdict:
+            next_steps.append(f"同步确认 T+2 contract verdict={t_plus_2_contract_verdict}，决定是继续 hold-bias 还是仅保留 confirm-then-hold 语义。")
+
+    return {
+        "task_id": "selected_contract_resolution_priority",
+        "title": title,
+        "why_now": " | ".join(why_now_parts),
+        "next_step": "；".join(next_steps),
+        "source": "selected_contract_resolution",
+    }
+
+
+def _build_selected_contract_monitor_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    selected_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
+    focus_ticker = str(selected_summary.get("focus_ticker") or "").strip()
+    overall_contract_verdict = str(selected_summary.get("focus_overall_contract_verdict") or "").strip()
+    focus_cycle_status = str(selected_summary.get("focus_cycle_status") or "").strip()
+    next_day_contract_verdict = str(selected_summary.get("focus_next_day_contract_verdict") or "").strip()
+    t_plus_2_contract_verdict = str(selected_summary.get("focus_t_plus_2_contract_verdict") or "").strip()
+    if not focus_ticker or not overall_contract_verdict or not overall_contract_verdict.startswith("pending"):
+        return None
+
+    why_now_parts = [f"focus_ticker={focus_ticker}", f"overall_contract_verdict={overall_contract_verdict}"]
+    if focus_cycle_status:
+        why_now_parts.append(f"focus_cycle_status={focus_cycle_status}")
+    if next_day_contract_verdict:
+        why_now_parts.append(f"next_day_contract_verdict={next_day_contract_verdict}")
+    if t_plus_2_contract_verdict:
+        why_now_parts.append(f"t_plus_2_contract_verdict={t_plus_2_contract_verdict}")
+
+    next_steps = [f"优先盯 {focus_ticker} 的主票闭环，确认 next-day bar 到来后是否仍满足 confirm-then-hold with T+2 bias 的 selected contract。"]
+    if overall_contract_verdict == "pending_next_day":
+        next_steps.append("一旦 next-day bar 落地，立即复核 next_close / intraday follow-through，避免 recall 或 peer 扩容叙事抢占 formal selected 主线。")
+    elif overall_contract_verdict == "pending_t_plus_2":
+        next_steps.append("一旦 T+2 bar 落地，立即复核 hold-bias 是否兑现，并决定是否继续保留 carryover 语义。")
+
+    return {
+        "task_id": "selected_contract_monitor_priority",
+        "title": f"优先监控 {focus_ticker} formal selected 主票闭环",
+        "why_now": " | ".join(why_now_parts),
+        "next_step": "；".join(next_steps),
+        "source": "selected_contract_monitor",
+    }
+
+
+def _build_gate_ready_priority_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+    ready_tickers = [str(ticker) for ticker in list(gate_summary.get("ready_tickers") or []) if str(ticker).strip()]
+    if not ready_tickers:
+        return None
+
+    selected_ticker = str(gate_summary.get("selected_ticker") or "").strip()
+    selected_contract_verdict = str(gate_summary.get("selected_contract_verdict") or "").strip()
+    focus_ticker = str(gate_summary.get("focus_ticker") or ready_tickers[0]).strip()
+    focus_gate_verdict = str(gate_summary.get("focus_gate_verdict") or "promotion_gate_ready").strip()
+    why_now_parts = [f"ready_tickers={ready_tickers}", f"focus_ticker={focus_ticker}", f"focus_gate_verdict={focus_gate_verdict}"]
+    if selected_ticker:
+        why_now_parts.append(f"selected_ticker={selected_ticker}")
+    if selected_contract_verdict:
+        why_now_parts.append(f"selected_contract_verdict={selected_contract_verdict}")
+    next_steps = [
+        f"立刻把 {ready_tickers} 作为第二个 aligned peer expansion review 的最高优先级，先复核 closed-cycle 兑现与执行约束，再决定是否在极窄 carryover lane 中扩容。"
+    ]
+    if selected_ticker:
+        next_steps.append(f"同步确认 {selected_ticker} 当前合约仍保持 {selected_contract_verdict or 'pending'}，避免主票未闭环时误扩容。")
+    return {
+        "task_id": "carryover_gate_ready_priority",
+        "title": f"优先复核 {focus_ticker} carryover gate-ready 扩容资格",
+        "why_now": " | ".join(why_now_parts),
+        "next_step": "；".join(next_steps),
+        "source": "carryover_gate_ready",
+    }
+
+
+def _build_peer_proof_priority_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
+    gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+    ready_for_promotion_review_tickers = [str(ticker) for ticker in list(proof_summary.get("ready_for_promotion_review_tickers") or []) if str(ticker).strip()]
+    promotion_gate_ready_tickers = [str(ticker) for ticker in list(gate_summary.get("ready_tickers") or []) if str(ticker).strip()]
+    if not ready_for_promotion_review_tickers or promotion_gate_ready_tickers:
+        return None
+
+    focus_ticker = str(proof_summary.get("focus_ticker") or ready_for_promotion_review_tickers[0]).strip()
+    focus_proof_verdict = str(proof_summary.get("focus_proof_verdict") or "").strip()
+    focus_promotion_review_verdict = str(proof_summary.get("focus_promotion_review_verdict") or "ready_for_promotion_review").strip()
+    selected_contract_verdict = str(gate_summary.get("selected_contract_verdict") or "").strip()
+    why_now_parts = [
+        f"ready_for_promotion_review_tickers={ready_for_promotion_review_tickers}",
+        f"focus_ticker={focus_ticker}",
+        f"focus_promotion_review_verdict={focus_promotion_review_verdict}",
+    ]
+    if focus_proof_verdict:
+        why_now_parts.append(f"focus_proof_verdict={focus_proof_verdict}")
+    if selected_contract_verdict:
+        why_now_parts.append(f"selected_contract_verdict={selected_contract_verdict}")
+
+    next_steps = [
+        f"立刻复核 {ready_for_promotion_review_tickers} 的第二个 aligned peer close-loop 证据，确认它们是否足以进入 promotion review，但在 gate 未 ready 前不要提前扩容。"
+    ]
+    if selected_contract_verdict:
+        next_steps.append(f"同步确认 formal selected contract 当前仍为 {selected_contract_verdict}，避免 peer proof-ready 被误读成已可扩容。")
+
+    return {
+        "task_id": "carryover_peer_proof_priority",
+        "title": f"优先复核 {focus_ticker} peer proof-ready 资格",
+        "why_now": " | ".join(why_now_parts),
+        "next_step": "；".join(next_steps),
+        "source": "carryover_peer_proof",
+    }
+
+
+def _build_peer_close_loop_monitor_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
+    gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+    focus_ticker = str(proof_summary.get("focus_ticker") or gate_summary.get("focus_ticker") or "").strip()
+    focus_proof_verdict = str(proof_summary.get("focus_proof_verdict") or "").strip()
+    focus_promotion_review_verdict = str(proof_summary.get("focus_promotion_review_verdict") or "").strip()
+    focus_gate_verdict = str(gate_summary.get("focus_gate_verdict") or "").strip()
+    pending_t_plus_2_tickers = [str(ticker) for ticker in list(gate_summary.get("pending_t_plus_2_tickers") or []) if str(ticker).strip()]
+    selected_contract_verdict = str(gate_summary.get("selected_contract_verdict") or "").strip()
+
+    is_pending_peer_close_loop = (
+        focus_ticker
+        and (
+            focus_proof_verdict == "pending_t_plus_2_close"
+            or focus_promotion_review_verdict == "await_t_plus_2_close"
+            or focus_gate_verdict == "await_peer_t_plus_2_close"
+            or focus_ticker in pending_t_plus_2_tickers
+        )
+    )
+    if not is_pending_peer_close_loop:
+        return None
+
+    why_now_parts = [f"focus_ticker={focus_ticker}"]
+    if focus_proof_verdict:
+        why_now_parts.append(f"focus_proof_verdict={focus_proof_verdict}")
+    if focus_promotion_review_verdict:
+        why_now_parts.append(f"focus_promotion_review_verdict={focus_promotion_review_verdict}")
+    if focus_gate_verdict:
+        why_now_parts.append(f"focus_gate_verdict={focus_gate_verdict}")
+    if pending_t_plus_2_tickers:
+        why_now_parts.append(f"pending_t_plus_2_tickers={pending_t_plus_2_tickers}")
+    if selected_contract_verdict:
+        why_now_parts.append(f"selected_contract_verdict={selected_contract_verdict}")
+
+    next_steps = [f"优先盯 {focus_ticker} 的 peer close-loop，等待 T+2 bar 落地后确认是否从 pending_t_plus_2_close 翻到 proof-ready / promotion-review-ready。"]
+    if selected_contract_verdict:
+        next_steps.append(f"同步确认 formal selected contract 仍为 {selected_contract_verdict}，避免主票未闭环时提前把 peer 读成可扩容。")
+
+    return {
+        "task_id": "carryover_peer_close_loop_monitor_priority",
+        "title": f"优先监控 {focus_ticker} peer close-loop 闭环",
+        "why_now": " | ".join(why_now_parts),
+        "next_step": "；".join(next_steps),
+        "source": "carryover_peer_close_loop_monitor",
+    }
+
+
 def _prioritize_control_tower_next_actions(
     latest_btst_snapshot: dict[str, Any],
     control_tower_snapshot: dict[str, Any],
@@ -890,6 +1347,12 @@ def _prioritize_control_tower_next_actions(
     prioritized: list[dict[str, Any]] = []
 
     for task in (
+        _build_selected_contract_resolution_task(control_tower_snapshot),
+        _build_selected_contract_monitor_task(control_tower_snapshot),
+        _build_gate_ready_priority_task(control_tower_snapshot),
+        _build_peer_proof_priority_task(control_tower_snapshot),
+        _build_peer_close_loop_monitor_task(control_tower_snapshot),
+        _build_carryover_contract_task(control_tower_snapshot),
         _build_recall_priority_task(latest_btst_snapshot, control_tower_snapshot),
         _build_lane_priority_task(
             latest_btst_snapshot,
@@ -1369,6 +1832,230 @@ def _diff_score_fail_frontier(current_payload: dict[str, Any], previous_payload:
     }
 
 
+def _diff_carryover_promotion_gate(current_payload: dict[str, Any], previous_payload: dict[str, Any]) -> dict[str, Any]:
+    if not previous_payload:
+        return {
+            "available": False,
+            "reason": "no_previous_nightly_snapshot",
+            "has_changes": False,
+        }
+
+    current_summary = dict(dict(current_payload.get("control_tower_snapshot") or {}).get("carryover_peer_promotion_gate_summary") or {})
+    previous_summary = dict(dict(previous_payload.get("control_tower_snapshot") or {}).get("carryover_peer_promotion_gate_summary") or {})
+    if not current_summary and not previous_summary:
+        return {
+            "available": False,
+            "reason": "no_carryover_peer_promotion_gate_summary",
+            "has_changes": False,
+        }
+
+    current_ready_tickers = list(current_summary.get("ready_tickers") or [])
+    previous_ready_tickers = list(previous_summary.get("ready_tickers") or [])
+    current_blocked_open_tickers = list(current_summary.get("blocked_open_tickers") or [])
+    previous_blocked_open_tickers = list(previous_summary.get("blocked_open_tickers") or [])
+    current_pending_t_plus_2_tickers = list(current_summary.get("pending_t_plus_2_tickers") or [])
+    previous_pending_t_plus_2_tickers = list(previous_summary.get("pending_t_plus_2_tickers") or [])
+    added_ready_tickers = [ticker for ticker in current_ready_tickers if ticker not in previous_ready_tickers]
+    removed_ready_tickers = [ticker for ticker in previous_ready_tickers if ticker not in current_ready_tickers]
+    added_blocked_open_tickers = [ticker for ticker in current_blocked_open_tickers if ticker not in previous_blocked_open_tickers]
+    removed_blocked_open_tickers = [ticker for ticker in previous_blocked_open_tickers if ticker not in current_blocked_open_tickers]
+    added_pending_t_plus_2_tickers = [ticker for ticker in current_pending_t_plus_2_tickers if ticker not in previous_pending_t_plus_2_tickers]
+    removed_pending_t_plus_2_tickers = [ticker for ticker in previous_pending_t_plus_2_tickers if ticker not in current_pending_t_plus_2_tickers]
+    focus_ticker_changed = str(current_summary.get("focus_ticker") or "") != str(previous_summary.get("focus_ticker") or "")
+    focus_gate_verdict_changed = str(current_summary.get("focus_gate_verdict") or "") != str(previous_summary.get("focus_gate_verdict") or "")
+    selected_contract_verdict_changed = str(current_summary.get("selected_contract_verdict") or "") != str(previous_summary.get("selected_contract_verdict") or "")
+    has_changes = any(
+        [
+            focus_ticker_changed,
+            focus_gate_verdict_changed,
+            selected_contract_verdict_changed,
+            bool(added_ready_tickers),
+            bool(removed_ready_tickers),
+            bool(added_blocked_open_tickers),
+            bool(removed_blocked_open_tickers),
+            bool(added_pending_t_plus_2_tickers),
+            bool(removed_pending_t_plus_2_tickers),
+        ]
+    )
+    return {
+        "available": True,
+        "previous_focus_ticker": previous_summary.get("focus_ticker"),
+        "current_focus_ticker": current_summary.get("focus_ticker"),
+        "focus_ticker_changed": focus_ticker_changed,
+        "previous_focus_gate_verdict": previous_summary.get("focus_gate_verdict"),
+        "current_focus_gate_verdict": current_summary.get("focus_gate_verdict"),
+        "focus_gate_verdict_changed": focus_gate_verdict_changed,
+        "previous_selected_contract_verdict": previous_summary.get("selected_contract_verdict"),
+        "current_selected_contract_verdict": current_summary.get("selected_contract_verdict"),
+        "selected_contract_verdict_changed": selected_contract_verdict_changed,
+        "previous_ready_tickers": previous_ready_tickers,
+        "current_ready_tickers": current_ready_tickers,
+        "added_ready_tickers": added_ready_tickers,
+        "removed_ready_tickers": removed_ready_tickers,
+        "previous_blocked_open_tickers": previous_blocked_open_tickers,
+        "current_blocked_open_tickers": current_blocked_open_tickers,
+        "added_blocked_open_tickers": added_blocked_open_tickers,
+        "removed_blocked_open_tickers": removed_blocked_open_tickers,
+        "previous_pending_t_plus_2_tickers": previous_pending_t_plus_2_tickers,
+        "current_pending_t_plus_2_tickers": current_pending_t_plus_2_tickers,
+        "added_pending_t_plus_2_tickers": added_pending_t_plus_2_tickers,
+        "removed_pending_t_plus_2_tickers": removed_pending_t_plus_2_tickers,
+        "has_changes": has_changes,
+    }
+
+
+def _diff_top_priority_action(current_payload: dict[str, Any], previous_payload: dict[str, Any]) -> dict[str, Any]:
+    if not previous_payload:
+        return {
+            "available": False,
+            "reason": "no_previous_nightly_snapshot",
+            "has_changes": False,
+        }
+
+    current_actions = list(dict(current_payload.get("control_tower_snapshot") or {}).get("next_actions") or [])
+    previous_actions = list(dict(previous_payload.get("control_tower_snapshot") or {}).get("next_actions") or [])
+    current_top = dict(current_actions[0] or {}) if current_actions else {}
+    previous_top = dict(previous_actions[0] or {}) if previous_actions else {}
+    if not current_top and not previous_top:
+        return {
+            "available": False,
+            "reason": "no_next_actions",
+            "has_changes": False,
+        }
+
+    task_id_changed = str(current_top.get("task_id") or "") != str(previous_top.get("task_id") or "")
+    source_changed = str(current_top.get("source") or "") != str(previous_top.get("source") or "")
+    title_changed = str(current_top.get("title") or "") != str(previous_top.get("title") or "")
+    has_changes = task_id_changed or source_changed or title_changed
+    return {
+        "available": True,
+        "previous_task_id": previous_top.get("task_id"),
+        "current_task_id": current_top.get("task_id"),
+        "task_id_changed": task_id_changed,
+        "previous_source": previous_top.get("source"),
+        "current_source": current_top.get("source"),
+        "source_changed": source_changed,
+        "previous_title": previous_top.get("title"),
+        "current_title": current_top.get("title"),
+        "title_changed": title_changed,
+        "has_changes": has_changes,
+    }
+
+
+def _diff_selected_outcome_contract(current_payload: dict[str, Any], previous_payload: dict[str, Any]) -> dict[str, Any]:
+    if not previous_payload:
+        return {
+            "available": False,
+            "reason": "no_previous_nightly_snapshot",
+            "has_changes": False,
+        }
+
+    current_summary = dict(dict(current_payload.get("control_tower_snapshot") or {}).get("selected_outcome_refresh_summary") or {})
+    previous_summary = dict(dict(previous_payload.get("control_tower_snapshot") or {}).get("selected_outcome_refresh_summary") or {})
+    if not current_summary and not previous_summary:
+        return {
+            "available": False,
+            "reason": "no_selected_outcome_refresh_summary",
+            "has_changes": False,
+        }
+
+    focus_ticker_changed = str(current_summary.get("focus_ticker") or "") != str(previous_summary.get("focus_ticker") or "")
+    focus_cycle_status_changed = str(current_summary.get("focus_cycle_status") or "") != str(previous_summary.get("focus_cycle_status") or "")
+    overall_contract_verdict_changed = str(current_summary.get("focus_overall_contract_verdict") or "") != str(previous_summary.get("focus_overall_contract_verdict") or "")
+    next_day_contract_verdict_changed = str(current_summary.get("focus_next_day_contract_verdict") or "") != str(previous_summary.get("focus_next_day_contract_verdict") or "")
+    t_plus_2_contract_verdict_changed = str(current_summary.get("focus_t_plus_2_contract_verdict") or "") != str(previous_summary.get("focus_t_plus_2_contract_verdict") or "")
+    has_changes = any(
+        [
+            focus_ticker_changed,
+            focus_cycle_status_changed,
+            overall_contract_verdict_changed,
+            next_day_contract_verdict_changed,
+            t_plus_2_contract_verdict_changed,
+        ]
+    )
+    return {
+        "available": True,
+        "previous_focus_ticker": previous_summary.get("focus_ticker"),
+        "current_focus_ticker": current_summary.get("focus_ticker"),
+        "focus_ticker_changed": focus_ticker_changed,
+        "previous_focus_cycle_status": previous_summary.get("focus_cycle_status"),
+        "current_focus_cycle_status": current_summary.get("focus_cycle_status"),
+        "focus_cycle_status_changed": focus_cycle_status_changed,
+        "previous_focus_overall_contract_verdict": previous_summary.get("focus_overall_contract_verdict"),
+        "current_focus_overall_contract_verdict": current_summary.get("focus_overall_contract_verdict"),
+        "focus_overall_contract_verdict_changed": overall_contract_verdict_changed,
+        "previous_focus_next_day_contract_verdict": previous_summary.get("focus_next_day_contract_verdict"),
+        "current_focus_next_day_contract_verdict": current_summary.get("focus_next_day_contract_verdict"),
+        "focus_next_day_contract_verdict_changed": next_day_contract_verdict_changed,
+        "previous_focus_t_plus_2_contract_verdict": previous_summary.get("focus_t_plus_2_contract_verdict"),
+        "current_focus_t_plus_2_contract_verdict": current_summary.get("focus_t_plus_2_contract_verdict"),
+        "focus_t_plus_2_contract_verdict_changed": t_plus_2_contract_verdict_changed,
+        "has_changes": has_changes,
+    }
+
+
+def _diff_carryover_peer_proof(current_payload: dict[str, Any], previous_payload: dict[str, Any]) -> dict[str, Any]:
+    if not previous_payload:
+        return {
+            "available": False,
+            "reason": "no_previous_nightly_snapshot",
+            "has_changes": False,
+        }
+
+    current_summary = dict(dict(current_payload.get("control_tower_snapshot") or {}).get("carryover_aligned_peer_proof_summary") or {})
+    previous_summary = dict(dict(previous_payload.get("control_tower_snapshot") or {}).get("carryover_aligned_peer_proof_summary") or {})
+    if not current_summary and not previous_summary:
+        return {
+            "available": False,
+            "reason": "no_carryover_aligned_peer_proof_summary",
+            "has_changes": False,
+        }
+
+    current_ready_tickers = list(current_summary.get("ready_for_promotion_review_tickers") or [])
+    previous_ready_tickers = list(previous_summary.get("ready_for_promotion_review_tickers") or [])
+    current_risk_review_tickers = list(current_summary.get("risk_review_tickers") or [])
+    previous_risk_review_tickers = list(previous_summary.get("risk_review_tickers") or [])
+    added_ready_tickers = [ticker for ticker in current_ready_tickers if ticker not in previous_ready_tickers]
+    removed_ready_tickers = [ticker for ticker in previous_ready_tickers if ticker not in current_ready_tickers]
+    added_risk_review_tickers = [ticker for ticker in current_risk_review_tickers if ticker not in previous_risk_review_tickers]
+    removed_risk_review_tickers = [ticker for ticker in previous_risk_review_tickers if ticker not in current_risk_review_tickers]
+    focus_ticker_changed = str(current_summary.get("focus_ticker") or "") != str(previous_summary.get("focus_ticker") or "")
+    focus_proof_verdict_changed = str(current_summary.get("focus_proof_verdict") or "") != str(previous_summary.get("focus_proof_verdict") or "")
+    focus_promotion_review_verdict_changed = str(current_summary.get("focus_promotion_review_verdict") or "") != str(previous_summary.get("focus_promotion_review_verdict") or "")
+    has_changes = any(
+        [
+            focus_ticker_changed,
+            focus_proof_verdict_changed,
+            focus_promotion_review_verdict_changed,
+            bool(added_ready_tickers),
+            bool(removed_ready_tickers),
+            bool(added_risk_review_tickers),
+            bool(removed_risk_review_tickers),
+        ]
+    )
+    return {
+        "available": True,
+        "previous_focus_ticker": previous_summary.get("focus_ticker"),
+        "current_focus_ticker": current_summary.get("focus_ticker"),
+        "focus_ticker_changed": focus_ticker_changed,
+        "previous_focus_proof_verdict": previous_summary.get("focus_proof_verdict"),
+        "current_focus_proof_verdict": current_summary.get("focus_proof_verdict"),
+        "focus_proof_verdict_changed": focus_proof_verdict_changed,
+        "previous_focus_promotion_review_verdict": previous_summary.get("focus_promotion_review_verdict"),
+        "current_focus_promotion_review_verdict": current_summary.get("focus_promotion_review_verdict"),
+        "focus_promotion_review_verdict_changed": focus_promotion_review_verdict_changed,
+        "previous_ready_for_promotion_review_tickers": previous_ready_tickers,
+        "current_ready_for_promotion_review_tickers": current_ready_tickers,
+        "added_ready_for_promotion_review_tickers": added_ready_tickers,
+        "removed_ready_for_promotion_review_tickers": removed_ready_tickers,
+        "previous_risk_review_tickers": previous_risk_review_tickers,
+        "current_risk_review_tickers": current_risk_review_tickers,
+        "added_risk_review_tickers": added_risk_review_tickers,
+        "removed_risk_review_tickers": removed_risk_review_tickers,
+        "has_changes": has_changes,
+    }
+
+
 def _list_changed_delta_sections(delta_payload: dict[str, Any]) -> list[str]:
     changed_sections: list[str] = []
     if dict(delta_payload.get("priority_delta") or {}).get("has_changes"):
@@ -1377,6 +2064,14 @@ def _list_changed_delta_sections(delta_payload: dict[str, Any]) -> list[str]:
         changed_sections.append("catalyst_frontier")
     if dict(delta_payload.get("score_fail_frontier_delta") or {}).get("has_changes"):
         changed_sections.append("score_fail_frontier")
+    if dict(delta_payload.get("top_priority_action_delta") or {}).get("has_changes"):
+        changed_sections.append("top_priority_action")
+    if dict(delta_payload.get("selected_outcome_contract_delta") or {}).get("has_changes"):
+        changed_sections.append("selected_outcome_contract")
+    if dict(delta_payload.get("carryover_peer_proof_delta") or {}).get("has_changes"):
+        changed_sections.append("carryover_peer_proof")
+    if dict(delta_payload.get("carryover_promotion_gate_delta") or {}).get("has_changes"):
+        changed_sections.append("carryover_promotion_gate")
     if dict(delta_payload.get("governance_delta") or {}).get("has_changes"):
         changed_sections.append("governance")
     if dict(delta_payload.get("replay_delta") or {}).get("has_changes"):
@@ -1480,6 +2175,10 @@ def build_btst_open_ready_delta_payload(
     replay_delta = _diff_replay(current_payload, previous_payload, previous_report_snapshot)
     catalyst_frontier_delta = _diff_catalyst_frontier(current_payload, previous_payload, previous_report_snapshot)
     score_fail_frontier_delta = _diff_score_fail_frontier(current_payload, previous_payload)
+    top_priority_action_delta = _diff_top_priority_action(current_payload, previous_payload)
+    selected_outcome_contract_delta = _diff_selected_outcome_contract(current_payload, previous_payload)
+    carryover_peer_proof_delta = _diff_carryover_peer_proof(current_payload, previous_payload)
+    carryover_promotion_gate_delta = _diff_carryover_promotion_gate(current_payload, previous_payload)
 
     operator_focus: list[str] = []
     if comparison_basis == "baseline_captured":
@@ -1527,12 +2226,34 @@ def build_btst_open_ready_delta_payload(
             )
         elif score_fail_frontier_delta.get("comparison_note"):
             operator_focus.append(str(score_fail_frontier_delta.get("comparison_note")))
+    if top_priority_action_delta.get("available") and top_priority_action_delta.get("has_changes"):
+        operator_focus.append(
+            f"control tower 顶级动作切换: {top_priority_action_delta.get('previous_source') or 'n/a'} -> {top_priority_action_delta.get('current_source') or 'n/a'} "
+            f"({top_priority_action_delta.get('previous_title') or 'n/a'} -> {top_priority_action_delta.get('current_title') or 'n/a'})."
+        )
+    if selected_outcome_contract_delta.get("available") and selected_outcome_contract_delta.get("has_changes"):
+        operator_focus.append(
+            f"selected contract 变化: {selected_outcome_contract_delta.get('previous_focus_ticker') or 'n/a'} / "
+            f"{selected_outcome_contract_delta.get('previous_focus_overall_contract_verdict') or 'n/a'} -> "
+            f"{selected_outcome_contract_delta.get('current_focus_ticker') or 'n/a'} / "
+            f"{selected_outcome_contract_delta.get('current_focus_overall_contract_verdict') or 'n/a'}。"
+        )
+    if carryover_peer_proof_delta.get("available") and carryover_peer_proof_delta.get("has_changes"):
+        operator_focus.append(
+            f"carryover peer proof 变化: focus {carryover_peer_proof_delta.get('previous_focus_ticker') or 'n/a'} -> {carryover_peer_proof_delta.get('current_focus_ticker') or 'n/a'}, "
+            f"promotion review {carryover_peer_proof_delta.get('previous_focus_promotion_review_verdict') or 'n/a'} -> {carryover_peer_proof_delta.get('current_focus_promotion_review_verdict') or 'n/a'}。"
+        )
+    if carryover_promotion_gate_delta.get("available") and carryover_promotion_gate_delta.get("has_changes"):
+        operator_focus.append(
+            f"carryover promotion gate 变化: focus {carryover_promotion_gate_delta.get('previous_focus_ticker') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_focus_ticker') or 'n/a'}, "
+            f"verdict {carryover_promotion_gate_delta.get('previous_focus_gate_verdict') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_focus_gate_verdict') or 'n/a'}。"
+        )
     if not operator_focus:
-        operator_focus.append("本轮相对上一轮没有检测到 priority / governance / replay / score-fail frontier 的结构变化，可视为稳定复跑。")
+        operator_focus.append("本轮相对上一轮没有检测到 priority / governance / replay / score-fail frontier / top priority action / selected contract / carryover peer proof / carryover promotion gate 的结构变化，可视为稳定复跑。")
 
     overall_delta_verdict = "baseline_captured"
     if comparison_basis != "baseline_captured":
-        overall_delta_verdict = "changed" if any([priority_delta.get("has_changes"), governance_delta.get("has_changes"), replay_delta.get("has_changes"), catalyst_frontier_delta.get("has_changes"), score_fail_frontier_delta.get("has_changes")]) else "stable"
+        overall_delta_verdict = "changed" if any([priority_delta.get("has_changes"), governance_delta.get("has_changes"), replay_delta.get("has_changes"), catalyst_frontier_delta.get("has_changes"), score_fail_frontier_delta.get("has_changes"), top_priority_action_delta.get("has_changes"), selected_outcome_contract_delta.get("has_changes"), carryover_peer_proof_delta.get("has_changes"), carryover_promotion_gate_delta.get("has_changes")]) else "stable"
 
     material_change_anchor: dict[str, Any] = {}
     if enable_material_anchor and historical_payload_candidates and comparison_scope == "same_report_rerun" and overall_delta_verdict == "stable":
@@ -1559,6 +2280,10 @@ def build_btst_open_ready_delta_payload(
         "priority_delta": priority_delta,
         "catalyst_frontier_delta": catalyst_frontier_delta,
         "score_fail_frontier_delta": score_fail_frontier_delta,
+        "top_priority_action_delta": top_priority_action_delta,
+        "selected_outcome_contract_delta": selected_outcome_contract_delta,
+        "carryover_peer_proof_delta": carryover_peer_proof_delta,
+        "carryover_promotion_gate_delta": carryover_promotion_gate_delta,
         "governance_delta": governance_delta,
         "replay_delta": replay_delta,
         "material_change_anchor": material_change_anchor,
@@ -1586,6 +2311,10 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
     priority_delta = dict(payload.get("priority_delta") or {})
     catalyst_frontier_delta = dict(payload.get("catalyst_frontier_delta") or {})
     score_fail_frontier_delta = dict(payload.get("score_fail_frontier_delta") or {})
+    top_priority_action_delta = dict(payload.get("top_priority_action_delta") or {})
+    selected_outcome_contract_delta = dict(payload.get("selected_outcome_contract_delta") or {})
+    carryover_peer_proof_delta = dict(payload.get("carryover_peer_proof_delta") or {})
+    carryover_promotion_gate_delta = dict(payload.get("carryover_promotion_gate_delta") or {})
     governance_delta = dict(payload.get("governance_delta") or {})
     replay_delta = dict(payload.get("replay_delta") or {})
     material_change_anchor = dict(payload.get("material_change_anchor") or {})
@@ -1721,6 +2450,102 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
             lines.append(f"- removed_top_rescue_ticker: {ticker}")
         if not score_fail_frontier_delta.get("has_changes"):
             lines.append("- no_score_fail_frontier_change_detected")
+    lines.append("")
+
+    lines.append("## Top Priority Action Delta")
+    if not top_priority_action_delta.get("available"):
+        lines.append(f"- unavailable: {top_priority_action_delta.get('reason')}")
+    else:
+        lines.append(f"- previous_task_id: {top_priority_action_delta.get('previous_task_id') or 'n/a'}")
+        lines.append(f"- current_task_id: {top_priority_action_delta.get('current_task_id') or 'n/a'}")
+        lines.append(f"- previous_source: {top_priority_action_delta.get('previous_source') or 'n/a'}")
+        lines.append(f"- current_source: {top_priority_action_delta.get('current_source') or 'n/a'}")
+        lines.append(f"- previous_title: {top_priority_action_delta.get('previous_title') or 'n/a'}")
+        lines.append(f"- current_title: {top_priority_action_delta.get('current_title') or 'n/a'}")
+        if not top_priority_action_delta.get("has_changes"):
+            lines.append("- no_top_priority_action_change_detected")
+    lines.append("")
+
+    lines.append("## Selected Outcome Contract Delta")
+    if not selected_outcome_contract_delta.get("available"):
+        lines.append(f"- unavailable: {selected_outcome_contract_delta.get('reason')}")
+    else:
+        lines.append(f"- previous_focus_ticker: {selected_outcome_contract_delta.get('previous_focus_ticker') or 'n/a'}")
+        lines.append(f"- current_focus_ticker: {selected_outcome_contract_delta.get('current_focus_ticker') or 'n/a'}")
+        lines.append(f"- previous_focus_cycle_status: {selected_outcome_contract_delta.get('previous_focus_cycle_status') or 'n/a'}")
+        lines.append(f"- current_focus_cycle_status: {selected_outcome_contract_delta.get('current_focus_cycle_status') or 'n/a'}")
+        lines.append(
+            f"- previous_focus_overall_contract_verdict: {selected_outcome_contract_delta.get('previous_focus_overall_contract_verdict') or 'n/a'}"
+        )
+        lines.append(
+            f"- current_focus_overall_contract_verdict: {selected_outcome_contract_delta.get('current_focus_overall_contract_verdict') or 'n/a'}"
+        )
+        lines.append(
+            f"- previous_focus_next_day_contract_verdict: {selected_outcome_contract_delta.get('previous_focus_next_day_contract_verdict') or 'n/a'}"
+        )
+        lines.append(
+            f"- current_focus_next_day_contract_verdict: {selected_outcome_contract_delta.get('current_focus_next_day_contract_verdict') or 'n/a'}"
+        )
+        lines.append(
+            f"- previous_focus_t_plus_2_contract_verdict: {selected_outcome_contract_delta.get('previous_focus_t_plus_2_contract_verdict') or 'n/a'}"
+        )
+        lines.append(
+            f"- current_focus_t_plus_2_contract_verdict: {selected_outcome_contract_delta.get('current_focus_t_plus_2_contract_verdict') or 'n/a'}"
+        )
+        if not selected_outcome_contract_delta.get("has_changes"):
+            lines.append("- no_selected_outcome_contract_change_detected")
+    lines.append("")
+
+    lines.append("## Carryover Peer Proof Delta")
+    if not carryover_peer_proof_delta.get("available"):
+        lines.append(f"- unavailable: {carryover_peer_proof_delta.get('reason')}")
+    else:
+        lines.append(f"- previous_focus_ticker: {carryover_peer_proof_delta.get('previous_focus_ticker') or 'n/a'}")
+        lines.append(f"- current_focus_ticker: {carryover_peer_proof_delta.get('current_focus_ticker') or 'n/a'}")
+        lines.append(f"- previous_focus_proof_verdict: {carryover_peer_proof_delta.get('previous_focus_proof_verdict') or 'n/a'}")
+        lines.append(f"- current_focus_proof_verdict: {carryover_peer_proof_delta.get('current_focus_proof_verdict') or 'n/a'}")
+        lines.append(
+            f"- previous_focus_promotion_review_verdict: {carryover_peer_proof_delta.get('previous_focus_promotion_review_verdict') or 'n/a'}"
+        )
+        lines.append(
+            f"- current_focus_promotion_review_verdict: {carryover_peer_proof_delta.get('current_focus_promotion_review_verdict') or 'n/a'}"
+        )
+        lines.append(
+            f"- previous_ready_for_promotion_review_tickers: {carryover_peer_proof_delta.get('previous_ready_for_promotion_review_tickers') or []}"
+        )
+        lines.append(
+            f"- current_ready_for_promotion_review_tickers: {carryover_peer_proof_delta.get('current_ready_for_promotion_review_tickers') or []}"
+        )
+        for ticker in list(carryover_peer_proof_delta.get("added_ready_for_promotion_review_tickers") or []):
+            lines.append(f"- added_ready_for_promotion_review_ticker: {ticker}")
+        for ticker in list(carryover_peer_proof_delta.get("removed_ready_for_promotion_review_tickers") or []):
+            lines.append(f"- removed_ready_for_promotion_review_ticker: {ticker}")
+        if not carryover_peer_proof_delta.get("has_changes"):
+            lines.append("- no_carryover_peer_proof_change_detected")
+    lines.append("")
+
+    lines.append("## Carryover Promotion Gate Delta")
+    if not carryover_promotion_gate_delta.get("available"):
+        lines.append(f"- unavailable: {carryover_promotion_gate_delta.get('reason')}")
+    else:
+        lines.append(f"- previous_focus_ticker: {carryover_promotion_gate_delta.get('previous_focus_ticker') or 'n/a'}")
+        lines.append(f"- current_focus_ticker: {carryover_promotion_gate_delta.get('current_focus_ticker') or 'n/a'}")
+        lines.append(f"- previous_focus_gate_verdict: {carryover_promotion_gate_delta.get('previous_focus_gate_verdict') or 'n/a'}")
+        lines.append(f"- current_focus_gate_verdict: {carryover_promotion_gate_delta.get('current_focus_gate_verdict') or 'n/a'}")
+        lines.append(f"- previous_selected_contract_verdict: {carryover_promotion_gate_delta.get('previous_selected_contract_verdict') or 'n/a'}")
+        lines.append(f"- current_selected_contract_verdict: {carryover_promotion_gate_delta.get('current_selected_contract_verdict') or 'n/a'}")
+        lines.append(f"- previous_ready_tickers: {carryover_promotion_gate_delta.get('previous_ready_tickers') or []}")
+        lines.append(f"- current_ready_tickers: {carryover_promotion_gate_delta.get('current_ready_tickers') or []}")
+        for ticker in list(carryover_promotion_gate_delta.get("added_ready_tickers") or []):
+            lines.append(f"- added_promotion_gate_ready_ticker: {ticker}")
+        for ticker in list(carryover_promotion_gate_delta.get("removed_ready_tickers") or []):
+            lines.append(f"- removed_promotion_gate_ready_ticker: {ticker}")
+        for ticker in list(carryover_promotion_gate_delta.get("added_pending_t_plus_2_tickers") or []):
+            lines.append(f"- added_pending_t_plus_2_ticker: {ticker}")
+        for ticker in list(carryover_promotion_gate_delta.get("removed_pending_t_plus_2_tickers") or []):
+            lines.append(f"- removed_pending_t_plus_2_ticker: {ticker}")
+        if not carryover_promotion_gate_delta.get("has_changes"):
+            lines.append("- no_carryover_promotion_gate_change_detected")
     lines.append("")
 
     lines.append("## Governance Delta")
@@ -1870,6 +2695,12 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
         "candidate_pool_corridor_window_command_board_summary": dict(control_tower_snapshot.get("candidate_pool_corridor_window_command_board_summary") or {}),
         "candidate_pool_corridor_window_diagnostics_summary": dict(control_tower_snapshot.get("candidate_pool_corridor_window_diagnostics_summary") or {}),
         "candidate_pool_corridor_narrow_probe_summary": dict(control_tower_snapshot.get("candidate_pool_corridor_narrow_probe_summary") or {}),
+        "selected_outcome_refresh_summary": dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {}),
+        "carryover_multiday_continuation_audit_summary": dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {}),
+        "carryover_aligned_peer_harvest_summary": dict(control_tower_snapshot.get("carryover_aligned_peer_harvest_summary") or {}),
+        "carryover_peer_expansion_summary": dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {}),
+        "carryover_aligned_peer_proof_summary": dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {}),
+        "carryover_peer_promotion_gate_summary": dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {}),
         "latest_priority_board_snapshot": {
             "headline": priority_board.get("headline"),
             "summary": priority_board.get("summary"),
@@ -1897,6 +2728,10 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
             "candidate_pool_corridor_window_command_board_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_window_command_board_latest").get("absolute_path"),
             "candidate_pool_corridor_window_diagnostics_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_window_diagnostics_latest").get("absolute_path"),
             "candidate_pool_corridor_narrow_probe_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_narrow_probe_latest").get("absolute_path"),
+            "selected_outcome_refresh_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "btst_selected_outcome_refresh_board_latest.md").expanduser().resolve()),
+            "carryover_multiday_continuation_audit_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "btst_carryover_multiday_continuation_audit_latest.md").expanduser().resolve()),
+            "carryover_aligned_peer_harvest_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "btst_carryover_aligned_peer_harvest_latest.md").expanduser().resolve()),
+            "carryover_peer_expansion_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "btst_carryover_peer_expansion_latest.md").expanduser().resolve()),
             "priority_board_markdown": latest_btst_snapshot.get("priority_board_markdown_path"),
             "brief_markdown": latest_btst_snapshot.get("brief_markdown_path"),
             "execution_card_markdown": latest_btst_snapshot.get("execution_card_markdown_path"),
@@ -2151,6 +2986,36 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- no_candidate_entry_failure_dossier_recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}")
     lines.append(f"- watchlist_recall_dossier_recommendation: {watchlist_recall_dossier_summary.get('recommendation')}")
     lines.append(f"- candidate_pool_recall_dossier_recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}")
+    selected_outcome_refresh_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
+    if selected_outcome_refresh_summary:
+        lines.append(
+            f"- selected_outcome_refresh_summary: focus_ticker={selected_outcome_refresh_summary.get('focus_ticker')} focus_cycle_status={selected_outcome_refresh_summary.get('focus_cycle_status')} focus_overall_contract_verdict={selected_outcome_refresh_summary.get('focus_overall_contract_verdict')}"
+        )
+    carryover_multiday_continuation_audit_summary = dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {})
+    if carryover_multiday_continuation_audit_summary:
+        lines.append(
+            f"- carryover_multiday_continuation_audit_summary: selected_ticker={carryover_multiday_continuation_audit_summary.get('selected_ticker')} selected_path_t2_bias_only={carryover_multiday_continuation_audit_summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={carryover_multiday_continuation_audit_summary.get('broad_family_only_multiday_unsupported')} aligned_peer_multiday_ready={carryover_multiday_continuation_audit_summary.get('aligned_peer_multiday_ready')}"
+        )
+    carryover_aligned_peer_harvest_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_harvest_summary") or {})
+    if carryover_aligned_peer_harvest_summary:
+        lines.append(
+            f"- carryover_aligned_peer_harvest_summary: focus_ticker={carryover_aligned_peer_harvest_summary.get('focus_ticker')} focus_status={carryover_aligned_peer_harvest_summary.get('focus_status')} fresh_open_cycle_tickers={carryover_aligned_peer_harvest_summary.get('fresh_open_cycle_tickers')}"
+        )
+    carryover_peer_expansion_summary = dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {})
+    if carryover_peer_expansion_summary:
+        lines.append(
+            f"- carryover_peer_expansion_summary: focus_ticker={carryover_peer_expansion_summary.get('focus_ticker')} focus_status={carryover_peer_expansion_summary.get('focus_status')} priority_expansion_tickers={carryover_peer_expansion_summary.get('priority_expansion_tickers')} watch_with_risk_tickers={carryover_peer_expansion_summary.get('watch_with_risk_tickers')}"
+        )
+    carryover_aligned_peer_proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
+    if carryover_aligned_peer_proof_summary:
+        lines.append(
+            f"- carryover_aligned_peer_proof_summary: focus_ticker={carryover_aligned_peer_proof_summary.get('focus_ticker')} focus_proof_verdict={carryover_aligned_peer_proof_summary.get('focus_proof_verdict')} focus_promotion_review_verdict={carryover_aligned_peer_proof_summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={carryover_aligned_peer_proof_summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={carryover_aligned_peer_proof_summary.get('risk_review_tickers')}"
+        )
+    carryover_peer_promotion_gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+    if carryover_peer_promotion_gate_summary:
+        lines.append(
+            f"- carryover_peer_promotion_gate_summary: focus_ticker={carryover_peer_promotion_gate_summary.get('focus_ticker')} focus_gate_verdict={carryover_peer_promotion_gate_summary.get('focus_gate_verdict')} ready_tickers={carryover_peer_promotion_gate_summary.get('ready_tickers')} blocked_open_tickers={carryover_peer_promotion_gate_summary.get('blocked_open_tickers')} pending_t_plus_2_tickers={carryover_peer_promotion_gate_summary.get('pending_t_plus_2_tickers')}"
+        )
     lines.append(f"- upstream_shadow_followup_overlay_recommendation: {control_tower_snapshot.get('upstream_shadow_followup_recommendation')}")
     if upstream_shadow_followup_overlay.get("validated_tickers"):
         lines.append(
@@ -2185,6 +3050,30 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     lines.append(f"- lane_status_counts: {control_tower_snapshot.get('lane_status_counts')}")
     lines.append(f"- warn_count: {control_tower_snapshot.get('warn_count')}")
     lines.append(f"- fail_count: {control_tower_snapshot.get('fail_count')}")
+    if selected_outcome_refresh_summary:
+        lines.append(
+            f"- selected_outcome_contract: focus_ticker={selected_outcome_refresh_summary.get('focus_ticker')} overall_contract_verdict={selected_outcome_refresh_summary.get('focus_overall_contract_verdict')} focus_cycle_status={selected_outcome_refresh_summary.get('focus_cycle_status')}"
+        )
+    if carryover_multiday_continuation_audit_summary:
+        lines.append(
+            f"- carryover_multiday_contract: selected_ticker={carryover_multiday_continuation_audit_summary.get('selected_ticker')} selected_path_t2_bias_only={carryover_multiday_continuation_audit_summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={carryover_multiday_continuation_audit_summary.get('broad_family_only_multiday_unsupported')}"
+        )
+    if carryover_aligned_peer_harvest_summary:
+        lines.append(
+            f"- carryover_peer_harvest_focus: focus_ticker={carryover_aligned_peer_harvest_summary.get('focus_ticker')} focus_status={carryover_aligned_peer_harvest_summary.get('focus_status')} fresh_open_cycle_tickers={carryover_aligned_peer_harvest_summary.get('fresh_open_cycle_tickers')}"
+        )
+    if carryover_peer_expansion_summary:
+        lines.append(
+            f"- carryover_peer_expansion_focus: focus_ticker={carryover_peer_expansion_summary.get('focus_ticker')} focus_status={carryover_peer_expansion_summary.get('focus_status')} priority_expansion_tickers={carryover_peer_expansion_summary.get('priority_expansion_tickers')} watch_with_risk_tickers={carryover_peer_expansion_summary.get('watch_with_risk_tickers')}"
+        )
+    if carryover_aligned_peer_proof_summary:
+        lines.append(
+            f"- carryover_peer_proof_focus: focus_ticker={carryover_aligned_peer_proof_summary.get('focus_ticker')} focus_promotion_review_verdict={carryover_aligned_peer_proof_summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={carryover_aligned_peer_proof_summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={carryover_aligned_peer_proof_summary.get('risk_review_tickers')}"
+        )
+    if carryover_peer_promotion_gate_summary:
+        lines.append(
+            f"- carryover_peer_promotion_gate_focus: focus_ticker={carryover_peer_promotion_gate_summary.get('focus_ticker')} focus_gate_verdict={carryover_peer_promotion_gate_summary.get('focus_gate_verdict')} ready_tickers={carryover_peer_promotion_gate_summary.get('ready_tickers')} blocked_open_tickers={carryover_peer_promotion_gate_summary.get('blocked_open_tickers')} pending_t_plus_2_tickers={carryover_peer_promotion_gate_summary.get('pending_t_plus_2_tickers')}"
+        )
     for frontier in list(control_tower_snapshot.get("closed_frontiers") or []):
         lines.append(
             f"- closed_frontier: {frontier.get('frontier_id')} status={frontier.get('status')} passing_variant_count={frontier.get('passing_variant_count')}"

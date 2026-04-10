@@ -385,6 +385,7 @@ def _resolve_upstream_shadow_catalyst_relief(
     relief_reason = str(relief_config.get("reason") or "upstream_shadow_catalyst_relief")
     historical_prior = _historical_prior(input_data)
     historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    historical_entry_timing_bias = str(historical_prior.get("entry_timing_bias") or "unknown")
     historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
     historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
     historical_next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
@@ -447,7 +448,8 @@ def _resolve_upstream_shadow_catalyst_relief(
     )
     if relief_reason == "catalyst_theme_short_trade_carryover":
         carryover_history_supported = (
-            historical_execution_quality_label in {"close_continuation", "balanced_confirmation"}
+            historical_execution_quality_label == "close_continuation"
+            and historical_entry_timing_bias == "confirm_then_hold"
             and historical_evaluable_count >= 2
             and historical_next_close_positive_rate >= 0.5
         )
@@ -2027,6 +2029,10 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         gate_status["score"] = "near_miss"
     else:
         decision = "rejected"
+
+    if carryover_evidence_deficiency["evidence_deficient"] and decision in {"selected", "near_miss"}:
+        decision = "rejected"
+        gate_status["score"] = "fail"
 
     if breakout_stage == "confirmed_breakout":
         positive_tags.append("confirmed_breakout_stage")
