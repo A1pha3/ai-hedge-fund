@@ -131,6 +131,155 @@ def render_targeted_short_trade_near_miss_release_markdown(analysis: dict[str, A
     return "\n".join(lines) + "\n"
 
 
+def _collect_near_miss_release_changes(
+    selection_root: Path,
+    *,
+    targets: set[tuple[str, str]],
+    select_threshold: float,
+    stale_weight: float,
+    extension_weight: float,
+) -> tuple[Counter[str], Counter[str], Counter[str], list[dict[str, Any]], set[tuple[str, str]], int]:
+    before_decision_counts: Counter[str] = Counter()
+    after_decision_counts: Counter[str] = Counter()
+    transition_counts: Counter[str] = Counter()
+    changed_cases: list[dict[str, Any]] = []
+    matched_targets: set[tuple[str, str]] = set()
+    total_case_count = 0
+    for snapshot in _iter_selection_snapshots(selection_root):
+        snapshot_counts = _process_near_miss_release_snapshot(
+            snapshot,
+            targets=targets,
+            select_threshold=select_threshold,
+            stale_weight=stale_weight,
+            extension_weight=extension_weight,
+        )
+        before_decision_counts.update(snapshot_counts["before_decision_counts"])
+        after_decision_counts.update(snapshot_counts["after_decision_counts"])
+        transition_counts.update(snapshot_counts["transition_counts"])
+        changed_cases.extend(snapshot_counts["changed_cases"])
+        matched_targets.update(snapshot_counts["matched_targets"])
+        total_case_count += int(snapshot_counts["total_case_count"])
+    return before_decision_counts, after_decision_counts, transition_counts, changed_cases, matched_targets, total_case_count
+
+
+def _process_near_miss_release_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    targets: set[tuple[str, str]],
+    select_threshold: float,
+    stale_weight: float,
+    extension_weight: float,
+) -> dict[str, Any]:
+    before_decision_counts: Counter[str] = Counter()
+    after_decision_counts: Counter[str] = Counter()
+    transition_counts: Counter[str] = Counter()
+    changed_cases: list[dict[str, Any]] = []
+    matched_targets: set[tuple[str, str]] = set()
+    total_case_count = 0
+    trade_date = str(snapshot.get("trade_date") or "")
+    selection_targets = dict(snapshot.get("selection_targets") or {})
+    for ticker, evaluation in selection_targets.items():
+        case_update = _process_near_miss_release_case(
+            trade_date=trade_date,
+            ticker=str(ticker),
+            evaluation=dict(evaluation or {}),
+            targets=targets,
+            select_threshold=select_threshold,
+            stale_weight=stale_weight,
+            extension_weight=extension_weight,
+        )
+        if case_update is None:
+            continue
+        total_case_count += 1
+        before_decision_counts.update([case_update["before_decision"]])
+        after_decision_counts.update([case_update["after_decision"]])
+        transition_counts.update([f"{case_update['before_decision']}->{case_update['after_decision']}"])
+        if case_update["is_target_case"]:
+            matched_targets.add((trade_date, str(ticker)))
+        if case_update["changed_case"] is not None:
+            changed_cases.append(case_update["changed_case"])
+    return {
+        "before_decision_counts": before_decision_counts,
+        "after_decision_counts": after_decision_counts,
+        "transition_counts": transition_counts,
+        "changed_cases": changed_cases,
+        "matched_targets": matched_targets,
+        "total_case_count": total_case_count,
+    }
+
+
+def _process_near_miss_release_case(
+    *,
+    trade_date: str,
+    ticker: str,
+    evaluation: dict[str, Any],
+    targets: set[tuple[str, str]],
+    select_threshold: float,
+    stale_weight: float,
+    extension_weight: float,
+) -> dict[str, Any] | None:
+    candidate_source = str(evaluation.get("candidate_source") or "")
+    short_trade = dict(evaluation.get("short_trade") or {})
+    if candidate_source != "short_trade_boundary":
+        return None
+    if str(short_trade.get("decision") or "") != "near_miss":
+        return None
+    case_key = (trade_date, ticker)
+    is_target_case = case_key in targets
+    before_decision = "near_miss"
+    before_score = _round(_safe_float(short_trade.get("score_target")))
+    after_snapshot = {
+        "decision": before_decision,
+        "score_target": before_score,
+        "select_threshold": _round(select_threshold),
+        "stale_weight": _round(stale_weight),
+        "extension_weight": _round(extension_weight),
+    }
+    if is_target_case:
+        after_snapshot = _evaluate_after_snapshot(
+            dict(short_trade.get("metrics_payload") or {}),
+            select_threshold=select_threshold,
+            stale_weight=stale_weight,
+            extension_weight=extension_weight,
+        )
+    after_decision = str(after_snapshot.get("decision") or before_decision)
+    changed_case = None
+    if before_decision != after_decision or before_score != after_snapshot.get("score_target"):
+        changed_case = {
+            "trade_date": trade_date,
+            "ticker": ticker,
+            "is_target_case": is_target_case,
+            "before_decision": before_decision,
+            "after_decision": after_decision,
+            "before_score_target": before_score,
+            "after_score_target": after_snapshot.get("score_target"),
+            "select_threshold": after_snapshot.get("select_threshold"),
+            "stale_weight": after_snapshot.get("stale_weight"),
+            "extension_weight": after_snapshot.get("extension_weight"),
+        }
+    return {
+        "is_target_case": is_target_case,
+        "before_decision": before_decision,
+        "after_decision": after_decision,
+        "changed_case": changed_case,
+    }
+
+
+def _build_near_miss_release_recommendation(
+    promoted_target_rows: list[dict[str, Any]],
+    changed_non_target_case_count: int,
+) -> str:
+    if promoted_target_rows and changed_non_target_case_count == 0:
+        target_descriptions = ", ".join(f"{row['trade_date']} / {row['ticker']}" for row in promoted_target_rows)
+        return (
+            f"当前定向 release 只改变目标 near-miss 样本。{target_descriptions} 从 near_miss -> selected，"
+            f"可作为低污染的 case-based near-miss promotion 实验。"
+        )
+    if changed_non_target_case_count > 0:
+        return "出现了非目标 near-miss 样本变化，当前实验不再是严格的 case-based promotion。"
+    return "目标 near-miss 样本没有进入 selected，当前 release 参数还不够强。"
+
+
 def analyze_targeted_short_trade_near_miss_release(
     report_dir: str | Path,
     *,
@@ -141,68 +290,13 @@ def analyze_targeted_short_trade_near_miss_release(
 ) -> dict[str, Any]:
     report_path = Path(report_dir).expanduser().resolve()
     selection_root = report_path / "selection_artifacts"
-
-    before_decision_counts: Counter[str] = Counter()
-    after_decision_counts: Counter[str] = Counter()
-    transition_counts: Counter[str] = Counter()
-    changed_cases: list[dict[str, Any]] = []
-    matched_targets: set[tuple[str, str]] = set()
-    total_case_count = 0
-
-    for snapshot in _iter_selection_snapshots(selection_root):
-        trade_date = str(snapshot.get("trade_date") or "")
-        selection_targets = dict(snapshot.get("selection_targets") or {})
-        for ticker, evaluation in selection_targets.items():
-            candidate_source = str((evaluation or {}).get("candidate_source") or "")
-            short_trade = dict((evaluation or {}).get("short_trade") or {})
-            if candidate_source != "short_trade_boundary":
-                continue
-            if str(short_trade.get("decision") or "") != "near_miss":
-                continue
-
-            total_case_count += 1
-            case_key = (trade_date, str(ticker))
-            is_target_case = case_key in targets
-            if is_target_case:
-                matched_targets.add(case_key)
-
-            before_decision = "near_miss"
-            before_score = _round(_safe_float(short_trade.get("score_target")))
-            after_snapshot = {
-                "decision": before_decision,
-                "score_target": before_score,
-                "select_threshold": _round(select_threshold),
-                "stale_weight": _round(stale_weight),
-                "extension_weight": _round(extension_weight),
-            }
-            if is_target_case:
-                after_snapshot = _evaluate_after_snapshot(
-                    dict(short_trade.get("metrics_payload") or {}),
-                    select_threshold=select_threshold,
-                    stale_weight=stale_weight,
-                    extension_weight=extension_weight,
-                )
-
-            after_decision = str(after_snapshot.get("decision") or before_decision)
-            before_decision_counts[before_decision] += 1
-            after_decision_counts[after_decision] += 1
-            transition_counts[f"{before_decision}->{after_decision}"] += 1
-
-            if before_decision != after_decision or before_score != after_snapshot.get("score_target"):
-                changed_cases.append(
-                    {
-                        "trade_date": trade_date,
-                        "ticker": str(ticker),
-                        "is_target_case": is_target_case,
-                        "before_decision": before_decision,
-                        "after_decision": after_decision,
-                        "before_score_target": before_score,
-                        "after_score_target": after_snapshot.get("score_target"),
-                        "select_threshold": after_snapshot.get("select_threshold"),
-                        "stale_weight": after_snapshot.get("stale_weight"),
-                        "extension_weight": after_snapshot.get("extension_weight"),
-                    }
-                )
+    before_decision_counts, after_decision_counts, transition_counts, changed_cases, matched_targets, total_case_count = _collect_near_miss_release_changes(
+        selection_root,
+        targets=targets,
+        select_threshold=select_threshold,
+        stale_weight=stale_weight,
+        extension_weight=extension_weight,
+    )
 
     unmatched_targets = sorted(f"{trade_date}:{ticker}" for trade_date, ticker in (targets - matched_targets))
     if unmatched_targets:
@@ -210,17 +304,7 @@ def analyze_targeted_short_trade_near_miss_release(
 
     changed_non_target_case_count = sum(1 for row in changed_cases if not row["is_target_case"])
     promoted_target_rows = [row for row in changed_cases if row["is_target_case"] and row["after_decision"] == "selected"]
-
-    if promoted_target_rows and changed_non_target_case_count == 0:
-        target_descriptions = ", ".join(f"{row['trade_date']} / {row['ticker']}" for row in promoted_target_rows)
-        recommendation = (
-            f"当前定向 release 只改变目标 near-miss 样本。{target_descriptions} 从 near_miss -> selected，"
-            f"可作为低污染的 case-based near-miss promotion 实验。"
-        )
-    elif changed_non_target_case_count > 0:
-        recommendation = "出现了非目标 near-miss 样本变化，当前实验不再是严格的 case-based promotion。"
-    else:
-        recommendation = "目标 near-miss 样本没有进入 selected，当前 release 参数还不够强。"
+    recommendation = _build_near_miss_release_recommendation(promoted_target_rows, changed_non_target_case_count)
 
     return {
         "report_dir": str(report_path),

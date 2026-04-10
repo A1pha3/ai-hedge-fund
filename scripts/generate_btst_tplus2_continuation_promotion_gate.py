@@ -20,66 +20,76 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
-def _build_promotion_gate(lane_rulepack: dict[str, Any], promotion_review: dict[str, Any]) -> dict[str, Any]:
+def _build_promotion_gate_context(lane_rulepack: dict[str, Any], promotion_review: dict[str, Any]) -> dict[str, Any]:
     lane_rules = dict(lane_rulepack.get("lane_rules") or {})
-    focus_ticker = str(promotion_review.get("focus_ticker") or "")
-    eligible_tickers = [str(item) for item in list(lane_rulepack.get("eligible_tickers") or []) if str(item).strip()]
-    watchlist_tickers = [str(item) for item in list(lane_rulepack.get("watchlist_tickers") or []) if str(item).strip()]
+    return {
+        "focus_ticker": str(promotion_review.get("focus_ticker") or ""),
+        "eligible_tickers": [str(item) for item in list(lane_rulepack.get("eligible_tickers") or []) if str(item).strip()],
+        "watchlist_tickers": [str(item) for item in list(lane_rulepack.get("watchlist_tickers") or []) if str(item).strip()],
+        "promotion_review_verdict": str(promotion_review.get("promotion_review_verdict") or ""),
+        "promotion_review_blockers": [str(item) for item in list(promotion_review.get("promotion_blockers") or []) if str(item).strip()],
+        "lane_stage": str(lane_rules.get("lane_stage") or lane_rulepack.get("lane_stage") or ""),
+        "capital_mode": str(lane_rules.get("capital_mode") or lane_rulepack.get("capital_mode") or ""),
+    }
+
+
+def _collect_promotion_gate_blockers(context: dict[str, Any]) -> list[str]:
     gate_blockers: list[str] = []
-    promotion_review_verdict = str(promotion_review.get("promotion_review_verdict") or "")
-    promotion_review_blockers = [str(item) for item in list(promotion_review.get("promotion_blockers") or []) if str(item).strip()]
-
-    if not focus_ticker:
+    if not context["focus_ticker"]:
         gate_blockers.append("missing_focus_ticker")
-    if promotion_review_verdict not in READY_PROMOTION_REVIEW_VERDICTS:
+    if context["promotion_review_verdict"] not in READY_PROMOTION_REVIEW_VERDICTS:
         gate_blockers.append("promotion_review_not_ready")
-    if promotion_review_blockers:
-        gate_blockers.extend(promotion_review_blockers)
-    if focus_ticker and focus_ticker in eligible_tickers:
+    if context["promotion_review_blockers"]:
+        gate_blockers.extend(context["promotion_review_blockers"])
+    if context["focus_ticker"] and context["focus_ticker"] in context["eligible_tickers"]:
         gate_blockers.append("focus_already_eligible")
-
-    lane_stage = str(lane_rules.get("lane_stage") or lane_rulepack.get("lane_stage") or "")
-    capital_mode = str(lane_rules.get("capital_mode") or lane_rulepack.get("capital_mode") or "")
-    if lane_stage and lane_stage != "observation_only":
+    if context["lane_stage"] and context["lane_stage"] != "observation_only":
         gate_blockers.append("unexpected_lane_stage")
-    if capital_mode and capital_mode != "paper_only":
+    if context["capital_mode"] and context["capital_mode"] != "paper_only":
         gate_blockers.append("unexpected_capital_mode")
+    return gate_blockers
 
-    if focus_ticker and focus_ticker in watchlist_tickers:
-        gate_verdict = "already_on_watchlist"
-        operator_action = "keep_watchlist_unchanged"
-        proposed_watchlist_tickers = list(watchlist_tickers)
-    elif gate_blockers:
-        gate_verdict = "hold_watchlist_promotion"
-        operator_action = "keep_watchlist_unchanged"
-        proposed_watchlist_tickers = list(watchlist_tickers)
-    else:
-        gate_verdict = "approve_watchlist_promotion"
-        operator_action = "append_focus_to_watchlist"
-        proposed_watchlist_tickers = watchlist_tickers + [focus_ticker]
 
+def _resolve_promotion_gate_decision(context: dict[str, Any], gate_blockers: list[str]) -> tuple[str, str, list[str]]:
+    if context["focus_ticker"] and context["focus_ticker"] in context["watchlist_tickers"]:
+        return "already_on_watchlist", "keep_watchlist_unchanged", list(context["watchlist_tickers"])
+    if gate_blockers:
+        return "hold_watchlist_promotion", "keep_watchlist_unchanged", list(context["watchlist_tickers"])
+    return "approve_watchlist_promotion", "append_focus_to_watchlist", context["watchlist_tickers"] + [context["focus_ticker"]]
+
+
+def _build_promotion_gate_recommendation(gate_verdict: str, *, focus_ticker: str, eligible_tickers: list[str]) -> str:
     if gate_verdict == "approve_watchlist_promotion":
-        recommendation = (
+        return (
             f"Approve {focus_ticker} as an additional near-cluster watchlist ticker while keeping "
             f"eligible_tickers={eligible_tickers} unchanged and the continuation lane isolated from default BTST."
         )
-    elif gate_verdict == "already_on_watchlist":
-        recommendation = f"{focus_ticker} is already on watchlist_tickers; no additional governance action is required."
-    else:
-        recommendation = "Hold watchlist promotion and keep the focus candidate inside validation review until the gate blockers clear."
+    if gate_verdict == "already_on_watchlist":
+        return f"{focus_ticker} is already on watchlist_tickers; no additional governance action is required."
+    return "Hold watchlist promotion and keep the focus candidate inside validation review until the gate blockers clear."
+
+
+def _build_promotion_gate(lane_rulepack: dict[str, Any], promotion_review: dict[str, Any]) -> dict[str, Any]:
+    context = _build_promotion_gate_context(lane_rulepack, promotion_review)
+    gate_blockers = _collect_promotion_gate_blockers(context)
+    gate_verdict, operator_action, proposed_watchlist_tickers = _resolve_promotion_gate_decision(context, gate_blockers)
 
     return {
-        "focus_ticker": focus_ticker or None,
-        "promotion_review_verdict": promotion_review_verdict or None,
-        "promotion_review_blockers": promotion_review_blockers,
+        "focus_ticker": context["focus_ticker"] or None,
+        "promotion_review_verdict": context["promotion_review_verdict"] or None,
+        "promotion_review_blockers": context["promotion_review_blockers"],
         "gate_verdict": gate_verdict,
         "gate_blockers": gate_blockers,
-        "current_watchlist_tickers": watchlist_tickers,
+        "current_watchlist_tickers": context["watchlist_tickers"],
         "proposed_watchlist_tickers": proposed_watchlist_tickers,
-        "eligible_tickers": eligible_tickers,
+        "eligible_tickers": context["eligible_tickers"],
         "operator_action": operator_action,
         "execution_mode": "manual_rulepack_update",
-        "recommendation": recommendation,
+        "recommendation": _build_promotion_gate_recommendation(
+            gate_verdict,
+            focus_ticker=context["focus_ticker"],
+            eligible_tickers=context["eligible_tickers"],
+        ),
     }
 
 

@@ -169,83 +169,152 @@ def render_targeted_release_outcomes_markdown(analysis: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def analyze_targeted_release_outcomes(
-    release_report: str | Path,
+def _enrich_target_release_rows(
+    target_rows: list[dict[str, Any]],
     *,
-    next_high_hit_threshold: float = 0.02,
+    release_analysis: dict[str, Any],
+    next_high_hit_threshold: float,
 ) -> dict[str, Any]:
-    release_analysis = _load_json(release_report)
     price_cache: dict[tuple[str, str], pd.DataFrame] = {}
-    target_rows = _resolve_target_rows(release_analysis)
-    release_mode = _infer_release_mode(release_analysis, target_rows)
-    report_dir = str(release_analysis.get("report_dir") or "")
-
     enriched_rows: list[dict[str, Any]] = []
     promoted_target_case_count = 0
     positive_next_close_count = 0
     high_hit_count = 0
     next_high_values: list[float] = []
     next_close_values: list[float] = []
-
     for row in target_rows:
-        trade_date = str(row.get("trade_date") or "")
-        ticker = str(row.get("ticker") or "")
-        outcome = _extract_next_day_outcome(ticker, trade_date, price_cache)
-        thresholds = _resolve_thresholds(release_analysis, row)
-        before_decision = row.get("before_decision")
-        after_decision = row.get("after_decision")
-        promoted = str(after_decision or "") in {"near_miss", "selected"} and str(after_decision or "") != str(before_decision or "")
-
-        next_high_return = outcome.get("next_high_return")
-        next_close_return = outcome.get("next_close_return")
-        if promoted:
+        enriched_row = _build_enriched_target_release_row(
+            row,
+            release_analysis=release_analysis,
+            price_cache=price_cache,
+            next_high_hit_threshold=next_high_hit_threshold,
+        )
+        enriched_rows.append(enriched_row)
+        if enriched_row["promoted"]:
             promoted_target_case_count += 1
+        next_high_return = enriched_row.get("next_high_return")
         if next_high_return is not None:
             next_high_values.append(float(next_high_return))
             if float(next_high_return) >= next_high_hit_threshold:
                 high_hit_count += 1
+        next_close_return = enriched_row.get("next_close_return")
         if next_close_return is not None:
             next_close_values.append(float(next_close_return))
             if float(next_close_return) > 0:
                 positive_next_close_count += 1
+    return {
+        "enriched_rows": enriched_rows,
+        "promoted_target_case_count": promoted_target_case_count,
+        "positive_next_close_count": positive_next_close_count,
+        "high_hit_count": high_hit_count,
+        "next_high_values": next_high_values,
+        "next_close_values": next_close_values,
+    }
 
-        if promoted and next_close_return is not None and float(next_close_return) > 0:
-            release_verdict = "promoted_with_positive_close"
-        elif promoted and next_high_return is not None and float(next_high_return) >= next_high_hit_threshold:
-            release_verdict = "promoted_with_intraday_upside"
-        elif promoted:
-            release_verdict = "promoted_but_outcome_mixed"
-        else:
-            release_verdict = "not_promoted"
 
-        enriched_rows.append(
-            {
-                **row,
-                **thresholds,
-                **outcome,
-                "release_verdict": release_verdict,
-            }
+def _build_enriched_target_release_row(
+    row: dict[str, Any],
+    *,
+    release_analysis: dict[str, Any],
+    price_cache: dict[tuple[str, str], pd.DataFrame],
+    next_high_hit_threshold: float,
+) -> dict[str, Any]:
+    trade_date = str(row.get("trade_date") or "")
+    ticker = str(row.get("ticker") or "")
+    outcome = _extract_next_day_outcome(ticker, trade_date, price_cache)
+    thresholds = _resolve_thresholds(release_analysis, row)
+    before_decision = row.get("before_decision")
+    after_decision = row.get("after_decision")
+    promoted = str(after_decision or "") in {"near_miss", "selected"} and str(after_decision or "") != str(before_decision or "")
+    return {
+        **row,
+        **thresholds,
+        **outcome,
+        "promoted": promoted,
+        "release_verdict": _build_target_release_verdict(
+            promoted=promoted,
+            next_high_return=outcome.get("next_high_return"),
+            next_close_return=outcome.get("next_close_return"),
+            next_high_hit_threshold=next_high_hit_threshold,
+        ),
+    }
+
+
+def _build_target_release_verdict(
+    *,
+    promoted: bool,
+    next_high_return: float | None,
+    next_close_return: float | None,
+    next_high_hit_threshold: float,
+) -> str:
+    if promoted and next_close_return is not None and float(next_close_return) > 0:
+        return "promoted_with_positive_close"
+    if promoted and next_high_return is not None and float(next_high_return) >= next_high_hit_threshold:
+        return "promoted_with_intraday_upside"
+    if promoted:
+        return "promoted_but_outcome_mixed"
+    return "not_promoted"
+
+
+def _build_targeted_release_outcomes_recommendation(
+    *,
+    enriched_rows: list[dict[str, Any]],
+    promoted_target_case_count: int,
+    positive_next_close_count: int,
+    high_hit_count: int,
+    next_close_positive_rate: float | None,
+    ticker: str,
+) -> str:
+    if enriched_rows and promoted_target_case_count == len(enriched_rows) and positive_next_close_count == len(enriched_rows):
+        return (
+            f"当前 targeted release 值得继续保留。{ticker} 的 {len(enriched_rows)} 个目标样本都完成了目标迁移，"
+            f"且 next_close_positive_rate={next_close_positive_rate}。"
         )
+    if enriched_rows and promoted_target_case_count == len(enriched_rows) and high_hit_count == len(enriched_rows):
+        return "当前 targeted release 至少兑现了稳定的 intraday upside，但 close continuation 仍需继续观察。"
+    if enriched_rows and promoted_target_case_count > 0:
+        return "当前 targeted release 已发生变化，但真实次日表现没有形成一致支持，建议继续保留为观察样本。"
+    if enriched_rows:
+        return "目标样本拿到了后验行情，但当前 release 没有形成有效迁移。"
+    return "当前没有可供评估的 targeted release 样本。"
+
+
+def analyze_targeted_release_outcomes(
+    release_report: str | Path,
+    *,
+    next_high_hit_threshold: float = 0.02,
+) -> dict[str, Any]:
+    release_analysis = _load_json(release_report)
+    target_rows = _resolve_target_rows(release_analysis)
+    release_mode = _infer_release_mode(release_analysis, target_rows)
+    report_dir = str(release_analysis.get("report_dir") or "")
+    enrichment = _enrich_target_release_rows(
+        target_rows,
+        release_analysis=release_analysis,
+        next_high_hit_threshold=next_high_hit_threshold,
+    )
+    enriched_rows = enrichment["enriched_rows"]
+    promoted_target_case_count = enrichment["promoted_target_case_count"]
+    positive_next_close_count = enrichment["positive_next_close_count"]
+    high_hit_count = enrichment["high_hit_count"]
+    next_high_values = enrichment["next_high_values"]
+    next_close_values = enrichment["next_close_values"]
+    for row in enriched_rows:
+        row.pop("promoted", None)
 
     next_high_return_mean = _mean(next_high_values)
     next_close_return_mean = _mean(next_close_values)
     next_high_hit_rate = round(high_hit_count / len(enriched_rows), 4) if enriched_rows else None
     next_close_positive_rate = round(positive_next_close_count / len(enriched_rows), 4) if enriched_rows else None
     ticker = str(enriched_rows[0].get("ticker") or "") if enriched_rows else ""
-
-    if enriched_rows and promoted_target_case_count == len(enriched_rows) and positive_next_close_count == len(enriched_rows):
-        recommendation = (
-            f"当前 targeted release 值得继续保留。{ticker} 的 {len(enriched_rows)} 个目标样本都完成了目标迁移，"
-            f"且 next_close_positive_rate={next_close_positive_rate}。"
-        )
-    elif enriched_rows and promoted_target_case_count == len(enriched_rows) and high_hit_count == len(enriched_rows):
-        recommendation = "当前 targeted release 至少兑现了稳定的 intraday upside，但 close continuation 仍需继续观察。"
-    elif enriched_rows and promoted_target_case_count > 0:
-        recommendation = "当前 targeted release 已发生变化，但真实次日表现没有形成一致支持，建议继续保留为观察样本。"
-    elif enriched_rows:
-        recommendation = "目标样本拿到了后验行情，但当前 release 没有形成有效迁移。"
-    else:
-        recommendation = "当前没有可供评估的 targeted release 样本。"
+    recommendation = _build_targeted_release_outcomes_recommendation(
+        enriched_rows=enriched_rows,
+        promoted_target_case_count=promoted_target_case_count,
+        positive_next_close_count=positive_next_close_count,
+        high_hit_count=high_hit_count,
+        next_close_positive_rate=next_close_positive_rate,
+        ticker=ticker,
+    )
 
     return {
         "release_report": str(Path(release_report).expanduser().resolve()),

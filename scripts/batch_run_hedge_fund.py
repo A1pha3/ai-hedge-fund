@@ -121,8 +121,8 @@ def get_existing_tickers_from_reports(report_dir: Path, report_date: str) -> set
     return existing_tickers
 
 
-def main() -> int:
-    """主函数"""
+def build_argument_parser() -> argparse.ArgumentParser:
+    """构建命令行参数解析器。"""
     parser = argparse.ArgumentParser(
         description="批量运行对冲基金分析脚本",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -166,53 +166,37 @@ def main() -> int:
         metavar="BOARD",
         help="排除指定板块的股票，可选值: 科创板 北交所 创业板 主板 (如: --exclude-boards 科创板 北交所)",
     )
+    return parser
 
-    args = parser.parse_args()
 
-    # 检查文件是否存在
+def _load_batch_stocks(args: argparse.Namespace) -> list[StockInfo] | None:
+    """加载并准备待分析股票列表。"""
     if not args.file.exists():
         print(f"错误: 文件不存在: {args.file}", file=sys.stderr)
-        return 1
-
-    # 提取股票信息
+        return None
     print("正在从文件中提取股票代码...")
     stocks = extract_stocks_from_markdown(args.file)
-
     if not stocks:
         print("错误: 未从文件中找到有效的股票代码", file=sys.stderr)
         print("支持的格式: xxxxxx.SH, xxxxxx.SZ, xxxxxx.BJ", file=sys.stderr)
-        return 1
-
+        return None
     print(f"找到 {len(stocks)} 只股票")
-
-    # 按板块过滤
     if args.exclude_boards:
         excluded = set(args.exclude_boards)
         before_count = len(stocks)
         stocks = [s for s in stocks if s.market_type not in excluded]
         filtered_count = before_count - len(stocks)
         print(f"已过滤 {filtered_count} 只股票（排除板块: {', '.join(excluded)}），剩余 {len(stocks)} 只")
-
-    # 按涨幅从低到高排序
     stocks.sort(key=lambda x: x.change_percent)
     print("已按涨幅从低到高排序")
-
-    # 如果设置了限制，只取前 N 只
     if args.limit > 0 and args.limit < len(stocks):
         stocks = stocks[: args.limit]
         print(f"限制处理前 {args.limit} 只股票")
+    return stocks
 
-    # 逐只处理股票
-    print()
-    print("=" * 40)
-    print("开始批量分析...")
-    print("=" * 40)
-    print()
 
-    total = len(stocks)
-    processed = 0
-
-    # 识别已完成报告的股票（用于断点续跑）
+def _resolve_existing_tickers(args: argparse.Namespace) -> set[str]:
+    """识别已生成报告的股票代码。"""
     report_date = args.report_date or datetime.datetime.now().strftime("%Y%m%d")
     project_root = Path(__file__).resolve().parent.parent
     reports_dir = project_root / "data" / "reports"
@@ -220,63 +204,92 @@ def main() -> int:
     if args.skip_existing:
         print(f"检测到 {len(existing_tickers)} 只股票在 {report_date} 已有报告，将自动跳过")
         print()
+    return existing_tickers
 
-    for stock in stocks:
-        if args.skip_existing and stock.ticker in existing_tickers:
-            processed += 1
-            print(f"[{processed}/{total}] 跳过已完成: {stock.ticker} ({stock.name}) - 涨幅: {stock.change_percent}%")
-            print("-" * 40)
-            print()
-            print("=" * 40)
-            print()
-            continue
 
-        processed += 1
-        print(f"[{processed}/{total}] 正在分析: {stock.ticker} ({stock.name}) - 涨幅: {stock.change_percent}%")
+def _should_retry_minimax(model: Optional[str], return_code: int) -> bool:
+    """判断失败后是否按 MiniMax 限流策略重试。"""
+    return return_code != 0 and isinstance(model, str) and "MiniMax" in model
+
+
+def _retry_after_minimax_rate_limit(stock: StockInfo, cmd: List[str]) -> int:
+    """在疑似 MiniMax 限流后等待并重试一次。"""
+    print(f"\n警告: {stock.ticker} 分析失败。可能是 API 限流。")
+    print("程序将休息 1 小时后再继续运行...")
+    try:
+        for i in range(3600, 0, -60):
+            print(f"\r剩余休息时间: {i//60} 分钟... ", end="", flush=True)
+            time.sleep(60)
+        print("\n休息结束，准备重试该股票并继续后续分析。")
+        return run_hedge_fund_analysis(cmd)
+    except KeyboardInterrupt:
+        print("\n用户中断休息，程序退出。")
+        return 1
+
+
+def _run_single_stock_analysis(stock: StockInfo, args: argparse.Namespace) -> int:
+    """执行单只股票分析，并处理失败重试。"""
+    cmd = build_run_hedge_fund_command(
+        ticker=stock.ticker,
+        model=args.model,
+        analysts_all=args.analysts_all,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        show_reasoning=args.show_reasoning,
+    )
+    return_code = run_hedge_fund_analysis(cmd)
+    if _should_retry_minimax(args.model, return_code):
+        return_code = _retry_after_minimax_rate_limit(stock, cmd)
+    if return_code != 0:
+        print(f"错误: {stock.ticker} 分析仍然失败，返回码: {return_code}", file=sys.stderr)
+    return return_code
+
+
+def _process_batch_stock(
+    stock: StockInfo,
+    *,
+    index: int,
+    total: int,
+    existing_tickers: set[str],
+    args: argparse.Namespace,
+) -> None:
+    """处理单只股票的打印、跳过和执行逻辑。"""
+    if args.skip_existing and stock.ticker in existing_tickers:
+        print(f"[{index}/{total}] 跳过已完成: {stock.ticker} ({stock.name}) - 涨幅: {stock.change_percent}%")
         print("-" * 40)
-
-        # 构建并执行命令
-        cmd = build_run_hedge_fund_command(
-            ticker=stock.ticker,
-            model=args.model,
-            analysts_all=args.analysts_all,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            show_reasoning=args.show_reasoning,
-        )
-
-        return_code = run_hedge_fund_analysis(cmd)
-
-        if return_code != 0:
-            # 检查是否因为 MiniMax API 限流导致 (退出码通常被 shell 捕获，但我们主要通过日志或特定逻辑判断)
-            # 在这种情况下，我们假设如果分析失败且模型是 MiniMax，可能是限流
-            if "MiniMax" in args.model:
-                print(f"\n警告: {stock.ticker} 分析失败。可能是 API 限流。")
-                print("程序将休息 1 小时后再继续运行...")
-                try:
-                    # 1 小时 = 3600 秒
-                    for i in range(3600, 0, -60):
-                        print(f"\r剩余休息时间: {i//60} 分钟... ", end="", flush=True)
-                        time.sleep(60)
-                    print("\n休息结束，准备重试该股票并继续后续分析。")
-                    # 重新对当前股票进行分析
-                    return_code = run_hedge_fund_analysis(cmd)
-                except KeyboardInterrupt:
-                    print("\n用户中断休息，程序退出。")
-                    return 1
-
-            if return_code != 0:
-                print(f"错误: {stock.ticker} 分析仍然失败，返回码: {return_code}", file=sys.stderr)
-
         print()
         print("=" * 40)
         print()
+        return
+    print(f"[{index}/{total}] 正在分析: {stock.ticker} ({stock.name}) - 涨幅: {stock.change_percent}%")
+    print("-" * 40)
+    _run_single_stock_analysis(stock, args)
+    print()
+    print("=" * 40)
+    print()
 
-        # 添加短暂延迟，避免请求过于频繁
-        if processed < total:
+
+def main() -> int:
+    """主函数"""
+    args = build_argument_parser().parse_args()
+    stocks = _load_batch_stocks(args)
+    if stocks is None:
+        return 1
+
+    print()
+    print("=" * 40)
+    print("开始批量分析...")
+    print("=" * 40)
+    print()
+
+    total = len(stocks)
+    existing_tickers = _resolve_existing_tickers(args)
+    for processed, stock in enumerate(stocks, start=1):
+        _process_batch_stock(stock, index=processed, total=total, existing_tickers=existing_tickers, args=args)
+        if processed < total and not (args.skip_existing and stock.ticker in existing_tickers):
             time.sleep(3)
 
-    print(f"批量分析完成！共处理 {processed} 只股票")
+    print(f"批量分析完成！共处理 {total} 只股票")
     return 0
 
 

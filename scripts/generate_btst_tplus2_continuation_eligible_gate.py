@@ -28,17 +28,88 @@ def _build_eligible_gate(
     watchlist_execution: dict[str, Any],
     promotion_review: dict[str, Any],
 ) -> dict[str, Any]:
+    gate_context = _build_eligible_gate_context(
+        lane_rulepack,
+        lane_validation,
+        watchlist_execution,
+        promotion_review,
+    )
+    gate_blockers = _collect_eligible_gate_blockers(gate_context, watchlist_execution, promotion_review)
+    gate_verdict, operator_action = _resolve_eligible_gate_decision(gate_blockers)
+    recommendation = _build_eligible_gate_recommendation(
+        gate_verdict=gate_verdict,
+        focus_ticker=gate_context["focus_ticker"],
+    )
+
+    return {
+        "focus_ticker": gate_context["focus_ticker"] or None,
+        "gate_verdict": gate_verdict,
+        "gate_blockers": gate_blockers,
+        "raw_eligible_tickers": gate_context["raw_eligible_tickers"],
+        "lane_support_window_count": gate_context["support_count"],
+        "lane_window_count": gate_context["window_count"],
+        "lane_support_ratio": gate_context["support_ratio"],
+        "focus_recent_support_ratio": gate_context["adopted_watch_row"].get("recent_support_ratio"),
+        "focus_recent_supporting_window_count": gate_context["adopted_watch_row"].get("recent_supporting_window_count"),
+        "focus_t_plus_2_close_return_mean": gate_context["adopted_watch_row"].get("t_plus_2_close_return_mean"),
+        "lane_t_plus_2_close_return_mean": gate_context["lane_t_plus_2_close_return_mean"],
+        "focus_t_plus_2_mean_gap_vs_watch": gate_context["comparison_summary"].get("t_plus_2_mean_gap_vs_watch"),
+        "operator_action": operator_action,
+        "execution_mode": "manual_eligible_overlay",
+        "recommendation": recommendation,
+    }
+
+
+def _build_eligible_gate_context(
+    lane_rulepack: dict[str, Any],
+    lane_validation: dict[str, Any],
+    watchlist_execution: dict[str, Any],
+    promotion_review: dict[str, Any],
+) -> dict[str, Any]:
     lane_rules = dict(lane_rulepack.get("lane_rules") or {})
     raw_eligible_tickers = [str(item) for item in list(lane_rulepack.get("eligible_tickers") or []) if str(item).strip()]
     focus_ticker = str(watchlist_execution.get("focus_ticker") or promotion_review.get("focus_ticker") or "")
     adopted_watch_row = dict(watchlist_execution.get("adopted_watch_row") or {})
     aggregate_surface_summary = dict(lane_validation.get("aggregate_surface_summary") or {})
-    support_count = sum(1 for item in list(lane_validation.get("per_window_summaries") or []) if str(item.get("window_verdict") or "") == "supports_tplus2_lane")
-    window_count = len(list(lane_validation.get("per_window_summaries") or []))
+    per_window_summaries = list(lane_validation.get("per_window_summaries") or [])
+    support_count = sum(1 for item in per_window_summaries if str(item.get("window_verdict") or "") == "supports_tplus2_lane")
+    window_count = len(per_window_summaries)
     support_ratio = round(support_count / window_count, 4) if window_count else 0.0
     comparison_summary = dict(promotion_review.get("comparison_summary") or {})
+    return {
+        "lane_rules": lane_rules,
+        "raw_eligible_tickers": raw_eligible_tickers,
+        "focus_ticker": focus_ticker,
+        "adopted_watch_row": adopted_watch_row,
+        "aggregate_surface_summary": aggregate_surface_summary,
+        "support_count": support_count,
+        "window_count": window_count,
+        "support_ratio": support_ratio,
+        "comparison_summary": comparison_summary,
+        "lane_t_plus_2_close_return_mean": dict(aggregate_surface_summary.get("t_plus_2_close_return_distribution") or {}).get("mean"),
+    }
 
+
+def _collect_eligible_gate_blockers(
+    gate_context: dict[str, Any],
+    watchlist_execution: dict[str, Any],
+    promotion_review: dict[str, Any],
+) -> list[str]:
+    gate_blockers = []
+    gate_blockers.extend(_collect_eligible_gate_presence_blockers(gate_context, watchlist_execution, promotion_review))
+    gate_blockers.extend(_collect_eligible_gate_lane_blockers(gate_context))
+    gate_blockers.extend(_collect_eligible_gate_focus_quality_blockers(gate_context))
+    return gate_blockers
+
+
+def _collect_eligible_gate_presence_blockers(
+    gate_context: dict[str, Any],
+    watchlist_execution: dict[str, Any],
+    promotion_review: dict[str, Any],
+) -> list[str]:
     gate_blockers: list[str] = []
+    focus_ticker = gate_context["focus_ticker"]
+    adopted_watch_row = gate_context["adopted_watch_row"]
     if not focus_ticker:
         gate_blockers.append("missing_focus_ticker")
     if str(watchlist_execution.get("execution_verdict") or "") not in {"watchlist_extension_applied", "watchlist_extension_already_applied"}:
@@ -47,12 +118,25 @@ def _build_eligible_gate(
         gate_blockers.append("promotion_review_not_ready")
     if not adopted_watch_row:
         gate_blockers.append("missing_adopted_watch_row")
-    if focus_ticker and focus_ticker in raw_eligible_tickers:
+    if focus_ticker and focus_ticker in gate_context["raw_eligible_tickers"]:
         gate_blockers.append("focus_already_eligible")
-    if support_count < 4:
+    return gate_blockers
+
+
+def _collect_eligible_gate_lane_blockers(gate_context: dict[str, Any]) -> list[str]:
+    gate_blockers: list[str] = []
+    if gate_context["support_count"] < 4:
         gate_blockers.append("insufficient_lane_support_windows")
-    if support_ratio < 0.75:
+    if gate_context["support_ratio"] < 0.75:
         gate_blockers.append("lane_support_ratio_too_low")
+    if bool(gate_context["lane_rules"].get("block_from_default_btst_tradeable_surface")) is not True:
+        gate_blockers.append("default_surface_block_missing")
+    return gate_blockers
+
+
+def _collect_eligible_gate_focus_quality_blockers(gate_context: dict[str, Any]) -> list[str]:
+    gate_blockers: list[str] = []
+    adopted_watch_row = gate_context["adopted_watch_row"]
     if float(adopted_watch_row.get("recent_support_ratio") or 0.0) < 0.75:
         gate_blockers.append("focus_recent_support_too_low")
     if int(adopted_watch_row.get("recent_supporting_window_count") or 0) < 4:
@@ -61,43 +145,23 @@ def _build_eligible_gate(
         gate_blockers.append("focus_next_close_too_weak")
     if float(adopted_watch_row.get("t_plus_2_close_positive_rate") or 0.0) < 0.75:
         gate_blockers.append("focus_t_plus_2_positive_rate_too_low")
-    if float(adopted_watch_row.get("t_plus_2_close_return_mean") or 0.0) < float(dict(aggregate_surface_summary.get("t_plus_2_close_return_distribution") or {}).get("mean") or 0.0):
+    if float(adopted_watch_row.get("t_plus_2_close_return_mean") or 0.0) < float(gate_context["lane_t_plus_2_close_return_mean"] or 0.0):
         gate_blockers.append("focus_t_plus_2_mean_below_lane")
-    if float(comparison_summary.get("t_plus_2_mean_gap_vs_watch") or 0.0) <= 0.0:
+    if float(gate_context["comparison_summary"].get("t_plus_2_mean_gap_vs_watch") or 0.0) <= 0.0:
         gate_blockers.append("focus_not_outperforming_watch")
-    if bool(lane_rules.get("block_from_default_btst_tradeable_surface")) is not True:
-        gate_blockers.append("default_surface_block_missing")
+    return gate_blockers
 
+
+def _resolve_eligible_gate_decision(gate_blockers: list[str]) -> tuple[str, str]:
     if gate_blockers:
-        gate_verdict = "hold_eligible_promotion"
-        operator_action = "keep_eligible_unchanged"
-    else:
-        gate_verdict = "approve_eligible_promotion"
-        operator_action = "append_focus_to_eligible"
+        return "hold_eligible_promotion", "keep_eligible_unchanged"
+    return "approve_eligible_promotion", "append_focus_to_eligible"
 
-    recommendation = (
-        f"Approve {focus_ticker} as an additional effective eligible continuation ticker while keeping the lane isolated from default BTST."
-        if gate_verdict == "approve_eligible_promotion"
-        else "Hold eligible promotion until lane support and adopted-watch quality remain strong enough for a stricter continuation promotion."
-    )
 
-    return {
-        "focus_ticker": focus_ticker or None,
-        "gate_verdict": gate_verdict,
-        "gate_blockers": gate_blockers,
-        "raw_eligible_tickers": raw_eligible_tickers,
-        "lane_support_window_count": support_count,
-        "lane_window_count": window_count,
-        "lane_support_ratio": support_ratio,
-        "focus_recent_support_ratio": adopted_watch_row.get("recent_support_ratio"),
-        "focus_recent_supporting_window_count": adopted_watch_row.get("recent_supporting_window_count"),
-        "focus_t_plus_2_close_return_mean": adopted_watch_row.get("t_plus_2_close_return_mean"),
-        "lane_t_plus_2_close_return_mean": dict(aggregate_surface_summary.get("t_plus_2_close_return_distribution") or {}).get("mean"),
-        "focus_t_plus_2_mean_gap_vs_watch": comparison_summary.get("t_plus_2_mean_gap_vs_watch"),
-        "operator_action": operator_action,
-        "execution_mode": "manual_eligible_overlay",
-        "recommendation": recommendation,
-    }
+def _build_eligible_gate_recommendation(*, gate_verdict: str, focus_ticker: str) -> str:
+    if gate_verdict == "approve_eligible_promotion":
+        return f"Approve {focus_ticker} as an additional effective eligible continuation ticker while keeping the lane isolated from default BTST."
+    return "Hold eligible promotion until lane support and adopted-watch quality remain strong enough for a stricter continuation promotion."
 
 
 def generate_btst_tplus2_continuation_eligible_gate(

@@ -134,20 +134,33 @@ def build_priority_reason(row: dict[str, Any], primary_archetype: str, gap_to_ne
 
 
 def compute_priority_score(row: dict[str, Any], primary_archetype: str, gap_to_near_miss: float | None) -> int:
-    score = 0
+    score = _priority_archetype_base_score(row, primary_archetype)
+    score += _priority_context_bonus(row)
+    score += _priority_outcome_bonus(row)
+    if gap_to_near_miss is not None:
+        score -= int(gap_to_near_miss * 20)
+    return score
+
+
+def _priority_archetype_base_score(row: dict[str, Any], primary_archetype: str) -> int:
     if primary_archetype == "structural_conflict_but_pattern_recurs":
-        score += 35
+        score = 35
         if (row.get("score_target") or 0.0) >= 0.35:
             score += 15
-    elif primary_archetype == "score_fail_but_high_works":
-        score += 30
-    elif primary_archetype == "watch_only_but_tradable_intraday":
-        score += 25
-    elif primary_archetype == "positive_close_only":
-        score += 18
-    elif primary_archetype == "recurring_pattern_only":
-        score += 12
+        return score
+    if primary_archetype == "score_fail_but_high_works":
+        return 30
+    if primary_archetype == "watch_only_but_tradable_intraday":
+        return 25
+    if primary_archetype == "positive_close_only":
+        return 18
+    if primary_archetype == "recurring_pattern_only":
+        return 12
+    return 0
 
+
+def _priority_context_bonus(row: dict[str, Any]) -> int:
+    score = 0
     if row.get("short_trade_decision") == "blocked":
         score += 5
     if row.get("false_negative_positive_close"):
@@ -156,11 +169,11 @@ def compute_priority_score(row: dict[str, Any], primary_archetype: str, gap_to_n
         score += 6
     if row.get("research_decision") == "selected":
         score += 8
-    score += int(((row.get("next_high_return") or 0.0) * 100))
-    score += int(((row.get("next_close_return") or 0.0) * 100))
-    if gap_to_near_miss is not None:
-        score -= int(gap_to_near_miss * 20)
     return score
+
+
+def _priority_outcome_bonus(row: dict[str, Any]) -> int:
+    return int(((row.get("next_high_return") or 0.0) * 100)) + int(((row.get("next_close_return") or 0.0) * 100))
 
 
 def derive_priority_bucket(primary_archetype: str, priority_score: int) -> str:

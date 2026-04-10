@@ -337,7 +337,37 @@ def build_upstream_shadow_followup_summary(
     merged_rows = _merge_ticker_rows(brief)
     upstream_shadow_summary = dict(brief.get("upstream_shadow_summary") or brief.get("upstream_shadow_recall_summary") or {})
     focus_tickers = _unique_strings(list(upstream_shadow_summary.get("top_focus_tickers") or []))
+    rows = _build_upstream_shadow_followup_rows(
+        merged_rows,
+        focus_tickers=focus_tickers,
+        report_dir=report_dir,
+        trade_date=trade_date,
+    )
+    if not rows:
+        return _build_unavailable_upstream_shadow_followup_summary(report_dir=report_dir, trade_date=trade_date)
+    ticker_groups = _build_upstream_shadow_followup_ticker_groups(rows)
 
+    return {
+        "status": "validated_upstream_shadow_followup_available",
+        "report_dir": report_dir,
+        "trade_date": trade_date,
+        "validated_tickers": ticker_groups["validated_tickers"],
+        "selected_tickers": ticker_groups["selected_tickers"],
+        "near_miss_tickers": ticker_groups["near_miss_tickers"],
+        "rejected_profitability_tickers": ticker_groups["rejected_profitability_tickers"],
+        "decision_counts": ticker_groups["decision_counts"],
+        "rows": rows,
+        "recommendation": _build_upstream_shadow_followup_recommendation(ticker_groups),
+    }
+
+
+def _build_upstream_shadow_followup_rows(
+    merged_rows: dict[str, dict[str, Any]],
+    *,
+    focus_tickers: list[str],
+    report_dir: str | None,
+    trade_date: str | None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     candidate_tickers = focus_tickers or list(merged_rows.keys())
     for ticker in candidate_tickers:
@@ -352,14 +382,6 @@ def build_upstream_shadow_followup_summary(
         top_reasons = _unique_strings(list(row.get("top_reasons") or []))
         rejection_reasons = _unique_strings(list(row.get("rejection_reasons") or []))
         positive_tags = _unique_strings(list(row.get("positive_tags") or []))
-        downstream_bottleneck = None
-        if decision == "selected":
-            downstream_bottleneck = "selected"
-        elif "profitability_hard_cliff" in set(top_reasons) | set(rejection_reasons):
-            downstream_bottleneck = "profitability_hard_cliff"
-        elif "upstream_shadow_catalyst_relief" in top_reasons or "upstream_shadow_catalyst_relief_applied" in positive_tags:
-            downstream_bottleneck = "catalyst_relief_validated"
-
         rows.append(
             {
                 **row,
@@ -370,13 +392,17 @@ def build_upstream_shadow_followup_summary(
                 "rejection_reasons": rejection_reasons,
                 "positive_tags": positive_tags,
                 "validated_by_upstream_shadow_recall": True,
-                "downstream_bottleneck": downstream_bottleneck,
+                "downstream_bottleneck": _resolve_upstream_shadow_downstream_bottleneck(
+                    decision=decision,
+                    top_reasons=top_reasons,
+                    rejection_reasons=rejection_reasons,
+                    positive_tags=positive_tags,
+                ),
                 "historical_execution_quality_label": row.get("historical_execution_quality_label"),
                 "historical_entry_timing_bias": row.get("historical_entry_timing_bias"),
                 "historical_execution_note": row.get("historical_execution_note"),
             }
         )
-
     rows.sort(
         key=lambda row: (
             0 if str(row.get("decision") or "") == "near_miss" else 1,
@@ -384,7 +410,26 @@ def build_upstream_shadow_followup_summary(
             str(row.get("ticker") or ""),
         )
     )
+    return rows
 
+
+def _resolve_upstream_shadow_downstream_bottleneck(
+    *,
+    decision: str,
+    top_reasons: list[str],
+    rejection_reasons: list[str],
+    positive_tags: list[str],
+) -> str | None:
+    if decision == "selected":
+        return "selected"
+    if "profitability_hard_cliff" in set(top_reasons) | set(rejection_reasons):
+        return "profitability_hard_cliff"
+    if "upstream_shadow_catalyst_relief" in top_reasons or "upstream_shadow_catalyst_relief_applied" in positive_tags:
+        return "catalyst_relief_validated"
+    return None
+
+
+def _build_upstream_shadow_followup_ticker_groups(rows: list[dict[str, Any]]) -> dict[str, Any]:
     decision_counts = Counter(str(row.get("decision") or "unknown") for row in rows)
     validated_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("ticker") or "").strip()]
     selected_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "selected"]
@@ -399,42 +444,53 @@ def build_upstream_shadow_followup_summary(
         for row in rows
         if str(row.get("decision") or "") == "rejected" and str(row.get("downstream_bottleneck") or "") != "profitability_hard_cliff"
     ]
-
-    if not rows:
-        return {
-            "status": "unavailable",
-            "report_dir": report_dir,
-            "trade_date": trade_date,
-            "validated_tickers": [],
-            "decision_counts": {},
-            "rows": [],
-            "recommendation": None,
-        }
-
-    recommendation_parts: list[str] = []
-    if selected_tickers:
-        recommendation_parts.append(f"最新正式 shadow rerun 已验证 {selected_tickers} 可进入 selected，当前不应再按 upstream absence 处理。")
-    if near_miss_tickers:
-        recommendation_parts.append(f"最新正式 shadow rerun 已验证 {near_miss_tickers} 可进入 near_miss，当前不应再按 upstream absence 处理。")
-    if rejected_profitability_tickers:
-        recommendation_parts.append(f"{rejected_profitability_tickers} 已完成上游召回验证，但当前主矛盾转为 profitability_hard_cliff。")
-    if generic_rejected_tickers:
-        recommendation_parts.append(f"{generic_rejected_tickers} 已完成上游召回验证，但仍停留在 recalled-shadow rejected 层。")
-    if not recommendation_parts:
-        recommendation_parts.append("最新正式 shadow rerun 已形成 upstream recall 下游验证样本，应按当前 short-trade decision 分层处理。")
-
     return {
-        "status": "validated_upstream_shadow_followup_available",
-        "report_dir": report_dir,
-        "trade_date": trade_date,
+        "decision_counts": {key: int(value) for key, value in decision_counts.items()},
         "validated_tickers": validated_tickers,
         "selected_tickers": selected_tickers,
         "near_miss_tickers": near_miss_tickers,
         "rejected_profitability_tickers": rejected_profitability_tickers,
-        "decision_counts": {key: int(value) for key, value in decision_counts.items()},
-        "rows": rows,
-        "recommendation": " ".join(recommendation_parts),
+        "generic_rejected_tickers": generic_rejected_tickers,
     }
+
+
+def _build_unavailable_upstream_shadow_followup_summary(
+    *,
+    report_dir: str | None,
+    trade_date: str | None,
+) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "report_dir": report_dir,
+        "trade_date": trade_date,
+        "validated_tickers": [],
+        "decision_counts": {},
+        "rows": [],
+        "recommendation": None,
+    }
+
+
+def _build_upstream_shadow_followup_recommendation(ticker_groups: dict[str, Any]) -> str:
+    recommendation_parts: list[str] = []
+    if ticker_groups["selected_tickers"]:
+        recommendation_parts.append(
+            f"最新正式 shadow rerun 已验证 {ticker_groups['selected_tickers']} 可进入 selected，当前不应再按 upstream absence 处理。"
+        )
+    if ticker_groups["near_miss_tickers"]:
+        recommendation_parts.append(
+            f"最新正式 shadow rerun 已验证 {ticker_groups['near_miss_tickers']} 可进入 near_miss，当前不应再按 upstream absence 处理。"
+        )
+    if ticker_groups["rejected_profitability_tickers"]:
+        recommendation_parts.append(
+            f"{ticker_groups['rejected_profitability_tickers']} 已完成上游召回验证，但当前主矛盾转为 profitability_hard_cliff。"
+        )
+    if ticker_groups["generic_rejected_tickers"]:
+        recommendation_parts.append(
+            f"{ticker_groups['generic_rejected_tickers']} 已完成上游召回验证，但仍停留在 recalled-shadow rejected 层。"
+        )
+    if not recommendation_parts:
+        recommendation_parts.append("最新正式 shadow rerun 已形成 upstream recall 下游验证样本，应按当前 short-trade decision 分层处理。")
+    return " ".join(recommendation_parts)
 
 
 def load_latest_upstream_shadow_followup_summary(reports_root: str | Path) -> dict[str, Any]:

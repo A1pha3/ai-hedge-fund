@@ -49,46 +49,42 @@ def _pick_recommended_variant(variants: list[dict[str, Any]]) -> dict[str, Any] 
         return None
     baseline = next((variant for variant in variants if variant.get("is_baseline")), variants[0])
     baseline_count = int(baseline.get("selected_candidate_count") or 0)
+    if baseline_count == 0:
+        cold_start_pick = _pick_cold_start_variant(variants)
+        if cold_start_pick is not None:
+            return cold_start_pick
+    eligible = _pick_incremental_eligible_variants(variants, baseline=baseline, baseline_count=baseline_count)
+    if not eligible:
+        return baseline
+    return sorted(eligible, key=_incremental_variant_sort_key, reverse=True)[0]
+
+
+def _pick_cold_start_variant(variants: list[dict[str, Any]]) -> dict[str, Any] | None:
+    quality_first = [
+        variant
+        for variant in variants
+        if int(variant.get("selected_candidate_count") or 0) > 0
+        and float(variant.get("next_close_positive_rate") or 0.0) >= 0.6
+        and float(variant.get("next_high_hit_rate_at_threshold") or 0.0) >= 0.6
+        and float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0) >= 0.0
+    ]
+    if quality_first:
+        return sorted(quality_first, key=_cold_start_quality_sort_key, reverse=True)[0]
+    fallback_positive = [variant for variant in variants if int(variant.get("selected_candidate_count") or 0) > 0]
+    if fallback_positive:
+        return sorted(fallback_positive, key=_cold_start_fallback_sort_key, reverse=True)[0]
+    return None
+
+
+def _pick_incremental_eligible_variants(
+    variants: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    baseline_count: int,
+) -> list[dict[str, Any]]:
     baseline_close_rate = baseline.get("next_close_positive_rate")
     baseline_high_rate = baseline.get("next_high_hit_rate_at_threshold")
     baseline_close_mean = dict(baseline.get("next_close_return_distribution") or {}).get("mean")
-
-    if baseline_count == 0:
-        quality_first = [
-            variant
-            for variant in variants
-            if int(variant.get("selected_candidate_count") or 0) > 0
-            and float(variant.get("next_close_positive_rate") or 0.0) >= 0.6
-            and float(variant.get("next_high_hit_rate_at_threshold") or 0.0) >= 0.6
-            and float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0) >= 0.0
-        ]
-        if quality_first:
-            quality_first.sort(
-                key=lambda variant: (
-                    int(variant.get("selected_candidate_count") or 0),
-                    float(variant.get("next_close_positive_rate") or -1.0),
-                    float(variant.get("next_high_hit_rate_at_threshold") or -1.0),
-                    float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0),
-                    -float(variant.get("threshold_relaxation_cost") or 0.0),
-                ),
-                reverse=True,
-            )
-            return quality_first[0]
-
-        fallback_positive = [variant for variant in variants if int(variant.get("selected_candidate_count") or 0) > 0]
-        if fallback_positive:
-            fallback_positive.sort(
-                key=lambda variant: (
-                    float(variant.get("next_close_positive_rate") or -1.0),
-                    float(variant.get("next_high_hit_rate_at_threshold") or -1.0),
-                    float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0),
-                    int(variant.get("selected_candidate_count") or 0),
-                    -float(variant.get("threshold_relaxation_cost") or 0.0),
-                ),
-                reverse=True,
-            )
-            return fallback_positive[0]
-
     eligible: list[dict[str, Any]] = []
     for variant in variants:
         if variant is baseline:
@@ -105,19 +101,36 @@ def _pick_recommended_variant(variants: list[dict[str, Any]]) -> dict[str, Any] 
         if baseline_close_mean is not None and close_mean is not None and close_mean < baseline_close_mean - 0.02:
             continue
         eligible.append(variant)
+    return eligible
 
-    if not eligible:
-        return baseline
-    eligible.sort(
-        key=lambda variant: (
-            int(variant.get("selected_candidate_count") or 0),
-            -float(variant.get("threshold_relaxation_cost") or 0.0),
-            float(variant.get("next_close_positive_rate") or -1.0),
-            float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0),
-        ),
-        reverse=True,
+
+def _cold_start_quality_sort_key(variant: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    return (
+        int(variant.get("selected_candidate_count") or 0),
+        float(variant.get("next_close_positive_rate") or -1.0),
+        float(variant.get("next_high_hit_rate_at_threshold") or -1.0),
+        float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0),
+        -float(variant.get("threshold_relaxation_cost") or 0.0),
     )
-    return eligible[0]
+
+
+def _cold_start_fallback_sort_key(variant: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    return (
+        float(variant.get("next_close_positive_rate") or -1.0),
+        float(variant.get("next_high_hit_rate_at_threshold") or -1.0),
+        float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0),
+        int(variant.get("selected_candidate_count") or 0),
+        -float(variant.get("threshold_relaxation_cost") or 0.0),
+    )
+
+
+def _incremental_variant_sort_key(variant: dict[str, Any]) -> tuple[float, float, float, float]:
+    return (
+        int(variant.get("selected_candidate_count") or 0),
+        -float(variant.get("threshold_relaxation_cost") or 0.0),
+        float(variant.get("next_close_positive_rate") or -1.0),
+        float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0),
+    )
 
 
 def render_short_trade_boundary_coverage_variants_markdown(analysis: dict[str, Any]) -> str:

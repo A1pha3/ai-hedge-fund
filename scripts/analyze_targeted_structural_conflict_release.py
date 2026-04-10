@@ -118,14 +118,13 @@ def render_targeted_structural_conflict_release_markdown(analysis: dict[str, Any
     return "\n".join(lines) + "\n"
 
 
-def analyze_targeted_structural_conflict_release(
-    report_dir: str | Path,
+def _collect_structural_conflict_release_changes(
+    selection_root: Path,
     *,
+    report_path: Path,
     targets: set[tuple[str, str]],
     profile_overrides: dict[str, Any],
-) -> dict[str, Any]:
-    report_path = Path(report_dir).expanduser().resolve()
-    selection_root = report_path / "selection_artifacts"
+) -> tuple[Counter[str], Counter[str], Counter[str], list[dict[str, Any]], list[dict[str, Any]], set[tuple[str, str]], int]:
     before_decision_counts: Counter[str] = Counter()
     after_decision_counts: Counter[str] = Counter()
     transition_counts: Counter[str] = Counter()
@@ -134,83 +133,183 @@ def analyze_targeted_structural_conflict_release(
     replay_input_cache: dict[str, dict[str, Any]] = {}
     matched_targets: set[tuple[str, str]] = set()
     total_case_count = 0
-
     for day_dir in sorted(path for path in selection_root.iterdir() if path.is_dir()):
         snapshot_path = day_dir / "selection_snapshot.json"
         if not snapshot_path.exists():
             continue
-        snapshot = _load_json(snapshot_path)
-        trade_date = str(snapshot.get("trade_date") or day_dir.name)
-        day_before: Counter[str] = Counter()
-        day_after: Counter[str] = Counter()
-        selection_targets = dict(snapshot.get("selection_targets") or {})
-
-        for ticker, evaluation in selection_targets.items():
-            total_case_count += 1
-            normalized_ticker = str(ticker)
-            normalized_evaluation = dict(evaluation or {})
-            short_trade = dict(normalized_evaluation.get("short_trade") or {})
-            candidate_source = str(normalized_evaluation.get("candidate_source") or "unknown")
-            before_decision = str(short_trade.get("decision") or "none")
-            before_score = short_trade.get("score_target")
-            case_key = (trade_date, normalized_ticker)
-            is_target_case = case_key in targets
-            after_snapshot = {
-                "decision": before_decision,
-                "score_target": before_score,
-                "blockers": list(short_trade.get("blockers") or []),
-                "top_reasons": list(short_trade.get("top_reasons") or []),
-                "thresholds": dict(short_trade.get("thresholds") or {}),
-            }
-            source_bucket = None
-
-            if is_target_case:
-                replay_input = replay_input_cache.get(trade_date)
-                if replay_input is None:
-                    replay_input = _load_replay_input(report_path, trade_date)
-                    replay_input_cache[trade_date] = replay_input
-                source_bucket, entry = _locate_entry(replay_input, normalized_ticker)
-                after_snapshot = _evaluate_target_case(
-                    trade_date=trade_date,
-                    source_bucket=source_bucket,
-                    entry=entry,
-                    buy_order_tickers={str(value) for value in list(replay_input.get("buy_order_tickers") or []) if str(value or "").strip()},
-                    profile_overrides=profile_overrides,
-                )
-                matched_targets.add(case_key)
-
-            after_decision = str(after_snapshot.get("decision") or "none")
-            before_decision_counts[before_decision] += 1
-            after_decision_counts[after_decision] += 1
-            day_before[before_decision] += 1
-            day_after[after_decision] += 1
-            transition_counts[f"{before_decision}->{after_decision}"] += 1
-
-            if before_decision != after_decision or before_score != after_snapshot.get("score_target"):
-                changed_cases.append(
-                    {
-                        "trade_date": trade_date,
-                        "ticker": normalized_ticker,
-                        "candidate_source": candidate_source,
-                        "source_bucket": source_bucket,
-                        "is_target_case": is_target_case,
-                        "before_decision": before_decision,
-                        "after_decision": after_decision,
-                        "before_score_target": before_score,
-                        "after_score_target": after_snapshot.get("score_target"),
-                        "before_blockers": list(short_trade.get("blockers") or []),
-                        "after_blockers": list(after_snapshot.get("blockers") or []),
-                        "after_top_reasons": list(after_snapshot.get("top_reasons") or []),
-                    }
-                )
-
-        per_trade_date.append(
-            {
-                "trade_date": trade_date,
-                "before_decision_counts": dict(day_before.most_common()),
-                "after_decision_counts": dict(day_after.most_common()),
-            }
+        snapshot_counts = _process_structural_conflict_snapshot(
+            _load_json(snapshot_path),
+            report_path=report_path,
+            targets=targets,
+            profile_overrides=profile_overrides,
+            replay_input_cache=replay_input_cache,
         )
+        before_decision_counts.update(snapshot_counts["before_decision_counts"])
+        after_decision_counts.update(snapshot_counts["after_decision_counts"])
+        transition_counts.update(snapshot_counts["transition_counts"])
+        changed_cases.extend(snapshot_counts["changed_cases"])
+        per_trade_date.append(snapshot_counts["trade_date_summary"])
+        matched_targets.update(snapshot_counts["matched_targets"])
+        total_case_count += int(snapshot_counts["total_case_count"])
+    return before_decision_counts, after_decision_counts, transition_counts, changed_cases, per_trade_date, matched_targets, total_case_count
+
+
+def _process_structural_conflict_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    report_path: Path,
+    targets: set[tuple[str, str]],
+    profile_overrides: dict[str, Any],
+    replay_input_cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    trade_date = str(snapshot.get("trade_date") or "")
+    day_before: Counter[str] = Counter()
+    day_after: Counter[str] = Counter()
+    before_decision_counts: Counter[str] = Counter()
+    after_decision_counts: Counter[str] = Counter()
+    transition_counts: Counter[str] = Counter()
+    changed_cases: list[dict[str, Any]] = []
+    matched_targets: set[tuple[str, str]] = set()
+    total_case_count = 0
+    selection_targets = dict(snapshot.get("selection_targets") or {})
+    for ticker, evaluation in selection_targets.items():
+        case_update = _process_structural_conflict_case(
+            trade_date=trade_date,
+            ticker=str(ticker),
+            evaluation=dict(evaluation or {}),
+            report_path=report_path,
+            targets=targets,
+            profile_overrides=profile_overrides,
+            replay_input_cache=replay_input_cache,
+        )
+        total_case_count += 1
+        before_decision_counts.update([case_update["before_decision"]])
+        after_decision_counts.update([case_update["after_decision"]])
+        day_before.update([case_update["before_decision"]])
+        day_after.update([case_update["after_decision"]])
+        transition_counts.update([f"{case_update['before_decision']}->{case_update['after_decision']}"])
+        if case_update["is_target_case"]:
+            matched_targets.add((trade_date, str(ticker)))
+        if case_update["changed_case"] is not None:
+            changed_cases.append(case_update["changed_case"])
+    return {
+        "before_decision_counts": before_decision_counts,
+        "after_decision_counts": after_decision_counts,
+        "transition_counts": transition_counts,
+        "changed_cases": changed_cases,
+        "matched_targets": matched_targets,
+        "total_case_count": total_case_count,
+        "trade_date_summary": {
+            "trade_date": trade_date,
+            "before_decision_counts": dict(day_before.most_common()),
+            "after_decision_counts": dict(day_after.most_common()),
+        },
+    }
+
+
+def _process_structural_conflict_case(
+    *,
+    trade_date: str,
+    ticker: str,
+    evaluation: dict[str, Any],
+    report_path: Path,
+    targets: set[tuple[str, str]],
+    profile_overrides: dict[str, Any],
+    replay_input_cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    short_trade = dict(evaluation.get("short_trade") or {})
+    candidate_source = str(evaluation.get("candidate_source") or "unknown")
+    before_decision = str(short_trade.get("decision") or "none")
+    before_score = short_trade.get("score_target")
+    case_key = (trade_date, ticker)
+    is_target_case = case_key in targets
+    after_snapshot = {
+        "decision": before_decision,
+        "score_target": before_score,
+        "blockers": list(short_trade.get("blockers") or []),
+        "top_reasons": list(short_trade.get("top_reasons") or []),
+        "thresholds": dict(short_trade.get("thresholds") or {}),
+    }
+    source_bucket = None
+    if is_target_case:
+        replay_input = replay_input_cache.get(trade_date)
+        if replay_input is None:
+            replay_input = _load_replay_input(report_path, trade_date)
+            replay_input_cache[trade_date] = replay_input
+        source_bucket, entry = _locate_entry(replay_input, ticker)
+        after_snapshot = _evaluate_target_case(
+            trade_date=trade_date,
+            source_bucket=source_bucket,
+            entry=entry,
+            buy_order_tickers={str(value) for value in list(replay_input.get("buy_order_tickers") or []) if str(value or "").strip()},
+            profile_overrides=profile_overrides,
+        )
+    after_decision = str(after_snapshot.get("decision") or "none")
+    changed_case = None
+    if before_decision != after_decision or before_score != after_snapshot.get("score_target"):
+        changed_case = {
+            "trade_date": trade_date,
+            "ticker": ticker,
+            "candidate_source": candidate_source,
+            "source_bucket": source_bucket,
+            "is_target_case": is_target_case,
+            "before_decision": before_decision,
+            "after_decision": after_decision,
+            "before_score_target": before_score,
+            "after_score_target": after_snapshot.get("score_target"),
+            "before_blockers": list(short_trade.get("blockers") or []),
+            "after_blockers": list(after_snapshot.get("blockers") or []),
+            "after_top_reasons": list(after_snapshot.get("top_reasons") or []),
+        }
+    return {
+        "is_target_case": is_target_case,
+        "before_decision": before_decision,
+        "after_decision": after_decision,
+        "changed_case": changed_case,
+    }
+
+
+def _build_structural_conflict_release_recommendation(
+    target_changed_cases: list[dict[str, Any]],
+    non_target_changed_cases: list[dict[str, Any]],
+    total_case_count: int,
+) -> str:
+    if target_changed_cases and not non_target_changed_cases:
+        promoted_rows = [row for row in target_changed_cases if row["after_decision"] in {"near_miss", "selected"}]
+        if promoted_rows:
+            head = promoted_rows[0]
+            return (
+                f"当前 case-based 定向释放只改变目标样本。{head['trade_date']} / {head['ticker']} 从 {head['before_decision']} -> {head['after_decision']}，"
+                f"未污染其它 {total_case_count - len(target_changed_cases)} 个样本，可作为 300724-only 受控实验入口。"
+            )
+        return "目标样本被重新评估，但未进入 near_miss/selected；当前 overrides 不足以形成有效 release。"
+    if non_target_changed_cases:
+        return "出现了非目标样本变化，当前实验语义不再是严格的 300724-only 受控释放。"
+    return "目标样本未发生任何决策变化，当前定向 release 不值得继续推进。"
+
+
+def analyze_targeted_structural_conflict_release(
+    report_dir: str | Path,
+    *,
+    targets: set[tuple[str, str]],
+    profile_overrides: dict[str, Any],
+) -> dict[str, Any]:
+    report_path = Path(report_dir).expanduser().resolve()
+    selection_root = report_path / "selection_artifacts"
+    (
+        before_decision_counts,
+        after_decision_counts,
+        transition_counts,
+        changed_cases,
+        per_trade_date,
+        matched_targets,
+        total_case_count,
+    ) = _collect_structural_conflict_release_changes(
+        selection_root,
+        report_path=report_path,
+        targets=targets,
+        profile_overrides=profile_overrides,
+    )
 
     unmatched_targets = sorted(f"{trade_date}:{ticker}" for trade_date, ticker in (targets - matched_targets))
     if unmatched_targets:
@@ -218,21 +317,11 @@ def analyze_targeted_structural_conflict_release(
 
     target_changed_cases = [row for row in changed_cases if row["is_target_case"]]
     non_target_changed_cases = [row for row in changed_cases if not row["is_target_case"]]
-
-    if target_changed_cases and not non_target_changed_cases:
-        promoted_rows = [row for row in target_changed_cases if row["after_decision"] in {"near_miss", "selected"}]
-        if promoted_rows:
-            head = promoted_rows[0]
-            recommendation = (
-                f"当前 case-based 定向释放只改变目标样本。{head['trade_date']} / {head['ticker']} 从 {head['before_decision']} -> {head['after_decision']}，"
-                f"未污染其它 {total_case_count - len(target_changed_cases)} 个样本，可作为 300724-only 受控实验入口。"
-            )
-        else:
-            recommendation = "目标样本被重新评估，但未进入 near_miss/selected；当前 overrides 不足以形成有效 release。"
-    elif non_target_changed_cases:
-        recommendation = "出现了非目标样本变化，当前实验语义不再是严格的 300724-only 受控释放。"
-    else:
-        recommendation = "目标样本未发生任何决策变化，当前定向 release 不值得继续推进。"
+    recommendation = _build_structural_conflict_release_recommendation(
+        target_changed_cases,
+        non_target_changed_cases,
+        total_case_count,
+    )
 
     return {
         "report_dir": str(report_path),

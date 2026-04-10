@@ -141,31 +141,16 @@ def _load_continuation_promotion_ready_summary(reports_root: str | Path, candida
     return summary
 
 
-def analyze_btst_tplus2_near_cluster_dossier(
-    reports_root: str | Path,
+def _collect_candidate_rows_for_dossier(
+    rows: list[dict[str, Any]],
     *,
-    anchor_ticker: str = "600988",
-    candidate_ticker: str = "600989",
-    profile_name: str = "watchlist_zero_catalyst_guard_relief",
-    report_name_contains: str = "btst_",
-    next_high_hit_threshold: float = 0.02,
-    similarity_threshold: float = 1.35,
-    near_similarity_threshold: float = 2.1,
-    observation_similarity_threshold: float = 2.8,
-    recent_window_limit: int = 5,
-    upstream_handoff_board_path: str | Path | None = None,
-    lane_objective_support_path: str | Path | None = None,
-) -> dict[str, Any]:
-    rows = _collect_rows(
-        reports_root,
-        profile_name=profile_name,
-        report_name_contains=report_name_contains,
-        next_high_hit_threshold=next_high_hit_threshold,
-    )
+    anchor_ticker: str,
+    candidate_ticker: str,
+    similarity_threshold: float,
+    near_similarity_threshold: float,
+    observation_similarity_threshold: float,
+) -> list[dict[str, Any]]:
     anchor_profile = _build_anchor_profile(rows, anchor_ticker=anchor_ticker)
-    current_plan_visibility_summary = _extract_current_plan_visibility_summary(reports_root, candidate_ticker)
-    continuation_promotion_ready_summary = _load_continuation_promotion_ready_summary(reports_root, candidate_ticker)
-
     candidate_rows: list[dict[str, Any]] = []
     for row in rows:
         if str(row.get("ticker") or "") != candidate_ticker:
@@ -190,41 +175,21 @@ def analyze_btst_tplus2_near_cluster_dossier(
                 "peer_tier": peer_tier,
             }
         )
+    return candidate_rows
 
+
+def _summarize_candidate_windows(
+    candidate_rows: list[dict[str, Any]],
+    *,
+    next_high_hit_threshold: float,
+    recent_window_limit: int,
+) -> dict[str, Any]:
     per_window_rows: dict[str, list[dict[str, Any]]] = {}
     for row in candidate_rows:
         per_window_rows.setdefault(str(row.get("report_label") or "unknown"), []).append(row)
-
-    per_window_summaries = []
-    for report_label, window_rows in sorted(per_window_rows.items()):
-        supporting_window_rows = [row for row in window_rows if str(row.get("peer_tier") or "") in {"strict_peer", "near_cluster_peer"}]
-        surface_summary = build_surface_summary(window_rows, next_high_hit_threshold=next_high_hit_threshold)
-        per_window_summaries.append(
-            {
-                "report_label": report_label,
-                "row_count": len(window_rows),
-                "tier_set": sorted({str(row.get("peer_tier") or "none") for row in window_rows}),
-                "surface_summary": surface_summary,
-                "supporting_row_count": len(supporting_window_rows),
-                "supporting_window": bool(supporting_window_rows),
-            }
-        )
-
-    tier_counts: dict[str, int] = {}
-    for row in candidate_rows:
-        tier = str(row.get("peer_tier") or "unclassified")
-        tier_counts[tier] = tier_counts.get(tier, 0) + 1
-
-    candidate_tier_focus = "unclassified"
-    if tier_counts:
-        candidate_tier_focus = sorted(
-            tier_counts,
-            key=lambda tier: (
-                TIER_PRIORITY.get(tier, 99),
-                -int(tier_counts.get(tier) or 0),
-            ),
-        )[0]
-
+    per_window_summaries = _build_per_window_summaries(per_window_rows, next_high_hit_threshold=next_high_hit_threshold)
+    tier_counts = _count_candidate_tiers(candidate_rows)
+    candidate_tier_focus = _resolve_candidate_tier_focus(tier_counts)
     supporting_rows = [row for row in candidate_rows if str(row.get("peer_tier") or "") in {"strict_peer", "near_cluster_peer"}]
     tier_focus_rows = [row for row in candidate_rows if str(row.get("peer_tier") or "unclassified") == candidate_tier_focus]
     surface_summary = build_surface_summary(candidate_rows, next_high_hit_threshold=next_high_hit_threshold)
@@ -248,10 +213,76 @@ def analyze_btst_tplus2_near_cluster_dossier(
     recent_tier_window_count = len({str(row.get("report_label") or "") for row in recent_tier_rows})
     recent_tier_ratio = round(recent_tier_window_count / len(recent_window_summaries), 4) if recent_window_summaries else 0.0
     recent_tier_surface_summary = build_surface_summary(recent_tier_rows, next_high_hit_threshold=next_high_hit_threshold)
+    return {
+        "per_window_summaries": per_window_summaries,
+        "tier_counts": tier_counts,
+        "candidate_tier_focus": candidate_tier_focus,
+        "supporting_rows": supporting_rows,
+        "tier_focus_rows": tier_focus_rows,
+        "surface_summary": surface_summary,
+        "supporting_surface_summary": supporting_surface_summary,
+        "tier_focus_surface_summary": tier_focus_surface_summary,
+        "recent_window_summaries": recent_window_summaries,
+        "recent_supporting_window_count": recent_supporting_window_count,
+        "recent_support_ratio": recent_support_ratio,
+        "recent_supporting_surface_summary": recent_supporting_surface_summary,
+        "recent_tier_window_count": recent_tier_window_count,
+        "recent_tier_ratio": recent_tier_ratio,
+        "recent_tier_surface_summary": recent_tier_surface_summary,
+    }
 
+
+def _build_per_window_summaries(
+    per_window_rows: dict[str, list[dict[str, Any]]],
+    *,
+    next_high_hit_threshold: float,
+) -> list[dict[str, Any]]:
+    per_window_summaries: list[dict[str, Any]] = []
+    for report_label, window_rows in sorted(per_window_rows.items()):
+        supporting_window_rows = [row for row in window_rows if str(row.get("peer_tier") or "") in {"strict_peer", "near_cluster_peer"}]
+        surface_summary = build_surface_summary(window_rows, next_high_hit_threshold=next_high_hit_threshold)
+        per_window_summaries.append(
+            {
+                "report_label": report_label,
+                "row_count": len(window_rows),
+                "tier_set": sorted({str(row.get("peer_tier") or "none") for row in window_rows}),
+                "surface_summary": surface_summary,
+                "supporting_row_count": len(supporting_window_rows),
+                "supporting_window": bool(supporting_window_rows),
+            }
+        )
+    return per_window_summaries
+
+
+def _count_candidate_tiers(candidate_rows: list[dict[str, Any]]) -> dict[str, int]:
+    tier_counts: dict[str, int] = {}
+    for row in candidate_rows:
+        tier = str(row.get("peer_tier") or "unclassified")
+        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+    return tier_counts
+
+
+def _resolve_candidate_tier_focus(tier_counts: dict[str, int]) -> str:
+    if not tier_counts:
+        return "unclassified"
+    return sorted(
+        tier_counts,
+        key=lambda tier: (
+            TIER_PRIORITY.get(tier, 99),
+            -int(tier_counts.get(tier) or 0),
+        ),
+    )[0]
+
+
+def _load_governance_context(
+    reports_root: str | Path,
+    *,
+    candidate_ticker: str,
+    upstream_handoff_board_path: str | Path | None,
+    lane_objective_support_path: str | Path | None,
+) -> dict[str, Any]:
     governance_followup = {}
     governance_objective_support = {}
-    governance_recent_followup_rows: list[dict[str, Any]] = []
     resolved_upstream_handoff_board_path = Path(upstream_handoff_board_path or DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH).expanduser().resolve()
     if resolved_upstream_handoff_board_path.exists():
         upstream_handoff_board = json.loads(resolved_upstream_handoff_board_path.read_text(encoding="utf-8"))
@@ -279,8 +310,23 @@ def analyze_btst_tplus2_near_cluster_dossier(
         dict(row or {})
         for row in list(load_upstream_shadow_followup_history_by_ticker(reports_root).get(candidate_ticker) or [])
     ]
-    if not per_window_summaries and governance_followup and governance_recent_followup_rows:
-        per_window_summaries = [
+    return {
+        "governance_followup": governance_followup,
+        "governance_objective_support": governance_objective_support,
+        "governance_recent_followup_rows": governance_recent_followup_rows,
+    }
+
+
+def _apply_governance_window_fallback(
+    *,
+    per_window_summaries: list[dict[str, Any]],
+    governance_followup: dict[str, Any],
+    governance_recent_followup_rows: list[dict[str, Any]],
+    recent_window_limit: int,
+) -> dict[str, Any]:
+    updated_per_window_summaries = list(per_window_summaries)
+    if not updated_per_window_summaries and governance_followup and governance_recent_followup_rows:
+        updated_per_window_summaries = [
             {
                 "report_label": str(row.get("trade_date") or row.get("report_dir") or "unknown"),
                 "row_count": 1,
@@ -296,54 +342,69 @@ def analyze_btst_tplus2_near_cluster_dossier(
             }
             for row in governance_recent_followup_rows
         ]
-        recent_window_summaries = per_window_summaries[: max(int(recent_window_limit), 0)] if recent_window_limit > 0 else []
-        recent_supporting_window_count = sum(1 for item in recent_window_summaries if bool(item.get("supporting_window")))
-        recent_support_ratio = round(recent_supporting_window_count / len(recent_window_summaries), 4) if recent_window_summaries else 0.0
-        recent_tier_window_count = len(recent_window_summaries)
-        recent_tier_ratio = 1.0 if recent_window_summaries else 0.0
+    recent_window_summaries = updated_per_window_summaries[: max(int(recent_window_limit), 0)] if recent_window_limit > 0 else []
+    recent_supporting_window_count = sum(1 for item in recent_window_summaries if bool(item.get("supporting_window")))
+    recent_support_ratio = round(recent_supporting_window_count / len(recent_window_summaries), 4) if recent_window_summaries else 0.0
+    recent_tier_window_count = len(recent_window_summaries)
+    recent_tier_ratio = 1.0 if recent_window_summaries else 0.0
+    return {
+        "per_window_summaries": updated_per_window_summaries,
+        "recent_window_summaries": recent_window_summaries,
+        "recent_supporting_window_count": recent_supporting_window_count,
+        "recent_support_ratio": recent_support_ratio,
+        "recent_tier_window_count": recent_tier_window_count,
+        "recent_tier_ratio": recent_tier_ratio,
+    }
 
+
+def _resolve_dossier_verdict(
+    *,
+    tier_counts: dict[str, int],
+    candidate_rows: list[dict[str, Any]],
+    governance_followup: dict[str, Any],
+) -> str:
     if tier_counts.get("strict_peer"):
-        verdict = "strict_peer_candidate"
-    elif tier_counts.get("near_cluster_peer"):
-        verdict = "near_cluster_candidate"
-    elif candidate_rows:
-        verdict = "observation_only_candidate"
-    elif governance_followup:
-        verdict = "governance_followup_candidate"
-    else:
-        verdict = "candidate_not_found"
+        return "strict_peer_candidate"
+    if tier_counts.get("near_cluster_peer"):
+        return "near_cluster_candidate"
+    if candidate_rows:
+        return "observation_only_candidate"
+    if governance_followup:
+        return "governance_followup_candidate"
+    return "candidate_not_found"
 
+
+def _resolve_recent_validation_verdict(
+    *,
+    verdict: str,
+    recent_window_summaries: list[dict[str, Any]],
+    recent_supporting_window_count: int,
+    recent_support_ratio: float,
+    recent_supporting_surface_summary: dict[str, Any],
+) -> str:
     if verdict == "governance_followup_candidate":
-        recent_validation_verdict = "governance_followup_pending_evidence"
-    elif not recent_window_summaries:
-        recent_validation_verdict = "no_recent_windows"
-    elif recent_supporting_window_count == 0:
-        recent_validation_verdict = "recent_support_absent"
-    elif recent_support_ratio < 0.5:
-        recent_validation_verdict = "recent_support_thin"
-    elif (
+        return "governance_followup_pending_evidence"
+    if not recent_window_summaries:
+        return "no_recent_windows"
+    if recent_supporting_window_count == 0:
+        return "recent_support_absent"
+    if recent_support_ratio < 0.5:
+        return "recent_support_thin"
+    if (
         float(recent_supporting_surface_summary.get("next_close_positive_rate") or 0.0) >= 0.5
         and float(recent_supporting_surface_summary.get("t_plus_2_close_positive_rate") or 0.0) >= 0.5
     ):
-        recent_validation_verdict = "recent_support_confirmed"
-    else:
-        recent_validation_verdict = "recent_support_mixed"
+        return "recent_support_confirmed"
+    return "recent_support_mixed"
 
-    governance_payoff_ready = governance_followup_payoff_confirmed(
-        governance_objective_support,
-        recent_tier_window_count=recent_tier_window_count,
-        recent_window_count=len(recent_window_summaries),
-    )
 
-    if verdict == "governance_followup_candidate":
-        candidate_tier_focus = "governance_followup"
-        recent_tier_verdict = "governance_followup_payoff_confirmed" if governance_payoff_ready else "governance_followup_pending_evidence"
-    else:
-        recent_tier_verdict = _classify_recent_tier_verdict(
-            recent_tier_window_count,
-            len(recent_window_summaries),
-            recent_tier_surface_summary,
-        )
+def _resolve_promotion_readiness_verdict(
+    *,
+    candidate_tier_focus: str,
+    recent_tier_verdict: str,
+    verdict: str,
+    continuation_promotion_ready_summary: dict[str, Any],
+) -> str:
     if candidate_tier_focus == "strict_peer" and recent_tier_verdict == "recent_tier_confirmed":
         promotion_readiness_verdict = "strict_peer_ready"
     elif candidate_tier_focus == "near_cluster_peer" and recent_tier_verdict == "recent_tier_confirmed":
@@ -360,10 +421,117 @@ def analyze_btst_tplus2_near_cluster_dossier(
         promotion_readiness_verdict = "candidate_not_found"
     else:
         promotion_readiness_verdict = "low_priority"
+    if str(continuation_promotion_ready_summary.get("promotion_merge_review_verdict") or "").strip() == "ready_for_default_btst_merge_review":
+        return "merge_review_ready"
+    return promotion_readiness_verdict
 
-    promotion_merge_review_verdict = str(continuation_promotion_ready_summary.get("promotion_merge_review_verdict") or "").strip()
-    if promotion_merge_review_verdict == "ready_for_default_btst_merge_review":
-        promotion_readiness_verdict = "merge_review_ready"
+
+def analyze_btst_tplus2_near_cluster_dossier(
+    reports_root: str | Path,
+    *,
+    anchor_ticker: str = "600988",
+    candidate_ticker: str = "600989",
+    profile_name: str = "watchlist_zero_catalyst_guard_relief",
+    report_name_contains: str = "btst_",
+    next_high_hit_threshold: float = 0.02,
+    similarity_threshold: float = 1.35,
+    near_similarity_threshold: float = 2.1,
+    observation_similarity_threshold: float = 2.8,
+    recent_window_limit: int = 5,
+    upstream_handoff_board_path: str | Path | None = None,
+    lane_objective_support_path: str | Path | None = None,
+) -> dict[str, Any]:
+    rows = _collect_rows(
+        reports_root,
+        profile_name=profile_name,
+        report_name_contains=report_name_contains,
+        next_high_hit_threshold=next_high_hit_threshold,
+    )
+    current_plan_visibility_summary = _extract_current_plan_visibility_summary(reports_root, candidate_ticker)
+    continuation_promotion_ready_summary = _load_continuation_promotion_ready_summary(reports_root, candidate_ticker)
+    candidate_rows = _collect_candidate_rows_for_dossier(
+        rows,
+        anchor_ticker=anchor_ticker,
+        candidate_ticker=candidate_ticker,
+        similarity_threshold=similarity_threshold,
+        near_similarity_threshold=near_similarity_threshold,
+        observation_similarity_threshold=observation_similarity_threshold,
+    )
+    window_summary = _summarize_candidate_windows(
+        candidate_rows,
+        next_high_hit_threshold=next_high_hit_threshold,
+        recent_window_limit=recent_window_limit,
+    )
+    per_window_summaries = window_summary["per_window_summaries"]
+    tier_counts = window_summary["tier_counts"]
+    candidate_tier_focus = window_summary["candidate_tier_focus"]
+    supporting_rows = window_summary["supporting_rows"]
+    tier_focus_rows = window_summary["tier_focus_rows"]
+    surface_summary = window_summary["surface_summary"]
+    supporting_surface_summary = window_summary["supporting_surface_summary"]
+    tier_focus_surface_summary = window_summary["tier_focus_surface_summary"]
+    recent_window_summaries = window_summary["recent_window_summaries"]
+    recent_supporting_window_count = window_summary["recent_supporting_window_count"]
+    recent_support_ratio = window_summary["recent_support_ratio"]
+    recent_supporting_surface_summary = window_summary["recent_supporting_surface_summary"]
+    recent_tier_window_count = window_summary["recent_tier_window_count"]
+    recent_tier_ratio = window_summary["recent_tier_ratio"]
+    recent_tier_surface_summary = window_summary["recent_tier_surface_summary"]
+    governance_context = _load_governance_context(
+        reports_root,
+        candidate_ticker=candidate_ticker,
+        upstream_handoff_board_path=upstream_handoff_board_path,
+        lane_objective_support_path=lane_objective_support_path,
+    )
+    governance_followup = governance_context["governance_followup"]
+    governance_objective_support = governance_context["governance_objective_support"]
+    governance_recent_followup_rows = governance_context["governance_recent_followup_rows"]
+    if not per_window_summaries and governance_followup and governance_recent_followup_rows:
+        fallback_summary = _apply_governance_window_fallback(
+            per_window_summaries=per_window_summaries,
+            governance_followup=governance_followup,
+            governance_recent_followup_rows=governance_recent_followup_rows,
+            recent_window_limit=recent_window_limit,
+        )
+        per_window_summaries = fallback_summary["per_window_summaries"]
+        recent_window_summaries = fallback_summary["recent_window_summaries"]
+        recent_supporting_window_count = fallback_summary["recent_supporting_window_count"]
+        recent_support_ratio = fallback_summary["recent_support_ratio"]
+        recent_tier_window_count = fallback_summary["recent_tier_window_count"]
+        recent_tier_ratio = fallback_summary["recent_tier_ratio"]
+    verdict = _resolve_dossier_verdict(
+        tier_counts=tier_counts,
+        candidate_rows=candidate_rows,
+        governance_followup=governance_followup,
+    )
+    recent_validation_verdict = _resolve_recent_validation_verdict(
+        verdict=verdict,
+        recent_window_summaries=recent_window_summaries,
+        recent_supporting_window_count=recent_supporting_window_count,
+        recent_support_ratio=recent_support_ratio,
+        recent_supporting_surface_summary=recent_supporting_surface_summary,
+    )
+    governance_payoff_ready = governance_followup_payoff_confirmed(
+        governance_objective_support,
+        recent_tier_window_count=recent_tier_window_count,
+        recent_window_count=len(recent_window_summaries),
+    )
+
+    if verdict == "governance_followup_candidate":
+        candidate_tier_focus = "governance_followup"
+        recent_tier_verdict = "governance_followup_payoff_confirmed" if governance_payoff_ready else "governance_followup_pending_evidence"
+    else:
+        recent_tier_verdict = _classify_recent_tier_verdict(
+            recent_tier_window_count,
+            len(recent_window_summaries),
+            recent_tier_surface_summary,
+        )
+    promotion_readiness_verdict = _resolve_promotion_readiness_verdict(
+        candidate_tier_focus=candidate_tier_focus,
+        recent_tier_verdict=recent_tier_verdict,
+        verdict=verdict,
+        continuation_promotion_ready_summary=continuation_promotion_ready_summary,
+    )
 
     latest_followup_decision = str(governance_followup.get("latest_followup_decision") or "").strip() or None
     downstream_followup_status = str(governance_followup.get("downstream_followup_status") or "").strip() or None
