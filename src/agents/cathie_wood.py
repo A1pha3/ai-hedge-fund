@@ -5,6 +5,18 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from typing_extensions import Literal
 
+from src.agents.cathie_wood_helpers import (
+    _calculate_yoy_growth_rates,
+    _score_cathie_capex_commitment,
+    _score_cathie_fcf_funding,
+    _score_cathie_gross_margin_profile,
+    _score_cathie_operating_efficiency,
+    _score_cathie_operating_leverage,
+    _score_cathie_rd_trends,
+    _score_cathie_revenue_disruption,
+    _score_cathie_reinvestment_focus,
+    _score_cathie_rnd_intensity,
+)
 from src.agents.prompt_rules import with_fact_grounding_rules
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
@@ -13,50 +25,6 @@ from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context
-
-
-def _calculate_yoy_growth_rates(line_items, field: str = "revenue"):
-    """
-    计算同季度 YoY 增长率（正确处理A股YTD累计数据）
-
-    将数据按季度分组，每个季度与上一年同季度进行比较。
-    返回增长率列表，按时间从新到旧排列。
-    """
-    # 提取 (值, report_period) 对
-    pairs = []
-    for item in line_items:
-        val = getattr(item, field, None)
-        period = getattr(item, "report_period", "") or ""
-        if val is not None and val > 0 and len(period) >= 8:
-            pairs.append((val, period))
-
-    if len(pairs) < 2:
-        return []
-
-    # 按季度分组: key = 季度标识(MMDD), value = [(value, year), ...]
-    quarter_map = {}
-    for val, period in pairs:
-        quarter_key = period[4:8]  # e.g. "0930", "1231"
-        year = period[:4]
-        if quarter_key not in quarter_map:
-            quarter_map[quarter_key] = []
-        quarter_map[quarter_key].append((val, year))
-
-    # 对每个季度组按年份排序(从新到旧)
-    growth_rates = []
-    for quarter_key, year_data in quarter_map.items():
-        year_data.sort(key=lambda x: x[1], reverse=True)
-        for i in range(len(year_data) - 1):
-            newer_val, newer_year = year_data[i]
-            older_val, older_year = year_data[i + 1]
-            if older_val > 0:
-                growth_rate = (newer_val - older_val) / older_val
-                growth_rates.append((growth_rate, newer_year + quarter_key))
-
-    # 按时间从新到旧排序
-    growth_rates.sort(key=lambda x: x[1], reverse=True)
-    return [rate for rate, _ in growth_rates]
-
 
 class CathieWoodSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
@@ -179,83 +147,30 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze disruptive potential"}
 
-    # 1. Revenue Growth Analysis - Check for accelerating growth using CAGR (处理A股YTD累计数据)
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
-    if len(revenues) >= 3:  # Need at least 3 periods to check acceleration
-        # 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
-        cagr_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
+    revenue_score, revenue_details = _score_cathie_revenue_disruption(
+        financial_line_items,
+        calculate_cagr_from_line_items,
+        _calculate_yoy_growth_rates,
+    )
+    score += revenue_score
+    details.extend(revenue_details)
 
-        # 计算同季度 YoY 增长率用于分析增长加速（正确处理A股YTD累计数据）
-        growth_rates = _calculate_yoy_growth_rates(financial_line_items, field="revenue")
+    margin_score, margin_details = _score_cathie_gross_margin_profile(financial_line_items)
+    score += margin_score
+    details.extend(margin_details)
 
-        # Check if growth is accelerating (first growth rate higher than last, since they're in reverse order)
-        if len(growth_rates) >= 2 and growth_rates[0] > growth_rates[-1]:
-            score += 2
-            details.append(f"Revenue growth is accelerating: {(growth_rates[0]*100):.1f}% vs {(growth_rates[-1]*100):.1f}%")
+    leverage_score, leverage_detail = _score_cathie_operating_leverage(
+        financial_line_items,
+        calculate_cagr_from_line_items,
+    )
+    score += leverage_score
+    if leverage_detail:
+        details.append(leverage_detail)
 
-        # 使用 CAGR 作为主要增长率指标
-        if cagr_growth is not None:
-            if cagr_growth > 1.0:
-                score += 3
-                details.append(f"Exceptional revenue CAGR: {cagr_growth:.1%}")
-            elif cagr_growth > 0.5:
-                score += 2
-                details.append(f"Strong revenue CAGR: {cagr_growth:.1%}")
-            elif cagr_growth > 0.2:
-                score += 1
-                details.append(f"Moderate revenue CAGR: {cagr_growth:.1%}")
-        else:
-            details.append("Insufficient revenue data for CAGR calculation")
-    else:
-        details.append("Insufficient revenue data for growth analysis")
-
-    # 2. Gross Margin Analysis - Check for expanding margins
-    gross_margins = [item.gross_margin for item in financial_line_items if hasattr(item, "gross_margin") and item.gross_margin is not None]
-    if len(gross_margins) >= 2:
-        margin_trend = gross_margins[0] - gross_margins[-1]
-        if margin_trend > 0.05:  # 5% improvement
-            score += 2
-            details.append(f"Expanding gross margins: +{(margin_trend*100):.1f}%")
-        elif margin_trend > 0:
-            score += 1
-            details.append(f"Slightly improving gross margins: +{(margin_trend*100):.1f}%")
-
-        # Check absolute margin level (most recent margin is at index 0)
-        if gross_margins[0] > 0.50:  # High margin business
-            score += 2
-            details.append(f"High gross margin: {(gross_margins[0]*100):.1f}%")
-    else:
-        details.append("Insufficient gross margin data")
-
-    # 3. Operating Leverage Analysis - 使用统一的 CAGR 计算方法(处理A股YTD累计数据)
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
-    operating_expenses = [item.operating_expense for item in financial_line_items if hasattr(item, "operating_expense") and item.operating_expense]
-
-    if len(revenues) >= 2 and len(operating_expenses) >= 2:
-        rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
-        opex_growth = calculate_cagr_from_line_items(financial_line_items, field="operating_expense")
-
-        if rev_growth is not None and opex_growth is not None and rev_growth > opex_growth:
-            score += 2
-            details.append("Positive operating leverage: Revenue growing faster than expenses")
-    else:
-        details.append("Insufficient data for operating leverage analysis")
-
-    # 4. R&D Investment Analysis
-    rd_expenses = [item.research_and_development for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development is not None]
-    if rd_expenses and revenues:
-        rd_intensity = rd_expenses[0] / revenues[0]
-        if rd_intensity > 0.15:  # High R&D intensity
-            score += 3
-            details.append(f"High R&D investment: {(rd_intensity*100):.1f}% of revenue")
-        elif rd_intensity > 0.08:
-            score += 2
-            details.append(f"Moderate R&D investment: {(rd_intensity*100):.1f}% of revenue")
-        elif rd_intensity > 0.05:
-            score += 1
-            details.append(f"Some R&D investment: {(rd_intensity*100):.1f}% of revenue")
-    else:
-        details.append("No R&D data available")
+    rnd_score, rnd_detail = _score_cathie_rnd_intensity(financial_line_items)
+    score += rnd_score
+    if rnd_detail:
+        details.append(rnd_detail)
 
     # Normalize score to be out of 5
     max_possible_score = 12  # Sum of all possible points
@@ -280,90 +195,29 @@ def analyze_innovation_growth(metrics: list, financial_line_items: list) -> dict
     if not metrics or not financial_line_items:
         return {"score": 0, "details": "Insufficient data to analyze innovation-driven growth"}
 
-    # 1. R&D Investment Trends
-    rd_expenses = [item.research_and_development for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development]
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
+    rnd_score, rnd_details = _score_cathie_rd_trends(financial_line_items)
+    score += rnd_score
+    details.extend(rnd_details)
 
-    if rd_expenses and revenues and len(rd_expenses) >= 2:
-        rd_growth = (rd_expenses[0] - rd_expenses[-1]) / abs(rd_expenses[-1]) if rd_expenses[-1] != 0 else 0
-        if rd_growth > 0.5:  # 50% growth in R&D
-            score += 3
-            details.append(f"Strong R&D investment growth: +{(rd_growth*100):.1f}%")
-        elif rd_growth > 0.2:
-            score += 2
-            details.append(f"Moderate R&D investment growth: +{(rd_growth*100):.1f}%")
+    fcf_score, fcf_detail = _score_cathie_fcf_funding(financial_line_items)
+    score += fcf_score
+    if fcf_detail:
+        details.append(fcf_detail)
 
-        # Check R&D intensity trend (corrected for reverse chronological order)
-        rd_intensity_start = rd_expenses[-1] / revenues[-1]
-        rd_intensity_end = rd_expenses[0] / revenues[0]
-        if rd_intensity_end > rd_intensity_start:
-            score += 2
-            details.append(f"Increasing R&D intensity: {(rd_intensity_end*100):.1f}% vs {(rd_intensity_start*100):.1f}%")
-    else:
-        details.append("Insufficient R&D data for trend analysis")
+    efficiency_score, efficiency_detail = _score_cathie_operating_efficiency(financial_line_items)
+    score += efficiency_score
+    if efficiency_detail:
+        details.append(efficiency_detail)
 
-    # 2. Free Cash Flow Analysis
-    fcf_vals = [getattr(item, "free_cash_flow", None) for item in financial_line_items if getattr(item, "free_cash_flow", None) is not None]
-    if fcf_vals and len(fcf_vals) >= 2:
-        fcf_growth = (fcf_vals[0] - fcf_vals[-1]) / abs(fcf_vals[-1])
-        positive_fcf_count = sum(1 for f in fcf_vals if f > 0)
+    capex_score, capex_detail = _score_cathie_capex_commitment(financial_line_items)
+    score += capex_score
+    if capex_detail:
+        details.append(capex_detail)
 
-        if fcf_growth > 0.3 and positive_fcf_count == len(fcf_vals):
-            score += 3
-            details.append("Strong and consistent FCF growth, excellent innovation funding capacity")
-        elif positive_fcf_count >= len(fcf_vals) * 0.75:
-            score += 2
-            details.append("Consistent positive FCF, good innovation funding capacity")
-        elif positive_fcf_count > len(fcf_vals) * 0.5:
-            score += 1
-            details.append("Moderately consistent FCF, adequate innovation funding capacity")
-    else:
-        details.append("Insufficient FCF data for analysis")
-
-    # 3. Operating Efficiency Analysis
-    op_margin_vals = [getattr(item, "operating_margin", None) for item in financial_line_items if getattr(item, "operating_margin", None) is not None]
-    if op_margin_vals and len(op_margin_vals) >= 2:
-        margin_trend = op_margin_vals[0] - op_margin_vals[-1]
-
-        if op_margin_vals[0] > 0.15 and margin_trend > 0:
-            score += 3
-            details.append(f"Strong and improving operating margin: {(op_margin_vals[0]*100):.1f}%")
-        elif op_margin_vals[0] > 0.10:
-            score += 2
-            details.append(f"Healthy operating margin: {(op_margin_vals[0]*100):.1f}%")
-        elif margin_trend > 0:
-            score += 1
-            details.append("Improving operating efficiency")
-    else:
-        details.append("Insufficient operating margin data")
-
-    # 4. Capital Allocation Analysis
-    capex = [item.capital_expenditure for item in financial_line_items if hasattr(item, "capital_expenditure") and item.capital_expenditure]
-    if capex and revenues and len(capex) >= 2:
-        capex_intensity = abs(capex[0]) / revenues[0]
-        capex_growth = (abs(capex[0]) - abs(capex[-1])) / abs(capex[-1]) if capex[-1] != 0 else 0
-
-        if capex_intensity > 0.10 and capex_growth > 0.2:
-            score += 2
-            details.append("Strong investment in growth infrastructure")
-        elif capex_intensity > 0.05:
-            score += 1
-            details.append("Moderate investment in growth infrastructure")
-    else:
-        details.append("Insufficient CAPEX data")
-
-    # 5. Growth Reinvestment Analysis
-    dividends = [item.dividends_and_other_cash_distributions for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions]
-    if dividends and fcf_vals:
-        latest_payout_ratio = dividends[0] / fcf_vals[0] if fcf_vals[0] != 0 else 1
-        if latest_payout_ratio < 0.2:  # Low dividend payout ratio suggests reinvestment focus
-            score += 2
-            details.append("Strong focus on reinvestment over dividends")
-        elif latest_payout_ratio < 0.4:
-            score += 1
-            details.append("Moderate focus on reinvestment over dividends")
-    else:
-        details.append("Insufficient dividend data")
+    reinvestment_score, reinvestment_detail = _score_cathie_reinvestment_focus(financial_line_items)
+    score += reinvestment_score
+    if reinvestment_detail:
+        details.append(reinvestment_detail)
 
     # Normalize score to be out of 5
     max_possible_score = 15  # Sum of all possible points

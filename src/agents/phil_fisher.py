@@ -1,11 +1,20 @@
 import json
-import statistics
-
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from typing_extensions import Literal
 
+from src.agents.phil_fisher_helpers import (
+    _score_fisher_debt_to_equity,
+    _score_fisher_eps_growth,
+    _score_fisher_fcf_consistency,
+    _score_fisher_gross_margin,
+    _score_fisher_margin_volatility,
+    _score_fisher_operating_margin_consistency,
+    _score_fisher_revenue_growth,
+    _score_fisher_rnd_intensity,
+    _score_fisher_roe,
+)
 from src.graph.state import AgentState, show_agent_reasoning
 from src.agents.prompt_rules import with_fact_grounding_rules
 from src.tools.api import (
@@ -182,103 +191,21 @@ def analyze_fisher_growth_quality(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # up to 9 raw points => scale to 0–10
 
-    revenue_score, revenue_detail = _analyze_fisher_revenue_growth(financial_line_items)
+    revenue_score, revenue_detail = _score_fisher_revenue_growth(financial_line_items, calculate_cagr_from_line_items)
     raw_score += revenue_score
     details.append(revenue_detail)
 
-    eps_score, eps_detail = _analyze_fisher_eps_growth(financial_line_items)
+    eps_score, eps_detail = _score_fisher_eps_growth(financial_line_items, calculate_cagr_from_line_items)
     raw_score += eps_score
     details.append(eps_detail)
 
-    rnd_score, rnd_detail = _analyze_fisher_rnd_intensity(financial_line_items)
+    rnd_score, rnd_detail = _score_fisher_rnd_intensity(financial_line_items)
     raw_score += rnd_score
     details.append(rnd_detail)
 
     # scale raw_score (max 9) to 0–10
     final_score = min(10, (raw_score / 9) * 10)
     return {"score": final_score, "details": "; ".join(details)}
-
-
-def _analyze_fisher_revenue_growth(financial_line_items: list) -> tuple[int, str]:
-    rev_growth = calculate_cagr_from_line_items(financial_line_items, field="revenue")
-    if rev_growth is None:
-        return 0, "Insufficient revenue data for CAGR calculation."
-    if rev_growth > 0.20:
-        return 3, f"Very strong annualized revenue growth: {rev_growth:.1%}"
-    if rev_growth > 0.10:
-        return 2, f"Moderate annualized revenue growth: {rev_growth:.1%}"
-    if rev_growth > 0.03:
-        return 1, f"Slight annualized revenue growth: {rev_growth:.1%}"
-    return 0, f"Minimal or negative annualized revenue growth: {rev_growth:.1%}"
-
-
-def _analyze_fisher_eps_growth(financial_line_items: list) -> tuple[int, str]:
-    eps_growth = calculate_cagr_from_line_items(financial_line_items, field="earnings_per_share")
-    if eps_growth is None:
-        return 0, "Insufficient EPS data for CAGR calculation."
-    if eps_growth > 0.20:
-        return 3, f"Very strong annualized EPS growth: {eps_growth:.1%}"
-    if eps_growth > 0.10:
-        return 2, f"Moderate annualized EPS growth: {eps_growth:.1%}"
-    if eps_growth > 0.03:
-        return 1, f"Slight annualized EPS growth: {eps_growth:.1%}"
-    return 0, f"Minimal or negative annualized EPS growth: {eps_growth:.1%}"
-
-
-def _analyze_fisher_rnd_intensity(financial_line_items: list) -> tuple[int, str]:
-    rnd_values = [getattr(fi, "research_and_development", None) for fi in financial_line_items if getattr(fi, "research_and_development", None) is not None]
-    revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
-    if not (rnd_values and revenues and len(rnd_values) == len(revenues)):
-        return 0, "Insufficient R&D data to evaluate"
-
-    recent_rnd = rnd_values[0]
-    recent_rev = revenues[0] if revenues[0] else 1e-9
-    rnd_ratio = recent_rnd / recent_rev
-    if 0.03 <= rnd_ratio <= 0.15:
-        return 3, f"R&D ratio {rnd_ratio:.1%} indicates significant investment in future growth"
-    if rnd_ratio > 0.15:
-        return 2, f"R&D ratio {rnd_ratio:.1%} is very high (could be good if well-managed)"
-    if rnd_ratio > 0.0:
-        return 1, f"R&D ratio {rnd_ratio:.1%} is somewhat low but still positive"
-    return 0, "No meaningful R&D expense ratio"
-
-
-def _analyze_fisher_operating_margin_consistency(op_margins: list[float]) -> tuple[int, str]:
-    if len(op_margins) < 2:
-        return 0, "Not enough operating margin data points"
-
-    oldest_op_margin = op_margins[-1]
-    newest_op_margin = op_margins[0]
-    if newest_op_margin >= oldest_op_margin > 0:
-        return 2, f"Operating margin stable or improving ({oldest_op_margin:.1%} -> {newest_op_margin:.1%})"
-    if newest_op_margin > 0:
-        return 1, "Operating margin positive but slightly declined"
-    return 0, "Operating margin may be negative or uncertain"
-
-
-def _analyze_fisher_gross_margin(financial_line_items: list) -> tuple[int, str]:
-    gm_values = [getattr(fi, "gross_margin", None) for fi in financial_line_items if getattr(fi, "gross_margin", None) is not None]
-    if not gm_values:
-        return 0, "No gross margin data available"
-
-    recent_gm = gm_values[0]
-    if recent_gm > 0.5:
-        return 2, f"Strong gross margin: {recent_gm:.1%}"
-    if recent_gm > 0.3:
-        return 1, f"Moderate gross margin: {recent_gm:.1%}"
-    return 0, f"Low gross margin: {recent_gm:.1%}"
-
-
-def _analyze_fisher_margin_volatility(op_margins: list[float]) -> tuple[int, str]:
-    if len(op_margins) < 3:
-        return 0, "Not enough margin data points for volatility check"
-
-    stdev = statistics.pstdev(op_margins)
-    if stdev < 0.02:
-        return 2, "Operating margin extremely stable over multiple years"
-    if stdev < 0.05:
-        return 1, "Operating margin reasonably stable"
-    return 0, "Operating margin volatility is high"
 
 
 def analyze_margins_stability(financial_line_items: list) -> dict:
@@ -295,15 +222,15 @@ def analyze_margins_stability(financial_line_items: list) -> dict:
     raw_score = 0  # up to 6 => scale to 0-10
 
     op_margins = [getattr(fi, "operating_margin", None) for fi in financial_line_items if getattr(fi, "operating_margin", None) is not None]
-    consistency_score, consistency_detail = _analyze_fisher_operating_margin_consistency(op_margins)
+    consistency_score, consistency_detail = _score_fisher_operating_margin_consistency(op_margins)
     raw_score += consistency_score
     details.append(consistency_detail)
 
-    gross_margin_score, gross_margin_detail = _analyze_fisher_gross_margin(financial_line_items)
+    gross_margin_score, gross_margin_detail = _score_fisher_gross_margin(financial_line_items)
     raw_score += gross_margin_score
     details.append(gross_margin_detail)
 
-    volatility_score, volatility_detail = _analyze_fisher_margin_volatility(op_margins)
+    volatility_score, volatility_detail = _score_fisher_margin_volatility(op_margins)
     raw_score += volatility_score
     details.append(volatility_detail)
 
@@ -328,67 +255,20 @@ def analyze_management_efficiency_leverage(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # up to 6 => scale to 0–10
 
-    # 1. Return on Equity (ROE)
     ni_values = [getattr(fi, "net_income", None) for fi in financial_line_items if getattr(fi, "net_income", None) is not None]
     eq_values = [getattr(fi, "shareholders_equity", None) for fi in financial_line_items if getattr(fi, "shareholders_equity", None) is not None]
-    if ni_values and eq_values and len(ni_values) == len(eq_values):
-        recent_ni = ni_values[0]
-        recent_eq = eq_values[0] if eq_values[0] else 1e-9
-        if recent_ni > 0:
-            roe = recent_ni / recent_eq
-            if roe > 0.2:
-                raw_score += 3
-                details.append(f"High ROE: {roe:.1%}")
-            elif roe > 0.1:
-                raw_score += 2
-                details.append(f"Moderate ROE: {roe:.1%}")
-            elif roe > 0:
-                raw_score += 1
-                details.append(f"Positive but low ROE: {roe:.1%}")
-            else:
-                details.append(f"ROE is near zero or negative: {roe:.1%}")
-        else:
-            details.append("Recent net income is zero or negative, hurting ROE")
-    else:
-        details.append("Insufficient data for ROE calculation")
 
-    # 2. Debt-to-Equity - 优先使用标准 debt_to_equity 字段
-    dte = None
-    dte_direct = getattr(financial_line_items[0], "debt_to_equity", None) if financial_line_items else None
-    if dte_direct is not None:
-        dte = dte_direct
-    else:
-        debt_values = [getattr(fi, "total_debt", None) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None]
-        if debt_values and eq_values and len(debt_values) == len(eq_values):
-            recent_debt = debt_values[0]
-            recent_equity = eq_values[0] if eq_values[0] else 1e-9
-            dte = recent_debt / recent_equity
-    if dte is not None:
-        if dte < 0.3:
-            raw_score += 2
-            details.append(f"Low debt-to-equity: {dte:.2f}")
-        elif dte < 1.0:
-            raw_score += 1
-            details.append(f"Manageable debt-to-equity: {dte:.2f}")
-        else:
-            details.append(f"High debt-to-equity: {dte:.2f}")
-    else:
-        details.append("No debt/equity data available")
+    roe_score, roe_detail = _score_fisher_roe(ni_values, eq_values)
+    raw_score += roe_score
+    details.append(roe_detail)
 
-    # 3. FCF Consistency
-    fcf_values = [getattr(fi, "free_cash_flow", None) for fi in financial_line_items if getattr(fi, "free_cash_flow", None) is not None]
-    if fcf_values and len(fcf_values) >= 2:
-        # Check if FCF is positive in recent years
-        positive_fcf_count = sum(1 for x in fcf_values if x and x > 0)
-        # We'll be simplistic: if most are positive, reward
-        ratio = positive_fcf_count / len(fcf_values)
-        if ratio > 0.8:
-            raw_score += 1
-            details.append(f"Majority of periods have positive FCF ({positive_fcf_count}/{len(fcf_values)})")
-        else:
-            details.append(f"Free cash flow is inconsistent or often negative")
-    else:
-        details.append("Insufficient or no FCF data to check consistency")
+    leverage_score, leverage_detail = _score_fisher_debt_to_equity(financial_line_items, eq_values)
+    raw_score += leverage_score
+    details.append(leverage_detail)
+
+    fcf_score, fcf_detail = _score_fisher_fcf_consistency(financial_line_items)
+    raw_score += fcf_score
+    details.append(fcf_detail)
 
     final_score = min(10, (raw_score / 6) * 10)
     return {"score": final_score, "details": "; ".join(details)}

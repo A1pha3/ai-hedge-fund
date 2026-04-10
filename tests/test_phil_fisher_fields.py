@@ -69,3 +69,32 @@ def test_analyze_fisher_growth_quality_reports_muted_growth_and_missing_rnd(monk
     assert "Minimal or negative annualized revenue growth: 1.0%" in result["details"]
     assert "Minimal or negative annualized EPS growth: -2.0%" in result["details"]
     assert "Insufficient R&D data to evaluate" in result["details"]
+
+
+def test_analyze_management_efficiency_leverage_scores_high_roe_low_debt_and_positive_fcf():
+    financial_line_items = [
+        SimpleNamespace(net_income=30.0, shareholders_equity=100.0, debt_to_equity=0.2, free_cash_flow=10.0),
+        SimpleNamespace(net_income=28.0, shareholders_equity=95.0, debt_to_equity=0.25, free_cash_flow=9.0),
+        SimpleNamespace(net_income=25.0, shareholders_equity=90.0, debt_to_equity=0.3, free_cash_flow=8.0),
+    ]
+
+    result = phil_fisher.analyze_management_efficiency_leverage(financial_line_items)
+
+    assert result["score"] == 10
+    assert "High ROE: 30.0%" in result["details"]
+    assert "Low debt-to-equity: 0.20" in result["details"]
+    assert "Majority of periods have positive FCF (3/3)" in result["details"]
+
+
+def test_analyze_management_efficiency_leverage_reports_negative_income_and_missing_fcf_with_debt_fallback():
+    financial_line_items = [
+        SimpleNamespace(net_income=-5.0, shareholders_equity=50.0, total_debt=80.0, free_cash_flow=None),
+        SimpleNamespace(net_income=-4.0, shareholders_equity=40.0, total_debt=70.0),
+    ]
+
+    result = phil_fisher.analyze_management_efficiency_leverage(financial_line_items)
+
+    assert result["score"] == 0
+    assert "Recent net income is zero or negative, hurting ROE" in result["details"]
+    assert "High debt-to-equity: 1.60" in result["details"]
+    assert "Insufficient or no FCF data to check consistency" in result["details"]
