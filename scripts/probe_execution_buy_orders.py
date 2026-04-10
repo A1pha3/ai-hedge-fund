@@ -111,6 +111,37 @@ def _price_from_order_like(payload: dict[str, Any]) -> float | None:
     return parsed_amount / parsed_shares
 
 
+def _collect_positive_probe_prices(price_payload: dict[str, Any] | None, probe_tickers: list[str]) -> dict[str, float]:
+    if not isinstance(price_payload, dict):
+        return {}
+
+    resolved_prices: dict[str, float] = {}
+    for ticker in probe_tickers:
+        price = price_payload.get(ticker)
+        if price is None:
+            continue
+        try:
+            parsed_price = float(price)
+        except (TypeError, ValueError):
+            continue
+        if parsed_price > 0:
+            resolved_prices[ticker] = parsed_price
+    return resolved_prices
+
+
+def _collect_original_order_prices(plan: ExecutionPlan, probe_tickers: list[str]) -> dict[str, float]:
+    original_order_map = {str(order.ticker): order for order in plan.buy_orders}
+    resolved_prices: dict[str, float] = {}
+    for ticker in probe_tickers:
+        order = original_order_map.get(ticker)
+        if order is None:
+            continue
+        implied_price = _price_from_order_like({"amount": order.amount, "shares": order.shares})
+        if implied_price is not None:
+            resolved_prices[ticker] = implied_price
+    return resolved_prices
+
+
 def _resolve_probe_price_map(
     event_payload: dict[str, Any],
     plan: ExecutionPlan,
@@ -120,56 +151,26 @@ def _resolve_probe_price_map(
 ) -> dict[str, float]:
     resolved_price_map = {ticker: float(price) for ticker, price in explicit_price_overrides.items() if ticker in probe_tickers}
 
-    top_level_current_prices = event_payload.get("current_prices")
-    if isinstance(top_level_current_prices, dict):
-        for ticker in probe_tickers:
-            price = top_level_current_prices.get(ticker)
-            if price is None:
-                continue
-            try:
-                parsed_price = float(price)
-            except (TypeError, ValueError):
-                continue
-            if parsed_price > 0:
-                resolved_price_map.setdefault(ticker, parsed_price)
+    top_level_current_prices = _collect_positive_probe_prices(event_payload.get("current_prices"), probe_tickers)
+    for ticker, price in top_level_current_prices.items():
+        resolved_price_map.setdefault(ticker, price)
 
     prepared_plan = event_payload.get("prepared_plan")
     if isinstance(prepared_plan, dict):
-        prepared_current_prices = prepared_plan.get("current_prices")
-        if isinstance(prepared_current_prices, dict):
-            for ticker in probe_tickers:
-                price = prepared_current_prices.get(ticker)
-                if price is None:
-                    continue
-                try:
-                    parsed_price = float(price)
-                except (TypeError, ValueError):
-                    continue
-                if parsed_price > 0:
-                    resolved_price_map.setdefault(ticker, parsed_price)
+        prepared_current_prices = _collect_positive_probe_prices(prepared_plan.get("current_prices"), probe_tickers)
+        for ticker, price in prepared_current_prices.items():
+            resolved_price_map.setdefault(ticker, price)
 
-    lookup_price_map = build_watchlist_price_map(normalized_trade_date, probe_tickers)
-    for ticker in probe_tickers:
-        price = lookup_price_map.get(ticker)
-        if price is None:
-            continue
-        try:
-            parsed_price = float(price)
-        except (TypeError, ValueError):
-            continue
-        if parsed_price > 0:
-            resolved_price_map.setdefault(ticker, parsed_price)
+    lookup_price_map = _collect_positive_probe_prices(
+        build_watchlist_price_map(normalized_trade_date, probe_tickers),
+        probe_tickers,
+    )
+    for ticker, price in lookup_price_map.items():
+        resolved_price_map.setdefault(ticker, price)
 
-    original_order_map = {str(order.ticker): order for order in plan.buy_orders}
-    for ticker in probe_tickers:
-        if ticker in resolved_price_map:
-            continue
-        order = original_order_map.get(ticker)
-        if order is None:
-            continue
-        implied_price = _price_from_order_like({"amount": order.amount, "shares": order.shares})
-        if implied_price is not None:
-            resolved_price_map[ticker] = implied_price
+    original_order_prices = _collect_original_order_prices(plan, probe_tickers)
+    for ticker, price in original_order_prices.items():
+        resolved_price_map.setdefault(ticker, price)
 
     missing_prices = [ticker for ticker in probe_tickers if ticker not in resolved_price_map]
     if missing_prices:

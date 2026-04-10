@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -417,6 +418,78 @@ def test_refresh_selection_artifacts_from_daily_events_promotes_post_gate_shadow
 
     session_summary = json.loads((report_dir / "session_summary.json").read_text(encoding="utf-8"))
     assert session_summary["selection_artifact_refresh"]["refreshed_trade_dates"] == ["2026-03-31"]
+
+
+def test_main_refreshes_unique_report_dirs_and_optional_followups(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]):
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260331_case"
+    reports_root = report_dir.parent
+    followup_calls: list[tuple] = []
+    manifest_calls: list[Path] = []
+    control_tower_calls: list[Path] = []
+
+    monkeypatch.setattr(
+        refresh_module,
+        "parse_args",
+        lambda: SimpleNamespace(
+            input_paths=["first", "second"],
+            trade_date="2026-03-31",
+            report_name_contains="paper_trading",
+            refresh_followup=True,
+            refresh_manifest=True,
+            refresh_control_tower=True,
+        ),
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "discover_report_dirs",
+        lambda raw_input, report_name_contains: [report_dir] if raw_input == "first" else [report_dir],
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "refresh_selection_artifacts_for_report",
+        lambda report_dir, trade_date: {
+            "report_dir": str(report_dir),
+            "daily_events_path": str(report_dir / "daily_events.jsonl"),
+            "results": [
+                {
+                    "trade_date": "2026-03-31",
+                    "write_status": "written",
+                    "snapshot_path": report_dir / "selection_artifacts/2026-03-31/selection_snapshot.json",
+                    "replay_input_path": report_dir / "selection_artifacts/2026-03-31/selection_target_replay_input.json",
+                    "short_trade_selected_symbols": ["300720", "002001"],
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "generate_and_register_btst_followup_artifacts",
+        lambda report_dir, trade_date: followup_calls.append((report_dir, trade_date)) or {"brief_json": "brief.json", "execution_card_json": "card.json"},
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "generate_reports_manifest_artifacts",
+        lambda reports_root: manifest_calls.append(reports_root) or {"json_path": "manifest.json"},
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "generate_btst_nightly_control_tower_artifacts",
+        lambda reports_root: control_tower_calls.append(reports_root) or {"json_path": "control.json"},
+    )
+
+    refresh_module.main()
+
+    assert followup_calls == [(report_dir, "2026-03-31")]
+    assert manifest_calls == [reports_root]
+    assert control_tower_calls == [reports_root]
+    stdout = capsys.readouterr().out
+    assert f"report_dir={report_dir}" in stdout
+    assert "trade_date=2026-03-31" in stdout
+    assert "short_trade_selected_symbols=300720,002001" in stdout
+    assert "btst_brief_json=brief.json" in stdout
+    assert "manifest_json=manifest.json" in stdout
+    assert "nightly_control_tower_json=control.json" in stdout
 
 
 def test_refresh_selection_artifacts_from_daily_events_promotes_visibility_gap_corridor_shadow_entry(tmp_path, monkeypatch: pytest.MonkeyPatch):

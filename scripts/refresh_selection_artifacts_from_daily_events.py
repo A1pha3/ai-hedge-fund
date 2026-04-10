@@ -406,14 +406,61 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
     }
 
 
+def _discover_unique_report_dirs(input_paths: list[str], *, report_name_contains: str) -> list[Path]:
+    report_dirs: list[Path] = []
+    for raw_input in input_paths:
+        report_dirs.extend(discover_report_dirs(raw_input, report_name_contains=report_name_contains))
+    seen: set[Path] = set()
+    return [path for path in report_dirs if not (path in seen or seen.add(path))]
+
+
+def _print_refresh_result(result: dict[str, Any], *, report_dir: Path, refresh_followup: bool) -> None:
+    print(f"report_dir={result['report_dir']}")
+    print(f"daily_events_path={result['daily_events_path']}")
+    for trade_result in result["results"]:
+        print(f"trade_date={trade_result['trade_date']}")
+        print(f"write_status={trade_result['write_status']}")
+        print(f"snapshot_path={trade_result['snapshot_path']}")
+        print(f"replay_input_path={trade_result['replay_input_path']}")
+        print(f"short_trade_selected_symbols={','.join(trade_result['short_trade_selected_symbols'])}")
+        if refresh_followup:
+            followup = generate_and_register_btst_followup_artifacts(
+                report_dir=report_dir,
+                trade_date=trade_result["trade_date"],
+            )
+            print(f"btst_brief_json={followup['brief_json']}")
+            print(f"btst_execution_card_json={followup['execution_card_json']}")
+
+
+def _collect_reports_root_refreshes(
+    report_dir: Path,
+    *,
+    refresh_manifest: bool,
+    refresh_control_tower: bool,
+    manifest_roots: set[Path],
+    control_tower_roots: set[Path],
+) -> None:
+    reports_root = report_dir.parent
+    if reports_root.name != "reports":
+        return
+    if refresh_manifest:
+        manifest_roots.add(reports_root)
+    if refresh_control_tower:
+        control_tower_roots.add(reports_root)
+
+
+def _refresh_reports_root_artifacts(*, manifest_roots: set[Path], control_tower_roots: set[Path]) -> None:
+    for reports_root in sorted(manifest_roots):
+        manifest = generate_reports_manifest_artifacts(reports_root=reports_root)
+        print(f"manifest_json={manifest['json_path']}")
+    for reports_root in sorted(control_tower_roots):
+        control_tower = generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
+        print(f"nightly_control_tower_json={control_tower['json_path']}")
+
+
 def main() -> None:
     args = parse_args()
-    report_dirs: list[Path] = []
-    for raw_input in args.input_paths:
-        report_dirs.extend(discover_report_dirs(raw_input, report_name_contains=args.report_name_contains))
-
-    seen: set[Path] = set()
-    unique_report_dirs = [path for path in report_dirs if not (path in seen or seen.add(path))]
+    unique_report_dirs = _discover_unique_report_dirs(args.input_paths, report_name_contains=args.report_name_contains)
     if not unique_report_dirs:
         raise SystemExit("No report directories found for selection artifact refresh.")
 
@@ -421,35 +468,18 @@ def main() -> None:
     reports_roots_to_refresh_control_tower: set[Path] = set()
     for report_dir in unique_report_dirs:
         result = refresh_selection_artifacts_for_report(report_dir, trade_date=args.trade_date)
-        print(f"report_dir={result['report_dir']}")
-        print(f"daily_events_path={result['daily_events_path']}")
-        for trade_result in result["results"]:
-            print(f"trade_date={trade_result['trade_date']}")
-            print(f"write_status={trade_result['write_status']}")
-            print(f"snapshot_path={trade_result['snapshot_path']}")
-            print(f"replay_input_path={trade_result['replay_input_path']}")
-            print(f"short_trade_selected_symbols={','.join(trade_result['short_trade_selected_symbols'])}")
-            if args.refresh_followup:
-                followup = generate_and_register_btst_followup_artifacts(
-                    report_dir=report_dir,
-                    trade_date=trade_result["trade_date"],
-                )
-                print(f"btst_brief_json={followup['brief_json']}")
-                print(f"btst_execution_card_json={followup['execution_card_json']}")
-        reports_root = report_dir.parent
-        if reports_root.name == "reports":
-            if args.refresh_manifest:
-                reports_roots_to_refresh_manifest.add(reports_root)
-            if args.refresh_control_tower:
-                reports_roots_to_refresh_control_tower.add(reports_root)
-
-    for reports_root in sorted(reports_roots_to_refresh_manifest):
-        manifest = generate_reports_manifest_artifacts(reports_root=reports_root)
-        print(f"manifest_json={manifest['json_path']}")
-
-    for reports_root in sorted(reports_roots_to_refresh_control_tower):
-        control_tower = generate_btst_nightly_control_tower_artifacts(reports_root=reports_root)
-        print(f"nightly_control_tower_json={control_tower['json_path']}")
+        _print_refresh_result(result, report_dir=report_dir, refresh_followup=args.refresh_followup)
+        _collect_reports_root_refreshes(
+            report_dir,
+            refresh_manifest=args.refresh_manifest,
+            refresh_control_tower=args.refresh_control_tower,
+            manifest_roots=reports_roots_to_refresh_manifest,
+            control_tower_roots=reports_roots_to_refresh_control_tower,
+        )
+    _refresh_reports_root_artifacts(
+        manifest_roots=reports_roots_to_refresh_manifest,
+        control_tower_roots=reports_roots_to_refresh_control_tower,
+    )
 
 
 if __name__ == "__main__":

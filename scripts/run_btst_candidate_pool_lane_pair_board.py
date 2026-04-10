@@ -75,10 +75,11 @@ def _candidate_row(
     }
 
 
-def _build_governance_overlays(governance_synthesis: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    raw_overlays: dict[str, dict[str, Any]] = {}
-
-    for constraint in list(governance_synthesis.get("execution_surface_constraints") or []):
+def _apply_governance_constraint_overlays(
+    raw_overlays: dict[str, dict[str, Any]],
+    constraints: list[dict[str, Any]],
+) -> None:
+    for constraint in constraints:
         row = dict(constraint or {})
         for ticker in list(row.get("focus_tickers") or []):
             normalized = str(ticker or "").strip()
@@ -92,7 +93,62 @@ def _build_governance_overlays(governance_synthesis: dict[str, Any]) -> dict[str
                 }
             )
 
-    followups = [dict(row or {}) for row in list(governance_synthesis.get("evidence_btst_followups") or [])]
+
+def _resolve_followup_governance_override(entry: dict[str, Any]) -> dict[str, Any]:
+    historical_next_close_positive_rate = entry.get("historical_next_close_positive_rate")
+    top_reasons = [str(reason) for reason in list(entry.get("top_reasons") or []) if str(reason).strip()]
+    if (
+        entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
+        and entry.get("decision") == "selected"
+        and entry.get("historical_execution_quality_label") in {"intraday_only", "gap_chase_risk"}
+    ):
+        return {
+            "governance_status": "continuation_confirm_only_intraday_bias",
+            "governance_blocker": "weak_overnight_follow_through_after_shadow_recall",
+            "governance_summary": (
+                "Latest upstream shadow selected row still behaves like a confirmation-only setup; "
+                "historical payoff is stronger intraday than overnight, so keep it out of standard BTST hold assumptions."
+            ),
+        }
+
+    if (
+        entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
+        and entry.get("decision") == "near_miss"
+        and "profitability_hard_cliff" in top_reasons
+    ):
+        sample_count = entry.get("historical_sample_count")
+        next_close_positive_rate = entry.get("historical_next_close_positive_rate")
+        next_close_return_mean = entry.get("historical_next_close_return_mean")
+        weak_payoff_suffix = ""
+        if sample_count is not None or next_close_positive_rate is not None or next_close_return_mean is not None:
+            weak_payoff_suffix = (
+                " Historical same-source near-miss payoff remains weak"
+                f" (samples={sample_count}, next_close_positive_rate={next_close_positive_rate},"
+                f" next_close_return_mean={next_close_return_mean})."
+            )
+        return {
+            "governance_status": "parallel_watch_only_not_default_ready",
+            "governance_blocker": "profitability_hard_cliff_and_weak_same_source_payoff",
+            "governance_summary": (
+                "Keep corridor profitability-cliff names as confirmatory parallel watch only; "
+                "do not treat a single-window near-miss uplift as a default BTST upgrade."
+                f"{weak_payoff_suffix}"
+            ),
+        }
+
+    if historical_next_close_positive_rate is not None and float(historical_next_close_positive_rate) <= 0.2:
+        return {
+            "governance_status": "monitor_only_weak_historical_payoff",
+            "governance_blocker": "weak_same_source_payoff",
+            "governance_summary": "Latest followup remains monitor-only because historical same-source payoff is still weak.",
+        }
+    return {}
+
+
+def _apply_followup_governance_overlays(
+    raw_overlays: dict[str, dict[str, Any]],
+    followups: list[dict[str, Any]],
+) -> None:
     for followup in followups:
         entries = [dict(entry or {}) for entry in list(followup.get("entries") or [])]
         for entry in entries:
@@ -106,62 +162,27 @@ def _build_governance_overlays(governance_synthesis: dict[str, Any]) -> dict[str
                 overlay.setdefault("governance_execution_quality_label", entry.get("historical_execution_quality_label"))
             if entry.get("historical_entry_timing_bias") not in (None, "", [], {}):
                 overlay.setdefault("governance_entry_timing_bias", entry.get("historical_entry_timing_bias"))
-            if (
-                entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
-                and entry.get("decision") == "selected"
-                and entry.get("historical_execution_quality_label") in {"intraday_only", "gap_chase_risk"}
-            ):
-                overlay.update(
-                    {
-                        "governance_status": "continuation_confirm_only_intraday_bias",
-                        "governance_blocker": "weak_overnight_follow_through_after_shadow_recall",
-                        "governance_summary": (
-                            "Latest upstream shadow selected row still behaves like a confirmation-only setup; "
-                            "historical payoff is stronger intraday than overnight, so keep it out of standard BTST hold assumptions."
-                        ),
-                    }
-                )
-                continue
 
+            followup_override = _resolve_followup_governance_override(entry)
+            if followup_override:
+                overlay.update(followup_override)
+                continue
             if overlay.get("governance_status"):
                 continue
 
-            top_reasons = [str(reason) for reason in list(entry.get("top_reasons") or []) if str(reason).strip()]
-            historical_next_close_positive_rate = entry.get("historical_next_close_positive_rate")
-            if (
-                entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
-                and entry.get("decision") == "near_miss"
-                and "profitability_hard_cliff" in top_reasons
-            ):
-                sample_count = entry.get("historical_sample_count")
-                next_close_positive_rate = entry.get("historical_next_close_positive_rate")
-                next_close_return_mean = entry.get("historical_next_close_return_mean")
-                weak_payoff_suffix = ""
-                if sample_count is not None or next_close_positive_rate is not None or next_close_return_mean is not None:
-                    weak_payoff_suffix = (
-                        " Historical same-source near-miss payoff remains weak"
-                        f" (samples={sample_count}, next_close_positive_rate={next_close_positive_rate},"
-                        f" next_close_return_mean={next_close_return_mean})."
-                    )
-                overlay.update(
-                    {
-                        "governance_status": "parallel_watch_only_not_default_ready",
-                        "governance_blocker": "profitability_hard_cliff_and_weak_same_source_payoff",
-                        "governance_summary": (
-                            "Keep corridor profitability-cliff names as confirmatory parallel watch only; "
-                            "do not treat a single-window near-miss uplift as a default BTST upgrade."
-                            f"{weak_payoff_suffix}"
-                        ),
-                    }
-                )
-            elif historical_next_close_positive_rate is not None and float(historical_next_close_positive_rate) <= 0.2:
-                overlay.update(
-                    {
-                        "governance_status": "monitor_only_weak_historical_payoff",
-                        "governance_blocker": "weak_same_source_payoff",
-                        "governance_summary": "Latest followup remains monitor-only because historical same-source payoff is still weak.",
-                    }
-                )
+            overlay.update(_resolve_followup_governance_override(entry))
+
+
+def _build_governance_overlays(governance_synthesis: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw_overlays: dict[str, dict[str, Any]] = {}
+    _apply_governance_constraint_overlays(
+        raw_overlays,
+        [dict(constraint or {}) for constraint in list(governance_synthesis.get("execution_surface_constraints") or [])],
+    )
+    _apply_followup_governance_overlays(
+        raw_overlays,
+        [dict(row or {}) for row in list(governance_synthesis.get("evidence_btst_followups") or [])],
+    )
 
     return {
         ticker: overlay
@@ -220,30 +241,32 @@ def _build_upstream_handoff_overlays(upstream_handoff_board: dict[str, Any]) -> 
     return overlays
 
 
-def analyze_btst_candidate_pool_lane_pair_board(
+def _resolve_rebucket_ticker(rebucket: dict[str, Any]) -> Any:
+    return rebucket.get("ticker") or (list(rebucket.get("tickers") or [])[:1] or [None])[0]
+
+
+def _build_lane_pair_governance_overlays(
     corridor_shadow_pack_path: str | Path,
-    rebucket_comparison_bundle_path: str | Path,
-    governance_synthesis_path: str | Path | None = None,
-    upstream_handoff_board_path: str | Path | None = None,
-) -> dict[str, Any]:
-    corridor_pack = _maybe_load_json(corridor_shadow_pack_path)
-    if not corridor_pack:
-        corridor_pack = analyze_btst_candidate_pool_corridor_shadow_pack(REPORTS_DIR / "btst_candidate_pool_corridor_validation_pack_latest.json")
-
-    rebucket_bundle = _maybe_load_json(rebucket_comparison_bundle_path)
-    if not rebucket_bundle:
-        rebucket_bundle = analyze_btst_candidate_pool_rebucket_comparison_bundle(REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json")
-
+    governance_synthesis_path: str | Path | None,
+    upstream_handoff_board_path: str | Path | None,
+) -> tuple[dict[str, dict[str, Any]], Path | None]:
     governance_synthesis = _maybe_load_json(governance_synthesis_path or DEFAULT_GOVERNANCE_SYNTHESIS_PATH)
     governance_overlays = _build_governance_overlays(governance_synthesis)
     resolved_upstream_handoff_board_path = _resolve_upstream_handoff_board_path(corridor_shadow_pack_path, upstream_handoff_board_path)
     upstream_handoff_board = _maybe_load_json(resolved_upstream_handoff_board_path)
     for ticker, overlay in _build_upstream_handoff_overlays(upstream_handoff_board).items():
         governance_overlays.setdefault(ticker, {}).update({key: value for key, value in overlay.items() if value is not None})
-    primary = dict(corridor_pack.get("primary_shadow_replay") or {})
-    parallel = [dict(row) for row in list(corridor_pack.get("parallel_watch_lanes") or [])]
-    rebucket = dict(rebucket_bundle.get("rebucket_objective_row") or {})
+    return governance_overlays, resolved_upstream_handoff_board_path
 
+
+def _build_lane_pair_candidates(
+    *,
+    primary: dict[str, Any],
+    parallel: list[dict[str, Any]],
+    rebucket: dict[str, Any],
+    governance_overlays: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rebucket_ticker = _resolve_rebucket_ticker(rebucket)
     candidates = [
         _candidate_row(
             ticker=primary.get("ticker"),
@@ -257,7 +280,7 @@ def analyze_btst_candidate_pool_lane_pair_board(
             **governance_overlays.get(str(primary.get("ticker") or "").strip(), {}),
         ),
         _candidate_row(
-            ticker=rebucket.get("ticker") or (list(rebucket.get("tickers") or [])[:1] or [None])[0],
+            ticker=rebucket_ticker,
             lane_family="rebucket",
             role="structural_challenger",
             mean_t_plus_2_return=rebucket.get("mean_t_plus_2_return"),
@@ -265,7 +288,7 @@ def analyze_btst_candidate_pool_lane_pair_board(
             t_plus_2_return_hit_rate_at_target=rebucket.get("t_plus_2_return_hit_rate_at_target"),
             t_plus_2_positive_rate=rebucket.get("t_plus_2_positive_rate"),
             tractability_tier=rebucket.get("prototype_readiness"),
-            **governance_overlays.get(str((rebucket.get("ticker") or (list(rebucket.get("tickers") or [])[:1] or [None])[0]) or "").strip(), {}),
+            **governance_overlays.get(str(rebucket_ticker or "").strip(), {}),
         ),
     ]
     for row in parallel:
@@ -313,22 +336,17 @@ def analyze_btst_candidate_pool_lane_pair_board(
     )
     for index, row in enumerate(candidates, start=1):
         row["board_rank"] = index
+    return candidates
 
-    pair_status = "ready_for_ranked_comparison" if candidates else "skipped_missing_candidates"
-    board_leader = dict(candidates[0]) if candidates else {}
 
-    comparison = {
-        "corridor_primary_ticker": primary.get("ticker"),
-        "corridor_primary_objective_fit_score": primary.get("objective_fit_score"),
-        "corridor_primary_mean_t_plus_2_return": primary.get("mean_t_plus_2_return"),
-        "rebucket_ticker": rebucket.get("ticker") or (list(rebucket.get("tickers") or [])[:1] or [None])[0],
-        "rebucket_objective_fit_score": rebucket.get("objective_fit_score"),
-        "rebucket_mean_t_plus_2_return": rebucket.get("mean_t_plus_2_return"),
-        "alignment_status": rebucket_bundle.get("priority_alignment_status"),
-        "governance_overlay_count": len(governance_overlays),
-    }
+def _build_lane_pair_guidance(
+    *,
+    primary: dict[str, Any],
+    comparison: dict[str, Any],
+    board_leader: dict[str, Any],
+    governance_overlays: dict[str, dict[str, Any]],
+) -> tuple[str, list[str]]:
     has_active_rebucket_challenger = bool(comparison.get("rebucket_ticker"))
-
     if board_leader.get("lane_family") == "corridor":
         recommendation = (
             f"lane pair board 当前仍应由 corridor 主导，首选 ticker={board_leader.get('ticker')}。"
@@ -349,12 +367,12 @@ def analyze_btst_candidate_pool_lane_pair_board(
     next_actions = [
         f"保持 corridor primary ticker {primary.get('ticker') or 'N/A'} 为第一 replay 槽位。",
         "parallel_watch 只承担 confirmatory evidence，不允许直接替换 primary replay 优先级。",
+        (
+            f"保持 rebucket ticker {comparison.get('rebucket_ticker')} 为结构 challenger，对照 corridor 主槽位表现。"
+            if has_active_rebucket_challenger
+            else "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再恢复并行收益对照。"
+        ),
     ]
-    next_actions.append(
-        f"保持 rebucket ticker {comparison.get('rebucket_ticker')} 为结构 challenger，对照 corridor 主槽位表现。"
-        if has_active_rebucket_challenger
-        else "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再恢复并行收益对照。"
-    )
     if governance_overlays.get("300720", {}).get("governance_status"):
         if governance_overlays.get("300720", {}).get("governance_status") == "continuation_confirm_only_intraday_bias":
             next_actions.append("300720 继续保持 confirmation-only；盘中确认后可做 intraday 机会，但不要默认当成标准隔夜 BTST 持有。")
@@ -364,6 +382,57 @@ def analyze_btst_candidate_pool_lane_pair_board(
         next_actions.append("003036 保持 profitability-cliff parallel watch，不把单窗口 near-miss uplift 当成默认 BTST 放行证据。")
     if governance_overlays.get("301292", {}).get("governance_status"):
         next_actions.append("301292 保持 shadow-recall diagnostics，不进入 execution lanes。")
+    return recommendation, next_actions
+
+
+def analyze_btst_candidate_pool_lane_pair_board(
+    corridor_shadow_pack_path: str | Path,
+    rebucket_comparison_bundle_path: str | Path,
+    governance_synthesis_path: str | Path | None = None,
+    upstream_handoff_board_path: str | Path | None = None,
+) -> dict[str, Any]:
+    corridor_pack = _maybe_load_json(corridor_shadow_pack_path)
+    if not corridor_pack:
+        corridor_pack = analyze_btst_candidate_pool_corridor_shadow_pack(REPORTS_DIR / "btst_candidate_pool_corridor_validation_pack_latest.json")
+
+    rebucket_bundle = _maybe_load_json(rebucket_comparison_bundle_path)
+    if not rebucket_bundle:
+        rebucket_bundle = analyze_btst_candidate_pool_rebucket_comparison_bundle(REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json")
+
+    governance_overlays, resolved_upstream_handoff_board_path = _build_lane_pair_governance_overlays(
+        corridor_shadow_pack_path,
+        governance_synthesis_path,
+        upstream_handoff_board_path,
+    )
+    primary = dict(corridor_pack.get("primary_shadow_replay") or {})
+    parallel = [dict(row) for row in list(corridor_pack.get("parallel_watch_lanes") or [])]
+    rebucket = dict(rebucket_bundle.get("rebucket_objective_row") or {})
+    candidates = _build_lane_pair_candidates(
+        primary=primary,
+        parallel=parallel,
+        rebucket=rebucket,
+        governance_overlays=governance_overlays,
+    )
+
+    pair_status = "ready_for_ranked_comparison" if candidates else "skipped_missing_candidates"
+    board_leader = dict(candidates[0]) if candidates else {}
+
+    comparison = {
+        "corridor_primary_ticker": primary.get("ticker"),
+        "corridor_primary_objective_fit_score": primary.get("objective_fit_score"),
+        "corridor_primary_mean_t_plus_2_return": primary.get("mean_t_plus_2_return"),
+        "rebucket_ticker": _resolve_rebucket_ticker(rebucket),
+        "rebucket_objective_fit_score": rebucket.get("objective_fit_score"),
+        "rebucket_mean_t_plus_2_return": rebucket.get("mean_t_plus_2_return"),
+        "alignment_status": rebucket_bundle.get("priority_alignment_status"),
+        "governance_overlay_count": len(governance_overlays),
+    }
+    recommendation, next_actions = _build_lane_pair_guidance(
+        primary=primary,
+        comparison=comparison,
+        board_leader=board_leader,
+        governance_overlays=governance_overlays,
+    )
 
     return {
         "corridor_shadow_pack_path": str(Path(corridor_shadow_pack_path).expanduser().resolve()),

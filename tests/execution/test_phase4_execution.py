@@ -2011,8 +2011,10 @@ def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
     original_score_batch = daily_pipeline_module.score_batch
     original_fuse_batch = daily_pipeline_module.fuse_batch
     original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    original_load_latest_btst_historical_prior_by_ticker = daily_pipeline_module._load_latest_btst_historical_prior_by_ticker
     original_lane_score_mins = dict(daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS)
     try:
+        daily_pipeline_module._load_latest_btst_historical_prior_by_ticker = lambda: {}
         daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS = {
             "layer_a_liquidity_corridor": 0.35,
             "post_gate_liquidity_competition": 0.28,
@@ -2076,6 +2078,7 @@ def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
         daily_pipeline_module.score_batch = original_score_batch
         daily_pipeline_module.fuse_batch = original_fuse_batch
         daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+        daily_pipeline_module._load_latest_btst_historical_prior_by_ticker = original_load_latest_btst_historical_prior_by_ticker
         daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS = original_lane_score_mins
 
     diagnostics = plan.risk_metrics["funnel_diagnostics"]

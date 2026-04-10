@@ -49,6 +49,43 @@ def _extract_focus_watch_validation(governance_board: dict[str, Any], watchlist_
     }
 
 
+def _append_watchboard_row_section(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
+    lines.append(title)
+    for row in rows:
+        lines.append(
+            f"- ticker={row['ticker']} entry_type={row['entry_type']} lane_stage={row['lane_stage']} "
+            f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']} "
+            f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}"
+        )
+    if not rows:
+        lines.append("- none")
+    lines.append("")
+
+
+def _append_watchboard_validation_queue_section(lines: list[str], queue_rows: list[dict[str, Any]]) -> None:
+    lines.append("## Validation Queue")
+    for item in queue_rows:
+        lines.append(
+            f"- ticker={item['ticker']} priority_rank={item['priority_rank']} candidate_tier_focus={item['candidate_tier_focus']} "
+            f"recent_tier_verdict={item['recent_tier_verdict']} promotion_readiness_verdict={item['promotion_readiness_verdict']}"
+        )
+    if not queue_rows:
+        lines.append("- none")
+    lines.append("")
+
+
+def _append_watchboard_risk_flags_section(lines: list[str], risk_flags: list[dict[str, Any]]) -> None:
+    lines.append("## Risk Flags")
+    for item in risk_flags:
+        lines.append(
+            f"- ticker={item['ticker']} tier={item['tier']} reason={item['reason']} "
+            f"t_plus_2_close_return_mean={item['t_plus_2_close_return_mean']}"
+        )
+    if not risk_flags:
+        lines.append("- none")
+    lines.append("")
+
+
 def generate_btst_tplus2_continuation_watchboard(
     reports_root: str | Path,
     *,
@@ -172,54 +209,11 @@ def render_btst_tplus2_continuation_watchboard_markdown(analysis: dict[str, Any]
     lines.append(f"- focus_execution_gate: {analysis.get('focus_execution_gate')}")
     lines.append(f"- focus_execution_overlay: {analysis.get('focus_execution_overlay')}")
     lines.append("")
-    lines.append("## Watch Rows")
-    for row in list(analysis.get("watch_rows") or []):
-        lines.append(
-            f"- ticker={row['ticker']} entry_type={row['entry_type']} lane_stage={row['lane_stage']} "
-            f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']} "
-            f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}"
-        )
-    if not list(analysis.get("watch_rows") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Eligible Rows")
-    for row in list(analysis.get("eligible_rows") or []):
-        lines.append(
-            f"- ticker={row['ticker']} entry_type={row['entry_type']} lane_stage={row['lane_stage']} "
-            f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']} "
-            f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}"
-        )
-    if not list(analysis.get("eligible_rows") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Execution Rows")
-    for row in list(analysis.get("execution_rows") or []):
-        lines.append(
-            f"- ticker={row['ticker']} entry_type={row['entry_type']} lane_stage={row['lane_stage']} "
-            f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']} "
-            f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}"
-        )
-    if not list(analysis.get("execution_rows") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Validation Queue")
-    for item in list(analysis.get("validation_queue_rows") or []):
-        lines.append(
-            f"- ticker={item['ticker']} priority_rank={item['priority_rank']} candidate_tier_focus={item['candidate_tier_focus']} "
-            f"recent_tier_verdict={item['recent_tier_verdict']} promotion_readiness_verdict={item['promotion_readiness_verdict']}"
-        )
-    if not list(analysis.get("validation_queue_rows") or []):
-        lines.append("- none")
-    lines.append("")
-    lines.append("## Risk Flags")
-    for item in list(analysis.get("risk_flags") or []):
-        lines.append(
-            f"- ticker={item['ticker']} tier={item['tier']} reason={item['reason']} "
-            f"t_plus_2_close_return_mean={item['t_plus_2_close_return_mean']}"
-        )
-    if not list(analysis.get("risk_flags") or []):
-        lines.append("- none")
-    lines.append("")
+    _append_watchboard_row_section(lines, "## Watch Rows", list(analysis.get("watch_rows") or []))
+    _append_watchboard_row_section(lines, "## Eligible Rows", list(analysis.get("eligible_rows") or []))
+    _append_watchboard_row_section(lines, "## Execution Rows", list(analysis.get("execution_rows") or []))
+    _append_watchboard_validation_queue_section(lines, list(analysis.get("validation_queue_rows") or []))
+    _append_watchboard_risk_flags_section(lines, list(analysis.get("risk_flags") or []))
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
     return "\n".join(lines) + "\n"

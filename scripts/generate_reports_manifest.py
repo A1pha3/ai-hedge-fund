@@ -375,15 +375,11 @@ def _collapse_same_trade_date_followups_for_focus(followups: list[dict[str, Any]
     return collapsed
 
 
-def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str, Any]:
-    execution_overlay = _optional_report_json(reports_root / "btst_tplus2_continuation_execution_overlay_latest.json")
-    governance_synthesis = _optional_report_json(reports_root / "btst_governance_synthesis_latest.json")
-    objective_monitor = _optional_report_json(reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json")
-    adopted_execution_row = dict(execution_overlay.get("adopted_execution_row") or {})
-    focus_ticker = str(execution_overlay.get("focus_ticker") or adopted_execution_row.get("ticker") or "").strip()
-    if not focus_ticker:
-        return {}
-
+def _collect_continuation_promotion_followup_evidence(
+    governance_synthesis: dict[str, Any],
+    *,
+    focus_ticker: str,
+) -> dict[str, Any]:
     evidence_trade_dates: list[str] = []
     evidence_report_dirs: list[str] = []
     merge_review_evidence_trade_dates: list[str] = []
@@ -394,62 +390,62 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
     disqualified_window_buckets: list[str] = []
     qualifying_bucket_allowlist: list[str] = ["near_miss_entries", "selected_entries"]
     merge_review_bucket_allowlist: list[str] = ["selected_entries"]
-    collapsed_followups = _collapse_same_trade_date_followups_for_focus(list(governance_synthesis.get("evidence_btst_followups") or []), focus_ticker)
+    collapsed_followups = _collapse_same_trade_date_followups_for_focus(
+        list(governance_synthesis.get("evidence_btst_followups") or []),
+        focus_ticker,
+    )
     for followup in collapsed_followups:
         row = dict(followup or {})
         entries = [dict(entry or {}) for entry in list(row.get("entries") or [])]
         qualification = _qualify_continuation_window_focus_entries(entries, focus_ticker)
         focus_entries = list(qualification.get("focus_entries") or [])
-        if focus_entries:
-            trade_date = str(row.get("trade_date") or "").strip()
-            report_dir = str(row.get("report_dir") or "").strip()
-            focus_buckets = list(qualification.get("focus_buckets") or [])
-            qualifying_bucket_allowlist = list(qualification.get("qualifying_bucket_allowlist") or qualifying_bucket_allowlist)
-            merge_review_bucket_allowlist = list(qualification.get("merge_review_bucket_allowlist") or merge_review_bucket_allowlist)
-            if qualification.get("qualifies"):
-                qualifying_window_buckets.extend(focus_buckets)
-                if trade_date:
-                    evidence_trade_dates.append(trade_date)
-                if report_dir:
-                    evidence_report_dirs.append(report_dir)
-            if qualification.get("merge_review_qualifies"):
-                merge_review_window_buckets.extend(focus_buckets)
-                if trade_date:
-                    merge_review_evidence_trade_dates.append(trade_date)
-                if report_dir:
-                    merge_review_evidence_report_dirs.append(report_dir)
-            else:
-                disqualified_window_buckets.extend(focus_buckets)
-                if trade_date:
-                    disqualified_trade_dates.append(trade_date)
+        if not focus_entries:
+            continue
 
-    distinct_trade_dates = sorted(set(evidence_trade_dates))
-    distinct_report_dirs = sorted(set(evidence_report_dirs))
-    distinct_merge_review_trade_dates = sorted(set(merge_review_evidence_trade_dates))
-    distinct_merge_review_report_dirs = sorted(set(merge_review_evidence_report_dirs))
-    distinct_disqualified_trade_dates = sorted(set(disqualified_trade_dates))
-    candidate_dossier_support = _extract_candidate_dossier_support_trade_dates(reports_root, focus_ticker)
-    candidate_dossier_support_trade_dates = list(candidate_dossier_support.get("supporting_trade_dates") or [])
-    candidate_dossier_selected_support_trade_dates = list(candidate_dossier_support.get("selected_support_trade_dates") or [])
-    candidate_dossier_support_trade_date_count = int(candidate_dossier_support.get("supporting_trade_date_count") or 0)
-    combined_trade_dates = sorted(set(distinct_trade_dates) | set(candidate_dossier_support_trade_dates))
-    combined_merge_review_trade_dates = sorted(set(distinct_merge_review_trade_dates) | set(candidate_dossier_selected_support_trade_dates))
-    target_window_count = 2
+        trade_date = str(row.get("trade_date") or "").strip()
+        report_dir = str(row.get("report_dir") or "").strip()
+        focus_buckets = list(qualification.get("focus_buckets") or [])
+        qualifying_bucket_allowlist = list(qualification.get("qualifying_bucket_allowlist") or qualifying_bucket_allowlist)
+        merge_review_bucket_allowlist = list(qualification.get("merge_review_bucket_allowlist") or merge_review_bucket_allowlist)
+
+        if qualification.get("qualifies"):
+            qualifying_window_buckets.extend(focus_buckets)
+            if trade_date:
+                evidence_trade_dates.append(trade_date)
+            if report_dir:
+                evidence_report_dirs.append(report_dir)
+        if qualification.get("merge_review_qualifies"):
+            merge_review_window_buckets.extend(focus_buckets)
+            if trade_date:
+                merge_review_evidence_trade_dates.append(trade_date)
+            if report_dir:
+                merge_review_evidence_report_dirs.append(report_dir)
+            continue
+
+        disqualified_window_buckets.extend(focus_buckets)
+        if trade_date:
+            disqualified_trade_dates.append(trade_date)
+
+    return {
+        "evidence_trade_dates": sorted(set(evidence_trade_dates)),
+        "evidence_report_dirs": sorted(set(evidence_report_dirs)),
+        "merge_review_evidence_trade_dates": sorted(set(merge_review_evidence_trade_dates)),
+        "merge_review_evidence_report_dirs": sorted(set(merge_review_evidence_report_dirs)),
+        "disqualified_trade_dates": sorted(set(disqualified_trade_dates)),
+        "qualifying_window_buckets": sorted(set(qualifying_window_buckets)),
+        "merge_review_window_buckets": sorted(set(merge_review_window_buckets)),
+        "disqualified_window_buckets": sorted(set(disqualified_window_buckets)),
+        "qualifying_bucket_allowlist": qualifying_bucket_allowlist,
+        "merge_review_bucket_allowlist": merge_review_bucket_allowlist,
+    }
+
+
+def _build_continuation_promotion_edge_summary(
+    adopted_execution_row: dict[str, Any],
+    objective_monitor: dict[str, Any],
+) -> dict[str, Any]:
     required_positive_rate_delta = 0.1
     required_mean_return_delta = 0.02
-    exploratory_window_count = len(combined_trade_dates) or len(distinct_report_dirs)
-    observed_window_count = len(combined_merge_review_trade_dates) or len(distinct_merge_review_report_dirs)
-    candidate_dossier_same_trade_date_variant_credit = float(candidate_dossier_support.get("same_trade_date_variant_credit") or 0.0)
-    current_plan_visibility_summary = dict(candidate_dossier_support.get("current_plan_visibility_summary") or {})
-    weighted_observed_window_credit = round(min(float(target_window_count), observed_window_count + candidate_dossier_same_trade_date_variant_credit), 4)
-    weighted_missing_window_credit = round(max(0.0, float(target_window_count) - weighted_observed_window_credit), 4)
-    missing_window_count = max(target_window_count - observed_window_count, 0)
-    persistence_verdict = (
-        "independent_window_requirement_satisfied"
-        if observed_window_count >= target_window_count
-        else "await_additional_independent_window_persistence"
-    )
-
     tradeable_surface = dict(objective_monitor.get("tradeable_surface") or {})
     focus_positive_rate = adopted_execution_row.get("t_plus_2_close_positive_rate")
     default_positive_rate = tradeable_surface.get("t_plus_2_positive_rate")
@@ -473,6 +469,7 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
         edge_verdict = "mixed_edge_vs_default_btst"
     else:
         edge_verdict = "not_outperforming_default_btst"
+
     positive_rate_delta_gap_to_threshold = (
         round(required_positive_rate_delta - float(positive_rate_delta), 4) if positive_rate_delta is not None else None
     )
@@ -490,18 +487,47 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
     else:
         edge_threshold_verdict = "edge_threshold_not_satisfied"
 
+    return {
+        "required_positive_rate_delta": required_positive_rate_delta,
+        "required_mean_return_delta": required_mean_return_delta,
+        "focus_positive_rate": focus_positive_rate,
+        "default_positive_rate": default_positive_rate,
+        "positive_rate_delta": positive_rate_delta,
+        "positive_rate_delta_gap_to_threshold": positive_rate_delta_gap_to_threshold,
+        "focus_mean_return": focus_mean_return,
+        "default_mean_return": default_mean_return,
+        "mean_return_delta": mean_return_delta,
+        "mean_return_delta_gap_to_threshold": mean_return_delta_gap_to_threshold,
+        "edge_verdict": edge_verdict,
+        "edge_threshold_verdict": edge_threshold_verdict,
+    }
+
+
+def _build_continuation_promotion_path_summary(
+    *,
+    observed_window_count: int,
+    target_window_count: int,
+    edge_threshold_verdict: str,
+    distinct_trade_dates: list[str],
+) -> dict[str, Any]:
+    missing_window_count = max(target_window_count - observed_window_count, 0)
+    persistence_verdict = (
+        "independent_window_requirement_satisfied"
+        if observed_window_count >= target_window_count
+        else "await_additional_independent_window_persistence"
+    )
     if persistence_verdict != "independent_window_requirement_satisfied":
         promotion_merge_review_verdict = "await_additional_independent_window_persistence"
     elif edge_threshold_verdict != "edge_threshold_satisfied":
         promotion_merge_review_verdict = "await_stronger_edge_vs_default_btst"
     else:
         promotion_merge_review_verdict = "ready_for_default_btst_merge_review"
+
     unresolved_requirements: list[str] = []
     if missing_window_count > 0:
         unresolved_requirements.append("new_independent_trade_date")
     if edge_threshold_verdict != "edge_threshold_satisfied":
         unresolved_requirements.append("edge_threshold_vs_default_btst")
-    blockers_remaining_count = len(unresolved_requirements)
     ready_after_next_qualifying_window = bool(
         missing_window_count == 1 and edge_threshold_verdict == "edge_threshold_satisfied"
     )
@@ -528,10 +554,6 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
         if distinct_trade_dates
         else "must be a newly observed independent continuation trade_date"
     )
-    next_window_duplicate_trade_date_verdict = "independent_window_count_unchanged"
-    next_window_quality_requirement = "must land in selected_entries"
-    next_window_disqualified_bucket_verdict = "await_higher_quality_window_bucket"
-    next_window_edge_regression_merge_review_verdict = "await_stronger_edge_vs_default_btst"
     next_window_qualified_merge_review_verdict = (
         "ready_for_default_btst_merge_review"
         if ready_after_next_qualifying_window
@@ -541,7 +563,6 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
             else promotion_merge_review_verdict
         )
     )
-
     next_step = (
         "Wait for one more independent continuation window before governance can evaluate merge readiness."
         if promotion_merge_review_verdict == "await_additional_independent_window_persistence"
@@ -553,21 +574,82 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
     )
 
     return {
+        "missing_window_count": missing_window_count,
+        "persistence_verdict": persistence_verdict,
+        "promotion_merge_review_verdict": promotion_merge_review_verdict,
+        "unresolved_requirements": unresolved_requirements,
+        "blockers_remaining_count": len(unresolved_requirements),
+        "ready_after_next_qualifying_window": ready_after_next_qualifying_window,
+        "promotion_path_status": promotion_path_status,
+        "next_window_requirement": next_window_requirement,
+        "next_window_trade_date_rule": next_window_trade_date_rule,
+        "next_window_duplicate_trade_date_verdict": "independent_window_count_unchanged",
+        "next_window_quality_requirement": "must land in selected_entries",
+        "next_window_disqualified_bucket_verdict": "await_higher_quality_window_bucket",
+        "next_window_edge_regression_merge_review_verdict": "await_stronger_edge_vs_default_btst",
+        "next_window_qualified_merge_review_verdict": next_window_qualified_merge_review_verdict,
+        "next_step": next_step,
+    }
+
+
+def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str, Any]:
+    execution_overlay = _optional_report_json(reports_root / "btst_tplus2_continuation_execution_overlay_latest.json")
+    governance_synthesis = _optional_report_json(reports_root / "btst_governance_synthesis_latest.json")
+    objective_monitor = _optional_report_json(reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json")
+    adopted_execution_row = dict(execution_overlay.get("adopted_execution_row") or {})
+    focus_ticker = str(execution_overlay.get("focus_ticker") or adopted_execution_row.get("ticker") or "").strip()
+    if not focus_ticker:
+        return {}
+
+    followup_summary = _collect_continuation_promotion_followup_evidence(
+        governance_synthesis,
+        focus_ticker=focus_ticker,
+    )
+    distinct_trade_dates = list(followup_summary.get("evidence_trade_dates") or [])
+    distinct_report_dirs = list(followup_summary.get("evidence_report_dirs") or [])
+    distinct_merge_review_trade_dates = list(followup_summary.get("merge_review_evidence_trade_dates") or [])
+    distinct_merge_review_report_dirs = list(followup_summary.get("merge_review_evidence_report_dirs") or [])
+    distinct_disqualified_trade_dates = list(followup_summary.get("disqualified_trade_dates") or [])
+    candidate_dossier_support = _extract_candidate_dossier_support_trade_dates(reports_root, focus_ticker)
+    candidate_dossier_support_trade_dates = list(candidate_dossier_support.get("supporting_trade_dates") or [])
+    candidate_dossier_selected_support_trade_dates = list(candidate_dossier_support.get("selected_support_trade_dates") or [])
+    candidate_dossier_support_trade_date_count = int(candidate_dossier_support.get("supporting_trade_date_count") or 0)
+    combined_trade_dates = sorted(set(distinct_trade_dates) | set(candidate_dossier_support_trade_dates))
+    combined_merge_review_trade_dates = sorted(set(distinct_merge_review_trade_dates) | set(candidate_dossier_selected_support_trade_dates))
+    target_window_count = 2
+    exploratory_window_count = len(combined_trade_dates) or len(distinct_report_dirs)
+    observed_window_count = len(combined_merge_review_trade_dates) or len(distinct_merge_review_report_dirs)
+    candidate_dossier_same_trade_date_variant_credit = float(candidate_dossier_support.get("same_trade_date_variant_credit") or 0.0)
+    current_plan_visibility_summary = dict(candidate_dossier_support.get("current_plan_visibility_summary") or {})
+    weighted_observed_window_credit = round(min(float(target_window_count), observed_window_count + candidate_dossier_same_trade_date_variant_credit), 4)
+    weighted_missing_window_credit = round(max(0.0, float(target_window_count) - weighted_observed_window_credit), 4)
+    edge_summary = _build_continuation_promotion_edge_summary(
+        adopted_execution_row,
+        objective_monitor,
+    )
+    path_summary = _build_continuation_promotion_path_summary(
+        observed_window_count=observed_window_count,
+        target_window_count=target_window_count,
+        edge_threshold_verdict=str(edge_summary.get("edge_threshold_verdict") or ""),
+        distinct_trade_dates=distinct_trade_dates,
+    )
+
+    return {
         "focus_ticker": focus_ticker,
         "observed_independent_window_count": observed_window_count,
         "exploratory_window_count": exploratory_window_count,
         "target_independent_window_count": target_window_count,
-        "missing_independent_window_count": missing_window_count,
+        "missing_independent_window_count": path_summary["missing_window_count"],
         "evidence_trade_dates": distinct_trade_dates,
         "combined_evidence_trade_dates": combined_trade_dates,
         "merge_ready_evidence_trade_dates": distinct_merge_review_trade_dates,
         "combined_merge_ready_evidence_trade_dates": combined_merge_review_trade_dates,
-        "qualifying_bucket_allowlist": qualifying_bucket_allowlist,
-        "qualifying_window_buckets": sorted(set(qualifying_window_buckets)),
-        "merge_review_bucket_allowlist": merge_review_bucket_allowlist,
-        "merge_ready_window_buckets": sorted(set(merge_review_window_buckets)),
+        "qualifying_bucket_allowlist": followup_summary["qualifying_bucket_allowlist"],
+        "qualifying_window_buckets": followup_summary["qualifying_window_buckets"],
+        "merge_review_bucket_allowlist": followup_summary["merge_review_bucket_allowlist"],
+        "merge_ready_window_buckets": followup_summary["merge_review_window_buckets"],
         "disqualified_window_trade_dates": distinct_disqualified_trade_dates,
-        "disqualified_window_buckets": sorted(set(disqualified_window_buckets)),
+        "disqualified_window_buckets": followup_summary["disqualified_window_buckets"],
         "candidate_dossier_support_trade_dates": candidate_dossier_support_trade_dates,
         "candidate_dossier_support_trade_date_count": candidate_dossier_support_trade_date_count,
         "candidate_dossier_selected_support_trade_dates": candidate_dossier_selected_support_trade_dates,
@@ -587,32 +669,32 @@ def _build_continuation_promotion_ready_summary(reports_root: Path) -> dict[str,
         "candidate_dossier_recent_tier_verdict": candidate_dossier_support.get("recent_tier_verdict"),
         "weighted_observed_window_credit": weighted_observed_window_credit,
         "weighted_missing_window_credit": weighted_missing_window_credit,
-        "promotion_path_status": promotion_path_status,
-        "blockers_remaining_count": blockers_remaining_count,
-        "unresolved_requirements": unresolved_requirements,
-        "persistence_verdict": persistence_verdict,
-        "provisional_default_btst_edge_verdict": edge_verdict,
-        "required_positive_rate_delta_vs_default_btst": required_positive_rate_delta,
-        "required_mean_return_delta_vs_default_btst": required_mean_return_delta,
-        "focus_t_plus_2_positive_rate": focus_positive_rate,
-        "default_btst_t_plus_2_positive_rate": default_positive_rate,
-        "t_plus_2_positive_rate_delta_vs_default_btst": positive_rate_delta,
-        "t_plus_2_positive_rate_delta_gap_to_threshold": positive_rate_delta_gap_to_threshold,
-        "focus_t_plus_2_mean_return": focus_mean_return,
-        "default_btst_t_plus_2_mean_return": default_mean_return,
-        "t_plus_2_mean_return_delta_vs_default_btst": mean_return_delta,
-        "t_plus_2_mean_return_delta_gap_to_threshold": mean_return_delta_gap_to_threshold,
-        "edge_threshold_verdict": edge_threshold_verdict,
-        "promotion_merge_review_verdict": promotion_merge_review_verdict,
-        "ready_after_next_qualifying_window": ready_after_next_qualifying_window,
-        "next_window_requirement": next_window_requirement,
-        "next_window_trade_date_rule": next_window_trade_date_rule,
-        "next_window_duplicate_trade_date_verdict": next_window_duplicate_trade_date_verdict,
-        "next_window_quality_requirement": next_window_quality_requirement,
-        "next_window_disqualified_bucket_verdict": next_window_disqualified_bucket_verdict,
-        "next_window_edge_regression_merge_review_verdict": next_window_edge_regression_merge_review_verdict,
-        "next_window_qualified_merge_review_verdict": next_window_qualified_merge_review_verdict,
-        "next_step": next_step,
+        "promotion_path_status": path_summary["promotion_path_status"],
+        "blockers_remaining_count": path_summary["blockers_remaining_count"],
+        "unresolved_requirements": path_summary["unresolved_requirements"],
+        "persistence_verdict": path_summary["persistence_verdict"],
+        "provisional_default_btst_edge_verdict": edge_summary["edge_verdict"],
+        "required_positive_rate_delta_vs_default_btst": edge_summary["required_positive_rate_delta"],
+        "required_mean_return_delta_vs_default_btst": edge_summary["required_mean_return_delta"],
+        "focus_t_plus_2_positive_rate": edge_summary["focus_positive_rate"],
+        "default_btst_t_plus_2_positive_rate": edge_summary["default_positive_rate"],
+        "t_plus_2_positive_rate_delta_vs_default_btst": edge_summary["positive_rate_delta"],
+        "t_plus_2_positive_rate_delta_gap_to_threshold": edge_summary["positive_rate_delta_gap_to_threshold"],
+        "focus_t_plus_2_mean_return": edge_summary["focus_mean_return"],
+        "default_btst_t_plus_2_mean_return": edge_summary["default_mean_return"],
+        "t_plus_2_mean_return_delta_vs_default_btst": edge_summary["mean_return_delta"],
+        "t_plus_2_mean_return_delta_gap_to_threshold": edge_summary["mean_return_delta_gap_to_threshold"],
+        "edge_threshold_verdict": edge_summary["edge_threshold_verdict"],
+        "promotion_merge_review_verdict": path_summary["promotion_merge_review_verdict"],
+        "ready_after_next_qualifying_window": path_summary["ready_after_next_qualifying_window"],
+        "next_window_requirement": path_summary["next_window_requirement"],
+        "next_window_trade_date_rule": path_summary["next_window_trade_date_rule"],
+        "next_window_duplicate_trade_date_verdict": path_summary["next_window_duplicate_trade_date_verdict"],
+        "next_window_quality_requirement": path_summary["next_window_quality_requirement"],
+        "next_window_disqualified_bucket_verdict": path_summary["next_window_disqualified_bucket_verdict"],
+        "next_window_edge_regression_merge_review_verdict": path_summary["next_window_edge_regression_merge_review_verdict"],
+        "next_window_qualified_merge_review_verdict": path_summary["next_window_qualified_merge_review_verdict"],
+        "next_step": path_summary["next_step"],
     }
 
 
