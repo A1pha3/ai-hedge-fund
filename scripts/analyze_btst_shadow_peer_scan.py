@@ -6,7 +6,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_SHADOW_EXPANSION_PATH = REPORTS_DIR / "p4_shadow_entry_expansion_board_300383_20260330.json"
 DEFAULT_FRONTIER_REPORT_PATH = REPORTS_DIR / "short_trade_boundary_score_failures_frontier_catalyst_floor_zero_refresh_20260401.json"
@@ -69,7 +68,7 @@ def analyze_btst_shadow_peer_scan(
         )
     )
     same_rule_peer_rows = [row for row in peer_rows if row["peer_class"] == "threshold_only"]
-    redirect_candidates = [row for row in peer_rows if row["ticker"] in {"300113", "600821"}]
+    redirect_candidates = [row for row in peer_rows if str(row.get("lane_type") or "") == "recurring_frontier_release"]
 
     if same_rule_peer_rows:
         peer_scan_verdict = "same_rule_peer_exists"
@@ -107,9 +106,7 @@ def render_btst_shadow_peer_scan_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Priority Peers")
     for row in analysis["priority_peer_rows"]:
-        lines.append(
-            f"- ticker={row['ticker']} peer_class={row['peer_class']} occurrence_count={row['occurrence_count']} minimal_adjustment_cost={row['minimal_adjustment_cost']} scoreboard_rank={row['scoreboard_rank']} lane_type={row['lane_type']}"
-        )
+        lines.append(f"- ticker={row['ticker']} peer_class={row['peer_class']} occurrence_count={row['occurrence_count']} minimal_adjustment_cost={row['minimal_adjustment_cost']} scoreboard_rank={row['scoreboard_rank']} lane_type={row['lane_type']}")
     if not analysis["priority_peer_rows"]:
         lines.append("- none")
     lines.append("")

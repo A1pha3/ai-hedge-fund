@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_SHADOW_EXPANSION_BOARD_PATH = REPORTS_DIR / "p4_shadow_entry_expansion_board_300383_20260330.json"
 DEFAULT_RECURRING_PAIR_COMPARISON_PATH = REPORTS_DIR / "recurring_frontier_release_pair_comparison_600821_vs_300113_catalyst_floor_zero_refresh_20260401.json"
@@ -41,13 +40,20 @@ def analyze_btst_shadow_lane_priority(
     shadow_expansion_board_path: str | Path,
     *,
     recurring_pair_comparison_path: str | Path,
-    recurring_close_candidate_path: str | Path,
-    recurring_intraday_control_path: str | Path,
+    recurring_close_candidate_path: str | Path | None = None,
+    recurring_intraday_control_path: str | Path | None = None,
+    recurring_002015_path: str | Path | None = None,
+    recurring_600821_path: str | Path | None = None,
 ) -> dict[str, Any]:
     shadow_board = _load_json(shadow_expansion_board_path)
     pair_comparison = _load_json(recurring_pair_comparison_path)
-    close_candidate_report = _load_json(recurring_close_candidate_path)
-    intraday_control_report = _load_json(recurring_intraday_control_path)
+    resolved_close_candidate_path = recurring_close_candidate_path or recurring_002015_path
+    resolved_intraday_control_path = recurring_intraday_control_path or recurring_600821_path
+    if resolved_close_candidate_path is None or resolved_intraday_control_path is None:
+        raise ValueError("Both recurring close-candidate and intraday-control reports are required")
+
+    close_candidate_report = _load_json(resolved_close_candidate_path)
+    intraday_control_report = _load_json(resolved_intraday_control_path)
 
     close_candidate_ticker = str(close_candidate_report.get("ticker") or "close_candidate")
     intraday_control_ticker = str(intraday_control_report.get("ticker") or "intraday_control")
@@ -84,10 +90,7 @@ def analyze_btst_shadow_lane_priority(
         row["priority_rank"] = index
 
     if expansion_constraint == "300383_same_rule_expansion_blocked":
-        recommendation = (
-            "300383 继续保留单票 shadow entry，但下一条可推进的 shadow 扩展路线应切到 recurring frontier。"
-            f"其中 {close_candidate_ticker} 优先作为 close-continuation shadow 候选，{intraday_control_ticker} 作为 intraday control。"
-        )
+        recommendation = "300383 继续保留单票 shadow entry，但下一条可推进的 shadow 扩展路线应切到 recurring frontier。" f"其中 {close_candidate_ticker} 优先作为 close-continuation shadow 候选，{intraday_control_ticker} 作为 intraday control。"
     else:
         recommendation = "300383 之外仍有同规则 threshold-only peer，可继续优先做同规则 shadow 扩展。"
 
@@ -133,9 +136,7 @@ def render_btst_shadow_lane_priority_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Lanes")
     for row in analysis["lane_rows"]:
-        lines.append(
-            f"- rank={row['priority_rank']} ticker={row['ticker']} lane_role={row['lane_role']} target_case_count={row['target_case_count']} next_high_return_mean={row['next_high_return_mean']} next_close_return_mean={row['next_close_return_mean']} next_close_positive_rate={row['next_close_positive_rate']}"
-        )
+        lines.append(f"- rank={row['priority_rank']} ticker={row['ticker']} lane_role={row['lane_role']} target_case_count={row['target_case_count']} next_high_return_mean={row['next_high_return_mean']} next_close_return_mean={row['next_close_return_mean']} next_close_positive_rate={row['next_close_positive_rate']}")
         lines.append(f"  why_now: {row['why_now']}")
         lines.append(f"  next_step: {row['next_step']}")
     lines.append("")

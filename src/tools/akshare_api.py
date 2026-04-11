@@ -10,9 +10,6 @@ A股数据接口模块 - 使用 AKShare 获取中国股票数据
 """
 
 import datetime
-import concurrent.futures
-import hashlib
-import json
 import os
 from typing import Any, Dict, List, Optional
 
@@ -21,14 +18,23 @@ from pydantic import BaseModel
 
 from src.data.enhanced_cache import get_cache, get_enhanced_cache
 from src.data.models import (
-    CompanyNews,
     FinancialMetrics,
-    InsiderTrade,
-    LineItem,
     Price,
 )
 from src.tools.akshare_news_helpers import build_company_news_entry, news_date_in_range, normalize_news_symbol, resolve_stock_name, sort_news_dataframe
 from src.tools.akshare_price_helpers import build_prices_from_dataframe, dump_prices_for_cache, hydrate_cached_prices
+from src.tools.akshare_runtime_helpers import (
+    SINA_QUOTE_HEADERS,
+    cached_akshare_dataframe_call as _cached_akshare_dataframe_call_impl,
+    create_session as _create_session_impl,
+    disable_proxy_temporarily as _disable_proxy_temporarily_impl,
+    disable_system_proxies as _disable_system_proxies_impl,
+    make_akshare_df_cache_key as _make_akshare_df_cache_key_impl,
+    normalize_akshare_cache_value as _normalize_akshare_cache_value_impl,
+    parse_sina_realtime_quote_text,
+    resolve_akshare_cache_ttl as _resolve_akshare_cache_ttl_impl,
+    restore_proxies as _restore_proxies_impl,
+)
 
 # Global cache instance
 _cache = get_cache()
@@ -54,60 +60,26 @@ class AShareDataError(Exception):
 
 
 def _normalize_akshare_cache_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(key): _normalize_akshare_cache_value(inner_value) for key, inner_value in sorted(value.items()) if inner_value is not None}
-    if isinstance(value, (list, tuple, set)):
-        return [_normalize_akshare_cache_value(item) for item in value]
-    return value
+    return _normalize_akshare_cache_value_impl(value)
 
 
 def _make_akshare_df_cache_key(api_name: str, **kwargs) -> str:
-    payload = json.dumps({"api_name": api_name, "params": _normalize_akshare_cache_value(kwargs)}, sort_keys=True, ensure_ascii=True, default=str)
-    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()
-    return f"akshare_df:{api_name}:{digest}"
+    return _make_akshare_df_cache_key_impl(api_name, **kwargs)
 
 
 def _resolve_akshare_cache_ttl(api_name: str, **kwargs) -> int:
-    reference_date = str(kwargs.get("end_date") or kwargs.get("start_date") or "")
-    today = datetime.datetime.now().strftime("%Y%m%d")
-    is_historical = bool(reference_date) and reference_date < today
-
-    if api_name in {"stock_zh_a_hist"}:
-        return 30 * 86400 if is_historical else 6 * 3600
-    if api_name in {"stock_financial_analysis_indicator", "stock_financial_report_sina"}:
-        return 14 * 86400
-    if api_name in {"stock_news_em"}:
-        return 6 * 3600
-    return 24 * 3600
+    return _resolve_akshare_cache_ttl_impl(api_name, **kwargs)
 
 
 def _cached_akshare_dataframe_call(api_name: str, func, ttl: Optional[int] = None, **kwargs) -> Optional[pd.DataFrame]:
-    cache_key = _make_akshare_df_cache_key(api_name, **kwargs)
-    cached_df = _persistent_cache.get(cache_key)
-    if isinstance(cached_df, pd.DataFrame):
-        return cached_df.copy()
-
-    try:
-        if api_name == "stock_news_em" and AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS > 0:
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            future = executor.submit(func, **kwargs)
-            try:
-                df = future.result(timeout=AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS)
-            except concurrent.futures.TimeoutError as exc:
-                future.cancel()
-                raise TimeoutError(f"AKShare {api_name} timed out after {AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS}s") from exc
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
-        else:
-            df = func(**kwargs)
-    except Exception:
-        raise
-
-    if df is not None:
-        _persistent_cache.set(cache_key, df, ttl=ttl if ttl is not None else _resolve_akshare_cache_ttl(api_name, **kwargs))
-        return df.copy()
-
-    return None
+    return _cached_akshare_dataframe_call_impl(
+        api_name,
+        func,
+        persistent_cache=_persistent_cache,
+        stock_news_timeout_seconds=AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS,
+        ttl=ttl,
+        **kwargs,
+    )
 
 
 class AShareTicker(BaseModel):
@@ -162,30 +134,12 @@ def _get_akshare():
 
 def _create_session():
     """创建一个禁用代理的 requests Session"""
-    import requests
-
-    session = requests.Session()
-    session.trust_env = False  # 禁用环境变量中的代理设置
-    return session
+    return _create_session_impl()
 
 
 def _disable_proxy_temporarily():
     """临时禁用系统代理（装饰器）"""
-    import functools
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            saved_proxies_env = _disable_system_proxies()
-
-            try:
-                return func(*args, **kwargs)
-            finally:
-                _restore_proxies(saved_proxies_env)
-
-        return wrapper
-
-    return decorator
+    return _disable_proxy_temporarily_impl(_disable_system_proxies, _restore_proxies)
 
 
 def get_realtime_quote_sina(ticker: str) -> Dict[str, Any]:
@@ -205,71 +159,11 @@ def get_realtime_quote_sina(ticker: str) -> Dict[str, Any]:
         symbol = ashare.full_code
 
         url = f"https://hq.sinajs.cn/list={symbol}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://finance.sina.com.cn",
-        }
-
-        response = session.get(url, headers=headers, timeout=30)
+        response = session.get(url, headers=SINA_QUOTE_HEADERS, timeout=30)
 
         if response.status_code != 200:
             raise AShareDataError(f"新浪 API 返回错误状态码: {response.status_code}")
-
-        # 解析新浪返回的数据格式
-        # var hq_str_sh600519="贵州茅台,1521.000,1485.300,1466.800,...";
-        text = response.text
-        if not text or "hq_str_" not in text:
-            raise AShareDataError("新浪 API 返回数据格式错误")
-
-        # 提取数据部分
-        start = text.find('"') + 1
-        end = text.rfind('"')
-        if start <= 0 or end <= start:
-            raise AShareDataError("无法解析新浪返回的数据")
-
-        data_str = text[start:end]
-        parts = data_str.split(",")
-
-        if len(parts) < 33:
-            raise AShareDataError("新浪返回的数据字段不完整")
-
-        # 新浪数据字段映射
-        result = {
-            "name": parts[0],  # 股票名称
-            "open": float(parts[1]),  # 今日开盘价
-            "close": float(parts[2]),  # 昨日收盘价
-            "current": float(parts[3]),  # 当前价格
-            "high": float(parts[4]),  # 今日最高价
-            "low": float(parts[5]),  # 今日最低价
-            "buy": float(parts[6]),  # 竞买价
-            "sell": float(parts[7]),  # 竞卖价
-            "volume": int(parts[8]),  # 成交量（股）
-            "amount": float(parts[9]),  # 成交金额（元）
-            "bid1_volume": int(parts[10]),  # 买1量
-            "bid1_price": float(parts[11]),  # 买1价
-            "bid2_volume": int(parts[12]),
-            "bid2_price": float(parts[13]),
-            "bid3_volume": int(parts[14]),
-            "bid3_price": float(parts[15]),
-            "bid4_volume": int(parts[16]),
-            "bid4_price": float(parts[17]),
-            "bid5_volume": int(parts[18]),
-            "bid5_price": float(parts[19]),
-            "ask1_volume": int(parts[20]),  # 卖1量
-            "ask1_price": float(parts[21]),  # 卖1价
-            "ask2_volume": int(parts[22]),
-            "ask2_price": float(parts[23]),
-            "ask3_volume": int(parts[24]),
-            "ask3_price": float(parts[25]),
-            "ask4_volume": int(parts[26]),
-            "ask4_price": float(parts[27]),
-            "ask5_volume": int(parts[28]),
-            "ask5_price": float(parts[29]),
-            "date": parts[30],  # 日期
-            "time": parts[31],  # 时间
-        }
-
-        return result
+        return parse_sina_realtime_quote_text(response.text, AShareDataError)
 
     except Exception as e:
         if isinstance(e, AShareDataError):
@@ -279,21 +173,12 @@ def get_realtime_quote_sina(ticker: str) -> Dict[str, Any]:
 
 def _disable_system_proxies():
     """禁用系统代理设置，返回原始设置用于恢复"""
-    proxy_vars = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy", "SOCKS_PROXY", "socks_proxy"]
-    saved = {}
-
-    for var in proxy_vars:
-        if var in os.environ:
-            saved[var] = os.environ[var]
-            del os.environ[var]
-
-    return saved
+    return _disable_system_proxies_impl()
 
 
 def _restore_proxies(saved: dict):
     """恢复系统代理设置"""
-    for var, value in saved.items():
-        os.environ[var] = value
+    _restore_proxies_impl(saved)
 
 
 def _get_prices_from_tencent(ticker: str, start_date: str, end_date: str) -> List[Price]:

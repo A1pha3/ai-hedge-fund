@@ -9,6 +9,77 @@ class _FallbackSignal(BaseModel):
     signal: str
 
 
+class _FakeModelInfo:
+    def __init__(self, has_json_mode: bool):
+        self._has_json_mode = has_json_mode
+
+    def has_json_mode(self):
+        return self._has_json_mode
+
+
+class _FakeStructuredLLM:
+    def __init__(self, provider, model_name, api_key, calls, failing_api_keys=None):
+        self.provider = provider
+        self.model_name = model_name
+        self.api_key = api_key
+        self._calls = calls
+        self._failing_api_keys = set(failing_api_keys or [])
+
+    def invoke(self, prompt):
+        self._calls.append((self.provider, self.model_name, self.api_key, "invoke", prompt))
+        if self.api_key in self._failing_api_keys:
+            raise RuntimeError("429 too many requests")
+        return _FallbackSignal(signal="ok")
+
+
+class _FakeLLM:
+    def __init__(self, provider, model_name, api_key, calls, failing_api_keys=None, raw_invoke_error=None):
+        self.provider = provider
+        self.model_name = model_name
+        self.api_key = api_key
+        self._calls = calls
+        self._failing_api_keys = set(failing_api_keys or [])
+        self._raw_invoke_error = raw_invoke_error
+
+    def with_structured_output(self, pydantic_model, method="json_mode"):
+        self._calls.append((self.provider, self.model_name, self.api_key, "with_structured_output", method, pydantic_model.__name__))
+        return _FakeStructuredLLM(self.provider, self.model_name, self.api_key, self._calls, self._failing_api_keys)
+
+    def invoke(self, prompt):
+        self._calls.append((self.provider, self.model_name, self.api_key, "invoke", prompt))
+        if self.api_key in self._failing_api_keys:
+            raise RuntimeError("429 too many requests")
+        if self._raw_invoke_error is not None:
+            raise self._raw_invoke_error
+        return type("Response", (), {"content": '{"signal": "ok"}'})()
+
+
+def _extract_first_available_api_key(api_keys):
+    if not api_keys:
+        return None
+    return api_keys.get("ZHIPU_CODE_API_KEY") or api_keys.get("MINIMAX_API_KEY") or api_keys.get("ZHIPU_API_KEY")
+
+
+def _patch_priority_strategy_test_doubles(monkeypatch, calls, *, failing_api_keys=None, raw_invoke_error=None):
+    monkeypatch.setattr(
+        llm_utils,
+        "get_model_info",
+        lambda model_name, model_provider: _FakeModelInfo(has_json_mode=str(model_provider) == "Zhipu"),
+    )
+    monkeypatch.setattr(
+        llm_utils,
+        "get_model",
+        lambda model_name, model_provider, api_keys=None: _FakeLLM(
+            str(model_provider),
+            model_name,
+            _extract_first_available_api_key(api_keys),
+            calls,
+            failing_api_keys=failing_api_keys,
+            raw_invoke_error=raw_invoke_error,
+        ),
+    )
+
+
 def setup_function():
     reset_llm_metrics_for_testing()
     llm_utils._reset_provider_rate_limit_cooldowns_for_testing()
@@ -120,37 +191,6 @@ def test_call_llm_prefers_coding_plan_before_other_supported_providers(monkeypat
     calls = []
     expected_coding_model = llm_utils.DEFAULT_ZHIPU_CODING_PLAN_FALLBACK_MODEL
 
-    class FakeModelInfo:
-        def __init__(self, has_json_mode: bool):
-            self._has_json_mode = has_json_mode
-
-        def has_json_mode(self):
-            return self._has_json_mode
-
-    class FakeStructuredLLM:
-        def __init__(self, provider, model_name, api_key):
-            self.provider = provider
-            self.model_name = model_name
-            self.api_key = api_key
-
-        def invoke(self, prompt):
-            calls.append((self.provider, self.model_name, self.api_key, "invoke", prompt))
-            return _FallbackSignal(signal="ok")
-
-    class FakeLLM:
-        def __init__(self, provider, model_name, api_key):
-            self.provider = provider
-            self.model_name = model_name
-            self.api_key = api_key
-
-        def with_structured_output(self, pydantic_model, method="json_mode"):
-            calls.append((self.provider, self.model_name, self.api_key, "with_structured_output", method, pydantic_model.__name__))
-            return FakeStructuredLLM(self.provider, self.model_name, self.api_key)
-
-        def invoke(self, prompt):
-            calls.append((self.provider, self.model_name, self.api_key, "invoke", prompt))
-            return type("Response", (), {"content": '{"signal": "ok"}'})()
-
     monkeypatch.setenv("ZHIPU_API_KEY", "test-key")
     monkeypatch.setenv("ZHIPU_CODE_API_KEY", "coding-key")
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
@@ -159,19 +199,7 @@ def test_call_llm_prefers_coding_plan_before_other_supported_providers(monkeypat
     monkeypatch.delenv("ZHIPU_FALLBACK_MODEL", raising=False)
     monkeypatch.delenv("ZHIPU_CODING_FALLBACK_MODEL", raising=False)
     monkeypatch.setattr(llm_utils, "get_agent_model_config", lambda state, agent_name: ("MiniMax-M2.5", "MiniMax"))
-    monkeypatch.setattr(
-        llm_utils,
-        "get_model_info",
-        lambda model_name, model_provider: FakeModelInfo(has_json_mode=str(model_provider) == "Zhipu"),
-    )
-
-    def fake_get_model(model_name, model_provider, api_keys=None):
-        api_key = None
-        if api_keys:
-            api_key = api_keys.get("ZHIPU_CODE_API_KEY") or api_keys.get("MINIMAX_API_KEY") or api_keys.get("ZHIPU_API_KEY")
-        return FakeLLM(str(model_provider), model_name, api_key)
-
-    monkeypatch.setattr(llm_utils, "get_model", fake_get_model)
+    _patch_priority_strategy_test_doubles(monkeypatch, calls)
 
     result = call_llm(
         prompt="hello",
@@ -192,57 +220,12 @@ def test_call_llm_falls_back_from_coding_plan_to_minimax_to_standard_zhipu(monke
     expected_standard_model = llm_utils.DEFAULT_ZHIPU_FALLBACK_MODEL
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
-    class FakeModelInfo:
-        def __init__(self, has_json_mode: bool):
-            self._has_json_mode = has_json_mode
-
-        def has_json_mode(self):
-            return self._has_json_mode
-
-    class FakeStructuredLLM:
-        def __init__(self, provider, model_name, api_key):
-            self.provider = provider
-            self.model_name = model_name
-            self.api_key = api_key
-
-        def invoke(self, prompt):
-            calls.append((self.provider, self.model_name, self.api_key, "invoke", prompt))
-            if self.api_key in {"coding-key", "minimax-key"}:
-                raise RuntimeError("429 too many requests")
-            return _FallbackSignal(signal="ok")
-
-    class FakeLLM:
-        def __init__(self, provider, model_name, api_key):
-            self.provider = provider
-            self.model_name = model_name
-            self.api_key = api_key
-
-        def with_structured_output(self, pydantic_model, method="json_mode"):
-            calls.append((self.provider, self.model_name, self.api_key, "with_structured_output", method, pydantic_model.__name__))
-            return FakeStructuredLLM(self.provider, self.model_name, self.api_key)
-
-        def invoke(self, prompt):
-            calls.append((self.provider, self.model_name, self.api_key, "invoke", prompt))
-            raise RuntimeError("429 too many requests")
-
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_CODE_API_KEY", "coding-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "standard-key")
     monkeypatch.delenv("ZHIPU_MODEL", raising=False)
     monkeypatch.setattr(llm_utils, "get_agent_model_config", lambda state, agent_name: ("MiniMax-M2.5", "MiniMax"))
-    monkeypatch.setattr(
-        llm_utils,
-        "get_model_info",
-        lambda model_name, model_provider: FakeModelInfo(has_json_mode=str(model_provider) == "Zhipu"),
-    )
-
-    def fake_get_model(model_name, model_provider, api_keys=None):
-        api_key = None
-        if api_keys:
-            api_key = api_keys.get("ZHIPU_CODE_API_KEY") or api_keys.get("MINIMAX_API_KEY") or api_keys.get("ZHIPU_API_KEY")
-        return FakeLLM(str(model_provider), model_name, api_key)
-
-    monkeypatch.setattr(llm_utils, "get_model", fake_get_model)
+    _patch_priority_strategy_test_doubles(monkeypatch, calls, failing_api_keys={"coding-key", "minimax-key"})
 
     result = call_llm(
         prompt="hello",

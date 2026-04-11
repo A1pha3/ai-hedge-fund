@@ -2,19 +2,30 @@ from __future__ import annotations
 
 import json
 import re
-from contextlib import contextmanager
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.backend.database.connection import SessionLocal
-from app.backend.database.connection import Base
-from app.backend.database.models import ReplayResearchFeedbackLedger, ReplayResearchFeedbackWorkflowItem
-from src.research.feedback import append_research_feedback, read_research_feedback, summarize_research_feedback, summarize_research_feedback_directory
-from src.research.models import RESEARCH_FEEDBACK_ALLOWED_REVIEW_STATUS, RESEARCH_FEEDBACK_ALLOWED_TAGS, ResearchFeedbackRecord
+from app.backend.database.connection import Base, SessionLocal
+from app.backend.database.models import (
+    ReplayResearchFeedbackLedger,
+    ReplayResearchFeedbackWorkflowItem,
+)
+from src.research.feedback import (
+    append_research_feedback,
+    read_research_feedback,
+    summarize_research_feedback,
+    summarize_research_feedback_directory,
+)
+from src.research.models import (
+    RESEARCH_FEEDBACK_ALLOWED_REVIEW_STATUS,
+    RESEARCH_FEEDBACK_ALLOWED_TAGS,
+    ResearchFeedbackRecord,
+)
 
 
 class ReplayArtifactService:
@@ -342,14 +353,7 @@ class ReplayArtifactService:
         self._sync_workflow_items(report_name=report_name)
 
         with self._db_session() as db:
-            item = (
-                db.query(ReplayResearchFeedbackWorkflowItem)
-                .filter(ReplayResearchFeedbackWorkflowItem.report_name == report_name)
-                .filter(ReplayResearchFeedbackWorkflowItem.trade_date == trade_date)
-                .filter(ReplayResearchFeedbackWorkflowItem.symbol == symbol)
-                .filter(ReplayResearchFeedbackWorkflowItem.review_scope == review_scope)
-                .one_or_none()
-            )
+            item = db.query(ReplayResearchFeedbackWorkflowItem).filter(ReplayResearchFeedbackWorkflowItem.report_name == report_name).filter(ReplayResearchFeedbackWorkflowItem.trade_date == trade_date).filter(ReplayResearchFeedbackWorkflowItem.symbol == symbol).filter(ReplayResearchFeedbackWorkflowItem.review_scope == review_scope).one_or_none()
             if item is None:
                 raise FileNotFoundError(f"Workflow item not found: {report_name}/{trade_date}/{symbol}/{review_scope}")
 
@@ -575,14 +579,7 @@ class ReplayArtifactService:
                 latest_by_key.setdefault((row.report_name, row.trade_date, row.symbol, row.review_scope), row)
 
             for row in latest_by_key.values():
-                item = (
-                    db.query(ReplayResearchFeedbackWorkflowItem)
-                    .filter(ReplayResearchFeedbackWorkflowItem.report_name == row.report_name)
-                    .filter(ReplayResearchFeedbackWorkflowItem.trade_date == row.trade_date)
-                    .filter(ReplayResearchFeedbackWorkflowItem.symbol == row.symbol)
-                    .filter(ReplayResearchFeedbackWorkflowItem.review_scope == row.review_scope)
-                    .one_or_none()
-                )
+                item = db.query(ReplayResearchFeedbackWorkflowItem).filter(ReplayResearchFeedbackWorkflowItem.report_name == row.report_name).filter(ReplayResearchFeedbackWorkflowItem.trade_date == row.trade_date).filter(ReplayResearchFeedbackWorkflowItem.symbol == row.symbol).filter(ReplayResearchFeedbackWorkflowItem.review_scope == row.review_scope).one_or_none()
                 if item is None:
                     item = ReplayResearchFeedbackWorkflowItem(
                         report_name=row.report_name,
@@ -628,81 +625,109 @@ class ReplayArtifactService:
                 return float(last_value)
         return 0.0
 
-    def _derive_daily_event_metrics(self, daily_events: list[dict[str, Any]], session_summary: dict[str, Any]) -> dict[str, Any]:
-        layer_b_values: list[float] = []
-        watchlist_values: list[float] = []
-        buy_order_values: list[float] = []
-        buy_blockers: Counter[str] = Counter()
-        watch_blockers: Counter[str] = Counter()
-        invested_ratios: list[float] = []
-        peak_invested_ratio = 0.0
+    def _accumulate_daily_event_record(
+        self,
+        record: dict[str, Any],
+        *,
+        initial_capital: float,
+        layer_b_values: list[float],
+        watchlist_values: list[float],
+        buy_order_values: list[float],
+        buy_blockers: Counter[str],
+        watch_blockers: Counter[str],
+        invested_ratios: list[float],
+        ticker_buy_counts: Counter[str],
+        ticker_sell_counts: Counter[str],
+        ticker_max_unrealized: defaultdict[str, float],
+    ) -> float:
+        current_plan = record.get("current_plan") or {}
+        risk_metrics = current_plan.get("risk_metrics") or {}
+        counts = risk_metrics.get("counts") or {}
+        funnel = risk_metrics.get("funnel_diagnostics") or {}
+        filters = funnel.get("filters") or {}
 
-        ticker_buy_counts: Counter[str] = Counter()
-        ticker_sell_counts: Counter[str] = Counter()
-        ticker_max_unrealized: defaultdict[str, float] = defaultdict(float)
+        layer_b = counts.get("layer_b_count")
+        watch_count = counts.get("watchlist_count")
+        buy_count = counts.get("buy_order_count")
+        if layer_b is not None:
+            layer_b_values.append(float(layer_b))
+        if watch_count is not None:
+            watchlist_values.append(float(watch_count))
+        if buy_count is not None:
+            buy_order_values.append(float(buy_count))
 
-        final_snapshot = (session_summary.get("final_portfolio_snapshot") or {}).get("positions") or {}
-        realized_gains = (session_summary.get("final_portfolio_snapshot") or {}).get("realized_gains") or {}
+        watch_reasons = (filters.get("watchlist") or {}).get("reason_counts") or {}
+        buy_reasons = (filters.get("buy_orders") or {}).get("reason_counts") or {}
+        watch_blockers.update({str(key): int(value) for key, value in watch_reasons.items()})
+        buy_blockers.update({str(key): int(value) for key, value in buy_reasons.items()})
 
-        initial_capital = float(session_summary.get("initial_capital", 0.0) or 0.0)
+        invested_value = self._extract_invested_value(
+            record=record,
+            ticker_max_unrealized=ticker_max_unrealized,
+        )
+        if initial_capital <= 0:
+            self._accumulate_decision_counts(record.get("decisions") or {}, ticker_buy_counts, ticker_sell_counts)
+            return 0.0
 
-        for record in daily_events:
-            current_plan = record.get("current_plan") or {}
-            risk_metrics = current_plan.get("risk_metrics") or {}
-            counts = risk_metrics.get("counts") or {}
-            funnel = risk_metrics.get("funnel_diagnostics") or {}
-            filters = funnel.get("filters") or {}
+        invested_ratio = invested_value / initial_capital
+        invested_ratios.append(invested_ratio)
+        self._accumulate_decision_counts(record.get("decisions") or {}, ticker_buy_counts, ticker_sell_counts)
+        return invested_ratio
 
-            layer_b = counts.get("layer_b_count")
-            watch_count = counts.get("watchlist_count")
-            buy_count = counts.get("buy_order_count")
-            if layer_b is not None:
-                layer_b_values.append(float(layer_b))
-            if watch_count is not None:
-                watchlist_values.append(float(watch_count))
-            if buy_count is not None:
-                buy_order_values.append(float(buy_count))
+    def _extract_invested_value(
+        self,
+        *,
+        record: dict[str, Any],
+        ticker_max_unrealized: defaultdict[str, float],
+    ) -> float:
+        portfolio_snapshot = record.get("portfolio_snapshot") or {}
+        current_prices = record.get("current_prices") or {}
+        positions = portfolio_snapshot.get("positions") or {}
+        invested_value = 0.0
 
-            watch_reasons = ((filters.get("watchlist") or {}).get("reason_counts") or {})
-            buy_reasons = ((filters.get("buy_orders") or {}).get("reason_counts") or {})
-            watch_blockers.update({str(key): int(value) for key, value in watch_reasons.items()})
-            buy_blockers.update({str(key): int(value) for key, value in buy_reasons.items()})
+        for ticker, position in positions.items():
+            if not isinstance(position, dict):
+                continue
+            long_shares = float(position.get("long", 0) or 0)
+            if long_shares <= 0:
+                continue
+            current_price = current_prices.get(ticker)
+            if current_price is None:
+                continue
+            invested_value += long_shares * float(current_price)
+            ticker_max_unrealized[ticker] = max(
+                ticker_max_unrealized[ticker],
+                float(position.get("max_unrealized_pnl_pct", 0.0) or 0.0),
+            )
 
-            portfolio_snapshot = record.get("portfolio_snapshot") or {}
-            current_prices = record.get("current_prices") or {}
-            positions = portfolio_snapshot.get("positions") or {}
-            invested_value = 0.0
-            for ticker, position in positions.items():
-                if not isinstance(position, dict):
-                    continue
-                long_shares = float(position.get("long", 0) or 0)
-                if long_shares <= 0:
-                    continue
-                current_price = current_prices.get(ticker)
-                if current_price is None:
-                    continue
-                invested_value += long_shares * float(current_price)
-                ticker_max_unrealized[ticker] = max(
-                    ticker_max_unrealized[ticker],
-                    float(position.get("max_unrealized_pnl_pct", 0.0) or 0.0),
-                )
+        return invested_value
 
-            if initial_capital > 0:
-                invested_ratio = invested_value / initial_capital
-                invested_ratios.append(invested_ratio)
-                peak_invested_ratio = max(peak_invested_ratio, invested_ratio)
+    def _accumulate_decision_counts(
+        self,
+        decisions: dict[str, Any],
+        ticker_buy_counts: Counter[str],
+        ticker_sell_counts: Counter[str],
+    ) -> None:
+        for ticker, decision in decisions.items():
+            if not isinstance(decision, dict):
+                continue
+            action = decision.get("action")
+            if action == "buy":
+                ticker_buy_counts[ticker] += 1
+            elif action == "sell":
+                ticker_sell_counts[ticker] += 1
 
-            decisions = record.get("decisions") or {}
-            for ticker, decision in decisions.items():
-                if not isinstance(decision, dict):
-                    continue
-                action = decision.get("action")
-                if action == "buy":
-                    ticker_buy_counts[ticker] += 1
-                elif action == "sell":
-                    ticker_sell_counts[ticker] += 1
-
+    def _build_daily_event_ticker_digests(
+        self,
+        *,
+        ticker_buy_counts: Counter[str],
+        ticker_sell_counts: Counter[str],
+        ticker_max_unrealized: defaultdict[str, float],
+        final_snapshot: dict[str, Any],
+        realized_gains: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         ticker_digests: list[dict[str, Any]] = []
+
         for ticker in sorted(set(ticker_buy_counts) | set(ticker_sell_counts) | set(final_snapshot) | set(realized_gains)):
             position = final_snapshot.get(ticker) or {}
             realized = realized_gains.get(ticker) or {}
@@ -723,6 +748,43 @@ class ReplayArtifactService:
             )
 
         ticker_digests.sort(key=lambda item: (item["buy_count"] + item["sell_count"], abs(item["realized_pnl"])), reverse=True)
+        return ticker_digests
+
+    def _derive_daily_event_metrics(self, daily_events: list[dict[str, Any]], session_summary: dict[str, Any]) -> dict[str, Any]:
+        layer_b_values: list[float] = []
+        watchlist_values: list[float] = []
+        buy_order_values: list[float] = []
+        buy_blockers: Counter[str] = Counter()
+        watch_blockers: Counter[str] = Counter()
+        invested_ratios: list[float] = []
+        peak_invested_ratio = 0.0
+
+        ticker_buy_counts: Counter[str] = Counter()
+        ticker_sell_counts: Counter[str] = Counter()
+        ticker_max_unrealized: defaultdict[str, float] = defaultdict(float)
+
+        final_snapshot = (session_summary.get("final_portfolio_snapshot") or {}).get("positions") or {}
+        realized_gains = (session_summary.get("final_portfolio_snapshot") or {}).get("realized_gains") or {}
+
+        initial_capital = float(session_summary.get("initial_capital", 0.0) or 0.0)
+
+        for record in daily_events:
+            peak_invested_ratio = max(
+                peak_invested_ratio,
+                self._accumulate_daily_event_record(
+                    record,
+                    initial_capital=initial_capital,
+                    layer_b_values=layer_b_values,
+                    watchlist_values=watchlist_values,
+                    buy_order_values=buy_order_values,
+                    buy_blockers=buy_blockers,
+                    watch_blockers=watch_blockers,
+                    invested_ratios=invested_ratios,
+                    ticker_buy_counts=ticker_buy_counts,
+                    ticker_sell_counts=ticker_sell_counts,
+                    ticker_max_unrealized=ticker_max_unrealized,
+                ),
+            )
 
         return {
             "funnel": {
@@ -734,8 +796,66 @@ class ReplayArtifactService:
                 "top_buy_blockers": self._counter_to_list(buy_blockers),
                 "top_watchlist_blockers": self._counter_to_list(watch_blockers),
             },
-            "tickers": ticker_digests,
+            "tickers": self._build_daily_event_ticker_digests(
+                ticker_buy_counts=ticker_buy_counts,
+                ticker_sell_counts=ticker_sell_counts,
+                ticker_max_unrealized=ticker_max_unrealized,
+                final_snapshot=final_snapshot,
+                realized_gains=realized_gains,
+            ),
         }
+
+    def _accumulate_target_summary_metadata(
+        self,
+        target_summary: dict[str, Any],
+        aggregated_counts: Counter[str],
+        delta_classification_counts: Counter[str],
+    ) -> None:
+        for field_name in [
+            "selection_target_count",
+            "research_target_count",
+            "short_trade_target_count",
+            "research_selected_count",
+            "research_near_miss_count",
+            "research_rejected_count",
+            "short_trade_selected_count",
+            "short_trade_near_miss_count",
+            "short_trade_blocked_count",
+            "short_trade_rejected_count",
+            "shell_target_count",
+        ]:
+            field_value = target_summary.get(field_name)
+            if field_value is not None:
+                aggregated_counts[field_name] += int(field_value)
+
+        for delta_name, delta_count in (target_summary.get("delta_classification_counts") or {}).items():
+            delta_classification_counts[str(delta_name)] += int(delta_count)
+
+    def _accumulate_dual_target_delta_metadata(
+        self,
+        trade_date: str,
+        dual_target_delta: dict[str, Any],
+        delta_classification_counts: Counter[str],
+        dominant_delta_reason_counts: Counter[str],
+        representative_cases: list[dict[str, Any]],
+    ) -> None:
+        for delta_name, delta_count in (dual_target_delta.get("delta_counts") or {}).items():
+            delta_classification_counts[str(delta_name)] += int(delta_count)
+        for reason in dual_target_delta.get("dominant_delta_reasons") or []:
+            dominant_delta_reason_counts[str(reason)] += 1
+        for case_item in dual_target_delta.get("representative_cases") or []:
+            if not isinstance(case_item, dict):
+                continue
+            representative_cases.append(
+                {
+                    "trade_date": trade_date,
+                    "ticker": case_item.get("ticker"),
+                    "delta_classification": case_item.get("delta_classification"),
+                    "research_decision": case_item.get("research_decision"),
+                    "short_trade_decision": case_item.get("short_trade_decision"),
+                    "delta_summary": case_item.get("delta_summary") or [],
+                }
+            )
 
     def _derive_runtime_metrics(self, pipeline_timings: list[dict[str, Any]]) -> dict[str, Any]:
         total_day_seconds: list[float] = []
@@ -998,11 +1118,7 @@ class ReplayArtifactService:
         if not governance_rows:
             return []
 
-        lane_matrix = {
-            str(row.get("ticker") or row.get("lane_id") or ""): dict(row)
-            for row in list(governance_synthesis_payload.get("lane_matrix") or [])
-            if isinstance(row, dict)
-        }
+        lane_matrix = {str(row.get("ticker") or row.get("lane_id") or ""): dict(row) for row in list(governance_synthesis_payload.get("lane_matrix") or []) if isinstance(row, dict)}
         context_index = self._build_btst_replay_context_index(preferred_report_names=preferred_report_names) if resolve_contexts else {}
 
         lane_rows: list[dict[str, Any]] = []
@@ -1064,11 +1180,7 @@ class ReplayArtifactService:
             resolve_contexts=resolve_contexts,
             preferred_report_names=preferred_report_names,
         )
-        lane_context_by_ticker = {
-            str(row.get("ticker")): dict(row.get("context_reference") or {})
-            for row in rollout_lane_rows
-            if row.get("ticker") and row.get("context_reference")
-        }
+        lane_context_by_ticker = {str(row.get("ticker")): dict(row.get("context_reference") or {}) for row in rollout_lane_rows if row.get("ticker") and row.get("context_reference")}
 
         next_actions: list[dict[str, Any]] = []
         for item in (control_tower_snapshot.get("next_actions") or [])[:3]:
@@ -1113,7 +1225,7 @@ class ReplayArtifactService:
         replay_delta = delta_payload.get("replay_delta") or {}
         recommendation = control_tower_snapshot.get("recommendation")
         if not recommendation:
-            recommendation = ((control_tower_snapshot.get("synthesis") or {}).get("recommendation"))
+            recommendation = (control_tower_snapshot.get("synthesis") or {}).get("recommendation")
 
         closed_frontiers: list[dict[str, Any]] = []
         for item in list(control_tower_snapshot.get("closed_frontiers") or []):
@@ -1309,45 +1421,17 @@ class ReplayArtifactService:
 
             if isinstance(target_summary, dict) and target_summary:
                 seen_any_target_metadata = True
-                for field_name in [
-                    "selection_target_count",
-                    "research_target_count",
-                    "short_trade_target_count",
-                    "research_selected_count",
-                    "research_near_miss_count",
-                    "research_rejected_count",
-                    "short_trade_selected_count",
-                    "short_trade_near_miss_count",
-                    "short_trade_blocked_count",
-                    "short_trade_rejected_count",
-                    "shell_target_count",
-                ]:
-                    field_value = target_summary.get(field_name)
-                    if field_value is not None:
-                        aggregated_counts[field_name] += int(field_value)
-
-                for delta_name, delta_count in (target_summary.get("delta_classification_counts") or {}).items():
-                    delta_classification_counts[str(delta_name)] += int(delta_count)
+                self._accumulate_target_summary_metadata(target_summary, aggregated_counts, delta_classification_counts)
 
             if isinstance(dual_target_delta, dict) and dual_target_delta:
                 seen_any_target_metadata = True
-                for delta_name, delta_count in (dual_target_delta.get("delta_counts") or {}).items():
-                    delta_classification_counts[str(delta_name)] += int(delta_count)
-                for reason in dual_target_delta.get("dominant_delta_reasons") or []:
-                    dominant_delta_reason_counts[str(reason)] += 1
-                for case_item in dual_target_delta.get("representative_cases") or []:
-                    if not isinstance(case_item, dict):
-                        continue
-                    representative_cases.append(
-                        {
-                            "trade_date": trade_date,
-                            "ticker": case_item.get("ticker"),
-                            "delta_classification": case_item.get("delta_classification"),
-                            "research_decision": case_item.get("research_decision"),
-                            "short_trade_decision": case_item.get("short_trade_decision"),
-                            "delta_summary": case_item.get("delta_summary") or [],
-                        }
-                    )
+                self._accumulate_dual_target_delta_metadata(
+                    trade_date,
+                    dual_target_delta,
+                    delta_classification_counts,
+                    dominant_delta_reason_counts,
+                    representative_cases,
+                )
 
         if not seen_any_target_metadata:
             return None
@@ -1424,10 +1508,14 @@ class ReplayArtifactService:
         records: list[ResearchFeedbackRecord],
     ) -> None:
         with self._db_session() as db:
-            existing_rows = db.query(ReplayResearchFeedbackLedger).filter(
-                ReplayResearchFeedbackLedger.report_name == report_name,
-                ReplayResearchFeedbackLedger.trade_date == trade_date,
-            ).all()
+            existing_rows = (
+                db.query(ReplayResearchFeedbackLedger)
+                .filter(
+                    ReplayResearchFeedbackLedger.report_name == report_name,
+                    ReplayResearchFeedbackLedger.trade_date == trade_date,
+                )
+                .all()
+            )
 
             existing_by_key = {
                 (

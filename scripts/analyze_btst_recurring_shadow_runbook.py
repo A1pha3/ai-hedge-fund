@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_SHADOW_LANE_PRIORITY_PATH = REPORTS_DIR / "p4_shadow_lane_priority_board_20260401.json"
 DEFAULT_RECURRING_PAIR_COMPARISON_PATH = REPORTS_DIR / "recurring_frontier_release_pair_comparison_600821_vs_300113_catalyst_floor_zero_refresh_20260401.json"
@@ -172,6 +171,10 @@ def analyze_btst_recurring_shadow_runbook(
     else:
         global_validation_verdict = "await_new_recurring_window_evidence"
 
+    close_candidate_execution_step = f"并行把 {close_candidate_ticker} 固定为 recurring shadow close 候选。"
+    if recurring_close_bundle and str(recurring_close_bundle.get("close_candidate_ticker") or "") == close_candidate_ticker:
+        close_candidate_execution_step = f"{close_candidate_execution_step[:-1]}，并直接复用 close bundle。"
+
     rerun_commands = _build_rerun_commands(close_candidate_ticker, intraday_control_ticker)
 
     runbook = {
@@ -189,17 +192,13 @@ def analyze_btst_recurring_shadow_runbook(
         ],
         "execution_sequence": [
             "先保留 300383 作为 single-name shadow，不做参数克隆式扩张。",
-            f"并行把 {close_candidate_ticker} 固定为 recurring shadow close 候选，并直接复用 close bundle。",
+            close_candidate_execution_step,
             f"同时把 {intraday_control_ticker} 固定为 recurring intraday control，专门监控 intraday-only 漂移。",
         ],
         "global_validation_verdict": global_validation_verdict,
         "rerun_commands": rerun_commands,
         "close_candidate_bundle_command": close_candidate_bundle_command,
-        "recommendation": (
-            f"当前 recurring shadow lane 应按 {close_candidate_ticker} close-candidate + {intraday_control_ticker} intraday-control 的双轨结构推进，"
-            "而不是把 recurring frontier 当成单一 shadow 规则。当前未完成项同样只剩新增独立窗口证据，而不是缺少额外规则。"
-            f" close-candidate 侧已具备可直接复用的 bundle，后续应优先走 bundle + governance 回接，而不是手工拼脚本链。"
-        ),
+        "recommendation": (f"当前 recurring shadow lane 应按 {close_candidate_ticker} close-candidate + {intraday_control_ticker} intraday-control 的双轨结构推进，" "而不是把 recurring frontier 当成单一 shadow 规则。当前未完成项同样只剩新增独立窗口证据，而不是缺少额外规则。" f" close-candidate 侧已具备可直接复用的 bundle，后续应优先走 bundle + governance 回接，而不是手工拼脚本链。"),
         "pair_recommendation": pair_comparison.get("recommendation"),
     }
     return runbook
@@ -222,7 +221,7 @@ def render_btst_recurring_shadow_runbook_markdown(analysis: dict[str, Any]) -> s
     lines.append(f"- missing_window_count: {analysis['close_candidate'].get('missing_window_count')}")
     lines.append(f"- transition_locality: {analysis['close_candidate'].get('transition_locality')}")
     lines.append(f"- next_step: {analysis['close_candidate'].get('next_step')}")
-    for item in analysis['close_candidate'].get('keep_guardrails') or []:
+    for item in analysis["close_candidate"].get("keep_guardrails") or []:
         lines.append(f"- keep_guardrail: {item}")
     lines.append("")
     lines.append("## Intraday Control")
@@ -233,11 +232,11 @@ def render_btst_recurring_shadow_runbook_markdown(analysis: dict[str, Any]) -> s
     lines.append(f"- missing_window_count: {analysis['intraday_control'].get('missing_window_count')}")
     lines.append(f"- transition_locality: {analysis['intraday_control'].get('transition_locality')}")
     lines.append(f"- next_step: {analysis['intraday_control'].get('next_step')}")
-    for item in analysis['intraday_control'].get('keep_guardrails') or []:
+    for item in analysis["intraday_control"].get("keep_guardrails") or []:
         lines.append(f"- keep_guardrail: {item}")
     lines.append("")
     lines.append("## Execution Sequence")
-    for item in analysis['execution_sequence']:
+    for item in analysis["execution_sequence"]:
         lines.append(f"- {item}")
     lines.append("")
     lines.append("## Bundle")
@@ -245,7 +244,7 @@ def render_btst_recurring_shadow_runbook_markdown(analysis: dict[str, Any]) -> s
     lines.append(f"- close_candidate_bundle_command: {analysis.get('close_candidate_bundle_command')}")
     lines.append("")
     lines.append("## Rerun Commands")
-    for item in analysis['rerun_commands']:
+    for item in analysis["rerun_commands"]:
         lines.append(f"- {item}")
     return "\n".join(lines) + "\n"
 

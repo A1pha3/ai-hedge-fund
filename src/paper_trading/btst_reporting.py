@@ -9,6 +9,19 @@ from typing import Any, Callable
 import pandas as pd
 
 from scripts.btst_latest_followup_utils import _choose_preferred_historical_prior
+from src.paper_trading.btst_opening_watch_markdown_helpers import (
+    append_catalyst_theme_watch_markdown as _append_catalyst_theme_watch_markdown_impl,
+    append_opening_watch_focus_items_markdown as _append_opening_watch_focus_items_markdown_impl,
+)
+from src.paper_trading.btst_recommendation_helpers import (
+    append_pool_and_observer_recommendations as _append_pool_and_observer_recommendations_impl,
+    append_primary_and_near_miss_recommendations as _append_primary_and_near_miss_recommendations_impl,
+    append_research_and_shadow_recommendations as _append_research_and_shadow_recommendations_impl,
+)
+from src.paper_trading.btst_premarket_markdown_helpers import (
+    append_premarket_frontier_watch_markdown as _append_premarket_frontier_watch_markdown_impl,
+    append_premarket_shadow_watch_markdown as _append_premarket_shadow_watch_markdown_impl,
+)
 from src.project_env import load_project_dotenv
 from src.tools.akshare_api import get_prices_robust
 from src.tools.api import get_price_data, prices_to_df
@@ -1516,33 +1529,12 @@ def _append_primary_and_near_miss_recommendations(
     primary_entry: dict[str, Any] | None,
     near_miss_entries: list[dict[str, Any]],
 ) -> None:
-    if primary_entry:
-        recommendation_lines.append(
-            f"主入场票为 {primary_entry['ticker']}，应按 {primary_entry['preferred_entry_mode']} 执行，而不是把它视为无条件开盘追价。"
-        )
-        primary_historical = primary_entry.get("historical_prior") or {}
-        if primary_historical.get("summary"):
-            recommendation_lines.append("主票历史先验参考: " + str(primary_historical.get("summary")))
-        if primary_historical.get("execution_note"):
-            recommendation_lines.append("主票执行先验: " + str(primary_historical.get("execution_note")))
-        primary_contract_note = _selected_holding_contract_note(primary_entry.get("preferred_entry_mode"), primary_historical)
-        if primary_contract_note:
-            recommendation_lines.append("主票持有 contract: " + primary_contract_note)
-    else:
-        recommendation_lines.append("本次 short-trade 没有正式 selected 样本，不建议把 near_miss 直接当成主入场票。")
-
-    if not near_miss_entries:
-        return
-    recommendation_lines.append(
-        "备选观察票为 " + ", ".join(entry["ticker"] for entry in near_miss_entries) + "，仅适合作为盘中跟踪对象。"
+    _append_primary_and_near_miss_recommendations_impl(
+        recommendation_lines,
+        primary_entry=primary_entry,
+        near_miss_entries=near_miss_entries,
+        selected_holding_contract_note=_selected_holding_contract_note,
     )
-    near_miss_historical_lines = [
-        f"{entry['ticker']}={entry.get('historical_prior', {}).get('summary')}"
-        for entry in near_miss_entries
-        if (entry.get("historical_prior") or {}).get("summary")
-    ]
-    if near_miss_historical_lines:
-        recommendation_lines.append("观察票历史先验参考: " + "；".join(near_miss_historical_lines))
 
 
 def _append_pool_and_observer_recommendations(
@@ -1553,9 +1545,9 @@ def _append_pool_and_observer_recommendations(
     no_history_observer_entries: list[dict[str, Any]],
     weak_history_pruned_entries: list[dict[str, Any]],
 ) -> None:
-    _append_opportunity_pool_recommendation_lines(recommendation_lines, opportunity_pool_entries=opportunity_pool_entries)
-    _append_observer_bucket_recommendation_lines(
+    _append_pool_and_observer_recommendations_impl(
         recommendation_lines,
+        opportunity_pool_entries=opportunity_pool_entries,
         risky_observer_entries=risky_observer_entries,
         no_history_observer_entries=no_history_observer_entries,
         weak_history_pruned_entries=weak_history_pruned_entries,
@@ -1603,93 +1595,6 @@ def _append_observer_bucket_recommendation_lines(
     )
 
 
-def _append_research_and_shadow_recommendations(
-    recommendation_lines: list[str],
-    *,
-    research_upside_radar_entries: list[dict[str, Any]],
-    catalyst_theme_entries: list[dict[str, Any]],
-    catalyst_theme_frontier_priority: dict[str, Any],
-    catalyst_theme_shadow_entries: list[dict[str, Any]],
-    excluded_research_entries: list[dict[str, Any]],
-    upstream_shadow_entries: list[dict[str, Any]],
-) -> None:
-    _append_research_lane_recommendation_lines(
-        recommendation_lines,
-        research_upside_radar_entries=research_upside_radar_entries,
-        catalyst_theme_entries=catalyst_theme_entries,
-    )
-    _append_shadow_lane_recommendation_lines(
-        recommendation_lines,
-        catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
-        catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
-    )
-    _append_excluded_and_upstream_recommendation_lines(
-        recommendation_lines,
-        excluded_research_entries=excluded_research_entries,
-        upstream_shadow_entries=upstream_shadow_entries,
-    )
-
-
-def _append_research_lane_recommendation_lines(
-    recommendation_lines: list[str],
-    *,
-    research_upside_radar_entries: list[dict[str, Any]],
-    catalyst_theme_entries: list[dict[str, Any]],
-) -> None:
-    _append_recommendation_line_if_entries(
-        recommendation_lines,
-        research_upside_radar_entries,
-        prefix="research 漏票雷达为 ",
-        suffix="，这些票只用于第二天上涨线索复盘，不进入 BTST 执行名单。",
-    )
-    _append_recommendation_line_if_entries(
-        recommendation_lines,
-        catalyst_theme_entries,
-        prefix="题材催化研究池为 ",
-        suffix="，这些票只用于专题催化跟踪，不进入主池或 BTST 执行名单。",
-    )
-
-
-def _append_shadow_lane_recommendation_lines(
-    recommendation_lines: list[str],
-    *,
-    catalyst_theme_frontier_priority: dict[str, Any],
-    catalyst_theme_shadow_entries: list[dict[str, Any]],
-) -> None:
-    _append_recommendation_line_if_tickers(
-        recommendation_lines,
-        catalyst_theme_frontier_priority.get("promoted_tickers") or [],
-        prefix="题材催化前沿第一优先 research follow-up 为 ",
-        suffix="；这些票是解释性前沿下的可晋级影子样本，只做研究跟踪，不进入当日 BTST 执行名单。",
-    )
-    _append_recommendation_line_if_entries(
-        recommendation_lines,
-        catalyst_theme_shadow_entries,
-        prefix="题材催化影子观察为 ",
-        suffix="，这些票距离正式题材研究池仅差少数阈值，当前只做近阈值跟踪，不进入主池或 BTST 执行名单。",
-    )
-
-
-def _append_excluded_and_upstream_recommendation_lines(
-    recommendation_lines: list[str],
-    *,
-    excluded_research_entries: list[dict[str, Any]],
-    upstream_shadow_entries: list[dict[str, Any]],
-) -> None:
-    _append_recommendation_line_if_entries(
-        recommendation_lines,
-        excluded_research_entries,
-        prefix="research 侧已选中但不属于本次 short-trade 执行名单的股票有 ",
-        suffix="。",
-    )
-    _append_recommendation_line_if_entries(
-        recommendation_lines,
-        upstream_shadow_entries,
-        prefix="上游影子召回覆盖 ",
-        suffix="，这些票来自 candidate-pool 上游漏票修复通道，只能按当前 short-trade decision 分层处理，不能因为被召回就自动升级。",
-    )
-
-
 def _append_recommendation_line_if_entries(
     recommendation_lines: list[str],
     entries: list[dict[str, Any]],
@@ -1729,6 +1634,27 @@ def _append_historical_prior_recommendation(
     ]
     if historical_prior_lines:
         recommendation_lines.append(prefix + "；".join(historical_prior_lines))
+
+
+def _append_research_and_shadow_recommendations(
+    recommendation_lines: list[str],
+    *,
+    research_upside_radar_entries: list[dict[str, Any]],
+    catalyst_theme_entries: list[dict[str, Any]],
+    catalyst_theme_frontier_priority: dict[str, Any],
+    catalyst_theme_shadow_entries: list[dict[str, Any]],
+    excluded_research_entries: list[dict[str, Any]],
+    upstream_shadow_entries: list[dict[str, Any]],
+) -> None:
+    _append_research_and_shadow_recommendations_impl(
+        recommendation_lines,
+        research_upside_radar_entries=research_upside_radar_entries,
+        catalyst_theme_entries=catalyst_theme_entries,
+        catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
+        catalyst_theme_shadow_entries=catalyst_theme_shadow_entries,
+        excluded_research_entries=excluded_research_entries,
+        upstream_shadow_entries=upstream_shadow_entries,
+    )
 
 
 def _entry_mode_action_guidance(preferred_entry_mode: str | None, *, default_action: str) -> tuple[str, str]:
@@ -4039,32 +3965,30 @@ def _append_premarket_action_section(lines: list[str], title: str, entries: list
 
 
 def _append_premarket_frontier_watch_markdown(lines: list[str], frontier_priority: dict[str, Any]) -> None:
-    _append_frontier_section(lines, frontier_priority, _append_premarket_frontier_entries)
+    _append_premarket_frontier_watch_markdown_impl(
+        lines,
+        frontier_priority,
+        append_frontier_section=_append_frontier_section,
+        append_indexed_ticker_blocks=_append_indexed_ticker_blocks,
+        append_candidate_watch_scoring_fields=_append_candidate_watch_scoring_fields,
+        append_candidate_watch_reason_tags=_append_candidate_watch_reason_tags,
+        append_threshold_shortfalls_line=_append_threshold_shortfalls_line,
+        append_catalyst_watch_metrics=_append_catalyst_watch_metrics,
+        format_float=_format_float,
+    )
 
 
-def _append_premarket_frontier_entries(lines: list[str], items: list[dict[str, Any]]) -> None:
-    _append_indexed_ticker_blocks(lines, items, _append_premarket_frontier_entry_item)
-
-
-def _append_premarket_frontier_entry_item(lines: list[str], item: dict[str, Any]) -> None:
-    _append_premarket_frontier_watch_header(lines, item)
-    threshold_shortfalls = dict(item.get("threshold_shortfalls") or {})
-    _append_threshold_shortfalls_line(lines, threshold_shortfalls)
-    _append_catalyst_watch_metrics(lines, dict(item.get("metrics") or {}))
-    _append_premarket_frontier_watch_rules(lines, item, threshold_shortfalls)
-
-
-def _append_premarket_watch_header(
-    lines: list[str],
-    item: dict[str, Any],
-    *,
-    action_tier: str,
-    execution_posture: str,
-) -> None:
-    lines.append(f"- action_tier: {action_tier}")
-    lines.append(f"- execution_posture: {execution_posture}")
-    _append_candidate_watch_scoring_fields(lines, item)
-    _append_candidate_watch_reason_tags(lines, item, reasons_label="evidence")
+def _append_premarket_shadow_watch_markdown(lines: list[str], shadow_watch: list[dict[str, Any]]) -> None:
+    _append_premarket_shadow_watch_markdown_impl(
+        lines,
+        shadow_watch,
+        append_titled_indexed_ticker_section=_append_titled_indexed_ticker_section,
+        append_candidate_watch_scoring_fields=_append_candidate_watch_scoring_fields,
+        append_candidate_watch_reason_tags=_append_candidate_watch_reason_tags,
+        append_threshold_shortfalls_line=_append_threshold_shortfalls_line,
+        append_catalyst_watch_metrics=_append_catalyst_watch_metrics,
+        format_float=_format_float,
+    )
 
 
 def _append_candidate_watch_scoring_fields(lines: list[str], item: dict[str, Any]) -> None:
@@ -4078,70 +4002,6 @@ def _append_candidate_watch_scoring_fields(lines: list[str], item: dict[str, Any
 def _append_candidate_watch_reason_tags(lines: list[str], item: dict[str, Any], *, reasons_label: str) -> None:
     lines.append(f"- {reasons_label}: {', '.join(item.get('top_reasons') or []) or 'n/a'}")
     lines.append(f"- positive_tags: {', '.join(item.get('positive_tags') or []) or 'n/a'}")
-
-
-def _append_premarket_frontier_watch_header(lines: list[str], item: dict[str, Any]) -> None:
-    _append_premarket_watch_header(
-        lines,
-        item,
-        action_tier="catalyst_theme_frontier_priority",
-        execution_posture="research_followup_priority",
-    )
-
-
-def _append_premarket_watch_rules(
-    lines: list[str],
-    item: dict[str, Any],
-    threshold_shortfalls: dict[str, Any],
-    *,
-    second_avoid_rule: str,
-) -> None:
-    lines.append("- trigger_rules:")
-    lines.append(f"  - {item.get('promotion_trigger') or '若催化继续发酵，才允许升级到题材催化研究池。'}")
-    if threshold_shortfalls:
-        lines.append(
-            "  - 需先补齐阈值缺口: "
-            + ", ".join(f"{key}={_format_float(value)}" for key, value in threshold_shortfalls.items())
-        )
-    lines.append("- avoid_rules:")
-    lines.append("  - 不进入当日 BTST 交易名单。")
-
-    lines.append(f"  - {second_avoid_rule}")
-
-
-def _append_premarket_frontier_watch_rules(lines: list[str], item: dict[str, Any], threshold_shortfalls: dict[str, Any]) -> None:
-    _append_premarket_watch_rules(
-        lines,
-        item,
-        threshold_shortfalls,
-        second_avoid_rule="不把题材催化前沿 priority 与 short-trade watchlist 混用。",
-    )
-
-
-def _append_premarket_shadow_watch_markdown(lines: list[str], shadow_watch: list[dict[str, Any]]) -> None:
-    _append_titled_indexed_ticker_section(
-        lines,
-        title="## Catalyst Theme Shadow Watch",
-        items=shadow_watch,
-        render_item=_append_premarket_shadow_watch_item,
-    )
-
-
-def _append_premarket_shadow_watch_header(lines: list[str], item: dict[str, Any]) -> None:
-    _append_premarket_watch_header(
-        lines,
-        item,
-        action_tier="research_followup_only",
-        execution_posture="research_followup_only",
-    )
-
-
-def _append_premarket_shadow_watch_item(lines: list[str], item: dict[str, Any]) -> None:
-    threshold_shortfalls = dict(item.get("threshold_shortfalls") or {})
-    _append_premarket_shadow_watch_header(lines, item)
-    _append_threshold_shortfalls_line(lines, threshold_shortfalls)
-    _append_catalyst_watch_metrics(lines, dict(item.get("metrics") or {}))
-    _append_premarket_shadow_watch_rules(lines, item, threshold_shortfalls)
 
 
 def _append_threshold_shortfalls_line(lines: list[str], threshold_shortfalls: dict[str, Any]) -> None:
@@ -4167,15 +4027,6 @@ def _append_catalyst_watch_metrics(lines: list[str], metrics: dict[str, Any]) ->
                 f"catalyst={_format_float(metrics.get('catalyst_freshness'))}",
             ]
         )
-    )
-
-
-def _append_premarket_shadow_watch_rules(lines: list[str], item: dict[str, Any], threshold_shortfalls: dict[str, Any]) -> None:
-    _append_premarket_watch_rules(
-        lines,
-        item,
-        threshold_shortfalls,
-        second_avoid_rule="不把题材催化研究跟踪对象与 short-trade watchlist 混用。",
     )
 
 
@@ -4688,24 +4539,12 @@ def _append_indexed_ticker_block(
 
 
 def _append_opening_watch_focus_items_markdown(lines: list[str], focus_items: list[dict[str, Any]]) -> None:
-    _append_titled_indexed_ticker_section(
+    _append_opening_watch_focus_items_markdown_impl(
         lines,
-        title="## Focus Order",
-        items=focus_items,
-        render_item=_append_opening_watch_focus_item_fields,
+        focus_items,
+        append_titled_indexed_ticker_section=_append_titled_indexed_ticker_section,
+        format_float=_format_float,
     )
-
-
-def _append_opening_watch_focus_item_fields(lines: list[str], item: dict[str, Any]) -> None:
-    lines.append(f"- focus_tier: {item.get('focus_tier')}")
-    lines.append(f"- monitor_priority: {item.get('monitor_priority')}")
-    lines.append(f"- execution_posture: {item.get('execution_posture')}")
-    lines.append(f"- score_target: {_format_float(item.get('score_target'))}")
-    lines.append(f"- preferred_entry_mode: {item.get('preferred_entry_mode')}")
-    lines.append(f"- why_now: {item.get('why_now')}")
-    lines.append(f"- opening_plan: {item.get('opening_plan')}")
-    lines.append(f"- historical_summary: {item.get('historical_summary') or 'n/a'}")
-    lines.append(f"- execution_note: {item.get('execution_note') or 'n/a'}")
 
 
 def _append_catalyst_theme_watch_markdown(
@@ -4716,40 +4555,19 @@ def _append_catalyst_theme_watch_markdown(
     focus_tier: str,
     execution_posture: str,
 ) -> None:
-    lines.append(title)
-    if not items:
-        _append_none_block(lines)
-        return
-    _append_indexed_ticker_blocks(
+    _append_catalyst_theme_watch_markdown_impl(
         lines,
-        items,
-        lambda inner_lines, item: _append_catalyst_theme_watch_item(
-            inner_lines,
-            item,
-            focus_tier=focus_tier,
-            execution_posture=execution_posture,
-        ),
+        title=title,
+        items=items,
+        focus_tier=focus_tier,
+        execution_posture=execution_posture,
+        append_none_block=_append_none_block,
+        append_indexed_ticker_blocks=_append_indexed_ticker_blocks,
+        append_candidate_watch_scoring_fields=_append_candidate_watch_scoring_fields,
+        append_candidate_watch_reason_tags=_append_candidate_watch_reason_tags,
+        append_threshold_shortfalls_line=_append_threshold_shortfalls_line,
+        append_catalyst_watch_metrics=_append_catalyst_watch_metrics,
     )
-
-
-def _append_catalyst_theme_watch_item(
-    lines: list[str],
-    item: dict[str, Any],
-    *,
-    focus_tier: str,
-    execution_posture: str,
-) -> None:
-    _append_catalyst_theme_watch_fields(lines, item, focus_tier, execution_posture)
-    _append_threshold_shortfalls_line(lines, dict(item.get("threshold_shortfalls") or {}))
-    _append_catalyst_watch_metrics(lines, dict(item.get("metrics") or {}))
-
-
-def _append_catalyst_theme_watch_fields(lines: list[str], item: dict[str, Any], focus_tier: str, execution_posture: str) -> None:
-    lines.append(f"- focus_tier: {focus_tier}")
-    lines.append(f"- execution_posture: {execution_posture}")
-    _append_candidate_watch_scoring_fields(lines, item)
-    lines.append(f"- opening_plan: {item.get('promotion_trigger') or '只做研究跟踪，不进入当日 BTST 交易名单。'}")
-    _append_candidate_watch_reason_tags(lines, item, reasons_label="top_reasons")
 
 
 def _append_upstream_shadow_recall_markdown(

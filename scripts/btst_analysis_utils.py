@@ -8,11 +8,15 @@ from typing import Any
 
 import pandas as pd
 
-from scripts.btst_data_utils import load_json, normalize_price_frame, round_or_none, safe_float
+from scripts.btst_data_utils import (
+    load_json,
+    normalize_price_frame,
+    round_or_none,
+    safe_float,
+)
 from src.project_env import load_project_dotenv
-from src.tools.api import get_price_data, prices_to_df
 from src.tools.akshare_api import get_prices_robust
-
+from src.tools.api import get_price_data, prices_to_df
 
 load_project_dotenv()
 
@@ -60,15 +64,23 @@ def fetch_price_frame(ticker: str, trade_date: str, price_cache: dict[tuple[str,
     if cached is not None:
         return cached
 
-    start_date = (pd.Timestamp(normalized_trade_date) - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
     end_date = (pd.Timestamp(normalized_trade_date) + pd.Timedelta(days=15)).strftime("%Y-%m-%d")
-    try:
-        frame = normalize_price_frame(get_price_data(ticker, start_date, end_date))
-    except Exception:
+
+    def _load_frame(start_date: str) -> pd.DataFrame:
         try:
-            frame = normalize_price_frame(prices_to_df(get_prices_robust(ticker, start_date, end_date, use_mock_on_fail=False)))
+            return normalize_price_frame(get_price_data(ticker, start_date, end_date))
         except Exception:
-            frame = pd.DataFrame()
+            try:
+                return normalize_price_frame(prices_to_df(get_prices_robust(ticker, start_date, end_date, use_mock_on_fail=False)))
+            except Exception:
+                return pd.DataFrame()
+
+    frame = _load_frame(normalized_trade_date)
+    if frame.empty or frame.loc[frame.index.normalize() <= pd.Timestamp(normalized_trade_date).normalize()].empty:
+        lookback_start = (pd.Timestamp(normalized_trade_date) - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+        lookback_frame = _load_frame(lookback_start)
+        if not lookback_frame.empty:
+            frame = lookback_frame
 
     price_cache[cache_key] = frame
     return frame
@@ -309,12 +321,7 @@ def compare_reports(
     variant_high_hit_rate = variant_tradeable.get("next_high_hit_rate_at_threshold")
     variant_close_positive_rate = variant_tradeable.get("next_close_positive_rate")
     if variant_tradeable.get("closed_cycle_count", 0):
-        if (
-            variant_high_hit_rate is not None
-            and variant_close_positive_rate is not None
-            and float(variant_high_hit_rate) >= guardrail_next_high_hit_rate
-            and float(variant_close_positive_rate) >= guardrail_next_close_positive_rate
-        ):
+        if variant_high_hit_rate is not None and variant_close_positive_rate is not None and float(variant_high_hit_rate) >= guardrail_next_high_hit_rate and float(variant_close_positive_rate) >= guardrail_next_close_positive_rate:
             guardrail_status = "passes_closed_tradeable_guardrails"
         else:
             guardrail_status = "fails_closed_tradeable_guardrails"
@@ -322,15 +329,9 @@ def compare_reports(
     if variant.get("artifact_status") == "missing_selection_artifacts" and int(variant.get("row_count", 0)) == 0:
         comparison_note = f"{variant['label']} 的 session_summary 已存在，但 selection_artifacts 缺失，无法自动重建 closed-cycle surface；当前比较仅能视为产物完整性告警，不能解读为 coverage 退化。"
     elif int(baseline_tradeable.get("total_count", 0)) == 0 and int(variant_tradeable.get("total_count", 0)) > 0:
-        comparison_note = (
-            f"{variant['label']} 把 tradeable surface 从 0 提升到 {variant_tradeable['total_count']}，"
-            f"其中 closed-cycle actionable={variant_tradeable['closed_cycle_count']}。"
-        )
+        comparison_note = f"{variant['label']} 把 tradeable surface 从 0 提升到 {variant_tradeable['total_count']}，" f"其中 closed-cycle actionable={variant_tradeable['closed_cycle_count']}。"
     elif actionable_count_delta > 0:
-        comparison_note = (
-            f"{variant['label']} 的 tradeable surface 相比 baseline 增加 {actionable_count_delta}，"
-            f"closed-cycle actionable 变化 {closed_cycle_actionable_delta}。"
-        )
+        comparison_note = f"{variant['label']} 的 tradeable surface 相比 baseline 增加 {actionable_count_delta}，" f"closed-cycle actionable 变化 {closed_cycle_actionable_delta}。"
     elif actionable_count_delta == 0 and false_negative_delta < 0:
         comparison_note = f"{variant['label']} 没有扩大 tradeable surface，但减少了 {abs(false_negative_delta)} 个 false negative proxy。"
     else:
