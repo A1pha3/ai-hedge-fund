@@ -76,6 +76,40 @@ def _build_recommendation(entries: list[dict[str, Any]]) -> str:
     return "formal selected refresh board 已建立，后续只需随价格数据自动更新即可。"
 
 
+def _historical_positive_expectation(rate: Any) -> bool:
+    return rate is not None and float(rate) >= 0.5
+
+
+def _resolve_cycle_contract_verdict(
+    current_close_return: Any,
+    *,
+    expectation_positive: bool,
+    pending_verdict: str,
+) -> str:
+    if current_close_return is None:
+        return pending_verdict
+    current_close_positive = float(current_close_return) > 0
+    if expectation_positive:
+        return "matched_positive_expectation" if current_close_positive else "violated_positive_expectation"
+    return "observed_without_positive_expectation"
+
+
+def _resolve_overall_contract_verdict(next_day_contract_verdict: str, t_plus_2_contract_verdict: str) -> str:
+    if "violated" in next_day_contract_verdict:
+        return "next_close_violated"
+    if "violated" in t_plus_2_contract_verdict:
+        return "t_plus_2_violated"
+    if t_plus_2_contract_verdict == "matched_positive_expectation":
+        return "t_plus_2_confirmed"
+    if t_plus_2_contract_verdict == "observed_without_positive_expectation":
+        return "t_plus_2_observed_without_positive_expectation"
+    if next_day_contract_verdict == "matched_positive_expectation":
+        return "next_close_confirmed_wait_t_plus_2"
+    if next_day_contract_verdict == "observed_without_positive_expectation":
+        return "next_close_observed_without_positive_expectation"
+    return "pending_next_day"
+
+
 def _resolve_contract_alignment(proof: dict[str, Any], current_outcome: dict[str, Any]) -> dict[str, Any]:
     proof_summary = dict(proof.get("summary") or {})
     current_next_close_return = current_outcome.get("next_close_return")
@@ -83,38 +117,19 @@ def _resolve_contract_alignment(proof: dict[str, Any], current_outcome: dict[str
     historical_next_close_positive_rate = proof_summary.get("next_close_positive_rate")
     historical_t_plus_2_close_positive_rate = proof_summary.get("t_plus_2_close_positive_rate")
 
-    next_day_expectation_positive = historical_next_close_positive_rate is not None and float(historical_next_close_positive_rate) >= 0.5
-    t_plus_2_expectation_positive = historical_t_plus_2_close_positive_rate is not None and float(historical_t_plus_2_close_positive_rate) >= 0.5
-
-    next_day_contract_verdict = "pending_next_day"
-    if current_next_close_return is not None:
-        current_next_close_positive = float(current_next_close_return) > 0
-        if next_day_expectation_positive:
-            next_day_contract_verdict = "matched_positive_expectation" if current_next_close_positive else "violated_positive_expectation"
-        else:
-            next_day_contract_verdict = "observed_without_positive_expectation"
-
-    t_plus_2_contract_verdict = "pending_t_plus_2"
-    if current_t_plus_2_close_return is not None:
-        current_t_plus_2_positive = float(current_t_plus_2_close_return) > 0
-        if t_plus_2_expectation_positive:
-            t_plus_2_contract_verdict = "matched_positive_expectation" if current_t_plus_2_positive else "violated_positive_expectation"
-        else:
-            t_plus_2_contract_verdict = "observed_without_positive_expectation"
-
-    overall_contract_verdict = "pending_next_day"
-    if "violated" in next_day_contract_verdict:
-        overall_contract_verdict = "next_close_violated"
-    elif "violated" in t_plus_2_contract_verdict:
-        overall_contract_verdict = "t_plus_2_violated"
-    elif t_plus_2_contract_verdict == "matched_positive_expectation":
-        overall_contract_verdict = "t_plus_2_confirmed"
-    elif t_plus_2_contract_verdict == "observed_without_positive_expectation":
-        overall_contract_verdict = "t_plus_2_observed_without_positive_expectation"
-    elif next_day_contract_verdict == "matched_positive_expectation":
-        overall_contract_verdict = "next_close_confirmed_wait_t_plus_2"
-    elif next_day_contract_verdict == "observed_without_positive_expectation":
-        overall_contract_verdict = "next_close_observed_without_positive_expectation"
+    next_day_expectation_positive = _historical_positive_expectation(historical_next_close_positive_rate)
+    t_plus_2_expectation_positive = _historical_positive_expectation(historical_t_plus_2_close_positive_rate)
+    next_day_contract_verdict = _resolve_cycle_contract_verdict(
+        current_next_close_return,
+        expectation_positive=next_day_expectation_positive,
+        pending_verdict="pending_next_day",
+    )
+    t_plus_2_contract_verdict = _resolve_cycle_contract_verdict(
+        current_t_plus_2_close_return,
+        expectation_positive=t_plus_2_expectation_positive,
+        pending_verdict="pending_t_plus_2",
+    )
+    overall_contract_verdict = _resolve_overall_contract_verdict(next_day_contract_verdict, t_plus_2_contract_verdict)
 
     return {
         "historical_next_close_expectation_positive": next_day_expectation_positive,

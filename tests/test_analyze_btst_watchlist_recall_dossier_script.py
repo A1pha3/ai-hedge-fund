@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_watchlist_recall_dossier import analyze_btst_watchlist_recall_dossier
+from scripts.analyze_btst_watchlist_recall_dossier import analyze_btst_watchlist_recall_dossier, render_btst_watchlist_recall_dossier_markdown
 
 
 def _write_json(path: Path, payload: object) -> Path:
@@ -101,3 +101,59 @@ def test_analyze_btst_watchlist_recall_dossier_splits_candidate_pool_and_watchli
     assert dossiers_by_ticker["003036"]["dominant_recall_stage"] == "layer_b_visible_but_missing_watchlist"
     assert dossiers_by_ticker["301292"]["dominant_recall_stage"] == "missing_candidate_pool_snapshot"
     assert "candidate_pool snapshot 都没有进入" in analysis["recommendation"]
+
+
+def test_render_btst_watchlist_recall_dossier_markdown_renders_sections() -> None:
+    markdown = render_btst_watchlist_recall_dossier_markdown(
+        {
+            "tradeable_opportunity_pool_path": "/tmp/tradeable.json",
+            "failure_dossier_path": "/tmp/failure.json",
+            "priority_recall_stage_counts": {"absent_from_candidate_pool": 1},
+            "top_absent_from_candidate_pool_tickers": ["300683"],
+            "top_candidate_pool_visible_but_missing_layer_b_tickers": [],
+            "top_layer_b_visible_but_missing_watchlist_tickers": [],
+            "recommendation": "先补 Layer A candidate_pool 召回观测。",
+            "priority_ticker_dossiers": [
+                {
+                    "priority_rank": 1,
+                    "ticker": "300683",
+                    "dominant_recall_stage": "absent_from_candidate_pool",
+                    "occurrence_count": 2,
+                    "candidate_pool_visible_count": 0,
+                    "layer_b_visible_count": 0,
+                    "recall_stage_counts": {"absent_from_candidate_pool": 2},
+                    "failure_reason": "300683 在已存在的 candidate_pool snapshot 中持续缺席。",
+                    "next_step": "先补 300683 的 Layer A candidate_pool 召回观测。",
+                    "occurrence_evidence": [
+                        {
+                            "trade_date": "2026-04-10",
+                            "report_dir": "paper_trading_window_x",
+                            "recall_stage": "absent_from_candidate_pool",
+                            "candidate_pool_visible": False,
+                            "candidate_pool_rank": None,
+                            "system_seen_stage": None,
+                        }
+                    ],
+                }
+            ],
+            "action_queue": [
+                {
+                    "task_id": "300683_absent_from_candidate_pool",
+                    "ticker": "300683",
+                    "action_tier": "p0_candidate_pool_recall",
+                    "dominant_recall_stage": "absent_from_candidate_pool",
+                    "why_now": "300683 在已存在的 candidate_pool snapshot 中持续缺席。",
+                    "next_step": "先审 300683 的 candidate_pool 构建。",
+                }
+            ],
+            "next_actions": ["先补 300683 的 Layer A candidate_pool 召回观测。"],
+        }
+    )
+
+    assert "## Overview" in markdown
+    assert "## Priority Ticker Dossiers" in markdown
+    assert "## Action Queue" in markdown
+    assert "## Next Actions" in markdown
+    assert "ticker=300683 dominant_recall_stage=absent_from_candidate_pool" in markdown
+    assert "task_id=300683_absent_from_candidate_pool" in markdown
+    assert "- 先补 300683 的 Layer A candidate_pool 召回观测。" in markdown

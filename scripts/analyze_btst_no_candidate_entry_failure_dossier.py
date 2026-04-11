@@ -609,94 +609,135 @@ def _build_priority_ticker_dossiers(
     watchlist_recall_stage_map: dict[str, str],
     report_cache: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    replay_rows_by_ticker = {
+    replay_rows_by_ticker = _build_priority_replay_rows_by_ticker(replay_bundle)
+    return [
+        dossier
+        for priority_row in priority_rows
+        if (dossier := _build_priority_ticker_dossier(
+            priority_row=priority_row,
+            no_candidate_rows=no_candidate_rows,
+            reports_root=reports_root,
+            replay_rows_by_ticker=replay_rows_by_ticker,
+            watchlist_recall_stage_map=watchlist_recall_stage_map,
+            report_cache=report_cache,
+        ))
+        is not None
+    ]
+
+
+def _build_priority_replay_rows_by_ticker(replay_bundle: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
         str(row.get("ticker") or "").strip(): dict(row)
         for row in list(replay_bundle.get("priority_replay_rows") or [])
         if str(row.get("ticker") or "").strip()
     }
-    dossiers: list[dict[str, Any]] = []
-    for priority_row in priority_rows:
-        ticker = str(priority_row.get("ticker") or "").strip()
-        if not ticker:
-            continue
-        ticker_rows = [row for row in no_candidate_rows if str(row.get("ticker") or "").strip() == ticker]
-        report_dir_counts = Counter(
-            str(row.get("report_dir") or "").strip()
-            for row in ticker_rows
-            if str(row.get("report_dir") or "").strip()
-        )
-        report_dir_evidence = [
-            _inspect_report_dir_for_ticker(
-                reports_root,
-                report_dir_name,
-                ticker=ticker,
-                report_cache=report_cache,
-            )
-            for report_dir_name in _ranked_report_dirs(priority_row, ticker_rows)
-        ]
-        source_presence_counts: Counter[str] = Counter()
-        candidate_sources: list[str] = []
-        selection_target_decisions: list[str] = []
-        for evidence_row in report_dir_evidence:
-            source_presence_counts.update(dict(evidence_row.get("source_presence_counts") or {}))
-            candidate_sources.extend(list(evidence_row.get("candidate_sources") or []))
-            selection_target_decisions.extend(list(evidence_row.get("selection_target_decisions") or []))
 
-        replay_input_report_count = sum(1 for row in report_dir_evidence if int(row.get("replay_input_count") or 0) > 0)
-        replay_input_visible_report_count = sum(1 for row in report_dir_evidence if bool(row.get("ticker_present")))
-        watchlist_visible_report_count = sum(1 for row in report_dir_evidence if bool(row.get("watchlist_visible")))
-        candidate_entry_visible_report_count = sum(1 for row in report_dir_evidence if bool(row.get("candidate_entry_visible")))
-        selection_target_visible_report_count = sum(1 for row in report_dir_evidence if bool(row.get("selection_target_visible")))
-        buy_order_visible_report_count = sum(1 for row in report_dir_evidence if bool(row.get("buy_order_visible")))
-        frontier_row = dict(replay_rows_by_ticker.get(ticker) or {})
-        primary_failure_class, failure_reason, next_step = _classify_priority_failure(
+
+def _collect_priority_report_dir_evidence(
+    *,
+    priority_row: dict[str, Any],
+    ticker: str,
+    ticker_rows: list[dict[str, Any]],
+    reports_root: Path,
+    report_cache: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        _inspect_report_dir_for_ticker(
+            reports_root,
+            report_dir_name,
             ticker=ticker,
-            frontier_row=frontier_row,
-            report_dir_evidence=report_dir_evidence,
-            replay_input_report_count=replay_input_report_count,
-            replay_input_visible_report_count=replay_input_visible_report_count,
-            candidate_entry_visible_report_count=candidate_entry_visible_report_count,
+            report_cache=report_cache,
         )
-        handoff_stage = _classify_handoff_stage(
-            replay_input_count=replay_input_report_count,
-            watchlist_visible=watchlist_visible_report_count > 0,
-            candidate_entry_visible=candidate_entry_visible_report_count > 0,
-            selection_target_visible=selection_target_visible_report_count > 0,
-            buy_order_visible=buy_order_visible_report_count > 0,
-        )
-        watchlist_recall_stage = str(watchlist_recall_stage_map.get(ticker) or "").strip() or None
+        for report_dir_name in _ranked_report_dirs(priority_row, ticker_rows)
+    ]
 
-        dossiers.append(
-            {
-                "priority_rank": priority_row.get("priority_rank"),
-                "ticker": ticker,
-                "occurrence_count": int(priority_row.get("occurrence_count") or len(ticker_rows)),
-                "strict_goal_case_count": int(priority_row.get("strict_goal_case_count") or sum(1 for row in ticker_rows if row.get("strict_btst_goal_case"))),
-                "distinct_report_count": int(priority_row.get("distinct_report_count") or len(report_dir_counts)),
-                "primary_report_dir": priority_row.get("primary_report_dir"),
-                "report_dir_counts": {key: int(value) for key, value in report_dir_counts.most_common()},
-                "replay_input_report_count": replay_input_report_count,
-                "replay_input_visible_report_count": replay_input_visible_report_count,
-                "watchlist_visible_report_count": watchlist_visible_report_count,
-                "candidate_entry_visible_report_count": candidate_entry_visible_report_count,
-                "selection_target_visible_report_count": selection_target_visible_report_count,
-                "buy_order_visible_report_count": buy_order_visible_report_count,
-                "source_presence_counts": dict(source_presence_counts),
-                "candidate_sources": _unique_strings(candidate_sources),
-                "selection_target_decisions": _unique_strings(selection_target_decisions),
-                "frontier_status": frontier_row.get("candidate_entry_status"),
-                "frontier_best_variant": frontier_row.get("best_variant_name"),
-                "frontier_viable_recall_probe": bool(frontier_row.get("viable_recall_probe")),
-                "frontier_comparison_note": frontier_row.get("comparison_note"),
-                "primary_failure_class": primary_failure_class,
-                "handoff_stage": handoff_stage,
-                "watchlist_recall_stage": watchlist_recall_stage,
-                "failure_reason": failure_reason,
-                "next_step": next_step,
-                "report_dir_evidence": report_dir_evidence,
-            }
-        )
-    return dossiers
+
+def _summarize_priority_report_dir_evidence(report_dir_evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    source_presence_counts: Counter[str] = Counter()
+    candidate_sources: list[str] = []
+    selection_target_decisions: list[str] = []
+    for evidence_row in report_dir_evidence:
+        source_presence_counts.update(dict(evidence_row.get("source_presence_counts") or {}))
+        candidate_sources.extend(list(evidence_row.get("candidate_sources") or []))
+        selection_target_decisions.extend(list(evidence_row.get("selection_target_decisions") or []))
+
+    return {
+        "source_presence_counts": dict(source_presence_counts),
+        "candidate_sources": _unique_strings(candidate_sources),
+        "selection_target_decisions": _unique_strings(selection_target_decisions),
+        "replay_input_report_count": sum(1 for row in report_dir_evidence if int(row.get("replay_input_count") or 0) > 0),
+        "replay_input_visible_report_count": sum(1 for row in report_dir_evidence if bool(row.get("ticker_present"))),
+        "watchlist_visible_report_count": sum(1 for row in report_dir_evidence if bool(row.get("watchlist_visible"))),
+        "candidate_entry_visible_report_count": sum(1 for row in report_dir_evidence if bool(row.get("candidate_entry_visible"))),
+        "selection_target_visible_report_count": sum(1 for row in report_dir_evidence if bool(row.get("selection_target_visible"))),
+        "buy_order_visible_report_count": sum(1 for row in report_dir_evidence if bool(row.get("buy_order_visible"))),
+    }
+
+
+def _build_priority_ticker_dossier(
+    *,
+    priority_row: dict[str, Any],
+    no_candidate_rows: list[dict[str, Any]],
+    reports_root: Path,
+    replay_rows_by_ticker: dict[str, dict[str, Any]],
+    watchlist_recall_stage_map: dict[str, str],
+    report_cache: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    ticker = str(priority_row.get("ticker") or "").strip()
+    if not ticker:
+        return None
+
+    ticker_rows = [row for row in no_candidate_rows if str(row.get("ticker") or "").strip() == ticker]
+    report_dir_counts = Counter(
+        str(row.get("report_dir") or "").strip()
+        for row in ticker_rows
+        if str(row.get("report_dir") or "").strip()
+    )
+    report_dir_evidence = _collect_priority_report_dir_evidence(
+        priority_row=priority_row,
+        ticker=ticker,
+        ticker_rows=ticker_rows,
+        reports_root=reports_root,
+        report_cache=report_cache,
+    )
+    evidence_summary = _summarize_priority_report_dir_evidence(report_dir_evidence)
+    frontier_row = dict(replay_rows_by_ticker.get(ticker) or {})
+    primary_failure_class, failure_reason, next_step = _classify_priority_failure(
+        ticker=ticker,
+        frontier_row=frontier_row,
+        report_dir_evidence=report_dir_evidence,
+        replay_input_report_count=evidence_summary["replay_input_report_count"],
+        replay_input_visible_report_count=evidence_summary["replay_input_visible_report_count"],
+        candidate_entry_visible_report_count=evidence_summary["candidate_entry_visible_report_count"],
+    )
+    handoff_stage = _classify_handoff_stage(
+        replay_input_count=evidence_summary["replay_input_report_count"],
+        watchlist_visible=evidence_summary["watchlist_visible_report_count"] > 0,
+        candidate_entry_visible=evidence_summary["candidate_entry_visible_report_count"] > 0,
+        selection_target_visible=evidence_summary["selection_target_visible_report_count"] > 0,
+        buy_order_visible=evidence_summary["buy_order_visible_report_count"] > 0,
+    )
+    watchlist_recall_stage = str(watchlist_recall_stage_map.get(ticker) or "").strip() or None
+    return {
+        "priority_rank": priority_row.get("priority_rank"),
+        "ticker": ticker,
+        "occurrence_count": int(priority_row.get("occurrence_count") or len(ticker_rows)),
+        "strict_goal_case_count": int(priority_row.get("strict_goal_case_count") or sum(1 for row in ticker_rows if row.get("strict_btst_goal_case"))),
+        "distinct_report_count": int(priority_row.get("distinct_report_count") or len(report_dir_counts)),
+        "primary_report_dir": priority_row.get("primary_report_dir"),
+        "report_dir_counts": {key: int(value) for key, value in report_dir_counts.most_common()},
+        **evidence_summary,
+        "frontier_status": frontier_row.get("candidate_entry_status"),
+        "frontier_best_variant": frontier_row.get("best_variant_name"),
+        "frontier_viable_recall_probe": bool(frontier_row.get("viable_recall_probe")),
+        "frontier_comparison_note": frontier_row.get("comparison_note"),
+        "primary_failure_class": primary_failure_class,
+        "handoff_stage": handoff_stage,
+        "watchlist_recall_stage": watchlist_recall_stage,
+        "failure_reason": failure_reason,
+        "next_step": next_step,
+        "report_dir_evidence": report_dir_evidence,
+    }
 
 
 def _build_hotspot_report_dossiers(
@@ -706,54 +747,93 @@ def _build_hotspot_report_dossiers(
     replay_bundle: dict[str, Any],
     report_cache: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    replay_rows_by_report_dir = {
+    replay_rows_by_report_dir = _build_hotspot_replay_rows_by_report_dir(replay_bundle)
+    return [
+        dossier
+        for hotspot_row in hotspot_rows
+        if (dossier := _build_hotspot_report_dossier(
+            hotspot_row=hotspot_row,
+            reports_root=reports_root,
+            replay_rows_by_report_dir=replay_rows_by_report_dir,
+            report_cache=report_cache,
+        ))
+        is not None
+    ]
+
+
+def _build_hotspot_replay_rows_by_report_dir(replay_bundle: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
         str(row.get("report_dir") or "").strip(): dict(row)
         for row in list(replay_bundle.get("hotspot_replay_rows") or [])
         if str(row.get("report_dir") or "").strip()
     }
-    dossiers: list[dict[str, Any]] = []
-    for hotspot_row in hotspot_rows:
-        report_dir = str(hotspot_row.get("report_dir") or "").strip()
-        focus_tickers = [str(value) for value in list(hotspot_row.get("top_focus_tickers") or hotspot_row.get("focus_tickers") or []) if str(value or "").strip()]
-        if not report_dir:
-            continue
-        focus_ticker_evidence = [
-            {
-                "ticker": ticker,
-                **_inspect_report_dir_for_ticker(
-                    reports_root,
-                    report_dir,
-                    ticker=ticker,
-                    report_cache=report_cache,
-                ),
-            }
-            for ticker in focus_tickers
-        ]
-        frontier_row = dict(replay_rows_by_report_dir.get(report_dir) or {})
-        primary_failure_class, failure_reason, next_step = _classify_hotspot_failure(
-            report_dir=report_dir,
-            focus_ticker_evidence=focus_ticker_evidence,
-            hotspot_frontier_row=frontier_row,
-        )
-        focus_ticker_handoff_stage_counts = _count_handoff_stages(focus_ticker_evidence)
-        dossiers.append(
-            {
-                "priority_rank": hotspot_row.get("priority_rank"),
-                "report_dir": report_dir,
-                "focus_tickers": focus_tickers,
-                "frontier_status": frontier_row.get("candidate_entry_status"),
-                "frontier_best_variant": frontier_row.get("best_variant_name"),
-                "frontier_viable_recall_probe": bool(frontier_row.get("viable_recall_probe")),
-                "frontier_comparison_note": frontier_row.get("comparison_note"),
-                "primary_failure_class": primary_failure_class,
-                "focus_ticker_handoff_stage_counts": focus_ticker_handoff_stage_counts,
-                "dominant_handoff_stage": _dominant_handoff_stage(focus_ticker_handoff_stage_counts),
-                "failure_reason": failure_reason,
-                "next_step": next_step,
-                "focus_ticker_evidence": focus_ticker_evidence,
-            }
-        )
-    return dossiers
+
+
+def _collect_hotspot_focus_ticker_evidence(
+    *,
+    report_dir: str,
+    focus_tickers: list[str],
+    reports_root: Path,
+    report_cache: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "ticker": ticker,
+            **_inspect_report_dir_for_ticker(
+                reports_root,
+                report_dir,
+                ticker=ticker,
+                report_cache=report_cache,
+            ),
+        }
+        for ticker in focus_tickers
+    ]
+
+
+def _build_hotspot_report_dossier(
+    *,
+    hotspot_row: dict[str, Any],
+    reports_root: Path,
+    replay_rows_by_report_dir: dict[str, dict[str, Any]],
+    report_cache: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    report_dir = str(hotspot_row.get("report_dir") or "").strip()
+    if not report_dir:
+        return None
+
+    focus_tickers = [
+        str(value)
+        for value in list(hotspot_row.get("top_focus_tickers") or hotspot_row.get("focus_tickers") or [])
+        if str(value or "").strip()
+    ]
+    focus_ticker_evidence = _collect_hotspot_focus_ticker_evidence(
+        report_dir=report_dir,
+        focus_tickers=focus_tickers,
+        reports_root=reports_root,
+        report_cache=report_cache,
+    )
+    frontier_row = dict(replay_rows_by_report_dir.get(report_dir) or {})
+    primary_failure_class, failure_reason, next_step = _classify_hotspot_failure(
+        report_dir=report_dir,
+        focus_ticker_evidence=focus_ticker_evidence,
+        hotspot_frontier_row=frontier_row,
+    )
+    focus_ticker_handoff_stage_counts = _count_handoff_stages(focus_ticker_evidence)
+    return {
+        "priority_rank": hotspot_row.get("priority_rank"),
+        "report_dir": report_dir,
+        "focus_tickers": focus_tickers,
+        "frontier_status": frontier_row.get("candidate_entry_status"),
+        "frontier_best_variant": frontier_row.get("best_variant_name"),
+        "frontier_viable_recall_probe": bool(frontier_row.get("viable_recall_probe")),
+        "frontier_comparison_note": frontier_row.get("comparison_note"),
+        "primary_failure_class": primary_failure_class,
+        "focus_ticker_handoff_stage_counts": focus_ticker_handoff_stage_counts,
+        "dominant_handoff_stage": _dominant_handoff_stage(focus_ticker_handoff_stage_counts),
+        "failure_reason": failure_reason,
+        "next_step": next_step,
+        "focus_ticker_evidence": focus_ticker_evidence,
+    }
 
 
 def _top_tickers_by_failure(priority_ticker_dossiers: list[dict[str, Any]], failure_class: str) -> list[str]:
@@ -987,6 +1067,127 @@ def _append_next_actions_markdown(lines: list[str], items: list[str]) -> None:
         lines.append(f"- {item}")
 
 
+def _build_no_entry_failure_context(
+    tradeable_opportunity_pool_path: str | Path,
+    *,
+    action_board_path: str | Path | None,
+    replay_bundle_path: str | Path | None,
+    watchlist_recall_dossier_path: str | Path | None,
+    corridor_shadow_pack_path: str | Path | None,
+    priority_limit: int,
+    hotspot_limit: int,
+) -> dict[str, Any]:
+    tradeable_pool = _load_json(tradeable_opportunity_pool_path)
+    resolved_tradeable_pool_path = Path(tradeable_opportunity_pool_path).expanduser().resolve()
+    action_board = _safe_load_json(action_board_path)
+    replay_bundle = _safe_load_json(replay_bundle_path)
+    resolved_watchlist_recall_dossier_path = watchlist_recall_dossier_path or DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH
+    resolved_corridor_shadow_pack_path = corridor_shadow_pack_path or DEFAULT_CORRIDOR_SHADOW_PACK_PATH
+    reports_root = Path(action_board.get("reports_root") or resolved_tradeable_pool_path.parent).expanduser().resolve()
+    return {
+        "tradeable_pool": tradeable_pool,
+        "resolved_tradeable_pool_path": resolved_tradeable_pool_path,
+        "action_board": action_board,
+        "replay_bundle": replay_bundle,
+        "watchlist_recall_dossier": _safe_load_json(resolved_watchlist_recall_dossier_path),
+        "corridor_shadow_pack": _safe_load_json(resolved_corridor_shadow_pack_path),
+        "action_board_path": Path(action_board_path).expanduser().resolve().as_posix() if action_board_path else None,
+        "replay_bundle_path": Path(replay_bundle_path).expanduser().resolve().as_posix() if replay_bundle_path else None,
+        "watchlist_recall_dossier_path": Path(resolved_watchlist_recall_dossier_path).expanduser().resolve().as_posix(),
+        "corridor_shadow_pack_path": Path(resolved_corridor_shadow_pack_path).expanduser().resolve().as_posix(),
+        "reports_root": reports_root,
+        "priority_limit": max(int(priority_limit), 0),
+        "hotspot_limit": max(int(hotspot_limit), 0),
+    }
+
+
+def _summarize_no_entry_failure_dossiers(
+    *,
+    priority_ticker_dossiers: list[dict[str, Any]],
+    hotspot_report_dossiers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    priority_failure_class_counts: Counter[str] = Counter(
+        str(row.get("primary_failure_class") or "unknown")
+        for row in priority_ticker_dossiers
+    )
+    hotspot_failure_class_counts: Counter[str] = Counter(
+        str(row.get("primary_failure_class") or "unknown")
+        for row in hotspot_report_dossiers
+    )
+    return {
+        "priority_failure_class_counts": priority_failure_class_counts,
+        "hotspot_failure_class_counts": hotspot_failure_class_counts,
+        "priority_handoff_stage_counts": _count_handoff_stages(priority_ticker_dossiers),
+        "hotspot_handoff_stage_counts": _count_handoff_stages(hotspot_report_dossiers, key="dominant_handoff_stage"),
+        "promising_priority_tickers": [
+            str(row.get("ticker") or "")
+            for row in priority_ticker_dossiers
+            if str(row.get("primary_failure_class") or "") == "preserve_safe_recall_probe" and str(row.get("ticker") or "").strip()
+        ],
+        "top_upstream_absence_tickers": _top_tickers_by_failure(priority_ticker_dossiers, "upstream_absent_from_replay_inputs"),
+        "top_absent_from_watchlist_tickers": _top_tickers_by_handoff_stage(priority_ticker_dossiers, "absent_from_watchlist"),
+        "top_absent_from_candidate_pool_breakpoint_tickers": [
+            str(row.get("ticker") or "")
+            for row in priority_ticker_dossiers
+            if str(row.get("handoff_stage") or "") == "absent_from_watchlist"
+            and str(row.get("watchlist_recall_stage") or "") == "absent_from_candidate_pool"
+            and str(row.get("ticker") or "").strip()
+        ][:3],
+        "top_watchlist_handoff_gap_tickers": _top_tickers_by_handoff_stage(priority_ticker_dossiers, "watchlist_visible_but_not_candidate_entry"),
+        "top_candidate_entry_to_target_gap_tickers": _top_tickers_by_handoff_stage(priority_ticker_dossiers, "candidate_entry_visible_but_not_selection_target"),
+        "top_outside_candidate_entry_tickers": _top_tickers_by_failure(priority_ticker_dossiers, "present_but_outside_candidate_entry_universe"),
+        "top_semantic_miss_tickers": _top_tickers_by_failure(priority_ticker_dossiers, "candidate_entry_semantic_miss"),
+        "top_missing_replay_input_tickers": _top_tickers_by_failure(priority_ticker_dossiers, "missing_replay_input_artifacts"),
+        "top_hotspot_semantic_miss_report_dirs": _top_report_dirs_by_failure(hotspot_report_dossiers, "hotspot_candidate_entry_semantic_miss"),
+        "top_hotspot_upstream_absence_report_dirs": _top_report_dirs_by_failure(hotspot_report_dossiers, "hotspot_upstream_absence"),
+    }
+
+
+def _build_no_entry_failure_analysis(
+    *,
+    context: dict[str, Any],
+    corridor_primary_shadow_ticker: str | None,
+    priority_ticker_dossiers: list[dict[str, Any]],
+    hotspot_report_dossiers: list[dict[str, Any]],
+    summary: dict[str, Any],
+    recommendation: str,
+    next_actions: list[str],
+) -> dict[str, Any]:
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "tradeable_opportunity_pool_path": context["resolved_tradeable_pool_path"].as_posix(),
+        "action_board_path": context["action_board_path"],
+        "replay_bundle_path": context["replay_bundle_path"],
+        "watchlist_recall_dossier_path": context["watchlist_recall_dossier_path"],
+        "corridor_shadow_pack_path": context["corridor_shadow_pack_path"],
+        "reports_root": context["reports_root"].as_posix(),
+        "priority_limit": context["priority_limit"],
+        "hotspot_limit": context["hotspot_limit"],
+        "corridor_primary_shadow_ticker": corridor_primary_shadow_ticker,
+        "priority_failure_class_counts": dict(summary["priority_failure_class_counts"].most_common()),
+        "hotspot_failure_class_counts": dict(summary["hotspot_failure_class_counts"].most_common()),
+        "priority_handoff_stage_counts": summary["priority_handoff_stage_counts"],
+        "hotspot_handoff_stage_counts": summary["hotspot_handoff_stage_counts"],
+        "top_upstream_absence_tickers": summary["top_upstream_absence_tickers"],
+        "top_absent_from_watchlist_tickers": summary["top_absent_from_watchlist_tickers"],
+        "top_absent_from_candidate_pool_breakpoint_tickers": summary["top_absent_from_candidate_pool_breakpoint_tickers"],
+        "top_watchlist_visible_but_not_candidate_entry_tickers": summary["top_watchlist_handoff_gap_tickers"],
+        "top_candidate_entry_visible_but_not_selection_target_tickers": summary["top_candidate_entry_to_target_gap_tickers"],
+        "top_present_but_outside_candidate_entry_tickers": summary["top_outside_candidate_entry_tickers"],
+        "top_candidate_entry_semantic_miss_tickers": summary["top_semantic_miss_tickers"],
+        "top_missing_replay_input_tickers": summary["top_missing_replay_input_tickers"],
+        "top_hotspot_semantic_miss_report_dirs": summary["top_hotspot_semantic_miss_report_dirs"],
+        "top_hotspot_upstream_absence_report_dirs": summary["top_hotspot_upstream_absence_report_dirs"],
+        "promising_priority_tickers": summary["promising_priority_tickers"],
+        "priority_ticker_dossiers": priority_ticker_dossiers,
+        "hotspot_report_dossiers": hotspot_report_dossiers,
+        "priority_handoff_action_queue": _build_priority_handoff_action_queue(priority_ticker_dossiers, limit=context["priority_limit"]),
+        "hotspot_handoff_action_queue": _build_hotspot_handoff_action_queue(hotspot_report_dossiers, limit=context["hotspot_limit"]),
+        "next_actions": next_actions,
+        "recommendation": recommendation,
+    }
+
+
 def analyze_btst_no_candidate_entry_failure_dossier(
     tradeable_opportunity_pool_path: str | Path,
     *,
@@ -997,133 +1198,72 @@ def analyze_btst_no_candidate_entry_failure_dossier(
     priority_limit: int = DEFAULT_PRIORITY_LIMIT,
     hotspot_limit: int = DEFAULT_HOTSPOT_LIMIT,
 ) -> dict[str, Any]:
-    tradeable_pool = _load_json(tradeable_opportunity_pool_path)
-    resolved_tradeable_pool_path = Path(tradeable_opportunity_pool_path).expanduser().resolve()
-    action_board = _safe_load_json(action_board_path)
-    replay_bundle = _safe_load_json(replay_bundle_path)
-    if watchlist_recall_dossier_path is None:
-        watchlist_recall_dossier_path = DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH
-    watchlist_recall_dossier = _safe_load_json(watchlist_recall_dossier_path)
-    if corridor_shadow_pack_path is None:
-        corridor_shadow_pack_path = DEFAULT_CORRIDOR_SHADOW_PACK_PATH
-    corridor_shadow_pack = _safe_load_json(corridor_shadow_pack_path)
-    reports_root = Path(
-        action_board.get("reports_root")
-        or resolved_tradeable_pool_path.parent
-    ).expanduser().resolve()
-    no_candidate_rows = _collect_no_candidate_rows(tradeable_pool)
-    priority_rows = _build_priority_rows(action_board, tradeable_pool, priority_limit=max(int(priority_limit), 0))
-    corridor_primary_shadow_ticker = _extract_corridor_primary_shadow_ticker(corridor_shadow_pack)
+    context = _build_no_entry_failure_context(
+        tradeable_opportunity_pool_path,
+        action_board_path=action_board_path,
+        replay_bundle_path=replay_bundle_path,
+        watchlist_recall_dossier_path=watchlist_recall_dossier_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        priority_limit=priority_limit,
+        hotspot_limit=hotspot_limit,
+    )
+    no_candidate_rows = _collect_no_candidate_rows(context["tradeable_pool"])
+    priority_rows = _build_priority_rows(context["action_board"], context["tradeable_pool"], priority_limit=context["priority_limit"])
+    corridor_primary_shadow_ticker = _extract_corridor_primary_shadow_ticker(context["corridor_shadow_pack"])
     priority_rows = _promote_corridor_primary_priority_rows(priority_rows, corridor_primary_shadow_ticker)
-    hotspot_rows = _build_hotspot_rows(action_board, hotspot_limit=max(int(hotspot_limit), 0))
-    watchlist_recall_stage_map = _build_watchlist_recall_stage_map(watchlist_recall_dossier)
+    hotspot_rows = _build_hotspot_rows(context["action_board"], hotspot_limit=context["hotspot_limit"])
+    watchlist_recall_stage_map = _build_watchlist_recall_stage_map(context["watchlist_recall_dossier"])
     report_cache: dict[str, dict[str, Any]] = {}
 
     priority_ticker_dossiers = _build_priority_ticker_dossiers(
         priority_rows,
         no_candidate_rows,
-        reports_root=reports_root,
-        replay_bundle=replay_bundle,
+        reports_root=context["reports_root"],
+        replay_bundle=context["replay_bundle"],
         watchlist_recall_stage_map=watchlist_recall_stage_map,
         report_cache=report_cache,
     )
     hotspot_report_dossiers = _build_hotspot_report_dossiers(
         hotspot_rows,
-        reports_root=reports_root,
-        replay_bundle=replay_bundle,
+        reports_root=context["reports_root"],
+        replay_bundle=context["replay_bundle"],
         report_cache=report_cache,
     )
-
-    priority_failure_class_counts: Counter[str] = Counter(
-        str(row.get("primary_failure_class") or "unknown")
-        for row in priority_ticker_dossiers
+    summary = _summarize_no_entry_failure_dossiers(
+        priority_ticker_dossiers=priority_ticker_dossiers,
+        hotspot_report_dossiers=hotspot_report_dossiers,
     )
-    hotspot_failure_class_counts: Counter[str] = Counter(
-        str(row.get("primary_failure_class") or "unknown")
-        for row in hotspot_report_dossiers
-    )
-    priority_handoff_stage_counts = _count_handoff_stages(priority_ticker_dossiers)
-    hotspot_handoff_stage_counts = _count_handoff_stages(hotspot_report_dossiers, key="dominant_handoff_stage")
-    promising_priority_tickers = [
-        str(row.get("ticker") or "")
-        for row in priority_ticker_dossiers
-        if str(row.get("primary_failure_class") or "") == "preserve_safe_recall_probe" and str(row.get("ticker") or "").strip()
-    ]
-    top_upstream_absence_tickers = _top_tickers_by_failure(priority_ticker_dossiers, "upstream_absent_from_replay_inputs")
-    top_absent_from_watchlist_tickers = _top_tickers_by_handoff_stage(priority_ticker_dossiers, "absent_from_watchlist")
-    top_absent_from_candidate_pool_breakpoint_tickers = [
-        str(row.get("ticker") or "")
-        for row in priority_ticker_dossiers
-        if str(row.get("handoff_stage") or "") == "absent_from_watchlist"
-        and str(row.get("watchlist_recall_stage") or "") == "absent_from_candidate_pool"
-        and str(row.get("ticker") or "").strip()
-    ][:3]
-    top_watchlist_handoff_gap_tickers = _top_tickers_by_handoff_stage(priority_ticker_dossiers, "watchlist_visible_but_not_candidate_entry")
-    top_candidate_entry_to_target_gap_tickers = _top_tickers_by_handoff_stage(priority_ticker_dossiers, "candidate_entry_visible_but_not_selection_target")
-    top_outside_candidate_entry_tickers = _top_tickers_by_failure(priority_ticker_dossiers, "present_but_outside_candidate_entry_universe")
-    top_semantic_miss_tickers = _top_tickers_by_failure(priority_ticker_dossiers, "candidate_entry_semantic_miss")
-    top_missing_replay_input_tickers = _top_tickers_by_failure(priority_ticker_dossiers, "missing_replay_input_artifacts")
-    top_hotspot_semantic_miss_report_dirs = _top_report_dirs_by_failure(hotspot_report_dossiers, "hotspot_candidate_entry_semantic_miss")
-    top_hotspot_upstream_absence_report_dirs = _top_report_dirs_by_failure(hotspot_report_dossiers, "hotspot_upstream_absence")
-    priority_handoff_action_queue = _build_priority_handoff_action_queue(priority_ticker_dossiers, limit=max(int(priority_limit), 0))
-    hotspot_handoff_action_queue = _build_hotspot_handoff_action_queue(hotspot_report_dossiers, limit=max(int(hotspot_limit), 0))
-
     recommendation = _build_recommendation(
-        priority_failure_class_counts=priority_failure_class_counts,
-        top_upstream_absence_tickers=top_upstream_absence_tickers,
-        top_absent_from_watchlist_tickers=top_absent_from_watchlist_tickers,
-        top_absent_from_candidate_pool_breakpoint_tickers=top_absent_from_candidate_pool_breakpoint_tickers,
-        top_watchlist_handoff_gap_tickers=top_watchlist_handoff_gap_tickers,
-        top_candidate_entry_to_target_gap_tickers=top_candidate_entry_to_target_gap_tickers,
-        top_outside_candidate_entry_tickers=top_outside_candidate_entry_tickers,
-        top_semantic_miss_tickers=top_semantic_miss_tickers,
-        promising_priority_tickers=promising_priority_tickers,
+        priority_failure_class_counts=summary["priority_failure_class_counts"],
+        top_upstream_absence_tickers=summary["top_upstream_absence_tickers"],
+        top_absent_from_watchlist_tickers=summary["top_absent_from_watchlist_tickers"],
+        top_absent_from_candidate_pool_breakpoint_tickers=summary["top_absent_from_candidate_pool_breakpoint_tickers"],
+        top_watchlist_handoff_gap_tickers=summary["top_watchlist_handoff_gap_tickers"],
+        top_candidate_entry_to_target_gap_tickers=summary["top_candidate_entry_to_target_gap_tickers"],
+        top_outside_candidate_entry_tickers=summary["top_outside_candidate_entry_tickers"],
+        top_semantic_miss_tickers=summary["top_semantic_miss_tickers"],
+        promising_priority_tickers=summary["promising_priority_tickers"],
     )
     next_actions = _build_next_actions(
-        top_upstream_absence_tickers=top_upstream_absence_tickers,
-        top_absent_from_watchlist_tickers=top_absent_from_watchlist_tickers,
-        top_absent_from_candidate_pool_breakpoint_tickers=top_absent_from_candidate_pool_breakpoint_tickers,
-        top_watchlist_handoff_gap_tickers=top_watchlist_handoff_gap_tickers,
-        top_candidate_entry_to_target_gap_tickers=top_candidate_entry_to_target_gap_tickers,
-        top_outside_candidate_entry_tickers=top_outside_candidate_entry_tickers,
-        top_semantic_miss_tickers=top_semantic_miss_tickers,
-        top_hotspot_semantic_miss_report_dirs=top_hotspot_semantic_miss_report_dirs,
-        promising_priority_tickers=promising_priority_tickers,
+        top_upstream_absence_tickers=summary["top_upstream_absence_tickers"],
+        top_absent_from_watchlist_tickers=summary["top_absent_from_watchlist_tickers"],
+        top_absent_from_candidate_pool_breakpoint_tickers=summary["top_absent_from_candidate_pool_breakpoint_tickers"],
+        top_watchlist_handoff_gap_tickers=summary["top_watchlist_handoff_gap_tickers"],
+        top_candidate_entry_to_target_gap_tickers=summary["top_candidate_entry_to_target_gap_tickers"],
+        top_outside_candidate_entry_tickers=summary["top_outside_candidate_entry_tickers"],
+        top_semantic_miss_tickers=summary["top_semantic_miss_tickers"],
+        top_hotspot_semantic_miss_report_dirs=summary["top_hotspot_semantic_miss_report_dirs"],
+        promising_priority_tickers=summary["promising_priority_tickers"],
     )
-
-    return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "tradeable_opportunity_pool_path": resolved_tradeable_pool_path.as_posix(),
-        "action_board_path": Path(action_board_path).expanduser().resolve().as_posix() if action_board_path else None,
-        "replay_bundle_path": Path(replay_bundle_path).expanduser().resolve().as_posix() if replay_bundle_path else None,
-        "watchlist_recall_dossier_path": Path(watchlist_recall_dossier_path).expanduser().resolve().as_posix() if watchlist_recall_dossier_path else None,
-        "corridor_shadow_pack_path": Path(corridor_shadow_pack_path).expanduser().resolve().as_posix() if corridor_shadow_pack_path else None,
-        "reports_root": reports_root.as_posix(),
-        "priority_limit": max(int(priority_limit), 0),
-        "hotspot_limit": max(int(hotspot_limit), 0),
-        "corridor_primary_shadow_ticker": corridor_primary_shadow_ticker,
-        "priority_failure_class_counts": dict(priority_failure_class_counts.most_common()),
-        "hotspot_failure_class_counts": dict(hotspot_failure_class_counts.most_common()),
-        "priority_handoff_stage_counts": priority_handoff_stage_counts,
-        "hotspot_handoff_stage_counts": hotspot_handoff_stage_counts,
-        "top_upstream_absence_tickers": top_upstream_absence_tickers,
-        "top_absent_from_watchlist_tickers": top_absent_from_watchlist_tickers,
-        "top_absent_from_candidate_pool_breakpoint_tickers": top_absent_from_candidate_pool_breakpoint_tickers,
-        "top_watchlist_visible_but_not_candidate_entry_tickers": top_watchlist_handoff_gap_tickers,
-        "top_candidate_entry_visible_but_not_selection_target_tickers": top_candidate_entry_to_target_gap_tickers,
-        "top_present_but_outside_candidate_entry_tickers": top_outside_candidate_entry_tickers,
-        "top_candidate_entry_semantic_miss_tickers": top_semantic_miss_tickers,
-        "top_missing_replay_input_tickers": top_missing_replay_input_tickers,
-        "top_hotspot_semantic_miss_report_dirs": top_hotspot_semantic_miss_report_dirs,
-        "top_hotspot_upstream_absence_report_dirs": top_hotspot_upstream_absence_report_dirs,
-        "promising_priority_tickers": promising_priority_tickers,
-        "priority_ticker_dossiers": priority_ticker_dossiers,
-        "hotspot_report_dossiers": hotspot_report_dossiers,
-        "priority_handoff_action_queue": priority_handoff_action_queue,
-        "hotspot_handoff_action_queue": hotspot_handoff_action_queue,
-        "next_actions": next_actions,
-        "recommendation": recommendation,
-    }
+    return _build_no_entry_failure_analysis(
+        context=context,
+        corridor_primary_shadow_ticker=corridor_primary_shadow_ticker,
+        priority_ticker_dossiers=priority_ticker_dossiers,
+        hotspot_report_dossiers=hotspot_report_dossiers,
+        summary=summary,
+        recommendation=recommendation,
+        next_actions=next_actions,
+    )
 
 
 def render_btst_no_candidate_entry_failure_dossier_markdown(analysis: dict[str, Any]) -> str:

@@ -169,6 +169,26 @@ def _find_focus_entry(entries: list[dict[str, Any]], focus_ticker: Any) -> dict[
     return dict(entries[0] or {}) if entries else {}
 
 
+def _load_entries_and_focus_entry(report: dict[str, Any], *, entries_key: str = "entries") -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    entries = [dict(entry or {}) for entry in list(report.get(entries_key) or [])]
+    return entries, _find_focus_entry(entries, report.get("focus_ticker"))
+
+
+def _build_focus_entry_metadata(focus_entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "focus_latest_trade_date": focus_entry.get("latest_trade_date"),
+        "focus_latest_scope": focus_entry.get("latest_scope"),
+        "focus_recommendation": focus_entry.get("recommendation"),
+    }
+
+
+def _build_carryover_focus_base_fields(report: dict[str, Any], focus_entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "focus_ticker": report.get("focus_ticker") or focus_entry.get("ticker"),
+        **_build_focus_entry_metadata(focus_entry),
+    }
+
+
 def _build_continuation_focus_summary(reports_root: Path) -> dict[str, Any]:
     promotion_review = _optional_report_json(reports_root / "btst_tplus2_continuation_promotion_review_latest.json")
     promotion_gate = _optional_report_json(reports_root / "btst_tplus2_continuation_promotion_gate_latest.json")
@@ -777,8 +797,7 @@ def _build_carryover_aligned_peer_harvest_summary(reports_root: Path) -> dict[st
     harvest = _optional_report_json(reports_root / "btst_carryover_aligned_peer_harvest_latest.json")
     if not harvest:
         return {}
-    entries = [dict(entry or {}) for entry in list(harvest.get("harvest_entries") or [])]
-    focus_entry = _find_focus_entry(entries, harvest.get("focus_ticker"))
+    entries, focus_entry = _load_entries_and_focus_entry(harvest, entries_key="harvest_entries")
     fresh_open_cycle_tickers = [
         str(entry.get("ticker") or "")
         for entry in entries
@@ -789,13 +808,10 @@ def _build_carryover_aligned_peer_harvest_summary(reports_root: Path) -> dict[st
         "peer_row_count": harvest.get("peer_row_count"),
         "peer_count": harvest.get("peer_count"),
         "status_counts": dict(harvest.get("status_counts") or {}),
-        "focus_ticker": harvest.get("focus_ticker") or focus_entry.get("ticker"),
+        **_build_carryover_focus_base_fields(harvest, focus_entry),
         "focus_status": harvest.get("focus_status") or focus_entry.get("harvest_status"),
-        "focus_latest_trade_date": focus_entry.get("latest_trade_date"),
-        "focus_latest_scope": focus_entry.get("latest_scope"),
         "focus_closed_cycle_count": focus_entry.get("closed_cycle_count"),
         "focus_next_day_available_count": focus_entry.get("next_day_available_count"),
-        "focus_recommendation": focus_entry.get("recommendation"),
         "fresh_open_cycle_tickers": fresh_open_cycle_tickers,
         "recommendation": harvest.get("recommendation"),
     }
@@ -805,8 +821,7 @@ def _build_carryover_peer_expansion_summary(reports_root: Path) -> dict[str, Any
     expansion = _optional_report_json(reports_root / "btst_carryover_peer_expansion_latest.json")
     if not expansion:
         return {}
-    entries = [dict(entry or {}) for entry in list(expansion.get("entries") or [])]
-    focus_entry = _find_focus_entry(entries, expansion.get("focus_ticker"))
+    _, focus_entry = _load_entries_and_focus_entry(expansion)
     return {
         "selected_ticker": expansion.get("selected_ticker"),
         "selected_path_t2_bias_only": expansion.get("selected_path_t2_bias_only"),
@@ -815,39 +830,55 @@ def _build_carryover_peer_expansion_summary(reports_root: Path) -> dict[str, Any
         "expansion_status_counts": dict(expansion.get("expansion_status_counts") or {}),
         "priority_expansion_tickers": list(expansion.get("priority_expansion_tickers") or []),
         "watch_with_risk_tickers": list(expansion.get("watch_with_risk_tickers") or []),
-        "focus_ticker": expansion.get("focus_ticker") or focus_entry.get("ticker"),
+        **_build_carryover_focus_base_fields(expansion, focus_entry),
         "focus_status": expansion.get("focus_status") or focus_entry.get("expansion_status"),
-        "focus_latest_trade_date": focus_entry.get("latest_trade_date"),
-        "focus_latest_scope": focus_entry.get("latest_scope"),
-        "focus_recommendation": focus_entry.get("recommendation"),
         "recommendation": expansion.get("recommendation"),
     }
+
+
+def _build_carryover_selected_refresh_override(reports_root: Path) -> dict[str, Any]:
+    selected_refresh_summary = _build_selected_outcome_refresh_summary(reports_root)
+    return {
+        "selected_ticker": selected_refresh_summary.get("focus_ticker"),
+        "selected_trade_date": selected_refresh_summary.get("trade_date"),
+        "selected_cycle_status": selected_refresh_summary.get("focus_cycle_status"),
+        "selected_contract_verdict": selected_refresh_summary.get("focus_overall_contract_verdict"),
+    }
+
+
+def _build_carryover_selected_refresh_fields(
+    report: dict[str, Any],
+    selected_refresh_override: dict[str, Any],
+    *,
+    include_cycle_status: bool = False,
+) -> dict[str, Any]:
+    selected_fields = {
+        "selected_ticker": selected_refresh_override.get("selected_ticker") or report.get("selected_ticker"),
+        "selected_trade_date": selected_refresh_override.get("selected_trade_date") or report.get("selected_trade_date"),
+        "selected_contract_verdict": selected_refresh_override.get("selected_contract_verdict") or report.get("selected_contract_verdict"),
+    }
+    if include_cycle_status:
+        selected_fields["selected_cycle_status"] = selected_refresh_override.get("selected_cycle_status") or report.get("selected_cycle_status")
+    return selected_fields
 
 
 def _build_carryover_aligned_peer_proof_summary(reports_root: Path) -> dict[str, Any]:
     proof_board = _optional_report_json(reports_root / "btst_carryover_aligned_peer_proof_board_latest.json")
     if not proof_board:
         return {}
-    selected_refresh_summary = _build_selected_outcome_refresh_summary(reports_root)
-    entries = [dict(entry or {}) for entry in list(proof_board.get("entries") or [])]
-    focus_entry = _find_focus_entry(entries, proof_board.get("focus_ticker"))
+    selected_refresh_override = _build_carryover_selected_refresh_override(reports_root)
+    _, focus_entry = _load_entries_and_focus_entry(proof_board)
     return {
-        "selected_ticker": selected_refresh_summary.get("focus_ticker") or proof_board.get("selected_ticker"),
-        "selected_trade_date": selected_refresh_summary.get("trade_date") or proof_board.get("selected_trade_date"),
-        "selected_cycle_status": selected_refresh_summary.get("focus_cycle_status") or proof_board.get("selected_cycle_status"),
-        "selected_contract_verdict": selected_refresh_summary.get("focus_overall_contract_verdict") or proof_board.get("selected_contract_verdict"),
+        **_build_carryover_selected_refresh_fields(proof_board, selected_refresh_override, include_cycle_status=True),
+        **_build_carryover_focus_base_fields(proof_board, focus_entry),
         "peer_count": proof_board.get("peer_count"),
         "proof_verdict_counts": dict(proof_board.get("proof_verdict_counts") or {}),
         "promotion_review_verdict_counts": dict(proof_board.get("promotion_review_verdict_counts") or {}),
         "ready_for_promotion_review_tickers": list(proof_board.get("ready_for_promotion_review_tickers") or []),
         "risk_review_tickers": list(proof_board.get("risk_review_tickers") or []),
         "pending_t_plus_2_tickers": list(proof_board.get("pending_t_plus_2_tickers") or []),
-        "focus_ticker": proof_board.get("focus_ticker") or focus_entry.get("ticker"),
         "focus_proof_verdict": proof_board.get("focus_proof_verdict") or focus_entry.get("proof_verdict"),
         "focus_promotion_review_verdict": proof_board.get("focus_promotion_review_verdict") or focus_entry.get("promotion_review_verdict"),
-        "focus_latest_trade_date": focus_entry.get("latest_trade_date"),
-        "focus_latest_scope": focus_entry.get("latest_scope"),
-        "focus_recommendation": focus_entry.get("recommendation"),
         "recommendation": proof_board.get("recommendation"),
     }
 
@@ -856,22 +887,18 @@ def _build_carryover_peer_promotion_gate_summary(reports_root: Path) -> dict[str
     promotion_gate = _optional_report_json(reports_root / "btst_carryover_peer_promotion_gate_latest.json")
     if not promotion_gate:
         return {}
-    selected_refresh_summary = _build_selected_outcome_refresh_summary(reports_root)
-    entries = [dict(entry or {}) for entry in list(promotion_gate.get("entries") or [])]
-    focus_entry = _find_focus_entry(entries, promotion_gate.get("focus_ticker"))
+    selected_refresh_override = _build_carryover_selected_refresh_override(reports_root)
+    _, focus_entry = _load_entries_and_focus_entry(promotion_gate)
     return {
-        "selected_ticker": selected_refresh_summary.get("focus_ticker") or promotion_gate.get("selected_ticker"),
-        "selected_trade_date": selected_refresh_summary.get("trade_date") or promotion_gate.get("selected_trade_date"),
-        "selected_contract_verdict": selected_refresh_summary.get("focus_overall_contract_verdict") or promotion_gate.get("selected_contract_verdict"),
+        **_build_carryover_selected_refresh_fields(promotion_gate, selected_refresh_override),
+        **_build_carryover_focus_base_fields(promotion_gate, focus_entry),
         "peer_count": promotion_gate.get("peer_count"),
         "gate_verdict_counts": dict(promotion_gate.get("gate_verdict_counts") or {}),
         "ready_tickers": list(promotion_gate.get("ready_tickers") or []),
         "blocked_open_tickers": list(promotion_gate.get("blocked_open_tickers") or []),
         "risk_review_tickers": list(promotion_gate.get("risk_review_tickers") or []),
         "pending_t_plus_2_tickers": list(promotion_gate.get("pending_t_plus_2_tickers") or []),
-        "focus_ticker": promotion_gate.get("focus_ticker") or focus_entry.get("ticker"),
         "focus_gate_verdict": promotion_gate.get("focus_gate_verdict") or focus_entry.get("gate_verdict"),
-        "focus_recommendation": focus_entry.get("recommendation"),
         "recommendation": promotion_gate.get("recommendation"),
     }
 

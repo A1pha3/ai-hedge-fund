@@ -196,6 +196,41 @@ def _extend_shadow_focus_from_candidate_pool_recall_dossier(
         )
 
 
+def _recall_row_meets_shadow_focus_prerequisites(reports_root: Path, payload: dict[str, Any], *, ticker: str) -> bool:
+    strict_goal_case_count = int(payload.get("strict_btst_goal_case_count") or 0)
+    if strict_goal_case_count < AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES:
+        return False
+
+    candidate_dossier = _load_json_if_exists(reports_root / f"btst_tplus2_candidate_dossier_{ticker}_latest.json")
+    return not candidate_dossier or _latest_followup_supports_overnight_shadow_focus(candidate_dossier)
+
+
+def _resolve_recall_liquidity_thresholds(payload: dict[str, Any]) -> tuple[str, Any, Any]:
+    truncation_liquidity_profile = dict(payload.get("truncation_liquidity_profile") or {})
+    priority_handoff = str(truncation_liquidity_profile.get("priority_handoff") or "").strip()
+    avg_amount_share_of_min_gate = truncation_liquidity_profile.get("avg_amount_share_of_min_gate_mean")
+    avg_amount_share_of_cutoff = truncation_liquidity_profile.get("avg_amount_share_of_cutoff_mean")
+    return priority_handoff, avg_amount_share_of_min_gate, avg_amount_share_of_cutoff
+
+
+def _qualifies_for_corridor_shadow_focus(avg_amount_share_of_min_gate: Any, avg_amount_share_of_cutoff: Any) -> bool:
+    if avg_amount_share_of_min_gate is None or float(avg_amount_share_of_min_gate) < AUTO_SHADOW_CORRIDOR_MIN_GATE_SHARE:
+        return False
+    if avg_amount_share_of_cutoff is None or float(avg_amount_share_of_cutoff) > AUTO_SHADOW_CORRIDOR_MAX_CUTOFF_SHARE:
+        return False
+    return not (
+        float(avg_amount_share_of_min_gate) < AUTO_SHADOW_CORRIDOR_STANDARD_MIN_GATE_SHARE
+        and float(avg_amount_share_of_cutoff) > AUTO_SHADOW_CORRIDOR_LOW_GATE_MAX_CUTOFF_SHARE
+    )
+
+
+def _qualifies_for_rebucket_shadow_focus(payload: dict[str, Any], avg_amount_share_of_min_gate: Any) -> bool:
+    if avg_amount_share_of_min_gate is None or float(avg_amount_share_of_min_gate) < AUTO_SHADOW_REBUCKET_MIN_GATE_SHARE:
+        return False
+    closest_pre_truncation_gap = payload.get("closest_pre_truncation_gap")
+    return closest_pre_truncation_gap is not None and int(closest_pre_truncation_gap) <= AUTO_SHADOW_RECALL_MAX_CLOSEST_PRE_TRUNCATION_GAP
+
+
 def _extend_shadow_focus_from_recall_row(
     reports_root: Path,
     payload: dict[str, Any],
@@ -208,27 +243,12 @@ def _extend_shadow_focus_from_recall_row(
     if not ticker:
         return
 
-    strict_goal_case_count = int(payload.get("strict_btst_goal_case_count") or 0)
-    if strict_goal_case_count < AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES:
+    if not _recall_row_meets_shadow_focus_prerequisites(reports_root, payload, ticker=ticker):
         return
 
-    candidate_dossier = _load_json_if_exists(reports_root / f"btst_tplus2_candidate_dossier_{ticker}_latest.json")
-    if candidate_dossier and not _latest_followup_supports_overnight_shadow_focus(candidate_dossier):
-        return
-
-    truncation_liquidity_profile = dict(payload.get("truncation_liquidity_profile") or {})
-    priority_handoff = str(truncation_liquidity_profile.get("priority_handoff") or "").strip()
-    avg_amount_share_of_min_gate = truncation_liquidity_profile.get("avg_amount_share_of_min_gate_mean")
-    avg_amount_share_of_cutoff = truncation_liquidity_profile.get("avg_amount_share_of_cutoff_mean")
+    priority_handoff, avg_amount_share_of_min_gate, avg_amount_share_of_cutoff = _resolve_recall_liquidity_thresholds(payload)
     if priority_handoff == "layer_a_liquidity_corridor":
-        if avg_amount_share_of_min_gate is None or float(avg_amount_share_of_min_gate) < AUTO_SHADOW_CORRIDOR_MIN_GATE_SHARE:
-            return
-        if avg_amount_share_of_cutoff is None or float(avg_amount_share_of_cutoff) > AUTO_SHADOW_CORRIDOR_MAX_CUTOFF_SHARE:
-            return
-        if (
-            float(avg_amount_share_of_min_gate) < AUTO_SHADOW_CORRIDOR_STANDARD_MIN_GATE_SHARE
-            and float(avg_amount_share_of_cutoff) > AUTO_SHADOW_CORRIDOR_LOW_GATE_MAX_CUTOFF_SHARE
-        ):
+        if not _qualifies_for_corridor_shadow_focus(avg_amount_share_of_min_gate, avg_amount_share_of_cutoff):
             return
         all_focus.add(ticker)
         corridor_focus.add(ticker)
@@ -236,10 +256,7 @@ def _extend_shadow_focus_from_recall_row(
 
     if priority_handoff != "post_gate_liquidity_competition":
         return
-    if avg_amount_share_of_min_gate is None or float(avg_amount_share_of_min_gate) < AUTO_SHADOW_REBUCKET_MIN_GATE_SHARE:
-        return
-    closest_pre_truncation_gap = payload.get("closest_pre_truncation_gap")
-    if closest_pre_truncation_gap is None or int(closest_pre_truncation_gap) > AUTO_SHADOW_RECALL_MAX_CLOSEST_PRE_TRUNCATION_GAP:
+    if not _qualifies_for_rebucket_shadow_focus(payload, avg_amount_share_of_min_gate):
         return
     all_focus.add(ticker)
     rebucket_focus.add(ticker)

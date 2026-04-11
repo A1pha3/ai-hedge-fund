@@ -178,6 +178,123 @@ def _build_recall_action(stage: str, *, subject: str) -> tuple[str, str, str]:
     )
 
 
+def _build_recall_failure_reason(*, ticker: str, dominant_recall_stage: str | None) -> str:
+    return {
+        "missing_candidate_pool_snapshot": f"{ticker} 对应的 trade_date 缺少 candidate_pool snapshot，当前先是候选池观测缺口。",
+        "absent_from_candidate_pool": f"{ticker} 在已存在的 candidate_pool snapshot 中持续缺席，说明问题先发生在 Layer A 候选池召回。",
+        "candidate_pool_visible_but_missing_layer_b": f"{ticker} 已进入 candidate_pool，但没有进入 layer_b 过滤诊断，当前断点落在 candidate_pool -> layer_b handoff。",
+        "layer_b_visible_but_missing_watchlist": f"{ticker} 已进入 layer_b，但没有进入 watchlist，当前断点落在 layer_b -> watchlist gate。",
+        "watchlist_visible_but_missing_candidate_entry": f"{ticker} 已进入 watchlist，因此不再属于 watchlist recall 主矛盾。",
+        "candidate_entry_visible_or_later_stage": f"{ticker} 已进入 candidate-entry 或更下游阶段，watchlist recall 已不是首要问题。",
+    }.get(dominant_recall_stage or "", f"{ticker} 的 watchlist recall 证据混合，仍需更多 occurrence 样本。")
+
+
+def _build_occurrence_evidence_row(
+    *,
+    row: dict[str, Any],
+    ticker: str,
+    snapshot_payload: dict[str, Any],
+    candidate_pool_rank: int | None,
+    recall_stage: str,
+) -> dict[str, Any]:
+    return {
+        "trade_date": str(row.get("trade_date") or "").strip(),
+        "report_dir": row.get("report_dir"),
+        "report_mode": row.get("report_mode"),
+        "strict_btst_goal_case": bool(row.get("strict_btst_goal_case")),
+        "system_seen_stage": row.get("system_seen_stage"),
+        "candidate_source": row.get("candidate_source"),
+        "short_trade_decision": row.get("short_trade_decision"),
+        "next_high_return": row.get("next_high_return"),
+        "t_plus_2_close_return": row.get("t_plus_2_close_return"),
+        "candidate_pool_snapshot": snapshot_payload.get("snapshot_name"),
+        "candidate_pool_snapshot_path": snapshot_payload.get("snapshot_path"),
+        "candidate_pool_snapshot_size": snapshot_payload.get("snapshot_size"),
+        "candidate_pool_visible": candidate_pool_rank is not None,
+        "candidate_pool_rank": candidate_pool_rank,
+        "recall_stage": recall_stage,
+    }
+
+
+def _collect_ticker_occurrence_evidence(
+    *,
+    ticker: str,
+    ticker_rows: list[dict[str, Any]],
+    snapshots_root: Path,
+    snapshot_cache: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    occurrence_evidence: list[dict[str, Any]] = []
+    for row in sorted(ticker_rows, key=lambda current: (str(current.get("trade_date") or ""), str(current.get("report_dir") or ""))):
+        trade_date = str(row.get("trade_date") or "").strip()
+        snapshot_payload = _load_candidate_pool_snapshot(snapshots_root, trade_date, snapshot_cache=snapshot_cache)
+        ticker_ranks = dict(snapshot_payload.get("ticker_ranks") or {})
+        candidate_pool_rank = ticker_ranks.get(ticker)
+        if not snapshot_payload.get("snapshot_path"):
+            recall_stage = "missing_candidate_pool_snapshot"
+        else:
+            recall_stage = _classify_recall_stage(
+                candidate_pool_visible=candidate_pool_rank is not None,
+                system_seen_stage=row.get("system_seen_stage"),
+                candidate_source=row.get("candidate_source"),
+            )
+        occurrence_evidence.append(
+            _build_occurrence_evidence_row(
+                row=row,
+                ticker=ticker,
+                snapshot_payload=snapshot_payload,
+                candidate_pool_rank=candidate_pool_rank,
+                recall_stage=recall_stage,
+            )
+        )
+    return occurrence_evidence
+
+
+def _build_priority_ticker_dossier(
+    *,
+    ticker: str,
+    priority_rank: int,
+    ticker_rows: list[dict[str, Any]],
+    snapshots_root: Path,
+    snapshot_cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    occurrence_evidence = _collect_ticker_occurrence_evidence(
+        ticker=ticker,
+        ticker_rows=ticker_rows,
+        snapshots_root=snapshots_root,
+        snapshot_cache=snapshot_cache,
+    )
+    report_dir_counts = Counter(str(row.get("report_dir") or "") for row in ticker_rows if str(row.get("report_dir") or "").strip())
+    recall_stage_counts = _count_recall_stages(occurrence_evidence)
+    dominant_recall_stage = _dominant_recall_stage(recall_stage_counts)
+    action_tier, title, next_step = _build_recall_action(dominant_recall_stage or "missing_candidate_pool_snapshot", subject=ticker)
+    candidate_pool_visible_count = sum(1 for row in occurrence_evidence if bool(row.get("candidate_pool_visible")))
+    layer_b_visible_count = sum(1 for row in occurrence_evidence if str(row.get("system_seen_stage") or "") == "boundary")
+    watchlist_visible_count = sum(
+        1
+        for row in occurrence_evidence
+        if str(row.get("system_seen_stage") or "") == "candidate_entry" or str(row.get("candidate_source") or "") in {"watchlist_filter_diagnostics", "layer_c_watchlist"}
+    )
+    strict_goal_case_count = sum(1 for row in occurrence_evidence if bool(row.get("strict_btst_goal_case")))
+    return {
+        "priority_rank": priority_rank,
+        "ticker": ticker,
+        "occurrence_count": len(occurrence_evidence),
+        "strict_btst_goal_case_count": strict_goal_case_count,
+        "primary_report_dir": report_dir_counts.most_common(1)[0][0] if report_dir_counts else None,
+        "report_dir_counts": {key: int(value) for key, value in report_dir_counts.most_common()},
+        "candidate_pool_visible_count": candidate_pool_visible_count,
+        "layer_b_visible_count": layer_b_visible_count,
+        "watchlist_visible_count": watchlist_visible_count,
+        "recall_stage_counts": recall_stage_counts,
+        "dominant_recall_stage": dominant_recall_stage,
+        "action_tier": action_tier,
+        "title": title,
+        "failure_reason": _build_recall_failure_reason(ticker=ticker, dominant_recall_stage=dominant_recall_stage),
+        "next_step": next_step,
+        "occurrence_evidence": occurrence_evidence,
+    }
+
+
 def _build_priority_ticker_dossiers(
     focus_tickers: list[str],
     tradeable_pool: dict[str, Any],
@@ -190,85 +307,16 @@ def _build_priority_ticker_dossiers(
         for row in list(tradeable_pool.get("rows") or [])
         if str(row.get("first_kill_switch") or "") == "no_candidate_entry"
     ]
-    dossiers: list[dict[str, Any]] = []
-    for priority_rank, ticker in enumerate(focus_tickers, start=1):
-        ticker_rows = [row for row in no_candidate_rows if str(row.get("ticker") or "").strip() == ticker]
-        occurrence_evidence: list[dict[str, Any]] = []
-        report_dir_counts = Counter(str(row.get("report_dir") or "") for row in ticker_rows if str(row.get("report_dir") or "").strip())
-        for row in sorted(ticker_rows, key=lambda current: (str(current.get("trade_date") or ""), str(current.get("report_dir") or ""))):
-            trade_date = str(row.get("trade_date") or "").strip()
-            snapshot_payload = _load_candidate_pool_snapshot(snapshots_root, trade_date, snapshot_cache=snapshot_cache)
-            ticker_ranks = dict(snapshot_payload.get("ticker_ranks") or {})
-            candidate_pool_rank = ticker_ranks.get(ticker)
-            if not snapshot_payload.get("snapshot_path"):
-                recall_stage = "missing_candidate_pool_snapshot"
-            else:
-                recall_stage = _classify_recall_stage(
-                    candidate_pool_visible=candidate_pool_rank is not None,
-                    system_seen_stage=row.get("system_seen_stage"),
-                    candidate_source=row.get("candidate_source"),
-                )
-            occurrence_evidence.append(
-                {
-                    "trade_date": trade_date,
-                    "report_dir": row.get("report_dir"),
-                    "report_mode": row.get("report_mode"),
-                    "strict_btst_goal_case": bool(row.get("strict_btst_goal_case")),
-                    "system_seen_stage": row.get("system_seen_stage"),
-                    "candidate_source": row.get("candidate_source"),
-                    "short_trade_decision": row.get("short_trade_decision"),
-                    "next_high_return": row.get("next_high_return"),
-                    "t_plus_2_close_return": row.get("t_plus_2_close_return"),
-                    "candidate_pool_snapshot": snapshot_payload.get("snapshot_name"),
-                    "candidate_pool_snapshot_path": snapshot_payload.get("snapshot_path"),
-                    "candidate_pool_snapshot_size": snapshot_payload.get("snapshot_size"),
-                    "candidate_pool_visible": candidate_pool_rank is not None,
-                    "candidate_pool_rank": candidate_pool_rank,
-                    "recall_stage": recall_stage,
-                }
-            )
-
-        recall_stage_counts = _count_recall_stages(occurrence_evidence)
-        dominant_recall_stage = _dominant_recall_stage(recall_stage_counts)
-        action_tier, title, next_step = _build_recall_action(dominant_recall_stage or "missing_candidate_pool_snapshot", subject=ticker)
-        candidate_pool_visible_count = sum(1 for row in occurrence_evidence if bool(row.get("candidate_pool_visible")))
-        layer_b_visible_count = sum(1 for row in occurrence_evidence if str(row.get("system_seen_stage") or "") == "boundary")
-        watchlist_visible_count = sum(
-            1
-            for row in occurrence_evidence
-            if str(row.get("system_seen_stage") or "") == "candidate_entry" or str(row.get("candidate_source") or "") in {"watchlist_filter_diagnostics", "layer_c_watchlist"}
+    return [
+        _build_priority_ticker_dossier(
+            ticker=ticker,
+            priority_rank=priority_rank,
+            ticker_rows=[row for row in no_candidate_rows if str(row.get("ticker") or "").strip() == ticker],
+            snapshots_root=snapshots_root,
+            snapshot_cache=snapshot_cache,
         )
-        strict_goal_case_count = sum(1 for row in occurrence_evidence if bool(row.get("strict_btst_goal_case")))
-        failure_reason = {
-            "missing_candidate_pool_snapshot": f"{ticker} 对应的 trade_date 缺少 candidate_pool snapshot，当前先是候选池观测缺口。",
-            "absent_from_candidate_pool": f"{ticker} 在已存在的 candidate_pool snapshot 中持续缺席，说明问题先发生在 Layer A 候选池召回。",
-            "candidate_pool_visible_but_missing_layer_b": f"{ticker} 已进入 candidate_pool，但没有进入 layer_b 过滤诊断，当前断点落在 candidate_pool -> layer_b handoff。",
-            "layer_b_visible_but_missing_watchlist": f"{ticker} 已进入 layer_b，但没有进入 watchlist，当前断点落在 layer_b -> watchlist gate。",
-            "watchlist_visible_but_missing_candidate_entry": f"{ticker} 已进入 watchlist，因此不再属于 watchlist recall 主矛盾。",
-            "candidate_entry_visible_or_later_stage": f"{ticker} 已进入 candidate-entry 或更下游阶段，watchlist recall 已不是首要问题。",
-        }.get(dominant_recall_stage or "", f"{ticker} 的 watchlist recall 证据混合，仍需更多 occurrence 样本。")
-
-        dossiers.append(
-            {
-                "priority_rank": priority_rank,
-                "ticker": ticker,
-                "occurrence_count": len(occurrence_evidence),
-                "strict_btst_goal_case_count": strict_goal_case_count,
-                "primary_report_dir": report_dir_counts.most_common(1)[0][0] if report_dir_counts else None,
-                "report_dir_counts": {key: int(value) for key, value in report_dir_counts.most_common()},
-                "candidate_pool_visible_count": candidate_pool_visible_count,
-                "layer_b_visible_count": layer_b_visible_count,
-                "watchlist_visible_count": watchlist_visible_count,
-                "recall_stage_counts": recall_stage_counts,
-                "dominant_recall_stage": dominant_recall_stage,
-                "action_tier": action_tier,
-                "title": title,
-                "failure_reason": failure_reason,
-                "next_step": next_step,
-                "occurrence_evidence": occurrence_evidence,
-            }
-        )
-    return dossiers
+        for priority_rank, ticker in enumerate(focus_tickers, start=1)
+    ]
 
 
 def _top_tickers_by_recall_stage(priority_ticker_dossiers: list[dict[str, Any]], recall_stage: str) -> list[str]:
@@ -344,63 +392,7 @@ def _build_next_actions(
     return actions[:4]
 
 
-def analyze_btst_watchlist_recall_dossier(
-    tradeable_opportunity_pool_path: str | Path,
-    *,
-    failure_dossier_path: str | Path | None = None,
-    priority_limit: int = DEFAULT_PRIORITY_LIMIT,
-) -> dict[str, Any]:
-    tradeable_pool = _load_json(tradeable_opportunity_pool_path)
-    failure_dossier = _safe_load_json(failure_dossier_path)
-    resolved_tradeable_pool_path = Path(tradeable_opportunity_pool_path).expanduser().resolve()
-    reports_root = Path(tradeable_pool.get("reports_root") or resolved_tradeable_pool_path.parent).expanduser().resolve()
-    snapshots_root = reports_root.parent / "snapshots"
-    focus_tickers = _build_focus_tickers(tradeable_pool, failure_dossier, priority_limit=priority_limit)
-    snapshot_cache: dict[str, dict[str, Any]] = {}
-    priority_ticker_dossiers = _build_priority_ticker_dossiers(
-        focus_tickers,
-        tradeable_pool,
-        snapshots_root=snapshots_root,
-        snapshot_cache=snapshot_cache,
-    )
-    priority_recall_stage_counts = _count_recall_stages(priority_ticker_dossiers, key="dominant_recall_stage")
-    top_absent_from_candidate_pool_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "absent_from_candidate_pool")
-    top_candidate_pool_visible_but_missing_layer_b_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "candidate_pool_visible_but_missing_layer_b")
-    top_layer_b_visible_but_missing_watchlist_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "layer_b_visible_but_missing_watchlist")
-    action_queue = _build_action_queue(priority_ticker_dossiers)
-    recommendation = _build_recommendation(
-        top_absent_from_candidate_pool_tickers=top_absent_from_candidate_pool_tickers,
-        top_candidate_pool_visible_but_missing_layer_b_tickers=top_candidate_pool_visible_but_missing_layer_b_tickers,
-        top_layer_b_visible_but_missing_watchlist_tickers=top_layer_b_visible_but_missing_watchlist_tickers,
-    )
-    next_actions = _build_next_actions(
-        top_absent_from_candidate_pool_tickers=top_absent_from_candidate_pool_tickers,
-        top_candidate_pool_visible_but_missing_layer_b_tickers=top_candidate_pool_visible_but_missing_layer_b_tickers,
-        top_layer_b_visible_but_missing_watchlist_tickers=top_layer_b_visible_but_missing_watchlist_tickers,
-    )
-    return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "tradeable_opportunity_pool_path": resolved_tradeable_pool_path.as_posix(),
-        "failure_dossier_path": Path(failure_dossier_path).expanduser().resolve().as_posix() if failure_dossier_path else None,
-        "reports_root": reports_root.as_posix(),
-        "snapshots_root": snapshots_root.as_posix(),
-        "priority_limit": max(int(priority_limit), 0),
-        "focus_tickers": focus_tickers,
-        "priority_recall_stage_counts": priority_recall_stage_counts,
-        "top_absent_from_candidate_pool_tickers": top_absent_from_candidate_pool_tickers,
-        "top_candidate_pool_visible_but_missing_layer_b_tickers": top_candidate_pool_visible_but_missing_layer_b_tickers,
-        "top_layer_b_visible_but_missing_watchlist_tickers": top_layer_b_visible_but_missing_watchlist_tickers,
-        "priority_ticker_dossiers": priority_ticker_dossiers,
-        "action_queue": action_queue,
-        "next_actions": next_actions,
-        "recommendation": recommendation,
-    }
-
-
-def render_btst_watchlist_recall_dossier_markdown(analysis: dict[str, Any]) -> str:
-    lines: list[str] = []
-    lines.append("# BTST Watchlist Recall Dossier")
-    lines.append("")
+def _append_watchlist_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Overview")
     lines.append(f"- tradeable_opportunity_pool_path: {analysis.get('tradeable_opportunity_pool_path')}")
     lines.append(f"- failure_dossier_path: {analysis.get('failure_dossier_path')}")
@@ -410,8 +402,11 @@ def render_btst_watchlist_recall_dossier_markdown(analysis: dict[str, Any]) -> s
     lines.append(f"- top_layer_b_visible_but_missing_watchlist_tickers: {analysis.get('top_layer_b_visible_but_missing_watchlist_tickers')}")
     lines.append(f"- recommendation: {analysis.get('recommendation')}")
     lines.append("")
+
+
+def _append_watchlist_priority_ticker_dossiers_markdown(lines: list[str], rows: list[dict[str, Any]]) -> None:
     lines.append("## Priority Ticker Dossiers")
-    for row in list(analysis.get("priority_ticker_dossiers") or []):
+    for row in rows:
         lines.append(
             f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} dominant_recall_stage={row.get('dominant_recall_stage')} occurrence_count={row.get('occurrence_count')} candidate_pool_visible_count={row.get('candidate_pool_visible_count')} layer_b_visible_count={row.get('layer_b_visible_count')}"
         )
@@ -422,25 +417,137 @@ def render_btst_watchlist_recall_dossier_markdown(analysis: dict[str, Any]) -> s
             lines.append(
                 f"  occurrence: trade_date={evidence_row.get('trade_date')} report_dir={evidence_row.get('report_dir')} recall_stage={evidence_row.get('recall_stage')} candidate_pool_visible={evidence_row.get('candidate_pool_visible')} candidate_pool_rank={evidence_row.get('candidate_pool_rank')} system_seen_stage={evidence_row.get('system_seen_stage')}"
             )
-    if not list(analysis.get("priority_ticker_dossiers") or []):
+    if not rows:
         lines.append("- none")
     lines.append("")
+
+
+def _append_watchlist_action_queue_markdown(lines: list[str], rows: list[dict[str, Any]]) -> None:
     lines.append("## Action Queue")
-    for row in list(analysis.get("action_queue") or []):
+    for row in rows:
         lines.append(
             f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} dominant_recall_stage={row.get('dominant_recall_stage')}"
         )
         lines.append(f"  why_now: {row.get('why_now')}")
         lines.append(f"  next_step: {row.get('next_step')}")
-    if not list(analysis.get("action_queue") or []):
+    if not rows:
         lines.append("- none")
     lines.append("")
+
+
+def _append_watchlist_next_actions_markdown(lines: list[str], items: list[str]) -> None:
     lines.append("## Next Actions")
-    for item in list(analysis.get("next_actions") or []):
+    for item in items:
         lines.append(f"- {item}")
-    if not list(analysis.get("next_actions") or []):
+    if not items:
         lines.append("- none")
     lines.append("")
+
+
+def _build_watchlist_recall_context(
+    tradeable_opportunity_pool_path: str | Path,
+    *,
+    failure_dossier_path: str | Path | None,
+    priority_limit: int,
+) -> dict[str, Any]:
+    tradeable_pool = _load_json(tradeable_opportunity_pool_path)
+    failure_dossier = _safe_load_json(failure_dossier_path)
+    resolved_tradeable_pool_path = Path(tradeable_opportunity_pool_path).expanduser().resolve()
+    reports_root = Path(tradeable_pool.get("reports_root") or resolved_tradeable_pool_path.parent).expanduser().resolve()
+    snapshots_root = reports_root.parent / "snapshots"
+    return {
+        "tradeable_pool": tradeable_pool,
+        "failure_dossier": failure_dossier,
+        "resolved_tradeable_pool_path": resolved_tradeable_pool_path,
+        "reports_root": reports_root,
+        "snapshots_root": snapshots_root,
+        "priority_limit": max(int(priority_limit), 0),
+        "failure_dossier_path": Path(failure_dossier_path).expanduser().resolve().as_posix() if failure_dossier_path else None,
+    }
+
+
+def _build_watchlist_recall_analysis(
+    *,
+    context: dict[str, Any],
+    focus_tickers: list[str],
+    priority_ticker_dossiers: list[dict[str, Any]],
+    recommendation: str,
+    next_actions: list[str],
+) -> dict[str, Any]:
+    priority_recall_stage_counts = _count_recall_stages(priority_ticker_dossiers, key="dominant_recall_stage")
+    top_absent_from_candidate_pool_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "absent_from_candidate_pool")
+    top_candidate_pool_visible_but_missing_layer_b_tickers = _top_tickers_by_recall_stage(
+        priority_ticker_dossiers, "candidate_pool_visible_but_missing_layer_b"
+    )
+    top_layer_b_visible_but_missing_watchlist_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "layer_b_visible_but_missing_watchlist")
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "tradeable_opportunity_pool_path": context["resolved_tradeable_pool_path"].as_posix(),
+        "failure_dossier_path": context["failure_dossier_path"],
+        "reports_root": context["reports_root"].as_posix(),
+        "snapshots_root": context["snapshots_root"].as_posix(),
+        "priority_limit": context["priority_limit"],
+        "focus_tickers": focus_tickers,
+        "priority_recall_stage_counts": priority_recall_stage_counts,
+        "top_absent_from_candidate_pool_tickers": top_absent_from_candidate_pool_tickers,
+        "top_candidate_pool_visible_but_missing_layer_b_tickers": top_candidate_pool_visible_but_missing_layer_b_tickers,
+        "top_layer_b_visible_but_missing_watchlist_tickers": top_layer_b_visible_but_missing_watchlist_tickers,
+        "priority_ticker_dossiers": priority_ticker_dossiers,
+        "action_queue": _build_action_queue(priority_ticker_dossiers),
+        "next_actions": next_actions,
+        "recommendation": recommendation,
+    }
+
+
+def analyze_btst_watchlist_recall_dossier(
+    tradeable_opportunity_pool_path: str | Path,
+    *,
+    failure_dossier_path: str | Path | None = None,
+    priority_limit: int = DEFAULT_PRIORITY_LIMIT,
+) -> dict[str, Any]:
+    context = _build_watchlist_recall_context(
+        tradeable_opportunity_pool_path,
+        failure_dossier_path=failure_dossier_path,
+        priority_limit=priority_limit,
+    )
+    focus_tickers = _build_focus_tickers(context["tradeable_pool"], context["failure_dossier"], priority_limit=context["priority_limit"])
+    snapshot_cache: dict[str, dict[str, Any]] = {}
+    priority_ticker_dossiers = _build_priority_ticker_dossiers(
+        focus_tickers,
+        context["tradeable_pool"],
+        snapshots_root=context["snapshots_root"],
+        snapshot_cache=snapshot_cache,
+    )
+    top_absent_from_candidate_pool_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "absent_from_candidate_pool")
+    top_candidate_pool_visible_but_missing_layer_b_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "candidate_pool_visible_but_missing_layer_b")
+    top_layer_b_visible_but_missing_watchlist_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "layer_b_visible_but_missing_watchlist")
+    recommendation = _build_recommendation(
+        top_absent_from_candidate_pool_tickers=top_absent_from_candidate_pool_tickers,
+        top_candidate_pool_visible_but_missing_layer_b_tickers=top_candidate_pool_visible_but_missing_layer_b_tickers,
+        top_layer_b_visible_but_missing_watchlist_tickers=top_layer_b_visible_but_missing_watchlist_tickers,
+    )
+    next_actions = _build_next_actions(
+        top_absent_from_candidate_pool_tickers=top_absent_from_candidate_pool_tickers,
+        top_candidate_pool_visible_but_missing_layer_b_tickers=top_candidate_pool_visible_but_missing_layer_b_tickers,
+        top_layer_b_visible_but_missing_watchlist_tickers=top_layer_b_visible_but_missing_watchlist_tickers,
+    )
+    return _build_watchlist_recall_analysis(
+        context=context,
+        focus_tickers=focus_tickers,
+        priority_ticker_dossiers=priority_ticker_dossiers,
+        recommendation=recommendation,
+        next_actions=next_actions,
+    )
+
+
+def render_btst_watchlist_recall_dossier_markdown(analysis: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# BTST Watchlist Recall Dossier")
+    lines.append("")
+    _append_watchlist_overview_markdown(lines, analysis)
+    _append_watchlist_priority_ticker_dossiers_markdown(lines, list(analysis.get("priority_ticker_dossiers") or []))
+    _append_watchlist_action_queue_markdown(lines, list(analysis.get("action_queue") or []))
+    _append_watchlist_next_actions_markdown(lines, list(analysis.get("next_actions") or []))
     return "\n".join(lines) + "\n"
 
 

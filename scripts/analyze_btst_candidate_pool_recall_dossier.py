@@ -984,33 +984,14 @@ def _build_priority_handoff_branch_experiment_queue(
             continue
         prototype_type, prototype_summary, success_signal, guardrail_summary = _describe_branch_experiment_prototype(normalized)
         occurrences = list(grouped_occurrences.get(priority_handoff) or [])
-        uplift_to_cutoff_multiples = [
-            round(1.0 / float(value), 4)
-            for value in [_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) for row in occurrences]
-            if value is not None and value > 0
-        ]
-        cutoff_targets = [
-            float(value)
-            for value in [_safe_float(row.get("pre_truncation_cutoff_avg_amount_20d")) for row in occurrences]
-            if value is not None
-        ]
-        lower_cap_hot_peer_counts = [
-            int(value)
-            for value in [row.get("top300_lower_market_cap_hot_peer_count") for row in occurrences]
-            if value is not None
-        ]
-        rebucket_rank_gaps = [
-            int(value)
-            for value in [row.get("estimated_rank_gap_after_rebucket") for row in occurrences]
-            if value is not None
-        ]
-        uplift_to_cutoff_multiple_mean = round(sum(uplift_to_cutoff_multiples) / len(uplift_to_cutoff_multiples), 4) if uplift_to_cutoff_multiples else None
-        uplift_to_cutoff_multiple_min = min(uplift_to_cutoff_multiples) if uplift_to_cutoff_multiples else None
-        uplift_to_cutoff_multiple_max = max(uplift_to_cutoff_multiples) if uplift_to_cutoff_multiples else None
-        target_cutoff_avg_amount_20d_mean = round(sum(cutoff_targets) / len(cutoff_targets), 4) if cutoff_targets else None
-        top300_lower_market_cap_hot_peer_count_mean = round(sum(lower_cap_hot_peer_counts) / len(lower_cap_hot_peer_counts), 4) if lower_cap_hot_peer_counts else None
-        lower_cap_hot_peer_case_share = round(sum(1 for value in lower_cap_hot_peer_counts if value > 0) / len(lower_cap_hot_peer_counts), 4) if lower_cap_hot_peer_counts else None
-        estimated_rank_gap_after_rebucket_mean = round(sum(rebucket_rank_gaps) / len(rebucket_rank_gaps), 4) if rebucket_rank_gaps else None
+        occurrence_summary = _summarize_branch_experiment_occurrences(occurrences)
+        uplift_to_cutoff_multiple_mean = occurrence_summary["uplift_to_cutoff_multiple_mean"]
+        uplift_to_cutoff_multiple_min = occurrence_summary["uplift_to_cutoff_multiple_min"]
+        uplift_to_cutoff_multiple_max = occurrence_summary["uplift_to_cutoff_multiple_max"]
+        target_cutoff_avg_amount_20d_mean = occurrence_summary["target_cutoff_avg_amount_20d_mean"]
+        top300_lower_market_cap_hot_peer_count_mean = occurrence_summary["top300_lower_market_cap_hot_peer_count_mean"]
+        lower_cap_hot_peer_case_share = occurrence_summary["lower_cap_hot_peer_case_share"]
+        estimated_rank_gap_after_rebucket_mean = occurrence_summary["estimated_rank_gap_after_rebucket_mean"]
         prototype_readiness = "research_only"
         evaluation_summary = "当前 prototype 还缺足够 occurrence 证据，暂不进入 execution-ready 讨论。"
         selective_exemption_readiness = None
@@ -1072,6 +1053,38 @@ def _build_priority_handoff_branch_experiment_queue(
             }
         )
     return sorted(queue, key=lambda row: (int(row.get("priority_rank") or 99), str(row.get("task_id") or "")))
+
+
+def _summarize_branch_experiment_occurrences(occurrences: list[dict[str, Any]]) -> dict[str, Any]:
+    uplift_to_cutoff_multiples = [
+        round(1.0 / float(value), 4)
+        for value in [_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) for row in occurrences]
+        if value is not None and value > 0
+    ]
+    cutoff_targets = [
+        float(value)
+        for value in [_safe_float(row.get("pre_truncation_cutoff_avg_amount_20d")) for row in occurrences]
+        if value is not None
+    ]
+    lower_cap_hot_peer_counts = [
+        int(value)
+        for value in [row.get("top300_lower_market_cap_hot_peer_count") for row in occurrences]
+        if value is not None
+    ]
+    rebucket_rank_gaps = [
+        int(value)
+        for value in [row.get("estimated_rank_gap_after_rebucket") for row in occurrences]
+        if value is not None
+    ]
+    return {
+        "uplift_to_cutoff_multiple_mean": round(sum(uplift_to_cutoff_multiples) / len(uplift_to_cutoff_multiples), 4) if uplift_to_cutoff_multiples else None,
+        "uplift_to_cutoff_multiple_min": min(uplift_to_cutoff_multiples) if uplift_to_cutoff_multiples else None,
+        "uplift_to_cutoff_multiple_max": max(uplift_to_cutoff_multiples) if uplift_to_cutoff_multiples else None,
+        "target_cutoff_avg_amount_20d_mean": round(sum(cutoff_targets) / len(cutoff_targets), 4) if cutoff_targets else None,
+        "top300_lower_market_cap_hot_peer_count_mean": round(sum(lower_cap_hot_peer_counts) / len(lower_cap_hot_peer_counts), 4) if lower_cap_hot_peer_counts else None,
+        "lower_cap_hot_peer_case_share": round(sum(1 for value in lower_cap_hot_peer_counts if value > 0) / len(lower_cap_hot_peer_counts), 4) if lower_cap_hot_peer_counts else None,
+        "estimated_rank_gap_after_rebucket_mean": round(sum(rebucket_rank_gaps) / len(rebucket_rank_gaps), 4) if rebucket_rank_gaps else None,
+    }
 
 
 def _build_priority_handoff_branch_mechanisms(priority_ticker_dossiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
