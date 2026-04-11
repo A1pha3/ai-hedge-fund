@@ -302,6 +302,42 @@ def build_upstream_shadow_release_entry(
     }
 
 
+def summarize_upstream_shadow_release_historical_support(
+    *,
+    historical_prior: dict[str, Any],
+    historical_prior_int_fn: Callable[[dict[str, Any], str], int | None],
+    historical_prior_float_fn: Callable[[dict[str, Any], str], float | None],
+    summarize_shadow_release_historical_support_fn: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    prior = dict(historical_prior or {})
+    execution_quality_label = str(prior.get("execution_quality_label") or "").strip()
+    applied_scope = str(prior.get("applied_scope") or "").strip()
+    evaluable_count = historical_prior_int_fn(prior, "evaluable_count") or 0
+    next_close_positive_rate = historical_prior_float_fn(prior, "next_close_positive_rate")
+    next_high_hit_rate = historical_prior_float_fn(prior, "next_high_hit_rate_at_threshold")
+    pruned_from_opportunity_pool = bool(prior.get("pruned_from_opportunity_pool"))
+    prune_reason = str(prior.get("prune_reason") or "").strip()
+    support_summary = summarize_shadow_release_historical_support_fn(
+        execution_quality_label=execution_quality_label,
+        applied_scope=applied_scope,
+        evaluable_count=evaluable_count,
+        next_close_positive_rate=next_close_positive_rate,
+        next_high_hit_rate=next_high_hit_rate,
+        pruned_from_opportunity_pool=pruned_from_opportunity_pool,
+        prune_reason=prune_reason,
+    )
+    return {
+        "execution_quality_label": execution_quality_label or None,
+        "applied_scope": applied_scope or None,
+        "evaluable_count": evaluable_count,
+        "next_close_positive_rate": round(float(next_close_positive_rate), 4) if next_close_positive_rate is not None else None,
+        "next_high_hit_rate_at_threshold": round(float(next_high_hit_rate), 4) if next_high_hit_rate is not None else None,
+        "pruned_from_opportunity_pool": pruned_from_opportunity_pool,
+        "prune_reason": prune_reason or None,
+        **support_summary,
+    }
+
+
 def apply_merge_approved_fused_boost(
     *,
     fused: list[Any],

@@ -77,6 +77,114 @@ def _build_upstream_shadow_catalyst_relief_default_result(
     }
 
 
+def _build_upstream_shadow_catalyst_relief_historical_context(historical_prior: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "execution_quality_label": str(historical_prior.get("execution_quality_label") or "unknown"),
+        "entry_timing_bias": str(historical_prior.get("entry_timing_bias") or "unknown"),
+        "evaluable_count": int(historical_prior.get("evaluable_count") or 0),
+        "next_close_positive_rate": clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0)),
+        "next_high_hit_rate": clamp_unit_interval(float(historical_prior.get("next_high_hit_rate_at_threshold", 0.0) or 0.0)),
+        "next_open_to_close_return_mean": float(historical_prior.get("next_open_to_close_return_mean", 0.0) or 0.0),
+    }
+
+
+def _parse_upstream_shadow_catalyst_relief_config(
+    *,
+    relief_config: dict[str, Any],
+    base_near_miss_threshold: float,
+    base_select_threshold: float,
+    strong_carryover_history_min_evaluable_count: int,
+) -> dict[str, Any]:
+    return {
+        "catalyst_freshness_floor": clamp_unit_interval(float(relief_config.get("catalyst_freshness_floor", 0.0) or 0.0)),
+        "near_miss_threshold_override": clamp_unit_interval(
+            float(relief_config.get("near_miss_threshold", base_near_miss_threshold) or base_near_miss_threshold)
+        ),
+        "select_threshold_override": clamp_unit_interval(
+            float(relief_config.get("selected_threshold", base_select_threshold) or base_select_threshold)
+        ),
+        "breakout_freshness_min": clamp_unit_interval(float(relief_config.get("breakout_freshness_min", 0.0) or 0.0)),
+        "trend_acceleration_min": clamp_unit_interval(float(relief_config.get("trend_acceleration_min", 0.0) or 0.0)),
+        "close_strength_min": clamp_unit_interval(float(relief_config.get("close_strength_min", 0.0) or 0.0)),
+        "require_no_profitability_hard_cliff": bool(relief_config.get("require_no_profitability_hard_cliff", False)),
+        "required_execution_quality_labels": {
+            str(label).strip()
+            for label in list(relief_config.get("required_execution_quality_labels") or [])
+            if str(label or "").strip()
+        },
+        "min_historical_evaluable_count": int(relief_config.get("min_historical_evaluable_count", 0) or 0),
+        "min_historical_next_close_positive_rate": float(relief_config.get("min_historical_next_close_positive_rate", 0.0) or 0.0),
+        "min_historical_next_open_to_close_return_mean": float(
+            relief_config.get("min_historical_next_open_to_close_return_mean", -1.0) or -1.0
+        ),
+        "carryover_min_historical_evaluable_count": int(
+            relief_config.get("min_historical_evaluable_count", strong_carryover_history_min_evaluable_count)
+            or strong_carryover_history_min_evaluable_count
+        ),
+    }
+
+
+def _resolve_upstream_shadow_catalyst_relief_history_support(
+    *,
+    relief_reason: str,
+    historical_context: dict[str, Any],
+    config: dict[str, Any],
+) -> tuple[bool, bool, bool]:
+    carryover_history_supported = True
+    if relief_reason == "catalyst_theme_short_trade_carryover":
+        carryover_history_supported = (
+            historical_context["execution_quality_label"] == "close_continuation"
+            and historical_context["entry_timing_bias"] == "confirm_then_hold"
+            and historical_context["evaluable_count"] >= config["carryover_min_historical_evaluable_count"]
+            and historical_context["next_close_positive_rate"] >= 0.5
+        )
+
+    carryover_strong_close_continuation = (
+        relief_reason == "catalyst_theme_short_trade_carryover"
+        and historical_context["execution_quality_label"] == "close_continuation"
+        and historical_context["evaluable_count"] >= config["carryover_min_historical_evaluable_count"]
+        and historical_context["next_close_positive_rate"] >= 0.8
+        and historical_context["next_high_hit_rate"] >= 0.8
+        and historical_context["next_open_to_close_return_mean"] >= 0.02
+    )
+
+    upstream_shadow_history_supported = True
+    if relief_reason == "upstream_shadow_catalyst_relief" and config["required_execution_quality_labels"]:
+        upstream_shadow_history_supported = (
+            historical_context["execution_quality_label"] in config["required_execution_quality_labels"]
+            and historical_context["evaluable_count"] >= config["min_historical_evaluable_count"]
+            and historical_context["next_close_positive_rate"] >= config["min_historical_next_close_positive_rate"]
+            and historical_context["next_open_to_close_return_mean"] >= config["min_historical_next_open_to_close_return_mean"]
+        )
+
+    return carryover_history_supported, carryover_strong_close_continuation, upstream_shadow_history_supported
+
+
+def _build_upstream_shadow_catalyst_relief_gate_hits(
+    *,
+    breakout_freshness: float,
+    trend_acceleration: float,
+    close_strength: float,
+    profitability_hard_cliff: bool,
+    relief_reason: str,
+    config: dict[str, Any],
+    carryover_history_supported: bool,
+    upstream_shadow_history_supported: bool,
+) -> dict[str, bool]:
+    return {
+        "breakout_freshness": breakout_freshness >= config["breakout_freshness_min"],
+        "trend_acceleration": trend_acceleration >= config["trend_acceleration_min"],
+        "close_strength": close_strength >= config["close_strength_min"],
+        "no_profitability_hard_cliff": (not config["require_no_profitability_hard_cliff"]) or (not profitability_hard_cliff),
+        **({"historical_continuation_quality": carryover_history_supported} if relief_reason == "catalyst_theme_short_trade_carryover" else {}),
+        **(
+            {"historical_continuation_quality": upstream_shadow_history_supported}
+            if relief_reason == "upstream_shadow_catalyst_relief" and config["required_execution_quality_labels"]
+            else {}
+        ),
+    }
+
+
 def _has_weak_intraday_or_zero_follow_through_history(historical_prior: dict[str, Any]) -> tuple[bool, str, str, int, float]:
     historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
     historical_applied_scope = str(historical_prior.get("applied_scope") or "")
@@ -216,12 +324,7 @@ def resolve_upstream_shadow_catalyst_relief(
     relief_config = dict(relief_payload) if isinstance(relief_payload, dict) else {}
     relief_reason = str(relief_config.get("reason") or "upstream_shadow_catalyst_relief")
     historical_prior = historical_prior_getter(input_data)
-    historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
-    historical_entry_timing_bias = str(historical_prior.get("entry_timing_bias") or "unknown")
-    historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
-    historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
-    historical_next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
-    historical_next_open_to_close_return_mean = float(historical_prior.get("next_open_to_close_return_mean", 0.0) or 0.0)
+    historical_context = _build_upstream_shadow_catalyst_relief_historical_context(historical_prior)
     base_near_miss_threshold = float(profile.near_miss_threshold)
     base_select_threshold = float(profile.select_threshold)
     default_result = _build_upstream_shadow_catalyst_relief_default_result(
@@ -229,11 +332,11 @@ def resolve_upstream_shadow_catalyst_relief(
         catalyst_freshness=catalyst_freshness,
         base_near_miss_threshold=base_near_miss_threshold,
         base_select_threshold=base_select_threshold,
-        historical_execution_quality_label=historical_execution_quality_label,
-        historical_evaluable_count=historical_evaluable_count,
-        historical_next_close_positive_rate=historical_next_close_positive_rate,
-        historical_next_high_hit_rate=historical_next_high_hit_rate,
-        historical_next_open_to_close_return_mean=historical_next_open_to_close_return_mean,
+        historical_execution_quality_label=historical_context["execution_quality_label"],
+        historical_evaluable_count=historical_context["evaluable_count"],
+        historical_next_close_positive_rate=historical_context["next_close_positive_rate"],
+        historical_next_high_hit_rate=historical_context["next_high_hit_rate"],
+        historical_next_open_to_close_return_mean=historical_context["next_open_to_close_return_mean"],
     )
 
     candidate_reason_codes = set(normalized_reason_codes(input_data.replay_context.get("candidate_reason_codes")))
@@ -244,68 +347,35 @@ def resolve_upstream_shadow_catalyst_relief(
     if not enabled:
         return {**default_result, "reason": relief_reason}
 
-    catalyst_freshness_floor = clamp_unit_interval(float(relief_config.get("catalyst_freshness_floor", 0.0) or 0.0))
-    near_miss_threshold_override = clamp_unit_interval(float(relief_config.get("near_miss_threshold", base_near_miss_threshold) or base_near_miss_threshold))
-    select_threshold_override = clamp_unit_interval(float(relief_config.get("selected_threshold", base_select_threshold) or base_select_threshold))
-    breakout_freshness_min = clamp_unit_interval(float(relief_config.get("breakout_freshness_min", 0.0) or 0.0))
-    trend_acceleration_min = clamp_unit_interval(float(relief_config.get("trend_acceleration_min", 0.0) or 0.0))
-    close_strength_min = clamp_unit_interval(float(relief_config.get("close_strength_min", 0.0) or 0.0))
-    require_no_profitability_hard_cliff = bool(relief_config.get("require_no_profitability_hard_cliff", False))
-    carryover_history_supported = True
-    required_execution_quality_labels = {
-        str(label).strip()
-        for label in list(relief_config.get("required_execution_quality_labels") or [])
-        if str(label or "").strip()
-    }
-    min_historical_evaluable_count = int(relief_config.get("min_historical_evaluable_count", 0) or 0)
-    min_historical_next_close_positive_rate = float(relief_config.get("min_historical_next_close_positive_rate", 0.0) or 0.0)
-    min_historical_next_open_to_close_return_mean = float(
-        relief_config.get("min_historical_next_open_to_close_return_mean", -1.0) or -1.0
+    config = _parse_upstream_shadow_catalyst_relief_config(
+        relief_config=relief_config,
+        base_near_miss_threshold=base_near_miss_threshold,
+        base_select_threshold=base_select_threshold,
+        strong_carryover_history_min_evaluable_count=strong_carryover_history_min_evaluable_count,
     )
-    carryover_min_historical_evaluable_count = int(
-        relief_config.get("min_historical_evaluable_count", strong_carryover_history_min_evaluable_count)
-        or strong_carryover_history_min_evaluable_count
+    carryover_history_supported, carryover_strong_close_continuation, upstream_shadow_history_supported = _resolve_upstream_shadow_catalyst_relief_history_support(
+        relief_reason=relief_reason,
+        historical_context=historical_context,
+        config=config,
     )
-    if relief_reason == "catalyst_theme_short_trade_carryover":
-        carryover_history_supported = (
-            historical_execution_quality_label == "close_continuation"
-            and historical_entry_timing_bias == "confirm_then_hold"
-            and historical_evaluable_count >= carryover_min_historical_evaluable_count
-            and historical_next_close_positive_rate >= 0.5
-        )
-    carryover_strong_close_continuation = (
-        relief_reason == "catalyst_theme_short_trade_carryover"
-        and historical_execution_quality_label == "close_continuation"
-        and historical_evaluable_count >= carryover_min_historical_evaluable_count
-        and historical_next_close_positive_rate >= 0.8
-        and historical_next_high_hit_rate >= 0.8
-        and historical_next_open_to_close_return_mean >= 0.02
+    gate_hits = _build_upstream_shadow_catalyst_relief_gate_hits(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        profitability_hard_cliff=profitability_hard_cliff,
+        relief_reason=relief_reason,
+        config=config,
+        carryover_history_supported=carryover_history_supported,
+        upstream_shadow_history_supported=upstream_shadow_history_supported,
     )
-    upstream_shadow_history_supported = True
-    if relief_reason == "upstream_shadow_catalyst_relief" and required_execution_quality_labels:
-        upstream_shadow_history_supported = (
-            historical_execution_quality_label in required_execution_quality_labels
-            and historical_evaluable_count >= min_historical_evaluable_count
-            and historical_next_close_positive_rate >= min_historical_next_close_positive_rate
-            and historical_next_open_to_close_return_mean >= min_historical_next_open_to_close_return_mean
-        )
-
-    gate_hits = {
-        "breakout_freshness": breakout_freshness >= breakout_freshness_min,
-        "trend_acceleration": trend_acceleration >= trend_acceleration_min,
-        "close_strength": close_strength >= close_strength_min,
-        "no_profitability_hard_cliff": (not require_no_profitability_hard_cliff) or (not profitability_hard_cliff),
-        **({"historical_continuation_quality": carryover_history_supported} if relief_reason == "catalyst_theme_short_trade_carryover" else {}),
-        **({"historical_continuation_quality": upstream_shadow_history_supported} if relief_reason == "upstream_shadow_catalyst_relief" and required_execution_quality_labels else {}),
-    }
     eligible = all(gate_hits.values())
     effective_catalyst_freshness = catalyst_freshness
     effective_near_miss_threshold = base_near_miss_threshold
     effective_select_threshold = base_select_threshold
     if eligible:
-        effective_catalyst_freshness = max(catalyst_freshness, catalyst_freshness_floor)
-        effective_near_miss_threshold = min(base_near_miss_threshold, near_miss_threshold_override)
-        effective_select_threshold = min(base_select_threshold, select_threshold_override)
+        effective_catalyst_freshness = max(catalyst_freshness, config["catalyst_freshness_floor"])
+        effective_near_miss_threshold = min(base_near_miss_threshold, config["near_miss_threshold_override"])
+        effective_select_threshold = min(base_select_threshold, config["select_threshold_override"])
         if carryover_strong_close_continuation:
             effective_select_threshold = min(effective_select_threshold, 0.45)
 
@@ -326,15 +396,15 @@ def resolve_upstream_shadow_catalyst_relief(
         "effective_near_miss_threshold": effective_near_miss_threshold,
         "base_select_threshold": base_select_threshold,
         "effective_select_threshold": effective_select_threshold,
-        "catalyst_freshness_floor": catalyst_freshness_floor,
-        "near_miss_threshold_override": near_miss_threshold_override,
-        "select_threshold_override": select_threshold_override,
-        "require_no_profitability_hard_cliff": require_no_profitability_hard_cliff,
-        "historical_execution_quality_label": historical_execution_quality_label,
-        "historical_evaluable_count": historical_evaluable_count,
-        "historical_next_close_positive_rate": historical_next_close_positive_rate,
-        "historical_next_high_hit_rate_at_threshold": historical_next_high_hit_rate,
-        "historical_next_open_to_close_return_mean": historical_next_open_to_close_return_mean,
+        "catalyst_freshness_floor": config["catalyst_freshness_floor"],
+        "near_miss_threshold_override": config["near_miss_threshold_override"],
+        "select_threshold_override": config["select_threshold_override"],
+        "require_no_profitability_hard_cliff": config["require_no_profitability_hard_cliff"],
+        "historical_execution_quality_label": historical_context["execution_quality_label"],
+        "historical_evaluable_count": historical_context["evaluable_count"],
+        "historical_next_close_positive_rate": historical_context["next_close_positive_rate"],
+        "historical_next_high_hit_rate_at_threshold": historical_context["next_high_hit_rate"],
+        "historical_next_open_to_close_return_mean": historical_context["next_open_to_close_return_mean"],
         "historical_strong_close_continuation": carryover_strong_close_continuation,
     }
 

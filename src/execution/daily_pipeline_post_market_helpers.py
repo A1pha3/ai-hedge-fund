@@ -62,6 +62,21 @@ class PostMarketSelectionTargetInputs:
 
 
 @dataclass(frozen=True)
+class PostMarketSelectionResolution:
+    counts: dict[str, Any]
+    funnel_diagnostics: dict[str, Any]
+    selection_targets: dict[str, Any]
+    dual_target_summary: Any
+
+
+@dataclass(frozen=True)
+class PostMarketDiagnosticsAggregation:
+    counts: dict[str, Any]
+    funnel_diagnostics: dict[str, Any]
+    timing_seconds: dict[str, float]
+
+
+@dataclass(frozen=True)
 class PlanTargetShellInputs:
     watchlist: list[Any]
     rejected_entries: list[dict[str, Any]]
@@ -184,6 +199,62 @@ def build_post_market_timing_seconds(
     }
 
 
+def aggregate_post_market_diagnostics(
+    *,
+    candidate_context: PostMarketCandidateContext,
+    watchlist_context: PostMarketWatchlistContext,
+    order_context: PostMarketOrderContext,
+    blocked_buy_tickers: dict[str, dict],
+    precise_stage_skipped: bool,
+    fast_agent_score_threshold: float,
+    fast_agent_max_tickers: int,
+    precise_agent_max_tickers: int,
+    watchlist_score_threshold: float,
+    candidate_timing: dict[str, float],
+    order_timing: dict[str, float],
+    total_post_market_seconds: float,
+) -> PostMarketDiagnosticsAggregation:
+    skipped_precise_ticker_count = len(candidate_context.top_precise_pool) if precise_stage_skipped else 0
+    counts = build_post_market_counts(
+        candidate_context=candidate_context,
+        watchlist_context=watchlist_context,
+        order_context=order_context,
+        precise_stage_skipped=precise_stage_skipped,
+        skipped_precise_ticker_count=skipped_precise_ticker_count,
+        fast_agent_score_threshold=fast_agent_score_threshold,
+        fast_agent_max_tickers=fast_agent_max_tickers,
+        precise_agent_max_tickers=precise_agent_max_tickers,
+        watchlist_score_threshold=watchlist_score_threshold,
+    )
+    funnel_diagnostics = build_post_market_funnel_diagnostics(
+        counts=counts,
+        candidate_context=candidate_context,
+        watchlist_context=watchlist_context,
+        order_context=order_context,
+        blocked_buy_tickers=blocked_buy_tickers,
+    )
+    timing_seconds = build_post_market_timing_seconds(
+        candidate_pool_seconds=candidate_timing["candidate_pool_seconds"],
+        market_state_seconds=candidate_timing["market_state_seconds"],
+        score_batch_seconds=candidate_timing["score_batch_seconds"],
+        fuse_batch_seconds=candidate_timing["fuse_batch_seconds"],
+        shadow_score_batch_seconds=candidate_timing["shadow_score_batch_seconds"],
+        shadow_fuse_batch_seconds=candidate_timing["shadow_fuse_batch_seconds"],
+        fast_agent_seconds=candidate_timing["fast_agent_seconds"],
+        precise_agent_seconds=candidate_timing["precise_agent_seconds"],
+        estimated_skipped_precise_seconds=candidate_timing["estimated_skipped_precise_seconds"],
+        aggregate_layer_c_seconds=candidate_timing["aggregate_layer_c_seconds"],
+        build_buy_orders_seconds=order_timing["build_buy_orders_seconds"],
+        sell_check_seconds=order_timing["sell_check_seconds"],
+        total_post_market_seconds=total_post_market_seconds,
+    )
+    return PostMarketDiagnosticsAggregation(
+        counts=counts,
+        funnel_diagnostics=funnel_diagnostics,
+        timing_seconds=timing_seconds,
+    )
+
+
 def build_sell_order_diagnostics(
     *,
     sell_orders: list[Any],
@@ -214,6 +285,37 @@ def build_sell_order_diagnostics(
     summary = build_filter_summary_fn(entries)
     summary["count"] = len(sell_orders)
     return summary
+
+
+def build_watchlist_price_map(
+    *,
+    trade_date: str,
+    tickers: list[str],
+    get_daily_basic_batch_fn: Callable[[str], Any],
+    to_ts_code_for_price_lookup_fn: Callable[[str], str],
+) -> dict[str, float]:
+    if not tickers:
+        return {}
+
+    df = get_daily_basic_batch_fn(trade_date)
+    if df is None or df.empty or "ts_code" not in df.columns or "close" not in df.columns:
+        return {}
+
+    ts_to_ticker = {to_ts_code_for_price_lookup_fn(ticker): ticker for ticker in tickers}
+    filtered = df[df["ts_code"].isin(ts_to_ticker.keys())]
+    if filtered.empty:
+        return {}
+
+    price_map: dict[str, float] = {}
+    for _, row in filtered.iterrows():
+        ticker = ts_to_ticker.get(str(row["ts_code"]))
+        close = row.get("close")
+        if ticker and close is not None:
+            try:
+                price_map[ticker] = float(close)
+            except (TypeError, ValueError):
+                continue
+    return price_map
 
 
 def build_selection_target_inputs(
@@ -382,4 +484,155 @@ def resolve_plan_target_shell_selection(
     return selection_targets, summarize_selection_targets_fn(
         selection_targets=selection_targets,
         target_mode=target_mode,
+    )
+
+
+def ensure_plan_target_shells(
+    *,
+    plan: Any,
+    target_mode: str,
+    short_trade_target_profile_name: str,
+    short_trade_target_profile_overrides: dict[str, object] | None,
+    dual_target_summary_cls: type,
+    load_latest_historical_prior_by_ticker_fn: Callable[[], dict[str, dict[str, Any]]],
+    attach_historical_prior_to_entries_fn,
+    attach_historical_prior_to_watchlist_fn,
+    use_short_trade_target_profile_fn: Callable[..., Any],
+    build_selection_targets_fn: Callable[..., tuple[dict[str, Any], Any]],
+    summarize_selection_targets_fn: Callable[..., Any],
+    attach_short_trade_target_profile_fn: Callable[..., Any],
+) -> Any:
+    selection_targets, summary, shell_inputs = prepare_plan_target_shell_context(
+        plan=plan,
+        target_mode=target_mode,
+        dual_target_summary_cls=dual_target_summary_cls,
+        load_latest_historical_prior_by_ticker_fn=load_latest_historical_prior_by_ticker_fn,
+        attach_historical_prior_to_entries_fn=attach_historical_prior_to_entries_fn,
+        attach_historical_prior_to_watchlist_fn=attach_historical_prior_to_watchlist_fn,
+    )
+    selection_targets, summary = resolve_plan_target_shell_selection(
+        plan_date=plan.date,
+        selection_targets=selection_targets,
+        shell_inputs=shell_inputs,
+        target_mode=target_mode,
+        short_trade_target_profile_name=short_trade_target_profile_name,
+        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+        use_short_trade_target_profile_fn=use_short_trade_target_profile_fn,
+        build_selection_targets_fn=build_selection_targets_fn,
+        summarize_selection_targets_fn=summarize_selection_targets_fn,
+    )
+    plan.selection_targets = selection_targets
+    plan.target_mode = target_mode
+    plan.dual_target_summary = summary
+    return attach_short_trade_target_profile_fn(
+        plan,
+        profile_name=short_trade_target_profile_name,
+        profile_overrides=short_trade_target_profile_overrides,
+    )
+
+
+def resolve_post_market_selection_targets(
+    *,
+    trade_date: str,
+    watchlist_context: PostMarketWatchlistContext,
+    buy_orders: list[Any],
+    counts: dict[str, Any],
+    funnel_diagnostics: dict[str, Any],
+    target_mode: str,
+    short_trade_target_profile_name: str,
+    short_trade_target_profile_overrides: dict[str, object] | None,
+    use_short_trade_target_profile_fn: Callable[..., Any],
+    build_selection_target_inputs_fn: Callable[..., PostMarketSelectionTargetInputs],
+    attach_historical_prior_to_entries_fn,
+    build_selection_targets_fn: Callable[..., tuple[dict[str, Any], Any]],
+) -> PostMarketSelectionResolution:
+    with use_short_trade_target_profile_fn(
+        profile_name=short_trade_target_profile_name,
+        overrides=short_trade_target_profile_overrides,
+    ):
+        selection_target_inputs = build_selection_target_inputs_fn(
+            trade_date=trade_date,
+            watchlist_filter_diagnostics=watchlist_context.watchlist_filter_diagnostics,
+            short_trade_candidate_diagnostics=watchlist_context.short_trade_candidate_diagnostics,
+            catalyst_theme_candidate_diagnostics=watchlist_context.catalyst_theme_candidate_diagnostics,
+            target_mode=target_mode,
+        )
+        resolved_counts = dict(counts)
+        resolved_counts["candidate_entry_filtered_count"] = int(selection_target_inputs.candidate_entry_filter_diagnostics.get("filtered_count") or 0)
+        resolved_funnel_diagnostics = dict(funnel_diagnostics)
+        funnel_filters = dict(resolved_funnel_diagnostics.get("filters", {}) or {})
+        funnel_filters["candidate_entry"] = selection_target_inputs.candidate_entry_filter_diagnostics
+        resolved_funnel_diagnostics["filters"] = funnel_filters
+        selection_targets, dual_target_summary = build_selection_targets_fn(
+            trade_date=trade_date,
+            watchlist=watchlist_context.watchlist,
+            rejected_entries=attach_historical_prior_to_entries_fn(
+                selection_target_inputs.rejected_entries,
+                prior_by_ticker=watchlist_context.historical_prior_by_ticker,
+            ),
+            supplemental_short_trade_entries=attach_historical_prior_to_entries_fn(
+                selection_target_inputs.supplemental_short_trade_entries,
+                prior_by_ticker=watchlist_context.historical_prior_by_ticker,
+            ),
+            buy_order_tickers={order.ticker for order in buy_orders},
+            target_mode=target_mode,
+        )
+    return PostMarketSelectionResolution(
+        counts=resolved_counts,
+        funnel_diagnostics=resolved_funnel_diagnostics,
+        selection_targets=selection_targets,
+        dual_target_summary=dual_target_summary,
+    )
+
+
+def build_post_market_execution_plan(
+    *,
+    trade_date: str,
+    candidate_context: PostMarketCandidateContext,
+    watchlist_context: PostMarketWatchlistContext,
+    order_context: PostMarketOrderContext,
+    portfolio_snapshot: dict[str, Any],
+    timing_seconds: dict[str, float],
+    counts: dict[str, Any],
+    funnel_diagnostics: dict[str, Any],
+    merge_approved_tickers: set[str],
+    merge_approved_score_boost: float,
+    merge_approved_watchlist_threshold_relaxation: float,
+    selection_targets: dict[str, Any],
+    target_mode: str,
+    dual_target_summary: Any,
+    short_trade_target_profile: Any,
+    serialize_short_trade_target_profile_fn: Callable[[Any], dict[str, object]],
+    generate_execution_plan_fn: Callable[..., Any],
+) -> Any:
+    return generate_execution_plan_fn(
+        trade_date=trade_date,
+        market_state=candidate_context.market_state,
+        watchlist=watchlist_context.watchlist,
+        logic_scores=candidate_context.logic_scores,
+        buy_orders=order_context.buy_orders,
+        sell_orders=order_context.sell_orders,
+        portfolio_snapshot=portfolio_snapshot,
+        risk_alerts=[],
+        risk_metrics={
+            "timing_seconds": timing_seconds,
+            "counts": counts,
+            "funnel_diagnostics": funnel_diagnostics,
+            "merge_approved_context": {
+                "tickers": sorted(merge_approved_tickers),
+                "score_boost": round(merge_approved_score_boost, 4),
+                "watchlist_threshold_relaxation": round(merge_approved_watchlist_threshold_relaxation, 4),
+                "breakout_signal_uplift": candidate_context.merge_approved_breakout_signal_uplift,
+                "layer_c_alignment_uplift": candidate_context.merge_approved_layer_c_alignment_uplift,
+                "sector_resonance_uplift": candidate_context.merge_approved_sector_resonance_uplift,
+            },
+        },
+        layer_a_count=len(candidate_context.candidates),
+        layer_b_count=len(candidate_context.high_pool),
+        layer_c_count=len(candidate_context.layer_c_results),
+        selection_targets=selection_targets,
+        target_mode=target_mode,
+        dual_target_summary=dual_target_summary,
+        short_trade_target_profile_name=short_trade_target_profile.name,
+        short_trade_target_profile_config=serialize_short_trade_target_profile_fn(short_trade_target_profile),
     )

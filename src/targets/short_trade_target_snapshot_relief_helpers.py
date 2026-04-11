@@ -77,6 +77,18 @@ class ScorePenaltyState:
     effective_extension_score_penalty_weight: float
 
 
+@dataclass(frozen=True)
+class SnapshotReliefResolution:
+    state: SnapshotSignalState
+    prepared_breakout_reliefs: PreparedBreakoutReliefs
+    threshold_state: SnapshotThresholdState
+    watchlist_penalty_state: WatchlistPenaltyState
+    score_penalty_state: ScorePenaltyState
+    positive_score_weights: dict[str, float]
+    score_payload: dict[str, Any]
+    selected_score_tolerance: float
+
+
 def _build_snapshot_signal_state(
     signal_snapshot: dict[str, Any],
     *,
@@ -470,7 +482,7 @@ def _build_snapshot_score_payload(
     }
 
 
-def resolve_short_trade_snapshot_reliefs_impl(
+def _resolve_short_trade_snapshot_relief_resolution(
     input_data: Any,
     *,
     profile: Any,
@@ -494,7 +506,7 @@ def resolve_short_trade_snapshot_reliefs_impl(
     resolve_t_plus_2_continuation_candidate: Callable[..., dict[str, Any]],
     resolve_profitability_hard_cliff_boundary_relief: Callable[..., dict[str, Any]],
     resolve_selected_score_tolerance: Callable[..., float],
-) -> dict[str, Any]:
+) -> SnapshotReliefResolution:
     state = _build_snapshot_signal_state(signal_snapshot, historical_prior=historical_prior(input_data))
     prepared_breakout_reliefs = _resolve_prepared_breakout_reliefs(
         input_data,
@@ -553,41 +565,105 @@ def resolve_short_trade_snapshot_reliefs_impl(
         upstream_shadow_catalyst_relief_reason=str(threshold_state.catalyst_relief["reason"]),
         historical_prior=state.historical_prior,
     )
+    return SnapshotReliefResolution(
+        state=state,
+        prepared_breakout_reliefs=prepared_breakout_reliefs,
+        threshold_state=threshold_state,
+        watchlist_penalty_state=watchlist_penalty_state,
+        score_penalty_state=score_penalty_state,
+        positive_score_weights=positive_score_weights,
+        score_payload=score_payload,
+        selected_score_tolerance=selected_score_tolerance,
+    )
+
+
+def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolution) -> dict[str, Any]:
     return {
-        "prepared_breakout_penalty_relief": prepared_breakout_reliefs.penalty_relief,
-        "prepared_breakout_catalyst_relief": prepared_breakout_reliefs.catalyst_relief,
-        "prepared_breakout_volume_relief": prepared_breakout_reliefs.volume_relief,
-        "prepared_breakout_continuation_relief": prepared_breakout_reliefs.continuation_relief,
-        "prepared_breakout_selected_catalyst_relief": threshold_state.prepared_breakout_selected_catalyst_relief,
-        "profitability_relief": threshold_state.profitability_relief,
-        "profitability_hard_cliff_boundary_relief": score_penalty_state.profitability_hard_cliff_boundary_relief,
-        "historical_execution_relief": threshold_state.historical_execution_relief,
-        "historical_prior": state.historical_prior,
-        "upstream_shadow_catalyst_relief": threshold_state.catalyst_relief,
-        "visibility_gap_continuation_relief": threshold_state.visibility_gap_continuation_relief,
-        "merge_approved_continuation_relief": threshold_state.merge_approved_continuation_relief,
-        "watchlist_zero_catalyst_penalty": watchlist_penalty_state.watchlist_zero_catalyst_penalty,
-        "watchlist_zero_catalyst_crowded_penalty": watchlist_penalty_state.watchlist_zero_catalyst_crowded_penalty,
-        "watchlist_zero_catalyst_flat_trend_penalty": watchlist_penalty_state.watchlist_zero_catalyst_flat_trend_penalty,
-        "t_plus_2_continuation_candidate": watchlist_penalty_state.t_plus_2_continuation_candidate,
-        "positive_score_weights": positive_score_weights,
-        "weighted_positive_contributions": score_payload["weighted_positive_contributions"],
-        "weighted_negative_contributions": score_payload["weighted_negative_contributions"],
-        "total_positive_contribution": score_payload["total_positive_contribution"],
-        "total_negative_contribution": score_payload["total_negative_contribution"],
-        "score_target": score_payload["score_target"],
-        "selected_score_tolerance": selected_score_tolerance,
-        "effective_near_miss_threshold": score_penalty_state.effective_near_miss_threshold,
-        "effective_select_threshold": threshold_state.effective_select_threshold,
-        "catalyst_freshness": threshold_state.catalyst_freshness,
-        "breakout_freshness": threshold_state.breakout_freshness,
-        "trend_acceleration": threshold_state.trend_acceleration,
-        "volume_expansion_quality": threshold_state.volume_expansion_quality,
-        "layer_c_avoid_penalty": threshold_state.layer_c_avoid_penalty,
-        "watchlist_zero_catalyst_penalty_effective": watchlist_penalty_state.effective_watchlist_zero_catalyst_penalty,
-        "watchlist_zero_catalyst_crowded_penalty_effective": watchlist_penalty_state.effective_watchlist_zero_catalyst_crowded_penalty,
-        "watchlist_zero_catalyst_flat_trend_penalty_effective": watchlist_penalty_state.effective_watchlist_zero_catalyst_flat_trend_penalty,
-        "stale_trend_repair_penalty": score_penalty_state.stale_trend_repair_penalty,
-        "overhead_supply_penalty": score_penalty_state.overhead_supply_penalty,
-        "extension_without_room_penalty": score_penalty_state.extension_without_room_penalty,
+        "prepared_breakout_penalty_relief": resolution.prepared_breakout_reliefs.penalty_relief,
+        "prepared_breakout_catalyst_relief": resolution.prepared_breakout_reliefs.catalyst_relief,
+        "prepared_breakout_volume_relief": resolution.prepared_breakout_reliefs.volume_relief,
+        "prepared_breakout_continuation_relief": resolution.prepared_breakout_reliefs.continuation_relief,
+        "prepared_breakout_selected_catalyst_relief": resolution.threshold_state.prepared_breakout_selected_catalyst_relief,
+        "profitability_relief": resolution.threshold_state.profitability_relief,
+        "profitability_hard_cliff_boundary_relief": resolution.score_penalty_state.profitability_hard_cliff_boundary_relief,
+        "historical_execution_relief": resolution.threshold_state.historical_execution_relief,
+        "historical_prior": resolution.state.historical_prior,
+        "upstream_shadow_catalyst_relief": resolution.threshold_state.catalyst_relief,
+        "visibility_gap_continuation_relief": resolution.threshold_state.visibility_gap_continuation_relief,
+        "merge_approved_continuation_relief": resolution.threshold_state.merge_approved_continuation_relief,
+        "watchlist_zero_catalyst_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_penalty,
+        "watchlist_zero_catalyst_crowded_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_crowded_penalty,
+        "watchlist_zero_catalyst_flat_trend_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_flat_trend_penalty,
+        "t_plus_2_continuation_candidate": resolution.watchlist_penalty_state.t_plus_2_continuation_candidate,
+        "positive_score_weights": resolution.positive_score_weights,
+        "weighted_positive_contributions": resolution.score_payload["weighted_positive_contributions"],
+        "weighted_negative_contributions": resolution.score_payload["weighted_negative_contributions"],
+        "total_positive_contribution": resolution.score_payload["total_positive_contribution"],
+        "total_negative_contribution": resolution.score_payload["total_negative_contribution"],
+        "score_target": resolution.score_payload["score_target"],
+        "selected_score_tolerance": resolution.selected_score_tolerance,
+        "effective_near_miss_threshold": resolution.score_penalty_state.effective_near_miss_threshold,
+        "effective_select_threshold": resolution.threshold_state.effective_select_threshold,
+        "catalyst_freshness": resolution.threshold_state.catalyst_freshness,
+        "breakout_freshness": resolution.threshold_state.breakout_freshness,
+        "trend_acceleration": resolution.threshold_state.trend_acceleration,
+        "volume_expansion_quality": resolution.threshold_state.volume_expansion_quality,
+        "layer_c_avoid_penalty": resolution.threshold_state.layer_c_avoid_penalty,
+        "watchlist_zero_catalyst_penalty_effective": resolution.watchlist_penalty_state.effective_watchlist_zero_catalyst_penalty,
+        "watchlist_zero_catalyst_crowded_penalty_effective": resolution.watchlist_penalty_state.effective_watchlist_zero_catalyst_crowded_penalty,
+        "watchlist_zero_catalyst_flat_trend_penalty_effective": resolution.watchlist_penalty_state.effective_watchlist_zero_catalyst_flat_trend_penalty,
+        "stale_trend_repair_penalty": resolution.score_penalty_state.stale_trend_repair_penalty,
+        "overhead_supply_penalty": resolution.score_penalty_state.overhead_supply_penalty,
+        "extension_without_room_penalty": resolution.score_penalty_state.extension_without_room_penalty,
     }
+
+
+def resolve_short_trade_snapshot_reliefs_impl(
+    input_data: Any,
+    *,
+    profile: Any,
+    signal_snapshot: dict[str, Any],
+    historical_prior: Callable[[Any], dict[str, Any]],
+    normalize_positive_score_weights: Callable[[dict[str, Any]], dict[str, float]],
+    clamp_unit_interval: Callable[[float], float],
+    resolve_profitability_relief: Callable[..., dict[str, Any]],
+    resolve_upstream_shadow_catalyst_relief: Callable[..., dict[str, Any]],
+    resolve_visibility_gap_continuation_relief: Callable[..., dict[str, Any]],
+    resolve_merge_approved_continuation_relief: Callable[..., dict[str, Any]],
+    resolve_historical_execution_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_continuation_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_penalty_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_catalyst_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_volume_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_selected_catalyst_relief: Callable[..., dict[str, Any]],
+    resolve_watchlist_zero_catalyst_penalty: Callable[..., dict[str, Any]],
+    resolve_watchlist_zero_catalyst_crowded_penalty: Callable[..., dict[str, Any]],
+    resolve_watchlist_zero_catalyst_flat_trend_penalty: Callable[..., dict[str, Any]],
+    resolve_t_plus_2_continuation_candidate: Callable[..., dict[str, Any]],
+    resolve_profitability_hard_cliff_boundary_relief: Callable[..., dict[str, Any]],
+    resolve_selected_score_tolerance: Callable[..., float],
+) -> dict[str, Any]:
+    resolution = _resolve_short_trade_snapshot_relief_resolution(
+        input_data,
+        profile=profile,
+        signal_snapshot=signal_snapshot,
+        historical_prior=historical_prior,
+        normalize_positive_score_weights=normalize_positive_score_weights,
+        clamp_unit_interval=clamp_unit_interval,
+        resolve_profitability_relief=resolve_profitability_relief,
+        resolve_upstream_shadow_catalyst_relief=resolve_upstream_shadow_catalyst_relief,
+        resolve_visibility_gap_continuation_relief=resolve_visibility_gap_continuation_relief,
+        resolve_merge_approved_continuation_relief=resolve_merge_approved_continuation_relief,
+        resolve_historical_execution_relief=resolve_historical_execution_relief,
+        resolve_prepared_breakout_continuation_relief=resolve_prepared_breakout_continuation_relief,
+        resolve_prepared_breakout_penalty_relief=resolve_prepared_breakout_penalty_relief,
+        resolve_prepared_breakout_catalyst_relief=resolve_prepared_breakout_catalyst_relief,
+        resolve_prepared_breakout_volume_relief=resolve_prepared_breakout_volume_relief,
+        resolve_prepared_breakout_selected_catalyst_relief=resolve_prepared_breakout_selected_catalyst_relief,
+        resolve_watchlist_zero_catalyst_penalty=resolve_watchlist_zero_catalyst_penalty,
+        resolve_watchlist_zero_catalyst_crowded_penalty=resolve_watchlist_zero_catalyst_crowded_penalty,
+        resolve_watchlist_zero_catalyst_flat_trend_penalty=resolve_watchlist_zero_catalyst_flat_trend_penalty,
+        resolve_t_plus_2_continuation_candidate=resolve_t_plus_2_continuation_candidate,
+        resolve_profitability_hard_cliff_boundary_relief=resolve_profitability_hard_cliff_boundary_relief,
+    )
+    return _build_short_trade_snapshot_reliefs_payload(resolution)

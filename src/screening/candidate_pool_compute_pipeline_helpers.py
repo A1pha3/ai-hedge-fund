@@ -8,18 +8,35 @@ if TYPE_CHECKING:
     from src.screening.models import CandidateStock
 
 
-def compute_candidate_pool_candidates(
+def _initialize_candidate_pool_context(
     *,
-    trade_date: str,
-    cooldown_tickers: set[str] | None,
-    min_listing_days: int,
-    min_estimated_amount_1d: float,
-    min_avg_amount_20d: float,
-    tushare_daily_batch_size: int,
     get_pro_fn: Callable[[], Any],
     get_all_stock_basic_fn: Callable[[], pd.DataFrame | None],
     resolve_cooldown_shadow_review_tickers_fn: Callable[[], set[str]],
     init_focus_filter_diagnostics_fn: Callable[..., dict[str, dict[str, Any]]],
+) -> tuple[Any, pd.DataFrame, dict[str, dict[str, Any]]] | tuple[None, None, None]:
+    pro = get_pro_fn()
+    if pro is None:
+        print("[CandidatePool] Tushare 未初始化，无法构建候选池")
+        return None, None, None
+
+    stock_df = get_all_stock_basic_fn()
+    if stock_df is None or stock_df.empty:
+        print("[CandidatePool] 无法获取全 A 股基本信息")
+        return None, None, None
+
+    focus_review_tickers = resolve_cooldown_shadow_review_tickers_fn()
+    focus_filter_diagnostics = init_focus_filter_diagnostics_fn(stock_df, focus_tickers=focus_review_tickers)
+    return pro, stock_df, focus_filter_diagnostics
+
+
+def _apply_preliminary_candidate_filters(
+    *,
+    trade_date: str,
+    stock_df: pd.DataFrame,
+    focus_filter_diagnostics: dict[str, dict[str, Any]],
+    cooldown_tickers: set[str] | None,
+    min_listing_days: int,
     record_focus_filter_stage_fn: Callable[..., None],
     build_beijing_exchange_mask_fn: Callable[[pd.DataFrame], pd.Series],
     estimate_trading_days_fn: Callable[[str, str], int],
@@ -28,34 +45,8 @@ def compute_candidate_pool_candidates(
     resolve_cooldown_tickers_fn: Callable[..., set[str]],
     get_cooled_tickers_fn: Callable[[str], set[str]],
     apply_cooldown_filter_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame, int]],
-    get_daily_basic_batch_fn: Callable[[str], pd.DataFrame | None],
-    build_daily_basic_maps_fn: Callable[..., tuple[dict[str, float], dict[str, float]]],
-    estimate_amount_from_daily_basic_fn: Callable[..., float],
-    apply_estimated_liquidity_filter_with_logging_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame]],
-    load_amount_map_and_low_liquidity_codes_fn: Callable[..., tuple[dict[str, float], set[str], bool]],
-    get_avg_amount_20d_map_fn: Callable[..., dict[str, float]],
-    get_avg_amount_20d_fn: Callable[..., float],
-    enforce_tushare_daily_rate_limit_fn: Callable[[], None],
-    filter_low_liquidity_candidates_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame, int]],
-    normalize_sw_map_fn: Callable[[Any], dict[str, str]],
-    get_sw_industry_classification_fn: Callable[[], Any],
-    is_disclosure_window_fn: Callable[[str], bool],
-    build_candidate_stocks_fn: Callable[..., list["CandidateStock"]],
-    finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
-) -> tuple[list["CandidateStock"], list["CandidateStock"], list[dict[str, Any]]]:
-    pro = get_pro_fn()
-    if pro is None:
-        print("[CandidatePool] Tushare 未初始化，无法构建候选池")
-        return [], [], []
-
-    stock_df = get_all_stock_basic_fn()
-    if stock_df is None or stock_df.empty:
-        print("[CandidatePool] 无法获取全 A 股基本信息")
-        return [], [], []
-
-    focus_review_tickers = resolve_cooldown_shadow_review_tickers_fn()
-    focus_filter_diagnostics = init_focus_filter_diagnostics_fn(stock_df, focus_tickers=focus_review_tickers)
-
+    resolve_cooldown_shadow_review_tickers_fn: Callable[[], set[str]],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     initial_count = len(stock_df)
     print(f"[CandidatePool] 全 A 股标的: {initial_count}")
 
@@ -132,6 +123,30 @@ def compute_candidate_pool_candidates(
         if not cooldown_review_df.empty:
             print(f"[CandidatePool] 保留冷却期 focus shadow review: {len(cooldown_review_df)}")
 
+    return stock_df, cooldown_review_df
+
+
+def _apply_candidate_pool_liquidity_filters(
+    *,
+    trade_date: str,
+    pro: Any,
+    stock_df: pd.DataFrame,
+    cooldown_review_df: pd.DataFrame,
+    focus_filter_diagnostics: dict[str, dict[str, Any]],
+    min_estimated_amount_1d: float,
+    min_avg_amount_20d: float,
+    tushare_daily_batch_size: int,
+    record_focus_filter_stage_fn: Callable[..., None],
+    get_daily_basic_batch_fn: Callable[[str], pd.DataFrame | None],
+    build_daily_basic_maps_fn: Callable[..., tuple[dict[str, float], dict[str, float]]],
+    estimate_amount_from_daily_basic_fn: Callable[..., float],
+    apply_estimated_liquidity_filter_with_logging_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame]],
+    load_amount_map_and_low_liquidity_codes_fn: Callable[..., tuple[dict[str, float], set[str], bool]],
+    get_avg_amount_20d_map_fn: Callable[..., dict[str, float]],
+    get_avg_amount_20d_fn: Callable[..., float],
+    enforce_tushare_daily_rate_limit_fn: Callable[[], None],
+    filter_low_liquidity_candidates_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame, int]],
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float], dict[str, float]]:
     daily_df = get_daily_basic_batch_fn(trade_date)
     estimated_amount_map, mv_map = build_daily_basic_maps_fn(
         daily_df=daily_df,
@@ -177,9 +192,24 @@ def compute_candidate_pool_candidates(
         stage="avg_amount_20d_filter",
         active_symbols=set(stock_df["symbol"].astype(str).tolist()) | set(cooldown_review_df["symbol"].astype(str).tolist()),
     )
+    return stock_df, cooldown_review_df, amount_map, mv_map
 
+
+def _build_candidate_pool_outputs(
+    *,
+    trade_date: str,
+    stock_df: pd.DataFrame,
+    cooldown_review_df: pd.DataFrame,
+    focus_filter_diagnostics: dict[str, dict[str, Any]],
+    amount_map: dict[str, float],
+    mv_map: dict[str, float],
+    normalize_sw_map_fn: Callable[[Any], dict[str, str]],
+    get_sw_industry_classification_fn: Callable[[], Any],
+    is_disclosure_window_fn: Callable[[str], bool],
+    build_candidate_stocks_fn: Callable[..., list["CandidateStock"]],
+    finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
+) -> tuple[list["CandidateStock"], list["CandidateStock"], list[dict[str, Any]]]:
     sw_map = normalize_sw_map_fn(get_sw_industry_classification_fn())
-
     is_disclosure = is_disclosure_window_fn(trade_date)
     candidates = build_candidate_stocks_fn(
         stock_df=stock_df,
@@ -196,7 +226,6 @@ def compute_candidate_pool_candidates(
         is_disclosure=is_disclosure,
         cooldown_review=True,
     )
-
     finalized_focus_filter_diagnostics = finalize_focus_filter_diagnostics_fn(
         focus_filter_diagnostics,
         candidate_tickers={candidate.ticker for candidate in candidates},
@@ -204,5 +233,99 @@ def compute_candidate_pool_candidates(
         selected_tickers=set(),
         shadow_tickers=set(),
     )
-
     return candidates, cooldown_review_candidates, finalized_focus_filter_diagnostics
+
+
+def compute_candidate_pool_candidates(
+    *,
+    trade_date: str,
+    cooldown_tickers: set[str] | None,
+    min_listing_days: int,
+    min_estimated_amount_1d: float,
+    min_avg_amount_20d: float,
+    tushare_daily_batch_size: int,
+    get_pro_fn: Callable[[], Any],
+    get_all_stock_basic_fn: Callable[[], pd.DataFrame | None],
+    resolve_cooldown_shadow_review_tickers_fn: Callable[[], set[str]],
+    init_focus_filter_diagnostics_fn: Callable[..., dict[str, dict[str, Any]]],
+    record_focus_filter_stage_fn: Callable[..., None],
+    build_beijing_exchange_mask_fn: Callable[[pd.DataFrame], pd.Series],
+    estimate_trading_days_fn: Callable[[str, str], int],
+    get_suspend_list_fn: Callable[[str], pd.DataFrame | None],
+    get_limit_list_fn: Callable[[str], pd.DataFrame | None],
+    resolve_cooldown_tickers_fn: Callable[..., set[str]],
+    get_cooled_tickers_fn: Callable[[str], set[str]],
+    apply_cooldown_filter_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame, int]],
+    get_daily_basic_batch_fn: Callable[[str], pd.DataFrame | None],
+    build_daily_basic_maps_fn: Callable[..., tuple[dict[str, float], dict[str, float]]],
+    estimate_amount_from_daily_basic_fn: Callable[..., float],
+    apply_estimated_liquidity_filter_with_logging_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame]],
+    load_amount_map_and_low_liquidity_codes_fn: Callable[..., tuple[dict[str, float], set[str], bool]],
+    get_avg_amount_20d_map_fn: Callable[..., dict[str, float]],
+    get_avg_amount_20d_fn: Callable[..., float],
+    enforce_tushare_daily_rate_limit_fn: Callable[[], None],
+    filter_low_liquidity_candidates_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame, int]],
+    normalize_sw_map_fn: Callable[[Any], dict[str, str]],
+    get_sw_industry_classification_fn: Callable[[], Any],
+    is_disclosure_window_fn: Callable[[str], bool],
+    build_candidate_stocks_fn: Callable[..., list["CandidateStock"]],
+    finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
+) -> tuple[list["CandidateStock"], list["CandidateStock"], list[dict[str, Any]]]:
+    pro, stock_df, focus_filter_diagnostics = _initialize_candidate_pool_context(
+        get_pro_fn=get_pro_fn,
+        get_all_stock_basic_fn=get_all_stock_basic_fn,
+        resolve_cooldown_shadow_review_tickers_fn=resolve_cooldown_shadow_review_tickers_fn,
+        init_focus_filter_diagnostics_fn=init_focus_filter_diagnostics_fn,
+    )
+    if pro is None or stock_df is None or focus_filter_diagnostics is None:
+        return [], [], []
+
+    stock_df, cooldown_review_df = _apply_preliminary_candidate_filters(
+        trade_date=trade_date,
+        stock_df=stock_df,
+        focus_filter_diagnostics=focus_filter_diagnostics,
+        cooldown_tickers=cooldown_tickers,
+        min_listing_days=min_listing_days,
+        record_focus_filter_stage_fn=record_focus_filter_stage_fn,
+        build_beijing_exchange_mask_fn=build_beijing_exchange_mask_fn,
+        estimate_trading_days_fn=estimate_trading_days_fn,
+        get_suspend_list_fn=get_suspend_list_fn,
+        get_limit_list_fn=get_limit_list_fn,
+        resolve_cooldown_tickers_fn=resolve_cooldown_tickers_fn,
+        get_cooled_tickers_fn=get_cooled_tickers_fn,
+        apply_cooldown_filter_fn=apply_cooldown_filter_fn,
+        resolve_cooldown_shadow_review_tickers_fn=resolve_cooldown_shadow_review_tickers_fn,
+    )
+    stock_df, cooldown_review_df, amount_map, mv_map = _apply_candidate_pool_liquidity_filters(
+        trade_date=trade_date,
+        pro=pro,
+        stock_df=stock_df,
+        cooldown_review_df=cooldown_review_df,
+        focus_filter_diagnostics=focus_filter_diagnostics,
+        min_estimated_amount_1d=min_estimated_amount_1d,
+        min_avg_amount_20d=min_avg_amount_20d,
+        tushare_daily_batch_size=tushare_daily_batch_size,
+        record_focus_filter_stage_fn=record_focus_filter_stage_fn,
+        get_daily_basic_batch_fn=get_daily_basic_batch_fn,
+        build_daily_basic_maps_fn=build_daily_basic_maps_fn,
+        estimate_amount_from_daily_basic_fn=estimate_amount_from_daily_basic_fn,
+        apply_estimated_liquidity_filter_with_logging_fn=apply_estimated_liquidity_filter_with_logging_fn,
+        load_amount_map_and_low_liquidity_codes_fn=load_amount_map_and_low_liquidity_codes_fn,
+        get_avg_amount_20d_map_fn=get_avg_amount_20d_map_fn,
+        get_avg_amount_20d_fn=get_avg_amount_20d_fn,
+        enforce_tushare_daily_rate_limit_fn=enforce_tushare_daily_rate_limit_fn,
+        filter_low_liquidity_candidates_fn=filter_low_liquidity_candidates_fn,
+    )
+    return _build_candidate_pool_outputs(
+        trade_date=trade_date,
+        stock_df=stock_df,
+        cooldown_review_df=cooldown_review_df,
+        focus_filter_diagnostics=focus_filter_diagnostics,
+        amount_map=amount_map,
+        mv_map=mv_map,
+        normalize_sw_map_fn=normalize_sw_map_fn,
+        get_sw_industry_classification_fn=get_sw_industry_classification_fn,
+        is_disclosure_window_fn=is_disclosure_window_fn,
+        build_candidate_stocks_fn=build_candidate_stocks_fn,
+        finalize_focus_filter_diagnostics_fn=finalize_focus_filter_diagnostics_fn,
+    )

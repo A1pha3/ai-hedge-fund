@@ -269,3 +269,44 @@ def build_buy_order_diagnostics_summary(
     summary = build_filter_summary_fn(filtered_entries)
     summary["selected_tickers"] = [plan.ticker for plan in buy_orders]
     return summary
+
+
+def build_buy_orders_with_diagnostics(
+    *,
+    watchlist: list[Any],
+    portfolio_snapshot: dict[str, Any],
+    trade_date: str,
+    candidate_by_ticker: dict[str, Any] | None,
+    price_map: dict[str, float] | None,
+    blocked_buy_tickers: dict[str, dict[str, Any]] | None,
+    selection_targets: dict[str, Any] | None,
+    normalize_blocked_buy_tickers_fn: Callable[[dict[str, dict[str, Any]] | None], dict[str, dict[str, Any]]],
+    build_filter_summary_fn: Callable[[list[dict[str, Any]]], dict[str, Any]],
+    build_reentry_filter_entry_fn: Callable[..., dict[str, Any] | None],
+    resolve_continuation_execution_overrides_fn: Callable[..., dict[str, Any]],
+    calculate_position_fn: Callable[..., Any],
+    enforce_daily_trade_limit_fn: Callable[[list[Any], float], list[Any]],
+) -> tuple[list[Any], dict[str, Any]]:
+    blocked_buy_tickers = normalize_blocked_buy_tickers_fn(blocked_buy_tickers)
+    if not watchlist:
+        return [], build_filter_summary_fn([])
+
+    execution_context = prepare_buy_order_execution_context(
+        watchlist=watchlist,
+        portfolio_snapshot=portfolio_snapshot,
+        candidate_by_ticker=candidate_by_ticker,
+        price_map=price_map,
+        blocked_buy_tickers=blocked_buy_tickers,
+        selection_targets=selection_targets,
+    )
+    return resolve_buy_orders_with_diagnostics(
+        watchlist=watchlist,
+        portfolio_snapshot=portfolio_snapshot,
+        trade_date=trade_date,
+        execution_context=execution_context,
+        build_reentry_filter_entry_fn=build_reentry_filter_entry_fn,
+        resolve_continuation_execution_overrides_fn=resolve_continuation_execution_overrides_fn,
+        calculate_position_fn=calculate_position_fn,
+        enforce_daily_trade_limit_fn=enforce_daily_trade_limit_fn,
+        build_filter_summary_fn=build_filter_summary_fn,
+    )
