@@ -54,6 +54,9 @@ def _build_recommendation(entries: list[dict[str, Any]]) -> str:
     if not entries:
         return "当前没有 formal selected，refresh board 暂无可跟踪主票。"
     confirmed_entries = [entry for entry in entries if str(entry.get("overall_contract_verdict") or "") == "t_plus_2_confirmed"]
+    closed_without_positive_expectation_entries = [
+        entry for entry in entries if "observed_without_positive_expectation" in str(entry.get("overall_contract_verdict") or "")
+    ]
     violated_entries = [entry for entry in entries if "violated" in str(entry.get("overall_contract_verdict") or "")]
     open_entries = [entry for entry in entries if str(entry.get("current_cycle_status") or "").startswith("missing") or entry.get("current_cycle_status") == "missing_next_day"]
     t1_entries = [entry for entry in entries if str(entry.get("current_cycle_status") or "") == "t1_only"]
@@ -62,6 +65,8 @@ def _build_recommendation(entries: list[dict[str, Any]]) -> str:
         return "至少有一只 formal selected 已出现 contract 违约，优先复核当前 next_close / T+2 兑现为何偏离 historical proof，再决定是否收紧 selected 语义。"
     if confirmed_entries:
         return "至少有一只 formal selected 已完成 T+2 contract 确认，可把 live realized 与 historical proof 一并作为 carryover lane 是否扩容的核心证据。"
+    if closed_without_positive_expectation_entries:
+        return "至少有一只 formal selected 已完成 closed-cycle，但历史并不要求 next-close/T+2 为正；应按已闭环 contract 复核执行质量，而不是继续把它当作 pending open case。"
     if t2_plus_entries:
         return "至少有一只 formal selected 已进入 T+2+ closed-cycle，可直接把当前兑现与 historical prior proof 对照，用于是否扩容 carryover lane。"
     if t1_entries:
@@ -104,8 +109,12 @@ def _resolve_contract_alignment(proof: dict[str, Any], current_outcome: dict[str
         overall_contract_verdict = "t_plus_2_violated"
     elif t_plus_2_contract_verdict == "matched_positive_expectation":
         overall_contract_verdict = "t_plus_2_confirmed"
+    elif t_plus_2_contract_verdict == "observed_without_positive_expectation":
+        overall_contract_verdict = "t_plus_2_observed_without_positive_expectation"
     elif next_day_contract_verdict == "matched_positive_expectation":
         overall_contract_verdict = "next_close_confirmed_wait_t_plus_2"
+    elif next_day_contract_verdict == "observed_without_positive_expectation":
+        overall_contract_verdict = "next_close_observed_without_positive_expectation"
 
     return {
         "historical_next_close_expectation_positive": next_day_expectation_positive,
@@ -122,6 +131,27 @@ def analyze_btst_selected_outcome_refresh_board(reports_root: str | Path) -> dic
     trade_date = str(snapshot.get("trade_date") or snapshot_path.parent.name)
     selected_tickers = _selected_tickers(snapshot)
     price_cache: dict[tuple[str, str], Any] = {}
+    entries = _build_refresh_board_entries(
+        report_dir=report_dir,
+        trade_date=trade_date,
+        selected_tickers=selected_tickers,
+        price_cache=price_cache,
+    )
+    return _build_refresh_board_analysis(
+        report_dir=report_dir,
+        snapshot_path=snapshot_path,
+        trade_date=trade_date,
+        entries=entries,
+    )
+
+
+def _build_refresh_board_entries(
+    *,
+    report_dir: Path,
+    trade_date: str,
+    selected_tickers: list[str],
+    price_cache: dict[tuple[str, str], Any],
+) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for ticker in selected_tickers:
         proof = analyze_btst_selected_outcome_proof(report_dir, ticker=ticker)
@@ -157,6 +187,16 @@ def analyze_btst_selected_outcome_refresh_board(reports_root: str | Path) -> dic
             }
         )
     entries.sort(key=lambda entry: (str(entry.get("current_cycle_status") or ""), -(entry.get("score_target") or 0.0), str(entry.get("ticker") or "")))
+    return entries
+
+
+def _build_refresh_board_analysis(
+    *,
+    report_dir: Path,
+    snapshot_path: Path,
+    trade_date: str,
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "report_dir": str(report_dir),
         "snapshot_path": str(snapshot_path),

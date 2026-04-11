@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_analysis_utils import fetch_price_frame, normalize_trade_date, round_or_none, safe_float, summarize_distribution
+from scripts.btst_analysis_utils import fetch_price_frame, normalize_trade_date, resolve_btst_trade_anchor, round_or_none, safe_float, summarize_distribution
 
 
 REPORTS_DIR = Path("data/reports")
@@ -28,12 +28,33 @@ def _resolve_snapshot(input_path: str | Path | dict[str, Any]) -> tuple[dict[str
         report_dir = snapshot_path.parent.parent.parent
     else:
         snapshot_candidates = sorted(resolved.glob("selection_artifacts/*/selection_snapshot.json"))
-        if not snapshot_candidates:
-            raise FileNotFoundError(f"No selection_snapshot.json found under {resolved}")
-        snapshot_path = snapshot_candidates[-1]
-        report_dir = resolved
+        if snapshot_candidates:
+            snapshot_path = snapshot_candidates[-1]
+            report_dir = resolved
+        else:
+            snapshot_path, report_dir = _resolve_latest_selected_snapshot_from_reports_root(resolved)
 
     return _load_json(snapshot_path), str(snapshot_path), str(report_dir)
+
+
+def _resolve_latest_selected_snapshot_from_reports_root(resolved: Path) -> tuple[Path, Path]:
+    candidates: list[tuple[tuple[str, int, str], Path, Path]] = []
+    for snapshot_path in resolved.glob("**/selection_artifacts/*/selection_snapshot.json"):
+        snapshot = _load_json(snapshot_path)
+        selected_count = sum(
+            1
+            for payload in dict(snapshot.get("selection_targets") or {}).values()
+            if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected"
+        )
+        if selected_count <= 0:
+            continue
+        trade_date = str(snapshot.get("trade_date") or snapshot_path.parent.name)
+        report_dir = snapshot_path.parents[2]
+        candidates.append(((trade_date, selected_count, str(report_dir)), snapshot_path, report_dir))
+    if not candidates:
+        raise FileNotFoundError(f"No selection_snapshot.json with formal selected entries found under {resolved}")
+    _, snapshot_path, report_dir = max(candidates, key=lambda item: item[0])
+    return snapshot_path, report_dir
 
 
 def _resolve_selected_entry(snapshot: dict[str, Any], ticker: str | None = None) -> tuple[str, dict[str, Any]]:
@@ -134,28 +155,31 @@ def _extract_holding_outcome(ticker: str, trade_date: str, price_cache: dict[tup
     if frame.empty:
         return {"data_status": "missing_price_frame", "cycle_status": "missing_next_day"}
 
-    import pandas as pd
-
-    trade_timestamp = pd.Timestamp(normalized_trade_date)
-    same_day = frame.loc[frame.index.normalize() == trade_timestamp.normalize()]
-    if same_day.empty:
+    trade_row, future_days, anchor_trade_date, used_prior_trade_anchor = resolve_btst_trade_anchor(frame, normalized_trade_date)
+    if trade_row is None:
         return {"data_status": "missing_trade_day_bar", "cycle_status": "missing_next_day"}
 
-    future_days = frame.loc[frame.index.normalize() > trade_timestamp.normalize()]
     if future_days.empty:
         return {
             "data_status": "missing_next_trade_day_bar",
-            "trade_close": round_or_none(safe_float(same_day.iloc[0].get("close"))),
+            "trade_close": round_or_none(safe_float(trade_row.get("close"))),
+            "trade_anchor_date": anchor_trade_date,
+            "trade_date_was_non_trading": used_prior_trade_anchor,
             "cycle_status": "missing_next_day",
         }
 
-    trade_row = same_day.iloc[0]
     trade_close = safe_float(trade_row.get("close"))
     if trade_close is None or trade_close <= 0:
         return {"data_status": "incomplete_trade_day_bar", "cycle_status": "missing_next_day"}
 
     future_rows, future_dates = _extract_holding_future_window(future_days)
-    return _build_holding_outcome_payload(trade_close=trade_close, future_rows=future_rows, future_dates=future_dates)
+    return _build_holding_outcome_payload(
+        trade_close=trade_close,
+        future_rows=future_rows,
+        future_dates=future_dates,
+        trade_anchor_date=anchor_trade_date,
+        trade_date_was_non_trading=used_prior_trade_anchor,
+    )
 
 
 def _extract_holding_future_window(future_days: Any) -> tuple[list[Any], list[str]]:
@@ -166,7 +190,14 @@ def _extract_holding_future_window(future_days: Any) -> tuple[list[Any], list[st
     )
 
 
-def _build_holding_outcome_payload(*, trade_close: float, future_rows: list[Any], future_dates: list[str]) -> dict[str, Any]:
+def _build_holding_outcome_payload(
+    *,
+    trade_close: float,
+    future_rows: list[Any],
+    future_dates: list[str],
+    trade_anchor_date: str | None,
+    trade_date_was_non_trading: bool,
+) -> dict[str, Any]:
     next_row = future_rows[0]
     next_open = safe_float(next_row.get("open"))
     next_high = safe_float(next_row.get("high"))
@@ -177,6 +208,8 @@ def _build_holding_outcome_payload(*, trade_close: float, future_rows: list[Any]
     outcome: dict[str, Any] = {
         "data_status": "ok",
         "trade_close": round(trade_close, 4),
+        "trade_anchor_date": trade_anchor_date,
+        "trade_date_was_non_trading": trade_date_was_non_trading,
         "next_trade_date": future_dates[0],
         "next_open": round(next_open, 4),
         "next_high": round(next_high, 4),
@@ -216,18 +249,49 @@ def _rate(hit_count: int, total_count: int) -> float | None:
 
 
 def _summarize_evidence_rows(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
+    evidence_metrics = _collect_evidence_return_metrics(rows)
+    return _build_evidence_summary_payload(
+        rows=rows,
+        evidence_metrics=evidence_metrics,
+        next_high_hit_threshold=next_high_hit_threshold,
+    )
+
+
+def _collect_evidence_return_metrics(rows: list[dict[str, Any]]) -> dict[str, list[Any] | list[float]]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     t_plus_2_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
     t_plus_3_rows = [row for row in rows if row.get("t_plus_3_close_return") is not None]
     t_plus_4_rows = [row for row in rows if row.get("t_plus_4_close_return") is not None]
+    return {
+        "next_day_rows": next_day_rows,
+        "t_plus_2_rows": t_plus_2_rows,
+        "t_plus_3_rows": t_plus_3_rows,
+        "t_plus_4_rows": t_plus_4_rows,
+        "next_high_returns": [float(row["next_high_return"]) for row in next_day_rows if row.get("next_high_return") is not None],
+        "next_close_returns": [float(row["next_close_return"]) for row in next_day_rows if row.get("next_close_return") is not None],
+        "next_open_to_close_returns": [float(row["next_open_to_close_return"]) for row in next_day_rows if row.get("next_open_to_close_return") is not None],
+        "t_plus_2_returns": [float(row["t_plus_2_close_return"]) for row in t_plus_2_rows if row.get("t_plus_2_close_return") is not None],
+        "t_plus_3_returns": [float(row["t_plus_3_close_return"]) for row in t_plus_3_rows if row.get("t_plus_3_close_return") is not None],
+        "t_plus_4_returns": [float(row["t_plus_4_close_return"]) for row in t_plus_4_rows if row.get("t_plus_4_close_return") is not None],
+    }
 
-    next_high_returns = [float(row["next_high_return"]) for row in next_day_rows if row.get("next_high_return") is not None]
-    next_close_returns = [float(row["next_close_return"]) for row in next_day_rows if row.get("next_close_return") is not None]
-    next_open_to_close_returns = [float(row["next_open_to_close_return"]) for row in next_day_rows if row.get("next_open_to_close_return") is not None]
-    t_plus_2_returns = [float(row["t_plus_2_close_return"]) for row in t_plus_2_rows if row.get("t_plus_2_close_return") is not None]
-    t_plus_3_returns = [float(row["t_plus_3_close_return"]) for row in t_plus_3_rows if row.get("t_plus_3_close_return") is not None]
-    t_plus_4_returns = [float(row["t_plus_4_close_return"]) for row in t_plus_4_rows if row.get("t_plus_4_close_return") is not None]
 
+def _build_evidence_summary_payload(
+    *,
+    rows: list[dict[str, Any]],
+    evidence_metrics: dict[str, list[Any] | list[float]],
+    next_high_hit_threshold: float,
+) -> dict[str, Any]:
+    next_day_rows = evidence_metrics["next_day_rows"]
+    t_plus_2_rows = evidence_metrics["t_plus_2_rows"]
+    t_plus_3_rows = evidence_metrics["t_plus_3_rows"]
+    t_plus_4_rows = evidence_metrics["t_plus_4_rows"]
+    next_high_returns = evidence_metrics["next_high_returns"]
+    next_close_returns = evidence_metrics["next_close_returns"]
+    next_open_to_close_returns = evidence_metrics["next_open_to_close_returns"]
+    t_plus_2_returns = evidence_metrics["t_plus_2_returns"]
+    t_plus_3_returns = evidence_metrics["t_plus_3_returns"]
+    t_plus_4_returns = evidence_metrics["t_plus_4_returns"]
     return {
         "evidence_case_count": len(rows),
         "next_day_available_count": len(next_day_rows),
@@ -256,13 +320,57 @@ def _build_recommendation(summary: dict[str, Any]) -> str:
     t_plus_3_positive_rate = summary.get("t_plus_3_close_positive_rate")
     if evidence_case_count <= 0:
         return "当前没有可复核的 historical_prior evidence cases，不能把这条 selected 路径当成已完成历史证明。"
-    if next_close_positive_rate is not None and next_close_positive_rate >= 0.8 and t_plus_2_positive_rate is not None and t_plus_2_positive_rate >= 0.5:
-        if t_plus_3_positive_rate is None or t_plus_3_positive_rate >= 0.5:
+    if _has_strong_next_day_and_t_plus_2_support(
+        next_close_positive_rate=next_close_positive_rate,
+        t_plus_2_positive_rate=t_plus_2_positive_rate,
+    ):
+        if _has_supported_t_plus_3(t_plus_3_positive_rate):
             return "当前 selected 路径已有足够的 historical_prior follow-through 支持，可继续保留 confirm_then_hold 语义。"
         return "当前 selected 路径的次日与 T+2 支持较强，但 T+3 延续偏弱，更适合作为次日确认后持有、而非过度拉长持仓的 BTST 方案。"
-    if next_close_positive_rate is not None and next_close_positive_rate >= 0.8:
+    if _has_strong_next_day_only(next_close_positive_rate):
         return "当前 selected 路径至少证明了较强的次日收盘延续，但 T+2/T+3 样本还不足，后续应继续积累 closed-cycle 证据。"
     return "当前 selected 路径的 historical_prior 证据还不足以证明收益质量改善，优先任务应转向扩充 carryover cohort，而不是继续放松 selected frontier。"
+
+
+def _has_strong_next_day_and_t_plus_2_support(*, next_close_positive_rate: Any, t_plus_2_positive_rate: Any) -> bool:
+    return next_close_positive_rate is not None and next_close_positive_rate >= 0.8 and t_plus_2_positive_rate is not None and t_plus_2_positive_rate >= 0.5
+
+
+def _has_supported_t_plus_3(t_plus_3_positive_rate: Any) -> bool:
+    return t_plus_3_positive_rate is None or t_plus_3_positive_rate >= 0.5
+
+
+def _has_strong_next_day_only(next_close_positive_rate: Any) -> bool:
+    return next_close_positive_rate is not None and next_close_positive_rate >= 0.8
+
+
+def _resolve_current_contract_status(*, decision: Any, ticker_explicitly_requested: bool) -> tuple[str, bool]:
+    normalized_decision = str(decision or "")
+    if normalized_decision == "selected":
+        return "formal_selected", True
+    if ticker_explicitly_requested:
+        return "non_selected_explicit_ticker", False
+    return "missing_formal_selected", False
+
+
+def _apply_current_contract_guardrail(
+    *,
+    recommendation: str,
+    decision: Any,
+    ticker_explicitly_requested: bool,
+) -> tuple[str, str, bool]:
+    contract_status, is_formal_selected = _resolve_current_contract_status(
+        decision=decision,
+        ticker_explicitly_requested=ticker_explicitly_requested,
+    )
+    if is_formal_selected:
+        return recommendation, contract_status, True
+    normalized_decision = str(decision or "unknown")
+    guarded_recommendation = (
+        f"当前 ticker 在 snapshot 中的 short_trade.decision={normalized_decision}，不属于当前 formal selected；"
+        "以下 historical proof 只能作为盘中升级或 close-loop 观察证据，不能当成当前 selected 路径证明。"
+    )
+    return guarded_recommendation, contract_status, False
 
 
 def analyze_btst_selected_outcome_proof(input_path: str | Path | dict[str, Any], *, ticker: str | None = None) -> dict[str, Any]:
@@ -279,21 +387,74 @@ def analyze_btst_selected_outcome_proof(input_path: str | Path | dict[str, Any],
     if score_target is not None and effective_select_threshold is not None:
         score_gap_to_selected = round(effective_select_threshold - score_target, 6)
 
+    evidence_rows = _build_evidence_rows(recent_examples)
+
+    summary = _summarize_evidence_rows(evidence_rows, next_high_hit_threshold=next_high_hit_threshold)
+    recommendation = _build_recommendation(summary)
+    recommendation, current_contract_status, is_formal_selected = _apply_current_contract_guardrail(
+        recommendation=recommendation,
+        decision=short_trade.get("decision"),
+        ticker_explicitly_requested=bool(ticker),
+    )
+
+    return _build_selected_outcome_analysis(
+        report_dir=report_dir,
+        snapshot_path=snapshot_path,
+        snapshot=snapshot,
+        resolved_ticker=resolved_ticker,
+        short_trade=short_trade,
+        score_target=score_target,
+        effective_select_threshold=effective_select_threshold,
+        selected_score_tolerance=selected_score_tolerance,
+        score_gap_to_selected=score_gap_to_selected,
+        relief_context=relief_context,
+        historical_prior=historical_prior,
+        recent_examples=recent_examples,
+        summary=summary,
+        evidence_rows=evidence_rows,
+        recommendation=recommendation,
+        current_contract_status=current_contract_status,
+        is_formal_selected=is_formal_selected,
+    )
+
+
+def _build_evidence_rows(recent_examples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     price_cache: dict[tuple[str, str], Any] = {}
     evidence_rows: list[dict[str, Any]] = []
     for row in recent_examples:
         outcome = _extract_holding_outcome(str(row.get("ticker") or ""), str(row.get("trade_date") or ""), price_cache)
         evidence_rows.append({**row, **outcome})
+    return evidence_rows
 
-    summary = _summarize_evidence_rows(evidence_rows, next_high_hit_threshold=next_high_hit_threshold)
-    recommendation = _build_recommendation(summary)
 
+def _build_selected_outcome_analysis(
+    *,
+    report_dir: str | None,
+    snapshot_path: str | None,
+    snapshot: dict[str, Any],
+    resolved_ticker: str,
+    short_trade: dict[str, Any],
+    score_target: float | None,
+    effective_select_threshold: float | None,
+    selected_score_tolerance: float,
+    score_gap_to_selected: float | None,
+    relief_context: dict[str, Any],
+    historical_prior: dict[str, Any],
+    recent_examples: list[dict[str, Any]],
+    summary: dict[str, Any],
+    evidence_rows: list[dict[str, Any]],
+    recommendation: str,
+    current_contract_status: str,
+    is_formal_selected: bool,
+) -> dict[str, Any]:
     return {
         "report_dir": report_dir,
         "snapshot_path": snapshot_path,
         "trade_date": normalize_trade_date(snapshot.get("trade_date")),
         "ticker": resolved_ticker,
         "decision": short_trade.get("decision"),
+        "current_contract_status": current_contract_status,
+        "is_formal_selected": is_formal_selected,
         "candidate_source": short_trade.get("candidate_source"),
         "preferred_entry_mode": short_trade.get("preferred_entry_mode"),
         "score_target": round_or_none(score_target),
@@ -325,6 +486,8 @@ def render_btst_selected_outcome_proof_markdown(analysis: dict[str, Any]) -> str
     lines.append(f"- trade_date: {analysis.get('trade_date')}")
     lines.append(f"- ticker: {analysis.get('ticker')}")
     lines.append(f"- decision: {analysis.get('decision')}")
+    lines.append(f"- current_contract_status: {analysis.get('current_contract_status')}")
+    lines.append(f"- is_formal_selected: {analysis.get('is_formal_selected')}")
     lines.append(f"- candidate_source: {analysis.get('candidate_source')}")
     lines.append(f"- preferred_entry_mode: {analysis.get('preferred_entry_mode')}")
     lines.append(f"- relief_reason: {analysis.get('relief_reason')}")

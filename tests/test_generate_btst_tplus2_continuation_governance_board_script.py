@@ -376,3 +376,56 @@ def test_generate_btst_tplus2_continuation_governance_board_surfaces_merge_revie
     assert analysis["promotion_blocker"] == "default_btst_merge_review_pending"
     assert analysis["focus_promotion_review_verdict"] == "ready_for_default_btst_merge_review"
     assert "escalate the focus ticker into default BTST merge review" in analysis["recommendation"]
+
+
+def test_generate_btst_tplus2_continuation_governance_board_threads_payload(monkeypatch, tmp_path: Path) -> None:
+    observation_pool_path = tmp_path / "observation_pool.json"
+    lane_rulepack_path = tmp_path / "lane_rulepack.json"
+    lane_validation_path = tmp_path / "lane_validation.json"
+    for path in (observation_pool_path, lane_rulepack_path, lane_validation_path):
+        path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "scripts.generate_btst_tplus2_continuation_governance_board._build_governance_context",
+        lambda *args, **kwargs: {
+            "resolved_watchlist_validation_path": tmp_path / "btst_tplus2_candidate_dossier_300505_latest.json",
+            "focus_ticker": "300505",
+            "eligible_execution": {"effective_eligible_tickers": ["600988", "300505"]},
+            "rulepack_eligible_tickers": ["600988"],
+            "watchlist_execution": {"effective_watchlist_tickers": ["600989", "300505"], "execution_verdict": "watchlist_extension_applied", "added_watchlist_tickers": ["300505"]},
+            "rulepack_watchlist_tickers": ["600989"],
+            "support_count": 2,
+            "mixed_count": 1,
+            "watchlist_validation_status": "recent_support_confirmed",
+            "recent_supporting_window_count": 3,
+            "recent_window_count": 4,
+            "recent_support_ratio": 0.75,
+            "promotion_review": {"promotion_review_verdict": "watch_review_ready", "promotion_blockers": [], "focus_ticker": "300505"},
+            "promotion_gate": {"gate_verdict": "approve_watchlist_promotion", "gate_blockers": [], "operator_action": "append_focus_to_watchlist", "proposed_watchlist_tickers": ["600989", "300505"]},
+            "eligible_gate": {"gate_verdict": "approve_eligible_promotion", "gate_blockers": [], "operator_action": "append_focus_to_eligible"},
+            "eligible_execution": {"effective_eligible_tickers": ["600988", "300505"], "execution_verdict": "eligible_extension_applied", "added_eligible_tickers": ["300505"]},
+            "execution_gate": {"gate_verdict": "approve_execution_candidate", "gate_blockers": [], "operator_action": "append_focus_to_execution_overlay"},
+            "execution_overlay": {"execution_verdict": "execution_candidate_applied", "added_execution_candidates": ["300505"]},
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.generate_btst_tplus2_continuation_governance_board._resolve_effective_governance_state",
+        lambda context: ("single_ticker_with_validation_watch", "near_cluster_only", [{"ticker": "600988"}]),
+    )
+    monkeypatch.setattr(
+        "scripts.generate_btst_tplus2_continuation_governance_board._build_governance_recommendation",
+        lambda context, governance_status: "keep lane isolated",
+    )
+
+    analysis = generate_btst_tplus2_continuation_governance_board(
+        observation_pool_path,
+        lane_rulepack_path=lane_rulepack_path,
+        lane_validation_path=lane_validation_path,
+    )
+
+    assert analysis["focus_ticker"] == "300505"
+    assert analysis["governance_status"] == "single_ticker_with_validation_watch"
+    assert analysis["eligible_tickers"] == ["600988", "300505"]
+    assert analysis["watchlist_tickers"] == ["600989", "300505"]
+    assert analysis["board_rows"] == [{"ticker": "600988"}]
+    assert analysis["recommendation"] == "keep lane isolated"

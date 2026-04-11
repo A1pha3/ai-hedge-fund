@@ -266,3 +266,89 @@ def test_generate_btst_tplus2_continuation_watchboard_combines_governance_and_ro
     assert "eligible_extension_applied" in markdown
     assert "approve_execution_candidate" in markdown
     assert "execution_candidate_applied" in markdown
+
+
+def test_generate_btst_tplus2_continuation_watchboard_threads_payload(monkeypatch, tmp_path: Path) -> None:
+    observation_pool_path = tmp_path / "pool.json"
+    lane_rulepack_path = tmp_path / "rulepack.json"
+    lane_validation_path = tmp_path / "validation.json"
+    watchlist_validation_path = tmp_path / "watchlist_validation.json"
+    validation_queue_path = tmp_path / "validation_queue.json"
+    promotion_review_path = tmp_path / "promotion_review.json"
+    promotion_gate_path = tmp_path / "promotion_gate.json"
+    watchlist_execution_path = tmp_path / "watchlist_execution.json"
+    eligible_gate_path = tmp_path / "eligible_gate.json"
+    eligible_execution_path = tmp_path / "eligible_execution.json"
+    execution_gate_path = tmp_path / "execution_gate.json"
+    execution_overlay_path = tmp_path / "execution_overlay.json"
+
+    for path, payload in {
+        observation_pool_path: {"entries": []},
+        lane_rulepack_path: {"eligible_tickers": ["600988"], "watchlist_tickers": ["600989"], "lane_rules": {"lane_stage": "observation_only", "capital_mode": "paper_only"}},
+        lane_validation_path: {"eligible_tickers": ["600988"], "per_window_summaries": [{"window_verdict": "supports_tplus2_lane"}]},
+        watchlist_validation_path: {"candidate_ticker": "600989", "recent_validation_verdict": "recent_support_confirmed", "recent_supporting_window_count": 4, "recent_window_count": 4, "recent_support_ratio": 1.0},
+        validation_queue_path: {"focus_candidate": {"ticker": "300505", "promotion_readiness_verdict": "validation_queue_ready"}, "queue_rows": [{"ticker": "300505", "priority_rank": 2, "candidate_tier_focus": "observation_candidate", "recent_tier_verdict": "recent_tier_confirmed", "promotion_readiness_verdict": "validation_queue_ready"}]},
+        promotion_review_path: {"focus_ticker": "300505", "promotion_review_verdict": "watch_review_ready", "promotion_blockers": []},
+        promotion_gate_path: {"focus_ticker": "300505", "gate_verdict": "approve_watchlist_promotion", "gate_blockers": [], "operator_action": "append_focus_to_watchlist", "proposed_watchlist_tickers": ["600989", "300505"]},
+        watchlist_execution_path: {"focus_ticker": "300505", "execution_verdict": "watchlist_extension_applied", "effective_watchlist_tickers": ["600989", "300505"], "added_watchlist_tickers": ["300505"], "adopted_watch_row": {"ticker": "300505", "entry_type": "promoted_validation_watch", "priority_score": 2, "lane_stage": "observation_only", "capital_mode": "paper_only", "promotion_blocker": "near_cluster_only", "watchlist_validation_status": "promoted_from_validation_queue", "recent_supporting_window_count": 4, "recent_window_count": 4, "recent_support_ratio": 1.0, "t_plus_2_close_positive_rate": 1.0, "t_plus_2_close_return_mean": 0.0361, "next_close_positive_rate": 1.0}},
+        eligible_gate_path: {"focus_ticker": "300505", "gate_verdict": "approve_eligible_promotion", "gate_blockers": [], "operator_action": "append_focus_to_eligible"},
+        eligible_execution_path: {"focus_ticker": "300505", "execution_verdict": "eligible_extension_applied", "effective_eligible_tickers": ["600988", "300505"], "added_eligible_tickers": ["300505"], "adopted_eligible_row": {"ticker": "300505", "entry_type": "promoted_watch_eligible", "priority_score": 2, "lane_stage": "observation_only", "capital_mode": "paper_only", "promotion_blocker": "governance_review_pending", "watchlist_validation_status": "promoted_from_validation_queue", "recent_supporting_window_count": 4, "recent_window_count": 4, "recent_support_ratio": 1.0, "t_plus_2_close_positive_rate": 1.0, "t_plus_2_close_return_mean": 0.0361, "next_close_positive_rate": 1.0}},
+        execution_gate_path: {"focus_ticker": "300505", "gate_verdict": "approve_execution_candidate", "gate_blockers": [], "operator_action": "append_focus_to_execution_overlay"},
+        execution_overlay_path: {"focus_ticker": "300505", "execution_verdict": "execution_candidate_applied", "effective_execution_candidates": ["300505"], "added_execution_candidates": ["300505"], "adopted_execution_row": {"ticker": "300505", "entry_type": "paper_execution_candidate", "priority_score": 2, "lane_stage": "observation_only", "capital_mode": "paper_only", "promotion_blocker": "default_btst_blocked", "watchlist_validation_status": "promoted_from_validation_queue", "recent_supporting_window_count": 4, "recent_window_count": 4, "recent_support_ratio": 1.0, "t_plus_2_close_positive_rate": 1.0, "t_plus_2_close_return_mean": 0.0361, "next_close_positive_rate": 1.0}},
+    }.items():
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setattr(
+        watchboard,
+        "generate_btst_tplus2_continuation_governance_board",
+        lambda *_args, **_kwargs: {
+            "governance_status": "single_ticker_with_validation_watch",
+            "promotion_blocker": "recent_validation_pending",
+            "eligible_tickers": ["600988", "300505"],
+            "watchlist_tickers": ["600989", "300505"],
+            "watchlist_validation_status": "promoted_from_validation_queue",
+            "recent_supporting_window_count": 4,
+            "recent_window_count": 4,
+            "recent_support_ratio": 1.0,
+            "board_rows": [
+                {"ticker": "600988", "entry_type": "anchor_cluster", "lane_stage": "observation_only", "t_plus_2_close_positive_rate": 1.0, "t_plus_2_close_return_mean": 0.0355},
+                {"ticker": "300505", "entry_type": "promoted_watch_eligible", "lane_stage": "observation_only", "t_plus_2_close_positive_rate": 1.0, "t_plus_2_close_return_mean": 0.0361},
+                {"ticker": "300505", "entry_type": "paper_execution_candidate", "lane_stage": "observation_only", "t_plus_2_close_positive_rate": 1.0, "t_plus_2_close_return_mean": 0.0361},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        watchboard,
+        "analyze_btst_tplus2_continuation_peer_rollup",
+        lambda *_args, **_kwargs: {
+            "rollup_verdict": "first_near_cluster_breakthrough",
+            "top_candidate": {"ticker": "600989", "tier": "near_cluster_peer"},
+            "risk_flags": [{"ticker": "300724", "tier": "observation_candidate", "reason": "negative_or_weak_follow_through", "t_plus_2_close_return_mean": -0.0182}],
+        },
+    )
+
+    analysis = watchboard.generate_btst_tplus2_continuation_watchboard(
+        tmp_path,
+        observation_pool_path=observation_pool_path,
+        lane_rulepack_path=lane_rulepack_path,
+        lane_validation_path=lane_validation_path,
+        watchlist_validation_path=watchlist_validation_path,
+        validation_queue_path=validation_queue_path,
+        promotion_review_path=promotion_review_path,
+        promotion_gate_path=promotion_gate_path,
+        watchlist_execution_path=watchlist_execution_path,
+        eligible_gate_path=eligible_gate_path,
+        eligible_execution_path=eligible_execution_path,
+        execution_gate_path=execution_gate_path,
+        execution_overlay_path=execution_overlay_path,
+    )
+
+    assert analysis["governance_status"] == "single_ticker_with_validation_watch"
+    assert analysis["rollup_verdict"] == "first_near_cluster_breakthrough"
+    assert analysis["focus_validation_candidate"]["ticker"] == "300505"
+    assert analysis["focus_execution_gate"]["gate_verdict"] == "approve_execution_candidate"
+    assert analysis["focus_execution_overlay"]["execution_verdict"] == "execution_candidate_applied"
+    assert analysis["risk_flags"][0]["ticker"] == "300724"
+    assert analysis["eligible_rows"][0]["entry_type"] == "anchor_cluster"
+    assert analysis["execution_rows"][0]["entry_type"] == "paper_execution_candidate"
+    assert "execution_blockers=[]" in analysis["recommendation"]

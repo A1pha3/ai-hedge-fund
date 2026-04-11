@@ -80,6 +80,20 @@ def _build_corridor_shadow_lanes(primary: dict[str, Any], parallel: list[dict[st
     return lanes
 
 
+def _build_shadow_pack_recommendation(*, shadow_status: str, primary: dict[str, Any], parallel: list[dict[str, Any]], excluded_low_gate_tail_tickers: list[str]) -> str:
+    if shadow_status == "ready_for_primary_shadow_replay":
+        recommendation = (
+            f"corridor lane 已可进入 primary shadow replay，当前首选 ticker={primary.get('ticker')}，"
+            f"并行确认 ticker={[row.get('ticker') for row in parallel if row.get('ticker')]}."
+        )
+        if excluded_low_gate_tail_tickers:
+            recommendation += f" excluded low-gate tail={excluded_low_gate_tail_tickers} 保留在 uplift 诊断，不进入 parallel watch。"
+        return recommendation
+    if shadow_status == "hold_for_more_corridor_evidence":
+        return "corridor lane 仍需更多 closed-cycle 证据，暂不进入 primary shadow replay。"
+    return "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控。"
+
+
 def _build_corridor_shadow_replay_commands(
     corridor_validation_pack_path: str | Path,
     *,
@@ -113,6 +127,7 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
     pack_status = str(pack.get("pack_status") or "skipped_no_corridor_lane")
     primary = dict(pack.get("primary_validation_ticker") or {})
     parallel = [dict(row) for row in list(pack.get("parallel_watch_tickers") or [])]
+    excluded_low_gate_tail_tickers = [str(ticker).strip() for ticker in list(pack.get("excluded_low_gate_tail_tickers") or []) if str(ticker).strip()]
     shadow_status = _resolve_corridor_shadow_status(pack_status=pack_status, primary=primary)
     lanes = _build_corridor_shadow_lanes(primary, parallel)
 
@@ -127,15 +142,12 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         "tractability_tier=upstream_research_only 的 ticker 不得被提升为 primary。",
     ]
 
-    if shadow_status == "ready_for_primary_shadow_replay":
-        recommendation = (
-            f"corridor lane 已可进入 primary shadow replay，当前首选 ticker={primary.get('ticker')}，"
-            f"并行确认 ticker={[row.get('ticker') for row in parallel if row.get('ticker')]}."
-        )
-    elif shadow_status == "hold_for_more_corridor_evidence":
-        recommendation = "corridor lane 仍需更多 closed-cycle 证据，暂不进入 primary shadow replay。"
-    else:
-        recommendation = "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控。"
+    recommendation = _build_shadow_pack_recommendation(
+        shadow_status=shadow_status,
+        primary=primary,
+        parallel=parallel,
+        excluded_low_gate_tail_tickers=excluded_low_gate_tail_tickers,
+    )
 
     refresh_commands = _build_refresh_commands(corridor_validation_pack_path=corridor_validation_pack_path)
     shadow_replay_commands = _build_corridor_shadow_replay_commands(
@@ -151,6 +163,7 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
         "source_pack_status": pack_status,
         "primary_shadow_replay": _build_lane(primary, lane_role="primary_shadow_replay", lane_rank=1) if primary else {},
         "parallel_watch_lanes": [_build_lane(row, lane_role="parallel_watch", lane_rank=index) for index, row in enumerate(parallel, start=2)],
+        "excluded_low_gate_tail_tickers": excluded_low_gate_tail_tickers,
         "lanes": lanes,
         "success_criteria": success_criteria,
         "guardrails": guardrails,
@@ -177,6 +190,8 @@ def render_btst_candidate_pool_corridor_shadow_pack_markdown(analysis: dict[str,
         )
     if not list(analysis.get("lanes") or []):
         lines.append("- none")
+    for ticker in list(analysis.get("excluded_low_gate_tail_tickers") or []):
+        lines.append(f"- excluded_low_gate_tail={ticker}")
     lines.append("")
     lines.append("## Success Criteria")
     for item in list(analysis.get("success_criteria") or []):

@@ -114,3 +114,72 @@ def test_generate_btst_default_merge_review_holds_when_not_ready(tmp_path: Path)
     assert analysis["merge_review_verdict"] == "hold_continuation_lane"
     assert "new_independent_trade_date" in analysis["blockers"]
     assert "recent_tier_not_confirmed" in analysis["blockers"]
+
+
+def test_generate_btst_default_merge_review_threads_payload(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    promotion_review_path = tmp_path / "promotion_review.json"
+    governance_board_path = tmp_path / "governance_board.json"
+    focus_dossier_path = tmp_path / "focus_dossier.json"
+
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "continuation_promotion_ready_summary": {
+                    "focus_ticker": "300720",
+                    "promotion_path_status": "merge_review_ready",
+                    "promotion_merge_review_verdict": "ready_for_default_btst_merge_review",
+                    "qualifying_window_buckets": ["near_miss_entries", "selected_entries"],
+                    "observed_independent_window_count": 2,
+                    "weighted_observed_window_credit": 2.0,
+                    "required_positive_rate_delta_vs_default_btst": 0.1,
+                    "required_mean_return_delta_vs_default_btst": 0.02,
+                    "focus_t_plus_2_positive_rate": 0.75,
+                    "default_btst_t_plus_2_positive_rate": 0.3539,
+                    "t_plus_2_positive_rate_delta_vs_default_btst": 0.3961,
+                    "focus_t_plus_2_mean_return": 0.0912,
+                    "default_btst_t_plus_2_mean_return": 0.0068,
+                    "t_plus_2_mean_return_delta_vs_default_btst": 0.0844,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    promotion_review_path.write_text(
+        json.dumps({"focus_ticker": "300720", "promotion_review_verdict": "ready_for_default_btst_merge_review", "promotion_blockers": []}),
+        encoding="utf-8",
+    )
+    governance_board_path.write_text(
+        json.dumps({"focus_ticker": "300720", "governance_status": "ready_for_default_btst_merge_review", "promotion_blocker": "default_btst_merge_review_pending"}),
+        encoding="utf-8",
+    )
+    focus_dossier_path.write_text(
+        json.dumps(
+            {
+                "latest_followup_decision": "selected",
+                "downstream_followup_status": "continuation_only_confirm_then_review",
+                "governance_objective_support": {"closed_cycle_count": 2, "support_verdict": "supports_default_btst_merge"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    analysis = generate_btst_default_merge_review(
+        manifest_path=manifest_path,
+        promotion_review_path=promotion_review_path,
+        governance_board_path=governance_board_path,
+        focus_dossier_path=focus_dossier_path,
+    )
+
+    assert analysis["focus_ticker"] == "300720"
+    assert analysis["merge_review_verdict"] == "ready_for_default_btst_merge_review"
+    assert analysis["operator_action"] == "review_default_btst_merge"
+    assert analysis["counterfactual_validation"]["counterfactual_verdict"] == "supports_default_btst_merge"
+    assert analysis["focus_closed_cycle_count"] == 2
+    assert analysis["focus_support_verdict"] == "supports_default_btst_merge"
+    assert analysis["source_reports"] == {
+        "manifest": str(manifest_path.expanduser().resolve()),
+        "promotion_review": str(promotion_review_path.expanduser().resolve()),
+        "governance_board": str(governance_board_path.expanduser().resolve()),
+        "focus_dossier": str(focus_dossier_path.expanduser().resolve()),
+    }

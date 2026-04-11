@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from scripts.analyze_btst_rollout_governance_board import analyze_btst_rollout_governance_board
 
@@ -208,3 +209,77 @@ def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurrin
     assert analysis["penalty_frontier_summary"]["best_variant_released_tickers"] == ["300724"]
     assert analysis["frontier_constraints"][0]["frontier_id"] == "broad_penalty_relief"
     assert "broad stale/extension penalty relief 已在当前窗口被证伪" in analysis["recommendation"]
+
+
+def test_analyze_btst_rollout_governance_board_threads_payload(monkeypatch, tmp_path: Path) -> None:
+    action_board = tmp_path / "action_board.json"
+    primary_roll = tmp_path / "primary_roll.json"
+    shadow_expansion = tmp_path / "shadow_expansion.json"
+    shadow_lane = tmp_path / "shadow_lane.json"
+    primary_gap = tmp_path / "primary_gap.json"
+    recurring_runbook = tmp_path / "recurring_runbook.json"
+    primary_window_runbook = tmp_path / "primary_window_runbook.json"
+    shadow_peer_scan = tmp_path / "shadow_peer_scan.json"
+    structural_shadow_runbook = tmp_path / "structural_shadow_runbook.json"
+    for path in (
+        action_board,
+        primary_roll,
+        shadow_expansion,
+        shadow_lane,
+        primary_gap,
+        recurring_runbook,
+        primary_window_runbook,
+        shadow_peer_scan,
+        structural_shadow_runbook,
+    ):
+        path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "scripts.analyze_btst_rollout_governance_board._load_rollout_governance_inputs",
+        lambda **kwargs: {
+            "action_board": {"generated_on": "2026-03-30"},
+            "primary_roll": {},
+            "shadow_expansion": {},
+            "shadow_lane_priority": {},
+            "primary_window_gap": {},
+            "recurring_shadow_runbook": {"close_candidate": {}, "intraday_control": {}},
+            "recurring_close_bundle": {},
+            "primary_window_validation_runbook": {},
+            "shadow_peer_scan": {},
+            "structural_shadow_runbook": {},
+            "penalty_frontier_summary": {"frontier_id": "broad_penalty_relief"},
+            "recurring_close_ticker": "002015",
+            "recurring_intraday_ticker": "600821",
+            "close_bundle_summary_path": None,
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.analyze_btst_rollout_governance_board._build_rollout_governance_rows",
+        lambda payloads: [{"ticker": "001309"}, {"ticker": "002015"}],
+    )
+    monkeypatch.setattr(
+        "scripts.analyze_btst_rollout_governance_board._build_rollout_next_tasks",
+        lambda governance_rows, recurring_close_ticker, recurring_intraday_ticker: [{"task_id": "001309_independent_window_validation"}],
+    )
+    monkeypatch.setattr(
+        "scripts.analyze_btst_rollout_governance_board._build_rollout_recommendation",
+        lambda payloads, recurring_close_ticker, recurring_intraday_ticker: "governance recommendation",
+    )
+
+    analysis = analyze_btst_rollout_governance_board(
+        action_board,
+        primary_roll_forward_path=primary_roll,
+        shadow_expansion_path=shadow_expansion,
+        shadow_lane_priority_path=shadow_lane,
+        primary_window_gap_path=primary_gap,
+        recurring_shadow_runbook_path=recurring_runbook,
+        primary_window_validation_runbook_path=primary_window_runbook,
+        shadow_peer_scan_path=shadow_peer_scan,
+        structural_shadow_runbook_path=structural_shadow_runbook,
+    )
+
+    assert analysis["generated_on"] == "2026-03-30"
+    assert analysis["governance_rows"] == [{"ticker": "001309"}, {"ticker": "002015"}]
+    assert analysis["next_3_tasks"] == [{"task_id": "001309_independent_window_validation"}]
+    assert analysis["penalty_frontier_summary"] == {"frontier_id": "broad_penalty_relief"}
+    assert analysis["recommendation"] == "governance recommendation"

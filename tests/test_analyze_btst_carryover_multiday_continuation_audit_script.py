@@ -124,8 +124,13 @@ def test_analyze_btst_carryover_multiday_continuation_audit_recommends_t2_bias(m
     markdown = render_btst_carryover_multiday_continuation_audit_markdown(analysis)
 
     assert analysis["selected_ticker"] == "002001"
+    assert analysis["selected_current_data_status"] == "ok"
+    assert analysis["selected_current_cycle_status"] == "t_plus_4_closed"
+    assert analysis["selected_current_next_close_return"] == 0.045
+    assert analysis["selected_current_t_plus_2_close_return"] == 0.0029
     assert analysis["policy_checks"]["selected_path_t2_bias_only"] is True
     assert analysis["policy_checks"]["broad_family_only_multiday_unsupported"] is True
+    assert analysis["policy_checks"]["open_selected_case_count"] == 0
     assert analysis["broad_family_only_summary"]["next_close_positive_rate"] == 0.0
     assert "T+2 bias" in analysis["recommendation"]
     assert "broad_family_only" in analysis["recommendation"]

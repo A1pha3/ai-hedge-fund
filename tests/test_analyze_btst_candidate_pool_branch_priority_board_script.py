@@ -118,5 +118,104 @@ def test_analyze_btst_candidate_pool_branch_priority_board_prioritizes_rebucket_
     assert analysis["priority_alignment_status"] == "divergent_top_lane"
     assert analysis["top_structural_handoff"] == "post_gate_liquidity_competition"
     assert analysis["top_objective_handoff"] == "layer_a_liquidity_corridor"
+    assert analysis["top_execution_handoff"] == "post_gate_liquidity_competition"
+    assert analysis["leader_governance_status"] == "structural_leader_retained"
     assert "post_gate_liquidity_competition" in analysis["recommendation"]
     assert "layer_a_liquidity_corridor" in analysis["recommendation"]
+
+
+def test_analyze_btst_candidate_pool_branch_priority_board_promotes_objective_leader_when_edge_is_large(tmp_path: Path) -> None:
+    dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    lane_objective_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
+    dossier_path.write_text(
+        json.dumps(
+            {
+                "priority_handoff_branch_experiment_queue": [
+                    {
+                        "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                        "priority_rank": 1,
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "tickers": ["300683", "301188"],
+                        "prototype_type": "upstream_base_liquidity_uplift_probe",
+                        "prototype_readiness": "shadow_ready_large_gap",
+                        "uplift_to_cutoff_multiple_mean": 12.5909,
+                        "top300_lower_market_cap_hot_peer_count_mean": 34.6875,
+                        "estimated_rank_gap_after_rebucket_mean": 2587.5,
+                        "evaluation_summary": "corridor 仍需 upstream uplift，但 closed-cycle 表现很强。",
+                        "guardrail_summary": "不得直接讨论 cutoff 微调。",
+                    },
+                    {
+                        "task_id": "post_gate_liquidity_competition_post_gate_competition_rebucket_probe",
+                        "priority_rank": 2,
+                        "priority_handoff": "post_gate_liquidity_competition",
+                        "tickers": ["301292"],
+                        "prototype_type": "post_gate_competition_rebucket_probe",
+                        "prototype_readiness": "shadow_ready_rebucket_signal",
+                        "uplift_to_cutoff_multiple_mean": 2.084,
+                        "top300_lower_market_cap_hot_peer_count_mean": 34.6667,
+                        "estimated_rank_gap_after_rebucket_mean": 361.3333,
+                        "evaluation_summary": "rebucket tractability 更强，但 closed-cycle 支持较弱。",
+                        "guardrail_summary": "不得直接下调 gate。",
+                    },
+                ],
+                "priority_ticker_dossiers": [
+                    {
+                        "ticker": "300683",
+                        "truncation_liquidity_profile": {
+                            "priority_handoff": "layer_a_liquidity_corridor",
+                            "profile_summary": "300683 是 corridor 内当前最接近 uplift probe 的样本。",
+                        },
+                        "occurrence_evidence": [
+                            {
+                                "blocking_stage": "candidate_pool_truncated_after_filters",
+                                "pre_truncation_avg_amount_share_of_cutoff": 0.1517,
+                                "pre_truncation_rank_gap_to_cutoff": 1599,
+                                "estimated_rank_gap_after_rebucket": 1599,
+                                "top300_lower_market_cap_hot_peer_count": 0,
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    lane_objective_support_path.write_text(
+        json.dumps(
+            {
+                "branch_rows": [
+                    {
+                        "priority_handoff": "layer_a_liquidity_corridor",
+                        "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                        "closed_cycle_count": 16,
+                        "t_plus_2_return_hit_rate_at_target": 0.9375,
+                        "mean_t_plus_2_return": 0.1258,
+                    },
+                    {
+                        "priority_handoff": "post_gate_liquidity_competition",
+                        "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                        "closed_cycle_count": 3,
+                        "t_plus_2_return_hit_rate_at_target": 0.3333,
+                        "mean_t_plus_2_return": 0.0351,
+                    },
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    analysis = analyze_btst_candidate_pool_branch_priority_board(dossier_path, lane_objective_support_path=lane_objective_support_path)
+
+    assert analysis["branch_rows"][0]["priority_handoff"] == "post_gate_liquidity_competition"
+    assert analysis["top_structural_handoff"] == "post_gate_liquidity_competition"
+    assert analysis["top_objective_handoff"] == "layer_a_liquidity_corridor"
+    assert analysis["top_execution_handoff"] == "layer_a_liquidity_corridor"
+    assert analysis["leader_governance_status"] == "objective_leader_promoted"
+    assert analysis["next_3_tasks"][0]["task_id"] == "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe"
+    assert analysis["next_3_tasks"][1]["task_id"] == "objective_followup_post_gate_liquidity_competition"
+    assert analysis["corridor_ticker_rows"][0]["ticker"] == "300683"
+    assert analysis["recommendation"].startswith("当前 candidate-pool recall 的第一优先 lane 是 layer_a_liquidity_corridor")

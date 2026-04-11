@@ -49,6 +49,122 @@ def _extract_focus_watch_validation(governance_board: dict[str, Any], watchlist_
     }
 
 
+def _load_watchboard_inputs(
+    reports_root: str | Path,
+    *,
+    observation_pool_path: str | Path,
+    lane_rulepack_path: str | Path,
+    lane_validation_path: str | Path,
+    watchlist_validation_path: str | Path | None,
+    validation_queue_path: str | Path | None,
+    promotion_review_path: str | Path | None,
+    promotion_gate_path: str | Path | None,
+    watchlist_execution_path: str | Path | None,
+    eligible_gate_path: str | Path | None,
+    eligible_execution_path: str | Path | None,
+    execution_gate_path: str | Path | None,
+    execution_overlay_path: str | Path | None,
+) -> dict[str, Any]:
+    governance_board = generate_btst_tplus2_continuation_governance_board(
+        observation_pool_path,
+        lane_rulepack_path=lane_rulepack_path,
+        lane_validation_path=lane_validation_path,
+        watchlist_validation_path=watchlist_validation_path,
+        promotion_review_path=promotion_review_path,
+        promotion_gate_path=promotion_gate_path,
+        watchlist_execution_path=watchlist_execution_path,
+        eligible_gate_path=eligible_gate_path,
+        eligible_execution_path=eligible_execution_path,
+        execution_gate_path=execution_gate_path,
+        execution_overlay_path=execution_overlay_path,
+    )
+    return {
+        "governance_board": governance_board,
+        "rollup": analyze_btst_tplus2_continuation_peer_rollup(reports_root),
+        "watchlist_validation": _load_optional_json(watchlist_validation_path),
+        "validation_queue": _load_optional_json(validation_queue_path),
+        "promotion_review": _load_optional_json(promotion_review_path),
+        "promotion_gate": _load_optional_json(promotion_gate_path),
+        "watchlist_execution": _load_optional_json(watchlist_execution_path),
+        "eligible_gate": _load_optional_json(eligible_gate_path),
+        "eligible_execution": _load_optional_json(eligible_execution_path),
+        "execution_gate": _load_optional_json(execution_gate_path),
+        "execution_overlay": _load_optional_json(execution_overlay_path),
+    }
+
+
+def _build_watchboard_lane_rows(watch_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    eligible_rows = [row for row in watch_rows if str(row.get("entry_type") or "") in {"anchor_cluster", "same_cluster_peer", "promoted_watch_eligible"}]
+    execution_rows = [row for row in watch_rows if str(row.get("entry_type") or "") in {"paper_execution_candidate"}]
+    return eligible_rows, execution_rows
+
+
+def _enrich_top_candidate(rollup: dict[str, Any], watchlist_validation: dict[str, Any]) -> dict[str, Any]:
+    top_candidate = dict(rollup.get("top_candidate") or {})
+    if top_candidate and str(top_candidate.get("ticker") or "") == str(watchlist_validation.get("candidate_ticker") or ""):
+        top_candidate["recent_validation_verdict"] = watchlist_validation.get("recent_validation_verdict")
+        top_candidate["recent_supporting_window_count"] = watchlist_validation.get("recent_supporting_window_count")
+        top_candidate["recent_window_count"] = watchlist_validation.get("recent_window_count")
+        top_candidate["recent_support_ratio"] = watchlist_validation.get("recent_support_ratio")
+    return top_candidate
+
+
+def _build_watchboard_analysis(
+    inputs: dict[str, Any],
+    watch_rows: list[dict[str, Any]],
+    eligible_rows: list[dict[str, Any]],
+    execution_rows: list[dict[str, Any]],
+    top_candidate: dict[str, Any],
+    focus_watch_validation: dict[str, Any],
+) -> dict[str, Any]:
+    governance_board = inputs["governance_board"]
+    rollup = inputs["rollup"]
+    validation_queue = inputs["validation_queue"]
+    promotion_review = inputs["promotion_review"]
+    promotion_gate = inputs["promotion_gate"]
+    watchlist_execution = inputs["watchlist_execution"]
+    eligible_gate = inputs["eligible_gate"]
+    eligible_execution = inputs["eligible_execution"]
+    execution_gate = inputs["execution_gate"]
+    execution_overlay = inputs["execution_overlay"]
+    return {
+        "governance_status": governance_board.get("governance_status"),
+        "promotion_blocker": governance_board.get("promotion_blocker"),
+        "eligible_tickers": governance_board.get("eligible_tickers"),
+        "watchlist_tickers": governance_board.get("watchlist_tickers"),
+        "watchlist_validation_status": governance_board.get("watchlist_validation_status"),
+        "recent_supporting_window_count": governance_board.get("recent_supporting_window_count"),
+        "recent_window_count": governance_board.get("recent_window_count"),
+        "recent_support_ratio": governance_board.get("recent_support_ratio"),
+        "rollup_verdict": rollup.get("rollup_verdict"),
+        "top_candidate": top_candidate,
+        "focus_validation_candidate": validation_queue.get("focus_candidate"),
+        "focus_promotion_review": promotion_review,
+        "focus_promotion_gate": promotion_gate,
+        "focus_watchlist_execution": watchlist_execution,
+        **focus_watch_validation,
+        "focus_eligible_gate": eligible_gate,
+        "focus_eligible_execution": eligible_execution,
+        "focus_execution_gate": execution_gate,
+        "focus_execution_overlay": execution_overlay,
+        "validation_queue_rows": validation_queue.get("queue_rows"),
+        "risk_flags": list(rollup.get("risk_flags") or []),
+        "watch_rows": watch_rows,
+        "eligible_rows": eligible_rows,
+        "execution_rows": execution_rows,
+        "recommendation": (
+            f"Watchboard status: governance={governance_board.get('governance_status')}, rollup={rollup.get('rollup_verdict')}. "
+            f"Focus watch validation={focus_watch_validation.get('focus_watch_validation_status')} with recent_support="
+            f"{focus_watch_validation.get('focus_watch_recent_supporting_window_count')}/{focus_watch_validation.get('focus_watch_recent_window_count')}. "
+            f"Focus validation candidate={dict(validation_queue.get('focus_candidate') or {}).get('ticker')} "
+            f"review={promotion_review.get('promotion_review_verdict')} "
+            f"gate={promotion_gate.get('gate_verdict')} eligible_gate={eligible_gate.get('gate_verdict')} execution_gate={execution_gate.get('gate_verdict')} "
+            f"execution_blockers={execution_gate.get('gate_blockers')}. "
+            "Keep anchor lane isolated, validate watchlist names separately, and do not widen default BTST."
+        ),
+    }
+
+
 def _append_watchboard_row_section(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
     lines.append(title)
     for row in rows:
@@ -102,11 +218,13 @@ def generate_btst_tplus2_continuation_watchboard(
     execution_gate_path: str | Path | None = DEFAULT_EXECUTION_GATE_PATH,
     execution_overlay_path: str | Path | None = DEFAULT_EXECUTION_OVERLAY_PATH,
 ) -> dict[str, Any]:
-    governance_board = generate_btst_tplus2_continuation_governance_board(
-        observation_pool_path,
+    inputs = _load_watchboard_inputs(
+        reports_root,
+        observation_pool_path=observation_pool_path,
         lane_rulepack_path=lane_rulepack_path,
         lane_validation_path=lane_validation_path,
         watchlist_validation_path=watchlist_validation_path,
+        validation_queue_path=validation_queue_path,
         promotion_review_path=promotion_review_path,
         promotion_gate_path=promotion_gate_path,
         watchlist_execution_path=watchlist_execution_path,
@@ -115,70 +233,14 @@ def generate_btst_tplus2_continuation_watchboard(
         execution_gate_path=execution_gate_path,
         execution_overlay_path=execution_overlay_path,
     )
-    rollup = analyze_btst_tplus2_continuation_peer_rollup(reports_root)
-    watchlist_validation = _load_optional_json(watchlist_validation_path)
-    validation_queue = _load_optional_json(validation_queue_path)
-    promotion_review = _load_optional_json(promotion_review_path)
-    promotion_gate = _load_optional_json(promotion_gate_path)
-    watchlist_execution = _load_optional_json(watchlist_execution_path)
-    eligible_gate = _load_optional_json(eligible_gate_path)
-    eligible_execution = _load_optional_json(eligible_execution_path)
-    execution_gate = _load_optional_json(execution_gate_path)
-    execution_overlay = _load_optional_json(execution_overlay_path)
+    governance_board = inputs["governance_board"]
+    watchlist_validation = inputs["watchlist_validation"]
+    watchlist_execution = inputs["watchlist_execution"]
     watch_rows = list(governance_board.get("board_rows") or [])
-    eligible_rows = [
-        row
-        for row in watch_rows
-        if str(row.get("entry_type") or "") in {"anchor_cluster", "same_cluster_peer", "promoted_watch_eligible"}
-    ]
-    execution_rows = [
-        row for row in watch_rows if str(row.get("entry_type") or "") in {"paper_execution_candidate"}
-    ]
-    risk_flags = list(rollup.get("risk_flags") or [])
-    top_candidate = dict(rollup.get("top_candidate") or {})
-    if top_candidate and str(top_candidate.get("ticker") or "") == str(watchlist_validation.get("candidate_ticker") or ""):
-        top_candidate["recent_validation_verdict"] = watchlist_validation.get("recent_validation_verdict")
-        top_candidate["recent_supporting_window_count"] = watchlist_validation.get("recent_supporting_window_count")
-        top_candidate["recent_window_count"] = watchlist_validation.get("recent_window_count")
-        top_candidate["recent_support_ratio"] = watchlist_validation.get("recent_support_ratio")
+    eligible_rows, execution_rows = _build_watchboard_lane_rows(watch_rows)
+    top_candidate = _enrich_top_candidate(inputs["rollup"], watchlist_validation)
     focus_watch_validation = _extract_focus_watch_validation(governance_board, watchlist_execution)
-
-    return {
-        "governance_status": governance_board.get("governance_status"),
-        "promotion_blocker": governance_board.get("promotion_blocker"),
-        "eligible_tickers": governance_board.get("eligible_tickers"),
-        "watchlist_tickers": governance_board.get("watchlist_tickers"),
-        "watchlist_validation_status": governance_board.get("watchlist_validation_status"),
-        "recent_supporting_window_count": governance_board.get("recent_supporting_window_count"),
-        "recent_window_count": governance_board.get("recent_window_count"),
-        "recent_support_ratio": governance_board.get("recent_support_ratio"),
-        "rollup_verdict": rollup.get("rollup_verdict"),
-        "top_candidate": top_candidate,
-        "focus_validation_candidate": validation_queue.get("focus_candidate"),
-        "focus_promotion_review": promotion_review,
-        "focus_promotion_gate": promotion_gate,
-        "focus_watchlist_execution": watchlist_execution,
-        **focus_watch_validation,
-        "focus_eligible_gate": eligible_gate,
-        "focus_eligible_execution": eligible_execution,
-        "focus_execution_gate": execution_gate,
-        "focus_execution_overlay": execution_overlay,
-        "validation_queue_rows": validation_queue.get("queue_rows"),
-        "risk_flags": risk_flags,
-        "watch_rows": watch_rows,
-        "eligible_rows": eligible_rows,
-        "execution_rows": execution_rows,
-        "recommendation": (
-            f"Watchboard status: governance={governance_board.get('governance_status')}, rollup={rollup.get('rollup_verdict')}. "
-            f"Focus watch validation={focus_watch_validation.get('focus_watch_validation_status')} with recent_support="
-            f"{focus_watch_validation.get('focus_watch_recent_supporting_window_count')}/{focus_watch_validation.get('focus_watch_recent_window_count')}. "
-            f"Focus validation candidate={dict(validation_queue.get('focus_candidate') or {}).get('ticker')} "
-            f"review={promotion_review.get('promotion_review_verdict')} "
-            f"gate={promotion_gate.get('gate_verdict')} eligible_gate={eligible_gate.get('gate_verdict')} execution_gate={execution_gate.get('gate_verdict')} "
-            f"execution_blockers={execution_gate.get('gate_blockers')}. "
-            "Keep anchor lane isolated, validate watchlist names separately, and do not widen default BTST."
-        ),
-    }
+    return _build_watchboard_analysis(inputs, watch_rows, eligible_rows, execution_rows, top_candidate, focus_watch_validation)
 
 
 def render_btst_tplus2_continuation_watchboard_markdown(analysis: dict[str, Any]) -> str:

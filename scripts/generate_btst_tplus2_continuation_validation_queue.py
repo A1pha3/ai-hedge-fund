@@ -15,6 +15,120 @@ DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_tplus2_continuation_validation_queue_l
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_tplus2_continuation_validation_queue_latest.md"
 
 
+def _build_validation_queue_row(*, seed: dict[str, Any], dossier: dict[str, Any]) -> dict[str, Any]:
+    promotion_readiness_verdict = str(dossier.get("promotion_readiness_verdict") or "")
+    candidate_tier_focus = str(dossier.get("candidate_tier_focus") or "")
+    return {
+        "ticker": str(seed.get("ticker") or ""),
+        "seed_tier": seed.get("tier"),
+        "priority_rank": seed.get("priority_rank"),
+        "candidate_tier_focus": candidate_tier_focus,
+        "recent_tier_verdict": dossier.get("recent_tier_verdict"),
+        "recent_tier_window_count": dossier.get("recent_tier_window_count"),
+        "recent_window_count": dossier.get("recent_window_count"),
+        "recent_tier_ratio": dossier.get("recent_tier_ratio"),
+        "promotion_readiness_verdict": promotion_readiness_verdict,
+        "next_close_positive_rate": dict(dossier.get("tier_focus_surface_summary") or {}).get("next_close_positive_rate"),
+        "t_plus_2_close_positive_rate": dict(dossier.get("tier_focus_surface_summary") or {}).get("t_plus_2_close_positive_rate"),
+        "t_plus_2_close_return_mean": dict(dict(dossier.get("tier_focus_surface_summary") or {}).get("t_plus_2_close_return_distribution") or {}).get("mean"),
+        "next_step": (
+            "Escalate into default BTST merge review under explicit governance approval."
+            if candidate_tier_focus == "governance_followup" and promotion_readiness_verdict == "merge_review_ready"
+            else (
+                "Promote into near-cluster watch review under the governance-approved continuation lane."
+                if candidate_tier_focus == "governance_followup" and promotion_readiness_verdict == "watch_review_ready"
+                else (
+                    "Promote into near-cluster watch review if another confirming window appears."
+                    if promotion_readiness_verdict == "validation_queue_ready"
+                    else (
+                        "Keep on queue watch until recent governance followup converts into payoff-confirmed continuation evidence."
+                        if candidate_tier_focus == "governance_followup"
+                        else "Keep on queue watch until recent tier confirmation strengthens."
+                    )
+                )
+            )
+        ),
+    }
+
+
+def _build_validation_queue_rows(
+    *,
+    reports_root: str | Path,
+    anchor_ticker: str,
+    profile_name: str,
+    report_name_contains: str,
+    queue_seed: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    queue_rows: list[dict[str, Any]] = []
+    for seed in queue_seed:
+        ticker = str(seed.get("ticker") or "")
+        if not ticker:
+            continue
+        dossier = analyze_btst_tplus2_near_cluster_dossier(
+            reports_root,
+            anchor_ticker=anchor_ticker,
+            candidate_ticker=ticker,
+            profile_name=profile_name,
+            report_name_contains=report_name_contains,
+        )
+        queue_rows.append(_build_validation_queue_row(seed=seed, dossier=dossier))
+    return queue_rows
+
+
+def _resolve_focus_candidate_review(
+    *,
+    reports_root: str | Path,
+    anchor_ticker: str,
+    profile_name: str,
+    report_name_contains: str,
+    resolved_focus_ticker: str,
+    queue_rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    focus_candidate = next((row for row in queue_rows if str(row.get("ticker") or "") == resolved_focus_ticker), None)
+    if not focus_candidate:
+        return None, None
+    focus_dossier = analyze_btst_tplus2_near_cluster_dossier(
+        reports_root,
+        anchor_ticker=anchor_ticker,
+        candidate_ticker=resolved_focus_ticker,
+        profile_name=profile_name,
+        report_name_contains=report_name_contains,
+    )
+    watch_dossier = analyze_btst_tplus2_near_cluster_dossier(
+        reports_root,
+        anchor_ticker=anchor_ticker,
+        candidate_ticker="600989",
+        profile_name=profile_name,
+        report_name_contains=report_name_contains,
+    )
+    return focus_candidate, _build_promotion_review({"focus_candidate": focus_candidate}, focus_dossier, watch_dossier)
+
+
+def _build_validation_queue_analysis(
+    *,
+    reports_root: str | Path,
+    anchor_ticker: str,
+    resolved_focus_ticker: str,
+    focus_candidate: dict[str, Any] | None,
+    promotion_review: dict[str, Any] | None,
+    queue_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    recommendation = (
+        f"Validation queue ready with {len(queue_rows)} candidates. "
+        f"Focus next review on {resolved_focus_ticker or 'none'} and keep all queue names outside the default BTST surface."
+    )
+    return {
+        "reports_root": str(Path(reports_root).expanduser().resolve()),
+        "anchor_ticker": anchor_ticker,
+        "queue_row_count": len(queue_rows),
+        "focus_ticker": resolved_focus_ticker or None,
+        "focus_candidate": focus_candidate,
+        "promotion_review": promotion_review,
+        "queue_rows": queue_rows,
+        "recommendation": recommendation,
+    }
+
+
 def generate_btst_tplus2_continuation_validation_queue(
     reports_root: str | Path,
     *,
@@ -52,88 +166,29 @@ def generate_btst_tplus2_continuation_validation_queue(
                 *queue_seed[: max(max_candidates - 1, 0)],
             ]
 
-    queue_rows: list[dict[str, Any]] = []
-    for seed in queue_seed:
-        ticker = str(seed.get("ticker") or "")
-        if not ticker:
-            continue
-        dossier = analyze_btst_tplus2_near_cluster_dossier(
-            reports_root,
-            anchor_ticker=anchor_ticker,
-            candidate_ticker=ticker,
-            profile_name=profile_name,
-            report_name_contains=report_name_contains,
-        )
-        promotion_readiness_verdict = str(dossier.get("promotion_readiness_verdict") or "")
-        candidate_tier_focus = str(dossier.get("candidate_tier_focus") or "")
-        queue_rows.append(
-            {
-                "ticker": ticker,
-                "seed_tier": seed.get("tier"),
-                "priority_rank": seed.get("priority_rank"),
-                "candidate_tier_focus": candidate_tier_focus,
-                "recent_tier_verdict": dossier.get("recent_tier_verdict"),
-                "recent_tier_window_count": dossier.get("recent_tier_window_count"),
-                "recent_window_count": dossier.get("recent_window_count"),
-                "recent_tier_ratio": dossier.get("recent_tier_ratio"),
-                "promotion_readiness_verdict": promotion_readiness_verdict,
-                "next_close_positive_rate": dict(dossier.get("tier_focus_surface_summary") or {}).get("next_close_positive_rate"),
-                "t_plus_2_close_positive_rate": dict(dossier.get("tier_focus_surface_summary") or {}).get("t_plus_2_close_positive_rate"),
-                "t_plus_2_close_return_mean": dict(dict(dossier.get("tier_focus_surface_summary") or {}).get("t_plus_2_close_return_distribution") or {}).get("mean"),
-                "next_step": (
-                    "Escalate into default BTST merge review under explicit governance approval."
-                    if candidate_tier_focus == "governance_followup" and promotion_readiness_verdict == "merge_review_ready"
-                    else (
-                    "Promote into near-cluster watch review under the governance-approved continuation lane."
-                    if candidate_tier_focus == "governance_followup" and promotion_readiness_verdict == "watch_review_ready"
-                    else (
-                    "Promote into near-cluster watch review if another confirming window appears."
-                    if promotion_readiness_verdict == "validation_queue_ready"
-                    else (
-                        "Keep on queue watch until recent governance followup converts into payoff-confirmed continuation evidence."
-                        if candidate_tier_focus == "governance_followup"
-                        else "Keep on queue watch until recent tier confirmation strengthens."
-                    )
-                    )
-                    )
-                ),
-            }
-        )
-
-    focus_candidate = next((row for row in queue_rows if str(row.get("ticker") or "") == resolved_focus_ticker), None)
-    promotion_review = None
-    if focus_candidate:
-        focus_dossier = analyze_btst_tplus2_near_cluster_dossier(
-            reports_root,
-            anchor_ticker=anchor_ticker,
-            candidate_ticker=resolved_focus_ticker,
-            profile_name=profile_name,
-            report_name_contains=report_name_contains,
-        )
-        watch_dossier = analyze_btst_tplus2_near_cluster_dossier(
-            reports_root,
-            anchor_ticker=anchor_ticker,
-            candidate_ticker="600989",
-            profile_name=profile_name,
-            report_name_contains=report_name_contains,
-        )
-        promotion_review = _build_promotion_review({"focus_candidate": focus_candidate}, focus_dossier, watch_dossier)
-
-    recommendation = (
-        f"Validation queue ready with {len(queue_rows)} candidates. "
-        f"Focus next review on {resolved_focus_ticker or 'none'} and keep all queue names outside the default BTST surface."
+    queue_rows = _build_validation_queue_rows(
+        reports_root=reports_root,
+        anchor_ticker=anchor_ticker,
+        profile_name=profile_name,
+        report_name_contains=report_name_contains,
+        queue_seed=queue_seed,
     )
-
-    return {
-        "reports_root": str(Path(reports_root).expanduser().resolve()),
-        "anchor_ticker": anchor_ticker,
-        "queue_row_count": len(queue_rows),
-        "focus_ticker": resolved_focus_ticker or None,
-        "focus_candidate": focus_candidate,
-        "promotion_review": promotion_review,
-        "queue_rows": queue_rows,
-        "recommendation": recommendation,
-    }
+    focus_candidate, promotion_review = _resolve_focus_candidate_review(
+        reports_root=reports_root,
+        anchor_ticker=anchor_ticker,
+        profile_name=profile_name,
+        report_name_contains=report_name_contains,
+        resolved_focus_ticker=resolved_focus_ticker,
+        queue_rows=queue_rows,
+    )
+    return _build_validation_queue_analysis(
+        reports_root=reports_root,
+        anchor_ticker=anchor_ticker,
+        resolved_focus_ticker=resolved_focus_ticker,
+        focus_candidate=focus_candidate,
+        promotion_review=promotion_review,
+        queue_rows=queue_rows,
+    )
 
 
 def render_btst_tplus2_continuation_validation_queue_markdown(analysis: dict[str, Any]) -> str:

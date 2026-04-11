@@ -343,6 +343,77 @@ def _build_peer_scan_recommendation(
     return f"No same-cluster peer passed the structural + T+2 edge scan around {anchor_ticker}. Treat the current continuation lane as a single-ticker pattern until more windows accumulate."
 
 
+def _summarize_scan_tiers(
+    *,
+    strict_peer_rows: list[dict[str, Any]],
+    near_peer_rows: list[dict[str, Any]],
+    observation_candidate_rows: list[dict[str, Any]],
+    grouped_all_candidate_rows: dict[str, list[dict[str, Any]]],
+    next_high_hit_threshold: float,
+    recent_window_limit: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    return (
+        _summarize_tier_rows(
+            _group_rows_by_ticker(strict_peer_rows),
+            next_high_hit_threshold=next_high_hit_threshold,
+            grouped_all_candidate_rows=grouped_all_candidate_rows,
+            recent_window_limit=recent_window_limit,
+        ),
+        _summarize_tier_rows(
+            _group_rows_by_ticker(near_peer_rows),
+            next_high_hit_threshold=next_high_hit_threshold,
+            grouped_all_candidate_rows=grouped_all_candidate_rows,
+            recent_window_limit=recent_window_limit,
+        ),
+        _summarize_tier_rows(
+            _group_rows_by_ticker(observation_candidate_rows),
+            next_high_hit_threshold=next_high_hit_threshold,
+            grouped_all_candidate_rows=grouped_all_candidate_rows,
+            recent_window_limit=recent_window_limit,
+        ),
+    )
+
+
+def _build_peer_scan_analysis(
+    *,
+    reports_root: str | Path,
+    profile_name: str,
+    report_name_contains: str,
+    anchor_ticker: str,
+    next_high_hit_threshold: float,
+    similarity_threshold: float,
+    near_similarity_threshold: float,
+    observation_similarity_threshold: float,
+    recent_window_limit: int,
+    anchor_profile: dict[str, Any],
+    peer_summaries: list[dict[str, Any]],
+    near_peer_summaries: list[dict[str, Any]],
+    observation_candidate_summaries: list[dict[str, Any]],
+    rejected_rows: list[dict[str, Any]],
+    recommendation: str,
+) -> dict[str, Any]:
+    return {
+        "reports_root": str(Path(reports_root).expanduser().resolve()),
+        "profile_name": profile_name,
+        "report_name_contains": report_name_contains,
+        "anchor_ticker": anchor_ticker,
+        "next_high_hit_threshold": next_high_hit_threshold,
+        "similarity_threshold": similarity_threshold,
+        "near_similarity_threshold": near_similarity_threshold,
+        "observation_similarity_threshold": observation_similarity_threshold,
+        "recent_window_limit": recent_window_limit,
+        "anchor_profile": anchor_profile,
+        "peer_count": len(peer_summaries),
+        "peer_summaries": peer_summaries,
+        "near_cluster_count": len(near_peer_summaries),
+        "near_peer_summaries": near_peer_summaries,
+        "observation_candidate_count": len(observation_candidate_summaries),
+        "observation_candidate_summaries": observation_candidate_summaries,
+        "near_peer_rejections": rejected_rows[:12],
+        "recommendation": recommendation,
+    }
+
+
 def analyze_btst_tplus2_continuation_peer_scan(
     reports_root: str | Path,
     *,
@@ -371,22 +442,12 @@ def analyze_btst_tplus2_continuation_peer_scan(
         observation_similarity_threshold=observation_similarity_threshold,
     )
 
-    peer_summaries = _summarize_tier_rows(
-        _group_rows_by_ticker(strict_peer_rows),
-        next_high_hit_threshold=next_high_hit_threshold,
+    peer_summaries, near_peer_summaries, observation_candidate_summaries = _summarize_scan_tiers(
+        strict_peer_rows=strict_peer_rows,
+        near_peer_rows=near_peer_rows,
+        observation_candidate_rows=observation_candidate_rows,
         grouped_all_candidate_rows=grouped_all_candidate_rows,
-        recent_window_limit=recent_window_limit,
-    )
-    near_peer_summaries = _summarize_tier_rows(
-        _group_rows_by_ticker(near_peer_rows),
         next_high_hit_threshold=next_high_hit_threshold,
-        grouped_all_candidate_rows=grouped_all_candidate_rows,
-        recent_window_limit=recent_window_limit,
-    )
-    observation_candidate_summaries = _summarize_tier_rows(
-        _group_rows_by_ticker(observation_candidate_rows),
-        next_high_hit_threshold=next_high_hit_threshold,
-        grouped_all_candidate_rows=grouped_all_candidate_rows,
         recent_window_limit=recent_window_limit,
     )
 
@@ -397,27 +458,23 @@ def analyze_btst_tplus2_continuation_peer_scan(
         observation_candidate_summaries=observation_candidate_summaries,
         anchor_ticker=anchor_ticker,
     )
-
-    return {
-        "reports_root": str(Path(reports_root).expanduser().resolve()),
-        "profile_name": profile_name,
-        "report_name_contains": report_name_contains,
-        "anchor_ticker": anchor_ticker,
-        "next_high_hit_threshold": next_high_hit_threshold,
-        "similarity_threshold": similarity_threshold,
-        "near_similarity_threshold": near_similarity_threshold,
-        "observation_similarity_threshold": observation_similarity_threshold,
-        "recent_window_limit": recent_window_limit,
-        "anchor_profile": anchor_profile,
-        "peer_count": len(peer_summaries),
-        "peer_summaries": peer_summaries,
-        "near_cluster_count": len(near_peer_summaries),
-        "near_peer_summaries": near_peer_summaries,
-        "observation_candidate_count": len(observation_candidate_summaries),
-        "observation_candidate_summaries": observation_candidate_summaries,
-        "near_peer_rejections": rejected_rows[:12],
-        "recommendation": recommendation,
-    }
+    return _build_peer_scan_analysis(
+        reports_root=reports_root,
+        profile_name=profile_name,
+        report_name_contains=report_name_contains,
+        anchor_ticker=anchor_ticker,
+        next_high_hit_threshold=next_high_hit_threshold,
+        similarity_threshold=similarity_threshold,
+        near_similarity_threshold=near_similarity_threshold,
+        observation_similarity_threshold=observation_similarity_threshold,
+        recent_window_limit=recent_window_limit,
+        anchor_profile=anchor_profile,
+        peer_summaries=peer_summaries,
+        near_peer_summaries=near_peer_summaries,
+        observation_candidate_summaries=observation_candidate_summaries,
+        rejected_rows=rejected_rows,
+        recommendation=recommendation,
+    )
 
 
 def render_btst_tplus2_continuation_peer_scan_markdown(analysis: dict[str, Any]) -> str:

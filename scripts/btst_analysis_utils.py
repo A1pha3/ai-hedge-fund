@@ -60,17 +60,34 @@ def fetch_price_frame(ticker: str, trade_date: str, price_cache: dict[tuple[str,
     if cached is not None:
         return cached
 
+    start_date = (pd.Timestamp(normalized_trade_date) - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
     end_date = (pd.Timestamp(normalized_trade_date) + pd.Timedelta(days=15)).strftime("%Y-%m-%d")
     try:
-        frame = normalize_price_frame(get_price_data(ticker, normalized_trade_date, end_date))
+        frame = normalize_price_frame(get_price_data(ticker, start_date, end_date))
     except Exception:
         try:
-            frame = normalize_price_frame(prices_to_df(get_prices_robust(ticker, normalized_trade_date, end_date, use_mock_on_fail=False)))
+            frame = normalize_price_frame(prices_to_df(get_prices_robust(ticker, start_date, end_date, use_mock_on_fail=False)))
         except Exception:
             frame = pd.DataFrame()
 
     price_cache[cache_key] = frame
     return frame
+
+
+def resolve_btst_trade_anchor(frame: pd.DataFrame, trade_date: str) -> tuple[Any | None, pd.DataFrame, str | None, bool]:
+    normalized_trade_date = normalize_trade_date(trade_date)
+    trade_ts = pd.Timestamp(normalized_trade_date)
+    same_day = frame.loc[frame.index.normalize() == trade_ts.normalize()]
+    future_days = frame.loc[frame.index.normalize() > trade_ts.normalize()]
+    if not same_day.empty:
+        return same_day.iloc[0], future_days, normalized_trade_date, False
+
+    prior_days = frame.loc[frame.index.normalize() < trade_ts.normalize()]
+    if prior_days.empty:
+        return None, future_days, None, False
+
+    anchor_trade_date = prior_days.index[-1].strftime("%Y-%m-%d")
+    return prior_days.iloc[-1], future_days, anchor_trade_date, True
 
 
 def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]) -> dict[str, Any]:
@@ -82,23 +99,22 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
             "cycle_status": "missing_next_day",
         }
 
-    trade_ts = pd.Timestamp(normalized_trade_date)
-    same_day = frame.loc[frame.index.normalize() == trade_ts.normalize()]
-    if same_day.empty:
+    trade_row, future_days, anchor_trade_date, used_prior_trade_anchor = resolve_btst_trade_anchor(frame, normalized_trade_date)
+    if trade_row is None:
         return {
             "data_status": "missing_trade_day_bar",
             "cycle_status": "missing_next_day",
         }
 
-    future_days = frame.loc[frame.index.normalize() > trade_ts.normalize()]
     if future_days.empty:
         return {
             "data_status": "missing_next_trade_day_bar",
-            "trade_close": round_or_none(safe_float(same_day.iloc[0].get("close"))),
+            "trade_close": round_or_none(safe_float(trade_row.get("close"))),
+            "trade_anchor_date": anchor_trade_date,
+            "trade_date_was_non_trading": used_prior_trade_anchor,
             "cycle_status": "missing_next_day",
         }
 
-    trade_row = same_day.iloc[0]
     next_row = future_days.iloc[0]
     later_rows = future_days.iloc[1:]
 
@@ -126,6 +142,8 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         "data_status": data_status,
         "cycle_status": cycle_status,
         "trade_close": round(trade_close, 4),
+        "trade_anchor_date": anchor_trade_date,
+        "trade_date_was_non_trading": used_prior_trade_anchor,
         "next_trade_date": future_days.index[0].strftime("%Y-%m-%d"),
         "next_open": round(next_open, 4),
         "next_high": round(next_high, 4),

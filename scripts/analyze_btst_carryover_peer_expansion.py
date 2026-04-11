@@ -123,7 +123,14 @@ def analyze_btst_carryover_peer_expansion(
     harvest = _load_json(harvest_json_path)
     multiday_audit = _load_json(multiday_audit_json_path)
     concerns = _build_historical_concerns(multiday_audit)
+    entries = _build_expansion_entries(harvest, concerns)
+    return _build_peer_expansion_analysis(harvest=harvest, multiday_audit=multiday_audit, entries=entries)
 
+
+def _build_expansion_entries(
+    harvest: dict[str, Any],
+    concerns: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for raw_entry in list(harvest.get("harvest_entries") or []):
         entry = dict(raw_entry or {})
@@ -148,9 +155,9 @@ def analyze_btst_carryover_peer_expansion(
                 "historical_concern_cycle_status": concern.get("cycle_status"),
                 "historical_concern_next_close_return": concern.get("next_close_return"),
                 "historical_concern_t_plus_2_close_return": concern.get("t_plus_2_close_return"),
+                "recommendation": _build_entry_recommendation({"ticker": ticker, "expansion_status": expansion_status}),
             }
         )
-
     entries.sort(
         key=lambda entry: (
             EXPANSION_STATUS_PRIORITY.get(str(entry.get("expansion_status") or ""), -99),
@@ -161,7 +168,15 @@ def analyze_btst_carryover_peer_expansion(
         ),
         reverse=True,
     )
+    return entries
 
+
+def _build_peer_expansion_analysis(
+    *,
+    harvest: dict[str, Any],
+    multiday_audit: dict[str, Any],
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
     priority_expansion_tickers = [
         str(entry.get("ticker") or "")
         for entry in entries
@@ -173,12 +188,9 @@ def analyze_btst_carryover_peer_expansion(
         if str(entry.get("expansion_status") or "") in {"next_day_watch_with_history_risk", "open_cycle_with_history_risk"}
     ][:4]
     focus = entries[0] if entries else {}
-
     recommendation_parts: list[str] = []
     if focus:
-        recommendation_parts.append(
-            f"当前 expansion 第一优先是 {focus.get('ticker')}，status={focus.get('expansion_status')}。"
-        )
+        recommendation_parts.append(f"当前 expansion 第一优先是 {focus.get('ticker')}，status={focus.get('expansion_status')}。")
     if priority_expansion_tickers:
         recommendation_parts.append(f"主扩样队列先看 {priority_expansion_tickers}。")
     if watch_with_risk_tickers:
@@ -186,10 +198,6 @@ def analyze_btst_carryover_peer_expansion(
     if bool(dict(multiday_audit.get("policy_checks") or {}).get("selected_path_t2_bias_only")):
         recommendation_parts.append("在第二个 aligned peer 真正闭环前，002001 仍只应按 T+2 bias 的单票证据处理。")
     recommendation = " ".join(recommendation_parts) if recommendation_parts else "当前没有可用的 carryover peer expansion 队列。"
-
-    for entry in entries:
-        entry["recommendation"] = _build_entry_recommendation(entry)
-
     return {
         "ticker": harvest.get("ticker") or multiday_audit.get("selected_ticker"),
         "selected_ticker": multiday_audit.get("selected_ticker"),

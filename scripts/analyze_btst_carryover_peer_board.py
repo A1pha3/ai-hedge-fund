@@ -63,35 +63,61 @@ def analyze_btst_carryover_peer_board(reports_root: str | Path) -> dict[str, Any
     deduped_rows = _deduplicate_case_rows(raw_rows)
     enriched_rows = _attach_outcomes(deduped_rows)
     supportive_rows = [row for row in enriched_rows if _is_supportive(row)]
-
-    peer_status_counts = dict(Counter(str(row.get("peer_evidence_status") or "unknown") for row in supportive_rows))
-    aligned_candidates = sorted(
-        [
-            row
-            for row in supportive_rows
-            if str(row.get("peer_evidence_status") or "") in ALIGNED_PEER_STATUSES and str(row.get("decision") or "") != "selected"
-        ],
-        key=_candidate_rank,
-    )
-    broad_family_only_candidates = sorted(
-        [
-            row
-            for row in supportive_rows
-            if str(row.get("peer_evidence_status") or "") == "broad_family_only" and str(row.get("decision") or "") != "selected"
-        ],
-        key=_candidate_rank,
-    )
-    same_ticker_ready_rows = sorted(
-        [row for row in supportive_rows if str(row.get("peer_evidence_status") or "") == "same_ticker_ready"],
-        key=lambda row: (str(row.get("trade_date") or ""), str(row.get("ticker") or "")),
+    aligned_candidates, broad_family_only_candidates, same_ticker_ready_rows = _partition_peer_candidates(supportive_rows)
+    return _build_peer_board_analysis(
+        resolved_reports_root=resolved_reports_root,
+        raw_rows=raw_rows,
+        deduped_rows=deduped_rows,
+        supportive_rows=supportive_rows,
+        aligned_candidates=aligned_candidates,
+        broad_family_only_candidates=broad_family_only_candidates,
+        same_ticker_ready_rows=same_ticker_ready_rows,
     )
 
+
+def _partition_peer_candidates(
+    supportive_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    return (
+        sorted(
+            [
+                row
+                for row in supportive_rows
+                if str(row.get("peer_evidence_status") or "") in ALIGNED_PEER_STATUSES and str(row.get("decision") or "") != "selected"
+            ],
+            key=_candidate_rank,
+        ),
+        sorted(
+            [
+                row
+                for row in supportive_rows
+                if str(row.get("peer_evidence_status") or "") == "broad_family_only" and str(row.get("decision") or "") != "selected"
+            ],
+            key=_candidate_rank,
+        ),
+        sorted(
+            [row for row in supportive_rows if str(row.get("peer_evidence_status") or "") == "same_ticker_ready"],
+            key=lambda row: (str(row.get("trade_date") or ""), str(row.get("ticker") or "")),
+        ),
+    )
+
+
+def _build_peer_board_analysis(
+    *,
+    resolved_reports_root: Path,
+    raw_rows: list[dict[str, Any]],
+    deduped_rows: list[dict[str, Any]],
+    supportive_rows: list[dict[str, Any]],
+    aligned_candidates: list[dict[str, Any]],
+    broad_family_only_candidates: list[dict[str, Any]],
+    same_ticker_ready_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "reports_root": str(resolved_reports_root),
         "raw_case_count": len(raw_rows),
         "unique_case_count": len(deduped_rows),
         "supportive_case_count": len(supportive_rows),
-        "peer_status_counts": peer_status_counts,
+        "peer_status_counts": dict(Counter(str(row.get("peer_evidence_status") or "unknown") for row in supportive_rows)),
         "aligned_candidate_count": len(aligned_candidates),
         "broad_family_only_count": len(broad_family_only_candidates),
         "same_ticker_ready_count": len(same_ticker_ready_rows),

@@ -5,6 +5,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+OBJECTIVE_LEADER_PROMOTION_MIN_CLOSED_CYCLES = 5
+OBJECTIVE_LEADER_PROMOTION_MIN_MEAN_T_PLUS_2_RETURN = 0.08
+OBJECTIVE_LEADER_PROMOTION_MIN_RETURN_EDGE = 0.03
+
 
 def _load_json(path: str | Path) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
@@ -39,6 +43,15 @@ def _mean(values: list[float]) -> float | None:
     if not values:
         return None
     return round(sum(values) / len(values), 4)
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _readiness_rank(value: str) -> int:
@@ -183,17 +196,79 @@ def _build_priority_alignment(
     )
 
 
+def _find_branch_row(branch_rows: list[dict[str, Any]], handoff: str) -> dict[str, Any]:
+    for row in branch_rows:
+        if str(row.get("priority_handoff") or "") == handoff:
+            return dict(row)
+    return {}
+
+
+def _resolve_execution_leader(
+    *,
+    branch_rows: list[dict[str, Any]],
+    structural_leader: dict[str, Any],
+    objective_leader: dict[str, Any],
+    priority_alignment_status: str,
+) -> tuple[dict[str, Any], str, str]:
+    if not structural_leader:
+        return {}, "no_branch_rows", "当前 branch priority board 没有可执行 lane。"
+    if priority_alignment_status != "divergent_top_lane" or not objective_leader:
+        return structural_leader, "structural_leader_retained", "当前结构 tractability 与 execution priority 保持一致。"
+
+    objective_mean_return = _float_or_none(objective_leader.get("objective_mean_t_plus_2_return", objective_leader.get("mean_t_plus_2_return")))
+    structural_mean_return = _float_or_none(structural_leader.get("objective_mean_t_plus_2_return", structural_leader.get("mean_t_plus_2_return")))
+    objective_closed_cycle_count = int(objective_leader.get("objective_closed_cycle_count", objective_leader.get("closed_cycle_count")) or 0)
+    objective_support_verdict = str(objective_leader.get("objective_support_verdict", objective_leader.get("support_verdict")) or "")
+    if (
+        objective_support_verdict == "candidate_pool_false_negative_outperforms_tradeable_surface"
+        and objective_closed_cycle_count >= OBJECTIVE_LEADER_PROMOTION_MIN_CLOSED_CYCLES
+        and objective_mean_return is not None
+        and objective_mean_return >= OBJECTIVE_LEADER_PROMOTION_MIN_MEAN_T_PLUS_2_RETURN
+        and objective_mean_return >= (float(structural_mean_return or 0.0) + OBJECTIVE_LEADER_PROMOTION_MIN_RETURN_EDGE)
+    ):
+        promoted_handoff = str(objective_leader.get("priority_handoff") or "")
+        promoted_row = _find_branch_row(branch_rows, promoted_handoff)
+        if promoted_row:
+            return (
+                promoted_row,
+                "objective_leader_promoted",
+                (
+                    f"虽然结构 tractability 仍偏向 {structural_leader.get('priority_handoff')}，"
+                    f"但 {promoted_handoff} 已有 {objective_closed_cycle_count} 个 closed cycles，"
+                    f"mean_t_plus_2_return={objective_mean_return}，"
+                    "execution priority 应先切到 objective leader。"
+                ),
+            )
+    return (
+        structural_leader,
+        "structural_leader_retained",
+        "当前 objective support 还不足以推翻结构 tractability leader，execution priority 继续保留 structural leader。",
+    )
+
+
 def _build_next_3_tasks(
     branch_rows: list[dict[str, Any]],
     corridor_ticker_rows: list[dict[str, Any]],
     priority_alignment_status: str,
+    structural_leader: dict[str, Any],
     objective_leader: dict[str, Any],
+    execution_leader: dict[str, Any],
 ) -> list[dict[str, Any]]:
     next_3_tasks: list[dict[str, Any]] = []
-    if branch_rows:
-        next_3_tasks.append(_build_structural_leader_task(branch_rows[0]))
-    if priority_alignment_status == "divergent_top_lane" and objective_leader:
-        next_3_tasks.append(_build_objective_followup_task(objective_leader))
+    if execution_leader:
+        next_3_tasks.append(_build_structural_leader_task(execution_leader))
+    if (
+        priority_alignment_status == "divergent_top_lane"
+        and objective_leader
+        and str(execution_leader.get("priority_handoff") or "") != str(objective_leader.get("priority_handoff") or "")
+    ):
+        next_3_tasks.append(_build_parallel_followup_task(objective_leader))
+    elif (
+        priority_alignment_status == "divergent_top_lane"
+        and structural_leader
+        and str(execution_leader.get("priority_handoff") or "") != str(structural_leader.get("priority_handoff") or "")
+    ):
+        next_3_tasks.append(_build_parallel_followup_task(structural_leader))
     for row in corridor_ticker_rows[:2]:
         next_3_tasks.append(
             {
@@ -215,14 +290,16 @@ def _build_structural_leader_task(leader: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_objective_followup_task(objective_leader: dict[str, Any]) -> dict[str, Any]:
-    objective_handoff = str(objective_leader.get("priority_handoff") or "")
+def _build_parallel_followup_task(leader: dict[str, Any]) -> dict[str, Any]:
+    objective_handoff = str(leader.get("priority_handoff") or "")
+    support_verdict = leader.get("support_verdict", leader.get("objective_support_verdict"))
+    mean_t_plus_2_return = leader.get("mean_t_plus_2_return", leader.get("objective_mean_t_plus_2_return"))
     return {
         "task_id": f"objective_followup_{objective_handoff}",
         "title": f"补强 {objective_handoff} 的收益验证 lane",
         "why_now": (
-            f"后验 support_verdict={objective_leader.get('support_verdict')}，"
-            f"mean_t_plus_2_return={objective_leader.get('mean_t_plus_2_return')}。"
+            f"后验 support_verdict={support_verdict}，"
+            f"mean_t_plus_2_return={mean_t_plus_2_return}。"
         ),
         "next_step": "保持结构 guardrail，不改现网阈值，先补齐 objective-led parallel validation。",
     }
@@ -232,18 +309,35 @@ def _build_recommendation(
     branch_rows: list[dict[str, Any]],
     corridor_ticker_rows: list[dict[str, Any]],
     priority_alignment_status: str,
+    structural_leader: dict[str, Any],
     objective_leader: dict[str, Any],
+    execution_leader: dict[str, Any],
+    leader_governance_status: str,
 ) -> str:
-    if not branch_rows:
+    if not branch_rows or not execution_leader:
         return "当前 candidate-pool recall 的第一优先 lane 应切到 post_gate competition rebucket shadow，其次再按 corridor uplift burden 排序 003036/300720 这类上游流动性修复样本。"
-    leader = branch_rows[0]
+    leader = execution_leader
     recommendation = (
         f"当前 candidate-pool recall 的第一优先 lane 是 {leader['priority_handoff']}，"
         f"因为它已进入 {leader['prototype_readiness']} 且 {leader.get('evaluation_summary') or ''}"
     )
     if corridor_ticker_rows:
         recommendation = f"{recommendation} corridor 车道内部则应优先处理 {corridor_ticker_rows[0]['ticker']}。"
-    if priority_alignment_status == "divergent_top_lane" and objective_leader:
+    if (
+        leader_governance_status == "objective_leader_promoted"
+        and structural_leader
+        and objective_leader
+    ):
+        objective_support_verdict = objective_leader.get("objective_support_verdict", objective_leader.get("support_verdict"))
+        objective_mean_t_plus_2_return = objective_leader.get("objective_mean_t_plus_2_return", objective_leader.get("mean_t_plus_2_return"))
+        recommendation = (
+            f"{recommendation} 虽然结构 tractability 仍把 {structural_leader.get('priority_handoff')} 放在最前，"
+            f"但 {objective_leader.get('priority_handoff')} 的后验证据更强，"
+            f"support_verdict={objective_support_verdict}，"
+            f"mean_t_plus_2_return={objective_mean_t_plus_2_return}，"
+            "因此下一优先实验应先切到 objective leader，同时保持既有 guardrail 不变。"
+        )
+    elif priority_alignment_status == "divergent_top_lane" and objective_leader:
         recommendation = (
             f"{recommendation} 但后验证据更强的 lane 是 {objective_leader.get('priority_handoff')}，"
             f"support_verdict={objective_leader.get('support_verdict')}，mean_t_plus_2_return={objective_leader.get('mean_t_plus_2_return')}，"
@@ -262,17 +356,28 @@ def analyze_btst_candidate_pool_branch_priority_board(dossier_path: str | Path, 
     structural_leader, objective_leader, priority_alignment_status, alignment_summary = _build_priority_alignment(
         branch_rows, objective_rows_by_handoff
     )
+    execution_leader, leader_governance_status, leader_governance_summary = _resolve_execution_leader(
+        branch_rows=branch_rows,
+        structural_leader=structural_leader,
+        objective_leader=objective_leader,
+        priority_alignment_status=priority_alignment_status,
+    )
     next_3_tasks = _build_next_3_tasks(
         branch_rows,
         corridor_ticker_rows,
         priority_alignment_status,
+        structural_leader,
         objective_leader,
+        execution_leader,
     )
     recommendation = _build_recommendation(
         branch_rows,
         corridor_ticker_rows,
         priority_alignment_status,
+        structural_leader,
         objective_leader,
+        execution_leader,
+        leader_governance_status,
     )
 
     return {
@@ -285,6 +390,9 @@ def analyze_btst_candidate_pool_branch_priority_board(dossier_path: str | Path, 
         "alignment_summary": alignment_summary,
         "top_structural_handoff": structural_leader.get("priority_handoff"),
         "top_objective_handoff": objective_leader.get("priority_handoff"),
+        "top_execution_handoff": execution_leader.get("priority_handoff"),
+        "leader_governance_status": leader_governance_status,
+        "leader_governance_summary": leader_governance_summary,
         "next_3_tasks": next_3_tasks,
         "recommendation": recommendation,
     }
@@ -310,6 +418,9 @@ def render_btst_candidate_pool_branch_priority_board_markdown(analysis: dict[str
     lines.append(f"- priority_alignment_status: {analysis.get('priority_alignment_status')}")
     lines.append(f"- top_structural_handoff: {analysis.get('top_structural_handoff')}")
     lines.append(f"- top_objective_handoff: {analysis.get('top_objective_handoff')}")
+    lines.append(f"- top_execution_handoff: {analysis.get('top_execution_handoff')}")
+    lines.append(f"- leader_governance_status: {analysis.get('leader_governance_status')}")
+    lines.append(f"- leader_governance_summary: {analysis.get('leader_governance_summary')}")
     lines.append(f"- alignment_summary: {analysis.get('alignment_summary')}")
     lines.append("")
     lines.append("## Corridor Tickers")

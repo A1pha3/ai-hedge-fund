@@ -426,6 +426,108 @@ def _resolve_promotion_readiness_verdict(
     return promotion_readiness_verdict
 
 
+def _resolve_recent_tier_state(
+    *,
+    verdict: str,
+    candidate_tier_focus: str,
+    governance_objective_support: dict[str, Any],
+    recent_tier_window_count: int,
+    recent_window_count: int,
+    recent_window_summaries: list[dict[str, Any]],
+    recent_tier_surface_summary: dict[str, Any],
+) -> tuple[str, bool]:
+    governance_payoff_ready = governance_followup_payoff_confirmed(
+        governance_objective_support,
+        recent_tier_window_count=recent_tier_window_count,
+        recent_window_count=recent_window_count,
+    )
+    if verdict == "governance_followup_candidate":
+        return ("governance_followup_payoff_confirmed" if governance_payoff_ready else "governance_followup_pending_evidence"), governance_payoff_ready
+    return (
+        _classify_recent_tier_verdict(
+            recent_tier_window_count,
+            len(recent_window_summaries),
+            recent_tier_surface_summary,
+        ),
+        governance_payoff_ready,
+    )
+
+
+def _build_near_cluster_dossier_analysis(
+    *,
+    reports_root: str | Path,
+    anchor_ticker: str,
+    candidate_ticker: str,
+    candidate_rows: list[dict[str, Any]],
+    supporting_rows: list[dict[str, Any]],
+    tier_counts: dict[str, int],
+    verdict: str,
+    candidate_tier_focus: str,
+    governance_followup: dict[str, Any],
+    governance_objective_support: dict[str, Any],
+    governance_recent_followup_rows: list[dict[str, Any]],
+    current_plan_visibility_summary: dict[str, Any],
+    continuation_promotion_ready_summary: dict[str, Any],
+    latest_followup_decision: str | None,
+    downstream_followup_status: str | None,
+    recent_window_limit: int,
+    recent_window_summaries: list[dict[str, Any]],
+    recent_supporting_window_count: int,
+    recent_support_ratio: float,
+    recent_validation_verdict: str,
+    recent_tier_window_count: int,
+    recent_tier_ratio: float,
+    recent_tier_verdict: str,
+    promotion_readiness_verdict: str,
+    supporting_surface_summary: dict[str, Any],
+    recent_supporting_surface_summary: dict[str, Any],
+    tier_focus_surface_summary: dict[str, Any],
+    recent_tier_surface_summary: dict[str, Any],
+    surface_summary: dict[str, Any],
+    per_window_summaries: list[dict[str, Any]],
+    tier_focus_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "reports_root": str(Path(reports_root).expanduser().resolve()),
+        "anchor_ticker": anchor_ticker,
+        "candidate_ticker": candidate_ticker,
+        "candidate_row_count": len(candidate_rows),
+        "supporting_row_count": len(supporting_rows),
+        "tier_counts": tier_counts,
+        "verdict": verdict,
+        "candidate_tier_focus": candidate_tier_focus,
+        "governance_followup": governance_followup,
+        "governance_objective_support": governance_objective_support,
+        "governance_recent_followup_rows": governance_recent_followup_rows,
+        "current_plan_visibility_summary": current_plan_visibility_summary,
+        "continuation_promotion_ready_summary": continuation_promotion_ready_summary,
+        "latest_followup_decision": latest_followup_decision,
+        "downstream_followup_status": downstream_followup_status,
+        "current_plan_visible_trade_dates": list(current_plan_visibility_summary.get("current_plan_visible_trade_dates") or []),
+        "current_plan_visibility_gap_trade_dates": list(current_plan_visibility_summary.get("current_plan_visibility_gap_trade_dates") or []),
+        "qualifying_window_buckets": list(continuation_promotion_ready_summary.get("qualifying_window_buckets") or []),
+        "promotion_path_status": continuation_promotion_ready_summary.get("promotion_path_status"),
+        "promotion_merge_review_verdict": continuation_promotion_ready_summary.get("promotion_merge_review_verdict"),
+        "tier_focus_row_count": len(tier_focus_rows),
+        "recent_window_limit": recent_window_limit,
+        "recent_window_count": len(recent_window_summaries),
+        "recent_supporting_window_count": recent_supporting_window_count,
+        "recent_support_ratio": recent_support_ratio,
+        "recent_validation_verdict": recent_validation_verdict,
+        "recent_tier_window_count": recent_tier_window_count,
+        "recent_tier_ratio": recent_tier_ratio,
+        "recent_tier_verdict": recent_tier_verdict,
+        "promotion_readiness_verdict": promotion_readiness_verdict,
+        "supporting_surface_summary": supporting_surface_summary,
+        "recent_supporting_surface_summary": recent_supporting_surface_summary,
+        "tier_focus_surface_summary": tier_focus_surface_summary,
+        "recent_tier_surface_summary": recent_tier_surface_summary,
+        "all_surface_summary": surface_summary,
+        "recent_window_summaries": recent_window_summaries,
+        "per_window_summaries": per_window_summaries,
+    }
+
+
 def analyze_btst_tplus2_near_cluster_dossier(
     reports_root: str | Path,
     *,
@@ -511,21 +613,17 @@ def analyze_btst_tplus2_near_cluster_dossier(
         recent_support_ratio=recent_support_ratio,
         recent_supporting_surface_summary=recent_supporting_surface_summary,
     )
-    governance_payoff_ready = governance_followup_payoff_confirmed(
-        governance_objective_support,
+    recent_tier_verdict, governance_payoff_ready = _resolve_recent_tier_state(
+        verdict=verdict,
+        candidate_tier_focus=candidate_tier_focus,
+        governance_objective_support=governance_objective_support,
         recent_tier_window_count=recent_tier_window_count,
         recent_window_count=len(recent_window_summaries),
+        recent_window_summaries=recent_window_summaries,
+        recent_tier_surface_summary=recent_tier_surface_summary,
     )
-
     if verdict == "governance_followup_candidate":
         candidate_tier_focus = "governance_followup"
-        recent_tier_verdict = "governance_followup_payoff_confirmed" if governance_payoff_ready else "governance_followup_pending_evidence"
-    else:
-        recent_tier_verdict = _classify_recent_tier_verdict(
-            recent_tier_window_count,
-            len(recent_window_summaries),
-            recent_tier_surface_summary,
-        )
     promotion_readiness_verdict = _resolve_promotion_readiness_verdict(
         candidate_tier_focus=candidate_tier_focus,
         recent_tier_verdict=recent_tier_verdict,
@@ -548,45 +646,39 @@ def analyze_btst_tplus2_near_cluster_dossier(
         }
         recent_tier_surface_summary = dict(tier_focus_surface_summary)
 
-    return {
-        "reports_root": str(Path(reports_root).expanduser().resolve()),
-        "anchor_ticker": anchor_ticker,
-        "candidate_ticker": candidate_ticker,
-        "candidate_row_count": len(candidate_rows),
-        "supporting_row_count": len(supporting_rows),
-        "tier_counts": tier_counts,
-        "verdict": verdict,
-        "candidate_tier_focus": candidate_tier_focus,
-        "governance_followup": governance_followup,
-        "governance_objective_support": governance_objective_support,
-        "governance_recent_followup_rows": governance_recent_followup_rows,
-        "current_plan_visibility_summary": current_plan_visibility_summary,
-        "continuation_promotion_ready_summary": continuation_promotion_ready_summary,
-        "latest_followup_decision": latest_followup_decision,
-        "downstream_followup_status": downstream_followup_status,
-        "current_plan_visible_trade_dates": list(current_plan_visibility_summary.get("current_plan_visible_trade_dates") or []),
-        "current_plan_visibility_gap_trade_dates": list(current_plan_visibility_summary.get("current_plan_visibility_gap_trade_dates") or []),
-        "qualifying_window_buckets": list(continuation_promotion_ready_summary.get("qualifying_window_buckets") or []),
-        "promotion_path_status": continuation_promotion_ready_summary.get("promotion_path_status"),
-        "promotion_merge_review_verdict": continuation_promotion_ready_summary.get("promotion_merge_review_verdict"),
-        "tier_focus_row_count": len(tier_focus_rows),
-        "recent_window_limit": recent_window_limit,
-        "recent_window_count": len(recent_window_summaries),
-        "recent_supporting_window_count": recent_supporting_window_count,
-        "recent_support_ratio": recent_support_ratio,
-        "recent_validation_verdict": recent_validation_verdict,
-        "recent_tier_window_count": recent_tier_window_count,
-        "recent_tier_ratio": recent_tier_ratio,
-        "recent_tier_verdict": recent_tier_verdict,
-        "promotion_readiness_verdict": promotion_readiness_verdict,
-        "supporting_surface_summary": supporting_surface_summary,
-        "recent_supporting_surface_summary": recent_supporting_surface_summary,
-        "tier_focus_surface_summary": tier_focus_surface_summary,
-        "recent_tier_surface_summary": recent_tier_surface_summary,
-        "all_surface_summary": surface_summary,
-        "recent_window_summaries": recent_window_summaries,
-        "per_window_summaries": per_window_summaries,
-    }
+    return _build_near_cluster_dossier_analysis(
+        reports_root=reports_root,
+        anchor_ticker=anchor_ticker,
+        candidate_ticker=candidate_ticker,
+        candidate_rows=candidate_rows,
+        supporting_rows=supporting_rows,
+        tier_counts=tier_counts,
+        verdict=verdict,
+        candidate_tier_focus=candidate_tier_focus,
+        governance_followup=governance_followup,
+        governance_objective_support=governance_objective_support,
+        governance_recent_followup_rows=governance_recent_followup_rows,
+        current_plan_visibility_summary=current_plan_visibility_summary,
+        continuation_promotion_ready_summary=continuation_promotion_ready_summary,
+        latest_followup_decision=latest_followup_decision,
+        downstream_followup_status=downstream_followup_status,
+        recent_window_limit=recent_window_limit,
+        recent_window_summaries=recent_window_summaries,
+        recent_supporting_window_count=recent_supporting_window_count,
+        recent_support_ratio=recent_support_ratio,
+        recent_validation_verdict=recent_validation_verdict,
+        recent_tier_window_count=recent_tier_window_count,
+        recent_tier_ratio=recent_tier_ratio,
+        recent_tier_verdict=recent_tier_verdict,
+        promotion_readiness_verdict=promotion_readiness_verdict,
+        supporting_surface_summary=supporting_surface_summary,
+        recent_supporting_surface_summary=recent_supporting_surface_summary,
+        tier_focus_surface_summary=tier_focus_surface_summary,
+        recent_tier_surface_summary=recent_tier_surface_summary,
+        surface_summary=surface_summary,
+        per_window_summaries=per_window_summaries,
+        tier_focus_rows=tier_focus_rows,
+    )
 
 
 def render_btst_tplus2_near_cluster_dossier_markdown(analysis: dict[str, Any]) -> str:

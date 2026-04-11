@@ -22,7 +22,11 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
-def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: dict[str, Any], promotion_gate: dict[str, Any]) -> dict[str, Any]:
+def _build_watchlist_execution_context(
+    lane_rulepack: dict[str, Any],
+    validation_queue: dict[str, Any],
+    promotion_gate: dict[str, Any],
+) -> dict[str, Any]:
     lane_rules = dict(lane_rulepack.get("lane_rules") or {})
     raw_watchlist_tickers = [str(item) for item in list(lane_rulepack.get("watchlist_tickers") or []) if str(item).strip()]
     eligible_tickers = [str(item) for item in list(lane_rulepack.get("eligible_tickers") or []) if str(item).strip()]
@@ -36,7 +40,23 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
     promotion_review_verdict = str(promotion_gate.get("promotion_review_verdict") or "")
     merge_review_ready = promotion_review_verdict == "ready_for_default_btst_merge_review"
     governance_ready_watch = governance_ready_watch or promotion_review_verdict in READY_PROMOTION_REVIEW_VERDICTS
+    return {
+        "lane_rulepack": lane_rulepack,
+        "lane_rules": lane_rules,
+        "raw_watchlist_tickers": raw_watchlist_tickers,
+        "eligible_tickers": eligible_tickers,
+        "focus_ticker": focus_ticker,
+        "focus_candidate": focus_candidate,
+        "gate_verdict": gate_verdict,
+        "governance_ready_watch": governance_ready_watch,
+        "merge_review_ready": merge_review_ready,
+    }
 
+
+def _resolve_watchlist_execution_decision(context: dict[str, Any]) -> tuple[str, list[str], list[str]]:
+    focus_ticker = context["focus_ticker"]
+    raw_watchlist_tickers = context["raw_watchlist_tickers"]
+    gate_verdict = context["gate_verdict"]
     if gate_verdict == "approve_watchlist_promotion" and focus_ticker and focus_ticker not in raw_watchlist_tickers:
         execution_verdict = "watchlist_extension_applied"
         added_watchlist_tickers = [focus_ticker]
@@ -49,10 +69,18 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
         execution_verdict = "watchlist_extension_held"
         added_watchlist_tickers = []
         effective_watchlist_tickers = list(raw_watchlist_tickers)
+    return execution_verdict, added_watchlist_tickers, effective_watchlist_tickers
 
-    adopted_watch_row = None
+
+def _build_adopted_watch_row(context: dict[str, Any], execution_verdict: str) -> dict[str, Any] | None:
+    focus_ticker = context["focus_ticker"]
+    focus_candidate = context["focus_candidate"]
+    lane_rules = context["lane_rules"]
+    lane_rulepack = context["lane_rulepack"]
+    merge_review_ready = context["merge_review_ready"]
+    governance_ready_watch = context["governance_ready_watch"]
     if focus_ticker and execution_verdict in {"watchlist_extension_applied", "watchlist_extension_already_applied"}:
-        adopted_watch_row = {
+        return {
             "ticker": focus_ticker,
             "entry_type": "promoted_validation_watch",
             "priority_score": focus_candidate.get("priority_rank"),
@@ -85,9 +113,15 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
             "t_plus_2_close_return_mean": focus_candidate.get("t_plus_2_close_return_mean"),
             "next_close_positive_rate": focus_candidate.get("next_close_positive_rate"),
         }
+    return None
 
+
+def _build_watchlist_execution_recommendation(context: dict[str, Any], execution_verdict: str) -> str:
+    focus_ticker = context["focus_ticker"]
+    eligible_tickers = context["eligible_tickers"]
+    merge_review_ready = context["merge_review_ready"]
     if execution_verdict == "watchlist_extension_applied":
-        recommendation = (
+        return (
             (
                 f"Treat {focus_ticker} as a formal continuation watchlist ticker because merge-approved daily-pipeline uplift is already active; "
                 f"keep eligible_tickers={eligible_tickers} unchanged while governance completes the merge review."
@@ -98,22 +132,42 @@ def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: 
                 f"eligible_tickers={eligible_tickers} unchanged and the continuation lane isolated from default BTST."
             )
         )
-    elif execution_verdict == "watchlist_extension_already_applied":
-        recommendation = f"{focus_ticker} is already part of the effective continuation watchlist."
-    else:
-        recommendation = "Keep the effective continuation watchlist unchanged until promotion gate approval is present."
+    if execution_verdict == "watchlist_extension_already_applied":
+        return f"{focus_ticker} is already part of the effective continuation watchlist."
+    return "Keep the effective continuation watchlist unchanged until promotion gate approval is present."
 
+
+def _build_watchlist_execution_analysis(
+    context: dict[str, Any],
+    execution_verdict: str,
+    effective_watchlist_tickers: list[str],
+    added_watchlist_tickers: list[str],
+    adopted_watch_row: dict[str, Any] | None,
+) -> dict[str, Any]:
     return {
-        "focus_ticker": focus_ticker or None,
-        "gate_verdict": gate_verdict or None,
+        "focus_ticker": context["focus_ticker"] or None,
+        "gate_verdict": context["gate_verdict"] or None,
         "execution_verdict": execution_verdict,
-        "raw_watchlist_tickers": raw_watchlist_tickers,
+        "raw_watchlist_tickers": context["raw_watchlist_tickers"],
         "effective_watchlist_tickers": effective_watchlist_tickers,
         "added_watchlist_tickers": added_watchlist_tickers,
-        "eligible_tickers": eligible_tickers,
+        "eligible_tickers": context["eligible_tickers"],
         "adopted_watch_row": adopted_watch_row,
-        "recommendation": recommendation,
+        "recommendation": _build_watchlist_execution_recommendation(context, execution_verdict),
     }
+
+
+def _build_watchlist_execution(lane_rulepack: dict[str, Any], validation_queue: dict[str, Any], promotion_gate: dict[str, Any]) -> dict[str, Any]:
+    context = _build_watchlist_execution_context(lane_rulepack, validation_queue, promotion_gate)
+    execution_verdict, added_watchlist_tickers, effective_watchlist_tickers = _resolve_watchlist_execution_decision(context)
+    adopted_watch_row = _build_adopted_watch_row(context, execution_verdict)
+    return _build_watchlist_execution_analysis(
+        context,
+        execution_verdict,
+        effective_watchlist_tickers,
+        added_watchlist_tickers,
+        adopted_watch_row,
+    )
 
 
 def generate_btst_tplus2_continuation_watchlist_execution(

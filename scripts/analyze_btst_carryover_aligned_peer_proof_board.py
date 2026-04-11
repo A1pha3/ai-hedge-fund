@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.btst_selected_focus import pick_selected_focus_entry
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_HARVEST_JSON = REPORTS_DIR / "btst_carryover_aligned_peer_harvest_latest.json"
@@ -121,11 +123,21 @@ def analyze_btst_carryover_aligned_peer_proof_board(
     peer_expansion = _load_json(peer_expansion_json_path)
     selected_refresh = _load_json(selected_refresh_json_path)
 
+    selected_entries = [dict(entry or {}) for entry in list(selected_refresh.get("entries") or [])]
+    selected_focus = pick_selected_focus_entry(selected_entries)
+    entries = _build_proof_entries(harvest, peer_expansion)
+    return _build_aligned_peer_proof_analysis(
+        harvest=harvest,
+        peer_expansion=peer_expansion,
+        selected_focus=selected_focus,
+        selected_refresh=selected_refresh,
+        entries=entries,
+    )
+
+
+def _build_proof_entries(harvest: dict[str, Any], peer_expansion: dict[str, Any]) -> list[dict[str, Any]]:
     harvest_entries = {str(entry.get("ticker") or ""): dict(entry or {}) for entry in list(harvest.get("harvest_entries") or [])}
     expansion_entries = [dict(entry or {}) for entry in list(peer_expansion.get("entries") or [])]
-    selected_entries = [dict(entry or {}) for entry in list(selected_refresh.get("entries") or [])]
-    selected_focus = selected_entries[0] if selected_entries else {}
-
     entries: list[dict[str, Any]] = []
     for expansion_entry in expansion_entries:
         ticker = str(expansion_entry.get("ticker") or "")
@@ -168,7 +180,17 @@ def analyze_btst_carryover_aligned_peer_proof_board(
         ),
         reverse=True,
     )
+    return entries
 
+
+def _build_aligned_peer_proof_analysis(
+    *,
+    harvest: dict[str, Any],
+    peer_expansion: dict[str, Any],
+    selected_focus: dict[str, Any],
+    selected_refresh: dict[str, Any],
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
     ready_for_promotion_review_tickers = [
         str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "ready_for_promotion_review"
     ][:4]
@@ -190,11 +212,24 @@ def analyze_btst_carryover_aligned_peer_proof_board(
     elif focus.get("ticker"):
         recommendation_parts.append(f"当前 proof focus 是 {focus.get('ticker')}，verdict={focus.get('proof_verdict')}。")
     if selected_focus:
-        recommendation_parts.append(
-            f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_focus.get('overall_contract_verdict')}，在第二个 aligned peer 真正闭环前仍维持 T+2 bias 语义。"
-        )
+        selected_contract_verdict = str(selected_focus.get("overall_contract_verdict") or "").strip()
+        selected_preferred_entry_mode = str(selected_focus.get("preferred_entry_mode") or "").strip()
+        if "violated" in selected_contract_verdict:
+            recommendation_parts.append(
+                f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，应先收紧 carryover 主叙事，不再把它维持为 T+2 bias 锚点。"
+            )
+        elif (
+            "observed_without_positive_expectation" in selected_contract_verdict
+            or selected_preferred_entry_mode == "intraday_confirmation_only"
+        ):
+            recommendation_parts.append(
+                f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，应继续只按 intraday confirmation-only / execution-quality 语义管理，在第二个 aligned peer 真正闭环前不要把它外推成 T+2 bias 锚点。"
+            )
+        else:
+            recommendation_parts.append(
+                f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，在第二个 aligned peer 真正闭环前仍维持 T+2 bias 语义。"
+            )
     recommendation = " ".join(recommendation_parts) if recommendation_parts else "当前没有可用于 aligned peer promotion proof 的有效 close-loop。"
-
     return {
         "selected_ticker": selected_focus.get("ticker") or peer_expansion.get("selected_ticker") or harvest.get("ticker"),
         "selected_trade_date": selected_focus.get("trade_date") or selected_refresh.get("trade_date"),

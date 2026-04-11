@@ -106,17 +106,8 @@ def _build_execution_gate_recommendation(gate_verdict: str, focus_ticker: str) -
     return "Hold execution-candidate promotion until the continuation lane retains stronger support and the focus ticker clears the controlled execution floor."
 
 
-def _build_execution_gate(
-    lane_rulepack: dict[str, Any],
-    lane_validation: dict[str, Any],
-    eligible_execution: dict[str, Any],
-    promotion_review: dict[str, Any],
-) -> dict[str, Any]:
-    context = _build_execution_gate_context(lane_rulepack, lane_validation, eligible_execution, promotion_review)
-    gate_blockers = _collect_execution_gate_blockers(context)
-    gate_verdict, operator_action = _resolve_execution_gate_decision(gate_blockers)
+def _build_execution_gate_analysis(context: dict[str, Any], gate_blockers: list[str], gate_verdict: str, operator_action: str) -> dict[str, Any]:
     adopted_eligible_row = context["adopted_eligible_row"]
-
     return {
         "focus_ticker": context["focus_ticker"] or None,
         "gate_verdict": gate_verdict,
@@ -130,12 +121,24 @@ def _build_execution_gate(
         "focus_t_plus_2_close_positive_rate": adopted_eligible_row.get("t_plus_2_close_positive_rate"),
         "focus_t_plus_2_close_return_mean": adopted_eligible_row.get("t_plus_2_close_return_mean"),
         "lane_t_plus_2_close_return_mean": context["lane_mean"],
-        "focus_t_plus_2_mean_gap_vs_watch": promotion_review.get("comparison_summary", {}).get("t_plus_2_mean_gap_vs_watch"),
+        "focus_t_plus_2_mean_gap_vs_watch": context["comparison_summary"].get("t_plus_2_mean_gap_vs_watch"),
         "governance_payoff_ready": context["governance_payoff_ready"],
         "operator_action": operator_action,
         "execution_mode": "paper_overlay_only",
         "recommendation": _build_execution_gate_recommendation(gate_verdict, context["focus_ticker"]),
     }
+
+
+def _build_execution_gate(
+    lane_rulepack: dict[str, Any],
+    lane_validation: dict[str, Any],
+    eligible_execution: dict[str, Any],
+    promotion_review: dict[str, Any],
+) -> dict[str, Any]:
+    context = _build_execution_gate_context(lane_rulepack, lane_validation, eligible_execution, promotion_review)
+    gate_blockers = _collect_execution_gate_blockers(context)
+    gate_verdict, operator_action = _resolve_execution_gate_decision(gate_blockers)
+    return _build_execution_gate_analysis(context, gate_blockers, gate_verdict, operator_action)
 
 
 def generate_btst_tplus2_continuation_execution_gate(

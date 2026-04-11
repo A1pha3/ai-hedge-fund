@@ -1,7 +1,114 @@
 from __future__ import annotations
 
 import json
+
+import src.paper_trading.btst_reporting as btst_reporting
 from src.paper_trading.btst_reporting import generate_btst_next_day_priority_board_artifacts
+
+
+def test_render_btst_next_day_priority_board_markdown_emits_sections_and_catalyst_rows():
+    markdown = btst_reporting.render_btst_next_day_priority_board_markdown(
+        {
+            "trade_date": "2026-03-27",
+            "next_trade_date": "2026-03-30",
+            "selection_target": "short_trade_only",
+            "headline": "先执行主票确认，再按 near-miss 递减关注；题材催化前沿 research priority 为 301001。",
+            "summary": {
+                "primary_count": 1,
+                "near_miss_count": 1,
+                "opportunity_pool_count": 0,
+                "no_history_observer_count": 0,
+                "risky_observer_count": 0,
+                "research_upside_radar_count": 1,
+                "catalyst_theme_count": 1,
+                "catalyst_theme_frontier_promoted_count": 1,
+                "catalyst_theme_shadow_count": 1,
+            },
+            "priority_rows": [
+                {
+                    "ticker": "300757",
+                    "lane": "primary_entry",
+                    "actionability": "trade_candidate",
+                    "monitor_priority": "highest",
+                    "execution_priority": "high",
+                    "execution_quality_label": "balanced_confirmation",
+                    "score_target": 0.5907,
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "why_now": "breakout_freshness=0.94",
+                    "suggested_action": "盘中确认后再执行。",
+                    "historical_summary": "close continuation supportive",
+                    "execution_note": "avoid weak open",
+                }
+            ],
+            "catalyst_theme_frontier_priority": {
+                "status": "watch",
+                "recommended_variant_name": "catalyst_theme_relaxed_sector_frontier",
+                "promoted_shadow_count": 1,
+                "promoted_tickers": ["301001"],
+                "recommended_relaxation_cost": 0.09,
+                "recommendation": "优先跟踪 frontier promoted shadow。",
+                "markdown_path": "/tmp/frontier.md",
+                "promoted_shadow_watch": [
+                    {
+                        "ticker": "301001",
+                        "candidate_score": 0.3874,
+                        "filter_reason": "candidate_score_below_catalyst_theme_floor",
+                        "total_shortfall": 0.06,
+                        "failed_threshold_count": 1,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "promotion_trigger": "若催化继续发酵，可升级到正式题材研究池。",
+                        "top_reasons": ["candidate_score=0.39"],
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "threshold_shortfalls": {"candidate_score": 0.06},
+                        "metrics": {
+                            "breakout_freshness": 0.301,
+                            "trend_acceleration": 0.241,
+                            "close_strength": 0.541,
+                            "sector_resonance": 0.182,
+                            "catalyst_freshness": 0.812,
+                        },
+                    }
+                ],
+            },
+            "catalyst_theme_shadow_watch": [
+                {
+                    "ticker": "301002",
+                    "candidate_score": 0.32,
+                    "filter_reason": "sector_resonance_below_catalyst_theme_floor",
+                    "total_shortfall": 0.05,
+                    "failed_threshold_count": 2,
+                    "preferred_entry_mode": "theme_research_followup",
+                    "promotion_trigger": "只做研究跟踪，不进入当日 BTST 交易名单。",
+                    "top_reasons": ["candidate_score=0.32"],
+                    "positive_tags": ["strong_catalyst_freshness"],
+                    "threshold_shortfalls": {"candidate_score": 0.02, "sector_resonance": 0.03},
+                    "metrics": {
+                        "breakout_freshness": 0.14,
+                        "trend_acceleration": 0.21,
+                        "close_strength": 0.41,
+                        "sector_resonance": 0.22,
+                        "catalyst_freshness": 0.82,
+                    },
+                }
+            ],
+            "global_guardrails": ["priority board 只负责排序和分层，不改变 short-trade admission 默认语义。"],
+            "source_paths": {
+                "report_dir": "/tmp/report",
+                "snapshot_path": "/tmp/snapshot.json",
+                "session_summary_path": "/tmp/session_summary.json",
+            },
+        }
+    )
+
+    assert "# BTST Next-Day Priority Board" in markdown
+    assert "## Overview" in markdown
+    assert "### 1. 300757" in markdown
+    assert "- execution_quality_label: balanced_confirmation" in markdown
+    assert "## Catalyst Theme Frontier Priority" in markdown
+    assert "- threshold_shortfalls: candidate_score=0.0600" in markdown
+    assert "## Catalyst Theme Shadow Watch" in markdown
+    assert "- key_metrics: breakout=0.1400, trend=0.2100, close=0.4100, sector=0.2200, catalyst=0.8200" in markdown
+    assert "## Source Paths" in markdown
 
 
 def test_generate_btst_next_day_priority_board_orders_trade_watch_opportunity_and_radar(tmp_path, monkeypatch):

@@ -249,38 +249,41 @@ def _build_governance_recommendation(context: dict[str, Any], *, governance_stat
     )
 
 
-def generate_btst_tplus2_continuation_governance_board(
-    observation_pool_path: str | Path,
+def _resolve_effective_governance_state(context: dict[str, Any]) -> tuple[str, str, list[dict[str, Any]]]:
+    effective_context = {
+        **context,
+        "eligible_tickers": list(context["eligible_execution"].get("effective_eligible_tickers") or context["rulepack_eligible_tickers"]),
+        "watchlist_tickers": list(context["watchlist_execution"].get("effective_watchlist_tickers") or context["rulepack_watchlist_tickers"]),
+    }
+    governance_status, promotion_blocker = _resolve_governance_status(effective_context)
+    board_rows = _build_governance_board_rows(effective_context, promotion_blocker=promotion_blocker)
+    context.update(
+        {
+            "eligible_tickers": effective_context["eligible_tickers"],
+            "watchlist_tickers": effective_context["watchlist_tickers"],
+        }
+    )
+    return governance_status, promotion_blocker, board_rows
+
+
+def _build_governance_board_analysis(
     *,
+    observation_pool_path: str | Path,
     lane_rulepack_path: str | Path,
     lane_validation_path: str | Path,
-    watchlist_validation_path: str | Path | None = DEFAULT_WATCHLIST_VALIDATION_PATH,
-    promotion_review_path: str | Path | None = DEFAULT_PROMOTION_REVIEW_PATH,
-    promotion_gate_path: str | Path | None = DEFAULT_PROMOTION_GATE_PATH,
-    watchlist_execution_path: str | Path | None = DEFAULT_WATCHLIST_EXECUTION_PATH,
-    eligible_gate_path: str | Path | None = DEFAULT_ELIGIBLE_GATE_PATH,
-    eligible_execution_path: str | Path | None = DEFAULT_ELIGIBLE_EXECUTION_PATH,
-    execution_gate_path: str | Path | None = DEFAULT_EXECUTION_GATE_PATH,
-    execution_overlay_path: str | Path | None = DEFAULT_EXECUTION_OVERLAY_PATH,
+    promotion_gate_path: str | Path | None,
+    watchlist_execution_path: str | Path | None,
+    eligible_gate_path: str | Path | None,
+    eligible_execution_path: str | Path | None,
+    execution_gate_path: str | Path | None,
+    execution_overlay_path: str | Path | None,
+    context: dict[str, Any],
+    governance_status: str,
+    promotion_blocker: str,
+    board_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    context = _build_governance_context(
-        observation_pool_path,
-        lane_rulepack_path=lane_rulepack_path,
-        lane_validation_path=lane_validation_path,
-        watchlist_validation_path=watchlist_validation_path,
-        promotion_review_path=promotion_review_path,
-        promotion_gate_path=promotion_gate_path,
-        watchlist_execution_path=watchlist_execution_path,
-        eligible_gate_path=eligible_gate_path,
-        eligible_execution_path=eligible_execution_path,
-        execution_gate_path=execution_gate_path,
-        execution_overlay_path=execution_overlay_path,
-    )
-    context["eligible_tickers"] = list(context["eligible_execution"].get("effective_eligible_tickers") or context["rulepack_eligible_tickers"])
-    context["watchlist_tickers"] = list(context["watchlist_execution"].get("effective_watchlist_tickers") or context["rulepack_watchlist_tickers"])
-    governance_status, promotion_blocker = _resolve_governance_status(context)
-    board_rows = _build_governance_board_rows(context, promotion_blocker=promotion_blocker)
-
+    eligible_tickers = list(context.get("eligible_tickers") or context["eligible_execution"].get("effective_eligible_tickers") or context["rulepack_eligible_tickers"])
+    watchlist_tickers = list(context.get("watchlist_tickers") or context["watchlist_execution"].get("effective_watchlist_tickers") or context["rulepack_watchlist_tickers"])
     return {
         "source_reports": {
             "observation_pool": str(Path(observation_pool_path).expanduser().resolve()),
@@ -297,9 +300,9 @@ def generate_btst_tplus2_continuation_governance_board(
         "focus_ticker": context["focus_ticker"] or None,
         "governance_status": governance_status,
         "promotion_blocker": promotion_blocker,
-        "eligible_tickers": context["eligible_tickers"],
+        "eligible_tickers": eligible_tickers,
         "rulepack_eligible_tickers": context["rulepack_eligible_tickers"],
-        "watchlist_tickers": context["watchlist_tickers"],
+        "watchlist_tickers": watchlist_tickers,
         "rulepack_watchlist_tickers": context["rulepack_watchlist_tickers"],
         "validation_support_window_count": context["support_count"],
         "validation_mixed_window_count": context["mixed_count"],
@@ -329,6 +332,51 @@ def generate_btst_tplus2_continuation_governance_board(
         "board_rows": board_rows,
         "recommendation": _build_governance_recommendation(context, governance_status=governance_status),
     }
+
+
+def generate_btst_tplus2_continuation_governance_board(
+    observation_pool_path: str | Path,
+    *,
+    lane_rulepack_path: str | Path,
+    lane_validation_path: str | Path,
+    watchlist_validation_path: str | Path | None = DEFAULT_WATCHLIST_VALIDATION_PATH,
+    promotion_review_path: str | Path | None = DEFAULT_PROMOTION_REVIEW_PATH,
+    promotion_gate_path: str | Path | None = DEFAULT_PROMOTION_GATE_PATH,
+    watchlist_execution_path: str | Path | None = DEFAULT_WATCHLIST_EXECUTION_PATH,
+    eligible_gate_path: str | Path | None = DEFAULT_ELIGIBLE_GATE_PATH,
+    eligible_execution_path: str | Path | None = DEFAULT_ELIGIBLE_EXECUTION_PATH,
+    execution_gate_path: str | Path | None = DEFAULT_EXECUTION_GATE_PATH,
+    execution_overlay_path: str | Path | None = DEFAULT_EXECUTION_OVERLAY_PATH,
+) -> dict[str, Any]:
+    context = _build_governance_context(
+        observation_pool_path,
+        lane_rulepack_path=lane_rulepack_path,
+        lane_validation_path=lane_validation_path,
+        watchlist_validation_path=watchlist_validation_path,
+        promotion_review_path=promotion_review_path,
+        promotion_gate_path=promotion_gate_path,
+        watchlist_execution_path=watchlist_execution_path,
+        eligible_gate_path=eligible_gate_path,
+        eligible_execution_path=eligible_execution_path,
+        execution_gate_path=execution_gate_path,
+        execution_overlay_path=execution_overlay_path,
+    )
+    governance_status, promotion_blocker, board_rows = _resolve_effective_governance_state(context)
+    return _build_governance_board_analysis(
+        observation_pool_path=observation_pool_path,
+        lane_rulepack_path=lane_rulepack_path,
+        lane_validation_path=lane_validation_path,
+        promotion_gate_path=promotion_gate_path,
+        watchlist_execution_path=watchlist_execution_path,
+        eligible_gate_path=eligible_gate_path,
+        eligible_execution_path=eligible_execution_path,
+        execution_gate_path=execution_gate_path,
+        execution_overlay_path=execution_overlay_path,
+        context=context,
+        governance_status=governance_status,
+        promotion_blocker=promotion_blocker,
+        board_rows=board_rows,
+    )
 
 
 def render_btst_tplus2_continuation_governance_board_markdown(analysis: dict[str, Any]) -> str:

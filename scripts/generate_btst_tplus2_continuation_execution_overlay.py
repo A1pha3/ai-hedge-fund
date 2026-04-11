@@ -23,12 +23,23 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
-def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate: dict[str, Any]) -> dict[str, Any]:
+def _build_execution_overlay_context(eligible_execution: dict[str, Any], execution_gate: dict[str, Any]) -> dict[str, Any]:
     focus_ticker = str(execution_gate.get("focus_ticker") or eligible_execution.get("focus_ticker") or "")
     adopted_eligible_row = dict(eligible_execution.get("adopted_eligible_row") or {})
     gate_verdict = str(execution_gate.get("gate_verdict") or "")
     merge_review_ready = is_merge_approved_execution_blocker(adopted_eligible_row.get("promotion_blocker"))
+    return {
+        "focus_ticker": focus_ticker,
+        "adopted_eligible_row": adopted_eligible_row,
+        "gate_verdict": gate_verdict,
+        "merge_review_ready": merge_review_ready,
+        "execution_gate": execution_gate,
+    }
 
+
+def _resolve_execution_overlay_decision(context: dict[str, Any]) -> tuple[str, list[str], list[str]]:
+    focus_ticker = context["focus_ticker"]
+    gate_verdict = context["gate_verdict"]
     if gate_verdict == "approve_execution_candidate" and focus_ticker:
         execution_verdict = "execution_candidate_applied"
         effective_execution_candidates = [focus_ticker]
@@ -37,10 +48,16 @@ def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate:
         execution_verdict = "execution_candidate_held"
         effective_execution_candidates = []
         added_execution_candidates = []
+    return execution_verdict, effective_execution_candidates, added_execution_candidates
 
-    adopted_execution_row = None
+
+def _build_adopted_execution_row(context: dict[str, Any], execution_verdict: str) -> dict[str, Any] | None:
+    focus_ticker = context["focus_ticker"]
+    adopted_eligible_row = context["adopted_eligible_row"]
+    execution_gate = context["execution_gate"]
+    merge_review_ready = context["merge_review_ready"]
     if focus_ticker and execution_verdict == "execution_candidate_applied":
-        adopted_execution_row = {
+        return {
             "ticker": focus_ticker,
             "entry_type": "paper_execution_candidate",
             "priority_score": adopted_eligible_row.get("priority_score"),
@@ -70,28 +87,50 @@ def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate:
             "next_close_positive_rate": adopted_eligible_row.get("next_close_positive_rate"),
             "lane_t_plus_2_close_return_mean": execution_gate.get("lane_t_plus_2_close_return_mean"),
         }
+    return None
 
-    recommendation = (
-        (
+
+def _build_execution_overlay_recommendation(context: dict[str, Any], execution_verdict: str) -> str:
+    focus_ticker = context["focus_ticker"]
+    merge_review_ready = context["merge_review_ready"]
+    if execution_verdict == "execution_candidate_applied" and merge_review_ready:
+        return (
             f"Keep {focus_ticker} as a paper execution candidate because merge-approved daily-pipeline uplift is already active while governance finalizes the merge review."
         )
-        if execution_verdict == "execution_candidate_applied" and merge_review_ready
-        else (
-        f"Treat {focus_ticker} as an isolated paper execution candidate while keeping the continuation lane outside default BTST."
-        if execution_verdict == "execution_candidate_applied"
-        else "Keep the execution overlay empty until the stricter execution gate approves a candidate."
-        )
-    )
+    if execution_verdict == "execution_candidate_applied":
+        return f"Treat {focus_ticker} as an isolated paper execution candidate while keeping the continuation lane outside default BTST."
+    return "Keep the execution overlay empty until the stricter execution gate approves a candidate."
 
+
+def _build_execution_overlay_analysis(
+    context: dict[str, Any],
+    execution_verdict: str,
+    effective_execution_candidates: list[str],
+    added_execution_candidates: list[str],
+    adopted_execution_row: dict[str, Any] | None,
+) -> dict[str, Any]:
     return {
-        "focus_ticker": focus_ticker or None,
-        "gate_verdict": gate_verdict or None,
+        "focus_ticker": context["focus_ticker"] or None,
+        "gate_verdict": context["gate_verdict"] or None,
         "execution_verdict": execution_verdict,
         "effective_execution_candidates": effective_execution_candidates,
         "added_execution_candidates": added_execution_candidates,
         "adopted_execution_row": adopted_execution_row,
-        "recommendation": recommendation,
+        "recommendation": _build_execution_overlay_recommendation(context, execution_verdict),
     }
+
+
+def _build_execution_overlay(eligible_execution: dict[str, Any], execution_gate: dict[str, Any]) -> dict[str, Any]:
+    context = _build_execution_overlay_context(eligible_execution, execution_gate)
+    execution_verdict, effective_execution_candidates, added_execution_candidates = _resolve_execution_overlay_decision(context)
+    adopted_execution_row = _build_adopted_execution_row(context, execution_verdict)
+    return _build_execution_overlay_analysis(
+        context,
+        execution_verdict,
+        effective_execution_candidates,
+        added_execution_candidates,
+        adopted_execution_row,
+    )
 
 
 def generate_btst_tplus2_continuation_execution_overlay(

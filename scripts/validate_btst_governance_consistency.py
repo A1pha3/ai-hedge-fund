@@ -76,28 +76,18 @@ def _closed_frontiers(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
-def validate_btst_governance_consistency(
+def _collect_governance_checks(
     *,
-    action_board_path: str | Path,
-    rollout_governance_path: str | Path,
-    primary_window_gap_path: str | Path,
-    recurring_shadow_runbook_path: str | Path,
-    primary_window_validation_runbook_path: str | Path,
-    structural_shadow_runbook_path: str | Path,
-    candidate_entry_governance_path: str | Path,
-    governance_synthesis_path: str | Path | None = None,
-    nightly_control_tower_path: str | Path | None = None,
-) -> dict[str, Any]:
-    action_board = _load_json(action_board_path)
-    rollout_governance = _load_json(rollout_governance_path)
-    primary_window_gap = _load_json(primary_window_gap_path)
-    recurring_shadow_runbook = _load_json(recurring_shadow_runbook_path)
-    primary_window_validation_runbook = _load_json(primary_window_validation_runbook_path)
-    structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
-    candidate_entry_governance = _load_json(candidate_entry_governance_path)
-    governance_synthesis = _safe_load_json(governance_synthesis_path)
-    nightly_control_tower = _safe_load_json(nightly_control_tower_path)
-
+    action_board: dict[str, Any],
+    rollout_governance: dict[str, Any],
+    primary_window_gap: dict[str, Any],
+    recurring_shadow_runbook: dict[str, Any],
+    primary_window_validation_runbook: dict[str, Any],
+    structural_shadow_runbook: dict[str, Any],
+    candidate_entry_governance: dict[str, Any],
+    governance_synthesis: dict[str, Any],
+    nightly_control_tower: dict[str, Any],
+) -> list[dict[str, Any]]:
     board_rows = [dict(row or {}) for row in list(action_board.get("board_rows") or [])]
     governance_rows = [dict(row or {}) for row in list(rollout_governance.get("governance_rows") or [])]
 
@@ -284,12 +274,26 @@ def validate_btst_governance_consistency(
                 },
             )
         )
+    return checks
 
+
+def _build_governance_validation_analysis(
+    *,
+    checks: list[dict[str, Any]],
+    action_board_path: str | Path,
+    rollout_governance_path: str | Path,
+    primary_window_gap_path: str | Path,
+    recurring_shadow_runbook_path: str | Path,
+    primary_window_validation_runbook_path: str | Path,
+    structural_shadow_runbook_path: str | Path,
+    candidate_entry_governance_path: str | Path,
+    governance_synthesis_path: str | Path | None,
+    nightly_control_tower_path: str | Path | None,
+) -> dict[str, Any]:
     fail_count = sum(1 for check in checks if check["status"] == "fail")
     warn_count = sum(1 for check in checks if check["status"] == "warn")
     pass_count = sum(1 for check in checks if check["status"] == "pass")
     overall_verdict = "fail" if fail_count > 0 else "pass_with_warnings" if warn_count > 0 else "pass"
-
     return {
         "overall_verdict": overall_verdict,
         "pass_count": pass_count,
@@ -308,6 +312,52 @@ def validate_btst_governance_consistency(
             "nightly_control_tower": str(Path(nightly_control_tower_path).expanduser().resolve()) if nightly_control_tower_path else None,
         },
     }
+
+
+def validate_btst_governance_consistency(
+    *,
+    action_board_path: str | Path,
+    rollout_governance_path: str | Path,
+    primary_window_gap_path: str | Path,
+    recurring_shadow_runbook_path: str | Path,
+    primary_window_validation_runbook_path: str | Path,
+    structural_shadow_runbook_path: str | Path,
+    candidate_entry_governance_path: str | Path,
+    governance_synthesis_path: str | Path | None = None,
+    nightly_control_tower_path: str | Path | None = None,
+) -> dict[str, Any]:
+    action_board = _load_json(action_board_path)
+    rollout_governance = _load_json(rollout_governance_path)
+    primary_window_gap = _load_json(primary_window_gap_path)
+    recurring_shadow_runbook = _load_json(recurring_shadow_runbook_path)
+    primary_window_validation_runbook = _load_json(primary_window_validation_runbook_path)
+    structural_shadow_runbook = _load_json(structural_shadow_runbook_path)
+    candidate_entry_governance = _load_json(candidate_entry_governance_path)
+    governance_synthesis = _safe_load_json(governance_synthesis_path)
+    nightly_control_tower = _safe_load_json(nightly_control_tower_path)
+    checks = _collect_governance_checks(
+        action_board=action_board,
+        rollout_governance=rollout_governance,
+        primary_window_gap=primary_window_gap,
+        recurring_shadow_runbook=recurring_shadow_runbook,
+        primary_window_validation_runbook=primary_window_validation_runbook,
+        structural_shadow_runbook=structural_shadow_runbook,
+        candidate_entry_governance=candidate_entry_governance,
+        governance_synthesis=governance_synthesis,
+        nightly_control_tower=nightly_control_tower,
+    )
+    return _build_governance_validation_analysis(
+        checks=checks,
+        action_board_path=action_board_path,
+        rollout_governance_path=rollout_governance_path,
+        primary_window_gap_path=primary_window_gap_path,
+        recurring_shadow_runbook_path=recurring_shadow_runbook_path,
+        primary_window_validation_runbook_path=primary_window_validation_runbook_path,
+        structural_shadow_runbook_path=structural_shadow_runbook_path,
+        candidate_entry_governance_path=candidate_entry_governance_path,
+        governance_synthesis_path=governance_synthesis_path,
+        nightly_control_tower_path=nightly_control_tower_path,
+    )
 
 
 def render_btst_governance_validation_markdown(analysis: dict[str, Any]) -> str:

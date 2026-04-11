@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from scripts.analyze_btst_latest_close_validation import generate_btst_latest_close_validation_artifacts
+from scripts.btst_selected_focus import pick_selected_focus_entry
 from scripts.btst_latest_followup_utils import load_latest_upstream_shadow_followup_summary
 from scripts.btst_report_utils import load_json as _load_json, looks_like_report_dir as _looks_like_report_dir, normalize_trade_date as _normalize_trade_date, safe_load_json as _safe_load_json
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
@@ -543,7 +544,7 @@ def _extract_selected_outcome_refresh_summary(manifest: dict[str, Any]) -> dict[
     reports_root = Path(manifest.get("reports_root") or REPORTS_DIR).expanduser().resolve()
     refresh_board = _safe_load_json(reports_root / "btst_selected_outcome_refresh_board_latest.json")
     entries = [dict(entry or {}) for entry in list(refresh_board.get("entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = pick_selected_focus_entry(entries)
     if not refresh_board and not focus_entry:
         return {}
     return {
@@ -562,6 +563,15 @@ def _extract_selected_outcome_refresh_summary(manifest: dict[str, Any]) -> dict[
         "focus_overall_contract_verdict": focus_entry.get("overall_contract_verdict"),
         "recommendation": refresh_board.get("recommendation"),
     }
+
+
+def _find_focus_entry(entries: list[dict[str, Any]], focus_ticker: Any) -> dict[str, Any]:
+    focus_ticker_str = str(focus_ticker or "").strip()
+    if focus_ticker_str:
+        for entry in entries:
+            if str((entry or {}).get("ticker") or "").strip() == focus_ticker_str:
+                return dict(entry or {})
+    return dict(entries[0] or {}) if entries else {}
 
 
 def _extract_carryover_multiday_continuation_audit_summary(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -603,7 +613,7 @@ def _extract_carryover_aligned_peer_harvest_summary(manifest: dict[str, Any]) ->
     if not harvest:
         return {}
     entries = [dict(entry or {}) for entry in list(harvest.get("harvest_entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = _find_focus_entry(entries, harvest.get("focus_ticker"))
     fresh_open_cycle_tickers = [
         str(entry.get("ticker") or "")
         for entry in entries
@@ -635,7 +645,7 @@ def _extract_carryover_peer_expansion_summary(manifest: dict[str, Any]) -> dict[
     if not expansion:
         return {}
     entries = [dict(entry or {}) for entry in list(expansion.get("entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = _find_focus_entry(entries, expansion.get("focus_ticker"))
     return {
         "selected_ticker": expansion.get("selected_ticker"),
         "selected_path_t2_bias_only": expansion.get("selected_path_t2_bias_only"),
@@ -662,7 +672,7 @@ def _extract_carryover_aligned_peer_proof_summary(manifest: dict[str, Any]) -> d
     if not proof_board:
         return {}
     entries = [dict(entry or {}) for entry in list(proof_board.get("entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = _find_focus_entry(entries, proof_board.get("focus_ticker"))
     return {
         "selected_ticker": proof_board.get("selected_ticker"),
         "selected_trade_date": proof_board.get("selected_trade_date"),
@@ -693,7 +703,7 @@ def _extract_carryover_peer_promotion_gate_summary(manifest: dict[str, Any]) -> 
     if not promotion_gate:
         return {}
     entries = [dict(entry or {}) for entry in list(promotion_gate.get("entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = _find_focus_entry(entries, promotion_gate.get("focus_ticker"))
     return {
         "selected_ticker": promotion_gate.get("selected_ticker"),
         "selected_trade_date": promotion_gate.get("selected_trade_date"),
@@ -992,6 +1002,10 @@ def _build_recall_priority_task(
         if dominant_stage == "candidate_pool_truncated_after_filters" and active_upstream_focus_tickers
         else top_stage_tickers
     )
+    priority_handoff_experiment = _resolve_priority_handoff_experiment(
+        candidate_pool_recall_dossier=candidate_pool_recall_dossier,
+        focus_tickers=focus_tickers,
+    )
     frontier_verdict = str(dict(candidate_pool_recall_dossier.get("truncation_frontier_summary") or {}).get("frontier_verdict") or "").strip()
     why_now_parts = [
         "latest BTST still has 0 primary selections",
@@ -1001,13 +1015,27 @@ def _build_recall_priority_task(
         why_now_parts.append(f"focus_tickers={focus_tickers}")
     if frontier_verdict:
         why_now_parts.append(f"frontier_verdict={frontier_verdict}")
+    if priority_handoff_experiment:
+        why_now_parts.extend(_build_priority_handoff_experiment_why_now_parts(priority_handoff_experiment))
 
     next_actions = list(candidate_pool_recall_dossier.get("next_actions") or [])
     next_step_default = str(candidate_pool_recall_dossier.get("recommendation") or "").strip() or "review candidate-pool recall dossier and upstream hard-filter stages"
     prioritized_handoff_next_step = None
     if dominant_stage == "candidate_pool_truncated_after_filters" and active_upstream_focus_tickers:
-        prioritized_handoff_next_step = f"先补 {active_upstream_focus_tickers} 的 candidate pool -> watchlist 召回观测，确认它们为何连 watchlist 都没进入。"
+        prioritized_handoff_next_step = (
+            f"先补 {active_upstream_focus_tickers} 的 pre-truncation 排名观测与 top300 frontier，"
+            "确认它们为何通过 Layer A 过滤后仍在 candidate_pool truncation 被压掉。"
+        )
+        if priority_handoff_experiment:
+            prioritized_handoff_next_step = "；".join(
+                [
+                    prioritized_handoff_next_step,
+                    _build_priority_handoff_experiment_next_step(priority_handoff_experiment),
+                ]
+            )
         next_step_default = prioritized_handoff_next_step
+    elif priority_handoff_experiment:
+        next_step_default = _build_priority_handoff_experiment_next_step(priority_handoff_experiment)
     next_step = prioritized_handoff_next_step or next(
         (str(action).strip() for action in next_actions if str(action).strip()),
         next_step_default,
@@ -1015,13 +1043,263 @@ def _build_recall_priority_task(
     return {
         "task_id": "candidate_pool_recall_priority",
         "title": (
-            "优先修复 Layer A recall / handoff 主链路"
+            "优先修复 Layer A candidate-pool truncation 主链路"
             if dominant_stage == "candidate_pool_truncated_after_filters" and active_upstream_focus_tickers
             else f"优先修复 {dominant_stage} recall 主链路"
         ),
         "why_now": " | ".join(why_now_parts),
         "next_step": str(next_step),
         "source": "candidate_pool_recall_dossier",
+    }
+
+
+def _resolve_priority_handoff_experiment(
+    *,
+    candidate_pool_recall_dossier: dict[str, Any],
+    focus_tickers: list[str],
+) -> dict[str, Any]:
+    experiments = [dict(row or {}) for row in list(candidate_pool_recall_dossier.get("priority_handoff_branch_experiment_queue") or [])]
+    if not experiments:
+        return {}
+
+    focus_set = {str(ticker).strip() for ticker in focus_tickers if str(ticker).strip()}
+    ranked: list[tuple[int, int, int, dict[str, Any]]] = []
+    for row in experiments:
+        tickers = [str(ticker).strip() for ticker in list(row.get("tickers") or []) if str(ticker).strip()]
+        overlap_count = len(focus_set.intersection(tickers))
+        priority_rank = int(row.get("priority_rank") or 999999)
+        ranked.append((overlap_count, -priority_rank, len(tickers), row))
+    ranked.sort(reverse=True)
+    selected = ranked[0][3]
+    return selected if ranked[0][0] > 0 or len(ranked) == 1 else {}
+
+
+def _build_priority_handoff_experiment_why_now_parts(experiment: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    priority_handoff = str(experiment.get("priority_handoff") or "").strip()
+    pressure_cluster_type = str(experiment.get("pressure_cluster_type") or "").strip()
+    uplift_to_cutoff_multiple_mean = experiment.get("uplift_to_cutoff_multiple_mean")
+    uplift_to_cutoff_multiple_min = experiment.get("uplift_to_cutoff_multiple_min")
+    why_now = str(experiment.get("why_now") or "").strip()
+    if priority_handoff:
+        parts.append(f"priority_handoff={priority_handoff}")
+    if pressure_cluster_type:
+        parts.append(f"pressure_cluster_type={pressure_cluster_type}")
+    if uplift_to_cutoff_multiple_mean is not None:
+        parts.append(f"uplift_to_cutoff_multiple_mean={uplift_to_cutoff_multiple_mean}")
+    if uplift_to_cutoff_multiple_min is not None:
+        parts.append(f"uplift_to_cutoff_multiple_min={uplift_to_cutoff_multiple_min}")
+    if why_now:
+        parts.append(why_now)
+    return parts
+
+
+def _build_priority_handoff_experiment_next_step(experiment: dict[str, Any]) -> str:
+    prototype_type = str(experiment.get("prototype_type") or "").strip()
+    prototype_summary = str(experiment.get("prototype_summary") or "").strip()
+    success_signal = str(experiment.get("success_signal") or "").strip()
+    guardrail_summary = str(experiment.get("guardrail_summary") or "").strip()
+    uplift_to_cutoff_multiple_min = experiment.get("uplift_to_cutoff_multiple_min")
+    next_step_parts: list[str] = []
+    if prototype_type and prototype_summary:
+        next_step_parts.append(f"再按 {prototype_type} 执行：{prototype_summary}")
+    elif prototype_summary:
+        next_step_parts.append(prototype_summary)
+    elif prototype_type:
+        next_step_parts.append(f"再按 {prototype_type} 执行")
+    if uplift_to_cutoff_multiple_min is not None:
+        next_step_parts.append(f"当前最轻样本门槛仍需约 {uplift_to_cutoff_multiple_min} 倍成交额抬升，先验证是否存在可复制的 upstream liquidity jump。")
+    if success_signal:
+        next_step_parts.append(success_signal)
+    if guardrail_summary:
+        next_step_parts.append(guardrail_summary)
+    return "；".join(next_step_parts) or "再按 priority_handoff_branch_experiment_queue 的首条实验执行。"
+
+
+def _normalize_primary_shadow_replay(primary_shadow_replay_raw: Any) -> dict[str, Any]:
+    if isinstance(primary_shadow_replay_raw, dict):
+        return dict(primary_shadow_replay_raw)
+    if isinstance(primary_shadow_replay_raw, str):
+        return {"ticker": primary_shadow_replay_raw}
+    if isinstance(primary_shadow_replay_raw, list) and primary_shadow_replay_raw:
+        first_replay = primary_shadow_replay_raw[0]
+        return dict(first_replay) if isinstance(first_replay, dict) else {"ticker": str(first_replay)}
+    return {}
+
+
+def _collect_control_tower_ticker_set(control_tower_snapshot: dict[str, Any], key: str) -> set[str]:
+    return {str(ticker).strip() for ticker in list(control_tower_snapshot.get(key) or []) if str(ticker).strip()}
+
+
+def _find_candidate_pool_focus_liquidity_profile(control_tower_snapshot: dict[str, Any], focus_ticker: str) -> dict[str, Any]:
+    return next(
+        (
+            dict(row or {})
+            for row in list(control_tower_snapshot.get("candidate_pool_recall_focus_liquidity_profiles") or [])
+            if str(dict(row or {}).get("ticker") or "").strip() == focus_ticker
+        ),
+        {},
+    )
+
+
+def _append_primary_shadow_replay_context(why_now_parts: list[str], primary_shadow_replay: dict[str, Any]) -> None:
+    for key in (
+        "validation_priority_rank",
+        "tractability_tier",
+        "uplift_to_cutoff_multiple_mean",
+        "closed_cycle_count",
+        "mean_t_plus_2_return",
+    ):
+        value = primary_shadow_replay.get(key)
+        if value is not None and str(value).strip() != "":
+            why_now_parts.append(f"{key}={value}")
+
+
+def _append_truncation_context(
+    why_now_parts: list[str],
+    *,
+    candidate_pool_recall_dominant_stage: str,
+    focus_liquidity_profile: dict[str, Any],
+) -> None:
+    if candidate_pool_recall_dominant_stage != "candidate_pool_truncated_after_filters" or not focus_liquidity_profile:
+        return
+
+    for key in ("dominant_liquidity_gap_mode", "avg_amount_share_of_cutoff_mean", "min_rank_gap_to_cutoff"):
+        value = focus_liquidity_profile.get(key)
+        if value is not None and str(value).strip() != "":
+            why_now_parts.append(f"{key}={value}")
+    for key in ("pressure_peer_cluster_type", "uplift_to_cutoff_multiple_mean"):
+        value = focus_liquidity_profile.get(key)
+        if value is not None and str(value).strip() != "":
+            why_now_parts.append(f"{key}={value}")
+
+    closest_case = dict(focus_liquidity_profile.get("closest_case") or {})
+    closest_gap = closest_case.get("pre_truncation_rank_gap_to_cutoff")
+    closest_share = closest_case.get("pre_truncation_avg_amount_share_of_cutoff")
+    if closest_gap is not None and str(closest_gap).strip() != "":
+        why_now_parts.append(f"closest_pre_truncation_rank_gap_to_cutoff={closest_gap}")
+    if closest_share is not None and str(closest_share).strip() != "":
+        why_now_parts.append(f"closest_pre_truncation_avg_amount_share_of_cutoff={closest_share}")
+    frontier_peer_labels = _extract_focus_frontier_peer_labels(focus_liquidity_profile)
+    if frontier_peer_labels:
+        why_now_parts.append(f"frontier_peers={frontier_peer_labels}")
+
+
+def _extract_focus_frontier_peer_labels(focus_liquidity_profile: dict[str, Any], *, limit: int = 3) -> list[str]:
+    frontier_peer_summary = dict(focus_liquidity_profile.get("frontier_peer_summary") or {})
+    frontier_rows = list(frontier_peer_summary.get("top_frontier_peers") or focus_liquidity_profile.get("top_frontier_peers") or [])
+    labels = [str(row.get("ticker") or "").strip() for row in frontier_rows if str(row.get("ticker") or "").strip()]
+    return labels[:limit]
+
+
+def _build_corridor_runbook_suffix(*, focus_ticker: str, corridor_uplift_runbook_summary: dict[str, Any]) -> str:
+    runbook_primary = str(corridor_uplift_runbook_summary.get("primary_shadow_replay") or "").strip()
+    runbook_step = str(corridor_uplift_runbook_summary.get("execution_step_head") or corridor_uplift_runbook_summary.get("next_step") or "").strip()
+    runbook_guardrail = str(corridor_uplift_runbook_summary.get("guardrail_head") or "").strip()
+    runbook_parallel = [str(ticker) for ticker in list(corridor_uplift_runbook_summary.get("parallel_watch_tickers") or []) if str(ticker).strip()]
+    runbook_excluded_low_gate_tail = [str(ticker) for ticker in list(corridor_uplift_runbook_summary.get("excluded_low_gate_tail_tickers") or []) if str(ticker).strip()]
+    if not focus_ticker or runbook_primary != focus_ticker or not runbook_step:
+        return ""
+    suffix = f"；runbook 首步：{runbook_step}"
+    if runbook_parallel:
+        suffix += f"；confirmatory parallel={runbook_parallel}"
+    if runbook_excluded_low_gate_tail:
+        suffix += f"；excluded_low_gate_tail={runbook_excluded_low_gate_tail}"
+    if runbook_guardrail:
+        suffix += f"；guardrail：{runbook_guardrail}"
+    return suffix
+
+
+def _build_truncated_corridor_shadow_next_step(*, focus_ticker: str, focus_liquidity_profile: dict[str, Any], runbook_suffix: str) -> str:
+    closest_case = dict(focus_liquidity_profile.get("closest_case") or {})
+    closest_gap = closest_case.get("pre_truncation_rank_gap_to_cutoff")
+    closest_share = closest_case.get("pre_truncation_avg_amount_share_of_cutoff")
+    prototype_type = str(focus_liquidity_profile.get("prototype_type") or "").strip()
+    prototype_summary = str(focus_liquidity_profile.get("prototype_summary") or "").strip()
+    frontier_peer_labels = _extract_focus_frontier_peer_labels(focus_liquidity_profile)
+    gap_suffix = f"最近 distinct 样本仍差 {closest_gap} 名" if closest_gap is not None and str(closest_gap).strip() != "" else "先锁定最近 distinct 样本的排名差距"
+    share_suffix = f"，avg_amount/cutoff≈{closest_share}" if closest_share is not None and str(closest_share).strip() != "" else ""
+    frontier_suffix = f"；先对比最近 frontier peers {frontier_peer_labels} 的量价差" if frontier_peer_labels else ""
+    prefix = f"先补 {focus_ticker} 的 pre-truncation 排名观测与 top300 frontier；{gap_suffix}{share_suffix}{frontier_suffix}"
+    if prototype_type and runbook_suffix:
+        return f"{prefix}，再按 {prototype_type} 执行。{runbook_suffix}"
+    if prototype_type and prototype_summary:
+        return f"{prefix}，再按 {prototype_type} 执行：{prototype_summary}{runbook_suffix}"
+    if prototype_type:
+        return f"{prefix}，再按 {prototype_type} 执行，不做 cutoff 微调。{runbook_suffix}"
+    return f"{prefix}，继续按 corridor uplift shadow probe 处理，不做 cutoff 微调。{runbook_suffix}"
+
+
+def _build_corridor_primary_shadow_next_step(
+    *,
+    focus_ticker: str,
+    shadow_summary: dict[str, Any],
+    corridor_uplift_runbook_summary: dict[str, Any],
+    candidate_pool_recall_dominant_stage: str,
+    focus_liquidity_profile: dict[str, Any],
+    active_absent_from_candidate_pool_tickers: set[str],
+    active_absent_from_watchlist_tickers: set[str],
+) -> str:
+    next_step = str(shadow_summary.get("next_step") or "").strip()
+    runbook_suffix = _build_corridor_runbook_suffix(
+        focus_ticker=focus_ticker,
+        corridor_uplift_runbook_summary=corridor_uplift_runbook_summary,
+    )
+    if focus_ticker in active_absent_from_candidate_pool_tickers:
+        if candidate_pool_recall_dominant_stage == "candidate_pool_truncated_after_filters" and focus_liquidity_profile:
+            return _build_truncated_corridor_shadow_next_step(
+                focus_ticker=focus_ticker,
+                focus_liquidity_profile=focus_liquidity_profile,
+                runbook_suffix=runbook_suffix,
+            )
+        return f"先回查 {focus_ticker} 为什么连 candidate_pool snapshot 都没有进入，优先补 watchlist -> candidate_pool handoff，再执行 corridor uplift primary shadow replay。"
+    if focus_ticker in active_absent_from_watchlist_tickers:
+        return f"先回查 {focus_ticker} 为什么连 watchlist 都没有进入，优先修复 candidate pool -> watchlist handoff，再执行 corridor uplift primary shadow replay。"
+    if next_step:
+        return next_step
+    return f"先对 {focus_ticker} 执行 corridor uplift primary shadow replay，保持 Layer A liquidity gate 与 top300 cutoff 默认口径不变。"
+
+
+def _build_candidate_pool_corridor_primary_shadow_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    shadow_status = str(control_tower_snapshot.get("candidate_pool_corridor_shadow_pack_status") or "").strip()
+    shadow_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_shadow_pack_summary") or {})
+    primary_shadow_replay = _normalize_primary_shadow_replay(shadow_summary.get("primary_shadow_replay"))
+    focus_ticker = str(primary_shadow_replay.get("ticker") or "").strip()
+    if shadow_status != "ready_for_primary_shadow_replay" or not focus_ticker:
+        return None
+
+    why_now_parts = [f"focus_ticker={focus_ticker}", f"shadow_status={shadow_status}"]
+    active_absent_from_watchlist_tickers = _collect_control_tower_ticker_set(control_tower_snapshot, "active_no_candidate_entry_absent_from_watchlist_tickers")
+    active_absent_from_candidate_pool_tickers = _collect_control_tower_ticker_set(control_tower_snapshot, "active_watchlist_recall_absent_from_candidate_pool_tickers")
+    candidate_pool_recall_dominant_stage = str(control_tower_snapshot.get("candidate_pool_recall_dominant_stage") or "").strip()
+    focus_liquidity_profile = _find_candidate_pool_focus_liquidity_profile(control_tower_snapshot, focus_ticker)
+    corridor_uplift_runbook_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_uplift_runbook_summary") or {})
+    _append_primary_shadow_replay_context(why_now_parts, primary_shadow_replay)
+    if focus_ticker in active_absent_from_candidate_pool_tickers:
+        why_now_parts.append("earliest_breakpoint=absent_from_candidate_pool")
+    elif focus_ticker in active_absent_from_watchlist_tickers:
+        why_now_parts.append("earliest_breakpoint=absent_from_watchlist")
+    _append_truncation_context(
+        why_now_parts,
+        candidate_pool_recall_dominant_stage=candidate_pool_recall_dominant_stage,
+        focus_liquidity_profile=focus_liquidity_profile,
+    )
+    next_step = _build_corridor_primary_shadow_next_step(
+        focus_ticker=focus_ticker,
+        shadow_summary=shadow_summary,
+        corridor_uplift_runbook_summary=corridor_uplift_runbook_summary,
+        candidate_pool_recall_dominant_stage=candidate_pool_recall_dominant_stage,
+        focus_liquidity_profile=focus_liquidity_profile,
+        active_absent_from_candidate_pool_tickers=active_absent_from_candidate_pool_tickers,
+        active_absent_from_watchlist_tickers=active_absent_from_watchlist_tickers,
+    )
+
+    return {
+        "task_id": "candidate_pool_corridor_primary_shadow_priority",
+        "title": f"优先推进 {focus_ticker} corridor primary shadow replay",
+        "why_now": " | ".join(why_now_parts),
+        "next_step": next_step,
+        "source": "candidate_pool_corridor_shadow_replay",
     }
 
 
@@ -1077,12 +1355,29 @@ def _extract_carryover_contract_context(control_tower_snapshot: dict[str, Any]) 
     peer_expansion_summary = dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {})
     peer_proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
     peer_promotion_gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
+    peer_focus_ticker = str(
+        peer_promotion_gate_summary.get("focus_ticker")
+        or peer_proof_summary.get("focus_ticker")
+        or peer_expansion_summary.get("focus_ticker")
+        or peer_summary.get("focus_ticker")
+        or ""
+    ).strip()
+    peer_focus_status = str(
+        peer_promotion_gate_summary.get("focus_gate_verdict")
+        or peer_proof_summary.get("focus_promotion_review_verdict")
+        or peer_expansion_summary.get("focus_status")
+        or peer_summary.get("focus_status")
+        or ""
+    ).strip()
     return {
         "audit_summary": audit_summary,
         "formal_selected_ticker": str(selected_summary.get("focus_ticker") or audit_summary.get("selected_ticker") or "").strip(),
         "overall_contract_verdict": str(selected_summary.get("focus_overall_contract_verdict") or "").strip(),
-        "peer_focus_ticker": str(peer_expansion_summary.get("focus_ticker") or peer_summary.get("focus_ticker") or "").strip(),
-        "peer_focus_status": str(peer_expansion_summary.get("focus_status") or peer_summary.get("focus_status") or "").strip(),
+        "selected_preferred_entry_mode": str(audit_summary.get("selected_preferred_entry_mode") or "").strip(),
+        "selected_execution_quality_label": str(audit_summary.get("selected_execution_quality_label") or "").strip(),
+        "selected_entry_timing_bias": str(audit_summary.get("selected_entry_timing_bias") or "").strip(),
+        "peer_focus_ticker": peer_focus_ticker,
+        "peer_focus_status": peer_focus_status,
         "peer_proof_focus_ticker": str(peer_proof_summary.get("focus_ticker") or "").strip(),
         "peer_proof_focus_verdict": str(peer_proof_summary.get("focus_promotion_review_verdict") or "").strip(),
         "peer_promotion_gate_focus_ticker": str(peer_promotion_gate_summary.get("focus_ticker") or "").strip(),
@@ -1092,6 +1387,25 @@ def _extract_carryover_contract_context(control_tower_snapshot: dict[str, Any]) 
         "ready_for_promotion_review_tickers": list(peer_proof_summary.get("ready_for_promotion_review_tickers") or []),
         "promotion_gate_ready_tickers": list(peer_promotion_gate_summary.get("ready_tickers") or []),
     }
+
+
+def _describe_selected_contract_style(*, audit_summary: dict[str, Any]) -> str:
+    preferred_entry_mode = str(audit_summary.get("selected_preferred_entry_mode") or "").strip()
+    execution_quality_label = str(audit_summary.get("selected_execution_quality_label") or "").strip()
+    entry_timing_bias = str(audit_summary.get("selected_entry_timing_bias") or "").strip()
+    if preferred_entry_mode == "intraday_confirmation_only" or execution_quality_label in {"intraday_only", "gap_chase_risk"} or entry_timing_bias == "confirm_then_reduce":
+        return "intraday confirmation-only"
+    if audit_summary.get("selected_path_t2_bias_only"):
+        return "confirm-then-hold + T+2 bias"
+    return "confirm-then-hold"
+
+
+def _prioritize_ticker_in_list(tickers: list[Any], prioritized_ticker: str) -> list[str]:
+    normalized_prioritized_ticker = str(prioritized_ticker or "").strip()
+    ordered = [str(ticker).strip() for ticker in tickers if str(ticker).strip()]
+    if normalized_prioritized_ticker and normalized_prioritized_ticker in ordered:
+        ordered = [normalized_prioritized_ticker] + [ticker for ticker in ordered if ticker != normalized_prioritized_ticker]
+    return ordered
 
 
 def _build_carryover_contract_why_now_parts(context: dict[str, Any]) -> list[str]:
@@ -1113,6 +1427,10 @@ def _build_carryover_contract_why_now_parts(context: dict[str, Any]) -> list[str
         why_now_parts.append("t_plus_2_bias_only")
     if audit_summary.get("broad_family_only_multiday_unsupported"):
         why_now_parts.append("broad_family_only_not_multiday_ready")
+    if context.get("selected_preferred_entry_mode"):
+        why_now_parts.append(f"selected_entry_mode={context.get('selected_preferred_entry_mode')}")
+    if context.get("selected_execution_quality_label"):
+        why_now_parts.append(f"selected_execution_quality={context.get('selected_execution_quality_label')}")
     if context.get("watch_with_risk_tickers"):
         why_now_parts.append(f"watch_with_risk={context.get('watch_with_risk_tickers')}")
     return why_now_parts
@@ -1123,12 +1441,18 @@ def _build_carryover_contract_next_steps(context: dict[str, Any]) -> list[str]:
     formal_selected_ticker = str(context.get("formal_selected_ticker") or "").strip()
     peer_focus_ticker = str(context.get("peer_focus_ticker") or "").strip()
     peer_focus_status = str(context.get("peer_focus_status") or "").strip()
-    priority_expansion_tickers = list(context.get("priority_expansion_tickers") or [])
+    priority_expansion_tickers = _prioritize_ticker_in_list(list(context.get("priority_expansion_tickers") or []), peer_focus_ticker)
     ready_for_promotion_review_tickers = list(context.get("ready_for_promotion_review_tickers") or [])
     promotion_gate_ready_tickers = list(context.get("promotion_gate_ready_tickers") or [])
     watch_with_risk_tickers = list(context.get("watch_with_risk_tickers") or [])
+    contract_style = _describe_selected_contract_style(audit_summary=audit_summary)
 
-    next_steps = [f"继续把 {formal_selected_ticker} 作为 confirm-then-hold + T+2 bias 合约管理，不把它包装成稳定 T+3/T+4 continuation。"]
+    if contract_style == "intraday confirmation-only":
+        next_steps = [f"继续把 {formal_selected_ticker} 作为 intraday confirmation-only 合约管理，不把它升级成隔夜 hold-bias 或稳定 T+3/T+4 continuation。"]
+    elif contract_style == "confirm-then-hold + T+2 bias":
+        next_steps = [f"继续把 {formal_selected_ticker} 作为 confirm-then-hold + T+2 bias 合约管理，不把它包装成稳定 T+3/T+4 continuation。"]
+    else:
+        next_steps = [f"继续把 {formal_selected_ticker} 作为 confirm-then-hold 合约管理，先不要外推成更强的 T+2/T+3 continuation 语义。"]
     if audit_summary.get("broad_family_only_multiday_unsupported"):
         next_steps.append("broad_family_only carryover 仅保留 evidence-deficient / diagnostic 语义，不进入多日 continuation contract。")
     if peer_focus_ticker:
@@ -1149,6 +1473,9 @@ def _build_carryover_contract_task(control_tower_snapshot: dict[str, Any]) -> di
     formal_selected_ticker = str(context.get("formal_selected_ticker") or "").strip()
     if not formal_selected_ticker:
         return None
+    overall_contract_verdict = str(context.get("overall_contract_verdict") or "").strip()
+    if "violated" in overall_contract_verdict:
+        return None
 
     peer_focus_ticker = str(context.get("peer_focus_ticker") or "").strip()
     title = f"固化 {formal_selected_ticker} carryover 合约并盯 {peer_focus_ticker} 闭环" if peer_focus_ticker else f"固化 {formal_selected_ticker} carryover 合约"
@@ -1161,81 +1488,125 @@ def _build_carryover_contract_task(control_tower_snapshot: dict[str, Any]) -> di
     }
 
 
-def _build_selected_contract_resolution_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+def _extract_selected_contract_task_context(control_tower_snapshot: dict[str, Any]) -> dict[str, Any]:
     selected_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
-    focus_ticker = str(selected_summary.get("focus_ticker") or "").strip()
-    overall_contract_verdict = str(selected_summary.get("focus_overall_contract_verdict") or "").strip()
-    focus_cycle_status = str(selected_summary.get("focus_cycle_status") or "").strip()
-    next_day_contract_verdict = str(selected_summary.get("focus_next_day_contract_verdict") or "").strip()
-    t_plus_2_contract_verdict = str(selected_summary.get("focus_t_plus_2_contract_verdict") or "").strip()
-    if not focus_ticker or not overall_contract_verdict or overall_contract_verdict.startswith("pending"):
-        return None
-
-    is_violated = "violated" in overall_contract_verdict
-    title = (
-        f"优先处置 {focus_ticker} selected contract 失效"
-        if is_violated
-        else f"优先复核 {focus_ticker} selected contract 已兑现"
-    )
-    why_now_parts = [f"focus_ticker={focus_ticker}", f"overall_contract_verdict={overall_contract_verdict}"]
-    if focus_cycle_status:
-        why_now_parts.append(f"focus_cycle_status={focus_cycle_status}")
-    if next_day_contract_verdict:
-        why_now_parts.append(f"next_day_contract_verdict={next_day_contract_verdict}")
-    if t_plus_2_contract_verdict:
-        why_now_parts.append(f"t_plus_2_contract_verdict={t_plus_2_contract_verdict}")
-
-    if is_violated:
-        next_steps = [
-            f"立刻把 {focus_ticker} 从 carryover 主合约语义中降级，停止把它当作次日/多日 continuation 锚点。"
-        ]
-        if focus_cycle_status:
-            next_steps.append(f"结合当前 cycle_status={focus_cycle_status} 复核是 next-day 失效还是 T+2 失效，并同步回看触发该票入选的 frontier 证据。")
-    else:
-        next_steps = [
-            f"立刻复核 {focus_ticker} 已兑现的 selected contract 是否足以支撑更高确信度的 BTST carryover 叙事，但仍避免把单票确认外推成过宽 lane。"
-        ]
-        if t_plus_2_contract_verdict:
-            next_steps.append(f"同步确认 T+2 contract verdict={t_plus_2_contract_verdict}，决定是继续 hold-bias 还是仅保留 confirm-then-hold 语义。")
-
+    audit_summary = dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {})
     return {
-        "task_id": "selected_contract_resolution_priority",
-        "title": title,
-        "why_now": " | ".join(why_now_parts),
-        "next_step": "；".join(next_steps),
-        "source": "selected_contract_resolution",
+        "audit_summary": audit_summary,
+        "focus_ticker": str(selected_summary.get("focus_ticker") or "").strip(),
+        "overall_contract_verdict": str(selected_summary.get("focus_overall_contract_verdict") or "").strip(),
+        "focus_cycle_status": str(selected_summary.get("focus_cycle_status") or "").strip(),
+        "next_day_contract_verdict": str(selected_summary.get("focus_next_day_contract_verdict") or "").strip(),
+        "t_plus_2_contract_verdict": str(selected_summary.get("focus_t_plus_2_contract_verdict") or "").strip(),
     }
 
 
-def _build_selected_contract_monitor_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
-    selected_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
-    focus_ticker = str(selected_summary.get("focus_ticker") or "").strip()
-    overall_contract_verdict = str(selected_summary.get("focus_overall_contract_verdict") or "").strip()
-    focus_cycle_status = str(selected_summary.get("focus_cycle_status") or "").strip()
-    next_day_contract_verdict = str(selected_summary.get("focus_next_day_contract_verdict") or "").strip()
-    t_plus_2_contract_verdict = str(selected_summary.get("focus_t_plus_2_contract_verdict") or "").strip()
-    if not focus_ticker or not overall_contract_verdict or not overall_contract_verdict.startswith("pending"):
-        return None
+def _build_selected_contract_why_now_parts(context: dict[str, Any]) -> list[str]:
+    audit_summary = dict(context.get("audit_summary") or {})
+    why_now_parts = [
+        f"focus_ticker={context.get('focus_ticker')}",
+        f"overall_contract_verdict={context.get('overall_contract_verdict')}",
+    ]
+    for key in ("focus_cycle_status", "next_day_contract_verdict", "t_plus_2_contract_verdict"):
+        value = str(context.get(key) or "").strip()
+        if value:
+            why_now_parts.append(f"{key}={value}")
+    if audit_summary.get("selected_preferred_entry_mode"):
+        why_now_parts.append(f"selected_entry_mode={audit_summary.get('selected_preferred_entry_mode')}")
+    if audit_summary.get("selected_execution_quality_label"):
+        why_now_parts.append(f"selected_execution_quality={audit_summary.get('selected_execution_quality_label')}")
+    return why_now_parts
 
-    why_now_parts = [f"focus_ticker={focus_ticker}", f"overall_contract_verdict={overall_contract_verdict}"]
-    if focus_cycle_status:
-        why_now_parts.append(f"focus_cycle_status={focus_cycle_status}")
-    if next_day_contract_verdict:
-        why_now_parts.append(f"next_day_contract_verdict={next_day_contract_verdict}")
-    if t_plus_2_contract_verdict:
-        why_now_parts.append(f"t_plus_2_contract_verdict={t_plus_2_contract_verdict}")
 
-    next_steps = [f"优先盯 {focus_ticker} 的主票闭环，确认 next-day bar 到来后是否仍满足 confirm-then-hold with T+2 bias 的 selected contract。"]
+def _build_selected_contract_resolution_title(*, focus_ticker: str, overall_contract_verdict: str) -> str:
+    if "violated" in overall_contract_verdict:
+        return f"优先处置 {focus_ticker} selected contract 失效"
+    if "observed_without_positive_expectation" in overall_contract_verdict:
+        return f"优先复核 {focus_ticker} selected contract 已闭环"
+    return f"优先复核 {focus_ticker} selected contract 已兑现"
+
+
+def _build_selected_contract_resolution_next_steps(context: dict[str, Any]) -> list[str]:
+    audit_summary = dict(context.get("audit_summary") or {})
+    focus_ticker = str(context.get("focus_ticker") or "").strip()
+    overall_contract_verdict = str(context.get("overall_contract_verdict") or "").strip()
+    focus_cycle_status = str(context.get("focus_cycle_status") or "").strip()
+    t_plus_2_contract_verdict = str(context.get("t_plus_2_contract_verdict") or "").strip()
+    if "violated" in overall_contract_verdict:
+        next_steps = [f"立刻把 {focus_ticker} 从 carryover 主合约语义中降级，停止把它当作次日/多日 continuation 锚点。"]
+        if focus_cycle_status:
+            next_steps.append(f"结合当前 cycle_status={focus_cycle_status} 复核是 next-day 失效还是 T+2 失效，并同步回看触发该票入选的 frontier 证据。")
+        return next_steps
+
+    contract_style = _describe_selected_contract_style(audit_summary=audit_summary)
+    if "observed_without_positive_expectation" in overall_contract_verdict:
+        next_steps = [f"立刻复核 {focus_ticker} 已闭环的 selected contract 是否只支持 execution-quality 结论，而不是被误写成更强 continuation 兑现。"]
+    else:
+        next_steps = [f"立刻复核 {focus_ticker} 已兑现的 selected contract 是否足以支撑更高确信度的 BTST carryover 叙事，但仍避免把单票确认外推成过宽 lane。"]
+    if not t_plus_2_contract_verdict:
+        return next_steps
+    if contract_style == "intraday confirmation-only":
+        next_steps.append(f"同步确认 T+2 contract verdict={t_plus_2_contract_verdict}，继续把它固定在 intraday confirmation-only / execution-quality 语义，不升级成 hold-bias。")
+    else:
+        next_steps.append(f"同步确认 T+2 contract verdict={t_plus_2_contract_verdict}，决定是继续 hold-bias 还是仅保留 confirm-then-hold 语义。")
+    return next_steps
+
+
+def _build_selected_contract_monitor_next_steps(context: dict[str, Any]) -> list[str]:
+    audit_summary = dict(context.get("audit_summary") or {})
+    focus_ticker = str(context.get("focus_ticker") or "").strip()
+    overall_contract_verdict = str(context.get("overall_contract_verdict") or "").strip()
+    contract_style = _describe_selected_contract_style(audit_summary=audit_summary)
+    if contract_style == "intraday confirmation-only":
+        next_steps = [f"优先盯 {focus_ticker} 的主票闭环，确认 next-day bar 到来后是否仍只支持 intraday confirmation-only，而不是被误读成隔夜 hold-bias。"]
+    elif contract_style == "confirm-then-hold + T+2 bias":
+        next_steps = [f"优先盯 {focus_ticker} 的主票闭环，确认 next-day bar 到来后是否仍满足 confirm-then-hold with T+2 bias 的 selected contract。"]
+    else:
+        next_steps = [f"优先盯 {focus_ticker} 的主票闭环，确认 next-day bar 到来后是否仍只支持 confirm-then-hold，而不是被外推成更强 continuation 合约。"]
     if overall_contract_verdict == "pending_next_day":
         next_steps.append("一旦 next-day bar 落地，立即复核 next_close / intraday follow-through，避免 recall 或 peer 扩容叙事抢占 formal selected 主线。")
     elif overall_contract_verdict == "pending_t_plus_2":
         next_steps.append("一旦 T+2 bar 落地，立即复核 hold-bias 是否兑现，并决定是否继续保留 carryover 语义。")
+    return next_steps
+
+
+def _build_selected_contract_resolution_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    context = _extract_selected_contract_task_context(control_tower_snapshot)
+    focus_ticker = str(context.get("focus_ticker") or "").strip()
+    overall_contract_verdict = str(context.get("overall_contract_verdict") or "").strip()
+    if not focus_ticker or not overall_contract_verdict or overall_contract_verdict.startswith("pending"):
+        return None
+
+    return {
+        "task_id": "selected_contract_resolution_priority",
+        "title": _build_selected_contract_resolution_title(focus_ticker=focus_ticker, overall_contract_verdict=overall_contract_verdict),
+        "why_now": " | ".join(_build_selected_contract_why_now_parts(context)),
+        "next_step": "；".join(_build_selected_contract_resolution_next_steps(context)),
+        "source": "selected_contract_resolution",
+    }
+
+
+def _is_low_urgency_selected_contract_resolution(control_tower_snapshot: dict[str, Any]) -> bool:
+    selected_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
+    audit_summary = dict(control_tower_snapshot.get("carryover_multiday_continuation_audit_summary") or {})
+    overall_contract_verdict = str(selected_summary.get("focus_overall_contract_verdict") or "").strip()
+    if "observed_without_positive_expectation" not in overall_contract_verdict:
+        return False
+    return _describe_selected_contract_style(audit_summary=audit_summary) == "intraday confirmation-only"
+
+
+def _build_selected_contract_monitor_task(control_tower_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    context = _extract_selected_contract_task_context(control_tower_snapshot)
+    focus_ticker = str(context.get("focus_ticker") or "").strip()
+    overall_contract_verdict = str(context.get("overall_contract_verdict") or "").strip()
+    if not focus_ticker or not overall_contract_verdict or not overall_contract_verdict.startswith("pending"):
+        return None
 
     return {
         "task_id": "selected_contract_monitor_priority",
         "title": f"优先监控 {focus_ticker} formal selected 主票闭环",
-        "why_now": " | ".join(why_now_parts),
-        "next_step": "；".join(next_steps),
+        "why_now": " | ".join(_build_selected_contract_why_now_parts(context)),
+        "next_step": "；".join(_build_selected_contract_monitor_next_steps(context)),
         "source": "selected_contract_monitor",
     }
 
@@ -1353,20 +1724,26 @@ def _build_peer_close_loop_monitor_task(control_tower_snapshot: dict[str, Any]) 
     }
 
 
-def _prioritize_control_tower_next_actions(
+def _collect_control_tower_priority_candidates(
     latest_btst_snapshot: dict[str, Any],
     control_tower_snapshot: dict[str, Any],
-) -> list[dict[str, Any]]:
-    prioritized: list[dict[str, Any]] = []
-
-    for task in (
-        _build_selected_contract_resolution_task(control_tower_snapshot),
+) -> list[dict[str, Any] | None]:
+    selected_contract_resolution_task = _build_selected_contract_resolution_task(control_tower_snapshot)
+    low_urgency_selected_contract_resolution = _is_low_urgency_selected_contract_resolution(control_tower_snapshot)
+    prioritized_tasks = [
         _build_selected_contract_monitor_task(control_tower_snapshot),
         _build_gate_ready_priority_task(control_tower_snapshot),
         _build_peer_proof_priority_task(control_tower_snapshot),
         _build_peer_close_loop_monitor_task(control_tower_snapshot),
         _build_carryover_contract_task(control_tower_snapshot),
+        _build_candidate_pool_corridor_primary_shadow_task(control_tower_snapshot),
         _build_recall_priority_task(latest_btst_snapshot, control_tower_snapshot),
+    ]
+    if low_urgency_selected_contract_resolution:
+        prioritized_tasks.append(selected_contract_resolution_task)
+    else:
+        prioritized_tasks.insert(0, selected_contract_resolution_task)
+    return prioritized_tasks + [
         _build_lane_priority_task(
             latest_btst_snapshot,
             control_tower_snapshot,
@@ -1385,13 +1762,13 @@ def _prioritize_control_tower_next_actions(
             fallback_why_now="shadow 只允许单票低污染验证，不能抢占 primary 主线",
             source="rollout_lane_shadow",
         ),
-    ):
-        if task:
-            prioritized.append(task)
+    ]
 
+
+def _dedupe_control_tower_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for task in prioritized + list(control_tower_snapshot.get("next_actions") or []):
+    for task in tasks:
         dedupe_key = (str(task.get("title") or "").strip(), str(task.get("next_step") or "").strip())
         if not any(dedupe_key):
             continue
@@ -1399,7 +1776,16 @@ def _prioritize_control_tower_next_actions(
             continue
         seen.add(dedupe_key)
         deduped.append(task)
-    return deduped[:3]
+    return deduped
+
+
+def _prioritize_control_tower_next_actions(
+    latest_btst_snapshot: dict[str, Any],
+    control_tower_snapshot: dict[str, Any],
+) -> list[dict[str, Any]]:
+    prioritized = [task for task in _collect_control_tower_priority_candidates(latest_btst_snapshot, control_tower_snapshot) if task]
+    merged_tasks = prioritized + list(control_tower_snapshot.get("next_actions") or [])
+    return _dedupe_control_tower_tasks(merged_tasks)[:3]
 
 
 def _extract_replay_cohort_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -2377,6 +2763,41 @@ def _build_open_ready_source_paths(
     }
 
 
+def _build_open_ready_delta_analysis(
+    *,
+    current_payload: dict[str, Any],
+    latest_btst_run: dict[str, Any],
+    previous_reference: dict[str, Any],
+    comparison_basis: str,
+    comparison_scope: str,
+    overall_delta_verdict: str,
+    operator_focus: list[str],
+    delta_sections: dict[str, Any],
+    material_change_anchor: dict[str, Any],
+    source_paths: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "generated_at": current_payload.get("generated_at"),
+        "comparison_basis": comparison_basis,
+        "comparison_scope": comparison_scope,
+        "overall_delta_verdict": overall_delta_verdict,
+        "current_reference": latest_btst_run,
+        "previous_reference": previous_reference,
+        "operator_focus": operator_focus[:6],
+        "priority_delta": delta_sections["priority_delta"],
+        "catalyst_frontier_delta": delta_sections["catalyst_frontier_delta"],
+        "score_fail_frontier_delta": delta_sections["score_fail_frontier_delta"],
+        "top_priority_action_delta": delta_sections["top_priority_action_delta"],
+        "selected_outcome_contract_delta": delta_sections["selected_outcome_contract_delta"],
+        "carryover_peer_proof_delta": delta_sections["carryover_peer_proof_delta"],
+        "carryover_promotion_gate_delta": delta_sections["carryover_promotion_gate_delta"],
+        "governance_delta": delta_sections["governance_delta"],
+        "replay_delta": delta_sections["replay_delta"],
+        "material_change_anchor": material_change_anchor,
+        "source_paths": source_paths,
+    }
+
+
 def build_btst_open_ready_delta_payload(
     current_payload: dict[str, Any],
     *,
@@ -2415,33 +2836,25 @@ def build_btst_open_ready_delta_payload(
         overall_delta_verdict=overall_delta_verdict,
         operator_focus=operator_focus,
     )
-
-    return {
-        "generated_at": current_payload.get("generated_at"),
-        "comparison_basis": comparison_basis,
-        "comparison_scope": comparison_scope,
-        "overall_delta_verdict": overall_delta_verdict,
-        "current_reference": latest_btst_run,
-        "previous_reference": previous_reference,
-        "operator_focus": operator_focus[:6],
-        "priority_delta": delta_sections["priority_delta"],
-        "catalyst_frontier_delta": delta_sections["catalyst_frontier_delta"],
-        "score_fail_frontier_delta": delta_sections["score_fail_frontier_delta"],
-        "top_priority_action_delta": delta_sections["top_priority_action_delta"],
-        "selected_outcome_contract_delta": delta_sections["selected_outcome_contract_delta"],
-        "carryover_peer_proof_delta": delta_sections["carryover_peer_proof_delta"],
-        "carryover_promotion_gate_delta": delta_sections["carryover_promotion_gate_delta"],
-        "governance_delta": delta_sections["governance_delta"],
-        "replay_delta": delta_sections["replay_delta"],
-        "material_change_anchor": material_change_anchor,
-        "source_paths": _build_open_ready_source_paths(
-            current_payload=current_payload,
-            current_nightly_json_path=current_nightly_json_path,
-            previous_payload=previous_payload,
-            previous_payload_path=previous_payload_path,
-            previous_report_snapshot=previous_report_snapshot,
-        ),
-    }
+    source_paths = _build_open_ready_source_paths(
+        current_payload=current_payload,
+        current_nightly_json_path=current_nightly_json_path,
+        previous_payload=previous_payload,
+        previous_payload_path=previous_payload_path,
+        previous_report_snapshot=previous_report_snapshot,
+    )
+    return _build_open_ready_delta_analysis(
+        current_payload=current_payload,
+        latest_btst_run=latest_btst_run,
+        previous_reference=previous_reference,
+        comparison_basis=comparison_basis,
+        comparison_scope=comparison_scope,
+        overall_delta_verdict=overall_delta_verdict,
+        operator_focus=operator_focus,
+        delta_sections=delta_sections,
+        material_change_anchor=material_change_anchor,
+        source_paths=source_paths,
+    )
 
 
 def _append_open_ready_overview_markdown(
@@ -2767,54 +3180,20 @@ def _append_open_ready_fast_links_markdown(lines: list[str], source_paths: dict[
     lines.append("")
 
 
-def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_parent: str | Path) -> str:
-    resolved_output_parent = Path(output_parent).expanduser().resolve()
-    current_reference = dict(payload.get("current_reference") or {})
-    previous_reference = dict(payload.get("previous_reference") or {})
-    priority_delta = dict(payload.get("priority_delta") or {})
-    catalyst_frontier_delta = dict(payload.get("catalyst_frontier_delta") or {})
-    score_fail_frontier_delta = dict(payload.get("score_fail_frontier_delta") or {})
-    top_priority_action_delta = dict(payload.get("top_priority_action_delta") or {})
-    selected_outcome_contract_delta = dict(payload.get("selected_outcome_contract_delta") or {})
-    carryover_peer_proof_delta = dict(payload.get("carryover_peer_proof_delta") or {})
-    carryover_promotion_gate_delta = dict(payload.get("carryover_promotion_gate_delta") or {})
-    governance_delta = dict(payload.get("governance_delta") or {})
-    replay_delta = dict(payload.get("replay_delta") or {})
-    material_change_anchor = dict(payload.get("material_change_anchor") or {})
-    source_paths = dict(payload.get("source_paths") or {})
-
-    lines: list[str] = []
-    _append_open_ready_overview_markdown(lines, payload, current_reference, previous_reference)
-    _append_material_change_anchor_markdown(lines, material_change_anchor, resolved_output_parent)
-    _append_priority_delta_markdown(lines, priority_delta)
-    _append_catalyst_frontier_delta_markdown(lines, catalyst_frontier_delta)
-    _append_score_fail_frontier_delta_markdown(lines, score_fail_frontier_delta)
-    _append_top_priority_action_delta_markdown(lines, top_priority_action_delta)
-    _append_selected_outcome_contract_delta_markdown(lines, selected_outcome_contract_delta)
-    _append_carryover_peer_proof_delta_markdown(lines, carryover_peer_proof_delta)
-    _append_carryover_promotion_gate_delta_markdown(lines, carryover_promotion_gate_delta)
-    _append_governance_delta_markdown(lines, governance_delta)
-    _append_replay_delta_markdown(lines, replay_delta)
-    _append_open_ready_fast_links_markdown(lines, source_paths, resolved_output_parent)
-    return "\n".join(lines) + "\n"
+def _build_nightly_refresh_status(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "btst_window_evidence_refresh": dict(manifest.get("btst_window_evidence_refresh") or {}).get("status"),
+        "candidate_entry_shadow_refresh": dict(manifest.get("candidate_entry_shadow_refresh") or {}).get("status"),
+        "btst_score_fail_frontier_refresh": dict(manifest.get("btst_score_fail_frontier_refresh") or {}).get("status"),
+        "btst_governance_synthesis_refresh": dict(manifest.get("btst_governance_synthesis_refresh") or {}).get("status"),
+        "btst_governance_validation_refresh": dict(manifest.get("btst_governance_validation_refresh") or {}).get("status"),
+        "btst_replay_cohort_refresh": dict(manifest.get("btst_replay_cohort_refresh") or {}).get("status"),
+        "btst_independent_window_monitor_refresh": dict(manifest.get("btst_independent_window_monitor_refresh") or {}).get("status"),
+        "btst_tradeable_opportunity_pool_refresh": dict(manifest.get("btst_tradeable_opportunity_pool_refresh") or {}).get("status"),
+    }
 
 
-def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[str, Any]:
-    latest_btst_snapshot = _extract_latest_btst_snapshot(manifest)
-    control_tower_snapshot = _extract_control_tower_snapshot(manifest)
-    control_tower_snapshot["next_actions"] = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
-    replay_cohort_snapshot = _extract_replay_cohort_snapshot(manifest)
-    priority_board = dict(latest_btst_snapshot.get("priority_board") or {})
-    default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
-    default_merge_review_ready = (
-        str(default_merge_review_summary.get("merge_review_verdict") or "").strip() == "ready_for_default_btst_merge_review"
-    )
-    effective_brief_recommendation = (
-        default_merge_review_summary.get("recommendation")
-        if default_merge_review_ready and default_merge_review_summary.get("recommendation")
-        else latest_btst_snapshot.get("brief_recommendation") or default_merge_review_summary.get("recommendation")
-    )
-
+def _build_nightly_recommended_reading_order(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     recommended_reading_order: list[dict[str, Any]] = []
     for entry_id in (
         "btst_governance_synthesis_latest",
@@ -2856,21 +3235,68 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
                 "question": entry.get("question"),
             }
         )
+    return recommended_reading_order
 
+
+def _build_nightly_source_paths(manifest: dict[str, Any], latest_btst_snapshot: dict[str, Any]) -> dict[str, Any]:
+    reports_root = Path(manifest.get("reports_root") or REPORTS_DIR)
+    return {
+        "report_manifest_json": str((reports_root / "report_manifest_latest.json").expanduser().resolve()),
+        "report_manifest_markdown": str((reports_root / "report_manifest_latest.md").expanduser().resolve()),
+        "governance_synthesis_markdown": _entry_by_id(manifest, "btst_governance_synthesis_latest").get("absolute_path"),
+        "governance_validation_markdown": _entry_by_id(manifest, "btst_governance_validation_latest").get("absolute_path"),
+        "default_merge_review_markdown": _entry_by_id(manifest, "btst_default_merge_review_latest").get("absolute_path"),
+        "default_merge_historical_counterfactual_markdown": _entry_by_id(manifest, "btst_default_merge_historical_counterfactual_latest").get("absolute_path"),
+        "continuation_merge_candidate_ranking_markdown": _entry_by_id(manifest, "btst_continuation_merge_candidate_ranking_latest").get("absolute_path"),
+        "default_merge_strict_counterfactual_markdown": _entry_by_id(manifest, "btst_default_merge_strict_counterfactual_latest").get("absolute_path"),
+        "merge_replay_validation_markdown": _entry_by_id(manifest, "btst_merge_replay_validation_latest").get("absolute_path"),
+        "prepared_breakout_relief_validation_markdown": _entry_by_id(manifest, "btst_prepared_breakout_relief_validation_latest").get("absolute_path"),
+        "prepared_breakout_cohort_markdown": _entry_by_id(manifest, "btst_prepared_breakout_cohort_latest").get("absolute_path"),
+        "prepared_breakout_residual_surface_markdown": _entry_by_id(manifest, "btst_prepared_breakout_residual_surface_latest").get("absolute_path"),
+        "candidate_pool_corridor_persistence_dossier_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_persistence_dossier_latest").get("absolute_path"),
+        "candidate_pool_corridor_window_command_board_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_window_command_board_latest").get("absolute_path"),
+        "candidate_pool_corridor_window_diagnostics_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_window_diagnostics_latest").get("absolute_path"),
+        "candidate_pool_corridor_narrow_probe_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_narrow_probe_latest").get("absolute_path"),
+        "selected_outcome_refresh_markdown": str((reports_root / "btst_selected_outcome_refresh_board_latest.md").expanduser().resolve()),
+        "carryover_multiday_continuation_audit_markdown": str((reports_root / "btst_carryover_multiday_continuation_audit_latest.md").expanduser().resolve()),
+        "carryover_aligned_peer_harvest_markdown": str((reports_root / "btst_carryover_aligned_peer_harvest_latest.md").expanduser().resolve()),
+        "carryover_peer_expansion_markdown": str((reports_root / "btst_carryover_peer_expansion_latest.md").expanduser().resolve()),
+        "priority_board_markdown": latest_btst_snapshot.get("priority_board_markdown_path"),
+        "brief_markdown": latest_btst_snapshot.get("brief_markdown_path"),
+        "execution_card_markdown": latest_btst_snapshot.get("execution_card_markdown_path"),
+        "opening_watch_card_markdown": latest_btst_snapshot.get("opening_watch_card_markdown_path"),
+        "catalyst_theme_frontier_markdown": latest_btst_snapshot.get("catalyst_theme_frontier_markdown_path"),
+        "score_fail_frontier_markdown": latest_btst_snapshot.get("score_fail_frontier_markdown_path"),
+        "score_fail_recurring_markdown": latest_btst_snapshot.get("score_fail_recurring_markdown_path"),
+        "score_fail_transition_markdown": latest_btst_snapshot.get("score_fail_transition_markdown_path"),
+        "tradeable_opportunity_pool_markdown": _entry_by_id(manifest, "btst_tradeable_opportunity_pool_march").get("absolute_path"),
+        "no_candidate_entry_action_board_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_action_board_latest").get("absolute_path"),
+        "no_candidate_entry_replay_bundle_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_replay_bundle_latest").get("absolute_path"),
+        "no_candidate_entry_failure_dossier_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_failure_dossier_latest").get("absolute_path"),
+        "watchlist_recall_dossier_markdown": _entry_by_id(manifest, "btst_watchlist_recall_dossier_latest").get("absolute_path"),
+        "candidate_pool_recall_dossier_markdown": _entry_by_id(manifest, "btst_candidate_pool_recall_dossier_latest").get("absolute_path"),
+        "tradeable_opportunity_waterfall_markdown": _entry_by_id(manifest, "btst_tradeable_opportunity_reason_waterfall_march").get("absolute_path"),
+        "replay_cohort_markdown": _entry_by_id(manifest, "btst_replay_cohort_latest").get("absolute_path"),
+        "independent_window_monitor_markdown": _entry_by_id(manifest, "btst_independent_window_monitor_latest").get("absolute_path"),
+        "tplus1_tplus2_objective_monitor_markdown": _entry_by_id(manifest, "btst_tplus1_tplus2_objective_monitor_latest").get("absolute_path"),
+    }
+
+
+def _build_nightly_control_tower_analysis(
+    manifest: dict[str, Any],
+    latest_btst_snapshot: dict[str, Any],
+    control_tower_snapshot: dict[str, Any],
+    replay_cohort_snapshot: dict[str, Any],
+    effective_brief_recommendation: Any,
+    recommended_reading_order: list[dict[str, Any]],
+    source_paths: dict[str, Any],
+) -> dict[str, Any]:
+    priority_board = dict(latest_btst_snapshot.get("priority_board") or {})
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "reports_root": manifest.get("reports_root"),
         "latest_btst_run": manifest.get("latest_btst_run"),
-        "refresh_status": {
-            "btst_window_evidence_refresh": dict(manifest.get("btst_window_evidence_refresh") or {}).get("status"),
-            "candidate_entry_shadow_refresh": dict(manifest.get("candidate_entry_shadow_refresh") or {}).get("status"),
-            "btst_score_fail_frontier_refresh": dict(manifest.get("btst_score_fail_frontier_refresh") or {}).get("status"),
-            "btst_governance_synthesis_refresh": dict(manifest.get("btst_governance_synthesis_refresh") or {}).get("status"),
-            "btst_governance_validation_refresh": dict(manifest.get("btst_governance_validation_refresh") or {}).get("status"),
-            "btst_replay_cohort_refresh": dict(manifest.get("btst_replay_cohort_refresh") or {}).get("status"),
-            "btst_independent_window_monitor_refresh": dict(manifest.get("btst_independent_window_monitor_refresh") or {}).get("status"),
-            "btst_tradeable_opportunity_pool_refresh": dict(manifest.get("btst_tradeable_opportunity_pool_refresh") or {}).get("status"),
-        },
+        "refresh_status": _build_nightly_refresh_status(manifest),
         "control_tower_snapshot": control_tower_snapshot,
         "merge_replay_validation_summary": dict(control_tower_snapshot.get("merge_replay_validation_summary") or {}),
         "prepared_breakout_relief_validation_summary": dict(control_tower_snapshot.get("prepared_breakout_relief_validation_summary") or {}),
@@ -2896,47 +3322,67 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
         "replay_cohort_snapshot": replay_cohort_snapshot,
         "latest_btst_snapshot": latest_btst_snapshot,
         "recommended_reading_order": recommended_reading_order,
-        "source_paths": {
-            "report_manifest_json": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "report_manifest_latest.json").expanduser().resolve()),
-            "report_manifest_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "report_manifest_latest.md").expanduser().resolve()),
-            "governance_synthesis_markdown": _entry_by_id(manifest, "btst_governance_synthesis_latest").get("absolute_path"),
-            "governance_validation_markdown": _entry_by_id(manifest, "btst_governance_validation_latest").get("absolute_path"),
-            "default_merge_review_markdown": _entry_by_id(manifest, "btst_default_merge_review_latest").get("absolute_path"),
-            "default_merge_historical_counterfactual_markdown": _entry_by_id(manifest, "btst_default_merge_historical_counterfactual_latest").get("absolute_path"),
-            "continuation_merge_candidate_ranking_markdown": _entry_by_id(manifest, "btst_continuation_merge_candidate_ranking_latest").get("absolute_path"),
-            "default_merge_strict_counterfactual_markdown": _entry_by_id(manifest, "btst_default_merge_strict_counterfactual_latest").get("absolute_path"),
-            "merge_replay_validation_markdown": _entry_by_id(manifest, "btst_merge_replay_validation_latest").get("absolute_path"),
-            "prepared_breakout_relief_validation_markdown": _entry_by_id(manifest, "btst_prepared_breakout_relief_validation_latest").get("absolute_path"),
-            "prepared_breakout_cohort_markdown": _entry_by_id(manifest, "btst_prepared_breakout_cohort_latest").get("absolute_path"),
-            "prepared_breakout_residual_surface_markdown": _entry_by_id(manifest, "btst_prepared_breakout_residual_surface_latest").get("absolute_path"),
-            "candidate_pool_corridor_persistence_dossier_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_persistence_dossier_latest").get("absolute_path"),
-            "candidate_pool_corridor_window_command_board_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_window_command_board_latest").get("absolute_path"),
-            "candidate_pool_corridor_window_diagnostics_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_window_diagnostics_latest").get("absolute_path"),
-            "candidate_pool_corridor_narrow_probe_markdown": _entry_by_id(manifest, "btst_candidate_pool_corridor_narrow_probe_latest").get("absolute_path"),
-            "selected_outcome_refresh_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "btst_selected_outcome_refresh_board_latest.md").expanduser().resolve()),
-            "carryover_multiday_continuation_audit_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "btst_carryover_multiday_continuation_audit_latest.md").expanduser().resolve()),
-            "carryover_aligned_peer_harvest_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "btst_carryover_aligned_peer_harvest_latest.md").expanduser().resolve()),
-            "carryover_peer_expansion_markdown": str((Path(manifest.get("reports_root") or REPORTS_DIR) / "btst_carryover_peer_expansion_latest.md").expanduser().resolve()),
-            "priority_board_markdown": latest_btst_snapshot.get("priority_board_markdown_path"),
-            "brief_markdown": latest_btst_snapshot.get("brief_markdown_path"),
-            "execution_card_markdown": latest_btst_snapshot.get("execution_card_markdown_path"),
-            "opening_watch_card_markdown": latest_btst_snapshot.get("opening_watch_card_markdown_path"),
-            "catalyst_theme_frontier_markdown": latest_btst_snapshot.get("catalyst_theme_frontier_markdown_path"),
-            "score_fail_frontier_markdown": latest_btst_snapshot.get("score_fail_frontier_markdown_path"),
-            "score_fail_recurring_markdown": latest_btst_snapshot.get("score_fail_recurring_markdown_path"),
-            "score_fail_transition_markdown": latest_btst_snapshot.get("score_fail_transition_markdown_path"),
-            "tradeable_opportunity_pool_markdown": _entry_by_id(manifest, "btst_tradeable_opportunity_pool_march").get("absolute_path"),
-            "no_candidate_entry_action_board_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_action_board_latest").get("absolute_path"),
-            "no_candidate_entry_replay_bundle_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_replay_bundle_latest").get("absolute_path"),
-            "no_candidate_entry_failure_dossier_markdown": _entry_by_id(manifest, "btst_no_candidate_entry_failure_dossier_latest").get("absolute_path"),
-            "watchlist_recall_dossier_markdown": _entry_by_id(manifest, "btst_watchlist_recall_dossier_latest").get("absolute_path"),
-            "candidate_pool_recall_dossier_markdown": _entry_by_id(manifest, "btst_candidate_pool_recall_dossier_latest").get("absolute_path"),
-            "tradeable_opportunity_waterfall_markdown": _entry_by_id(manifest, "btst_tradeable_opportunity_reason_waterfall_march").get("absolute_path"),
-            "replay_cohort_markdown": _entry_by_id(manifest, "btst_replay_cohort_latest").get("absolute_path"),
-            "independent_window_monitor_markdown": _entry_by_id(manifest, "btst_independent_window_monitor_latest").get("absolute_path"),
-            "tplus1_tplus2_objective_monitor_markdown": _entry_by_id(manifest, "btst_tplus1_tplus2_objective_monitor_latest").get("absolute_path"),
-        },
+        "source_paths": source_paths,
     }
+
+
+def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_parent: str | Path) -> str:
+    resolved_output_parent = Path(output_parent).expanduser().resolve()
+    current_reference = dict(payload.get("current_reference") or {})
+    previous_reference = dict(payload.get("previous_reference") or {})
+    priority_delta = dict(payload.get("priority_delta") or {})
+    catalyst_frontier_delta = dict(payload.get("catalyst_frontier_delta") or {})
+    score_fail_frontier_delta = dict(payload.get("score_fail_frontier_delta") or {})
+    top_priority_action_delta = dict(payload.get("top_priority_action_delta") or {})
+    selected_outcome_contract_delta = dict(payload.get("selected_outcome_contract_delta") or {})
+    carryover_peer_proof_delta = dict(payload.get("carryover_peer_proof_delta") or {})
+    carryover_promotion_gate_delta = dict(payload.get("carryover_promotion_gate_delta") or {})
+    governance_delta = dict(payload.get("governance_delta") or {})
+    replay_delta = dict(payload.get("replay_delta") or {})
+    material_change_anchor = dict(payload.get("material_change_anchor") or {})
+    source_paths = dict(payload.get("source_paths") or {})
+
+    lines: list[str] = []
+    _append_open_ready_overview_markdown(lines, payload, current_reference, previous_reference)
+    _append_material_change_anchor_markdown(lines, material_change_anchor, resolved_output_parent)
+    _append_priority_delta_markdown(lines, priority_delta)
+    _append_catalyst_frontier_delta_markdown(lines, catalyst_frontier_delta)
+    _append_score_fail_frontier_delta_markdown(lines, score_fail_frontier_delta)
+    _append_top_priority_action_delta_markdown(lines, top_priority_action_delta)
+    _append_selected_outcome_contract_delta_markdown(lines, selected_outcome_contract_delta)
+    _append_carryover_peer_proof_delta_markdown(lines, carryover_peer_proof_delta)
+    _append_carryover_promotion_gate_delta_markdown(lines, carryover_promotion_gate_delta)
+    _append_governance_delta_markdown(lines, governance_delta)
+    _append_replay_delta_markdown(lines, replay_delta)
+    _append_open_ready_fast_links_markdown(lines, source_paths, resolved_output_parent)
+    return "\n".join(lines) + "\n"
+
+
+def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+    latest_btst_snapshot = _extract_latest_btst_snapshot(manifest)
+    control_tower_snapshot = _extract_control_tower_snapshot(manifest)
+    control_tower_snapshot["next_actions"] = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
+    replay_cohort_snapshot = _extract_replay_cohort_snapshot(manifest)
+    default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
+    default_merge_review_ready = (
+        str(default_merge_review_summary.get("merge_review_verdict") or "").strip() == "ready_for_default_btst_merge_review"
+    )
+    effective_brief_recommendation = (
+        default_merge_review_summary.get("recommendation")
+        if default_merge_review_ready and default_merge_review_summary.get("recommendation")
+        else latest_btst_snapshot.get("brief_recommendation") or default_merge_review_summary.get("recommendation")
+    )
+    recommended_reading_order = _build_nightly_recommended_reading_order(manifest)
+    source_paths = _build_nightly_source_paths(manifest, latest_btst_snapshot)
+    return _build_nightly_control_tower_analysis(
+        manifest,
+        latest_btst_snapshot,
+        control_tower_snapshot,
+        replay_cohort_snapshot,
+        effective_brief_recommendation,
+        recommended_reading_order,
+        source_paths,
+    )
 
 
 

@@ -128,6 +128,21 @@ def analyze_btst_carryover_peer_quality_review(anchor_probe_path: str | Path) ->
     anchor_probe = _load_json(anchor_probe_path)
     peer_rows = _extract_peer_rows(anchor_probe)
     peer_entries = _build_peer_entries(peer_rows)
+    return _build_peer_quality_review_analysis(
+        anchor_probe_path=anchor_probe_path,
+        anchor_probe=anchor_probe,
+        peer_rows=peer_rows,
+        peer_entries=peer_entries,
+    )
+
+
+def _build_peer_quality_review_analysis(
+    *,
+    anchor_probe_path: str | Path,
+    anchor_probe: dict[str, Any],
+    peer_rows: list[dict[str, Any]],
+    peer_entries: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "anchor_probe_path": str(Path(anchor_probe_path).expanduser().resolve()),
         "ticker": anchor_probe.get("ticker"),

@@ -159,10 +159,24 @@ def generate_btst_tplus2_continuation_promotion_review(
     focus_dossier_path: str | Path,
     watch_dossier_path: str | Path,
 ) -> dict[str, Any]:
+    queue, focus_dossier, watch_dossier = _load_promotion_review_inputs(
+        queue_path=queue_path,
+        focus_dossier_path=focus_dossier_path,
+        watch_dossier_path=watch_dossier_path,
+    )
+    return _build_promotion_review(queue, focus_dossier, watch_dossier)
+
+
+def _load_promotion_review_inputs(
+    *,
+    queue_path: str | Path,
+    focus_dossier_path: str | Path,
+    watch_dossier_path: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     queue = _load_json(queue_path)
     focus_dossier = _load_json(focus_dossier_path)
     watch_dossier = _load_json(watch_dossier_path)
-    return _build_promotion_review(queue, focus_dossier, watch_dossier)
+    return queue, focus_dossier, watch_dossier
 
 
 def render_btst_tplus2_continuation_promotion_review_markdown(analysis: dict[str, Any]) -> str:

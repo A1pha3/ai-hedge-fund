@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.analyze_btst_candidate_pool_corridor_narrow_probe import analyze_btst_candidate_pool_corridor_narrow_probe
 from scripts.run_btst_candidate_pool_corridor_shadow_pack import analyze_btst_candidate_pool_corridor_shadow_pack
 from scripts.run_btst_candidate_pool_lane_pair_board import analyze_btst_candidate_pool_lane_pair_board
 
@@ -13,6 +14,7 @@ REPORTS_DIR = Path("data/reports")
 DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json"
 DEFAULT_CORRIDOR_SHADOW_PACK_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_latest.json"
 DEFAULT_LANE_PAIR_BOARD_PATH = REPORTS_DIR / "btst_candidate_pool_lane_pair_board_latest.json"
+DEFAULT_CORRIDOR_NARROW_PROBE_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_narrow_probe_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_corridor_uplift_runbook_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_corridor_uplift_runbook_latest.md"
 
@@ -74,16 +76,37 @@ def _find_corridor_experiment(recall_dossier: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _filter_parallel_watch_lanes(
+    parallel_watch: list[dict[str, Any]],
+    corridor_narrow_probe: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    excluded_tickers = {
+        str(ticker or "").strip()
+        for ticker in list(corridor_narrow_probe.get("excluded_low_gate_tail_tickers") or [])
+        if str(ticker or "").strip()
+    }
+    if not excluded_tickers:
+        return parallel_watch, []
+    filtered = [row for row in parallel_watch if str(row.get("ticker") or "").strip() not in excluded_tickers]
+    return filtered, sorted(excluded_tickers)
+
+
 def analyze_btst_candidate_pool_corridor_uplift_runbook(
     candidate_pool_recall_dossier_path: str | Path,
     *,
     corridor_shadow_pack_path: str | Path | None = None,
     lane_pair_board_path: str | Path | None = None,
+    corridor_narrow_probe_path: str | Path | None = None,
 ) -> dict[str, Any]:
     recall_dossier = _maybe_load_json(candidate_pool_recall_dossier_path)
     corridor_shadow_pack = _maybe_load_json(corridor_shadow_pack_path)
     if not corridor_shadow_pack:
         corridor_shadow_pack = analyze_btst_candidate_pool_corridor_shadow_pack(REPORTS_DIR / "btst_candidate_pool_corridor_validation_pack_latest.json")
+    corridor_narrow_probe = _maybe_load_json(corridor_narrow_probe_path or DEFAULT_CORRIDOR_NARROW_PROBE_PATH)
+    if not corridor_narrow_probe:
+        corridor_narrow_probe = analyze_btst_candidate_pool_corridor_narrow_probe(
+            candidate_pool_recall_dossier_path=candidate_pool_recall_dossier_path,
+        )
 
     lane_pair_board = _maybe_load_json(lane_pair_board_path)
     if not lane_pair_board:
@@ -94,7 +117,10 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
 
     corridor_experiment = _find_corridor_experiment(recall_dossier)
     primary_shadow = dict(corridor_shadow_pack.get("primary_shadow_replay") or {})
-    parallel_watch = [dict(row) for row in list(corridor_shadow_pack.get("parallel_watch_lanes") or [])]
+    parallel_watch, excluded_low_gate_tail_tickers = _filter_parallel_watch_lanes(
+        [dict(row) for row in list(corridor_shadow_pack.get("parallel_watch_lanes") or [])],
+        corridor_narrow_probe,
+    )
     board_leader = dict(lane_pair_board.get("board_leader") or {})
 
     runbook_status = "ready_for_upstream_uplift_probe" if corridor_experiment and primary_shadow else "skipped_no_corridor_probe"
@@ -104,6 +130,8 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
         "仅验证 upstream base-liquidity uplift 是否压缩 nearest frontier multiple，不讨论 cutoff 微调。",
         f"若 pair board leader 仍是 {board_leader.get('ticker') or 'corridor primary'}，则继续保持 corridor-first。",
     ]
+    if excluded_low_gate_tail_tickers:
+        execution_steps.append(f"把 {excluded_low_gate_tail_tickers} 作为 excluded low-gate tail 留在上游流动性诊断，不进入 retained deepest corridor shadow pack。")
     success_criteria = list(corridor_shadow_pack.get("success_criteria") or [])
     if corridor_experiment.get("success_signal"):
         success_criteria.append(str(corridor_experiment.get("success_signal")))
@@ -127,6 +155,7 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
         "candidate_pool_recall_dossier_path": str(Path(candidate_pool_recall_dossier_path).expanduser().resolve()),
         "corridor_shadow_pack_path": str(Path(corridor_shadow_pack_path).expanduser().resolve()) if corridor_shadow_pack_path else None,
         "lane_pair_board_path": str(Path(lane_pair_board_path).expanduser().resolve()) if lane_pair_board_path else None,
+        "corridor_narrow_probe_path": str(Path(corridor_narrow_probe_path).expanduser().resolve()) if corridor_narrow_probe_path else None,
         "runbook_status": runbook_status,
         "priority_handoff": corridor_experiment.get("priority_handoff"),
         "prototype_task_id": corridor_experiment.get("task_id"),
@@ -134,6 +163,7 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
         "prototype_type": corridor_experiment.get("prototype_type"),
         "primary_shadow_replay": primary_shadow.get("ticker"),
         "parallel_watch_tickers": [str(row.get("ticker") or "") for row in parallel_watch if str(row.get("ticker") or "").strip()],
+        "excluded_low_gate_tail_tickers": excluded_low_gate_tail_tickers,
         "lane_pair_board_leader": board_leader.get("ticker"),
         "leader_lane_family": board_leader.get("lane_family"),
         "uplift_to_cutoff_multiple_mean": corridor_experiment.get("uplift_to_cutoff_multiple_mean"),
@@ -200,6 +230,7 @@ if __name__ == "__main__":
     parser.add_argument("--candidate-pool-recall-dossier-path", default=str(DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH))
     parser.add_argument("--corridor-shadow-pack-path", default=str(DEFAULT_CORRIDOR_SHADOW_PACK_PATH))
     parser.add_argument("--lane-pair-board-path", default=str(DEFAULT_LANE_PAIR_BOARD_PATH))
+    parser.add_argument("--corridor-narrow-probe-path", default=str(DEFAULT_CORRIDOR_NARROW_PROBE_PATH))
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -208,6 +239,7 @@ if __name__ == "__main__":
         args.candidate_pool_recall_dossier_path,
         corridor_shadow_pack_path=args.corridor_shadow_pack_path,
         lane_pair_board_path=args.lane_pair_board_path,
+        corridor_narrow_probe_path=args.corridor_narrow_probe_path,
     )
     output_json = Path(args.output_json).expanduser().resolve()
     output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

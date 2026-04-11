@@ -58,6 +58,17 @@ def test_build_focus_tickers_backfills_high_value_strict_no_candidate_misses() -
     assert focus_tickers == ["300720", "003036", "603778", "301188", "688677"]
 
 
+def test_resolve_dominant_blocking_stage_prefers_real_truncation_over_tied_legacy_unknown() -> None:
+    dominant_stage = recall_script._resolve_dominant_blocking_stage(
+        {
+            "shadow_snapshot_legacy_unknown": 4,
+            "candidate_pool_truncated_after_filters": 4,
+        }
+    )
+
+    assert dominant_stage == "candidate_pool_truncated_after_filters"
+
+
 def test_analyze_btst_candidate_pool_recall_dossier_splits_layer_a_root_causes(tmp_path: Path) -> None:
     avg_amount_share_of_min_gate = round(9100.0 / float(recall_script.MIN_AVG_AMOUNT_20D), 4)
     cutoff_avg_amount_share_of_min_gate = round(9250.0 / float(recall_script.MIN_AVG_AMOUNT_20D), 4)
@@ -207,6 +218,26 @@ def test_analyze_btst_candidate_pool_recall_dossier_splits_layer_a_root_causes(t
         "cutoff_avg_amount_share_of_min_gate_mean": cutoff_avg_amount_share_of_min_gate,
         "cutoff_avg_amount_share_of_min_gate_min": cutoff_avg_amount_share_of_min_gate,
         "cutoff_avg_amount_share_of_min_gate_max": cutoff_avg_amount_share_of_min_gate,
+        "frontier_peer_summary": {
+            "occurrence_count": 1,
+            "pressure_peer_type": "insufficient_frontier_peer_evidence",
+            "pressure_peer_summary": "当前单票还缺足够 frontier peer 样本，先继续补 pre-truncation 观察，再决定该打 larger-cap wall 还是 mixed-size hot peer。",
+            "peer_avg_amount_multiple_mean": 1.0161,
+            "peer_market_cap_multiple_mean": None,
+            "nearest_frontier_peer_amount_multiple_mean": 1.0121,
+            "nearest_frontier_peer_amount_multiple_min": 1.0121,
+            "nearest_frontier_peer_amount_multiple_median": 1.0121,
+            "lower_market_cap_higher_liquidity_peer_share": 0.0,
+            "cutoff_lower_market_cap_share": None,
+            "recurring_top5_peer_share": 1.0,
+            "top_frontier_peers": [
+                {"ticker": "600120", "count": 1},
+                {"ticker": "600123", "count": 1},
+                {"ticker": "600125", "count": 1},
+            ],
+            "top_lower_market_cap_hot_peers": [],
+            "top_larger_market_cap_wall_peers": [],
+        },
         "closest_case": {
             "trade_date": "20260324",
             "pre_truncation_rank": 304,
@@ -229,6 +260,26 @@ def test_analyze_btst_candidate_pool_recall_dossier_splits_layer_a_root_causes(t
         "avg_rank_gap_to_cutoff": 4.0,
         "priority_handoff": "top300_boundary_micro_tuning",
         "profile_summary": "这只票更接近 cutoff 微边界，可保留为 top300 boundary 微调对照样本。",
+        "frontier_peer_summary": {
+            "occurrence_count": 1,
+            "pressure_peer_type": "insufficient_frontier_peer_evidence",
+            "pressure_peer_summary": "当前单票还缺足够 frontier peer 样本，先继续补 pre-truncation 观察，再决定该打 larger-cap wall 还是 mixed-size hot peer。",
+            "peer_avg_amount_multiple_mean": 1.0161,
+            "peer_market_cap_multiple_mean": None,
+            "nearest_frontier_peer_amount_multiple_mean": 1.0121,
+            "nearest_frontier_peer_amount_multiple_min": 1.0121,
+            "nearest_frontier_peer_amount_multiple_median": 1.0121,
+            "lower_market_cap_higher_liquidity_peer_share": 0.0,
+            "cutoff_lower_market_cap_share": None,
+            "recurring_top5_peer_share": 1.0,
+            "top_frontier_peers": [
+                {"ticker": "600120", "count": 1},
+                {"ticker": "600123", "count": 1},
+                {"ticker": "600125", "count": 1},
+            ],
+            "top_lower_market_cap_hot_peers": [],
+            "top_larger_market_cap_wall_peers": [],
+        },
         "closest_case": {
             "trade_date": "20260324",
             "pre_truncation_rank": 304,
@@ -244,7 +295,21 @@ def test_analyze_btst_candidate_pool_recall_dossier_splits_layer_a_root_causes(t
         "dominant_liquidity_gap_mode": "near_cutoff_liquidity_gap",
         "liquidity_gap_mode_counts": {"near_cutoff_liquidity_gap": 1},
         "priority_handoff_counts": {"top300_boundary_micro_tuning": 1},
-        "primary_focus_tickers": [dossiers_by_ticker["003036"]["truncation_liquidity_profile"]],
+        "primary_focus_tickers": [
+            {
+                **dossiers_by_ticker["003036"]["truncation_liquidity_profile"],
+                "pressure_peer_cluster_type": "insufficient_branch_evidence",
+                "pressure_cluster_summary": "当前分支还缺足够样本解释其压力同伴结构。",
+                "repair_hypothesis_type": "generic_branch_repair_hypothesis",
+                "repair_hypothesis_summary": "当前分支距离最近 frontier peer 的成交额差距均值约为 1.0121 倍，可继续围绕 recurring peer 结构做定向修复实验。",
+                "prototype_type": "top300_boundary_shadow_tuning_probe",
+                "prototype_readiness": "research_only",
+                "uplift_to_cutoff_multiple_mean": 1.0165,
+                "prototype_summary": "把 003036 保留为 top300 boundary shadow tuning 对照样本，只验证 cutoff 附近的微边界弹性，不与 far-below-cutoff 车道混用。",
+                "evaluation_summary": "当前 prototype 还缺足够 occurrence 证据，暂不进入 execution-ready 讨论。",
+                "guardrail_summary": "仅限 top300 boundary micro-tuning 分支；不得把该样本外推成 corridor 或 competition lane 的修复规则。",
+            }
+        ],
     }
     assert analysis["priority_handoff_branch_diagnoses"] == [
         {
@@ -336,6 +401,100 @@ def test_analyze_btst_candidate_pool_recall_dossier_splits_layer_a_root_causes(t
         }
     ]
     assert "硬过滤阶段" in analysis["recommendation"]
+
+
+def test_analyze_btst_candidate_pool_recall_dossier_threads_context_and_payload(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    tradeable_pool_path = _write_json(reports_root / "btst_tradeable_opportunity_pool_march.json", {"reports_root": str(reports_root.resolve())})
+    watchlist_recall_dossier_path = _write_json(reports_root / "btst_watchlist_recall_dossier_latest.json", {})
+    failure_dossier_path = _write_json(reports_root / "btst_no_candidate_entry_failure_dossier_latest.json", {})
+
+    monkeypatch.setattr(recall_script, "_build_focus_tickers", lambda *args, **kwargs: ["300683"])
+    monkeypatch.setattr(recall_script, "_build_trade_date_allowlist", lambda dossier: {"300683": {"20260409"}})
+    monkeypatch.setattr(
+        recall_script,
+        "_build_priority_ticker_dossiers",
+        lambda *args, **kwargs: [{"ticker": "300683", "dominant_blocking_stage": "absent_from_candidate_pool"}],
+    )
+    monkeypatch.setattr(recall_script, "_count_stages", lambda dossiers, key: {"absent_from_candidate_pool": 1})
+    monkeypatch.setattr(recall_script, "_dominant_stage", lambda counts: "absent_from_candidate_pool")
+    monkeypatch.setattr(recall_script, "_build_top_stage_tickers", lambda dossiers: {"absent_from_candidate_pool": ["300683"]})
+    monkeypatch.setattr(recall_script, "_build_truncation_frontier_summary", lambda dossiers: {"observed_case_count": 0})
+    monkeypatch.setattr(
+        recall_script,
+        "_build_focus_liquidity_profile_summary",
+        lambda dossiers, **kwargs: {
+            "profile_count": 1,
+            "priority_handoff_counts": {"layer_a_liquidity_corridor": 1},
+            "primary_focus_tickers": [{"ticker": "300683", "priority_handoff": "layer_a_liquidity_corridor"}],
+        },
+    )
+    monkeypatch.setattr(recall_script, "_build_priority_handoff_branch_diagnoses", lambda dossiers: [{"priority_handoff": "layer_a_liquidity_corridor"}])
+    monkeypatch.setattr(recall_script, "_build_priority_handoff_branch_mechanisms", lambda dossiers: [{"priority_handoff": "layer_a_liquidity_corridor"}])
+    monkeypatch.setattr(recall_script, "_build_priority_handoff_branch_experiment_queue", lambda mechanisms, dossiers: [{"task_id": "probe"}])
+    monkeypatch.setattr(recall_script, "_build_action_queue", lambda dossiers: [{"task_id": "fix_300683"}])
+    monkeypatch.setattr(recall_script, "_build_recommendation", lambda dominant_stage, **kwargs: f"fix {dominant_stage}")
+    monkeypatch.setattr(recall_script, "_build_next_actions", lambda dominant_stage, **kwargs: [f"next {dominant_stage}"])
+
+    analysis = analyze_btst_candidate_pool_recall_dossier(
+        tradeable_pool_path,
+        watchlist_recall_dossier_path=watchlist_recall_dossier_path,
+        failure_dossier_path=failure_dossier_path,
+    )
+
+    assert analysis["focus_tickers"] == ["300683"]
+    assert analysis["dominant_stage"] == "absent_from_candidate_pool"
+    assert analysis["focus_liquidity_profiles"] == [{"ticker": "300683", "priority_handoff": "layer_a_liquidity_corridor"}]
+    assert analysis["priority_handoff_counts"] == {"layer_a_liquidity_corridor": 1}
+    assert analysis["priority_handoff_branch_experiment_queue"] == [{"task_id": "probe"}]
+    assert analysis["action_queue"] == [{"task_id": "fix_300683"}]
+    assert analysis["recommendation"] == "fix absent_from_candidate_pool"
+    assert analysis["next_actions"] == ["next absent_from_candidate_pool"]
+
+
+def test_resolve_recall_dossier_paths_prefers_payload_reports_root(tmp_path: Path) -> None:
+    tradeable_pool_path = tmp_path / "custom" / "btst_tradeable_opportunity_pool_march.json"
+
+    resolved_tradeable_pool_path, reports_root, snapshots_root = recall_script._resolve_recall_dossier_paths(
+        tradeable_opportunity_pool_path=tradeable_pool_path,
+        tradeable_pool={"reports_root": str((tmp_path / "data" / "reports").resolve())},
+    )
+
+    assert resolved_tradeable_pool_path == tradeable_pool_path.resolve()
+    assert reports_root == (tmp_path / "data" / "reports").resolve()
+    assert snapshots_root == (tmp_path / "data" / "snapshots").resolve()
+
+
+def test_build_candidate_pool_recall_analysis_threads_sources_and_sections(tmp_path: Path) -> None:
+    analysis = recall_script._build_candidate_pool_recall_analysis(
+        resolved_tradeable_pool_path=(tmp_path / "pool.json").resolve(),
+        watchlist_recall_dossier_path=tmp_path / "watch.json",
+        failure_dossier_path=tmp_path / "failure.json",
+        reports_root=(tmp_path / "reports").resolve(),
+        snapshots_root=(tmp_path / "snapshots").resolve(),
+        priority_limit=5,
+        focus_tickers=["300683"],
+        priority_stage_counts={"absent_from_candidate_pool": 1},
+        dominant_stage="absent_from_candidate_pool",
+        top_stage_tickers={"absent_from_candidate_pool": ["300683"]},
+        truncation_frontier_summary={"observed_case_count": 0},
+        focus_liquidity_profile_summary={"profile_count": 0},
+        priority_handoff_branch_diagnoses=[{"priority_handoff": "layer_a_liquidity_corridor"}],
+        priority_handoff_branch_mechanisms=[{"priority_handoff": "layer_a_liquidity_corridor"}],
+        priority_handoff_branch_experiment_queue=[{"task_id": "probe"}],
+        priority_ticker_dossiers=[{"ticker": "300683"}],
+        action_queue=[{"task_id": "fix_300683"}],
+        next_actions=["next absent_from_candidate_pool"],
+        recommendation="fix absent_from_candidate_pool",
+    )
+
+    assert analysis["tradeable_opportunity_pool_path"] == str((tmp_path / "pool.json").resolve())
+    assert analysis["watchlist_recall_dossier_path"] == str((tmp_path / "watch.json").resolve())
+    assert analysis["failure_dossier_path"] == str((tmp_path / "failure.json").resolve())
+    assert analysis["focus_tickers"] == ["300683"]
+    assert analysis["priority_handoff_branch_experiment_queue"] == [{"task_id": "probe"}]
+    assert analysis["next_actions"] == ["next absent_from_candidate_pool"]
+    assert analysis["recommendation"] == "fix absent_from_candidate_pool"
 
 
 def test_analyze_btst_candidate_pool_recall_dossier_marks_legacy_unknown_shadow_snapshot(monkeypatch, tmp_path: Path) -> None:
@@ -862,6 +1021,21 @@ def test_build_priority_handoff_branch_mechanisms_adds_pressure_peer_structure_s
     assert "平均约有 1.3333 个更小市值高流动性 peer 挡在前面" in queue_by_handoff["post_gate_liquidity_competition"]["evaluation_summary"]
     assert "rebucket 后剩余 rank gap 仍高于 300" in queue_by_handoff["post_gate_liquidity_competition"]["evaluation_summary"]
 
+    focus_summary = recall_script._build_focus_liquidity_profile_summary(
+        priority_ticker_dossiers,
+        priority_handoff_branch_mechanisms=mechanisms,
+        priority_handoff_branch_experiment_queue=experiment_queue,
+    )
+    focus_by_ticker = {row["ticker"]: row for row in focus_summary["primary_focus_tickers"]}
+    assert focus_by_ticker["AAA001"]["pressure_peer_cluster_type"] == "broad_large_cap_liquidity_wall"
+    assert "一整层更大更活跃的 liquidity wall" in focus_by_ticker["AAA001"]["pressure_cluster_summary"]
+    assert focus_by_ticker["AAA001"]["prototype_type"] == "upstream_base_liquidity_uplift_probe"
+    assert focus_by_ticker["AAA001"]["uplift_to_cutoff_multiple_mean"] == 5.0
+    assert focus_by_ticker["BBB001"]["pressure_peer_cluster_type"] == "mixed_size_hot_peer_competition"
+    assert "更小市值下仍具备更高流动性" in focus_by_ticker["BBB001"]["pressure_cluster_summary"]
+    assert focus_by_ticker["BBB001"]["prototype_type"] == "post_gate_competition_rebucket_probe"
+    assert focus_by_ticker["BBB001"]["uplift_to_cutoff_multiple_mean"] == 2.1018
+
 
 def test_describe_branch_experiment_prototype_marks_low_gate_corridor_focus_split():
     prototype_type, prototype_summary, success_signal, guardrail_summary = recall_script._describe_branch_experiment_prototype(
@@ -930,6 +1104,108 @@ def test_recall_recommendation_prioritizes_branch_split_before_generic_far_below
     assert "('layer_a_liquidity_corridor', ['688796', '688383'])" in recommendation
     assert "('post_gate_liquidity_competition', ['301292'])" in recommendation
     assert "最近的 distinct ticker 也只有 301292" not in recommendation
+
+
+def test_build_branch_recommendation_suffix_threads_mechanism_and_experiment_sections() -> None:
+    suffix = recall_script._build_branch_recommendation_suffix(
+        [
+            {
+                "mechanism_summary": "corridor 样本主要被更大更活跃的 liquidity wall 压制。",
+                "pressure_cluster_summary": "压力主要来自 larger-cap wall。",
+                "repair_hypothesis_summary": "优先修复 upstream base liquidity。",
+            }
+        ],
+        [
+            {
+                "prototype_summary": "先做 corridor uplift shadow probe。",
+                "evaluation_summary": "当前先不讨论 pool-size 放宽。",
+                "guardrail_summary": "只有 frontier multiple 收敛才允许继续。",
+            }
+        ],
+    )
+
+    assert "当前最重要的机制摘要是：corridor 样本主要被更大更活跃的 liquidity wall 压制。" in suffix
+    assert "压力同伴结构显示：压力主要来自 larger-cap wall。" in suffix
+    assert "当前优先修复假设是：优先修复 upstream base liquidity。" in suffix
+    assert "当前优先实验原型是：先做 corridor uplift shadow probe。" in suffix
+    assert "当前实验评估是：当前先不讨论 pool-size 放宽。" in suffix
+    assert "守门条件是：只有 frontier multiple 收敛才允许继续。" in suffix
+
+
+def test_build_far_below_cutoff_recommendation_uses_missing_rank_wording() -> None:
+    recommendation = recall_script._build_far_below_cutoff_recommendation(
+        {
+            "ticker": "301292",
+            "trade_date": "20260325",
+            "pre_truncation_avg_amount_share_of_cutoff": 0.5611,
+            "pre_truncation_cutoff_avg_amount_20d": 9250.0,
+        },
+        dominant_ranking_driver="avg_amount_20d_gap_dominant",
+        dominant_liquidity_gap_mode="barely_above_gate_and_far_below_cutoff",
+        primary_focus_tickers=[{"ticker": "301292", "dominant_liquidity_gap_mode": "barely_above_gate_and_far_below_cutoff", "priority_handoff": "post_gate_liquidity_competition"}],
+    )
+
+    assert "在缺 rank 观测时" in recommendation
+    assert "avg_amount/cutoff 也只有 0.5611" in recommendation
+    assert "过滤后排序弱势仍主要由 20 日成交额落后于 cutoff 驱动" in recommendation
+    assert "gate 与 top300 cutoff 之间存在很长的质量走廊" in recommendation
+    assert "('301292', 'barely_above_gate_and_far_below_cutoff', 'post_gate_liquidity_competition')" in recommendation
+
+
+def test_build_non_truncation_stage_recommendation_uses_hard_filter_wording() -> None:
+    recommendation = recall_script._build_non_truncation_stage_recommendation(
+        "cooldown_excluded",
+        top_stage_tickers={"cooldown_excluded": ["301292", "688796"]},
+    )
+
+    assert "主矛盾落在硬过滤阶段" in recommendation
+    assert "['301292', '688796']" in recommendation
+    assert "先核对硬过滤规则是否符合当前策略边界" in recommendation
+
+
+def test_build_non_truncation_stage_next_actions_uses_missing_market_context_wording() -> None:
+    actions = recall_script._build_non_truncation_stage_next_actions(
+        "missing_market_context",
+        top_stage_tickers={},
+    )
+
+    assert actions == ["优先补齐 stock_basic / daily_basic / limit / cooldown 数据，再继续 Layer A root-cause 诊断。"]
+
+
+def test_build_branch_split_next_actions_threads_focus_and_collected_sections() -> None:
+    actions = recall_script._build_branch_split_next_actions(
+        primary_focus_tickers=[
+            {"ticker": "688796", "priority_handoff": "layer_a_liquidity_corridor"},
+            {"ticker": "301292", "priority_handoff": "post_gate_liquidity_competition"},
+        ],
+        branch_diagnoses=[{"next_step": "先看 corridor。"}],
+        branch_mechanisms=[{"mechanism_summary": "机制摘要。", "pressure_cluster_summary": "压力摘要。", "repair_hypothesis_summary": "修复摘要。"}],
+        branch_experiment_queue=[{"prototype_summary": "原型摘要。", "evaluation_summary": "评估摘要。", "success_signal": "成功信号。"}],
+    )
+
+    assert actions[0].startswith("按焦点 ticker 画像拆分后续 handoff")
+    assert actions[1] == "先看 corridor。"
+    assert "机制摘要。" in actions
+    assert "压力摘要。" in actions
+    assert "修复摘要。" in actions
+    assert "原型摘要。" in actions
+    assert "评估摘要。" in actions
+    assert "成功信号。" in actions
+
+
+def test_build_far_below_cutoff_next_actions_uses_missing_rank_wording() -> None:
+    actions = recall_script._build_far_below_cutoff_next_actions(
+        top_stage_tickers={"candidate_pool_truncated_after_filters": ["301292"]},
+        closest_case={"ticker": "301292", "pre_truncation_avg_amount_share_of_cutoff": 0.5611},
+        dominant_ranking_driver="avg_amount_20d_gap_dominant",
+        dominant_liquidity_gap_mode="barely_above_gate_and_far_below_cutoff",
+        primary_focus_tickers=[{"ticker": "301292", "priority_handoff": "post_gate_liquidity_competition"}],
+    )
+
+    assert actions[0] == "不要把 ['301292'] 直接当作 top300 边界微调问题；最近 distinct 样本 301292 的 avg_amount/cutoff 也只有 0.5611。"
+    assert actions[1] == "优先拆解过滤后排序里的 20 日成交额落差，而不是先调 MAX_CANDIDATE_POOL_SIZE。"
+    assert actions[2] == "这些票多数只是勉强高于最低流动性门槛，下一步应同时复核 liquidity gate 与 cutoff 竞争强度。"
+    assert actions[3].startswith("按焦点 ticker 画像拆分后续 handoff")
 
 
 def test_recall_next_actions_prioritize_branch_split_before_generic_far_below_summary() -> None:
@@ -1100,6 +1376,30 @@ def test_analyze_btst_candidate_pool_recall_dossier_reconstructs_pre_truncation_
         "cutoff_avg_amount_share_of_min_gate_mean": cutoff_avg_amount_share_of_min_gate,
         "cutoff_avg_amount_share_of_min_gate_min": cutoff_avg_amount_share_of_min_gate,
         "cutoff_avg_amount_share_of_min_gate_max": cutoff_avg_amount_share_of_min_gate,
+        "frontier_peer_summary": {
+            "occurrence_count": 1,
+            "pressure_peer_type": "insufficient_frontier_peer_evidence",
+            "pressure_peer_summary": "当前单票还缺足够 frontier peer 样本，先继续补 pre-truncation 观察，再决定该打 larger-cap wall 还是 mixed-size hot peer。",
+            "peer_avg_amount_multiple_mean": 1.2857,
+            "peer_market_cap_multiple_mean": 1.2857,
+            "nearest_frontier_peer_amount_multiple_mean": 1.1429,
+            "nearest_frontier_peer_amount_multiple_min": 1.1429,
+            "nearest_frontier_peer_amount_multiple_median": 1.1429,
+            "lower_market_cap_higher_liquidity_peer_share": 0.0,
+            "cutoff_lower_market_cap_share": 0.0,
+            "recurring_top5_peer_share": 1.0,
+            "top_frontier_peers": [
+                {"ticker": "600001", "count": 1},
+                {"ticker": "600002", "count": 1},
+                {"ticker": "600003", "count": 1},
+            ],
+            "top_lower_market_cap_hot_peers": [],
+            "top_larger_market_cap_wall_peers": [
+                {"ticker": "600001", "count": 1},
+                {"ticker": "600002", "count": 1},
+                {"ticker": "600003", "count": 1},
+            ],
+        },
         "closest_case": {
             "trade_date": "20260324",
             "pre_truncation_rank": 4,
@@ -1122,6 +1422,30 @@ def test_analyze_btst_candidate_pool_recall_dossier_reconstructs_pre_truncation_
         "avg_rank_gap_to_cutoff": 1.0,
         "priority_handoff": "top300_boundary_micro_tuning",
         "profile_summary": "这只票更接近 cutoff 微边界，可保留为 top300 boundary 微调对照样本。",
+        "frontier_peer_summary": {
+            "occurrence_count": 1,
+            "pressure_peer_type": "insufficient_frontier_peer_evidence",
+            "pressure_peer_summary": "当前单票还缺足够 frontier peer 样本，先继续补 pre-truncation 观察，再决定该打 larger-cap wall 还是 mixed-size hot peer。",
+            "peer_avg_amount_multiple_mean": 1.2857,
+            "peer_market_cap_multiple_mean": 1.2857,
+            "nearest_frontier_peer_amount_multiple_mean": 1.1429,
+            "nearest_frontier_peer_amount_multiple_min": 1.1429,
+            "nearest_frontier_peer_amount_multiple_median": 1.1429,
+            "lower_market_cap_higher_liquidity_peer_share": 0.0,
+            "cutoff_lower_market_cap_share": 0.0,
+            "recurring_top5_peer_share": 1.0,
+            "top_frontier_peers": [
+                {"ticker": "600001", "count": 1},
+                {"ticker": "600002", "count": 1},
+                {"ticker": "600003", "count": 1},
+            ],
+            "top_lower_market_cap_hot_peers": [],
+            "top_larger_market_cap_wall_peers": [
+                {"ticker": "600001", "count": 1},
+                {"ticker": "600002", "count": 1},
+                {"ticker": "600003", "count": 1},
+            ],
+        },
         "closest_case": {
             "trade_date": "20260324",
             "pre_truncation_rank": 4,
@@ -1219,5 +1543,104 @@ def test_analyze_btst_candidate_pool_recall_dossier_reconstructs_pre_truncation_
         "dominant_liquidity_gap_mode": "near_cutoff_liquidity_gap",
         "liquidity_gap_mode_counts": {"near_cutoff_liquidity_gap": 1},
         "priority_handoff_counts": {"top300_boundary_micro_tuning": 1},
-        "primary_focus_tickers": [dossier["truncation_liquidity_profile"]],
+        "primary_focus_tickers": [
+            {
+                **dossier["truncation_liquidity_profile"],
+                "pressure_peer_cluster_type": "insufficient_branch_evidence",
+                "pressure_cluster_summary": "当前分支还缺足够样本解释其压力同伴结构。",
+                "repair_hypothesis_type": "generic_branch_repair_hypothesis",
+                "repair_hypothesis_summary": "当前分支距离最近 frontier peer 的成交额差距均值约为 1.1429 倍，可继续围绕 recurring peer 结构做定向修复实验。",
+                "prototype_type": "top300_boundary_shadow_tuning_probe",
+                "prototype_readiness": "research_only",
+                "uplift_to_cutoff_multiple_mean": 1.1429,
+                "prototype_summary": "把 003036 保留为 top300 boundary shadow tuning 对照样本，只验证 cutoff 附近的微边界弹性，不与 far-below-cutoff 车道混用。",
+                "evaluation_summary": "当前 prototype 还缺足够 occurrence 证据，暂不进入 execution-ready 讨论。",
+                "guardrail_summary": "仅限 top300 boundary micro-tuning 分支；不得把该样本外推成 corridor 或 competition lane 的修复规则。",
+            }
+        ],
     }
+
+
+def test_build_ticker_truncation_ranking_summary_adds_frontier_peer_pressure_for_corridor_wall() -> None:
+    summary = recall_script._build_ticker_truncation_ranking_summary(
+        [
+            {
+                "blocking_stage": "candidate_pool_truncated_after_filters",
+                "trade_date": "20260320",
+                "ticker": "AAA001",
+                "avg_amount_20d": 100.0,
+                "market_cap": 50.0,
+                "pre_truncation_rank_gap_to_cutoff": 1700,
+                "pre_truncation_avg_amount_share_of_cutoff": 0.2,
+                "avg_amount_share_of_min_gate": 5.0,
+                "pre_truncation_cutoff_avg_amount_share_of_min_gate": 30.0,
+                "pre_truncation_frontier_window": [
+                    {"ticker": "P1", "avg_amount_20d": 510.0, "market_cap": 500.0},
+                    {"ticker": "P2", "avg_amount_20d": 480.0, "market_cap": 200.0},
+                    {"ticker": "AAA001", "avg_amount_20d": 100.0, "market_cap": 50.0},
+                ],
+                "pre_truncation_cutoff_ticker": "P2",
+                "pre_truncation_cutoff_market_cap": 200.0,
+                "pre_truncation_ranking_driver": "avg_amount_20d_gap_dominant",
+                "pre_truncation_liquidity_gap_mode": "barely_above_gate_and_far_below_cutoff",
+            },
+            {
+                "blocking_stage": "candidate_pool_truncated_after_filters",
+                "trade_date": "20260323",
+                "ticker": "AAA001",
+                "avg_amount_20d": 105.0,
+                "market_cap": 52.0,
+                "pre_truncation_rank_gap_to_cutoff": 1600,
+                "pre_truncation_avg_amount_share_of_cutoff": 0.21,
+                "avg_amount_share_of_min_gate": 5.2,
+                "pre_truncation_cutoff_avg_amount_share_of_min_gate": 31.0,
+                "pre_truncation_frontier_window": [
+                    {"ticker": "P1", "avg_amount_20d": 520.0, "market_cap": 505.0},
+                    {"ticker": "P3", "avg_amount_20d": 500.0, "market_cap": 250.0},
+                    {"ticker": "AAA001", "avg_amount_20d": 105.0, "market_cap": 52.0},
+                ],
+                "pre_truncation_cutoff_ticker": "P3",
+                "pre_truncation_cutoff_market_cap": 250.0,
+                "pre_truncation_ranking_driver": "avg_amount_20d_gap_dominant",
+                "pre_truncation_liquidity_gap_mode": "barely_above_gate_and_far_below_cutoff",
+            },
+            {
+                "blocking_stage": "candidate_pool_truncated_after_filters",
+                "trade_date": "20260330",
+                "ticker": "AAA001",
+                "avg_amount_20d": 110.0,
+                "market_cap": 55.0,
+                "pre_truncation_rank_gap_to_cutoff": 1680,
+                "pre_truncation_avg_amount_share_of_cutoff": 0.22,
+                "avg_amount_share_of_min_gate": 5.5,
+                "pre_truncation_cutoff_avg_amount_share_of_min_gate": 31.5,
+                "pre_truncation_frontier_window": [
+                    {"ticker": "P2", "avg_amount_20d": 530.0, "market_cap": 210.0},
+                    {"ticker": "P3", "avg_amount_20d": 495.0, "market_cap": 255.0},
+                    {"ticker": "AAA001", "avg_amount_20d": 110.0, "market_cap": 55.0},
+                ],
+                "pre_truncation_cutoff_ticker": "P2",
+                "pre_truncation_cutoff_market_cap": 210.0,
+                "pre_truncation_ranking_driver": "avg_amount_20d_gap_dominant",
+                "pre_truncation_liquidity_gap_mode": "barely_above_gate_and_far_below_cutoff",
+            },
+        ]
+    )
+
+    frontier_peer_summary = dict(summary["frontier_peer_summary"])
+    assert frontier_peer_summary["occurrence_count"] == 3
+    assert frontier_peer_summary["pressure_peer_type"] == "larger_cap_liquidity_wall"
+    assert frontier_peer_summary["peer_avg_amount_multiple_mean"] == 4.8221
+    assert frontier_peer_summary["nearest_frontier_peer_amount_multiple_mean"] == 4.6873
+    assert frontier_peer_summary["lower_market_cap_higher_liquidity_peer_share"] == 0.0
+    assert frontier_peer_summary["top_frontier_peers"] == [
+        {"ticker": "P1", "count": 2},
+        {"ticker": "P2", "count": 2},
+        {"ticker": "P3", "count": 2},
+    ]
+    assert frontier_peer_summary["top_larger_market_cap_wall_peers"] == [
+        {"ticker": "P1", "count": 2},
+        {"ticker": "P2", "count": 2},
+        {"ticker": "P3", "count": 2},
+    ]
+    assert "更大更活跃的对手" in frontier_peer_summary["pressure_peer_summary"]

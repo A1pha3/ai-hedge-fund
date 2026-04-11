@@ -85,19 +85,19 @@ def _summarize_penalty_frontier(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def analyze_btst_rollout_governance_board(
-    action_board_path: str | Path,
+def _load_rollout_governance_inputs(
     *,
+    action_board_path: str | Path,
     primary_roll_forward_path: str | Path,
     shadow_expansion_path: str | Path,
     shadow_lane_priority_path: str | Path,
     primary_window_gap_path: str | Path,
     recurring_shadow_runbook_path: str | Path,
-    recurring_close_bundle_path: str | Path | None = None,
+    recurring_close_bundle_path: str | Path | None,
     primary_window_validation_runbook_path: str | Path,
     shadow_peer_scan_path: str | Path,
     structural_shadow_runbook_path: str | Path,
-    penalty_frontier_path: str | Path | None = None,
+    penalty_frontier_path: str | Path | None,
 ) -> dict[str, Any]:
     action_board = _load_json(action_board_path)
     primary_roll = _load_json(primary_roll_forward_path)
@@ -112,20 +112,57 @@ def analyze_btst_rollout_governance_board(
     penalty_frontier_summary = _summarize_penalty_frontier(_safe_load_json(penalty_frontier_path))
     recurring_close_candidate = dict(recurring_shadow_runbook.get("close_candidate") or {})
     recurring_intraday_control = dict(recurring_shadow_runbook.get("intraday_control") or {})
-    recurring_close_ticker = str(recurring_close_candidate.get("ticker") or "close_candidate")
-    recurring_intraday_ticker = str(recurring_intraday_control.get("ticker") or "intraday_control")
+    recurring_rows = list(shadow_lane_priority.get("lane_rows") or [])
+    recurring_close_row = _find_lane_row(recurring_rows, "recurring_shadow_close_candidate") or (dict(recurring_rows[0]) if recurring_rows else {})
+    recurring_intraday_row = _find_lane_row(recurring_rows, "recurring_shadow_intraday_control") or (dict(recurring_rows[1]) if len(recurring_rows) > 1 else {})
+    return {
+        "action_board": action_board,
+        "primary_roll": primary_roll,
+        "shadow_expansion": shadow_expansion,
+        "shadow_lane_priority": shadow_lane_priority,
+        "primary_window_gap": primary_window_gap,
+        "recurring_shadow_runbook": recurring_shadow_runbook,
+        "recurring_close_bundle": recurring_close_bundle,
+        "primary_window_validation_runbook": primary_window_validation_runbook,
+        "shadow_peer_scan": shadow_peer_scan,
+        "structural_shadow_runbook": structural_shadow_runbook,
+        "penalty_frontier_summary": penalty_frontier_summary,
+        "recurring_close_candidate": recurring_close_candidate,
+        "recurring_intraday_control": recurring_intraday_control,
+        "recurring_close_row": recurring_close_row,
+        "recurring_intraday_row": recurring_intraday_row,
+        "recurring_close_ticker": str(recurring_close_candidate.get("ticker") or recurring_close_row.get("ticker") or "close_candidate"),
+        "recurring_intraday_ticker": str(recurring_intraday_control.get("ticker") or recurring_intraday_row.get("ticker") or "intraday_control"),
+        "close_bundle_summary_path": str(Path(recurring_close_bundle_path).expanduser().resolve()) if recurring_close_bundle_path else None,
+    }
+
+
+def _build_rollout_governance_rows(payloads: dict[str, Any]) -> list[dict[str, Any]]:
+    action_board = payloads["action_board"]
+    primary_roll = payloads["primary_roll"]
+    shadow_expansion = payloads["shadow_expansion"]
+    shadow_lane_priority = payloads["shadow_lane_priority"]
+    primary_window_gap = payloads["primary_window_gap"]
+    recurring_shadow_runbook = payloads["recurring_shadow_runbook"]
+    recurring_close_bundle = payloads["recurring_close_bundle"]
+    primary_window_validation_runbook = payloads["primary_window_validation_runbook"]
+    shadow_peer_scan = payloads["shadow_peer_scan"]
+    structural_shadow_runbook = payloads["structural_shadow_runbook"]
+    recurring_close_ticker = payloads["recurring_close_ticker"]
+    recurring_intraday_ticker = payloads["recurring_intraday_ticker"]
+    close_bundle_summary_path = payloads["close_bundle_summary_path"]
+    recurring_close_candidate = payloads["recurring_close_candidate"]
+    recurring_intraday_control = payloads["recurring_intraday_control"]
+    recurring_close_row = payloads["recurring_close_row"]
+    recurring_intraday_row = payloads["recurring_intraday_row"]
 
     structural_row = next(
         (row for row in list(action_board.get("board_rows") or []) if str(row.get("ticker") or "") == "300724"),
         {},
     )
-    recurring_rows = list(shadow_lane_priority.get("lane_rows") or [])
-    recurring_close_row = _find_lane_row(recurring_rows, "recurring_shadow_close_candidate")
-    recurring_intraday_row = _find_lane_row(recurring_rows, "recurring_shadow_intraday_control")
     close_bundle_outcomes = dict(recurring_close_bundle.get("close_candidate_outcomes") or {})
-    close_bundle_summary_path = str(Path(recurring_close_bundle_path).expanduser().resolve()) if recurring_close_bundle_path else None
 
-    governance_rows = [
+    return [
         {
             "ticker": "001309",
             "governance_tier": "primary_roll_forward_only",
@@ -201,7 +238,9 @@ def analyze_btst_rollout_governance_board(
         },
     ]
 
-    next_3_tasks = [
+
+def _build_rollout_next_tasks(governance_rows: list[dict[str, Any]], recurring_close_ticker: str, recurring_intraday_ticker: str) -> list[dict[str, Any]]:
+    return [
         {
             "task_id": "001309_independent_window_validation",
             "title": "补 001309 独立窗口证据",
@@ -222,6 +261,10 @@ def analyze_btst_rollout_governance_board(
         },
     ]
 
+
+def _build_rollout_recommendation(payloads: dict[str, Any], recurring_close_ticker: str, recurring_intraday_ticker: str) -> str:
+    recurring_close_bundle = payloads["recurring_close_bundle"]
+    penalty_frontier_summary = payloads["penalty_frontier_summary"]
     recommendation = (
         "当前 rollout 治理应分成四条清晰车道：001309 只做 primary roll-forward；300383 只做单票 shadow；"
         f"{recurring_close_ticker}/{recurring_intraday_ticker} 组成 recurring frontier 的 close/intraday 双轨；"
@@ -236,9 +279,29 @@ def analyze_btst_rollout_governance_board(
             recommendation += " 同时，broad stale/extension penalty relief 已在当前窗口被证伪，应从 nightly open path 中移除，不再作为广义放松路线继续追踪。"
         else:
             recommendation += " 同时，penalty frontier 虽已出现 guardrail-passing row，但在新增独立窗口前仍只能保留在 shadow/research lane。"
+    return recommendation
 
+
+def _build_rollout_governance_analysis(
+    *,
+    action_board_path: str | Path,
+    primary_roll_forward_path: str | Path,
+    shadow_expansion_path: str | Path,
+    shadow_lane_priority_path: str | Path,
+    primary_window_gap_path: str | Path,
+    recurring_shadow_runbook_path: str | Path,
+    recurring_close_bundle_path: str | Path | None,
+    primary_window_validation_runbook_path: str | Path,
+    shadow_peer_scan_path: str | Path,
+    structural_shadow_runbook_path: str | Path,
+    penalty_frontier_path: str | Path | None,
+    payloads: dict[str, Any],
+    governance_rows: list[dict[str, Any]],
+    next_3_tasks: list[dict[str, Any]],
+    recommendation: str,
+) -> dict[str, Any]:
     return {
-        "generated_on": action_board.get("generated_on"),
+        "generated_on": payloads["action_board"].get("generated_on"),
         "source_reports": {
             "action_board": str(Path(action_board_path).expanduser().resolve()),
             "primary_roll_forward": str(Path(primary_roll_forward_path).expanduser().resolve()),
@@ -246,18 +309,67 @@ def analyze_btst_rollout_governance_board(
             "shadow_lane_priority": str(Path(shadow_lane_priority_path).expanduser().resolve()),
             "primary_window_gap": str(Path(primary_window_gap_path).expanduser().resolve()),
             "recurring_shadow_runbook": str(Path(recurring_shadow_runbook_path).expanduser().resolve()),
-            "recurring_close_bundle": close_bundle_summary_path,
+            "recurring_close_bundle": payloads["close_bundle_summary_path"] if recurring_close_bundle_path else None,
             "primary_window_validation_runbook": str(Path(primary_window_validation_runbook_path).expanduser().resolve()),
             "shadow_peer_scan": str(Path(shadow_peer_scan_path).expanduser().resolve()),
             "structural_shadow_runbook": str(Path(structural_shadow_runbook_path).expanduser().resolve()),
             "penalty_frontier": str(Path(penalty_frontier_path).expanduser().resolve()) if penalty_frontier_path else None,
         },
-        "frontier_constraints": [penalty_frontier_summary] if penalty_frontier_summary else [],
-        "penalty_frontier_summary": penalty_frontier_summary,
+        "frontier_constraints": [payloads["penalty_frontier_summary"]] if payloads["penalty_frontier_summary"] else [],
+        "penalty_frontier_summary": payloads["penalty_frontier_summary"],
         "governance_rows": governance_rows,
         "next_3_tasks": next_3_tasks,
         "recommendation": recommendation,
     }
+
+
+def analyze_btst_rollout_governance_board(
+    action_board_path: str | Path,
+    *,
+    primary_roll_forward_path: str | Path,
+    shadow_expansion_path: str | Path,
+    shadow_lane_priority_path: str | Path,
+    primary_window_gap_path: str | Path,
+    recurring_shadow_runbook_path: str | Path,
+    recurring_close_bundle_path: str | Path | None = None,
+    primary_window_validation_runbook_path: str | Path,
+    shadow_peer_scan_path: str | Path,
+    structural_shadow_runbook_path: str | Path,
+    penalty_frontier_path: str | Path | None = None,
+) -> dict[str, Any]:
+    payloads = _load_rollout_governance_inputs(
+        action_board_path=action_board_path,
+        primary_roll_forward_path=primary_roll_forward_path,
+        shadow_expansion_path=shadow_expansion_path,
+        shadow_lane_priority_path=shadow_lane_priority_path,
+        primary_window_gap_path=primary_window_gap_path,
+        recurring_shadow_runbook_path=recurring_shadow_runbook_path,
+        recurring_close_bundle_path=recurring_close_bundle_path,
+        primary_window_validation_runbook_path=primary_window_validation_runbook_path,
+        shadow_peer_scan_path=shadow_peer_scan_path,
+        structural_shadow_runbook_path=structural_shadow_runbook_path,
+        penalty_frontier_path=penalty_frontier_path,
+    )
+    governance_rows = _build_rollout_governance_rows(payloads)
+    next_3_tasks = _build_rollout_next_tasks(governance_rows, payloads["recurring_close_ticker"], payloads["recurring_intraday_ticker"])
+    recommendation = _build_rollout_recommendation(payloads, payloads["recurring_close_ticker"], payloads["recurring_intraday_ticker"])
+    return _build_rollout_governance_analysis(
+        action_board_path=action_board_path,
+        primary_roll_forward_path=primary_roll_forward_path,
+        shadow_expansion_path=shadow_expansion_path,
+        shadow_lane_priority_path=shadow_lane_priority_path,
+        primary_window_gap_path=primary_window_gap_path,
+        recurring_shadow_runbook_path=recurring_shadow_runbook_path,
+        recurring_close_bundle_path=recurring_close_bundle_path,
+        primary_window_validation_runbook_path=primary_window_validation_runbook_path,
+        shadow_peer_scan_path=shadow_peer_scan_path,
+        structural_shadow_runbook_path=structural_shadow_runbook_path,
+        penalty_frontier_path=penalty_frontier_path,
+        payloads=payloads,
+        governance_rows=governance_rows,
+        next_3_tasks=next_3_tasks,
+        recommendation=recommendation,
+    )
 
 
 def render_btst_rollout_governance_board_markdown(analysis: dict[str, Any]) -> str:

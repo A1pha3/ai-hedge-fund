@@ -223,3 +223,36 @@ def test_generate_btst_tplus2_continuation_promotion_review_promotes_merge_ready
     assert analysis["promotion_review_verdict"] == "ready_for_default_btst_merge_review"
     assert analysis["promotion_blockers"] == []
     assert analysis["comparison_summary"]["focus_promotion_merge_review_verdict"] == "ready_for_default_btst_merge_review"
+
+
+def test_generate_btst_tplus2_continuation_promotion_review_threads_analysis_payload(monkeypatch, tmp_path: Path) -> None:
+    queue_path = tmp_path / "queue.json"
+    focus_dossier_path = tmp_path / "focus.json"
+    watch_dossier_path = tmp_path / "watch.json"
+    queue_path.write_text("{}", encoding="utf-8")
+    focus_dossier_path.write_text("{}", encoding="utf-8")
+    watch_dossier_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "scripts.generate_btst_tplus2_continuation_promotion_review._build_promotion_review",
+        lambda queue, focus_dossier, watch_dossier: {
+            "focus_ticker": "300505",
+            "benchmark_watch_ticker": "600989",
+            "promotion_review_verdict": "watch_review_ready",
+            "promotion_blockers": [],
+            "focus_candidate": {"ticker": "300505"},
+            "comparison_summary": {"governance_payoff_ready": True},
+            "recommendation": "ready for watch review",
+        },
+    )
+
+    analysis = generate_btst_tplus2_continuation_promotion_review(
+        queue_path=queue_path,
+        focus_dossier_path=focus_dossier_path,
+        watch_dossier_path=watch_dossier_path,
+    )
+
+    assert analysis["focus_ticker"] == "300505"
+    assert analysis["benchmark_watch_ticker"] == "600989"
+    assert analysis["comparison_summary"] == {"governance_payoff_ready": True}
+    assert analysis["recommendation"] == "ready for watch review"

@@ -225,6 +225,66 @@ def test_corridor_validation_pack_reports_parallel_probe_ready(tmp_path: Path) -
     assert [row["ticker"] for row in analysis["parallel_watch_tickers"]] == ["003036"]
 
 
+def test_corridor_validation_pack_excludes_low_gate_tail_without_backfilling_new_parallel(tmp_path: Path) -> None:
+    dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    lane_support_path = tmp_path / "btst_candidate_pool_lane_objective_support_latest.json"
+    branch_priority_path = tmp_path / "btst_candidate_pool_branch_priority_board_latest.json"
+    narrow_probe_path = tmp_path / "btst_candidate_pool_corridor_narrow_probe_latest.json"
+
+    _write_json(dossier_path, {"priority_stage_counts": {"candidate_pool_truncated_after_filters": 4}})
+    _write_json(
+        lane_support_path,
+        {
+            "branch_rows": [
+                {
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "support_verdict": "candidate_pool_false_negative_outperforms_tradeable_surface",
+                    "closed_cycle_count": 16,
+                    "objective_fit_score": 0.9913,
+                    "mean_t_plus_2_return": 0.1258,
+                }
+            ],
+            "ticker_rows": [
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "300683", "mean_t_plus_2_return": 0.1051, "objective_fit_score": 1.0},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "688796", "mean_t_plus_2_return": 0.1333, "objective_fit_score": 0.98},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "301188", "mean_t_plus_2_return": 0.1214, "objective_fit_score": 0.975},
+                {"priority_handoff": "layer_a_liquidity_corridor", "ticker": "688383", "mean_t_plus_2_return": 0.1188, "objective_fit_score": 0.972},
+            ],
+        },
+    )
+    _write_json(
+        branch_priority_path,
+        {
+            "branch_rows": [
+                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
+            ],
+            "corridor_ticker_rows": [
+                {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.3291},
+                {"ticker": "688796", "corridor_priority_rank": 2, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 8.9123},
+                {"ticker": "301188", "corridor_priority_rank": 3, "tractability_tier": "parallel_probe", "uplift_to_cutoff_multiple_mean": 6.3502},
+                {"ticker": "688383", "corridor_priority_rank": 4, "tractability_tier": "parallel_probe", "uplift_to_cutoff_multiple_mean": 6.9812},
+            ],
+        },
+    )
+    _write_json(
+        narrow_probe_path,
+        {
+            "excluded_low_gate_tail_tickers": ["688796"],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_validation_pack(
+        dossier_path,
+        lane_objective_support_path=lane_support_path,
+        branch_priority_board_path=branch_priority_path,
+        corridor_narrow_probe_path=narrow_probe_path,
+    )
+
+    assert analysis["primary_validation_ticker"]["ticker"] == "300683"
+    assert [row["ticker"] for row in analysis["parallel_watch_tickers"]] == ["301188"]
+    assert analysis["excluded_low_gate_tail_tickers"] == ["688796"]
+
+
 def test_corridor_shadow_pack_promotes_primary_shadow_replay(tmp_path: Path) -> None:
     corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
     _write_json(
@@ -269,6 +329,51 @@ def test_corridor_shadow_pack_promotes_primary_shadow_replay(tmp_path: Path) -> 
     assert [row["ticker"] for row in analysis["parallel_watch_lanes"]] == ["003036"]
     assert any("run_btst_candidate_pool_corridor_shadow_pack.py" in command for command in analysis["refresh_commands"])
     assert any("parallel_watch=003036" in command for command in analysis["shadow_replay_commands"])
+
+
+def test_corridor_shadow_pack_surfaces_excluded_low_gate_tail(tmp_path: Path) -> None:
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "primary_validation_ticker": {
+                "ticker": "300683",
+                "validation_priority_rank": 1,
+                "tractability_tier": "second_shadow_probe",
+                "corridor_priority_rank": 1,
+                "closed_cycle_count": 4,
+                "mean_t_plus_2_return": 0.1051,
+                "t_plus_2_return_hit_rate_at_target": 1.0,
+                "t_plus_2_positive_rate": 1.0,
+                "objective_fit_score": 1.0,
+                "uplift_to_cutoff_multiple_mean": 6.3291,
+                "profile_summary": "primary corridor ticker",
+            },
+            "parallel_watch_tickers": [
+                {
+                    "ticker": "301188",
+                    "validation_priority_rank": 3,
+                    "tractability_tier": "parallel_probe",
+                    "corridor_priority_rank": 3,
+                    "closed_cycle_count": 6,
+                    "mean_t_plus_2_return": 0.1214,
+                    "t_plus_2_return_hit_rate_at_target": 1.0,
+                    "t_plus_2_positive_rate": 1.0,
+                    "objective_fit_score": 0.975,
+                    "uplift_to_cutoff_multiple_mean": 6.3502,
+                    "profile_summary": "parallel corridor ticker",
+                }
+            ],
+            "excluded_low_gate_tail_tickers": ["688796"],
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_shadow_pack(corridor_validation_pack_path)
+
+    assert [row["ticker"] for row in analysis["parallel_watch_lanes"]] == ["301188"]
+    assert analysis["excluded_low_gate_tail_tickers"] == ["688796"]
+    assert "688796" in analysis["recommendation"]
 
 
 def test_lane_pair_board_keeps_corridor_primary_first(tmp_path: Path) -> None:
@@ -1031,19 +1136,28 @@ def test_corridor_uplift_runbook_keeps_corridor_first_and_parallel_confirmatory(
             "board_leader": {"ticker": "300720", "lane_family": "corridor"},
         },
     )
+    _write_json(
+        tmp_path / "btst_candidate_pool_corridor_narrow_probe_latest.json",
+        {
+            "excluded_low_gate_tail_tickers": ["688796"],
+        },
+    )
 
     analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
         recall_dossier_path,
         corridor_shadow_pack_path=corridor_shadow_pack_path,
         lane_pair_board_path=lane_pair_board_path,
+        corridor_narrow_probe_path=tmp_path / "btst_candidate_pool_corridor_narrow_probe_latest.json",
     )
 
     assert analysis["runbook_status"] == "ready_for_upstream_uplift_probe"
     assert analysis["primary_shadow_replay"] == "300720"
     assert analysis["parallel_watch_tickers"] == ["003036"]
+    assert analysis["excluded_low_gate_tail_tickers"] == ["688796"]
     assert analysis["leader_lane_family"] == "corridor"
     assert any("run_btst_candidate_pool_lane_pair_board.py" in command for command in analysis["execution_commands"])
     paper_trading_commands = [command for command in analysis["execution_commands"] if "run_paper_trading.py" in command]
     assert paper_trading_commands
     assert "--candidate-pool-shadow-focus-tickers 300720,003036" in paper_trading_commands[0]
     assert "--candidate-pool-shadow-corridor-focus-tickers 300720,003036" in paper_trading_commands[0]
+    assert any("excluded low-gate tail" in step for step in analysis["execution_steps"])

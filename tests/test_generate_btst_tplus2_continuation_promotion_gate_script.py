@@ -128,3 +128,39 @@ def test_generate_btst_tplus2_continuation_promotion_gate_accepts_merge_review_r
     assert analysis["gate_verdict"] == "approve_watchlist_promotion"
     assert "promotion_review_not_ready" not in analysis["gate_blockers"]
     assert analysis["proposed_watchlist_tickers"] == ["600989", "300720"]
+
+
+def test_generate_btst_tplus2_continuation_promotion_gate_threads_source_reports(monkeypatch, tmp_path: Path) -> None:
+    lane_rulepack_path = tmp_path / "lane_rulepack.json"
+    promotion_review_path = tmp_path / "promotion_review.json"
+    lane_rulepack_path.write_text("{}", encoding="utf-8")
+    promotion_review_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "scripts.generate_btst_tplus2_continuation_promotion_gate._build_promotion_gate",
+        lambda lane_rulepack, promotion_review: {
+            "focus_ticker": "300505",
+            "promotion_review_verdict": "watch_review_ready",
+            "promotion_review_blockers": [],
+            "gate_verdict": "approve_watchlist_promotion",
+            "gate_blockers": [],
+            "current_watchlist_tickers": ["600989"],
+            "proposed_watchlist_tickers": ["600989", "300505"],
+            "eligible_tickers": ["600988"],
+            "operator_action": "append_focus_to_watchlist",
+            "execution_mode": "manual_rulepack_update",
+            "recommendation": "approve focus",
+        },
+    )
+
+    analysis = generate_btst_tplus2_continuation_promotion_gate(
+        lane_rulepack_path=lane_rulepack_path,
+        promotion_review_path=promotion_review_path,
+    )
+
+    assert analysis["focus_ticker"] == "300505"
+    assert analysis["gate_verdict"] == "approve_watchlist_promotion"
+    assert analysis["source_reports"] == {
+        "lane_rulepack": str(lane_rulepack_path.resolve()),
+        "promotion_review": str(promotion_review_path.resolve()),
+    }

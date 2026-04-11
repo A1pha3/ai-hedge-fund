@@ -179,3 +179,45 @@ def test_analyze_btst_tplus2_continuation_peer_scan_surfaces_near_cluster_candid
     assert analysis["near_peer_summaries"][0]["recent_tier_verdict"] == "recent_tier_confirmed"
     assert analysis["observation_candidate_count"] == 0
     assert analysis["recommendation"].startswith("No strict same-cluster peer passed")
+
+
+def test_analyze_btst_tplus2_continuation_peer_scan_threads_analysis_payload(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+
+    monkeypatch.setattr(
+        peer_scan,
+        "_collect_rows",
+        lambda *_args, **_kwargs: [{"ticker": "600988"}],
+    )
+    monkeypatch.setattr(peer_scan, "_build_anchor_profile", lambda rows, anchor_ticker: {"ticker": anchor_ticker})
+    monkeypatch.setattr(
+        peer_scan,
+        "_classify_peer_candidate_rows",
+        lambda *args, **kwargs: (
+            [{"ticker": "300620", "similarity_score": 1.1}],
+            [{"ticker": "000988", "similarity_score": 1.8}],
+            [{"ticker": "300505", "similarity_score": 2.5}],
+            [{"ticker": "300724", "similarity_score": 2.9}],
+            {"300620": [{"ticker": "300620"}], "000988": [{"ticker": "000988"}], "300505": [{"ticker": "300505"}]},
+        ),
+    )
+    monkeypatch.setattr(
+        peer_scan,
+        "_summarize_scan_tiers",
+        lambda strict_peer_rows, near_peer_rows, observation_candidate_rows, grouped_all_candidate_rows, next_high_hit_threshold, recent_window_limit: (
+            [{"ticker": "300620"}],
+            [{"ticker": "000988"}],
+            [{"ticker": "300505"}],
+        ),
+    )
+    monkeypatch.setattr(peer_scan, "_build_peer_scan_recommendation", lambda **kwargs: "scan ready")
+
+    analysis = peer_scan.analyze_btst_tplus2_continuation_peer_scan(reports_root)
+
+    assert analysis["anchor_profile"] == {"ticker": "600988"}
+    assert analysis["peer_summaries"] == [{"ticker": "300620"}]
+    assert analysis["near_peer_summaries"] == [{"ticker": "000988"}]
+    assert analysis["observation_candidate_summaries"] == [{"ticker": "300505"}]
+    assert analysis["near_peer_rejections"] == [{"ticker": "300724", "similarity_score": 2.9}]
+    assert analysis["recommendation"] == "scan ready"

@@ -140,25 +140,24 @@ def _deduplicate_case_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if current is None:
             deduped[key] = row
             continue
-        rank = (
-            _decision_rank(row.get("decision")),
-            1 if row.get("relief_applied") else 0,
-            int(row.get("historical_evaluable_count") or 0),
-            -float(row.get("gap_to_selected") or 999.0),
-            float(row.get("score_target") or -999.0),
-            str(row.get("report_dir") or ""),
-        )
-        current_rank = (
-            _decision_rank(current.get("decision")),
-            1 if current.get("relief_applied") else 0,
-            int(current.get("historical_evaluable_count") or 0),
-            -float(current.get("gap_to_selected") or 999.0),
-            float(current.get("score_target") or -999.0),
-            str(current.get("report_dir") or ""),
-        )
-        if rank > current_rank:
+        if _should_replace_deduplicated_case(current=current, candidate=row):
             deduped[key] = row
     return sorted(deduped.values(), key=lambda row: (str(row.get("trade_date") or ""), str(row.get("ticker") or "")))
+
+
+def _should_replace_deduplicated_case(*, current: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    return _case_row_rank(candidate) > _case_row_rank(current)
+
+
+def _case_row_rank(row: dict[str, Any]) -> tuple[int, int, int, float, float, str]:
+    return (
+        _decision_rank(row.get("decision")),
+        1 if row.get("relief_applied") else 0,
+        int(row.get("historical_evaluable_count") or 0),
+        -float(row.get("gap_to_selected") or 999.0),
+        float(row.get("score_target") or -999.0),
+        str(row.get("report_dir") or ""),
+    )
 
 
 def _is_supportive(row: dict[str, Any]) -> bool:
@@ -191,17 +190,51 @@ def _attach_outcomes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     price_cache: dict[tuple[str, str], Any] = {}
     enriched: list[dict[str, Any]] = []
     for row in rows:
-        outcome = extract_btst_price_outcome(str(row.get("ticker") or ""), str(row.get("trade_date") or ""), price_cache)
-        enriched.append({**row, **outcome, "peer_evidence_status": _peer_evidence_status(row)})
+        enriched.append(_build_enriched_outcome_row(row=row, price_cache=price_cache))
     return enriched
 
 
+def _build_enriched_outcome_row(*, row: dict[str, Any], price_cache: dict[tuple[str, str], Any]) -> dict[str, Any]:
+    outcome = extract_btst_price_outcome(
+        str(row.get("ticker") or ""),
+        str(row.get("trade_date") or ""),
+        price_cache,
+    )
+    return {**row, **outcome, "peer_evidence_status": _peer_evidence_status(row)}
+
+
 def _summarize_outcomes(rows: list[dict[str, Any]], *, next_high_hit_threshold: float = 0.02) -> dict[str, Any]:
+    outcome_metrics = _collect_outcome_summary_metrics(rows)
+    return _build_outcome_summary_payload(
+        rows=rows,
+        outcome_metrics=outcome_metrics,
+        next_high_hit_threshold=next_high_hit_threshold,
+    )
+
+
+def _collect_outcome_summary_metrics(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]] | list[float]]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
-    next_high_returns = [float(row["next_high_return"]) for row in next_day_rows if row.get("next_high_return") is not None]
-    next_close_returns = [float(row["next_close_return"]) for row in next_day_rows if row.get("next_close_return") is not None]
-    t_plus_2_returns = [float(row["t_plus_2_close_return"]) for row in closed_rows if row.get("t_plus_2_close_return") is not None]
+    return {
+        "next_day_rows": next_day_rows,
+        "closed_rows": closed_rows,
+        "next_high_returns": [float(row["next_high_return"]) for row in next_day_rows if row.get("next_high_return") is not None],
+        "next_close_returns": [float(row["next_close_return"]) for row in next_day_rows if row.get("next_close_return") is not None],
+        "t_plus_2_returns": [float(row["t_plus_2_close_return"]) for row in closed_rows if row.get("t_plus_2_close_return") is not None],
+    }
+
+
+def _build_outcome_summary_payload(
+    *,
+    rows: list[dict[str, Any]],
+    outcome_metrics: dict[str, list[dict[str, Any]] | list[float]],
+    next_high_hit_threshold: float,
+) -> dict[str, Any]:
+    next_day_rows = outcome_metrics["next_day_rows"]
+    closed_rows = outcome_metrics["closed_rows"]
+    next_high_returns = outcome_metrics["next_high_returns"]
+    next_close_returns = outcome_metrics["next_close_returns"]
+    t_plus_2_returns = outcome_metrics["t_plus_2_returns"]
     return {
         "case_count": len(rows),
         "next_day_available_count": len(next_day_rows),
@@ -216,24 +249,24 @@ def _summarize_outcomes(rows: list[dict[str, Any]], *, next_high_hit_threshold: 
 
 
 def _build_top_expansion_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    candidates = [
-        row
-        for row in rows
-        if _is_supportive(row)
-        and not row.get("relief_applied")
-        and str(row.get("decision") or "") != "selected"
-    ]
-    candidates.sort(
-        key=lambda row: (
-            float(row.get("gap_to_selected") or 999.0),
-            -int(row.get("historical_evaluable_count") or 0),
-            -float(row.get("historical_next_close_positive_rate") or 0.0),
-            -float(row.get("score_target") or 0.0),
-            str(row.get("trade_date") or ""),
-            str(row.get("ticker") or ""),
-        )
-    )
+    candidates = [row for row in rows if _is_expansion_candidate(row)]
+    candidates.sort(key=_top_expansion_candidate_sort_key)
     return candidates[:10]
+
+
+def _is_expansion_candidate(row: dict[str, Any]) -> bool:
+    return _is_supportive(row) and not row.get("relief_applied") and str(row.get("decision") or "") != "selected"
+
+
+def _top_expansion_candidate_sort_key(row: dict[str, Any]) -> tuple[float, int, float, float, str, str]:
+    return (
+        float(row.get("gap_to_selected") or 999.0),
+        -int(row.get("historical_evaluable_count") or 0),
+        -float(row.get("historical_next_close_positive_rate") or 0.0),
+        -float(row.get("score_target") or 0.0),
+        str(row.get("trade_date") or ""),
+        str(row.get("ticker") or ""),
+    )
 
 
 def _build_recommendation(*, supportive_rows: list[dict[str, Any]], applied_rows: list[dict[str, Any]], top_expansion_candidates: list[dict[str, Any]]) -> str:
@@ -241,24 +274,37 @@ def _build_recommendation(*, supportive_rows: list[dict[str, Any]], applied_rows
         return "当前没有任何 strong carryover supportive cohort，默认结论应是继续收集样本，不要再主动放松 selected frontier。"
     if top_expansion_candidates:
         top_candidate = top_expansion_candidates[0]
-        if int(top_candidate.get("historical_evaluable_count") or 0) < 2:
-            if str(top_candidate.get("peer_evidence_status") or "") == "broad_family_only":
-                return (
-                    f"当前最接近 002001 扩样路径的是 {top_candidate.get('ticker')}@{top_candidate.get('trade_date')}，"
-                    "但它只有 broad family 级别的外围样本，没有 aligned family/source peer，且 same_ticker evaluable_count 仍不足。"
-                    "下一步应优先补 peer evidence 对齐，而不是继续放松 selected frontier。"
-                )
-            return (
-                f"当前最接近 002001 扩样路径的是 {top_candidate.get('ticker')}@{top_candidate.get('trade_date')}，"
-                "但它的主阻塞仍是 historical evaluable_count 不足，而不是 score frontier。本阶段应优先扩同票/同类历史样本，而不是继续放松阈值。"
-            )
-        return (
-            f"{top_candidate.get('ticker')}@{top_candidate.get('trade_date')} 已具备继续复核价值，"
-            "可作为下一批 carryover selected promotion 的重点候选。"
-        )
+        if _top_candidate_is_low_sample(top_candidate):
+            return _build_low_sample_recommendation(top_candidate)
+        return _build_ready_candidate_recommendation(top_candidate)
     if applied_rows:
         return "当前 applied carryover relief 仍主要集中在极少数样本上，应继续扩 supportive cohort，而不是把单票成功经验推广成宽松规则。"
     return "当前 strong carryover supportive 样本存在，但没有形成可直接推广的 false negative 候选，下一步重点仍应是扩充 cohort。"
+
+
+def _top_candidate_is_low_sample(top_candidate: dict[str, Any]) -> bool:
+    return int(top_candidate.get("historical_evaluable_count") or 0) < 2
+
+
+def _build_low_sample_recommendation(top_candidate: dict[str, Any]) -> str:
+    candidate_label = f"{top_candidate.get('ticker')}@{top_candidate.get('trade_date')}"
+    if str(top_candidate.get("peer_evidence_status") or "") == "broad_family_only":
+        return (
+            f"当前最接近 002001 扩样路径的是 {candidate_label}，"
+            "但它只有 broad family 级别的外围样本，没有 aligned family/source peer，且 same_ticker evaluable_count 仍不足。"
+            "下一步应优先补 peer evidence 对齐，而不是继续放松 selected frontier。"
+        )
+    return (
+        f"当前最接近 002001 扩样路径的是 {candidate_label}，"
+        "但它的主阻塞仍是 historical evaluable_count 不足，而不是 score frontier。本阶段应优先扩同票/同类历史样本，而不是继续放松阈值。"
+    )
+
+
+def _build_ready_candidate_recommendation(top_candidate: dict[str, Any]) -> str:
+    return (
+        f"{top_candidate.get('ticker')}@{top_candidate.get('trade_date')} 已具备继续复核价值，"
+        "可作为下一批 carryover selected promotion 的重点候选。"
+    )
 
 
 def analyze_btst_carryover_selected_cohort(reports_root: str | Path) -> dict[str, Any]:
@@ -266,10 +312,36 @@ def analyze_btst_carryover_selected_cohort(reports_root: str | Path) -> dict[str
     raw_rows = _iter_case_rows(resolved_reports_root)
     deduped_rows = _deduplicate_case_rows(raw_rows)
     enriched_rows = _attach_outcomes(deduped_rows)
-    supportive_rows = [row for row in enriched_rows if _is_supportive(row)]
-    applied_rows = [row for row in enriched_rows if row.get("relief_applied")]
+    supportive_rows, applied_rows = _partition_cohort_rows(enriched_rows)
     top_expansion_candidates = _build_top_expansion_candidates(enriched_rows)
+    return _build_carryover_selected_cohort_analysis(
+        resolved_reports_root=resolved_reports_root,
+        raw_rows=raw_rows,
+        deduped_rows=deduped_rows,
+        enriched_rows=enriched_rows,
+        supportive_rows=supportive_rows,
+        applied_rows=applied_rows,
+        top_expansion_candidates=top_expansion_candidates,
+    )
 
+
+def _partition_cohort_rows(enriched_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return (
+        [row for row in enriched_rows if _is_supportive(row)],
+        [row for row in enriched_rows if row.get("relief_applied")],
+    )
+
+
+def _build_carryover_selected_cohort_analysis(
+    *,
+    resolved_reports_root: Path,
+    raw_rows: list[dict[str, Any]],
+    deduped_rows: list[dict[str, Any]],
+    enriched_rows: list[dict[str, Any]],
+    supportive_rows: list[dict[str, Any]],
+    applied_rows: list[dict[str, Any]],
+    top_expansion_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "reports_root": str(resolved_reports_root),
         "raw_case_count": len(raw_rows),

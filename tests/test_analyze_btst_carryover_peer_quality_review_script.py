@@ -37,3 +37,20 @@ def test_analyze_btst_carryover_peer_quality_review_flags_missing_strong_peer(tm
     assert analysis["peer_entries"][0]["surface_summary"]["next_high_hit_rate_at_threshold"] == 0.0
     assert "暂不支持扩容" in analysis["recommendation"]
     assert "300408" in markdown
+
+
+def test_analyze_btst_carryover_peer_quality_review_threads_peer_payloads(monkeypatch, tmp_path):
+    anchor_probe_path = tmp_path / "anchor_probe.json"
+    anchor_probe_path.write_text('{"ticker":"002001"}\n', encoding="utf-8")
+
+    monkeypatch.setattr("scripts.analyze_btst_carryover_peer_quality_review._extract_peer_rows", lambda anchor_probe: [{"ticker": "300408"}, {"ticker": "301396"}])
+    monkeypatch.setattr("scripts.analyze_btst_carryover_peer_quality_review._build_peer_entries", lambda rows: [{"ticker": "300408"}])
+    monkeypatch.setattr("scripts.analyze_btst_carryover_peer_quality_review._build_recommendation", lambda entries: "review 300408")
+
+    analysis = analyze_btst_carryover_peer_quality_review(anchor_probe_path)
+
+    assert analysis["ticker"] == "002001"
+    assert analysis["peer_row_count"] == 2
+    assert analysis["peer_count"] == 1
+    assert analysis["peer_entries"] == [{"ticker": "300408"}]
+    assert analysis["recommendation"] == "review 300408"

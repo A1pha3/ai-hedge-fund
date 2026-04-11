@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.btst_selected_focus import pick_selected_focus_entry
+
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_PROOF_BOARD_JSON = REPORTS_DIR / "btst_carryover_aligned_peer_proof_board_latest.json"
@@ -78,9 +80,18 @@ def analyze_btst_carryover_peer_promotion_gate(
     selected_refresh = _load_json(selected_refresh_json_path)
 
     selected_entries = [dict(entry or {}) for entry in list(selected_refresh.get("entries") or [])]
-    selected_focus = selected_entries[0] if selected_entries else {}
+    selected_focus = pick_selected_focus_entry(selected_entries)
     selected_contract_verdict = str(selected_focus.get("overall_contract_verdict") or proof_board.get("selected_contract_verdict") or "")
+    entries = _build_gate_entries(proof_board, selected_contract_verdict)
+    return _build_peer_promotion_gate_analysis(
+        proof_board=proof_board,
+        selected_focus=selected_focus,
+        selected_contract_verdict=selected_contract_verdict,
+        entries=entries,
+    )
 
+
+def _build_gate_entries(proof_board: dict[str, Any], selected_contract_verdict: str) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for raw_entry in list(proof_board.get("entries") or []):
         entry = dict(raw_entry or {})
@@ -109,12 +120,64 @@ def analyze_btst_carryover_peer_promotion_gate(
         ),
         reverse=True,
     )
+    return entries
 
-    ready_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "promotion_gate_ready"][:4]
-    blocked_open_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "blocked_selected_contract_open"][:4]
-    risk_review_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "requires_history_risk_review"][:4]
-    pending_t_plus_2_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "await_peer_t_plus_2_close"][:4]
-    focus = entries[0] if entries else {}
+
+def _select_gate_focus_entry(
+    entries: list[dict[str, Any]],
+    *,
+    proof_board: dict[str, Any],
+    selected_contract_verdict: str,
+) -> dict[str, Any]:
+    if not entries:
+        return {}
+    proof_focus_ticker = str(proof_board.get("focus_ticker") or "").strip()
+    if proof_focus_ticker:
+        for entry in entries:
+            if str(entry.get("ticker") or "").strip() == proof_focus_ticker:
+                return entry
+    if selected_contract_verdict not in {"next_close_violated", "t_plus_2_violated"}:
+        return entries[0]
+    return entries[0]
+
+
+def _prioritize_focus_ticker(tickers: list[str], focus_ticker: str, *, limit: int = 4) -> list[str]:
+    normalized_focus_ticker = str(focus_ticker or "").strip()
+    ordered = [str(ticker).strip() for ticker in tickers if str(ticker).strip()]
+    if normalized_focus_ticker and normalized_focus_ticker in ordered:
+        ordered = [normalized_focus_ticker] + [ticker for ticker in ordered if ticker != normalized_focus_ticker]
+    return ordered[:limit]
+
+
+def _build_peer_promotion_gate_analysis(
+    *,
+    proof_board: dict[str, Any],
+    selected_focus: dict[str, Any],
+    selected_contract_verdict: str,
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    focus = _select_gate_focus_entry(
+        entries,
+        proof_board=proof_board,
+        selected_contract_verdict=selected_contract_verdict,
+    )
+    focus_ticker = str(focus.get("ticker") or "").strip()
+    ready_tickers = _prioritize_focus_ticker(
+        [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "promotion_gate_ready"],
+        focus_ticker,
+    )
+    blocked_open_tickers = _prioritize_focus_ticker(
+        [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "blocked_selected_contract_open"],
+        focus_ticker,
+    )
+    risk_review_tickers = _prioritize_focus_ticker(
+        [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "requires_history_risk_review"],
+        focus_ticker,
+    )
+    pending_t_plus_2_tickers = _prioritize_focus_ticker(
+        [str(entry.get("ticker") or "") for entry in entries if str(entry.get("gate_verdict") or "") == "await_peer_t_plus_2_close"],
+        focus_ticker,
+    )
 
     recommendation_parts: list[str] = []
     if ready_tickers:
@@ -130,7 +193,6 @@ def analyze_btst_carryover_peer_promotion_gate(
     recommendation_parts.append(
         f"formal selected {selected_focus.get('ticker') or proof_board.get('selected_ticker')} 当前 contract={selected_contract_verdict or 'pending_next_day'}。"
     )
-
     return {
         "selected_ticker": selected_focus.get("ticker") or proof_board.get("selected_ticker"),
         "selected_trade_date": selected_focus.get("trade_date") or proof_board.get("selected_trade_date"),

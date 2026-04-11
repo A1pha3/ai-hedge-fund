@@ -32,12 +32,12 @@ def _resolve_focus_dossier_path(reports_dir: Path, focus_ticker: str, focus_doss
     return candidate_path if candidate_path.exists() else None
 
 
-def generate_btst_default_merge_review(
+def _load_default_merge_review_inputs(
     *,
-    manifest_path: str | Path = DEFAULT_MANIFEST_PATH,
-    promotion_review_path: str | Path = DEFAULT_PROMOTION_REVIEW_PATH,
-    governance_board_path: str | Path = DEFAULT_GOVERNANCE_BOARD_PATH,
-    focus_dossier_path: str | Path | None = None,
+    manifest_path: str | Path,
+    promotion_review_path: str | Path,
+    governance_board_path: str | Path,
+    focus_dossier_path: str | Path | None,
 ) -> dict[str, Any]:
     manifest = _load_optional_json(manifest_path)
     promotion_review = _load_optional_json(promotion_review_path)
@@ -51,29 +51,22 @@ def generate_btst_default_merge_review(
     ).strip()
     resolved_focus_dossier_path = _resolve_focus_dossier_path(Path(manifest_path).expanduser().resolve().parent, focus_ticker, focus_dossier_path)
     focus_dossier = _load_optional_json(resolved_focus_dossier_path)
-    objective_support = dict(focus_dossier.get("governance_objective_support") or {})
+    return {
+        "manifest": manifest,
+        "manifest_path": Path(manifest_path).expanduser().resolve(),
+        "promotion_review": promotion_review,
+        "promotion_review_path": Path(promotion_review_path).expanduser().resolve(),
+        "governance_board": governance_board,
+        "governance_board_path": Path(governance_board_path).expanduser().resolve(),
+        "continuation_summary": continuation_summary,
+        "focus_ticker": focus_ticker,
+        "resolved_focus_dossier_path": resolved_focus_dossier_path,
+        "focus_dossier": focus_dossier,
+        "objective_support": dict(focus_dossier.get("governance_objective_support") or {}),
+    }
 
-    promotion_review_verdict = str(promotion_review.get("promotion_review_verdict") or "").strip()
-    governance_status = str(governance_board.get("governance_status") or "").strip()
-    summary_verdict = str(continuation_summary.get("promotion_merge_review_verdict") or "").strip()
-    ready = summary_verdict == "ready_for_default_btst_merge_review"
 
-    blockers = [
-        *[str(item) for item in list(continuation_summary.get("unresolved_requirements") or []) if str(item).strip()],
-        *[str(item) for item in list(promotion_review.get("promotion_blockers") or []) if str(item).strip()],
-    ]
-    if ready:
-        blockers = []
-
-    recommendation = (
-        f"{focus_ticker} 已满足 continuation -> default BTST merge review 的前置条件。"
-        f" observed_windows={continuation_summary.get('observed_independent_window_count')}, "
-        f"positive_rate_delta={continuation_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')}, "
-        f"mean_return_delta={continuation_summary.get('t_plus_2_mean_return_delta_vs_default_btst')}。"
-        " 建议把这条 continuation edge 直接升级到 default BTST merge review，并优先审阅其 counterfactual uplift。"
-        if ready and focus_ticker
-        else "当前没有 continuation 焦点票进入 default BTST merge review；继续保持 continuation lane 独立治理。"
-    )
+def _build_counterfactual_validation(continuation_summary: dict[str, Any]) -> dict[str, Any]:
     required_positive_rate_delta = continuation_summary.get("required_positive_rate_delta_vs_default_btst")
     required_mean_return_delta = continuation_summary.get("required_mean_return_delta_vs_default_btst")
     positive_rate_delta = continuation_summary.get("t_plus_2_positive_rate_delta_vs_default_btst")
@@ -94,7 +87,7 @@ def generate_btst_default_merge_review(
         counterfactual_verdict = "supports_default_btst_merge"
     else:
         counterfactual_verdict = "fails_default_btst_merge_threshold"
-    counterfactual_validation = {
+    return {
         "counterfactual_verdict": counterfactual_verdict,
         "required_positive_rate_delta_vs_default_btst": required_positive_rate_delta,
         "required_mean_return_delta_vs_default_btst": required_mean_return_delta,
@@ -112,16 +105,58 @@ def generate_btst_default_merge_review(
         "target_independent_window_count": continuation_summary.get("target_independent_window_count"),
     }
 
+
+def _resolve_default_merge_review_state(inputs: dict[str, Any]) -> dict[str, Any]:
+    continuation_summary = inputs["continuation_summary"]
+    promotion_review = inputs["promotion_review"]
+    governance_board = inputs["governance_board"]
+    focus_ticker = inputs["focus_ticker"]
+    summary_verdict = str(continuation_summary.get("promotion_merge_review_verdict") or "").strip()
+    ready = summary_verdict == "ready_for_default_btst_merge_review"
+    blockers = [
+        *[str(item) for item in list(continuation_summary.get("unresolved_requirements") or []) if str(item).strip()],
+        *[str(item) for item in list(promotion_review.get("promotion_blockers") or []) if str(item).strip()],
+    ]
+    if ready:
+        blockers = []
     return {
-        "focus_ticker": focus_ticker or None,
-        "merge_review_verdict": "ready_for_default_btst_merge_review" if ready and focus_ticker else "hold_continuation_lane",
-        "operator_action": "review_default_btst_merge" if ready and focus_ticker else "hold_continuation_lane",
-        "promotion_path_status": continuation_summary.get("promotion_path_status"),
-        "promotion_merge_review_verdict": summary_verdict or None,
-        "promotion_review_verdict": promotion_review_verdict or None,
-        "governance_status": governance_status or None,
-        "governance_blocker": governance_board.get("promotion_blocker"),
+        "focus_ticker": focus_ticker,
+        "promotion_review_verdict": str(promotion_review.get("promotion_review_verdict") or "").strip(),
+        "governance_status": str(governance_board.get("governance_status") or "").strip(),
+        "summary_verdict": summary_verdict,
+        "ready": ready,
         "blockers": blockers,
+    }
+
+
+def _build_default_merge_review_analysis(
+    inputs: dict[str, Any],
+    review_state: dict[str, Any],
+    counterfactual_validation: dict[str, Any],
+) -> dict[str, Any]:
+    continuation_summary = inputs["continuation_summary"]
+    focus_dossier = inputs["focus_dossier"]
+    objective_support = inputs["objective_support"]
+    governance_board = inputs["governance_board"]
+    recommendation = (
+        f"{review_state['focus_ticker']} 已满足 continuation -> default BTST merge review 的前置条件。"
+        f" observed_windows={continuation_summary.get('observed_independent_window_count')}, "
+        f"positive_rate_delta={continuation_summary.get('t_plus_2_positive_rate_delta_vs_default_btst')}, "
+        f"mean_return_delta={continuation_summary.get('t_plus_2_mean_return_delta_vs_default_btst')}。"
+        " 建议把这条 continuation edge 直接升级到 default BTST merge review，并优先审阅其 counterfactual uplift。"
+        if review_state["ready"] and review_state["focus_ticker"]
+        else "当前没有 continuation 焦点票进入 default BTST merge review；继续保持 continuation lane 独立治理。"
+    )
+    return {
+        "focus_ticker": review_state["focus_ticker"] or None,
+        "merge_review_verdict": "ready_for_default_btst_merge_review" if review_state["ready"] and review_state["focus_ticker"] else "hold_continuation_lane",
+        "operator_action": "review_default_btst_merge" if review_state["ready"] and review_state["focus_ticker"] else "hold_continuation_lane",
+        "promotion_path_status": continuation_summary.get("promotion_path_status"),
+        "promotion_merge_review_verdict": review_state["summary_verdict"] or None,
+        "promotion_review_verdict": review_state["promotion_review_verdict"] or None,
+        "governance_status": review_state["governance_status"] or None,
+        "governance_blocker": governance_board.get("promotion_blocker"),
+        "blockers": review_state["blockers"],
         "qualifying_window_buckets": list(continuation_summary.get("qualifying_window_buckets") or []),
         "observed_independent_window_count": continuation_summary.get("observed_independent_window_count"),
         "weighted_observed_window_credit": continuation_summary.get("weighted_observed_window_credit"),
@@ -129,8 +164,8 @@ def generate_btst_default_merge_review(
         "candidate_dossier_current_plan_visibility_gap_trade_dates": continuation_summary.get("candidate_dossier_current_plan_visibility_gap_trade_dates"),
         "t_plus_2_positive_rate_delta_vs_default_btst": continuation_summary.get("t_plus_2_positive_rate_delta_vs_default_btst"),
         "t_plus_2_mean_return_delta_vs_default_btst": continuation_summary.get("t_plus_2_mean_return_delta_vs_default_btst"),
-        "required_positive_rate_delta_vs_default_btst": required_positive_rate_delta,
-        "required_mean_return_delta_vs_default_btst": required_mean_return_delta,
+        "required_positive_rate_delta_vs_default_btst": counterfactual_validation.get("required_positive_rate_delta_vs_default_btst"),
+        "required_mean_return_delta_vs_default_btst": counterfactual_validation.get("required_mean_return_delta_vs_default_btst"),
         "counterfactual_validation": counterfactual_validation,
         "latest_followup_decision": focus_dossier.get("latest_followup_decision"),
         "downstream_followup_status": focus_dossier.get("downstream_followup_status"),
@@ -138,12 +173,30 @@ def generate_btst_default_merge_review(
         "focus_support_verdict": objective_support.get("support_verdict"),
         "recommendation": recommendation,
         "source_reports": {
-            "manifest": str(Path(manifest_path).expanduser().resolve()),
-            "promotion_review": str(Path(promotion_review_path).expanduser().resolve()),
-            "governance_board": str(Path(governance_board_path).expanduser().resolve()),
-            "focus_dossier": str(resolved_focus_dossier_path) if resolved_focus_dossier_path is not None else None,
+            "manifest": str(inputs["manifest_path"]),
+            "promotion_review": str(inputs["promotion_review_path"]),
+            "governance_board": str(inputs["governance_board_path"]),
+            "focus_dossier": str(inputs["resolved_focus_dossier_path"]) if inputs["resolved_focus_dossier_path"] is not None else None,
         },
     }
+
+
+def generate_btst_default_merge_review(
+    *,
+    manifest_path: str | Path = DEFAULT_MANIFEST_PATH,
+    promotion_review_path: str | Path = DEFAULT_PROMOTION_REVIEW_PATH,
+    governance_board_path: str | Path = DEFAULT_GOVERNANCE_BOARD_PATH,
+    focus_dossier_path: str | Path | None = None,
+) -> dict[str, Any]:
+    inputs = _load_default_merge_review_inputs(
+        manifest_path=manifest_path,
+        promotion_review_path=promotion_review_path,
+        governance_board_path=governance_board_path,
+        focus_dossier_path=focus_dossier_path,
+    )
+    review_state = _resolve_default_merge_review_state(inputs)
+    counterfactual_validation = _build_counterfactual_validation(inputs["continuation_summary"])
+    return _build_default_merge_review_analysis(inputs, review_state, counterfactual_validation)
 
 
 def render_btst_default_merge_review_markdown(analysis: dict[str, Any]) -> str:

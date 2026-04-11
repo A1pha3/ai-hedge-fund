@@ -581,6 +581,43 @@ def test_build_selected_outcome_refresh_summary(tmp_path: Path) -> None:
     assert summary["focus_overall_contract_verdict"] is None
 
 
+def test_build_selected_outcome_refresh_summary_prefers_violated_focus(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_selected_outcome_refresh_board_latest.json",
+        {
+            "trade_date": "2026-04-09",
+            "selected_count": 2,
+            "current_cycle_status_counts": {"t_plus_2_closed": 1, "t1_only": 1},
+            "entries": [
+                {
+                    "ticker": "600111",
+                    "current_cycle_status": "t_plus_2_closed",
+                    "current_data_status": "closed_cycle_complete",
+                    "overall_contract_verdict": "t_plus_2_confirmed",
+                    "score_target": 0.52,
+                },
+                {
+                    "ticker": "002001",
+                    "current_cycle_status": "t1_only",
+                    "current_data_status": "next_day_bar_loaded",
+                    "next_day_contract_verdict": "violated_positive_expectation",
+                    "t_plus_2_contract_verdict": "pending_t_plus_2",
+                    "overall_contract_verdict": "next_close_violated",
+                    "score_target": 0.4493,
+                },
+            ],
+            "recommendation": "selected contract violated",
+        },
+    )
+
+    summary = _build_selected_outcome_refresh_summary(reports_root)
+
+    assert summary["focus_ticker"] == "002001"
+    assert summary["focus_cycle_status"] == "t1_only"
+    assert summary["focus_overall_contract_verdict"] == "next_close_violated"
+
+
 def test_build_carryover_multiday_continuation_audit_summary(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     _write_json(
@@ -588,6 +625,17 @@ def test_build_carryover_multiday_continuation_audit_summary(tmp_path: Path) -> 
         {
             "selected_ticker": "002001",
             "selected_trade_date": "2026-04-09",
+            "selected_preferred_entry_mode": "confirm_then_hold_breakout",
+            "selected_current_contract_status": "formal_selected",
+            "selected_current_data_status": "ok",
+            "selected_current_cycle_status": "t_plus_4_closed",
+            "selected_current_next_trade_date": "2026-04-10",
+            "selected_current_next_close_return": 0.045,
+            "selected_current_t_plus_2_close_return": 0.0029,
+            "selected_trade_anchor_date": "2026-04-09",
+            "selected_trade_date_was_non_trading": False,
+            "selected_execution_quality_label": "close_continuation",
+            "selected_entry_timing_bias": "confirm_then_hold",
             "supportive_case_count": 3,
             "peer_status_counts": {"broad_family_only": 2, "same_ticker_ready": 1},
             "selected_historical_proof_summary": {
@@ -603,7 +651,7 @@ def test_build_carryover_multiday_continuation_audit_summary(tmp_path: Path) -> 
                 "selected_path_t2_bias_only": True,
                 "broad_family_only_multiday_unsupported": True,
                 "aligned_peer_multiday_ready": False,
-                "open_selected_case_count": 1,
+                "open_selected_case_count": 0,
             },
             "policy_recommendations": ["keep T+2 bias"],
             "recommendation": "keep T+2 bias",
@@ -613,6 +661,17 @@ def test_build_carryover_multiday_continuation_audit_summary(tmp_path: Path) -> 
     summary = _build_carryover_multiday_continuation_audit_summary(reports_root)
 
     assert summary["selected_ticker"] == "002001"
+    assert summary["selected_preferred_entry_mode"] == "confirm_then_hold_breakout"
+    assert summary["selected_current_contract_status"] == "formal_selected"
+    assert summary["selected_current_data_status"] == "ok"
+    assert summary["selected_current_cycle_status"] == "t_plus_4_closed"
+    assert summary["selected_current_next_trade_date"] == "2026-04-10"
+    assert summary["selected_current_next_close_return"] == 0.045
+    assert summary["selected_current_t_plus_2_close_return"] == 0.0029
+    assert summary["selected_trade_anchor_date"] == "2026-04-09"
+    assert summary["selected_trade_date_was_non_trading"] is False
+    assert summary["selected_execution_quality_label"] == "close_continuation"
+    assert summary["selected_entry_timing_bias"] == "confirm_then_hold"
     assert summary["selected_path_t2_bias_only"] is True
     assert summary["broad_family_only_multiday_unsupported"] is True
     assert summary["selected_t_plus_3_close_positive_rate"] == 0.0
@@ -727,6 +786,69 @@ def test_build_carryover_aligned_peer_proof_summary(tmp_path: Path) -> None:
     assert summary["risk_review_tickers"] == ["688498"]
 
 
+def test_build_carryover_aligned_peer_proof_summary_aligns_focus_recommendation(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_carryover_aligned_peer_proof_board_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_cycle_status": "t1_only",
+            "selected_contract_verdict": "next_close_violated",
+            "focus_ticker": "300620",
+            "focus_proof_verdict": "pending_t_plus_2_close",
+            "focus_promotion_review_verdict": "await_t_plus_2_close",
+            "entries": [
+                {"ticker": "688498", "recommendation": "688498 recommendation"},
+                {"ticker": "300620", "recommendation": "300620 recommendation"},
+            ],
+            "recommendation": "proof summary recommendation",
+        },
+    )
+
+    summary = _build_carryover_aligned_peer_proof_summary(reports_root)
+
+    assert summary["focus_ticker"] == "300620"
+    assert summary["focus_recommendation"] == "300620 recommendation"
+
+
+def test_build_carryover_aligned_peer_proof_summary_overrides_stale_selected_fields_from_refresh_board(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_selected_outcome_refresh_board_latest.json",
+        {
+            "trade_date": "2026-04-06",
+            "entries": [
+                {
+                    "ticker": "300720",
+                    "current_cycle_status": "t_plus_4_closed",
+                    "overall_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+                }
+            ],
+        },
+    )
+    _write_json(
+        reports_root / "btst_carryover_aligned_peer_proof_board_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_trade_date": "2026-04-09",
+            "selected_cycle_status": "t1_only",
+            "selected_contract_verdict": "next_close_violated",
+            "focus_ticker": "300620",
+            "focus_proof_verdict": "pending_t_plus_2_close",
+            "focus_promotion_review_verdict": "await_t_plus_2_close",
+            "entries": [{"ticker": "300620", "recommendation": "300620 recommendation"}],
+            "recommendation": "proof summary recommendation",
+        },
+    )
+
+    summary = _build_carryover_aligned_peer_proof_summary(reports_root)
+
+    assert summary["selected_ticker"] == "300720"
+    assert summary["selected_trade_date"] == "2026-04-06"
+    assert summary["selected_cycle_status"] == "t_plus_4_closed"
+    assert summary["selected_contract_verdict"] == "t_plus_2_observed_without_positive_expectation"
+
+
 def test_build_carryover_peer_promotion_gate_summary(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     _write_json(
@@ -760,6 +882,65 @@ def test_build_carryover_peer_promotion_gate_summary(tmp_path: Path) -> None:
     assert summary["focus_gate_verdict"] == "blocked_selected_contract_open"
     assert summary["blocked_open_tickers"] == ["301396"]
     assert summary["pending_t_plus_2_tickers"] == ["300408"]
+
+
+def test_build_carryover_peer_promotion_gate_summary_aligns_focus_recommendation(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_carryover_peer_promotion_gate_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_trade_date": "2026-04-09",
+            "selected_contract_verdict": "next_close_violated",
+            "focus_ticker": "300620",
+            "focus_gate_verdict": "blocked_selected_contract_violated",
+            "entries": [
+                {"ticker": "688498", "gate_verdict": "blocked_selected_contract_violated", "recommendation": "688498 recommendation"},
+                {"ticker": "300620", "gate_verdict": "blocked_selected_contract_violated", "recommendation": "300620 recommendation"},
+            ],
+            "recommendation": "gate summary recommendation",
+        },
+    )
+
+    summary = _build_carryover_peer_promotion_gate_summary(reports_root)
+
+    assert summary["focus_ticker"] == "300620"
+    assert summary["focus_recommendation"] == "300620 recommendation"
+
+
+def test_build_carryover_peer_promotion_gate_summary_overrides_stale_selected_fields_from_refresh_board(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    _write_json(
+        reports_root / "btst_selected_outcome_refresh_board_latest.json",
+        {
+            "trade_date": "2026-04-06",
+            "entries": [
+                {
+                    "ticker": "300720",
+                    "current_cycle_status": "t_plus_4_closed",
+                    "overall_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+                }
+            ],
+        },
+    )
+    _write_json(
+        reports_root / "btst_carryover_peer_promotion_gate_latest.json",
+        {
+            "selected_ticker": "002001",
+            "selected_trade_date": "2026-04-09",
+            "selected_contract_verdict": "next_close_violated",
+            "focus_ticker": "300620",
+            "focus_gate_verdict": "blocked_selected_contract_violated",
+            "entries": [{"ticker": "300620", "gate_verdict": "blocked_selected_contract_violated", "recommendation": "300620 recommendation"}],
+            "recommendation": "gate summary recommendation",
+        },
+    )
+
+    summary = _build_carryover_peer_promotion_gate_summary(reports_root)
+
+    assert summary["selected_ticker"] == "300720"
+    assert summary["selected_trade_date"] == "2026-04-06"
+    assert summary["selected_contract_verdict"] == "t_plus_2_observed_without_positive_expectation"
 
 
 def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:
@@ -1601,6 +1782,10 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert "historical_shadow_probe_tickers" in refresh["candidate_pool_upstream_handoff_board_summary"]
     assert refresh["candidate_pool_corridor_uplift_runbook_status"] in {"ready_for_upstream_uplift_probe", "skipped_no_corridor_probe"}
     assert refresh["candidate_pool_corridor_uplift_runbook_summary"]["runbook_status"] == refresh["candidate_pool_corridor_uplift_runbook_status"]
+    assert "prototype_type" in refresh["candidate_pool_corridor_uplift_runbook_summary"]
+    assert "execution_step_head" in refresh["candidate_pool_corridor_uplift_runbook_summary"]
+    assert "guardrail_head" in refresh["candidate_pool_corridor_uplift_runbook_summary"]
+    assert "excluded_low_gate_tail_tickers" in refresh["candidate_pool_corridor_uplift_runbook_summary"]
     assert result["manifest"]["continuation_focus_summary"]["focus_ticker"] == "300720"
     assert result["manifest"]["continuation_focus_summary"]["promotion_review_verdict"] == "watch_review_ready"
     assert result["manifest"]["continuation_focus_summary"]["focus_watch_validation_status"] is None

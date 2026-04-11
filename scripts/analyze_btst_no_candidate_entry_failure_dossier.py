@@ -15,6 +15,7 @@ DEFAULT_TRADEABLE_OPPORTUNITY_POOL_PATH = REPORTS_DIR / "btst_tradeable_opportun
 DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "btst_no_candidate_entry_action_board_latest.json"
 DEFAULT_REPLAY_BUNDLE_PATH = REPORTS_DIR / "btst_no_candidate_entry_replay_bundle_latest.json"
 DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH = REPORTS_DIR / "btst_watchlist_recall_dossier_latest.json"
+DEFAULT_CORRIDOR_SHADOW_PACK_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_no_candidate_entry_failure_dossier_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_no_candidate_entry_failure_dossier_latest.md"
 DEFAULT_PRIORITY_LIMIT = 5
@@ -65,6 +66,47 @@ def _unique_strings(values: list[Any]) -> list[str]:
         seen.add(token)
         ordered.append(token)
     return ordered
+
+
+def _extract_corridor_primary_shadow_ticker(corridor_shadow_pack: dict[str, Any]) -> str | None:
+    if str(corridor_shadow_pack.get("shadow_status") or "").strip() != "ready_for_primary_shadow_replay":
+        return None
+    primary_shadow_replay = corridor_shadow_pack.get("primary_shadow_replay")
+    if isinstance(primary_shadow_replay, dict):
+        ticker = str(primary_shadow_replay.get("ticker") or "").strip()
+        return ticker or None
+    if isinstance(primary_shadow_replay, str):
+        ticker = str(primary_shadow_replay).strip()
+        return ticker or None
+    if isinstance(primary_shadow_replay, list) and primary_shadow_replay:
+        first_row = primary_shadow_replay[0]
+        if isinstance(first_row, dict):
+            ticker = str(first_row.get("ticker") or "").strip()
+            return ticker or None
+        ticker = str(first_row).strip()
+        return ticker or None
+    return None
+
+
+def _promote_corridor_primary_priority_rows(priority_rows: list[dict[str, Any]], corridor_primary_ticker: str | None) -> list[dict[str, Any]]:
+    focus_ticker = str(corridor_primary_ticker or "").strip()
+    reordered_rows = [dict(row) for row in priority_rows if str(row.get("ticker") or "").strip()]
+    if not focus_ticker:
+        return reordered_rows
+
+    match_index = next((index for index, row in enumerate(reordered_rows) if str(row.get("ticker") or "").strip() == focus_ticker), None)
+    if match_index is None:
+        return reordered_rows
+
+    promoted_row = reordered_rows.pop(match_index)
+    promoted_row["priority_rank"] = 1
+    promoted_row["priority_governance"] = "corridor_primary_shadow_replay_promoted"
+    reordered_rows.insert(0, promoted_row)
+    for index, row in enumerate(reordered_rows, start=1):
+        row["priority_rank"] = index
+        if index != 1 and row.get("priority_governance") == "corridor_primary_shadow_replay_promoted":
+            row.pop("priority_governance", None)
+    return reordered_rows
 
 
 def _build_priority_rows(action_board: dict[str, Any], tradeable_pool: dict[str, Any], *, priority_limit: int) -> list[dict[str, Any]]:
@@ -951,6 +993,7 @@ def analyze_btst_no_candidate_entry_failure_dossier(
     action_board_path: str | Path | None = None,
     replay_bundle_path: str | Path | None = None,
     watchlist_recall_dossier_path: str | Path | None = None,
+    corridor_shadow_pack_path: str | Path | None = None,
     priority_limit: int = DEFAULT_PRIORITY_LIMIT,
     hotspot_limit: int = DEFAULT_HOTSPOT_LIMIT,
 ) -> dict[str, Any]:
@@ -961,12 +1004,17 @@ def analyze_btst_no_candidate_entry_failure_dossier(
     if watchlist_recall_dossier_path is None:
         watchlist_recall_dossier_path = DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH
     watchlist_recall_dossier = _safe_load_json(watchlist_recall_dossier_path)
+    if corridor_shadow_pack_path is None:
+        corridor_shadow_pack_path = DEFAULT_CORRIDOR_SHADOW_PACK_PATH
+    corridor_shadow_pack = _safe_load_json(corridor_shadow_pack_path)
     reports_root = Path(
         action_board.get("reports_root")
         or resolved_tradeable_pool_path.parent
     ).expanduser().resolve()
     no_candidate_rows = _collect_no_candidate_rows(tradeable_pool)
     priority_rows = _build_priority_rows(action_board, tradeable_pool, priority_limit=max(int(priority_limit), 0))
+    corridor_primary_shadow_ticker = _extract_corridor_primary_shadow_ticker(corridor_shadow_pack)
+    priority_rows = _promote_corridor_primary_priority_rows(priority_rows, corridor_primary_shadow_ticker)
     hotspot_rows = _build_hotspot_rows(action_board, hotspot_limit=max(int(hotspot_limit), 0))
     watchlist_recall_stage_map = _build_watchlist_recall_stage_map(watchlist_recall_dossier)
     report_cache: dict[str, dict[str, Any]] = {}
@@ -1049,9 +1097,11 @@ def analyze_btst_no_candidate_entry_failure_dossier(
         "action_board_path": Path(action_board_path).expanduser().resolve().as_posix() if action_board_path else None,
         "replay_bundle_path": Path(replay_bundle_path).expanduser().resolve().as_posix() if replay_bundle_path else None,
         "watchlist_recall_dossier_path": Path(watchlist_recall_dossier_path).expanduser().resolve().as_posix() if watchlist_recall_dossier_path else None,
+        "corridor_shadow_pack_path": Path(corridor_shadow_pack_path).expanduser().resolve().as_posix() if corridor_shadow_pack_path else None,
         "reports_root": reports_root.as_posix(),
         "priority_limit": max(int(priority_limit), 0),
         "hotspot_limit": max(int(hotspot_limit), 0),
+        "corridor_primary_shadow_ticker": corridor_primary_shadow_ticker,
         "priority_failure_class_counts": dict(priority_failure_class_counts.most_common()),
         "hotspot_failure_class_counts": dict(hotspot_failure_class_counts.most_common()),
         "priority_handoff_stage_counts": priority_handoff_stage_counts,
@@ -1119,6 +1169,7 @@ def main() -> None:
     parser.add_argument("--action-board", default=str(DEFAULT_ACTION_BOARD_PATH))
     parser.add_argument("--replay-bundle", default=str(DEFAULT_REPLAY_BUNDLE_PATH))
     parser.add_argument("--watchlist-recall-dossier", default=str(DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH))
+    parser.add_argument("--corridor-shadow-pack", default=str(DEFAULT_CORRIDOR_SHADOW_PACK_PATH))
     parser.add_argument("--priority-limit", type=int, default=DEFAULT_PRIORITY_LIMIT)
     parser.add_argument("--hotspot-limit", type=int, default=DEFAULT_HOTSPOT_LIMIT)
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
@@ -1130,6 +1181,7 @@ def main() -> None:
         action_board_path=args.action_board or None,
         replay_bundle_path=args.replay_bundle or None,
         watchlist_recall_dossier_path=args.watchlist_recall_dossier or None,
+        corridor_shadow_pack_path=args.corridor_shadow_pack or None,
         priority_limit=args.priority_limit,
         hotspot_limit=args.hotspot_limit,
     )

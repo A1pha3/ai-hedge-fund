@@ -72,3 +72,28 @@ def test_analyze_btst_tplus2_continuation_peer_rollup_detects_near_cluster_break
     assert "# BTST T+2 Continuation Peer Rollup" in markdown
     assert "600989" in markdown
     assert "000792" in markdown
+
+
+def test_analyze_btst_tplus2_continuation_peer_rollup_threads_summary_payload(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+
+    monkeypatch.setattr(
+        peer_rollup,
+        "generate_btst_tplus2_continuation_expansion_board",
+        lambda *_args, **_kwargs: {
+            "strict_peer_count": 1,
+            "near_cluster_count": 2,
+            "observation_candidate_count": 3,
+            "board_rows": [{"ticker": "600989", "tier": "strict_peer"}],
+            "next_validation_candidates": [{"ticker": "000792", "priority_rank": 1}],
+        },
+    )
+
+    analysis = peer_rollup.analyze_btst_tplus2_continuation_peer_rollup(reports_root)
+
+    assert analysis["rollup_verdict"] == "strict_peer_breakthrough"
+    assert analysis["top_candidate"] == {"ticker": "600989", "tier": "strict_peer"}
+    assert analysis["next_validation_candidates"] == [{"ticker": "000792", "priority_rank": 1}]
+    assert analysis["risk_flags"] == []
+    assert "strict-peer quality" in analysis["recommendation"]

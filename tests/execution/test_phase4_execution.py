@@ -2188,6 +2188,50 @@ def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
     }
 
 
+def test_should_release_upstream_shadow_candidate_relaxes_corridor_score_floor_by_default():
+    corridor_result = daily_pipeline_module._should_release_upstream_shadow_candidate(
+        candidate_entry={"candidate_pool_lane": "layer_a_liquidity_corridor"},
+        filter_reason="breakout_freshness_below_short_trade_boundary_floor",
+        metrics_payload={"candidate_score": 0.29},
+        historical_support={},
+    )
+    post_gate_result = daily_pipeline_module._should_release_upstream_shadow_candidate(
+        candidate_entry={"candidate_pool_lane": "post_gate_liquidity_competition"},
+        filter_reason="breakout_freshness_below_short_trade_boundary_floor",
+        metrics_payload={"candidate_score": 0.29},
+        historical_support={},
+    )
+
+    assert corridor_result == (True, "upstream_shadow_release_score_floor_pass")
+    assert post_gate_result == (False, None)
+
+
+def test_select_upstream_shadow_release_entries_respects_lane_caps():
+    original_release_max_tickers = daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_MAX_TICKERS
+    original_lane_max_tickers = dict(daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS)
+    try:
+        daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_MAX_TICKERS = 5
+        daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS = {
+            "layer_a_liquidity_corridor": 2,
+            "post_gate_liquidity_competition": 1,
+        }
+        released_entries = daily_pipeline_module._select_upstream_shadow_release_entries(
+            [
+                (0.92, 0.34, 0.39, {"ticker": "300683", "candidate_pool_lane": "layer_a_liquidity_corridor"}),
+                (0.91, 0.33, 0.38, {"ticker": "688383", "candidate_pool_lane": "layer_a_liquidity_corridor"}),
+                (0.90, 0.32, 0.37, {"ticker": "688796", "candidate_pool_lane": "layer_a_liquidity_corridor"}),
+                (0.89, 0.31, 0.36, {"ticker": "301292", "candidate_pool_lane": "post_gate_liquidity_competition"}),
+                (0.88, 0.30, 0.35, {"ticker": "300720", "candidate_pool_lane": "post_gate_liquidity_competition"}),
+            ]
+        )
+    finally:
+        daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_MAX_TICKERS = original_release_max_tickers
+        daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS = original_lane_max_tickers
+
+    assert [entry["ticker"] for entry in released_entries] == ["300683", "688383", "301292"]
+    assert [entry["rank"] for entry in released_entries] == [1, 2, 3]
+
+
 def test_run_post_market_relaxes_post_gate_shadow_catalyst_relief_thresholds_for_profitability_hard_cliff_sample():
     relief = daily_pipeline_module._build_upstream_shadow_catalyst_relief_config(
         candidate_pool_lane="post_gate_liquidity_competition",
@@ -2744,20 +2788,25 @@ def test_run_post_market_short_trade_only_bridges_close_momentum_catalyst_candid
     assert catalyst_diagnostics["selected_tickers"] == ["000006"]
     assert "close_momentum_catalyst_relief" in catalyst_diagnostics["tickers"][0]["positive_tags"]
     assert catalyst_diagnostics["tickers"][0]["catalyst_theme_metrics"]["close_momentum_catalyst_relief"]["applied"] is True
-    assert "catalyst_theme_short_trade_carryover_candidate" in catalyst_diagnostics["tickers"][0]["candidate_reason_codes"]
-    assert catalyst_diagnostics["tickers"][0]["short_trade_catalyst_relief"] == {
-        "enabled": True,
-        "reason": "catalyst_theme_short_trade_carryover",
-        "catalyst_freshness_floor": 1.0,
-        "near_miss_threshold": 0.44,
-        "breakout_freshness_min": 0.35,
-        "trend_acceleration_min": 0.72,
-        "close_strength_min": 0.85,
-        "require_no_profitability_hard_cliff": True,
-    }
+    assert "catalyst_theme_short_trade_carryover_candidate" not in catalyst_diagnostics["tickers"][0]["candidate_reason_codes"]
+    assert "short_trade_catalyst_relief" not in catalyst_diagnostics["tickers"][0]
     assert "000006" in plan.selection_targets
     assert plan.selection_targets["000006"].candidate_source == "catalyst_theme"
     assert plan.selection_targets["000006"].short_trade is not None
+
+
+def test_build_catalyst_theme_short_trade_carryover_relief_config_requires_higher_candidate_score() -> None:
+    relief = daily_pipeline_module._build_catalyst_theme_short_trade_carryover_relief_config(
+        metrics_payload={
+            "candidate_score": 0.4499,
+            "breakout_freshness": 0.40,
+            "trend_acceleration": 0.80,
+            "close_strength": 0.91,
+            "close_momentum_catalyst_relief": {"applied": True},
+        }
+    )
+
+    assert relief == {}
 
 
 def test_run_post_market_short_trade_only_keeps_fresh_catalyst_theme_candidates_from_getting_carryover_relief():

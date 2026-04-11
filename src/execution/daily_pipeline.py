@@ -101,7 +101,7 @@ SHORT_TRADE_BOUNDARY_TREND_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUN
 SHORT_TRADE_BOUNDARY_VOLUME_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_VOLUME_MIN", 0.15)
 SHORT_TRADE_BOUNDARY_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN", 0.12)
 UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS", 3)
-UPSTREAM_SHADOW_RELEASE_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_MAX_TICKERS", 2)
+UPSTREAM_SHADOW_RELEASE_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_MAX_TICKERS", 5)
 UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN", 0.30)
 UPSTREAM_SHADOW_RELEASE_LANES = _get_env_csv_set(
     "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LANES",
@@ -110,11 +110,21 @@ UPSTREAM_SHADOW_RELEASE_LANES = _get_env_csv_set(
 UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS = {
     "layer_a_liquidity_corridor": _get_env_float(
         "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LIQUIDITY_CORRIDOR_SCORE_MIN",
-        UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+        0.28,
     ),
     "post_gate_liquidity_competition": _get_env_float(
         "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_POST_GATE_REBUCKET_SCORE_MIN",
         UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+    ),
+}
+UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS = {
+    "layer_a_liquidity_corridor": _get_env_int(
+        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LIQUIDITY_CORRIDOR_MAX_TICKERS",
+        4,
+    ),
+    "post_gate_liquidity_competition": _get_env_int(
+        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_POST_GATE_REBUCKET_MAX_TICKERS",
+        1,
     ),
 }
 UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN", 0.47)
@@ -200,9 +210,13 @@ CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN = 0.35
 CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN = 0.72
 CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN = 0.85
 CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN = 0.10
-CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN", 0.43)
+CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN", 0.45)
 CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR", 1.0)
 CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD", 0.44)
+CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT = _get_env_int(
+    "DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT",
+    3,
+)
 CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF = bool(
     _get_env_int("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 1)
 )
@@ -942,6 +956,34 @@ def _should_release_upstream_shadow_candidate(
     return True, "upstream_shadow_release_score_floor_pass"
 
 
+def _resolve_upstream_shadow_release_max_tickers(candidate_pool_lane: str) -> int:
+    return int(UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS.get(candidate_pool_lane, UPSTREAM_SHADOW_RELEASE_MAX_TICKERS))
+
+
+def _select_upstream_shadow_release_entries(
+    ranked_released_shadow_entries: list[tuple[float, float, float, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    ranked_released_shadow_entries.sort(
+        key=lambda row: (*row[:-1], str(row[-1].get("ticker") or "")),
+        reverse=True,
+    )
+    selected_rows: list[tuple[float, float, float, dict[str, Any]]] = []
+    lane_counts: dict[str, int] = {}
+    for row in ranked_released_shadow_entries:
+        entry = row[-1]
+        candidate_pool_lane = str(entry.get("candidate_pool_lane") or "")
+        lane_limit = _resolve_upstream_shadow_release_max_tickers(candidate_pool_lane)
+        if lane_limit <= 0:
+            continue
+        if lane_counts.get(candidate_pool_lane, 0) >= lane_limit:
+            continue
+        selected_rows.append(row)
+        lane_counts[candidate_pool_lane] = lane_counts.get(candidate_pool_lane, 0) + 1
+        if len(selected_rows) >= UPSTREAM_SHADOW_RELEASE_MAX_TICKERS:
+            break
+    return rank_scored_entries(selected_rows, limit=len(selected_rows))
+
+
 def _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(candidate_pool_lane: str) -> bool:
     return bool(
         UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_BY_LANE.get(
@@ -1054,6 +1096,7 @@ def _build_catalyst_theme_short_trade_carryover_relief_config(*, metrics_payload
         "breakout_freshness_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN, 4),
         "trend_acceleration_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN, 4),
         "close_strength_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN, 4),
+        "min_historical_evaluable_count": int(CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT),
         "require_no_profitability_hard_cliff": CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
     }
 
@@ -1236,7 +1279,7 @@ def _build_short_trade_candidate_diagnostics(
 
     shadow_observation_entries.extend(rank_scored_entries(ranked_shadow_observations, limit=UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS))
 
-    released_shadow_entries.extend(rank_scored_entries(ranked_released_shadow_entries, limit=UPSTREAM_SHADOW_RELEASE_MAX_TICKERS))
+    released_shadow_entries.extend(_select_upstream_shadow_release_entries(ranked_released_shadow_entries))
 
     return {
         "upstream_candidate_count": len(upstream_candidates),
@@ -1268,6 +1311,10 @@ def _build_short_trade_candidate_diagnostics(
             "upstream_shadow_release_lane_score_mins": {
                 lane: round(float(score_min), 4)
                 for lane, score_min in UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.items()
+            },
+            "upstream_shadow_release_lane_max_tickers": {
+                lane: int(limit)
+                for lane, limit in UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS.items()
             },
         },
         "selected_tickers": [entry["ticker"] for entry in entries],
@@ -1581,6 +1628,7 @@ def _build_catalyst_theme_candidate_diagnostics(
             "short_trade_carryover_candidate_score_min": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN, 4),
             "short_trade_carryover_catalyst_freshness_floor": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR, 4),
             "short_trade_carryover_near_miss_threshold": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD, 4),
+            "short_trade_carryover_min_historical_evaluable_count": int(CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT),
             "short_trade_carryover_require_no_profitability_hard_cliff": CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
         },
         "selected_tickers": [entry["ticker"] for entry in entries],

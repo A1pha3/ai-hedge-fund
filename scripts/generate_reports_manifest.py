@@ -138,6 +138,7 @@ from scripts.run_btst_candidate_pool_rebucket_comparison_bundle import (
     analyze_btst_candidate_pool_rebucket_comparison_bundle,
     render_btst_candidate_pool_rebucket_comparison_bundle_markdown,
 )
+from scripts.btst_selected_focus import pick_selected_focus_entry
 from scripts.validate_btst_governance_consistency import (
     render_btst_governance_validation_markdown,
     validate_btst_governance_consistency,
@@ -157,6 +158,15 @@ def _optional_report_json(path: str | Path | None) -> dict[str, Any]:
         return {}
     payload = _load_json(resolved)
     return payload if isinstance(payload, dict) else {}
+
+
+def _find_focus_entry(entries: list[dict[str, Any]], focus_ticker: Any) -> dict[str, Any]:
+    focus_ticker_str = str(focus_ticker or "").strip()
+    if focus_ticker_str:
+        for entry in entries:
+            if str((entry or {}).get("ticker") or "").strip() == focus_ticker_str:
+                return dict(entry or {})
+    return dict(entries[0] or {}) if entries else {}
 
 
 def _build_continuation_focus_summary(reports_root: Path) -> dict[str, Any]:
@@ -707,7 +717,7 @@ def _build_selected_outcome_refresh_summary(reports_root: Path) -> dict[str, Any
     if not refresh_board:
         return {}
     entries = [dict(entry or {}) for entry in list(refresh_board.get("entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = pick_selected_focus_entry(entries)
     return {
         "trade_date": refresh_board.get("trade_date"),
         "selected_count": refresh_board.get("selected_count"),
@@ -736,6 +746,17 @@ def _build_carryover_multiday_continuation_audit_summary(reports_root: Path) -> 
     return {
         "selected_ticker": audit.get("selected_ticker"),
         "selected_trade_date": audit.get("selected_trade_date"),
+        "selected_preferred_entry_mode": audit.get("selected_preferred_entry_mode"),
+        "selected_current_contract_status": audit.get("selected_current_contract_status"),
+        "selected_current_data_status": audit.get("selected_current_data_status"),
+        "selected_current_cycle_status": audit.get("selected_current_cycle_status"),
+        "selected_current_next_trade_date": audit.get("selected_current_next_trade_date"),
+        "selected_current_next_close_return": audit.get("selected_current_next_close_return"),
+        "selected_current_t_plus_2_close_return": audit.get("selected_current_t_plus_2_close_return"),
+        "selected_trade_anchor_date": audit.get("selected_trade_anchor_date"),
+        "selected_trade_date_was_non_trading": audit.get("selected_trade_date_was_non_trading"),
+        "selected_execution_quality_label": audit.get("selected_execution_quality_label"),
+        "selected_entry_timing_bias": audit.get("selected_entry_timing_bias"),
         "supportive_case_count": audit.get("supportive_case_count"),
         "peer_status_counts": dict(audit.get("peer_status_counts") or {}),
         "selected_path_t2_bias_only": policy_checks.get("selected_path_t2_bias_only"),
@@ -757,7 +778,7 @@ def _build_carryover_aligned_peer_harvest_summary(reports_root: Path) -> dict[st
     if not harvest:
         return {}
     entries = [dict(entry or {}) for entry in list(harvest.get("harvest_entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = _find_focus_entry(entries, harvest.get("focus_ticker"))
     fresh_open_cycle_tickers = [
         str(entry.get("ticker") or "")
         for entry in entries
@@ -785,7 +806,7 @@ def _build_carryover_peer_expansion_summary(reports_root: Path) -> dict[str, Any
     if not expansion:
         return {}
     entries = [dict(entry or {}) for entry in list(expansion.get("entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = _find_focus_entry(entries, expansion.get("focus_ticker"))
     return {
         "selected_ticker": expansion.get("selected_ticker"),
         "selected_path_t2_bias_only": expansion.get("selected_path_t2_bias_only"),
@@ -807,13 +828,14 @@ def _build_carryover_aligned_peer_proof_summary(reports_root: Path) -> dict[str,
     proof_board = _optional_report_json(reports_root / "btst_carryover_aligned_peer_proof_board_latest.json")
     if not proof_board:
         return {}
+    selected_refresh_summary = _build_selected_outcome_refresh_summary(reports_root)
     entries = [dict(entry or {}) for entry in list(proof_board.get("entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = _find_focus_entry(entries, proof_board.get("focus_ticker"))
     return {
-        "selected_ticker": proof_board.get("selected_ticker"),
-        "selected_trade_date": proof_board.get("selected_trade_date"),
-        "selected_cycle_status": proof_board.get("selected_cycle_status"),
-        "selected_contract_verdict": proof_board.get("selected_contract_verdict"),
+        "selected_ticker": selected_refresh_summary.get("focus_ticker") or proof_board.get("selected_ticker"),
+        "selected_trade_date": selected_refresh_summary.get("trade_date") or proof_board.get("selected_trade_date"),
+        "selected_cycle_status": selected_refresh_summary.get("focus_cycle_status") or proof_board.get("selected_cycle_status"),
+        "selected_contract_verdict": selected_refresh_summary.get("focus_overall_contract_verdict") or proof_board.get("selected_contract_verdict"),
         "peer_count": proof_board.get("peer_count"),
         "proof_verdict_counts": dict(proof_board.get("proof_verdict_counts") or {}),
         "promotion_review_verdict_counts": dict(proof_board.get("promotion_review_verdict_counts") or {}),
@@ -834,12 +856,13 @@ def _build_carryover_peer_promotion_gate_summary(reports_root: Path) -> dict[str
     promotion_gate = _optional_report_json(reports_root / "btst_carryover_peer_promotion_gate_latest.json")
     if not promotion_gate:
         return {}
+    selected_refresh_summary = _build_selected_outcome_refresh_summary(reports_root)
     entries = [dict(entry or {}) for entry in list(promotion_gate.get("entries") or [])]
-    focus_entry = entries[0] if entries else {}
+    focus_entry = _find_focus_entry(entries, promotion_gate.get("focus_ticker"))
     return {
-        "selected_ticker": promotion_gate.get("selected_ticker"),
-        "selected_trade_date": promotion_gate.get("selected_trade_date"),
-        "selected_contract_verdict": promotion_gate.get("selected_contract_verdict"),
+        "selected_ticker": selected_refresh_summary.get("focus_ticker") or promotion_gate.get("selected_ticker"),
+        "selected_trade_date": selected_refresh_summary.get("trade_date") or promotion_gate.get("selected_trade_date"),
+        "selected_contract_verdict": selected_refresh_summary.get("focus_overall_contract_verdict") or promotion_gate.get("selected_contract_verdict"),
         "peer_count": promotion_gate.get("peer_count"),
         "gate_verdict_counts": dict(promotion_gate.get("gate_verdict_counts") or {}),
         "ready_tickers": list(promotion_gate.get("ready_tickers") or []),
@@ -2765,6 +2788,12 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
                 "runbook_status": candidate_pool_corridor_uplift_runbook_analysis.get("runbook_status"),
                 "primary_shadow_replay": candidate_pool_corridor_uplift_runbook_analysis.get("primary_shadow_replay"),
                 "parallel_watch_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("parallel_watch_tickers") or [])[:3],
+                "excluded_low_gate_tail_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("excluded_low_gate_tail_tickers") or [])[:3],
+                "prototype_type": candidate_pool_corridor_uplift_runbook_analysis.get("prototype_type"),
+                "next_step": candidate_pool_corridor_uplift_runbook_analysis.get("next_step"),
+                "execution_step_head": next(iter(list(candidate_pool_corridor_uplift_runbook_analysis.get("execution_steps") or [])), None),
+                "execution_command_head": next(iter(list(candidate_pool_corridor_uplift_runbook_analysis.get("execution_commands") or [])), None),
+                "guardrail_head": next(iter(list(candidate_pool_corridor_uplift_runbook_analysis.get("guardrails") or [])), None),
             },
             "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
             "selected_outcome_refresh_summary": _build_selected_outcome_refresh_summary(resolved_reports_root),
@@ -3034,6 +3063,12 @@ def refresh_btst_candidate_entry_shadow_lane_artifacts(reports_root: str | Path)
             "runbook_status": candidate_pool_corridor_uplift_runbook_analysis.get("runbook_status"),
             "primary_shadow_replay": candidate_pool_corridor_uplift_runbook_analysis.get("primary_shadow_replay"),
             "parallel_watch_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("parallel_watch_tickers") or [])[:3],
+            "excluded_low_gate_tail_tickers": list(candidate_pool_corridor_uplift_runbook_analysis.get("excluded_low_gate_tail_tickers") or [])[:3],
+            "prototype_type": candidate_pool_corridor_uplift_runbook_analysis.get("prototype_type"),
+            "next_step": candidate_pool_corridor_uplift_runbook_analysis.get("next_step"),
+            "execution_step_head": next(iter(list(candidate_pool_corridor_uplift_runbook_analysis.get("execution_steps") or [])), None),
+            "execution_command_head": next(iter(list(candidate_pool_corridor_uplift_runbook_analysis.get("execution_commands") or [])), None),
+            "guardrail_head": next(iter(list(candidate_pool_corridor_uplift_runbook_analysis.get("guardrails") or [])), None),
         },
         "continuation_focus_summary": _build_continuation_focus_summary(resolved_reports_root),
         "selected_outcome_refresh_summary": _build_selected_outcome_refresh_summary(resolved_reports_root),

@@ -9,7 +9,14 @@ from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
 from src.targets.profiles import get_active_short_trade_target_profile, use_short_trade_target_profile
 
 STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE = 0.001
-STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT = 3
+STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT = 3
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT = STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT
+SELECTED_HISTORICAL_PROOF_REQUIRED_SOURCES = frozenset(
+    {
+        "upstream_liquidity_corridor_shadow",
+        "post_gate_liquidity_competition_shadow",
+    }
+)
 
 
 def _normalize_score(value: float) -> float:
@@ -118,6 +125,24 @@ def _resolve_carryover_evidence_deficiency(input_data: TargetEvaluationInput) ->
         "same_family_source_sample_count": same_family_source_sample_count,
         "same_family_source_score_catalyst_sample_count": same_family_source_score_catalyst_sample_count,
         "same_source_score_sample_count": same_source_score_sample_count,
+        "evaluable_count": evaluable_count,
+    }
+
+
+def _resolve_selected_historical_proof_deficiency(input_data: TargetEvaluationInput) -> dict[str, Any]:
+    historical_prior = _historical_prior(input_data)
+    source = str(input_data.replay_context.get("source") or "").strip()
+    evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    proof_required = source in SELECTED_HISTORICAL_PROOF_REQUIRED_SOURCES
+    gate_hits = {
+        "candidate_source": proof_required,
+        "has_evaluable_history": evaluable_count >= 1,
+    }
+    return {
+        "enabled": proof_required,
+        "proof_missing": proof_required and evaluable_count < 1,
+        "gate_hits": gate_hits,
+        "candidate_source": source,
         "evaluable_count": evaluable_count,
     }
 
@@ -315,9 +340,10 @@ def _resolve_historical_execution_relief(
     if not historical_prior:
         return default_result
 
+    strong_close_continuation_min_evaluable_count = STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT if catalyst_theme_carryover_candidate else 2
     strong_close_continuation_candidate = (
         execution_quality_label == "close_continuation"
-        and evaluable_count >= 2
+        and evaluable_count >= strong_close_continuation_min_evaluable_count
         and next_close_positive_rate >= 0.8
         and next_high_hit_rate >= 0.8
         and next_open_to_close_return_mean >= 0.02
@@ -450,17 +476,21 @@ def _resolve_upstream_shadow_catalyst_relief(
     min_historical_next_open_to_close_return_mean = float(
         relief_config.get("min_historical_next_open_to_close_return_mean", -1.0) or -1.0
     )
+    carryover_min_historical_evaluable_count = int(
+        relief_config.get("min_historical_evaluable_count", STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT)
+        or STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT
+    )
     if relief_reason == "catalyst_theme_short_trade_carryover":
         carryover_history_supported = (
             historical_execution_quality_label == "close_continuation"
             and historical_entry_timing_bias == "confirm_then_hold"
-            and historical_evaluable_count >= 2
+            and historical_evaluable_count >= carryover_min_historical_evaluable_count
             and historical_next_close_positive_rate >= 0.5
         )
     carryover_strong_close_continuation = (
         relief_reason == "catalyst_theme_short_trade_carryover"
         and historical_execution_quality_label == "close_continuation"
-        and historical_evaluable_count >= 2
+        and historical_evaluable_count >= carryover_min_historical_evaluable_count
         and historical_next_close_positive_rate >= 0.8
         and historical_next_high_hit_rate >= 0.8
         and historical_next_open_to_close_return_mean >= 0.02
@@ -2212,6 +2242,7 @@ def _resolve_short_trade_decision(
     selected_breakout_gate_pass: bool,
     near_miss_breakout_gate_pass: bool,
     carryover_evidence_deficiency: dict[str, Any],
+    selected_historical_proof_deficiency: dict[str, Any],
 ) -> str:
     selected_score_pass = score_target >= (effective_select_threshold - selected_score_tolerance)
 
@@ -2232,6 +2263,9 @@ def _resolve_short_trade_decision(
     if carryover_evidence_deficiency["evidence_deficient"] and decision in {"selected", "near_miss"}:
         gate_status["score"] = "fail"
         return "rejected"
+    if selected_historical_proof_deficiency["proof_missing"] and decision == "selected":
+        gate_status["score"] = "near_miss"
+        return "near_miss"
     return decision
 
 
@@ -2241,6 +2275,7 @@ def _annotate_short_trade_tags(
     negative_tags: list[str],
     breakout_stage: str,
     carryover_evidence_deficiency: dict[str, Any],
+    selected_historical_proof_deficiency: dict[str, Any],
 ) -> None:
     if breakout_stage == "confirmed_breakout":
         positive_tags.append("confirmed_breakout_stage")
@@ -2249,6 +2284,8 @@ def _annotate_short_trade_tags(
 
     if carryover_evidence_deficiency["evidence_deficient"]:
         negative_tags.append("evidence_deficient_broad_family_only")
+    if selected_historical_proof_deficiency["proof_missing"]:
+        negative_tags.append("selected_historical_proof_missing")
 
 
 def _build_short_trade_top_reasons(
@@ -2278,6 +2315,7 @@ def _build_short_trade_top_reasons(
     watchlist_zero_catalyst_crowded_guard: dict[str, Any],
     watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
     carryover_evidence_deficiency: dict[str, Any],
+    selected_historical_proof_deficiency: dict[str, Any],
     t_plus_2_continuation_candidate: dict[str, Any],
     score_target: float,
 ) -> list[str]:
@@ -2309,6 +2347,7 @@ def _build_short_trade_top_reasons(
                 "watchlist_zero_catalyst_crowded_penalty_applied" if watchlist_zero_catalyst_crowded_guard["applied"] else None,
                 "watchlist_zero_catalyst_flat_trend_penalty_applied" if watchlist_zero_catalyst_flat_trend_guard["applied"] else None,
                 "evidence_deficient_broad_family_only" if carryover_evidence_deficiency["evidence_deficient"] else None,
+                "selected_historical_proof_missing" if selected_historical_proof_deficiency["proof_missing"] else None,
                 "t_plus_2_continuation_candidate" if t_plus_2_continuation_candidate["applied"] else None,
                 f"score_short={score_target:.2f}",
             ]
@@ -2395,6 +2434,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
     historical_execution_relief = dict(snapshot["historical_execution_relief"])
     historical_prior = dict(snapshot["historical_prior"])
     carryover_evidence_deficiency = _resolve_carryover_evidence_deficiency(input_data)
+    selected_historical_proof_deficiency = _resolve_selected_historical_proof_deficiency(input_data)
     profitability_relief_soft_penalty = float(snapshot["profitability_relief_soft_penalty"])
     upstream_shadow_catalyst_relief_enabled = bool(snapshot["upstream_shadow_catalyst_relief_enabled"])
     upstream_shadow_catalyst_relief_gate_hits = dict(snapshot["upstream_shadow_catalyst_relief_gate_hits"])
@@ -2469,12 +2509,14 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         selected_breakout_gate_pass=selected_breakout_gate_pass,
         near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
         carryover_evidence_deficiency=carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=selected_historical_proof_deficiency,
     )
     _annotate_short_trade_tags(
         positive_tags=positive_tags,
         negative_tags=negative_tags,
         breakout_stage=breakout_stage,
         carryover_evidence_deficiency=carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=selected_historical_proof_deficiency,
     )
 
     top_reasons = _build_short_trade_top_reasons(
@@ -2503,6 +2545,7 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         watchlist_zero_catalyst_crowded_guard=watchlist_zero_catalyst_crowded_guard,
         watchlist_zero_catalyst_flat_trend_guard=watchlist_zero_catalyst_flat_trend_guard,
         carryover_evidence_deficiency=carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=selected_historical_proof_deficiency,
         t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
         score_target=score_target,
     )
@@ -2620,6 +2663,13 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "same_family_source_score_catalyst_sample_count": int(carryover_evidence_deficiency["same_family_source_score_catalyst_sample_count"]),
                 "same_source_score_sample_count": int(carryover_evidence_deficiency["same_source_score_sample_count"]),
                 "evaluable_count": int(carryover_evidence_deficiency["evaluable_count"]),
+            },
+            "selected_historical_proof_deficiency": {
+                "enabled": bool(selected_historical_proof_deficiency["enabled"]),
+                "proof_missing": bool(selected_historical_proof_deficiency["proof_missing"]),
+                "gate_hits": dict(selected_historical_proof_deficiency["gate_hits"]),
+                "candidate_source": str(selected_historical_proof_deficiency["candidate_source"]),
+                "evaluable_count": int(selected_historical_proof_deficiency["evaluable_count"]),
             },
             "base_layer_c_avoid_penalty": round(base_layer_c_avoid_penalty, 4),
             "profitability_relief_soft_penalty": round(profitability_relief_soft_penalty, 4),
@@ -3018,6 +3068,13 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
                 "same_family_source_score_catalyst_sample_count": int(carryover_evidence_deficiency["same_family_source_score_catalyst_sample_count"]),
                 "same_source_score_sample_count": int(carryover_evidence_deficiency["same_source_score_sample_count"]),
                 "evaluable_count": int(carryover_evidence_deficiency["evaluable_count"]),
+            },
+            "selected_historical_proof_deficiency": {
+                "enabled": bool(selected_historical_proof_deficiency["enabled"]),
+                "proof_missing": bool(selected_historical_proof_deficiency["proof_missing"]),
+                "gate_hits": dict(selected_historical_proof_deficiency["gate_hits"]),
+                "candidate_source": str(selected_historical_proof_deficiency["candidate_source"]),
+                "evaluable_count": int(selected_historical_proof_deficiency["evaluable_count"]),
             },
             "upstream_shadow_catalyst_relief": {
                 "enabled": upstream_shadow_catalyst_relief_enabled,

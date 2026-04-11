@@ -98,14 +98,41 @@ def generate_btst_tplus2_continuation_promotion_gate(
     lane_rulepack_path: str | Path,
     promotion_review_path: str | Path,
 ) -> dict[str, Any]:
+    lane_rulepack, promotion_review = _load_promotion_gate_inputs(
+        lane_rulepack_path=lane_rulepack_path,
+        promotion_review_path=promotion_review_path,
+    )
+    analysis = _build_promotion_gate(lane_rulepack, promotion_review)
+    return _attach_promotion_gate_source_reports(
+        analysis=analysis,
+        lane_rulepack_path=lane_rulepack_path,
+        promotion_review_path=promotion_review_path,
+    )
+
+
+def _load_promotion_gate_inputs(
+    *,
+    lane_rulepack_path: str | Path,
+    promotion_review_path: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     lane_rulepack = _load_json(lane_rulepack_path)
     promotion_review = _load_json(promotion_review_path)
-    analysis = _build_promotion_gate(lane_rulepack, promotion_review)
-    analysis["source_reports"] = {
+    return lane_rulepack, promotion_review
+
+
+def _attach_promotion_gate_source_reports(
+    *,
+    analysis: dict[str, Any],
+    lane_rulepack_path: str | Path,
+    promotion_review_path: str | Path,
+) -> dict[str, Any]:
+    return {
+        **analysis,
+        "source_reports": {
         "lane_rulepack": str(Path(lane_rulepack_path).expanduser().resolve()),
         "promotion_review": str(Path(promotion_review_path).expanduser().resolve()),
+        },
     }
-    return analysis
 
 
 def render_btst_tplus2_continuation_promotion_gate_markdown(analysis: dict[str, Any]) -> str:

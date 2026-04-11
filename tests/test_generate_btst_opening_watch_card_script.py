@@ -3,6 +3,198 @@ from __future__ import annotations
 import json
 
 from scripts.generate_btst_opening_watch_card import generate_btst_opening_watch_card_artifacts
+import src.paper_trading.btst_reporting as btst_reporting
+
+
+def test_append_opening_watch_focus_items_markdown_emits_focus_fields():
+    lines: list[str] = []
+
+    btst_reporting._append_opening_watch_focus_items_markdown(
+        lines,
+        [
+            {
+                "ticker": "300757",
+                "focus_tier": "primary",
+                "monitor_priority": "highest",
+                "execution_posture": "breakout_confirmation",
+                "score_target": 0.5907,
+                "preferred_entry_mode": "next_day_breakout_confirmation",
+                "why_now": "fresh breakout",
+                "opening_plan": "only buy on confirming push",
+                "historical_summary": "close continuation supportive",
+                "execution_note": "avoid weak open",
+            }
+        ],
+    )
+
+    markdown = "\n".join(lines)
+    assert "## Focus Order" in markdown
+    assert "### 1. 300757" in markdown
+    assert "- focus_tier: primary" in markdown
+    assert "- execution_posture: breakout_confirmation" in markdown
+    assert "- opening_plan: only buy on confirming push" in markdown
+    assert "- execution_note: avoid weak open" in markdown
+
+
+def test_append_catalyst_theme_watch_markdown_emits_thresholds_and_metrics():
+    lines: list[str] = []
+
+    btst_reporting._append_catalyst_theme_watch_markdown(
+        lines,
+        title="## Catalyst Theme Frontier Watch",
+        items=[
+            {
+                "ticker": "301001",
+                "candidate_score": 0.3874,
+                "filter_reason": "candidate_score_below_catalyst_theme_floor",
+                "total_shortfall": 0.06,
+                "failed_threshold_count": 1,
+                "preferred_entry_mode": "theme_research_followup",
+                "promotion_trigger": "若催化继续发酵，可升级到正式题材研究池。",
+                "top_reasons": ["candidate_score=0.39"],
+                "positive_tags": ["strong_catalyst_freshness"],
+                "threshold_shortfalls": {"candidate_score": 0.06},
+                "metrics": {
+                    "breakout_freshness": 0.301,
+                    "trend_acceleration": 0.241,
+                    "close_strength": 0.541,
+                    "sector_resonance": 0.182,
+                    "catalyst_freshness": 0.812,
+                },
+            }
+        ],
+        focus_tier="frontier",
+        execution_posture="research_followup_priority",
+    )
+
+    markdown = "\n".join(lines)
+    assert "## Catalyst Theme Frontier Watch" in markdown
+    assert "### 1. 301001" in markdown
+    assert "- focus_tier: frontier" in markdown
+    assert "- execution_posture: research_followup_priority" in markdown
+    assert "- threshold_shortfalls: candidate_score=0.0600" in markdown
+    assert "- key_metrics: breakout=0.3010, trend=0.2410, close=0.5410, sector=0.1820, catalyst=0.8120" in markdown
+
+
+def test_render_btst_opening_watch_card_markdown_emits_sections_and_sources():
+    markdown = btst_reporting.render_btst_opening_watch_card_markdown(
+        {
+            "trade_date": "2026-03-27",
+            "next_trade_date": "2026-03-30",
+            "selection_target": "short_trade_only",
+            "headline": "若主票缺少确认信号，则允许空仓。",
+            "recommendation": "先观察主票，再递减关注 near-miss 与机会池。",
+            "summary": {
+                "primary_count": 1,
+                "near_miss_count": 1,
+                "opportunity_pool_count": 1,
+                "no_history_observer_count": 0,
+                "risky_observer_count": 0,
+                "catalyst_theme_frontier_promoted_count": 1,
+                "catalyst_theme_shadow_count": 1,
+                "upstream_shadow_candidate_count": 1,
+                "upstream_shadow_promotable_count": 1,
+            },
+            "focus_items": [
+                {
+                    "ticker": "300757",
+                    "focus_tier": "primary_entry",
+                    "monitor_priority": "execute",
+                    "execution_posture": "breakout_confirmation",
+                    "score_target": 0.5907,
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "why_now": "breakout_freshness=0.94",
+                    "opening_plan": "只在确认出现后执行。",
+                    "historical_summary": "close continuation supportive",
+                    "execution_note": "avoid weak open",
+                }
+            ],
+            "catalyst_theme_frontier_priority": {
+                "status": "watch",
+                "recommended_variant_name": "catalyst_theme_relaxed_sector_frontier",
+                "promoted_shadow_count": 1,
+                "promoted_tickers": ["301001"],
+                "recommended_relaxation_cost": 0.09,
+                "recommendation": "优先跟踪 frontier promoted shadow。",
+                "markdown_path": "/tmp/frontier.md",
+                "promoted_shadow_watch": [
+                    {
+                        "ticker": "301001",
+                        "candidate_score": 0.3874,
+                        "filter_reason": "candidate_score_below_catalyst_theme_floor",
+                        "total_shortfall": 0.06,
+                        "failed_threshold_count": 1,
+                        "preferred_entry_mode": "theme_research_followup",
+                        "promotion_trigger": "若催化继续发酵，可升级到正式题材研究池。",
+                        "top_reasons": ["candidate_score=0.39"],
+                        "positive_tags": ["strong_catalyst_freshness"],
+                        "threshold_shortfalls": {"candidate_score": 0.06},
+                        "metrics": {
+                            "breakout_freshness": 0.301,
+                            "trend_acceleration": 0.241,
+                            "close_strength": 0.541,
+                            "sector_resonance": 0.182,
+                            "catalyst_freshness": 0.812,
+                        },
+                    }
+                ],
+            },
+            "catalyst_theme_shadow_watch": [
+                {
+                    "ticker": "301002",
+                    "candidate_score": 0.32,
+                    "filter_reason": "sector_resonance_below_catalyst_theme_floor",
+                    "total_shortfall": 0.05,
+                    "failed_threshold_count": 2,
+                    "preferred_entry_mode": "theme_research_followup",
+                    "promotion_trigger": "只做研究跟踪，不进入当日 BTST 交易名单。",
+                    "top_reasons": ["candidate_score=0.32"],
+                    "positive_tags": ["strong_catalyst_freshness"],
+                    "threshold_shortfalls": {"candidate_score": 0.02, "sector_resonance": 0.03},
+                    "metrics": {
+                        "breakout_freshness": 0.14,
+                        "trend_acceleration": 0.21,
+                        "close_strength": 0.41,
+                        "sector_resonance": 0.22,
+                        "catalyst_freshness": 0.82,
+                    },
+                }
+            ],
+            "upstream_shadow_summary": {
+                "shadow_candidate_count": 1,
+                "promotable_count": 1,
+                "lane_counts": {"layer_a_liquidity_corridor": 1},
+            },
+            "upstream_shadow_entries": [
+                {
+                    "ticker": "601869",
+                    "candidate_source": "upstream_liquidity_corridor_shadow",
+                    "candidate_pool_lane_display": "layer_a_liquidity_corridor",
+                    "decision": "near_miss",
+                    "preferred_entry_mode": "next_day_breakout_confirmation",
+                    "promotion_trigger": "若盘中强度延续，可再评估。",
+                    "top_reasons": ["trend_acceleration=0.76"],
+                    "rejection_reasons": ["score_short_below_threshold"],
+                }
+            ],
+            "global_guardrails": ["selected 之外的对象默认都不是开盘直接交易名单。"],
+            "source_paths": {
+                "report_dir": "/tmp/report",
+                "snapshot_path": "/tmp/snapshot.json",
+                "session_summary_path": "/tmp/session_summary.json",
+            },
+        }
+    )
+
+    assert "# BTST Opening Watch Card" in markdown
+    assert "## Opening Headline" in markdown
+    assert "### 1. 300757" in markdown
+    assert "## Catalyst Theme Frontier Priority" in markdown
+    assert "- recommended_variant_name: catalyst_theme_relaxed_sector_frontier" in markdown
+    assert "## Catalyst Theme Shadow Watch" in markdown
+    assert "## Upstream Shadow Recall" in markdown
+    assert "- candidate_source: upstream_liquidity_corridor_shadow" in markdown
+    assert "## Source Paths" in markdown
 
 
 def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(tmp_path, monkeypatch):

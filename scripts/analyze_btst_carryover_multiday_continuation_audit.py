@@ -53,7 +53,7 @@ def _build_supportive_cohort_rows(reports_root: Path) -> list[dict[str, Any]]:
 def _build_policy_checks(
     *,
     selected_proof: dict[str, Any],
-    cohort_rows: list[dict[str, Any]],
+    selected_current_outcome: dict[str, Any],
     broad_family_only_summary: dict[str, Any],
     aligned_peer_summary: dict[str, Any],
 ) -> dict[str, Any]:
@@ -84,7 +84,9 @@ def _build_policy_checks(
             and float(aligned_t3) >= 0.5
             and float(aligned_t4) >= 0.5
         ),
-        "open_selected_case_count": sum(1 for row in cohort_rows if str(row.get("decision") or "") == "selected" and str(row.get("cycle_status") or "").startswith("missing_")),
+        "open_selected_case_count": int(
+            str(selected_current_outcome.get("cycle_status") or "") in {"missing_next_day", "t1_only"}
+        ),
     }
 
 
@@ -123,6 +125,11 @@ def analyze_btst_carryover_multiday_continuation_audit(reports_root: str | Path)
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     latest_snapshot_path = _resolve_latest_selected_snapshot(resolved_reports_root)
     selected_proof = analyze_btst_selected_outcome_proof(latest_snapshot_path)
+    selected_current_outcome = _extract_holding_outcome(
+        str(selected_proof.get("ticker") or ""),
+        str(selected_proof.get("trade_date") or ""),
+        {},
+    )
     cohort_rows = _build_supportive_cohort_rows(resolved_reports_root)
 
     broad_family_only_rows = [row for row in cohort_rows if str(row.get("peer_evidence_status") or "") == "broad_family_only"]
@@ -139,7 +146,7 @@ def analyze_btst_carryover_multiday_continuation_audit(reports_root: str | Path)
 
     policy_checks = _build_policy_checks(
         selected_proof=selected_proof,
-        cohort_rows=cohort_rows,
+        selected_current_outcome=selected_current_outcome,
         broad_family_only_summary=broad_family_only_summary,
         aligned_peer_summary=aligned_peer_summary,
     )
@@ -155,6 +162,17 @@ def analyze_btst_carryover_multiday_continuation_audit(reports_root: str | Path)
         "selected_snapshot_path": str(latest_snapshot_path),
         "selected_ticker": selected_proof.get("ticker"),
         "selected_trade_date": selected_proof.get("trade_date"),
+        "selected_preferred_entry_mode": selected_proof.get("preferred_entry_mode"),
+        "selected_current_contract_status": selected_proof.get("current_contract_status"),
+        "selected_current_data_status": selected_current_outcome.get("data_status"),
+        "selected_current_cycle_status": selected_current_outcome.get("cycle_status"),
+        "selected_current_next_trade_date": selected_current_outcome.get("next_trade_date"),
+        "selected_current_next_close_return": selected_current_outcome.get("next_close_return"),
+        "selected_current_t_plus_2_close_return": selected_current_outcome.get("t_plus_2_close_return"),
+        "selected_trade_anchor_date": selected_current_outcome.get("trade_anchor_date"),
+        "selected_trade_date_was_non_trading": selected_current_outcome.get("trade_date_was_non_trading"),
+        "selected_execution_quality_label": dict(selected_proof.get("historical_prior") or {}).get("execution_quality_label"),
+        "selected_entry_timing_bias": dict(selected_proof.get("historical_prior") or {}).get("entry_timing_bias"),
         "supportive_case_count": len(cohort_rows),
         "peer_status_counts": dict(Counter(str(row.get("peer_evidence_status") or "") for row in cohort_rows)),
         "selected_historical_proof_summary": dict(selected_proof.get("summary") or {}),

@@ -39,6 +39,22 @@ def _write_replay_input(report_dir: Path, *, trade_date: str, rejected_tickers: 
     (selection_dir / "selection_target_replay_input.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_absent_replay_input(report_dir: Path, *, trade_date: str) -> None:
+    payload = {
+        "artifact_version": "v1",
+        "trade_date": trade_date,
+        "target_mode": "dual_target",
+        "watchlist": [],
+        "rejected_entries": [],
+        "supplemental_short_trade_entries": [],
+        "selection_targets": {},
+        "buy_order_tickers": [],
+    }
+    selection_dir = report_dir / "selection_artifacts" / trade_date
+    selection_dir.mkdir(parents=True, exist_ok=True)
+    (selection_dir / "selection_target_replay_input.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def test_analyze_btst_no_candidate_entry_failure_dossier_distinguishes_absence_and_semantic_miss(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     absent_report = reports_root / "paper_trading_20260302_20260313_btst_research_replay"
@@ -168,3 +184,86 @@ def test_analyze_btst_no_candidate_entry_failure_dossier_distinguishes_absence_a
     assert hotspot_dossier["primary_failure_class"] == "hotspot_candidate_entry_semantic_miss"
     assert hotspot_dossier["focus_ticker_evidence"][0]["ticker"] == "003036"
     assert hotspot_dossier["dominant_handoff_stage"] == "candidate_entry_visible_and_selection_target_attached"
+
+
+def test_analyze_btst_no_candidate_entry_failure_dossier_promotes_corridor_primary_shadow_ticker(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    first_report = reports_root / "paper_trading_a"
+    second_report = reports_root / "paper_trading_b"
+    _write_absent_replay_input(first_report, trade_date="2026-03-23")
+    _write_absent_replay_input(second_report, trade_date="2026-03-23")
+
+    tradeable_pool_path = _write_json(
+        reports_root / "btst_tradeable_opportunity_pool_march.json",
+        {
+            "rows": [
+                {
+                    "trade_date": "2026-03-23",
+                    "ticker": "688796",
+                    "first_kill_switch": "no_candidate_entry",
+                    "report_dir": first_report.name,
+                    "strict_btst_goal_case": True,
+                },
+                {
+                    "trade_date": "2026-03-23",
+                    "ticker": "300683",
+                    "first_kill_switch": "no_candidate_entry",
+                    "report_dir": second_report.name,
+                    "strict_btst_goal_case": True,
+                },
+            ],
+            "no_candidate_entry_summary": {
+                "top_ticker_rows": [
+                    {"ticker": "688796", "occurrence_count": 1, "strict_goal_case_count": 1},
+                    {"ticker": "300683", "occurrence_count": 1, "strict_goal_case_count": 1},
+                ]
+            },
+        },
+    )
+    action_board_path = _write_json(
+        reports_root / "btst_no_candidate_entry_action_board_latest.json",
+        {
+            "reports_root": str(reports_root.resolve()),
+            "priority_queue": [
+                {"priority_rank": 1, "ticker": "688796", "primary_report_dir": first_report.name},
+                {"priority_rank": 2, "ticker": "300683", "primary_report_dir": second_report.name},
+            ],
+            "window_hotspot_rows": [],
+        },
+    )
+    replay_bundle_path = _write_json(
+        reports_root / "btst_no_candidate_entry_replay_bundle_latest.json",
+        {"priority_replay_rows": [], "hotspot_replay_rows": []},
+    )
+    watchlist_recall_dossier_path = _write_json(
+        reports_root / "btst_watchlist_recall_dossier_latest.json",
+        {
+            "priority_ticker_dossiers": [
+                {"ticker": "688796", "dominant_recall_stage": "absent_from_candidate_pool"},
+                {"ticker": "300683", "dominant_recall_stage": "absent_from_candidate_pool"},
+            ]
+        },
+    )
+    corridor_shadow_pack_path = _write_json(
+        reports_root / "btst_candidate_pool_corridor_shadow_pack_latest.json",
+        {
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": {"ticker": "300683"},
+        },
+    )
+
+    analysis = analyze_btst_no_candidate_entry_failure_dossier(
+        tradeable_pool_path,
+        action_board_path=action_board_path,
+        replay_bundle_path=replay_bundle_path,
+        watchlist_recall_dossier_path=watchlist_recall_dossier_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        priority_limit=2,
+        hotspot_limit=0,
+    )
+
+    assert analysis["corridor_primary_shadow_ticker"] == "300683"
+    assert analysis["top_absent_from_watchlist_tickers"][:2] == ["300683", "688796"]
+    assert analysis["priority_handoff_action_queue"][0]["task_id"] == "300683_absent_from_watchlist"
+    assert analysis["priority_ticker_dossiers"][0]["ticker"] == "300683"
+    assert analysis["priority_ticker_dossiers"][0]["priority_rank"] == 1

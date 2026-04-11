@@ -135,3 +135,39 @@ def test_generate_btst_tplus2_continuation_validation_queue_escalates_merge_read
     analysis = validation_queue.generate_btst_tplus2_continuation_validation_queue(reports_root)
 
     assert analysis["queue_rows"][0]["next_step"] == "Escalate into default BTST merge review under explicit governance approval."
+
+
+def test_generate_btst_tplus2_continuation_validation_queue_threads_payload(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+
+    monkeypatch.setattr(
+        validation_queue,
+        "generate_btst_tplus2_continuation_expansion_board",
+        lambda *_args, **_kwargs: {
+            "focus_candidate": {"ticker": "300505"},
+            "board_rows": [{"ticker": "300505", "tier": "observation_candidate", "priority_rank": 1}],
+            "next_validation_candidates": [{"ticker": "300505", "tier": "observation_candidate", "priority_rank": 1}],
+        },
+    )
+    monkeypatch.setattr(
+        validation_queue,
+        "_build_validation_queue_rows",
+        lambda **kwargs: [{"ticker": "300505", "next_step": "keep validating"}],
+    )
+    monkeypatch.setattr(
+        validation_queue,
+        "_resolve_focus_candidate_review",
+        lambda **kwargs: (
+            {"ticker": "300505", "next_step": "keep validating"},
+            {"promotion_review_verdict": "watch_review_ready"},
+        ),
+    )
+
+    analysis = validation_queue.generate_btst_tplus2_continuation_validation_queue(reports_root, focus_ticker="300505")
+
+    assert analysis["queue_row_count"] == 1
+    assert analysis["focus_ticker"] == "300505"
+    assert analysis["focus_candidate"] == {"ticker": "300505", "next_step": "keep validating"}
+    assert analysis["promotion_review"] == {"promotion_review_verdict": "watch_review_ready"}
+    assert "300505" in analysis["recommendation"]

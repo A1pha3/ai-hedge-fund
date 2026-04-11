@@ -72,3 +72,22 @@ def test_refresh_btst_carryover_close_loop_bundle_writes_all_artifacts(monkeypat
     assert (output_dir / "btst_carryover_peer_expansion_latest.json").exists()
     assert (output_dir / "btst_carryover_aligned_peer_proof_board_latest.json").exists()
     assert (output_dir / "btst_carryover_peer_promotion_gate_latest.json").exists()
+
+
+def test_refresh_btst_carryover_close_loop_bundle_short_circuits_without_formal_selected(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    output_dir = tmp_path / "outputs"
+    reports_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        "scripts.run_btst_carryover_close_loop_refresh.analyze_btst_selected_outcome_refresh_board",
+        lambda reports_root: {"entries": [], "report_dir": str(reports_root)},
+    )
+    monkeypatch.setattr("scripts.run_btst_carryover_close_loop_refresh.render_btst_selected_outcome_refresh_board_markdown", lambda payload: "# selected\n")
+
+    bundle = refresh_btst_carryover_close_loop_bundle(reports_root, output_dir=output_dir, refresh_control_tower=False)
+
+    assert bundle["status"] == "no_formal_selected"
+    assert bundle["selected_ticker"] is None
+    assert "selected_outcome_refresh_json" in bundle["artifact_paths"]
+    assert (output_dir / "btst_selected_outcome_refresh_board_latest.json").exists()

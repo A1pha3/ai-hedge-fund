@@ -24,14 +24,32 @@ def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
-def _build_eligible_execution(lane_rulepack: dict[str, Any], watchlist_execution: dict[str, Any], eligible_gate: dict[str, Any]) -> dict[str, Any]:
+def _build_eligible_execution_context(
+    lane_rulepack: dict[str, Any],
+    watchlist_execution: dict[str, Any],
+    eligible_gate: dict[str, Any],
+) -> dict[str, Any]:
     lane_rules = dict(lane_rulepack.get("lane_rules") or {})
     raw_eligible_tickers = [str(item) for item in list(lane_rulepack.get("eligible_tickers") or []) if str(item).strip()]
     focus_ticker = str(eligible_gate.get("focus_ticker") or watchlist_execution.get("focus_ticker") or "")
     adopted_watch_row = dict(watchlist_execution.get("adopted_watch_row") or {})
     gate_verdict = str(eligible_gate.get("gate_verdict") or "")
     merge_review_ready = is_merge_approved_execution_blocker(adopted_watch_row.get("promotion_blocker"))
+    return {
+        "lane_rulepack": lane_rulepack,
+        "lane_rules": lane_rules,
+        "raw_eligible_tickers": raw_eligible_tickers,
+        "focus_ticker": focus_ticker,
+        "adopted_watch_row": adopted_watch_row,
+        "gate_verdict": gate_verdict,
+        "merge_review_ready": merge_review_ready,
+    }
 
+
+def _resolve_eligible_execution_decision(context: dict[str, Any]) -> tuple[str, list[str], list[str]]:
+    focus_ticker = context["focus_ticker"]
+    raw_eligible_tickers = context["raw_eligible_tickers"]
+    gate_verdict = context["gate_verdict"]
     if gate_verdict == "approve_eligible_promotion" and focus_ticker and focus_ticker not in raw_eligible_tickers:
         execution_verdict = "eligible_extension_applied"
         added_eligible_tickers = [focus_ticker]
@@ -44,10 +62,17 @@ def _build_eligible_execution(lane_rulepack: dict[str, Any], watchlist_execution
         execution_verdict = "eligible_extension_held"
         added_eligible_tickers = []
         effective_eligible_tickers = list(raw_eligible_tickers)
+    return execution_verdict, added_eligible_tickers, effective_eligible_tickers
 
-    adopted_eligible_row = None
+
+def _build_adopted_eligible_row(context: dict[str, Any], execution_verdict: str) -> dict[str, Any] | None:
+    focus_ticker = context["focus_ticker"]
+    adopted_watch_row = context["adopted_watch_row"]
+    lane_rules = context["lane_rules"]
+    lane_rulepack = context["lane_rulepack"]
+    merge_review_ready = context["merge_review_ready"]
     if focus_ticker and execution_verdict in {"eligible_extension_applied", "eligible_extension_already_applied"}:
-        adopted_eligible_row = {
+        return {
             "ticker": focus_ticker,
             "entry_type": "promoted_watch_eligible",
             "priority_score": adopted_watch_row.get("priority_score"),
@@ -68,33 +93,53 @@ def _build_eligible_execution(lane_rulepack: dict[str, Any], watchlist_execution
             "t_plus_2_close_return_mean": adopted_watch_row.get("t_plus_2_close_return_mean"),
             "next_close_positive_rate": adopted_watch_row.get("next_close_positive_rate"),
         }
+    return None
 
-    recommendation = (
-        (
+
+def _build_eligible_execution_recommendation(context: dict[str, Any], execution_verdict: str) -> str:
+    focus_ticker = context["focus_ticker"]
+    merge_review_ready = context["merge_review_ready"]
+    if execution_verdict == "eligible_extension_applied" and merge_review_ready:
+        return (
             f"Keep {focus_ticker} in the effective eligible continuation set because merge-approved daily-pipeline uplift is already active; leave the base rulepack unchanged while governance finishes the merge review."
         )
-        if execution_verdict == "eligible_extension_applied" and merge_review_ready
-        else (
-        f"Treat {focus_ticker} as an effective eligible continuation ticker while keeping the base rulepack unchanged."
-        if execution_verdict == "eligible_extension_applied"
-        else (
-            f"{focus_ticker} is already part of the effective eligible continuation set."
-            if execution_verdict == "eligible_extension_already_applied"
-            else "Keep the effective eligible continuation set unchanged until the stricter gate approves promotion."
-        )
-        )
-    )
+    if execution_verdict == "eligible_extension_applied":
+        return f"Treat {focus_ticker} as an effective eligible continuation ticker while keeping the base rulepack unchanged."
+    if execution_verdict == "eligible_extension_already_applied":
+        return f"{focus_ticker} is already part of the effective eligible continuation set."
+    return "Keep the effective eligible continuation set unchanged until the stricter gate approves promotion."
 
+
+def _build_eligible_execution_analysis(
+    context: dict[str, Any],
+    execution_verdict: str,
+    effective_eligible_tickers: list[str],
+    added_eligible_tickers: list[str],
+    adopted_eligible_row: dict[str, Any] | None,
+) -> dict[str, Any]:
     return {
-        "focus_ticker": focus_ticker or None,
-        "gate_verdict": gate_verdict or None,
+        "focus_ticker": context["focus_ticker"] or None,
+        "gate_verdict": context["gate_verdict"] or None,
         "execution_verdict": execution_verdict,
-        "raw_eligible_tickers": raw_eligible_tickers,
+        "raw_eligible_tickers": context["raw_eligible_tickers"],
         "effective_eligible_tickers": effective_eligible_tickers,
         "added_eligible_tickers": added_eligible_tickers,
         "adopted_eligible_row": adopted_eligible_row,
-        "recommendation": recommendation,
+        "recommendation": _build_eligible_execution_recommendation(context, execution_verdict),
     }
+
+
+def _build_eligible_execution(lane_rulepack: dict[str, Any], watchlist_execution: dict[str, Any], eligible_gate: dict[str, Any]) -> dict[str, Any]:
+    context = _build_eligible_execution_context(lane_rulepack, watchlist_execution, eligible_gate)
+    execution_verdict, added_eligible_tickers, effective_eligible_tickers = _resolve_eligible_execution_decision(context)
+    adopted_eligible_row = _build_adopted_eligible_row(context, execution_verdict)
+    return _build_eligible_execution_analysis(
+        context,
+        execution_verdict,
+        effective_eligible_tickers,
+        added_eligible_tickers,
+        adopted_eligible_row,
+    )
 
 
 def generate_btst_tplus2_continuation_eligible_execution(

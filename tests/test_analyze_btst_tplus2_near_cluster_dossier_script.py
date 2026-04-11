@@ -430,3 +430,57 @@ def test_analyze_btst_tplus2_near_cluster_dossier_surfaces_manifest_merge_review
     assert analysis["latest_followup_decision"] == "selected"
     assert analysis["downstream_followup_status"] == "continuation_only_confirm_then_review"
     assert analysis["qualifying_window_buckets"] == ["near_miss_entries", "selected_entries"]
+
+
+def test_analyze_btst_tplus2_near_cluster_dossier_threads_final_payload(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+
+    monkeypatch.setattr(dossier, "_collect_rows", lambda *_args, **_kwargs: [{"ticker": "600988"}])
+    monkeypatch.setattr(dossier, "_extract_current_plan_visibility_summary", lambda *_args, **_kwargs: {"current_plan_visible_trade_dates": ["2026-03-31"]})
+    monkeypatch.setattr(dossier, "_load_continuation_promotion_ready_summary", lambda *_args, **_kwargs: {"promotion_path_status": "watch_review"})
+    monkeypatch.setattr(dossier, "_collect_candidate_rows_for_dossier", lambda *args, **kwargs: [{"ticker": "300505"}])
+    monkeypatch.setattr(
+        dossier,
+        "_summarize_candidate_windows",
+        lambda *args, **kwargs: {
+            "per_window_summaries": [{"report_label": "window_a"}],
+            "tier_counts": {"observation_candidate": 1},
+            "candidate_tier_focus": "observation_candidate",
+            "supporting_rows": [],
+            "tier_focus_rows": [{"ticker": "300505"}],
+            "surface_summary": {"evidence_case_count": 1},
+            "supporting_surface_summary": {},
+            "tier_focus_surface_summary": {"next_close_positive_rate": 1.0},
+            "recent_window_summaries": [{"report_label": "window_a"}],
+            "recent_supporting_window_count": 0,
+            "recent_support_ratio": 0.0,
+            "recent_supporting_surface_summary": {},
+            "recent_tier_window_count": 1,
+            "recent_tier_ratio": 1.0,
+            "recent_tier_surface_summary": {"next_close_positive_rate": 1.0},
+        },
+    )
+    monkeypatch.setattr(
+        dossier,
+        "_load_governance_context",
+        lambda *args, **kwargs: {
+            "governance_followup": {},
+            "governance_objective_support": {},
+            "governance_recent_followup_rows": [],
+        },
+    )
+    monkeypatch.setattr(dossier, "_resolve_dossier_verdict", lambda **kwargs: "observation_only_candidate")
+    monkeypatch.setattr(dossier, "_resolve_recent_validation_verdict", lambda **kwargs: "recent_support_absent")
+    monkeypatch.setattr(dossier, "governance_followup_payoff_confirmed", lambda *args, **kwargs: False)
+    monkeypatch.setattr(dossier, "_classify_recent_tier_verdict", lambda *args, **kwargs: "recent_tier_confirmed")
+    monkeypatch.setattr(dossier, "_resolve_promotion_readiness_verdict", lambda **kwargs: "validation_queue_ready")
+
+    analysis = dossier.analyze_btst_tplus2_near_cluster_dossier(reports_root, candidate_ticker="300505")
+
+    assert analysis["candidate_ticker"] == "300505"
+    assert analysis["candidate_row_count"] == 1
+    assert analysis["tier_counts"] == {"observation_candidate": 1}
+    assert analysis["recent_window_summaries"] == [{"report_label": "window_a"}]
+    assert analysis["promotion_readiness_verdict"] == "validation_queue_ready"
+    assert analysis["current_plan_visible_trade_dates"] == ["2026-03-31"]

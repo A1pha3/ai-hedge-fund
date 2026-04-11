@@ -125,3 +125,32 @@ def test_analyze_btst_carryover_peer_board_classifies_aligned_and_broad_family_c
     assert "300999" in markdown
     assert "688498" in markdown
     assert "002001" in markdown
+
+
+def test_analyze_btst_carryover_peer_board_threads_partitioned_counts(monkeypatch, tmp_path):
+    raw_rows = [{"ticker": "300001"}, {"ticker": "300002"}]
+    deduped_rows = [{"ticker": "300001"}]
+    enriched_rows = [
+        {"ticker": "300999", "trade_date": "2026-04-09", "decision": "near_miss", "peer_evidence_status": "aligned_peer_ready", "gap_to_selected": 0.01, "historical_evaluable_count": 2, "score_target": 0.44},
+        {"ticker": "688498", "trade_date": "2026-03-30", "decision": "rejected", "peer_evidence_status": "broad_family_only", "gap_to_selected": 0.21, "historical_evaluable_count": 1, "score_target": 0.36},
+        {"ticker": "002001", "trade_date": "2026-04-09", "decision": "selected", "peer_evidence_status": "same_ticker_ready", "gap_to_selected": 0.0, "historical_evaluable_count": 2, "score_target": 0.4493},
+    ]
+
+    monkeypatch.setattr("scripts.analyze_btst_carryover_peer_board._iter_case_rows", lambda reports_root: raw_rows)
+    monkeypatch.setattr("scripts.analyze_btst_carryover_peer_board._deduplicate_case_rows", lambda rows: deduped_rows)
+    monkeypatch.setattr("scripts.analyze_btst_carryover_peer_board._attach_outcomes", lambda rows: enriched_rows)
+    monkeypatch.setattr("scripts.analyze_btst_carryover_peer_board._is_supportive", lambda row: True)
+
+    analysis = analyze_btst_carryover_peer_board(tmp_path)
+
+    assert analysis["raw_case_count"] == 2
+    assert analysis["unique_case_count"] == 1
+    assert analysis["supportive_case_count"] == 3
+    assert analysis["peer_status_counts"] == {
+        "aligned_peer_ready": 1,
+        "broad_family_only": 1,
+        "same_ticker_ready": 1,
+    }
+    assert [row["ticker"] for row in analysis["aligned_candidates"]] == ["300999"]
+    assert [row["ticker"] for row in analysis["broad_family_only_candidates"]] == ["688498"]
+    assert [row["ticker"] for row in analysis["same_ticker_ready_rows"]] == ["002001"]

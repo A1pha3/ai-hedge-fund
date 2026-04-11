@@ -5,7 +5,16 @@ from pathlib import Path
 
 from scripts.analyze_btst_governance_synthesis import analyze_btst_governance_synthesis
 from scripts.analyze_btst_replay_cohort import analyze_btst_replay_cohort
-from scripts.run_btst_nightly_control_tower import _prioritize_control_tower_next_actions, build_btst_nightly_control_tower_payload, build_btst_open_ready_delta_payload, generate_btst_nightly_control_tower_artifacts, render_btst_nightly_control_tower_markdown
+from scripts.run_btst_nightly_control_tower import (
+    _build_carryover_contract_task,
+    _build_selected_contract_resolution_task,
+    _build_selected_contract_monitor_task,
+    _prioritize_control_tower_next_actions,
+    build_btst_nightly_control_tower_payload,
+    build_btst_open_ready_delta_payload,
+    generate_btst_nightly_control_tower_artifacts,
+    render_btst_nightly_control_tower_markdown,
+)
 from scripts.validate_btst_governance_consistency import validate_btst_governance_consistency
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
@@ -709,6 +718,94 @@ def test_build_btst_nightly_control_tower_payload_prioritizes_pending_peer_close
     assert payload["control_tower_snapshot"]["next_actions"][2]["source"] == "carryover_contract"
 
 
+def test_build_selected_contract_monitor_task_uses_intraday_confirmation_only_language() -> None:
+    task = _build_selected_contract_monitor_task(
+        {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "300720",
+                "focus_cycle_status": "missing_next_day",
+                "focus_overall_contract_verdict": "pending_next_day",
+                "focus_next_day_contract_verdict": "pending_next_day",
+                "focus_t_plus_2_contract_verdict": "pending_t_plus_2",
+            },
+            "carryover_multiday_continuation_audit_summary": {
+                "selected_ticker": "300720",
+                "selected_path_t2_bias_only": False,
+                "selected_preferred_entry_mode": "intraday_confirmation_only",
+                "selected_execution_quality_label": "intraday_only",
+                "selected_entry_timing_bias": "confirm_then_reduce",
+            },
+        }
+    )
+
+    assert task is not None
+    assert "intraday confirmation-only" in task["next_step"]
+    assert "selected_entry_mode=intraday_confirmation_only" in task["why_now"]
+    assert "selected_execution_quality=intraday_only" in task["why_now"]
+
+
+def test_build_carryover_contract_task_uses_intraday_confirmation_only_language() -> None:
+    task = _build_carryover_contract_task(
+        {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "300720",
+                "focus_overall_contract_verdict": "pending_next_day",
+            },
+            "carryover_multiday_continuation_audit_summary": {
+                "selected_ticker": "300720",
+                "selected_path_t2_bias_only": False,
+                "selected_preferred_entry_mode": "intraday_confirmation_only",
+                "selected_execution_quality_label": "intraday_only",
+                "selected_entry_timing_bias": "confirm_then_reduce",
+                "broad_family_only_multiday_unsupported": False,
+            },
+            "carryover_aligned_peer_harvest_summary": {
+                "focus_ticker": "301396",
+                "focus_status": "next_day_watch_priority",
+            },
+            "carryover_peer_expansion_summary": {
+                "focus_ticker": "301396",
+                "focus_status": "next_day_watch_priority",
+                "priority_expansion_tickers": ["301396"],
+                "watch_with_risk_tickers": [],
+            },
+            "carryover_aligned_peer_proof_summary": {},
+            "carryover_peer_promotion_gate_summary": {},
+        }
+    )
+
+    assert task is not None
+    assert "intraday confirmation-only" in task["next_step"]
+    assert "selected_entry_mode=intraday_confirmation_only" in task["why_now"]
+    assert "selected_execution_quality=intraday_only" in task["why_now"]
+
+
+def test_build_selected_contract_resolution_task_uses_closed_cycle_wording_for_nonpositive_expectation() -> None:
+    task = _build_selected_contract_resolution_task(
+        {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "300720",
+                "focus_cycle_status": "t_plus_4_closed",
+                "focus_overall_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+                "focus_next_day_contract_verdict": "observed_without_positive_expectation",
+                "focus_t_plus_2_contract_verdict": "observed_without_positive_expectation",
+            },
+            "carryover_multiday_continuation_audit_summary": {
+                "selected_ticker": "300720",
+                "selected_preferred_entry_mode": "intraday_confirmation_only",
+                "selected_execution_quality_label": "intraday_only",
+                "selected_entry_timing_bias": "confirm_then_reduce",
+            },
+        }
+    )
+
+    assert task is not None
+    assert "已闭环" in task["title"]
+    assert "已闭环的 selected contract" in task["next_step"]
+    assert "intraday confirmation-only / execution-quality" in task["next_step"]
+    assert "selected_entry_mode=intraday_confirmation_only" in task["why_now"]
+
+
 def test_prioritize_control_tower_next_actions_prefers_btst_flip_tasks_over_recall() -> None:
     latest_btst_snapshot = {"summary": {"primary_count": 0}}
     control_tower_snapshot = {
@@ -808,6 +905,453 @@ def test_prioritize_control_tower_next_actions_prefers_pending_peer_close_loop_o
     assert actions[0]["source"] == "selected_contract_monitor"
     assert actions[1]["source"] == "carryover_peer_close_loop_monitor"
     assert actions[2]["source"] == "carryover_contract"
+
+
+def test_prioritize_control_tower_next_actions_demotes_low_urgency_selected_resolution_below_live_peer_and_corridor_tasks() -> None:
+    latest_btst_snapshot = {"summary": {"primary_count": 0}}
+    control_tower_snapshot = {
+        "candidate_pool_recall_dossier": {
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["300683", "688796", "688383"]},
+            "truncation_frontier_summary": {"frontier_verdict": "far_below_cutoff_not_boundary"},
+            "next_actions": ["先补 recall 链路"],
+        },
+        "active_candidate_pool_upstream_handoff_focus_tickers": ["300683", "688796", "688383"],
+        "active_watchlist_recall_absent_from_candidate_pool_tickers": ["300683"],
+        "selected_outcome_refresh_summary": {
+            "focus_ticker": "300720",
+            "focus_cycle_status": "t_plus_4_closed",
+            "focus_overall_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+            "focus_next_day_contract_verdict": "observed_without_positive_expectation",
+            "focus_t_plus_2_contract_verdict": "observed_without_positive_expectation",
+        },
+        "carryover_multiday_continuation_audit_summary": {
+            "selected_ticker": "300720",
+            "selected_preferred_entry_mode": "intraday_confirmation_only",
+            "selected_execution_quality_label": "intraday_only",
+            "selected_entry_timing_bias": "confirm_then_reduce",
+        },
+        "carryover_aligned_peer_proof_summary": {
+            "focus_ticker": "300620",
+            "focus_proof_verdict": "pending_t_plus_2_close",
+            "focus_promotion_review_verdict": "await_t_plus_2_close",
+            "ready_for_promotion_review_tickers": [],
+            "risk_review_tickers": [],
+        },
+        "carryover_peer_promotion_gate_summary": {
+            "selected_ticker": "300720",
+            "selected_contract_verdict": "t_plus_2_observed_without_positive_expectation",
+            "focus_ticker": "300620",
+            "focus_gate_verdict": "await_peer_t_plus_2_close",
+            "ready_tickers": [],
+            "blocked_open_tickers": [],
+            "pending_t_plus_2_tickers": ["300620", "688498"],
+        },
+        "carryover_peer_expansion_summary": {
+            "focus_ticker": "301396",
+            "focus_status": "next_day_watch_priority",
+            "priority_expansion_tickers": ["301396", "300620"],
+            "watch_with_risk_tickers": ["688498"],
+        },
+        "candidate_pool_recall_dominant_stage": "candidate_pool_truncated_after_filters",
+        "candidate_pool_recall_focus_liquidity_profiles": [
+            {
+                "ticker": "300683",
+                "dominant_liquidity_gap_mode": "barely_above_gate_and_far_below_cutoff",
+                "pressure_peer_cluster_type": "mixed_liquidity_wall",
+                "uplift_to_cutoff_multiple_mean": 12.5909,
+                "closest_case": {
+                    "pre_truncation_rank_gap_to_cutoff": 1599,
+                    "pre_truncation_avg_amount_share_of_cutoff": 0.158,
+                },
+                "prototype_type": "upstream_base_liquidity_uplift_probe",
+            }
+        ],
+        "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+        "candidate_pool_corridor_shadow_pack_summary": {
+            "primary_shadow_replay": {
+                "ticker": "300683",
+                "validation_priority_rank": 1,
+                "tractability_tier": "second_shadow_probe",
+                "uplift_to_cutoff_multiple_mean": 6.5919,
+                "closed_cycle_count": 4,
+                "mean_t_plus_2_return": 0.1051,
+            },
+            "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
+        },
+        "candidate_pool_corridor_uplift_runbook_summary": {
+            "primary_shadow_replay": "300683",
+            "execution_step_head": "保持 300683 为唯一 primary shadow replay 槽位。",
+            "parallel_watch_tickers": ["301188"],
+            "guardrail_head": "保持 Layer A liquidity gate 与 top300 cutoff 默认口径不变。",
+        },
+    }
+
+    actions = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
+
+    assert [row["source"] for row in actions[:3]] == [
+        "carryover_peer_close_loop_monitor",
+        "carryover_contract",
+        "candidate_pool_corridor_shadow_replay",
+    ]
+    assert all(row["source"] != "selected_contract_resolution" for row in actions[:3])
+    assert "['300620', '301396']" in actions[1]["next_step"]
+
+
+def test_prioritize_control_tower_next_actions_drops_generic_carryover_when_selected_contract_is_violated() -> None:
+    latest_btst_snapshot = {"summary": {"primary_count": 0}}
+    control_tower_snapshot = {
+        "candidate_pool_recall_dossier": {
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["688796", "300683", "688383"]},
+            "truncation_frontier_summary": {"frontier_verdict": "far_below_cutoff_not_boundary"},
+            "next_actions": ["先补 recall 链路"],
+        },
+        "active_candidate_pool_upstream_handoff_focus_tickers": ["688796", "300683", "688383"],
+        "selected_outcome_refresh_summary": {
+            "focus_ticker": "002001",
+            "focus_cycle_status": "t1_only",
+            "focus_overall_contract_verdict": "next_close_violated",
+            "focus_next_day_contract_verdict": "violated_positive_expectation",
+            "focus_t_plus_2_contract_verdict": "pending_t_plus_2",
+        },
+        "carryover_aligned_peer_proof_summary": {
+            "focus_ticker": "300620",
+            "focus_proof_verdict": "pending_t_plus_2_close",
+            "focus_promotion_review_verdict": "await_t_plus_2_close",
+            "ready_for_promotion_review_tickers": [],
+            "risk_review_tickers": [],
+        },
+        "carryover_peer_promotion_gate_summary": {
+            "selected_ticker": "002001",
+            "selected_contract_verdict": "next_close_violated",
+            "focus_ticker": "300620",
+            "focus_gate_verdict": "blocked_selected_contract_violated",
+            "ready_tickers": [],
+            "blocked_open_tickers": [],
+            "pending_t_plus_2_tickers": ["300620"],
+        },
+        "carryover_peer_expansion_summary": {
+            "focus_ticker": "301396",
+            "focus_status": "next_day_watch_priority",
+            "priority_expansion_tickers": ["301396"],
+            "watch_with_risk_tickers": [],
+        },
+        "carryover_multiday_continuation_audit_summary": {
+            "selected_ticker": "002001",
+            "selected_path_t2_bias_only": True,
+        },
+        "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+        "candidate_pool_corridor_shadow_pack_summary": {
+            "primary_shadow_replay": {
+                "ticker": "300683",
+                "validation_priority_rank": 1,
+                "tractability_tier": "second_shadow_probe",
+                "uplift_to_cutoff_multiple_mean": 6.5919,
+                "closed_cycle_count": 4,
+                "mean_t_plus_2_return": 0.1051,
+            },
+            "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
+        },
+        "candidate_pool_corridor_uplift_runbook_summary": {
+            "primary_shadow_replay": "300683",
+            "execution_step_head": "保持 300683 为唯一 primary shadow replay 槽位。",
+            "parallel_watch_tickers": ["301188"],
+            "excluded_low_gate_tail_tickers": ["688796"],
+            "guardrail_head": "保持 Layer A liquidity gate 与 top300 cutoff 默认口径不变。",
+        },
+    }
+
+    actions = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
+
+    assert [action["source"] for action in actions] == [
+        "selected_contract_resolution",
+        "carryover_peer_close_loop_monitor",
+        "candidate_pool_corridor_shadow_replay",
+    ]
+
+
+def test_prioritize_control_tower_next_actions_threads_top_three_without_duplicate_manual_tasks() -> None:
+    latest_btst_snapshot = {"summary": {"primary_count": 0}}
+    control_tower_snapshot = {
+        "selected_outcome_refresh_summary": {
+            "focus_ticker": "002001",
+            "focus_overall_contract_verdict": "pending_next_day",
+        },
+        "carryover_aligned_peer_proof_summary": {
+            "focus_ticker": "300408",
+            "focus_proof_verdict": "supportive_closed_cycle",
+            "focus_promotion_review_verdict": "ready_for_promotion_review",
+            "ready_for_promotion_review_tickers": ["300408"],
+            "risk_review_tickers": [],
+        },
+        "carryover_peer_promotion_gate_summary": {
+            "selected_ticker": "002001",
+            "selected_contract_verdict": "pending_next_day",
+            "focus_ticker": "300408",
+            "focus_gate_verdict": "blocked_selected_contract_open",
+            "ready_tickers": [],
+            "blocked_open_tickers": ["300408"],
+            "pending_t_plus_2_tickers": [],
+        },
+        "carryover_peer_expansion_summary": {
+            "focus_ticker": "300408",
+            "focus_status": "promotion_review_ready",
+            "priority_expansion_tickers": ["300408"],
+            "watch_with_risk_tickers": [],
+        },
+        "carryover_multiday_continuation_audit_summary": {
+            "selected_ticker": "002001",
+            "selected_path_t2_bias_only": True,
+        },
+        "next_actions": [
+            {
+                "task_id": "duplicate-manual",
+                "title": "优先监控 002001 formal selected 主票闭环",
+                "next_step": "优先盯 002001 的主票闭环，确认 next-day bar 到来后是否仍满足 confirm-then-hold with T+2 bias 的 selected contract。",
+                "source": "manual_duplicate",
+            }
+        ],
+    }
+
+    actions = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
+
+    assert len(actions) == 3
+    assert [action["source"] for action in actions] == [
+        "selected_contract_monitor",
+        "carryover_peer_proof",
+        "carryover_contract",
+    ]
+
+
+def test_prioritize_control_tower_next_actions_prefers_corridor_primary_shadow_replay_over_generic_recall() -> None:
+    latest_btst_snapshot = {"summary": {"primary_count": 0}}
+    control_tower_snapshot = {
+        "candidate_pool_recall_dossier": {
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["688796", "300683", "688383"]},
+            "truncation_frontier_summary": {"frontier_verdict": "far_below_cutoff_not_boundary"},
+            "next_actions": ["先补 recall 链路"],
+        },
+        "active_candidate_pool_upstream_handoff_focus_tickers": ["688796", "300683", "688383"],
+        "active_no_candidate_entry_absent_from_watchlist_tickers": ["300683"],
+        "active_watchlist_recall_absent_from_candidate_pool_tickers": ["300683"],
+        "candidate_pool_recall_dominant_stage": "candidate_pool_truncated_after_filters",
+        "candidate_pool_recall_focus_liquidity_profiles": [
+            {
+                "ticker": "300683",
+                "dominant_liquidity_gap_mode": "barely_above_gate_and_far_below_cutoff",
+                "pressure_peer_cluster_type": "diffuse_recurring_liquidity_wall",
+                "uplift_to_cutoff_multiple_mean": 12.5602,
+                "avg_amount_share_of_cutoff_mean": 0.1519,
+                "min_rank_gap_to_cutoff": 1599,
+                "prototype_type": "upstream_base_liquidity_uplift_probe",
+                "prototype_summary": "先把 300683/301188/688383/688796 收敛到 upstream base-liquidity uplift shadow probe，只验证能否把基础流动性从当前 corridor 系统性抬升，不提前讨论 cutoff 微调。",
+                "frontier_peer_summary": {
+                    "top_frontier_peers": [
+                        {"ticker": "603077", "count": 2},
+                        {"ticker": "001330", "count": 1},
+                        {"ticker": "001267", "count": 1},
+                    ]
+                },
+                "closest_case": {
+                    "pre_truncation_rank_gap_to_cutoff": 1599,
+                    "pre_truncation_avg_amount_share_of_cutoff": 0.158,
+                },
+            }
+        ],
+        "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+        "candidate_pool_corridor_shadow_pack_summary": {
+            "primary_shadow_replay": {
+                "ticker": "300683",
+                "validation_priority_rank": 1,
+                "tractability_tier": "second_shadow_probe",
+                "uplift_to_cutoff_multiple_mean": 6.5919,
+                "closed_cycle_count": 4,
+                "mean_t_plus_2_return": 0.1051,
+            },
+            "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
+        },
+        "candidate_pool_corridor_uplift_runbook_summary": {
+            "primary_shadow_replay": "300683",
+            "execution_step_head": "保持 300683 为唯一 primary shadow replay 槽位。",
+            "parallel_watch_tickers": ["301188"],
+            "excluded_low_gate_tail_tickers": ["688796"],
+            "guardrail_head": "保持 Layer A liquidity gate 与 top300 cutoff 默认口径不变。",
+        },
+    }
+
+    actions = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
+
+    assert actions[0]["source"] == "candidate_pool_corridor_shadow_replay"
+    assert actions[0]["task_id"] == "candidate_pool_corridor_primary_shadow_priority"
+    assert "300683" in actions[0]["title"]
+    assert "shadow_status=ready_for_primary_shadow_replay" in actions[0]["why_now"]
+    assert "earliest_breakpoint=absent_from_candidate_pool" in actions[0]["why_now"]
+    assert "min_rank_gap_to_cutoff=1599" in actions[0]["why_now"]
+    assert "pressure_peer_cluster_type=diffuse_recurring_liquidity_wall" in actions[0]["why_now"]
+    assert "uplift_to_cutoff_multiple_mean=12.5602" in actions[0]["why_now"]
+    assert "closest_pre_truncation_avg_amount_share_of_cutoff=0.158" in actions[0]["why_now"]
+    assert "frontier_peers=['603077', '001330', '001267']" in actions[0]["why_now"]
+    assert "最近 distinct 样本仍差 1599 名，avg_amount/cutoff≈0.158" in actions[0]["next_step"]
+    assert "最近 frontier peers ['603077', '001330', '001267']" in actions[0]["next_step"]
+    assert "upstream_base_liquidity_uplift_probe" in actions[0]["next_step"]
+    assert "runbook 首步：保持 300683 为唯一 primary shadow replay 槽位。" in actions[0]["next_step"]
+    assert "confirmatory parallel=['301188']" in actions[0]["next_step"]
+    assert "excluded_low_gate_tail=['688796']" in actions[0]["next_step"]
+    assert "guardrail：保持 Layer A liquidity gate 与 top300 cutoff 默认口径不变。" in actions[0]["next_step"]
+    assert actions[1]["source"] == "candidate_pool_recall_dossier"
+
+
+def test_prioritize_control_tower_next_actions_accepts_legacy_string_corridor_primary_shadow_replay() -> None:
+    latest_btst_snapshot = {"summary": {"primary_count": 0}}
+    control_tower_snapshot = {
+        "candidate_pool_recall_dossier": {
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["300683"]},
+        },
+        "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+        "candidate_pool_corridor_shadow_pack_summary": {
+            "primary_shadow_replay": "300683",
+        },
+    }
+
+    actions = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
+
+    assert actions[0]["task_id"] == "candidate_pool_corridor_primary_shadow_priority"
+    assert actions[0]["source"] == "candidate_pool_corridor_shadow_replay"
+    assert "300683" in actions[0]["title"]
+
+
+def test_build_btst_open_ready_delta_payload_threads_summary_sections(tmp_path: Path) -> None:
+    current_payload = {
+        "generated_at": "2026-04-10T08:00:00",
+        "latest_btst_run": {
+            "report_dir": "data/reports/report_b",
+            "report_dir_abs": str(tmp_path / "data" / "reports" / "report_b"),
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-04-10",
+        },
+        "latest_priority_board_snapshot": {"headline": "headline-b"},
+        "latest_btst_snapshot": {},
+        "control_tower_snapshot": {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "002001",
+                "focus_cycle_status": "t_plus_2_closed",
+                "focus_overall_contract_verdict": "t_plus_2_confirmed",
+                "focus_next_day_contract_verdict": "next_close_confirmed_wait_t_plus_2",
+                "focus_t_plus_2_contract_verdict": "t_plus_2_confirmed",
+            },
+            "next_actions": [
+                {"task_id": "carryover_gate_ready_priority", "title": "优先复核 300408 carryover gate-ready 扩容资格", "source": "carryover_gate_ready"}
+            ],
+        },
+        "source_paths": {},
+    }
+    previous_payload = {
+        "generated_at": "2026-04-10T07:30:00",
+        "latest_btst_run": {
+            "report_dir": "data/reports/report_b",
+            "report_dir_abs": str(tmp_path / "data" / "reports" / "report_b"),
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-04-09",
+        },
+        "latest_priority_board_snapshot": {"headline": "headline-a"},
+        "latest_btst_snapshot": {},
+        "control_tower_snapshot": {
+            "selected_outcome_refresh_summary": {
+                "focus_ticker": "002001",
+                "focus_cycle_status": "missing_next_day",
+                "focus_overall_contract_verdict": "pending_next_day",
+                "focus_next_day_contract_verdict": "pending_next_day",
+                "focus_t_plus_2_contract_verdict": "pending_t_plus_2",
+            },
+            "next_actions": [
+                {"task_id": "carryover_contract_priority", "title": "固化 002001 carryover 合约并盯 300408 闭环", "source": "carryover_contract"}
+            ],
+        },
+        "source_paths": {},
+    }
+
+    delta_payload = build_btst_open_ready_delta_payload(
+        current_payload,
+        reports_root=tmp_path / "data" / "reports",
+        current_nightly_json_path=tmp_path / "data" / "reports" / "btst_nightly_control_tower_latest.json",
+        previous_payload=previous_payload,
+        previous_payload_path=str(tmp_path / "data" / "reports" / "history.json"),
+        historical_payload_candidates=[],
+    )
+
+    assert delta_payload["generated_at"] == "2026-04-10T08:00:00"
+    assert delta_payload["comparison_basis"] == "nightly_history"
+    assert delta_payload["overall_delta_verdict"] == "changed"
+    assert delta_payload["selected_outcome_contract_delta"]["current_focus_overall_contract_verdict"] == "t_plus_2_confirmed"
+    assert delta_payload["top_priority_action_delta"]["current_task_id"] == "carryover_gate_ready_priority"
+    assert str(delta_payload["source_paths"]["current_nightly_control_tower_json"]).endswith("btst_nightly_control_tower_latest.json")
+
+
+def test_build_btst_nightly_control_tower_payload_threads_refresh_and_sources(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    manifest = {
+        "reports_root": str(reports_root),
+        "entries": [
+            {"id": "btst_governance_synthesis_latest", "report_path": "data/reports/btst_governance_synthesis_latest.md", "question": "gov", "absolute_path": "/tmp/reports/btst_governance_synthesis_latest.md"},
+            {"id": "btst_tplus1_tplus2_objective_monitor_latest", "report_path": "data/reports/btst_tplus1_tplus2_objective_monitor_latest.md", "question": "obj", "absolute_path": "/tmp/reports/btst_tplus1_tplus2_objective_monitor_latest.md"},
+            {"id": "btst_default_merge_review_latest", "report_path": "data/reports/btst_default_merge_review_latest.md", "question": "merge", "absolute_path": "/tmp/reports/btst_default_merge_review_latest.md"},
+        ],
+        "latest_btst_run": {"report_dir": "data/reports/report_x"},
+        "btst_window_evidence_refresh": {"status": "done"},
+        "candidate_entry_shadow_refresh": {"status": "done"},
+        "btst_score_fail_frontier_refresh": {"status": "done"},
+        "btst_governance_synthesis_refresh": {"status": "done"},
+        "btst_governance_validation_refresh": {"status": "done"},
+        "btst_replay_cohort_refresh": {"status": "done"},
+        "btst_independent_window_monitor_refresh": {"status": "done"},
+        "btst_tradeable_opportunity_pool_refresh": {"status": "done"},
+        "selected_outcome_refresh_summary": {
+            "focus_ticker": "002001",
+            "focus_overall_contract_verdict": "pending_next_day",
+        },
+        "carryover_multiday_continuation_audit_summary": {
+            "selected_ticker": "002001",
+            "selected_path_t2_bias_only": True,
+        },
+        "carryover_aligned_peer_proof_summary": {
+            "focus_ticker": "300408",
+            "focus_proof_verdict": "supportive_closed_cycle",
+            "focus_promotion_review_verdict": "ready_for_promotion_review",
+            "ready_for_promotion_review_tickers": ["300408"],
+            "risk_review_tickers": [],
+        },
+        "carryover_peer_promotion_gate_summary": {
+            "selected_ticker": "002001",
+            "selected_contract_verdict": "pending_next_day",
+            "focus_ticker": "300408",
+            "focus_gate_verdict": "blocked_selected_contract_open",
+            "ready_tickers": [],
+            "blocked_open_tickers": ["300408"],
+            "pending_t_plus_2_tickers": [],
+        },
+        "carryover_peer_expansion_summary": {
+            "focus_ticker": "300408",
+            "focus_status": "promotion_review_ready",
+            "priority_expansion_tickers": ["300408"],
+            "watch_with_risk_tickers": [],
+        },
+        "default_merge_review_summary": {
+            "focus_ticker": "300720",
+            "merge_review_verdict": "ready_for_default_btst_merge_review",
+            "recommendation": "Promote 300720 into explicit default BTST merge review.",
+        },
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+
+    assert payload["refresh_status"]["btst_governance_synthesis_refresh"] == "done"
+    assert payload["control_tower_snapshot"]["next_actions"][0]["source"] == "selected_contract_monitor"
+    assert payload["latest_priority_board_snapshot"]["brief_recommendation"] == "Promote 300720 into explicit default BTST merge review."
+    assert payload["recommended_reading_order"][0]["entry_id"] == "btst_governance_synthesis_latest"
+    assert payload["source_paths"]["report_manifest_json"].endswith("report_manifest_latest.json")
 
 
 def _write_btst_followup_report(
@@ -1653,6 +2197,40 @@ def test_validate_btst_governance_consistency_fails_on_candidate_entry_evidence_
     assert candidate_check["details"]["expected_missing_window_count"] == 0
 
 
+def test_validate_btst_governance_consistency_threads_summary_payload(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+    required_paths = {
+        "action_board_path": reports_root / "action_board.json",
+        "rollout_governance_path": reports_root / "rollout.json",
+        "primary_window_gap_path": reports_root / "primary_gap.json",
+        "recurring_shadow_runbook_path": reports_root / "recurring.json",
+        "primary_window_validation_runbook_path": reports_root / "primary_validation.json",
+        "structural_shadow_runbook_path": reports_root / "structural.json",
+        "candidate_entry_governance_path": reports_root / "candidate.json",
+    }
+    for path in required_paths.values():
+        _write_json(path, {})
+
+    monkeypatch.setattr(
+        "scripts.validate_btst_governance_consistency._collect_governance_checks",
+        lambda **kwargs: [
+            {"check_id": "a", "status": "pass"},
+            {"check_id": "b", "status": "warn"},
+            {"check_id": "c", "status": "fail"},
+        ],
+    )
+
+    validation = validate_btst_governance_consistency(**required_paths)
+
+    assert validation["overall_verdict"] == "fail"
+    assert validation["pass_count"] == 1
+    assert validation["warn_count"] == 1
+    assert validation["fail_count"] == 1
+    assert validation["checks"][2]["check_id"] == "c"
+    assert validation["source_reports"]["action_board"] == str(required_paths["action_board_path"].resolve())
+
+
 def test_btst_replay_cohort_summarizes_short_trade_and_frozen_reports(tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     _write_btst_followup_report(
@@ -2330,7 +2908,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["control_tower_snapshot"]["carryover_peer_promotion_gate_summary"]["blocked_open_tickers"] == ["301396"]
     carryover_task = next(task for task in payload["control_tower_snapshot"]["next_actions"] if task.get("source") == "carryover_contract")
     assert "002001" in carryover_task["title"]
-    assert "300408" in carryover_task["title"]
+    assert "301396" in carryover_task["title"]
     assert "t_plus_2_bias_only" in carryover_task["why_now"]
     assert "peer_proof_focus=301396" in carryover_task["why_now"]
     assert "peer_proof_verdict=ready_for_promotion_review" in carryover_task["why_now"]
@@ -2338,7 +2916,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "peer_gate_verdict=blocked_selected_contract_open" in carryover_task["why_now"]
     assert "watch_with_risk=['688498']" in carryover_task["why_now"]
     assert "T+2 bias" in carryover_task["next_step"]
-    assert "['300408', '301396']" in carryover_task["next_step"]
+    assert "['301396', '300408']" in carryover_task["next_step"]
     assert "['301396']" in carryover_task["next_step"]
     assert "['688498']" in carryover_task["next_step"]
     assert payload["control_tower_snapshot"]["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
@@ -2693,6 +3271,8 @@ def test_control_tower_prioritizes_recall_and_primary_lane_when_latest_btst_has_
     independent_json = reports_root / "btst_independent_window_monitor_latest.json"
     tplus_json = reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json"
     replay_json = reports_root / "btst_replay_cohort_latest.json"
+    failure_dossier_json = reports_root / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_json = reports_root / "btst_watchlist_recall_dossier_latest.json"
     candidate_pool_dossier_json = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
 
     _write_json(
@@ -2728,6 +3308,23 @@ def test_control_tower_prioritizes_recall_and_primary_lane_when_latest_btst_has_
     _write_json(independent_json, {"report_dir_count": 0, "rows": [], "recommendation": "n/a"})
     _write_json(tplus_json, {"tradeable_surface": {"verdict": "n/a"}})
     _write_json(replay_json, {"report_count": 1, "selection_target_counts": {"short_trade_only": 1}, "cohort_summaries": [], "recommendation": "n/a"})
+    _write_json(
+        failure_dossier_json,
+        {
+            "top_absent_from_watchlist_tickers": ["300683", "688796", "688383"],
+        },
+    )
+    _write_json(
+        watchlist_dossier_json,
+        {
+            "top_absent_from_candidate_pool_tickers": ["300683", "688796", "688383"],
+            "priority_ticker_dossiers": [
+                {"ticker": "300683", "dominant_recall_stage": "absent_from_candidate_pool"},
+                {"ticker": "688796", "dominant_recall_stage": "absent_from_candidate_pool"},
+                {"ticker": "688383", "dominant_recall_stage": "absent_from_candidate_pool"},
+            ],
+        },
+    )
     _write_json(
         candidate_pool_dossier_json,
         {
@@ -2800,6 +3397,8 @@ def test_control_tower_recall_priority_prefers_active_upstream_handoff_focus_tic
     independent_json = reports_root / "btst_independent_window_monitor_latest.json"
     tplus_json = reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json"
     replay_json = reports_root / "btst_replay_cohort_latest.json"
+    failure_dossier_json = reports_root / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_json = reports_root / "btst_watchlist_recall_dossier_latest.json"
     candidate_pool_dossier_json = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
 
     _write_json(
@@ -2819,6 +3418,23 @@ def test_control_tower_recall_priority_prefers_active_upstream_handoff_focus_tic
     _write_json(tplus_json, {"tradeable_surface": {"verdict": "n/a"}})
     _write_json(replay_json, {"report_count": 1, "selection_target_counts": {"short_trade_only": 1}, "cohort_summaries": [], "recommendation": "n/a"})
     _write_json(
+        failure_dossier_json,
+        {
+            "top_absent_from_watchlist_tickers": ["300683", "688796", "688383"],
+        },
+    )
+    _write_json(
+        watchlist_dossier_json,
+        {
+            "top_absent_from_candidate_pool_tickers": ["300683", "688796", "688383"],
+            "priority_ticker_dossiers": [
+                {"ticker": "300683", "dominant_recall_stage": "absent_from_candidate_pool"},
+                {"ticker": "688796", "dominant_recall_stage": "absent_from_candidate_pool"},
+                {"ticker": "688383", "dominant_recall_stage": "absent_from_candidate_pool"},
+            ],
+        },
+    )
+    _write_json(
         candidate_pool_dossier_json,
         {
             "priority_stage_counts": {"candidate_pool_truncated_after_filters": 3},
@@ -2826,6 +3442,21 @@ def test_control_tower_recall_priority_prefers_active_upstream_handoff_focus_tic
             "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["688796", "688383", "301292"]},
             "truncation_frontier_summary": {"frontier_verdict": "far_below_cutoff_not_boundary"},
             "recommendation": "先拆 liquidity corridor 和 post-gate competition。",
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "priority_rank": 1,
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "tickers": ["300683", "688796", "688383"],
+                    "pressure_cluster_type": "mixed_liquidity_wall",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 12.5909,
+                    "uplift_to_cutoff_multiple_min": 6.3291,
+                    "prototype_summary": "先把 300683/688796/688383 收敛到 upstream base-liquidity uplift shadow probe，只验证能否把基础流动性从当前 corridor 系统性抬升。",
+                    "success_signal": "若 nearest frontier multiple 能持续压向最轻样本，再进入 cutoff tuning 讨论。",
+                    "guardrail_summary": "若 larger-cap liquidity wall 仍主导，就不得把这条 lane 改写成 top300 boundary 微调。",
+                    "why_now": "要脱离当前 corridor 并摸到最近 frontier peer，候选平均仍需把 20 日成交额抬到当前的 12.5602 倍。",
+                }
+            ],
         },
     )
 
@@ -2845,21 +3476,48 @@ def test_control_tower_recall_priority_prefers_active_upstream_handoff_focus_tic
         "btst_replay_cohort_refresh": {"status": "refreshed", "output_json": str(replay_json.resolve())},
         "candidate_entry_shadow_refresh": {
             "status": "refreshed",
+            "no_candidate_entry_failure_dossier_json": str(failure_dossier_json.resolve()),
+            "watchlist_recall_dossier_json": str(watchlist_dossier_json.resolve()),
             "candidate_pool_recall_dossier_json": str(candidate_pool_dossier_json.resolve()),
             "candidate_pool_upstream_handoff_board_summary": {
                 "focus_tickers": ["688796", "300683", "688383"],
+            },
+            "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+            "candidate_pool_corridor_shadow_pack_summary": {
+                "primary_shadow_replay": {
+                    "ticker": "300683",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "uplift_to_cutoff_multiple_mean": 6.5919,
+                    "closed_cycle_count": 4,
+                    "mean_t_plus_2_return": 0.1051,
+                },
+                "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
             },
         },
         "entries": [],
     }
 
     payload = build_btst_nightly_control_tower_payload(manifest)
-    next_action = payload["control_tower_snapshot"]["next_actions"][0]
+    next_actions = payload["control_tower_snapshot"]["next_actions"]
+    next_action = next_actions[0]
 
-    assert next_action["task_id"] == "candidate_pool_recall_priority"
-    assert next_action["title"] == "优先修复 Layer A recall / handoff 主链路"
-    assert "focus_tickers=['688796', '300683', '688383']" in next_action["why_now"]
-    assert next_action["next_step"] == "先补 ['688796', '300683', '688383'] 的 candidate pool -> watchlist 召回观测，确认它们为何连 watchlist 都没进入。"
+    assert next_action["task_id"] == "candidate_pool_corridor_primary_shadow_priority"
+    assert next_action["source"] == "candidate_pool_corridor_shadow_replay"
+    assert "300683" in next_action["title"]
+    assert "shadow_status=ready_for_primary_shadow_replay" in next_action["why_now"]
+    assert "earliest_breakpoint=absent_from_candidate_pool" in next_action["why_now"]
+    assert next_action["next_step"] == "先回查 300683 为什么连 candidate_pool snapshot 都没有进入，优先补 watchlist -> candidate_pool handoff，再执行 corridor uplift primary shadow replay。"
+    assert next_actions[1]["task_id"] == "candidate_pool_recall_priority"
+    assert "candidate-pool truncation" in next_actions[1]["title"]
+    assert "priority_handoff=layer_a_liquidity_corridor" in next_actions[1]["why_now"]
+    assert "pressure_cluster_type=mixed_liquidity_wall" in next_actions[1]["why_now"]
+    assert "uplift_to_cutoff_multiple_mean=12.5909" in next_actions[1]["why_now"]
+    assert "uplift_to_cutoff_multiple_min=6.3291" in next_actions[1]["why_now"]
+    assert "upstream_base_liquidity_uplift_probe" in next_actions[1]["next_step"]
+    assert "pre-truncation 排名观测与 top300 frontier" in next_actions[1]["next_step"]
+    assert "通过 Layer A 过滤后仍在 candidate_pool truncation 被压掉" in next_actions[1]["next_step"]
+    assert "当前最轻样本门槛仍需约 6.3291 倍成交额抬升" in next_actions[1]["next_step"]
 
 
 def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_path: Path) -> None:

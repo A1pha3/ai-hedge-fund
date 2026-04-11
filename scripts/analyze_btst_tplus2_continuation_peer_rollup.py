@@ -29,7 +29,22 @@ def analyze_btst_tplus2_continuation_peer_rollup(
     board_rows = list(expansion_board.get("board_rows") or [])
     next_validation_candidates = list(expansion_board.get("next_validation_candidates") or [])
     top_candidate = dict(board_rows[0] or {}) if board_rows else {}
-    risk_flags = [
+    risk_flags = _collect_risk_flags(board_rows)
+    rollup_verdict, recommendation = _resolve_rollup_outcome(expansion_board, top_candidate)
+    return _build_peer_rollup_analysis(
+        reports_root=reports_root,
+        anchor_ticker=anchor_ticker,
+        expansion_board=expansion_board,
+        top_candidate=top_candidate,
+        next_validation_candidates=next_validation_candidates,
+        risk_flags=risk_flags,
+        rollup_verdict=rollup_verdict,
+        recommendation=recommendation,
+    )
+
+
+def _collect_risk_flags(board_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
         {
             "ticker": row.get("ticker"),
             "tier": row.get("tier"),
@@ -42,24 +57,43 @@ def analyze_btst_tplus2_continuation_peer_rollup(
         or (row.get("next_close_positive_rate") is not None and float(row.get("next_close_positive_rate")) <= 0.0)
     ]
 
+
+def _resolve_rollup_outcome(expansion_board: dict[str, Any], top_candidate: dict[str, Any]) -> tuple[str, str]:
     if int(expansion_board.get("strict_peer_count") or 0) > 0:
-        rollup_verdict = "strict_peer_breakthrough"
-        recommendation = "Continuation expansion has reached strict-peer quality. Keep the lane isolated, but promotion review can shift from peer discovery to pooled validation."
-    elif int(expansion_board.get("near_cluster_count") or 0) > 0:
-        rollup_verdict = "first_near_cluster_breakthrough"
-        recommendation = (
+        return (
+            "strict_peer_breakthrough",
+            "Continuation expansion has reached strict-peer quality. Keep the lane isolated, but promotion review can shift from peer discovery to pooled validation.",
+        )
+    if int(expansion_board.get("near_cluster_count") or 0) > 0:
+        return (
+            "first_near_cluster_breakthrough",
             "Continuation expansion has moved beyond a single-name pattern, but only into the near-cluster tier. "
             f"Top candidate recent_tier_verdict={top_candidate.get('recent_tier_verdict')} "
             f"({top_candidate.get('recent_tier_window_count')}/{top_candidate.get('recent_window_count')}). "
-            "Focus next work on validating the top near-cluster candidate across new windows."
+            "Focus next work on validating the top near-cluster candidate across new windows.",
         )
-    elif board_rows:
-        rollup_verdict = "observation_only_candidates_present"
-        recommendation = "Only loose observation candidates exist. Keep the lane in single-name observation mode until a near-cluster or strict peer emerges."
-    else:
-        rollup_verdict = "no_peer_expansion"
-        recommendation = "No peer expansion evidence exists yet. Continue treating the lane as a single-anchor continuation pattern."
+    if expansion_board.get("board_rows"):
+        return (
+            "observation_only_candidates_present",
+            "Only loose observation candidates exist. Keep the lane in single-name observation mode until a near-cluster or strict peer emerges.",
+        )
+    return (
+        "no_peer_expansion",
+        "No peer expansion evidence exists yet. Continue treating the lane as a single-anchor continuation pattern.",
+    )
 
+
+def _build_peer_rollup_analysis(
+    *,
+    reports_root: str | Path,
+    anchor_ticker: str,
+    expansion_board: dict[str, Any],
+    top_candidate: dict[str, Any],
+    next_validation_candidates: list[dict[str, Any]],
+    risk_flags: list[dict[str, Any]],
+    rollup_verdict: str,
+    recommendation: str,
+) -> dict[str, Any]:
     return {
         "reports_root": str(Path(reports_root).expanduser().resolve()),
         "anchor_ticker": anchor_ticker,
