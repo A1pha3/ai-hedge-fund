@@ -15,7 +15,9 @@ from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.research.artifacts import FileSelectionArtifactWriter
-from src.targets.router import build_selection_targets
+from src.targets.models import DualTargetEvaluation
+from src.targets.router import build_selection_targets, summarize_selection_targets
+from src.targets.short_trade_target import evaluate_short_trade_selected_target
 
 EVIDENCE_DEFICIENT_BROAD_FAMILY_ONLY = "evidence_deficient_broad_family_only"
 
@@ -262,6 +264,100 @@ def _extract_historical_prior_from_plan_selection_targets(plan: ExecutionPlan) -
     return prior_by_ticker
 
 
+def _build_selected_catalyst_theme_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int) -> DualTargetEvaluation:
+    selected_entry = dict(entry or {})
+    relief = dict(selected_entry.get("short_trade_catalyst_relief") or {})
+    if str(relief.get("reason") or "") == "catalyst_theme_short_trade_carryover":
+        relief.setdefault("selected_threshold", 0.45)
+        relief.setdefault("min_historical_evaluable_count", 2)
+    if relief:
+        selected_entry["short_trade_catalyst_relief"] = relief
+
+    candidate_reason_codes = [
+        str(reason)
+        for reason in list(selected_entry.get("candidate_reason_codes", selected_entry.get("reasons", [])) or [])
+        if str(reason or "").strip()
+    ]
+    selected_item = SimpleNamespace(
+        ticker=str(selected_entry.get("ticker") or ""),
+        score_b=float(selected_entry.get("score_b", 0.0) or 0.0),
+        score_c=float(selected_entry.get("score_c", 0.0) or 0.0),
+        score_final=float(selected_entry.get("score_final", 0.0) or 0.0),
+        quality_score=float(selected_entry.get("quality_score", 0.5) or 0.5),
+        candidate_source=str(selected_entry.get("candidate_source") or "catalyst_theme"),
+        candidate_reason_codes=candidate_reason_codes,
+        strategy_signals=dict(selected_entry.get("strategy_signals") or {}),
+        agent_contribution_summary=dict(selected_entry.get("agent_contribution_summary") or {}),
+        bc_conflict=selected_entry.get("bc_conflict"),
+        decision=str(selected_entry.get("decision") or ""),
+        historical_prior=dict(selected_entry.get("historical_prior") or {}),
+        short_trade_catalyst_relief=relief,
+        metrics=dict(selected_entry.get("metrics") or {}),
+        catalyst_theme_metrics=dict(selected_entry.get("catalyst_theme_metrics") or {}),
+        reason=str(selected_entry.get("reason") or ""),
+    )
+    short_trade_result = evaluate_short_trade_selected_target(
+        trade_date=trade_date,
+        item=selected_item,
+        rank_hint=rank_hint,
+        included_in_buy_orders=False,
+    )
+    return DualTargetEvaluation(
+        ticker=selected_item.ticker,
+        trade_date=trade_date,
+        research=None,
+        short_trade=short_trade_result,
+        candidate_source=selected_item.candidate_source,
+        candidate_reason_codes=candidate_reason_codes,
+    )
+
+
+def _selected_tickers_from_filter(filter_payload: dict[str, Any]) -> set[str]:
+    return {
+        str(ticker).strip()
+        for ticker in list(filter_payload.get("selected_tickers") or [])
+        if str(ticker or "").strip()
+    }
+
+
+def _catalyst_theme_entries_by_ticker(filter_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(entry.get("ticker") or "").strip(): dict(entry or {})
+        for entry in list(filter_payload.get("tickers") or [])
+        if str((entry or {}).get("ticker") or "").strip()
+    }
+
+
+def _restore_selected_catalyst_theme_targets(
+    *,
+    selection_targets: dict[str, DualTargetEvaluation],
+    catalyst_theme_filter: dict[str, Any],
+    trade_date_compact: str,
+    target_mode: str,
+) -> tuple[dict[str, DualTargetEvaluation], Any]:
+    if target_mode == "research_only":
+        return selection_targets, summarize_selection_targets(selection_targets=selection_targets, target_mode=target_mode)
+
+    selected_tickers = _selected_tickers_from_filter(catalyst_theme_filter)
+    if not selected_tickers:
+        return selection_targets, summarize_selection_targets(selection_targets=selection_targets, target_mode=target_mode)
+
+    catalyst_theme_entries = _catalyst_theme_entries_by_ticker(catalyst_theme_filter)
+    restored_targets = dict(selection_targets)
+    next_rank_hint = len(restored_targets) + 1
+    for ticker in selected_tickers:
+        entry = catalyst_theme_entries.get(ticker)
+        if not entry:
+            continue
+        restored_targets[ticker] = _build_selected_catalyst_theme_evaluation(
+            trade_date=trade_date_compact,
+            entry=entry,
+            rank_hint=next_rank_hint,
+        )
+        next_rank_hint += 1
+    return restored_targets, summarize_selection_targets(selection_targets=restored_targets, target_mode=target_mode)
+
+
 def rebuild_selection_targets_for_plan(
     plan: ExecutionPlan,
     trade_date_compact: str,
@@ -321,6 +417,12 @@ def rebuild_selection_targets_for_plan(
             *refreshed_catalyst_theme_tickers,
         ],
         buy_order_tickers={str(order.ticker) for order in list(plan.buy_orders or [])},
+        target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
+    )
+    selection_targets, dual_target_summary = _restore_selected_catalyst_theme_targets(
+        selection_targets=selection_targets,
+        catalyst_theme_filter=catalyst_theme_filter,
+        trade_date_compact=trade_date_compact,
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
     )
 

@@ -4137,53 +4137,7 @@ def _append_nightly_overview_markdown(
     llm_error_digest: dict[str, Any],
 ) -> None:
     lines.append("## Overview")
-    lines.extend(
-        [
-            f"- generated_at: {payload.get('generated_at')}",
-            f"- latest_btst_report_dir: {latest_btst_run.get('report_dir')}",
-            f"- latest_trade_date: {latest_btst_run.get('trade_date')}",
-            f"- latest_next_trade_date: {latest_btst_run.get('next_trade_date')}",
-            f"- latest_selection_target: {latest_btst_run.get('selection_target')}",
-            f"- governance_verdict: {control_tower_snapshot.get('overall_verdict')}",
-            f"- waiting_lane_count: {control_tower_snapshot.get('waiting_lane_count')}",
-            f"- ready_lane_count: {control_tower_snapshot.get('ready_lane_count')}",
-            f"- independent_window_ready_lane_count: {control_tower_snapshot.get('independent_window_ready_lane_count')}",
-            f"- independent_window_waiting_lane_count: {control_tower_snapshot.get('independent_window_waiting_lane_count')}",
-            f"- tplus1_tplus2_tradeable_positive_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_positive_rate')}",
-            f"- tplus1_tplus2_tradeable_return_hit_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_return_hit_rate')}",
-            f"- tplus1_tplus2_tradeable_mean_return: {control_tower_snapshot.get('tplus1_tplus2_tradeable_mean_return')}",
-            f"- tplus1_tplus2_tradeable_verdict: {control_tower_snapshot.get('tplus1_tplus2_tradeable_verdict')}",
-            f"- tradeable_opportunity_pool_count: {control_tower_snapshot.get('tradeable_opportunity_pool_count')}",
-            f"- tradeable_opportunity_capture_rate: {control_tower_snapshot.get('tradeable_opportunity_capture_rate')}",
-            f"- tradeable_opportunity_selected_or_near_miss_rate: {control_tower_snapshot.get('tradeable_opportunity_selected_or_near_miss_rate')}",
-            f"- tradeable_opportunity_top_kill_switches: {control_tower_snapshot.get('tradeable_opportunity_top_kill_switches')}",
-            f"- no_candidate_entry_priority_queue_count: {control_tower_snapshot.get('no_candidate_entry_priority_queue_count')}",
-            f"- no_candidate_entry_priority_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_priority_tickers')}",
-            f"- no_candidate_entry_priority_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_priority_tickers')}",
-            f"- no_candidate_entry_recall_probe_tickers: {control_tower_snapshot.get('no_candidate_entry_recall_probe_tickers')}",
-            f"- no_candidate_entry_failure_class_counts: {control_tower_snapshot.get('no_candidate_entry_failure_class_counts')}",
-            f"- no_candidate_entry_handoff_stage_counts: {control_tower_snapshot.get('no_candidate_entry_handoff_stage_counts')}",
-            f"- no_candidate_entry_absent_from_watchlist_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_absent_from_watchlist_tickers')}",
-            f"- no_candidate_entry_absent_from_watchlist_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_absent_from_watchlist_tickers')}",
-            f"- no_candidate_entry_watchlist_handoff_gap_tickers: {control_tower_snapshot.get('no_candidate_entry_watchlist_handoff_gap_tickers')}",
-            f"- no_candidate_entry_upstream_absence_tickers: {control_tower_snapshot.get('no_candidate_entry_upstream_absence_tickers')}",
-            f"- watchlist_recall_stage_counts: {control_tower_snapshot.get('watchlist_recall_stage_counts')}",
-            f"- watchlist_recall_absent_from_candidate_pool_tickers_historical: {control_tower_snapshot.get('watchlist_recall_absent_from_candidate_pool_tickers')}",
-            f"- watchlist_recall_absent_from_candidate_pool_tickers_active: {control_tower_snapshot.get('active_watchlist_recall_absent_from_candidate_pool_tickers')}",
-            f"- watchlist_recall_candidate_pool_layer_b_gap_tickers: {control_tower_snapshot.get('watchlist_recall_candidate_pool_layer_b_gap_tickers')}",
-            f"- watchlist_recall_layer_b_watchlist_gap_tickers: {control_tower_snapshot.get('watchlist_recall_layer_b_watchlist_gap_tickers')}",
-            f"- candidate_pool_recall_stage_counts: {control_tower_snapshot.get('candidate_pool_recall_stage_counts')}",
-            f"- candidate_pool_recall_dominant_stage: {control_tower_snapshot.get('candidate_pool_recall_dominant_stage')}",
-            f"- candidate_pool_recall_top_stage_tickers: {control_tower_snapshot.get('candidate_pool_recall_top_stage_tickers')}",
-            f"- candidate_pool_recall_truncation_frontier_summary: {control_tower_snapshot.get('candidate_pool_recall_truncation_frontier_summary')}",
-            f"- candidate_pool_recall_dominant_ranking_driver: {control_tower_snapshot.get('candidate_pool_recall_dominant_ranking_driver')}",
-            f"- candidate_pool_recall_dominant_liquidity_gap_mode: {control_tower_snapshot.get('candidate_pool_recall_dominant_liquidity_gap_mode')}",
-            f"- candidate_pool_recall_focus_liquidity_profiles: {control_tower_snapshot.get('candidate_pool_recall_focus_liquidity_profiles')}",
-            f"- candidate_pool_recall_priority_handoff_counts: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_counts')}",
-            f"- candidate_pool_recall_priority_handoff_branch_diagnoses: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_diagnoses')}",
-            f"- candidate_pool_recall_priority_handoff_branch_mechanisms: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_mechanisms')}",
-        ]
-    )
+    lines.extend(_build_nightly_overview_header_lines(payload, latest_btst_run, control_tower_snapshot))
     _append_nightly_overview_candidate_pool_priority_markdown(lines, control_tower_snapshot)
     _append_nightly_overview_candidate_pool_corridor_markdown(lines, control_tower_snapshot)
     _append_nightly_overview_candidate_pool_followup_markdown(
@@ -4195,6 +4149,58 @@ def _append_nightly_overview_markdown(
         llm_error_digest,
     )
     lines.append("")
+
+
+def _build_nightly_overview_header_lines(
+    payload: dict[str, Any],
+    latest_btst_run: dict[str, Any],
+    control_tower_snapshot: dict[str, Any],
+) -> list[str]:
+    return [
+        f"- generated_at: {payload.get('generated_at')}",
+        f"- latest_btst_report_dir: {latest_btst_run.get('report_dir')}",
+        f"- latest_trade_date: {latest_btst_run.get('trade_date')}",
+        f"- latest_next_trade_date: {latest_btst_run.get('next_trade_date')}",
+        f"- latest_selection_target: {latest_btst_run.get('selection_target')}",
+        f"- governance_verdict: {control_tower_snapshot.get('overall_verdict')}",
+        f"- waiting_lane_count: {control_tower_snapshot.get('waiting_lane_count')}",
+        f"- ready_lane_count: {control_tower_snapshot.get('ready_lane_count')}",
+        f"- independent_window_ready_lane_count: {control_tower_snapshot.get('independent_window_ready_lane_count')}",
+        f"- independent_window_waiting_lane_count: {control_tower_snapshot.get('independent_window_waiting_lane_count')}",
+        f"- tplus1_tplus2_tradeable_positive_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_positive_rate')}",
+        f"- tplus1_tplus2_tradeable_return_hit_rate: {control_tower_snapshot.get('tplus1_tplus2_tradeable_return_hit_rate')}",
+        f"- tplus1_tplus2_tradeable_mean_return: {control_tower_snapshot.get('tplus1_tplus2_tradeable_mean_return')}",
+        f"- tplus1_tplus2_tradeable_verdict: {control_tower_snapshot.get('tplus1_tplus2_tradeable_verdict')}",
+        f"- tradeable_opportunity_pool_count: {control_tower_snapshot.get('tradeable_opportunity_pool_count')}",
+        f"- tradeable_opportunity_capture_rate: {control_tower_snapshot.get('tradeable_opportunity_capture_rate')}",
+        f"- tradeable_opportunity_selected_or_near_miss_rate: {control_tower_snapshot.get('tradeable_opportunity_selected_or_near_miss_rate')}",
+        f"- tradeable_opportunity_top_kill_switches: {control_tower_snapshot.get('tradeable_opportunity_top_kill_switches')}",
+        f"- no_candidate_entry_priority_queue_count: {control_tower_snapshot.get('no_candidate_entry_priority_queue_count')}",
+        f"- no_candidate_entry_priority_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_priority_tickers')}",
+        f"- no_candidate_entry_priority_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_priority_tickers')}",
+        f"- no_candidate_entry_recall_probe_tickers: {control_tower_snapshot.get('no_candidate_entry_recall_probe_tickers')}",
+        f"- no_candidate_entry_failure_class_counts: {control_tower_snapshot.get('no_candidate_entry_failure_class_counts')}",
+        f"- no_candidate_entry_handoff_stage_counts: {control_tower_snapshot.get('no_candidate_entry_handoff_stage_counts')}",
+        f"- no_candidate_entry_absent_from_watchlist_tickers_historical: {control_tower_snapshot.get('no_candidate_entry_absent_from_watchlist_tickers')}",
+        f"- no_candidate_entry_absent_from_watchlist_tickers_active: {control_tower_snapshot.get('active_no_candidate_entry_absent_from_watchlist_tickers')}",
+        f"- no_candidate_entry_watchlist_handoff_gap_tickers: {control_tower_snapshot.get('no_candidate_entry_watchlist_handoff_gap_tickers')}",
+        f"- no_candidate_entry_upstream_absence_tickers: {control_tower_snapshot.get('no_candidate_entry_upstream_absence_tickers')}",
+        f"- watchlist_recall_stage_counts: {control_tower_snapshot.get('watchlist_recall_stage_counts')}",
+        f"- watchlist_recall_absent_from_candidate_pool_tickers_historical: {control_tower_snapshot.get('watchlist_recall_absent_from_candidate_pool_tickers')}",
+        f"- watchlist_recall_absent_from_candidate_pool_tickers_active: {control_tower_snapshot.get('active_watchlist_recall_absent_from_candidate_pool_tickers')}",
+        f"- watchlist_recall_candidate_pool_layer_b_gap_tickers: {control_tower_snapshot.get('watchlist_recall_candidate_pool_layer_b_gap_tickers')}",
+        f"- watchlist_recall_layer_b_watchlist_gap_tickers: {control_tower_snapshot.get('watchlist_recall_layer_b_watchlist_gap_tickers')}",
+        f"- candidate_pool_recall_stage_counts: {control_tower_snapshot.get('candidate_pool_recall_stage_counts')}",
+        f"- candidate_pool_recall_dominant_stage: {control_tower_snapshot.get('candidate_pool_recall_dominant_stage')}",
+        f"- candidate_pool_recall_top_stage_tickers: {control_tower_snapshot.get('candidate_pool_recall_top_stage_tickers')}",
+        f"- candidate_pool_recall_truncation_frontier_summary: {control_tower_snapshot.get('candidate_pool_recall_truncation_frontier_summary')}",
+        f"- candidate_pool_recall_dominant_ranking_driver: {control_tower_snapshot.get('candidate_pool_recall_dominant_ranking_driver')}",
+        f"- candidate_pool_recall_dominant_liquidity_gap_mode: {control_tower_snapshot.get('candidate_pool_recall_dominant_liquidity_gap_mode')}",
+        f"- candidate_pool_recall_focus_liquidity_profiles: {control_tower_snapshot.get('candidate_pool_recall_focus_liquidity_profiles')}",
+        f"- candidate_pool_recall_priority_handoff_counts: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_counts')}",
+        f"- candidate_pool_recall_priority_handoff_branch_diagnoses: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_diagnoses')}",
+        f"- candidate_pool_recall_priority_handoff_branch_mechanisms: {control_tower_snapshot.get('candidate_pool_recall_priority_handoff_branch_mechanisms')}",
+    ]
 
 
 def _append_nightly_summary_markdown(
@@ -4214,15 +4220,19 @@ def _append_nightly_summary_markdown(
     llm_error_digest: dict[str, Any],
 ) -> None:
     lines.append("## Nightly Summary")
-    lines.append(f"- control_tower_recommendation: {control_tower_snapshot.get('recommendation')}")
-    lines.append(f"- priority_board_headline: {latest_priority_board_snapshot.get('headline')}")
-    lines.append(f"- replay_recommendation: {replay_cohort_snapshot.get('recommendation')}")
-    lines.append(f"- tradeable_opportunity_recommendation: {tradeable_opportunity_pool_summary.get('recommendation')}")
-    lines.append(f"- no_candidate_entry_action_recommendation: {no_candidate_entry_action_board_summary.get('recommendation')}")
-    lines.append(f"- no_candidate_entry_replay_recommendation: {no_candidate_entry_replay_bundle_summary.get('recommendation')}")
-    lines.append(f"- no_candidate_entry_failure_dossier_recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}")
-    lines.append(f"- watchlist_recall_dossier_recommendation: {watchlist_recall_dossier_summary.get('recommendation')}")
-    lines.append(f"- candidate_pool_recall_dossier_recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}")
+    lines.extend(
+        _build_nightly_summary_header_lines(
+            control_tower_snapshot=control_tower_snapshot,
+            latest_priority_board_snapshot=latest_priority_board_snapshot,
+            replay_cohort_snapshot=replay_cohort_snapshot,
+            tradeable_opportunity_pool_summary=tradeable_opportunity_pool_summary,
+            no_candidate_entry_action_board_summary=no_candidate_entry_action_board_summary,
+            no_candidate_entry_replay_bundle_summary=no_candidate_entry_replay_bundle_summary,
+            no_candidate_entry_failure_dossier_summary=no_candidate_entry_failure_dossier_summary,
+            watchlist_recall_dossier_summary=watchlist_recall_dossier_summary,
+            candidate_pool_recall_dossier_summary=candidate_pool_recall_dossier_summary,
+        )
+    )
     selected_outcome_refresh_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
     if selected_outcome_refresh_summary:
         lines.append(f"- selected_outcome_refresh_summary: focus_ticker={selected_outcome_refresh_summary.get('focus_ticker')} focus_cycle_status={selected_outcome_refresh_summary.get('focus_cycle_status')} focus_overall_contract_verdict={selected_outcome_refresh_summary.get('focus_overall_contract_verdict')}")
@@ -4251,6 +4261,31 @@ def _append_nightly_summary_markdown(
     lines.append("")
 
 
+def _build_nightly_summary_header_lines(
+    *,
+    control_tower_snapshot: dict[str, Any],
+    latest_priority_board_snapshot: dict[str, Any],
+    replay_cohort_snapshot: dict[str, Any],
+    tradeable_opportunity_pool_summary: dict[str, Any],
+    no_candidate_entry_action_board_summary: dict[str, Any],
+    no_candidate_entry_replay_bundle_summary: dict[str, Any],
+    no_candidate_entry_failure_dossier_summary: dict[str, Any],
+    watchlist_recall_dossier_summary: dict[str, Any],
+    candidate_pool_recall_dossier_summary: dict[str, Any],
+) -> list[str]:
+    return [
+        f"- control_tower_recommendation: {control_tower_snapshot.get('recommendation')}",
+        f"- priority_board_headline: {latest_priority_board_snapshot.get('headline')}",
+        f"- replay_recommendation: {replay_cohort_snapshot.get('recommendation')}",
+        f"- tradeable_opportunity_recommendation: {tradeable_opportunity_pool_summary.get('recommendation')}",
+        f"- no_candidate_entry_action_recommendation: {no_candidate_entry_action_board_summary.get('recommendation')}",
+        f"- no_candidate_entry_replay_recommendation: {no_candidate_entry_replay_bundle_summary.get('recommendation')}",
+        f"- no_candidate_entry_failure_dossier_recommendation: {no_candidate_entry_failure_dossier_summary.get('recommendation')}",
+        f"- watchlist_recall_dossier_recommendation: {watchlist_recall_dossier_summary.get('recommendation')}",
+        f"- candidate_pool_recall_dossier_recommendation: {candidate_pool_recall_dossier_summary.get('recommendation')}",
+    ]
+
+
 def _append_latest_upstream_shadow_followup_overlay_markdown(lines: list[str], upstream_shadow_followup_overlay: dict[str, Any]) -> None:
     lines.append("## Latest Upstream Shadow Followup Overlay")
     lines.append(f"- status: {upstream_shadow_followup_overlay.get('status')}")
@@ -4272,9 +4307,7 @@ def _append_latest_upstream_shadow_followup_overlay_markdown(lines: list[str], u
 
 def _append_control_tower_snapshot_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
     lines.append("## Control Tower Snapshot")
-    lines.append(f"- lane_status_counts: {control_tower_snapshot.get('lane_status_counts')}")
-    lines.append(f"- warn_count: {control_tower_snapshot.get('warn_count')}")
-    lines.append(f"- fail_count: {control_tower_snapshot.get('fail_count')}")
+    lines.extend(_build_control_tower_snapshot_header_lines(control_tower_snapshot))
     selected_outcome_refresh_summary = dict(control_tower_snapshot.get("selected_outcome_refresh_summary") or {})
     if selected_outcome_refresh_summary:
         lines.append(f"- selected_outcome_contract: focus_ticker={selected_outcome_refresh_summary.get('focus_ticker')} overall_contract_verdict={selected_outcome_refresh_summary.get('focus_overall_contract_verdict')} focus_cycle_status={selected_outcome_refresh_summary.get('focus_cycle_status')}")
@@ -4302,6 +4335,14 @@ def _append_control_tower_snapshot_markdown(lines: list[str], control_tower_snap
         lines.append(f"  why_now: {task.get('why_now')}")
         lines.append(f"  next_step: {task.get('next_step')}")
     lines.append("")
+
+
+def _build_control_tower_snapshot_header_lines(control_tower_snapshot: dict[str, Any]) -> list[str]:
+    return [
+        f"- lane_status_counts: {control_tower_snapshot.get('lane_status_counts')}",
+        f"- warn_count: {control_tower_snapshot.get('warn_count')}",
+        f"- fail_count: {control_tower_snapshot.get('fail_count')}",
+    ]
 
 
 def _append_rollout_lanes_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
@@ -4681,22 +4722,22 @@ def _append_nightly_fast_links_markdown(lines: list[str], source_paths: dict[str
 
 def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, output_parent: str | Path) -> str:
     resolved_output_parent = Path(output_parent).expanduser().resolve()
-    latest_btst_run = dict(payload.get("latest_btst_run") or {})
-    control_tower_snapshot = dict(payload.get("control_tower_snapshot") or {})
-    latest_priority_board_snapshot = dict(payload.get("latest_priority_board_snapshot") or {})
-    replay_cohort_snapshot = dict(payload.get("replay_cohort_snapshot") or {})
-    latest_btst_snapshot = dict(payload.get("latest_btst_snapshot") or {})
-    catalyst_theme_frontier_summary = dict(latest_btst_snapshot.get("catalyst_theme_frontier_summary") or {})
-    score_fail_frontier_summary = dict(latest_btst_snapshot.get("score_fail_frontier_summary") or {})
-    tradeable_opportunity_pool_summary = dict(control_tower_snapshot.get("tradeable_opportunity_pool") or {})
-    no_candidate_entry_action_board_summary = dict(control_tower_snapshot.get("no_candidate_entry_action_board") or {})
-    no_candidate_entry_replay_bundle_summary = dict(control_tower_snapshot.get("no_candidate_entry_replay_bundle") or {})
-    no_candidate_entry_failure_dossier_summary = dict(control_tower_snapshot.get("no_candidate_entry_failure_dossier") or {})
-    watchlist_recall_dossier_summary = dict(control_tower_snapshot.get("watchlist_recall_dossier") or {})
-    candidate_pool_recall_dossier_summary = dict(control_tower_snapshot.get("candidate_pool_recall_dossier") or {})
-    upstream_shadow_followup_overlay = dict(control_tower_snapshot.get("upstream_shadow_followup_overlay") or {})
-    llm_error_digest = dict(latest_btst_snapshot.get("llm_error_digest") or {})
-    source_paths = dict(payload.get("source_paths") or {})
+    render_context = _build_nightly_control_tower_render_context(payload)
+    latest_btst_run = render_context["latest_btst_run"]
+    control_tower_snapshot = render_context["control_tower_snapshot"]
+    latest_priority_board_snapshot = render_context["latest_priority_board_snapshot"]
+    replay_cohort_snapshot = render_context["replay_cohort_snapshot"]
+    catalyst_theme_frontier_summary = render_context["catalyst_theme_frontier_summary"]
+    score_fail_frontier_summary = render_context["score_fail_frontier_summary"]
+    tradeable_opportunity_pool_summary = render_context["tradeable_opportunity_pool_summary"]
+    no_candidate_entry_action_board_summary = render_context["no_candidate_entry_action_board_summary"]
+    no_candidate_entry_replay_bundle_summary = render_context["no_candidate_entry_replay_bundle_summary"]
+    no_candidate_entry_failure_dossier_summary = render_context["no_candidate_entry_failure_dossier_summary"]
+    watchlist_recall_dossier_summary = render_context["watchlist_recall_dossier_summary"]
+    candidate_pool_recall_dossier_summary = render_context["candidate_pool_recall_dossier_summary"]
+    upstream_shadow_followup_overlay = render_context["upstream_shadow_followup_overlay"]
+    llm_error_digest = render_context["llm_error_digest"]
+    source_paths = render_context["source_paths"]
 
     lines: list[str] = []
     lines.append("# BTST Nightly Control Tower")
@@ -4748,6 +4789,31 @@ def render_btst_nightly_control_tower_markdown(payload: dict[str, Any], *, outpu
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _build_nightly_control_tower_render_context(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    latest_btst_run = dict(payload.get("latest_btst_run") or {})
+    control_tower_snapshot = dict(payload.get("control_tower_snapshot") or {})
+    latest_priority_board_snapshot = dict(payload.get("latest_priority_board_snapshot") or {})
+    replay_cohort_snapshot = dict(payload.get("replay_cohort_snapshot") or {})
+    latest_btst_snapshot = dict(payload.get("latest_btst_snapshot") or {})
+    return {
+        "latest_btst_run": latest_btst_run,
+        "control_tower_snapshot": control_tower_snapshot,
+        "latest_priority_board_snapshot": latest_priority_board_snapshot,
+        "replay_cohort_snapshot": replay_cohort_snapshot,
+        "catalyst_theme_frontier_summary": dict(latest_btst_snapshot.get("catalyst_theme_frontier_summary") or {}),
+        "score_fail_frontier_summary": dict(latest_btst_snapshot.get("score_fail_frontier_summary") or {}),
+        "tradeable_opportunity_pool_summary": dict(control_tower_snapshot.get("tradeable_opportunity_pool") or {}),
+        "no_candidate_entry_action_board_summary": dict(control_tower_snapshot.get("no_candidate_entry_action_board") or {}),
+        "no_candidate_entry_replay_bundle_summary": dict(control_tower_snapshot.get("no_candidate_entry_replay_bundle") or {}),
+        "no_candidate_entry_failure_dossier_summary": dict(control_tower_snapshot.get("no_candidate_entry_failure_dossier") or {}),
+        "watchlist_recall_dossier_summary": dict(control_tower_snapshot.get("watchlist_recall_dossier") or {}),
+        "candidate_pool_recall_dossier_summary": dict(control_tower_snapshot.get("candidate_pool_recall_dossier") or {}),
+        "upstream_shadow_followup_overlay": dict(control_tower_snapshot.get("upstream_shadow_followup_overlay") or {}),
+        "llm_error_digest": dict(latest_btst_snapshot.get("llm_error_digest") or {}),
+        "source_paths": dict(payload.get("source_paths") or {}),
+    }
+
+
 def generate_btst_nightly_control_tower_artifacts(
     reports_root: str | Path,
     *,
@@ -4760,13 +4826,23 @@ def generate_btst_nightly_control_tower_artifacts(
     history_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
-    resolved_output_json = Path(output_json).expanduser().resolve() if output_json else (resolved_reports_root / DEFAULT_OUTPUT_JSON.name).resolve()
-    resolved_output_md = Path(output_md).expanduser().resolve() if output_md else (resolved_reports_root / DEFAULT_OUTPUT_MD.name).resolve()
-    resolved_delta_output_json = Path(delta_output_json).expanduser().resolve() if delta_output_json else (resolved_reports_root / DEFAULT_DELTA_JSON.name).resolve()
-    resolved_delta_output_md = Path(delta_output_md).expanduser().resolve() if delta_output_md else (resolved_reports_root / DEFAULT_DELTA_MD.name).resolve()
-    resolved_close_validation_output_json = Path(close_validation_output_json).expanduser().resolve() if close_validation_output_json else (resolved_reports_root / DEFAULT_CLOSE_VALIDATION_JSON.name).resolve()
-    resolved_close_validation_output_md = Path(close_validation_output_md).expanduser().resolve() if close_validation_output_md else (resolved_reports_root / DEFAULT_CLOSE_VALIDATION_MD.name).resolve()
-    resolved_history_dir = Path(history_dir).expanduser().resolve() if history_dir else (resolved_reports_root / DEFAULT_HISTORY_DIR.relative_to(REPORTS_DIR)).resolve()
+    output_paths = _resolve_nightly_control_tower_output_paths(
+        resolved_reports_root=resolved_reports_root,
+        output_json=output_json,
+        output_md=output_md,
+        delta_output_json=delta_output_json,
+        delta_output_md=delta_output_md,
+        close_validation_output_json=close_validation_output_json,
+        close_validation_output_md=close_validation_output_md,
+        history_dir=history_dir,
+    )
+    resolved_output_json = output_paths["resolved_output_json"]
+    resolved_output_md = output_paths["resolved_output_md"]
+    resolved_delta_output_json = output_paths["resolved_delta_output_json"]
+    resolved_delta_output_md = output_paths["resolved_delta_output_md"]
+    resolved_close_validation_output_json = output_paths["resolved_close_validation_output_json"]
+    resolved_close_validation_output_md = output_paths["resolved_close_validation_output_md"]
+    resolved_history_dir = output_paths["resolved_history_dir"]
 
     pre_manifest_result = generate_reports_manifest_artifacts(reports_root=resolved_reports_root)
     bootstrap_payload = build_btst_nightly_control_tower_payload(pre_manifest_result["manifest"])
@@ -4823,6 +4899,28 @@ def generate_btst_nightly_control_tower_artifacts(
         "catalyst_theme_frontier_markdown": dict(payload.get("latest_btst_snapshot") or {}).get("catalyst_theme_frontier_markdown_path"),
         "manifest_json": final_manifest_result["json_path"],
         "manifest_markdown": final_manifest_result["markdown_path"],
+    }
+
+
+def _resolve_nightly_control_tower_output_paths(
+    *,
+    resolved_reports_root: Path,
+    output_json: str | Path | None,
+    output_md: str | Path | None,
+    delta_output_json: str | Path | None,
+    delta_output_md: str | Path | None,
+    close_validation_output_json: str | Path | None,
+    close_validation_output_md: str | Path | None,
+    history_dir: str | Path | None,
+) -> dict[str, Path]:
+    return {
+        "resolved_output_json": Path(output_json).expanduser().resolve() if output_json else (resolved_reports_root / DEFAULT_OUTPUT_JSON.name).resolve(),
+        "resolved_output_md": Path(output_md).expanduser().resolve() if output_md else (resolved_reports_root / DEFAULT_OUTPUT_MD.name).resolve(),
+        "resolved_delta_output_json": Path(delta_output_json).expanduser().resolve() if delta_output_json else (resolved_reports_root / DEFAULT_DELTA_JSON.name).resolve(),
+        "resolved_delta_output_md": Path(delta_output_md).expanduser().resolve() if delta_output_md else (resolved_reports_root / DEFAULT_DELTA_MD.name).resolve(),
+        "resolved_close_validation_output_json": Path(close_validation_output_json).expanduser().resolve() if close_validation_output_json else (resolved_reports_root / DEFAULT_CLOSE_VALIDATION_JSON.name).resolve(),
+        "resolved_close_validation_output_md": Path(close_validation_output_md).expanduser().resolve() if close_validation_output_md else (resolved_reports_root / DEFAULT_CLOSE_VALIDATION_MD.name).resolve(),
+        "resolved_history_dir": Path(history_dir).expanduser().resolve() if history_dir else (resolved_reports_root / DEFAULT_HISTORY_DIR.relative_to(REPORTS_DIR)).resolve(),
     }
 
 

@@ -2228,7 +2228,23 @@ def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, r
         "next_trade_date": latest_btst_run.get("next_trade_date"),
     }
 
-    dynamic_specs = [
+    dynamic_specs = _build_dynamic_latest_btst_entry_specs(latest_btst_run)
+
+    entries: list[dict[str, Any]] = []
+    for spec in dynamic_specs:
+        entry = _build_dynamic_latest_btst_entry(
+            spec=spec,
+            time_scope=time_scope,
+            report_dir=report_dir,
+            repo_root=repo_root,
+        )
+        if entry:
+            entries.append(entry)
+    return entries
+
+
+def _build_dynamic_latest_btst_entry_specs(latest_btst_run: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
         {
             "id": "latest_btst_priority_board",
             "path": latest_btst_run.get("priority_board_markdown_path"),
@@ -2339,29 +2355,33 @@ def _build_dynamic_latest_btst_entries(latest_btst_run: dict[str, Any] | None, r
         },
     ]
 
-    entries: list[dict[str, Any]] = []
-    for spec in dynamic_specs:
-        path = spec.get("path")
-        if not path:
-            continue
-        entry = _build_entry(
-            entry_id=spec["id"],
-            absolute_path=Path(path),
-            repo_root=repo_root,
-            report_type=spec["report_type"],
-            topic=spec["topic"],
-            usage=spec["usage"],
-            priority=int(spec["priority"]),
-            is_latest=bool(spec["is_latest"]),
-            question=spec["question"],
-            view_order=int(spec["view_order"]),
-            time_scope=dict(time_scope),
-            source_kind=spec["source_kind"],
-            report_dir=report_dir,
-        )
-        if entry:
-            entries.append(entry)
-    return entries
+
+def _build_dynamic_latest_btst_entry(
+    *,
+    spec: dict[str, Any],
+    time_scope: dict[str, Any],
+    report_dir: Path,
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    path = spec.get("path")
+    if not path:
+        return None
+
+    return _build_entry(
+        entry_id=spec["id"],
+        absolute_path=Path(path),
+        repo_root=repo_root,
+        report_type=spec["report_type"],
+        topic=spec["topic"],
+        usage=spec["usage"],
+        priority=int(spec["priority"]),
+        is_latest=bool(spec["is_latest"]),
+        question=spec["question"],
+        view_order=int(spec["view_order"]),
+        time_scope=dict(time_scope),
+        source_kind=spec["source_kind"],
+        report_dir=report_dir,
+    )
 
 
 def refresh_latest_btst_catalyst_theme_frontier_artifacts(latest_btst_run: dict[str, Any] | None) -> dict[str, Any]:
@@ -3712,7 +3732,30 @@ def generate_reports_manifest(
 
     entries = _build_static_entries(repo_root) + _build_dynamic_latest_btst_entries(latest_btst_run, repo_root)
     entries.sort(key=lambda entry: (entry["usage"], entry["priority"], entry["view_order"], entry["id"]))
+    reading_paths = _build_manifest_reading_paths(entries)
+    entry_count_by_usage = _count_manifest_entries_by_usage(entries)
+    return _build_reports_manifest_payload(
+        resolved_reports_root=resolved_reports_root,
+        repo_root=repo_root,
+        entries=entries,
+        reading_paths=reading_paths,
+        entry_count_by_usage=entry_count_by_usage,
+        latest_btst_run=latest_btst_run,
+        catalyst_theme_frontier_refresh=catalyst_theme_frontier_refresh,
+        btst_window_evidence_refresh=btst_window_evidence_refresh,
+        candidate_entry_shadow_refresh=candidate_entry_shadow_refresh,
+        btst_score_fail_frontier_refresh=btst_score_fail_frontier_refresh,
+        btst_rollout_governance_refresh=btst_rollout_governance_refresh,
+        btst_governance_synthesis_refresh=btst_governance_synthesis_refresh,
+        btst_governance_validation_refresh=btst_governance_validation_refresh,
+        btst_replay_cohort_refresh=btst_replay_cohort_refresh,
+        btst_independent_window_monitor_refresh=btst_independent_window_monitor_refresh,
+        btst_tplus1_tplus2_objective_monitor_refresh=btst_tplus1_tplus2_objective_monitor_refresh,
+        btst_tradeable_opportunity_pool_refresh=btst_tradeable_opportunity_pool_refresh,
+    )
 
+
+def _build_manifest_reading_paths(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     entry_ids = {entry["id"] for entry in entries}
     reading_paths: list[dict[str, Any]] = []
     for spec in READING_PATH_SPECS:
@@ -3727,11 +3770,36 @@ def generate_reports_manifest(
                 "entry_ids": resolved_entry_ids,
             }
         )
+    return reading_paths
 
+
+def _count_manifest_entries_by_usage(entries: list[dict[str, Any]]) -> dict[str, int]:
     entry_count_by_usage: dict[str, int] = {}
     for entry in entries:
         entry_count_by_usage[entry["usage"]] = entry_count_by_usage.get(entry["usage"], 0) + 1
+    return entry_count_by_usage
 
+
+def _build_reports_manifest_payload(
+    *,
+    resolved_reports_root: Path,
+    repo_root: Path,
+    entries: list[dict[str, Any]],
+    reading_paths: list[dict[str, Any]],
+    entry_count_by_usage: dict[str, int],
+    latest_btst_run: dict[str, Any] | None,
+    catalyst_theme_frontier_refresh: dict[str, Any] | None,
+    btst_window_evidence_refresh: dict[str, Any] | None,
+    candidate_entry_shadow_refresh: dict[str, Any] | None,
+    btst_score_fail_frontier_refresh: dict[str, Any] | None,
+    btst_rollout_governance_refresh: dict[str, Any] | None,
+    btst_governance_synthesis_refresh: dict[str, Any] | None,
+    btst_governance_validation_refresh: dict[str, Any] | None,
+    btst_replay_cohort_refresh: dict[str, Any] | None,
+    btst_independent_window_monitor_refresh: dict[str, Any] | None,
+    btst_tplus1_tplus2_objective_monitor_refresh: dict[str, Any] | None,
+    btst_tradeable_opportunity_pool_refresh: dict[str, Any] | None,
+) -> dict[str, Any]:
     manifest: dict[str, Any] = {
         "manifest_version": 1,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -3772,19 +3840,23 @@ def generate_reports_manifest(
         "candidate_pool_corridor_narrow_probe_summary": _build_candidate_pool_corridor_narrow_probe_summary(resolved_reports_root),
         "transient_probe_summary": _build_transient_probe_summary(resolved_reports_root),
         "execution_constraint_rollup": _build_execution_constraint_rollup(resolved_reports_root),
-        "latest_btst_run": None,
+        "latest_btst_run": _build_latest_btst_run_manifest_payload(latest_btst_run),
         "reading_paths": reading_paths,
         "entries": entries,
     }
-    if latest_btst_run:
-        manifest["latest_btst_run"] = {
-            "report_dir": latest_btst_run["report_dir_path"],
-            "report_dir_abs": latest_btst_run["report_dir"].as_posix(),
-            "selection_target": latest_btst_run.get("selection_target"),
-            "trade_date": latest_btst_run.get("trade_date"),
-            "next_trade_date": latest_btst_run.get("next_trade_date"),
-        }
     return manifest
+
+
+def _build_latest_btst_run_manifest_payload(latest_btst_run: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not latest_btst_run:
+        return None
+    return {
+        "report_dir": latest_btst_run["report_dir_path"],
+        "report_dir_abs": latest_btst_run["report_dir"].as_posix(),
+        "selection_target": latest_btst_run.get("selection_target"),
+        "trade_date": latest_btst_run.get("trade_date"),
+        "next_trade_date": latest_btst_run.get("next_trade_date"),
+    }
 
 
 def _build_markdown_link(entry: dict[str, Any], output_parent: Path) -> str:
@@ -3846,59 +3918,74 @@ def _append_candidate_entry_shadow_refresh(lines: list[str], payload: dict[str, 
     _append_markdown_field_lines(
         lines,
         payload=payload,
-        field_specs=[
-            ("candidate_entry_shadow_refresh_status", "status", "always"),
-            ("candidate_entry_shadow_refresh_window_reports", "window_report_count", "always"),
-            ("candidate_entry_shadow_refresh_filtered_reports", "filtered_report_count", "always"),
-            ("candidate_entry_shadow_refresh_rollout_readiness", "rollout_readiness", "always"),
-            ("candidate_entry_shadow_no_candidate_entry_action_board_status", "no_candidate_entry_action_board_status", "not_none"),
-            ("candidate_entry_shadow_no_candidate_entry_priority_queue_count", "no_candidate_entry_priority_queue_count", "not_none"),
-            ("candidate_entry_shadow_no_candidate_entry_top_tickers", "no_candidate_entry_top_tickers", "not_none"),
-            ("candidate_entry_shadow_no_candidate_entry_replay_bundle_status", "no_candidate_entry_replay_bundle_status", "not_none"),
-            ("candidate_entry_shadow_no_candidate_entry_promising_tickers", "no_candidate_entry_promising_tickers", "not_none"),
-            ("candidate_entry_shadow_no_candidate_entry_failure_dossier_status", "no_candidate_entry_failure_dossier_status", "not_none"),
-            ("candidate_entry_shadow_no_candidate_entry_upstream_absence_tickers", "no_candidate_entry_upstream_absence_tickers", "not_none"),
-            ("candidate_entry_shadow_no_candidate_entry_semantic_miss_tickers", "no_candidate_entry_semantic_miss_tickers", "not_none"),
-            ("candidate_entry_shadow_watchlist_recall_dossier_status", "watchlist_recall_dossier_status", "not_none"),
-            ("candidate_entry_shadow_watchlist_recall_stage_counts", "watchlist_recall_stage_counts", "not_none"),
-            ("candidate_entry_shadow_watchlist_recall_absent_from_candidate_pool_tickers", "watchlist_recall_absent_from_candidate_pool_tickers", "not_none"),
-            ("candidate_entry_shadow_watchlist_recall_candidate_pool_layer_b_gap_tickers", "watchlist_recall_candidate_pool_layer_b_gap_tickers", "not_none"),
-            ("candidate_entry_shadow_watchlist_recall_layer_b_watchlist_gap_tickers", "watchlist_recall_layer_b_watchlist_gap_tickers", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_recall_dossier_status", "candidate_pool_recall_dossier_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_recall_stage_counts", "candidate_pool_recall_stage_counts", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_recall_dominant_stage", "candidate_pool_recall_dominant_stage", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_recall_top_stage_tickers", "candidate_pool_recall_top_stage_tickers", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary", "candidate_pool_recall_truncation_frontier_summary", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_recall_dominant_liquidity_gap_mode", "candidate_pool_recall_dominant_liquidity_gap_mode", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_recall_focus_liquidity_profiles", "candidate_pool_recall_focus_liquidity_profiles", "truthy"),
-            ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_counts", "candidate_pool_recall_priority_handoff_counts", "truthy"),
-            ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_diagnoses", "candidate_pool_recall_priority_handoff_branch_diagnoses", "truthy"),
-            ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_mechanisms", "candidate_pool_recall_priority_handoff_branch_mechanisms", "truthy"),
-            ("candidate_entry_shadow_candidate_pool_branch_priority_board_status", "candidate_pool_branch_priority_board_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_branch_priority_alignment_status", "candidate_pool_branch_priority_alignment_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_branch_priority_alignment_summary", "candidate_pool_branch_priority_alignment_summary", "truthy"),
-            ("candidate_entry_shadow_candidate_pool_lane_objective_support_status", "candidate_pool_lane_objective_support_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_corridor_validation_pack_status", "candidate_pool_corridor_validation_pack_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_corridor_shadow_pack_status", "candidate_pool_corridor_shadow_pack_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status", "candidate_pool_rebucket_shadow_pack_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_rebucket_objective_validation_status", "candidate_pool_rebucket_objective_validation_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_status", "candidate_pool_rebucket_comparison_bundle_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_lane_pair_board_status", "candidate_pool_lane_pair_board_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_upstream_handoff_board_status", "candidate_pool_upstream_handoff_board_status", "not_none"),
-            ("candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_status", "candidate_pool_corridor_uplift_runbook_status", "not_none"),
-        ],
+        field_specs=_candidate_entry_shadow_refresh_field_specs(),
     )
+    _append_candidate_entry_shadow_experiment_queue(lines, payload)
+    _append_candidate_entry_shadow_board_rows(lines, payload)
+    _append_candidate_entry_shadow_summary_rows(lines, payload)
+
+
+def _candidate_entry_shadow_refresh_field_specs() -> list[tuple[str, str, str]]:
+    return [
+        ("candidate_entry_shadow_refresh_status", "status", "always"),
+        ("candidate_entry_shadow_refresh_window_reports", "window_report_count", "always"),
+        ("candidate_entry_shadow_refresh_filtered_reports", "filtered_report_count", "always"),
+        ("candidate_entry_shadow_refresh_rollout_readiness", "rollout_readiness", "always"),
+        ("candidate_entry_shadow_no_candidate_entry_action_board_status", "no_candidate_entry_action_board_status", "not_none"),
+        ("candidate_entry_shadow_no_candidate_entry_priority_queue_count", "no_candidate_entry_priority_queue_count", "not_none"),
+        ("candidate_entry_shadow_no_candidate_entry_top_tickers", "no_candidate_entry_top_tickers", "not_none"),
+        ("candidate_entry_shadow_no_candidate_entry_replay_bundle_status", "no_candidate_entry_replay_bundle_status", "not_none"),
+        ("candidate_entry_shadow_no_candidate_entry_promising_tickers", "no_candidate_entry_promising_tickers", "not_none"),
+        ("candidate_entry_shadow_no_candidate_entry_failure_dossier_status", "no_candidate_entry_failure_dossier_status", "not_none"),
+        ("candidate_entry_shadow_no_candidate_entry_upstream_absence_tickers", "no_candidate_entry_upstream_absence_tickers", "not_none"),
+        ("candidate_entry_shadow_no_candidate_entry_semantic_miss_tickers", "no_candidate_entry_semantic_miss_tickers", "not_none"),
+        ("candidate_entry_shadow_watchlist_recall_dossier_status", "watchlist_recall_dossier_status", "not_none"),
+        ("candidate_entry_shadow_watchlist_recall_stage_counts", "watchlist_recall_stage_counts", "not_none"),
+        ("candidate_entry_shadow_watchlist_recall_absent_from_candidate_pool_tickers", "watchlist_recall_absent_from_candidate_pool_tickers", "not_none"),
+        ("candidate_entry_shadow_watchlist_recall_candidate_pool_layer_b_gap_tickers", "watchlist_recall_candidate_pool_layer_b_gap_tickers", "not_none"),
+        ("candidate_entry_shadow_watchlist_recall_layer_b_watchlist_gap_tickers", "watchlist_recall_layer_b_watchlist_gap_tickers", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_recall_dossier_status", "candidate_pool_recall_dossier_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_recall_stage_counts", "candidate_pool_recall_stage_counts", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_recall_dominant_stage", "candidate_pool_recall_dominant_stage", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_recall_top_stage_tickers", "candidate_pool_recall_top_stage_tickers", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary", "candidate_pool_recall_truncation_frontier_summary", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_recall_dominant_liquidity_gap_mode", "candidate_pool_recall_dominant_liquidity_gap_mode", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_recall_focus_liquidity_profiles", "candidate_pool_recall_focus_liquidity_profiles", "truthy"),
+        ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_counts", "candidate_pool_recall_priority_handoff_counts", "truthy"),
+        ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_diagnoses", "candidate_pool_recall_priority_handoff_branch_diagnoses", "truthy"),
+        ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_mechanisms", "candidate_pool_recall_priority_handoff_branch_mechanisms", "truthy"),
+        ("candidate_entry_shadow_candidate_pool_branch_priority_board_status", "candidate_pool_branch_priority_board_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_branch_priority_alignment_status", "candidate_pool_branch_priority_alignment_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_branch_priority_alignment_summary", "candidate_pool_branch_priority_alignment_summary", "truthy"),
+        ("candidate_entry_shadow_candidate_pool_lane_objective_support_status", "candidate_pool_lane_objective_support_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_corridor_validation_pack_status", "candidate_pool_corridor_validation_pack_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_corridor_shadow_pack_status", "candidate_pool_corridor_shadow_pack_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status", "candidate_pool_rebucket_shadow_pack_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_rebucket_objective_validation_status", "candidate_pool_rebucket_objective_validation_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_rebucket_comparison_bundle_status", "candidate_pool_rebucket_comparison_bundle_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_lane_pair_board_status", "candidate_pool_lane_pair_board_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_upstream_handoff_board_status", "candidate_pool_upstream_handoff_board_status", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_corridor_uplift_runbook_status", "candidate_pool_corridor_uplift_runbook_status", "not_none"),
+    ]
+
+
+def _append_candidate_entry_shadow_experiment_queue(lines: list[str], payload: dict[str, Any]) -> None:
     branch_experiment_queue = list(payload.get("candidate_pool_recall_priority_handoff_branch_experiment_queue") or [])
-    if branch_experiment_queue:
-        lines.append("- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
-        lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
-        for experiment in branch_experiment_queue[:3]:
-            lines.append(
-                f"- candidate_entry_shadow_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
-            )
-            lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
-            lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
-            lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
+    if not branch_experiment_queue:
+        return
+
+    lines.append("- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
+    lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
+    for experiment in branch_experiment_queue[:3]:
+        lines.append(
+            f"- candidate_entry_shadow_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
+        )
+        lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
+        lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
+        lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
+
+
+def _append_candidate_entry_shadow_board_rows(lines: list[str], payload: dict[str, Any]) -> None:
     for row in list(payload.get("candidate_pool_branch_priority_board_rows") or [])[:3]:
         lines.append(
             f"- candidate_entry_shadow_candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
@@ -3907,6 +3994,9 @@ def _append_candidate_entry_shadow_refresh(lines: list[str], payload: dict[str, 
         lines.append(
             f"- candidate_entry_shadow_candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
         )
+
+
+def _append_candidate_entry_shadow_summary_rows(lines: list[str], payload: dict[str, Any]) -> None:
     for key, formatter in (
         (
             "candidate_pool_corridor_validation_pack_summary",
@@ -3947,7 +4037,14 @@ def _append_candidate_entry_shadow_refresh(lines: list[str], payload: dict[str, 
 
 
 def _append_manifest_summary_sections(lines: list[str], manifest: dict[str, Any]) -> None:
-    for key, formatter in (
+    for key, formatter in _manifest_summary_section_specs():
+        summary = dict(manifest.get(key) or {})
+        if summary:
+            lines.append(formatter(summary))
+
+
+def _manifest_summary_section_specs() -> tuple[tuple[str, Any], ...]:
+    return (
         (
             "continuation_focus_summary",
             lambda summary: f"- continuation_focus_summary: focus_ticker={summary.get('focus_ticker')} promotion_review_verdict={summary.get('promotion_review_verdict')} promotion_gate_verdict={summary.get('promotion_gate_verdict')} watchlist_execution_verdict={summary.get('watchlist_execution_verdict')} focus_watch_validation_status={summary.get('focus_watch_validation_status')} focus_watch_recent_supporting_window_count={summary.get('focus_watch_recent_supporting_window_count')} eligible_gate_verdict={summary.get('eligible_gate_verdict')} execution_gate_verdict={summary.get('execution_gate_verdict')} execution_gate_blockers={summary.get('execution_gate_blockers')} execution_overlay_verdict={summary.get('execution_overlay_verdict')} execution_overlay_promotion_blocker={summary.get('execution_overlay_promotion_blocker')} execution_overlay_persistence_requirement={summary.get('execution_overlay_persistence_requirement')} execution_overlay_lane_support_ratio={summary.get('execution_overlay_lane_support_ratio')} governance_status={summary.get('governance_status')}",
@@ -3979,10 +4076,7 @@ def _append_manifest_summary_sections(lines: list[str], manifest: dict[str, Any]
         ("candidate_pool_corridor_narrow_probe_summary", lambda summary: f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} threshold_override_gap_vs_anchor={summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={summary.get('target_gap_to_selected')}"),
         ("transient_probe_summary", lambda summary: f"- transient_probe_summary: ticker={summary.get('ticker')} status={summary.get('status')} blocker={summary.get('blocker')} candidate_source={summary.get('candidate_source')} score_state={summary.get('score_state')} downstream_bottleneck={summary.get('downstream_bottleneck')} historical_sample_count={summary.get('historical_sample_count')} historical_next_close_positive_rate={summary.get('historical_next_close_positive_rate')}"),
         ("execution_constraint_rollup", lambda summary: f"- execution_constraint_rollup: constraint_count={summary.get('constraint_count')} continuation_focus_tickers={summary.get('continuation_focus_tickers')} continuation_blockers={summary.get('continuation_blockers')} shadow_focus_tickers={summary.get('shadow_focus_tickers')} shadow_blockers={summary.get('shadow_blockers')}"),
-    ):
-        summary = dict(manifest.get(key) or {})
-        if summary:
-            lines.append(formatter(summary))
+    )
 
 
 def _append_manifest_trailing_refreshes(lines: list[str], manifest: dict[str, Any]) -> None:
@@ -4011,27 +4105,42 @@ def _append_manifest_reading_paths(
 ) -> None:
     lines.append("")
     for reading_path in reading_paths:
-        lines.append(f"## {reading_path['title']}")
-        lines.append("")
-        lines.append(reading_path["description"])
-        lines.append("")
-        for index, entry_id in enumerate(list(reading_path.get("entry_ids") or []), start=1):
-            entry = entries_by_id[entry_id]
-            lines.append(f"{index}. {_build_markdown_link(entry, resolved_output_parent)}")
-            lines.append(f"   用途：{entry['question']}")
-            lines.append(f"   类型：{entry['report_type']} | usage={entry['usage']} | priority={entry['priority']}")
-        lines.append("")
+        _append_manifest_reading_path(
+            lines,
+            reading_path=reading_path,
+            entries_by_id=entries_by_id,
+            resolved_output_parent=resolved_output_parent,
+        )
+
+
+def _append_manifest_reading_path(
+    lines: list[str],
+    *,
+    reading_path: dict[str, Any],
+    entries_by_id: dict[str, dict[str, Any]],
+    resolved_output_parent: Path,
+) -> None:
+    lines.append(f"## {reading_path['title']}")
+    lines.append("")
+    lines.append(reading_path["description"])
+    lines.append("")
+    for index, entry_id in enumerate(list(reading_path.get("entry_ids") or []), start=1):
+        entry = entries_by_id[entry_id]
+        lines.append(f"{index}. {_build_markdown_link(entry, resolved_output_parent)}")
+        lines.append(f"   用途：{entry['question']}")
+        lines.append(f"   类型：{entry['report_type']} | usage={entry['usage']} | priority={entry['priority']}")
+    lines.append("")
 
 
 def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent: str | Path) -> str:
-    resolved_output_parent = Path(output_parent).expanduser().resolve()
-    entries_by_id = {entry["id"]: entry for entry in list(manifest.get("entries") or [])}
+    render_context = _build_reports_manifest_render_context(manifest, output_parent=output_parent)
+    resolved_output_parent = render_context["resolved_output_parent"]
+    entries_by_id = render_context["entries_by_id"]
 
     lines: list[str] = []
     _append_manifest_header(lines, manifest)
     _append_candidate_entry_shadow_refresh(lines, dict(manifest.get("candidate_entry_shadow_refresh") or {}))
     _append_manifest_summary_sections(lines, manifest)
-    
     _append_manifest_trailing_refreshes(lines, manifest)
     _append_manifest_reading_paths(
         lines,
@@ -4043,6 +4152,13 @@ def render_reports_manifest_markdown(manifest: dict[str, Any], *, output_parent:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _build_reports_manifest_render_context(manifest: dict[str, Any], *, output_parent: str | Path) -> dict[str, Any]:
+    return {
+        "resolved_output_parent": Path(output_parent).expanduser().resolve(),
+        "entries_by_id": {entry["id"]: entry for entry in list(manifest.get("entries") or [])},
+    }
+
+
 def generate_reports_manifest_artifacts(
     reports_root: str | Path,
     *,
@@ -4050,13 +4166,67 @@ def generate_reports_manifest_artifacts(
     output_md: str | Path | None = None,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
-    resolved_output_json = Path(output_json).expanduser().resolve() if output_json else (resolved_reports_root / DEFAULT_OUTPUT_JSON.name).resolve()
-    resolved_output_md = Path(output_md).expanduser().resolve() if output_md else (resolved_reports_root / DEFAULT_OUTPUT_MD.name).resolve()
+    resolved_output_json, resolved_output_md = _resolve_reports_manifest_output_paths(
+        resolved_reports_root=resolved_reports_root,
+        output_json=output_json,
+        output_md=output_md,
+    )
     repo_root = _resolve_repo_root(resolved_reports_root)
     latest_btst_run = _select_latest_btst_candidate(resolved_reports_root, repo_root)
-    catalyst_theme_frontier_refresh = refresh_latest_btst_catalyst_theme_frontier_artifacts(latest_btst_run)
     if latest_btst_run:
         latest_btst_run = _extract_btst_candidate(latest_btst_run["report_dir"], repo_root)
+    refresh_bundle = _build_reports_manifest_refresh_bundle(
+        resolved_reports_root,
+        latest_btst_run=latest_btst_run,
+    )
+    if latest_btst_run:
+        latest_btst_run = _extract_btst_candidate(latest_btst_run["report_dir"], repo_root)
+    manifest = generate_reports_manifest(
+        resolved_reports_root,
+        latest_btst_run=latest_btst_run,
+        catalyst_theme_frontier_refresh=refresh_bundle["catalyst_theme_frontier_refresh"],
+        btst_window_evidence_refresh=refresh_bundle["btst_window_evidence_refresh"],
+        candidate_entry_shadow_refresh=refresh_bundle["candidate_entry_shadow_refresh"],
+        btst_score_fail_frontier_refresh=refresh_bundle["btst_score_fail_frontier_refresh"],
+        btst_rollout_governance_refresh=refresh_bundle["btst_rollout_governance_refresh"],
+        btst_governance_synthesis_refresh=refresh_bundle["btst_governance_synthesis_refresh"],
+        btst_governance_validation_refresh=refresh_bundle["btst_governance_validation_refresh"],
+        btst_replay_cohort_refresh=refresh_bundle["btst_replay_cohort_refresh"],
+        btst_independent_window_monitor_refresh=refresh_bundle["btst_independent_window_monitor_refresh"],
+        btst_tplus1_tplus2_objective_monitor_refresh=refresh_bundle["btst_tplus1_tplus2_objective_monitor_refresh"],
+        btst_tradeable_opportunity_pool_refresh=refresh_bundle["btst_tradeable_opportunity_pool_refresh"],
+    )
+    _write_reports_manifest_artifacts(
+        manifest=manifest,
+        resolved_output_json=resolved_output_json,
+        resolved_output_md=resolved_output_md,
+    )
+    return {
+        "manifest": manifest,
+        **refresh_bundle,
+        "json_path": resolved_output_json.as_posix(),
+        "markdown_path": resolved_output_md.as_posix(),
+    }
+
+
+def _resolve_reports_manifest_output_paths(
+    *,
+    resolved_reports_root: Path,
+    output_json: str | Path | None,
+    output_md: str | Path | None,
+) -> tuple[Path, Path]:
+    return (
+        Path(output_json).expanduser().resolve() if output_json else (resolved_reports_root / DEFAULT_OUTPUT_JSON.name).resolve(),
+        Path(output_md).expanduser().resolve() if output_md else (resolved_reports_root / DEFAULT_OUTPUT_MD.name).resolve(),
+    )
+
+
+def _build_reports_manifest_refresh_bundle(
+    resolved_reports_root: Path,
+    *,
+    latest_btst_run: dict[str, Any] | None,
+) -> dict[str, Any]:
+    catalyst_theme_frontier_refresh = refresh_latest_btst_catalyst_theme_frontier_artifacts(latest_btst_run)
     btst_window_evidence_refresh = refresh_btst_window_evidence_artifacts(resolved_reports_root)
     btst_independent_window_monitor_refresh = refresh_btst_independent_window_monitor_artifacts(resolved_reports_root)
     btst_tplus1_tplus2_objective_monitor_refresh = refresh_btst_tplus1_tplus2_objective_monitor_artifacts(resolved_reports_root)
@@ -4074,25 +4244,7 @@ def generate_reports_manifest_artifacts(
     )
     btst_governance_validation_refresh = refresh_btst_governance_validation_artifacts(resolved_reports_root)
     btst_replay_cohort_refresh = refresh_btst_replay_cohort_artifacts(resolved_reports_root)
-    manifest = generate_reports_manifest(
-        resolved_reports_root,
-        latest_btst_run=latest_btst_run,
-        catalyst_theme_frontier_refresh=catalyst_theme_frontier_refresh,
-        btst_window_evidence_refresh=btst_window_evidence_refresh,
-        candidate_entry_shadow_refresh=candidate_entry_shadow_refresh,
-        btst_score_fail_frontier_refresh=btst_score_fail_frontier_refresh,
-        btst_rollout_governance_refresh=btst_rollout_governance_refresh,
-        btst_governance_synthesis_refresh=btst_governance_synthesis_refresh,
-        btst_governance_validation_refresh=btst_governance_validation_refresh,
-        btst_replay_cohort_refresh=btst_replay_cohort_refresh,
-        btst_independent_window_monitor_refresh=btst_independent_window_monitor_refresh,
-        btst_tplus1_tplus2_objective_monitor_refresh=btst_tplus1_tplus2_objective_monitor_refresh,
-        btst_tradeable_opportunity_pool_refresh=btst_tradeable_opportunity_pool_refresh,
-    )
-    resolved_output_json.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    resolved_output_md.write_text(render_reports_manifest_markdown(manifest, output_parent=resolved_output_md.parent), encoding="utf-8")
     return {
-        "manifest": manifest,
         "catalyst_theme_frontier_refresh": catalyst_theme_frontier_refresh,
         "btst_window_evidence_refresh": btst_window_evidence_refresh,
         "candidate_entry_shadow_refresh": candidate_entry_shadow_refresh,
@@ -4104,9 +4256,17 @@ def generate_reports_manifest_artifacts(
         "btst_independent_window_monitor_refresh": btst_independent_window_monitor_refresh,
         "btst_tplus1_tplus2_objective_monitor_refresh": btst_tplus1_tplus2_objective_monitor_refresh,
         "btst_tradeable_opportunity_pool_refresh": btst_tradeable_opportunity_pool_refresh,
-        "json_path": resolved_output_json.as_posix(),
-        "markdown_path": resolved_output_md.as_posix(),
     }
+
+
+def _write_reports_manifest_artifacts(
+    *,
+    manifest: dict[str, Any],
+    resolved_output_json: Path,
+    resolved_output_md: Path,
+) -> None:
+    resolved_output_json.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    resolved_output_md.write_text(render_reports_manifest_markdown(manifest, output_parent=resolved_output_md.parent), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:

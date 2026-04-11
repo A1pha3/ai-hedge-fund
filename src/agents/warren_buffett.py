@@ -7,10 +7,11 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal
 
 from src.agents.warren_buffett_helpers import (
-    _build_buffett_owner_earnings_details,
+    _analyze_buffett_earnings_consistency,
     _build_buffett_intrinsic_value_details,
-    _collect_buffett_capex_ratio_inputs,
+    _build_buffett_owner_earnings_details,
     _calculate_buffett_dcf_components,
+    _collect_buffett_capex_ratio_inputs,
     _resolve_buffett_conservative_growth,
     _resolve_buffett_dcf_assumptions,
     _resolve_buffett_maintenance_capex_methods,
@@ -18,9 +19,13 @@ from src.agents.warren_buffett_helpers import (
     _resolve_buffett_owner_earnings_inputs,
     _resolve_buffett_working_capital_change,
     _score_buffett_asset_efficiency,
+    _score_buffett_current_ratio,
+    _score_buffett_debt_to_equity,
+    _score_buffett_fundamental_roe,
     _score_buffett_gross_margin_level,
     _score_buffett_gross_margin_trend,
     _score_buffett_margin_strength,
+    _score_buffett_operating_margin,
     _score_buffett_performance_stability,
     _score_buffett_roe_consistency,
 )
@@ -186,75 +191,24 @@ def analyze_fundamentals(metrics: list) -> dict[str, any]:
         return {"score": 0, "details": "Insufficient fundamental data"}
 
     latest_metrics = metrics[0]
+    roe_score, roe_reason = _score_buffett_fundamental_roe(latest_metrics)
+    debt_score, debt_reason = _score_buffett_debt_to_equity(latest_metrics)
+    margin_score, margin_reason = _score_buffett_operating_margin(latest_metrics)
+    liquidity_score, liquidity_reason = _score_buffett_current_ratio(latest_metrics)
 
-    score = 0
-    reasoning = []
-
-    # Check ROE (Return on Equity)
-    if latest_metrics.return_on_equity and latest_metrics.return_on_equity > 0.15:  # 15% ROE threshold
-        score += 2
-        reasoning.append(f"Strong ROE of {latest_metrics.return_on_equity:.1%}")
-    elif latest_metrics.return_on_equity:
-        reasoning.append(f"Weak ROE of {latest_metrics.return_on_equity:.1%}")
-    else:
-        reasoning.append("ROE data not available")
-
-    # Check Debt to Equity
-    if latest_metrics.debt_to_equity and latest_metrics.debt_to_equity < 0.5:
-        score += 2
-        reasoning.append("Conservative debt levels")
-    elif latest_metrics.debt_to_equity:
-        reasoning.append(f"High debt to equity ratio of {latest_metrics.debt_to_equity:.1f}")
-    else:
-        reasoning.append("Debt to equity data not available")
-
-    # Check Operating Margin
-    if latest_metrics.operating_margin and latest_metrics.operating_margin > 0.15:
-        score += 2
-        reasoning.append("Strong operating margins")
-    elif latest_metrics.operating_margin:
-        reasoning.append(f"Weak operating margin of {latest_metrics.operating_margin:.1%}")
-    else:
-        reasoning.append("Operating margin data not available")
-
-    # Check Current Ratio
-    if latest_metrics.current_ratio and latest_metrics.current_ratio > 1.5:
-        score += 1
-        reasoning.append("Good liquidity position")
-    elif latest_metrics.current_ratio:
-        reasoning.append(f"Weak liquidity with current ratio of {latest_metrics.current_ratio:.1f}")
-    else:
-        reasoning.append("Current ratio data not available")
-
-    return {"score": score, "details": "; ".join(reasoning), "metrics": latest_metrics.model_dump()}
+    return {
+        "score": roe_score + debt_score + margin_score + liquidity_score,
+        "details": "; ".join([roe_reason, debt_reason, margin_reason, liquidity_reason]),
+        "metrics": latest_metrics.model_dump(),
+    }
 
 
 def analyze_consistency(financial_line_items: list) -> dict[str, any]:
     """Analyze earnings consistency and growth."""
     if len(financial_line_items) < 4:  # Need at least 4 periods for trend analysis
         return {"score": 0, "details": "Insufficient historical data"}
-
-    score = 0
-    reasoning = []
-
-    # Check earnings growth trend
-    earnings_values = [getattr(item, "net_income", None) for item in financial_line_items if getattr(item, "net_income", None) is not None]
-    if len(earnings_values) >= 4:
-        # Simple check: is each period's earnings bigger than the next?
-        earnings_growth = all(earnings_values[i] > earnings_values[i + 1] for i in range(len(earnings_values) - 1))
-
-        if earnings_growth:
-            score += 3
-            reasoning.append("Consistent earnings growth over past periods")
-        else:
-            reasoning.append("Inconsistent earnings growth pattern")
-    else:
-        reasoning.append("Insufficient earnings data for trend analysis")
-
-    return {
-        "score": score,
-        "details": "; ".join(reasoning),
-    }
+    score, details = _analyze_buffett_earnings_consistency(financial_line_items)
+    return {"score": score, "details": details}
 
 
 def analyze_moat(metrics: list) -> dict[str, any]:

@@ -1,6 +1,15 @@
 from types import SimpleNamespace
 
-from src.agents.warren_buffett import analyze_book_value_growth, analyze_moat, analyze_pricing_power, calculate_intrinsic_value, calculate_owner_earnings, estimate_maintenance_capex
+from src.agents.warren_buffett import (
+    analyze_book_value_growth,
+    analyze_consistency,
+    analyze_fundamentals,
+    analyze_moat,
+    analyze_pricing_power,
+    calculate_intrinsic_value,
+    calculate_owner_earnings,
+    estimate_maintenance_capex,
+)
 
 
 def test_calculate_intrinsic_value_handles_missing_outstanding_shares_field():
@@ -173,6 +182,62 @@ def test_estimate_maintenance_capex_falls_back_to_higher_of_capex_and_depreciati
 
 def test_estimate_maintenance_capex_returns_zero_for_empty_inputs():
     assert estimate_maintenance_capex([]) == 0
+
+
+def test_analyze_fundamentals_preserves_high_quality_and_missing_metric_paths():
+    strong_metrics = [
+        SimpleNamespace(
+            return_on_equity=0.18,
+            debt_to_equity=0.3,
+            operating_margin=0.2,
+            current_ratio=1.8,
+            model_dump=lambda: {"return_on_equity": 0.18, "debt_to_equity": 0.3, "operating_margin": 0.2, "current_ratio": 1.8},
+        )
+    ]
+    missing_metrics = [
+        SimpleNamespace(
+            return_on_equity=None,
+            debt_to_equity=None,
+            operating_margin=None,
+            current_ratio=None,
+            model_dump=lambda: {"return_on_equity": None, "debt_to_equity": None, "operating_margin": None, "current_ratio": None},
+        )
+    ]
+
+    assert analyze_fundamentals(strong_metrics) == {
+        "score": 7,
+        "details": "Strong ROE of 18.0%; Conservative debt levels; Strong operating margins; Good liquidity position",
+        "metrics": {"return_on_equity": 0.18, "debt_to_equity": 0.3, "operating_margin": 0.2, "current_ratio": 1.8},
+    }
+    assert analyze_fundamentals(missing_metrics) == {
+        "score": 0,
+        "details": "ROE data not available; Debt to equity data not available; Operating margin data not available; Current ratio data not available",
+        "metrics": {"return_on_equity": None, "debt_to_equity": None, "operating_margin": None, "current_ratio": None},
+    }
+
+
+def test_analyze_consistency_preserves_growth_and_insufficient_earnings_paths():
+    consistent_financials = [
+        SimpleNamespace(net_income=130.0),
+        SimpleNamespace(net_income=110.0),
+        SimpleNamespace(net_income=90.0),
+        SimpleNamespace(net_income=70.0),
+    ]
+    sparse_financials = [
+        SimpleNamespace(net_income=130.0),
+        SimpleNamespace(net_income=None),
+        SimpleNamespace(net_income=90.0),
+        SimpleNamespace(net_income=None),
+    ]
+
+    assert analyze_consistency(consistent_financials) == {
+        "score": 3,
+        "details": "Consistent earnings growth over past periods",
+    }
+    assert analyze_consistency(sparse_financials) == {
+        "score": 0,
+        "details": "Insufficient earnings data for trend analysis",
+    }
 
 
 def test_analyze_book_value_growth_skips_items_without_share_count():

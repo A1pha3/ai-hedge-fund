@@ -144,6 +144,55 @@ def _score_rakesh_quality_growth_consistency(financial_line_items: list) -> floa
     return 1 - (declining_years / (len(net_incomes) - 1))
 
 
+def _score_rakesh_debt_ratio(latest) -> tuple[int, str]:
+    if getattr(latest, "total_assets", None) and getattr(latest, "total_liabilities", None) and latest.total_assets and latest.total_liabilities and latest.total_assets > 0:
+        debt_ratio = latest.total_liabilities / latest.total_assets
+        if debt_ratio < 0.5:
+            return 2, f"Low debt ratio: {debt_ratio:.2f}"
+        if debt_ratio < 0.7:
+            return 1, f"Moderate debt ratio: {debt_ratio:.2f}"
+        return 0, f"High debt ratio: {debt_ratio:.2f}"
+    return 0, "Insufficient data to calculate debt ratio"
+
+
+def _score_rakesh_current_ratio(latest) -> tuple[int, str]:
+    if getattr(latest, "current_assets", None) and getattr(latest, "current_liabilities", None) and latest.current_assets and latest.current_liabilities and latest.current_liabilities > 0:
+        current_ratio = latest.current_assets / latest.current_liabilities
+        if current_ratio > 2.0:
+            return 2, f"Excellent liquidity with current ratio: {current_ratio:.2f}"
+        if current_ratio > 1.5:
+            return 1, f"Good liquidity with current ratio: {current_ratio:.2f}"
+        return 0, f"Weak liquidity with current ratio: {current_ratio:.2f}"
+    return 0, "Insufficient data to calculate current ratio"
+
+
+def _score_rakesh_free_cash_flow(latest) -> tuple[int, str]:
+    if getattr(latest, "free_cash_flow", None) and latest.free_cash_flow:
+        if latest.free_cash_flow > 0:
+            return 2, f"Positive free cash flow: {latest.free_cash_flow}"
+        return 0, f"Negative free cash flow: {latest.free_cash_flow}"
+    return 0, "Free cash flow data not available"
+
+
+def _score_rakesh_dividends(latest) -> tuple[int, str]:
+    if getattr(latest, "dividends_and_other_cash_distributions", None) and latest.dividends_and_other_cash_distributions:
+        if latest.dividends_and_other_cash_distributions < 0:
+            return 1, "Company pays dividends to shareholders"
+        return 0, "No significant dividend payments"
+    return 0, "No dividend payment data available"
+
+
+def _score_rakesh_share_issuance(latest) -> tuple[int, str]:
+    issuance = getattr(latest, "issuance_or_purchase_of_equity_shares", None)
+    if issuance is None:
+        return 0, "No data on share issuance or buybacks"
+    if issuance < 0:
+        return 2, f"Company buying back shares: {abs(issuance)}"
+    if issuance > 0:
+        return 0, f"Share issuance detected (potential dilution): {issuance}"
+    return 1, "No recent share issuance or buyback"
+
+
 def _resolve_rakesh_historical_growth(net_incomes: list[float]) -> float:
     initial_income = net_incomes[-1]
     final_income = net_incomes[0]

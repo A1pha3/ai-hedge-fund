@@ -1,3 +1,46 @@
+def _score_buffett_fundamental_roe(latest_metrics) -> tuple[int, str]:
+    if latest_metrics.return_on_equity and latest_metrics.return_on_equity > 0.15:
+        return 2, f"Strong ROE of {latest_metrics.return_on_equity:.1%}"
+    if latest_metrics.return_on_equity:
+        return 0, f"Weak ROE of {latest_metrics.return_on_equity:.1%}"
+    return 0, "ROE data not available"
+
+
+def _score_buffett_debt_to_equity(latest_metrics) -> tuple[int, str]:
+    if latest_metrics.debt_to_equity and latest_metrics.debt_to_equity < 0.5:
+        return 2, "Conservative debt levels"
+    if latest_metrics.debt_to_equity:
+        return 0, f"High debt to equity ratio of {latest_metrics.debt_to_equity:.1f}"
+    return 0, "Debt to equity data not available"
+
+
+def _score_buffett_operating_margin(latest_metrics) -> tuple[int, str]:
+    if latest_metrics.operating_margin and latest_metrics.operating_margin > 0.15:
+        return 2, "Strong operating margins"
+    if latest_metrics.operating_margin:
+        return 0, f"Weak operating margin of {latest_metrics.operating_margin:.1%}"
+    return 0, "Operating margin data not available"
+
+
+def _score_buffett_current_ratio(latest_metrics) -> tuple[int, str]:
+    if latest_metrics.current_ratio and latest_metrics.current_ratio > 1.5:
+        return 1, "Good liquidity position"
+    if latest_metrics.current_ratio:
+        return 0, f"Weak liquidity with current ratio of {latest_metrics.current_ratio:.1f}"
+    return 0, "Current ratio data not available"
+
+
+def _analyze_buffett_earnings_consistency(financial_line_items: list) -> tuple[int, str]:
+    earnings_values = [getattr(item, "net_income", None) for item in financial_line_items if getattr(item, "net_income", None) is not None]
+    if len(earnings_values) < 4:
+        return 0, "Insufficient earnings data for trend analysis"
+
+    earnings_growth = all(earnings_values[index] > earnings_values[index + 1] for index in range(len(earnings_values) - 1))
+    if earnings_growth:
+        return 3, "Consistent earnings growth over past periods"
+    return 0, "Inconsistent earnings growth pattern"
+
+
 def _score_buffett_roe_consistency(historical_roes: list[float]) -> tuple[int, str]:
     if len(historical_roes) < 5:
         return 0, "Insufficient ROE history for moat analysis"

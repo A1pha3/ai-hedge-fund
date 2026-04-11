@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 
 from src.agents.rakesh_jhunjhunwala import (
+    analyze_balance_sheet,
+    analyze_cash_flow,
     analyze_growth,
+    analyze_management_actions,
     analyze_profitability,
     assess_quality_metrics,
     calculate_intrinsic_value,
@@ -55,6 +58,49 @@ def test_analyze_growth_preserves_negative_income_cagr_wording():
     assert analyze_growth(financial_line_items) == {
         "score": 1,
         "details": "Insufficient revenue data for CAGR calculation; Moderate income CAGR: -10.6%; Consistent growth pattern (100% of years)",
+    }
+
+
+def test_analyze_balance_sheet_preserves_strength_and_missing_messages():
+    strong_financials = [
+        SimpleNamespace(total_assets=1000.0, total_liabilities=300.0, current_assets=420.0, current_liabilities=180.0)
+    ]
+    missing_financials = [SimpleNamespace(total_assets=None, total_liabilities=None, current_assets=None, current_liabilities=None)]
+
+    assert analyze_balance_sheet(strong_financials) == {
+        "score": 4,
+        "details": "Low debt ratio: 0.30; Excellent liquidity with current ratio: 2.33",
+    }
+    assert analyze_balance_sheet(missing_financials) == {
+        "score": 0,
+        "details": "Insufficient data to calculate debt ratio; Insufficient data to calculate current ratio",
+    }
+
+
+def test_analyze_cash_flow_preserves_positive_and_missing_dividend_paths():
+    shareholder_friendly = [
+        SimpleNamespace(free_cash_flow=125.0, dividends_and_other_cash_distributions=-12.0)
+    ]
+    missing_cash_flow = [SimpleNamespace(free_cash_flow=None, dividends_and_other_cash_distributions=None)]
+
+    assert analyze_cash_flow(shareholder_friendly) == {
+        "score": 3,
+        "details": "Positive free cash flow: 125.0; Company pays dividends to shareholders",
+    }
+    assert analyze_cash_flow(missing_cash_flow) == {
+        "score": 0,
+        "details": "Free cash flow data not available; No dividend payment data available",
+    }
+
+
+def test_analyze_management_actions_preserves_buyback_and_missing_paths():
+    assert analyze_management_actions([SimpleNamespace(issuance_or_purchase_of_equity_shares=-25.0)]) == {
+        "score": 2,
+        "details": "Company buying back shares: 25.0",
+    }
+    assert analyze_management_actions([SimpleNamespace(issuance_or_purchase_of_equity_shares=None)]) == {
+        "score": 0,
+        "details": "No data on share issuance or buybacks",
     }
 
 

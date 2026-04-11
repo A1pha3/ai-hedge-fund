@@ -89,14 +89,93 @@ def _historical_prior(input_data: TargetEvaluationInput) -> dict[str, Any]:
     return dict(input_data.replay_context.get("historical_prior") or {})
 
 
+def _normalized_reason_codes(values: Any) -> list[str]:
+    return [
+        str(reason)
+        for reason in list(values or [])
+        if str(reason or "").strip()
+    ]
+
+
+def _is_catalyst_theme_carryover_candidate(*, source: str, candidate_reason_codes: set[str]) -> bool:
+    return source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" in candidate_reason_codes
+
+
+def _build_historical_execution_relief_default_result(
+    *,
+    historical_prior: dict[str, Any],
+    source: str,
+    execution_quality_label: str,
+    evaluable_count: int,
+    next_close_positive_rate: float,
+    next_high_hit_rate: float,
+    next_open_to_close_return_mean: float,
+    base_near_miss_threshold: float,
+    base_select_threshold: float,
+) -> dict[str, Any]:
+    return {
+        "enabled": bool(historical_prior),
+        "eligible": False,
+        "applied": False,
+        "candidate_source": source,
+        "execution_quality_label": execution_quality_label,
+        "evaluable_count": evaluable_count,
+        "next_close_positive_rate": next_close_positive_rate,
+        "next_high_hit_rate_at_threshold": next_high_hit_rate,
+        "next_open_to_close_return_mean": next_open_to_close_return_mean,
+        "strong_close_continuation": False,
+        "gate_hits": {},
+        "reason": "historical_execution_relief",
+        "base_near_miss_threshold": base_near_miss_threshold,
+        "effective_near_miss_threshold": base_near_miss_threshold,
+        "near_miss_threshold_override": base_near_miss_threshold,
+        "base_select_threshold": base_select_threshold,
+        "effective_select_threshold": base_select_threshold,
+        "select_threshold_override": base_select_threshold,
+    }
+
+
+def _build_upstream_shadow_catalyst_relief_default_result(
+    *,
+    relief_reason: str,
+    catalyst_freshness: float,
+    base_near_miss_threshold: float,
+    base_select_threshold: float,
+    historical_execution_quality_label: str,
+    historical_evaluable_count: int,
+    historical_next_close_positive_rate: float,
+    historical_next_high_hit_rate: float,
+    historical_next_open_to_close_return_mean: float,
+) -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "eligible": False,
+        "applied": False,
+        "reason": relief_reason,
+        "gate_hits": {},
+        "base_catalyst_freshness": catalyst_freshness,
+        "effective_catalyst_freshness": catalyst_freshness,
+        "base_near_miss_threshold": base_near_miss_threshold,
+        "effective_near_miss_threshold": base_near_miss_threshold,
+        "base_select_threshold": base_select_threshold,
+        "effective_select_threshold": base_select_threshold,
+        "catalyst_freshness_floor": 0.0,
+        "near_miss_threshold_override": base_near_miss_threshold,
+        "select_threshold_override": base_select_threshold,
+        "require_no_profitability_hard_cliff": False,
+        "historical_execution_quality_label": historical_execution_quality_label,
+        "historical_evaluable_count": historical_evaluable_count,
+        "historical_next_close_positive_rate": historical_next_close_positive_rate,
+        "historical_next_high_hit_rate_at_threshold": historical_next_high_hit_rate,
+        "historical_next_open_to_close_return_mean": historical_next_open_to_close_return_mean,
+        "historical_strong_close_continuation": False,
+    }
+
+
 def _resolve_carryover_evidence_deficiency(input_data: TargetEvaluationInput) -> dict[str, Any]:
     historical_prior = _historical_prior(input_data)
     source = str(input_data.replay_context.get("source") or "").strip()
-    candidate_reason_codes = {
-        str(code).strip()
-        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
-        if str(code or "").strip()
-    }
+    candidate_reason_codes = set(_normalized_reason_codes(input_data.replay_context.get("candidate_reason_codes")))
     same_ticker_sample_count = int(historical_prior.get("same_ticker_sample_count") or 0)
     same_family_sample_count = int(historical_prior.get("same_family_sample_count") or 0)
     same_family_source_sample_count = int(historical_prior.get("same_family_source_sample_count") or 0)
@@ -296,6 +375,29 @@ def _resolve_profitability_hard_cliff_boundary_relief(
     }
 
 
+def _build_item_replay_context(item: LayerCResult) -> dict[str, Any]:
+    candidate_source = str(getattr(item, "candidate_source", "") or "layer_c_watchlist")
+    explicit_metric_overrides = {}
+    if candidate_source == "catalyst_theme":
+        explicit_metric_overrides = dict(
+            getattr(item, "catalyst_theme_metrics", None)
+            or getattr(item, "metrics", None)
+            or {}
+        )
+    return {
+        "source": candidate_source,
+        "reason": str(getattr(item, "reason", "") or ""),
+        "candidate_reason_codes": _normalized_reason_codes(getattr(item, "candidate_reason_codes", [])),
+        "historical_prior": dict(getattr(item, "historical_prior", {}) or {}),
+        "candidate_pool_lane": str(getattr(item, "candidate_pool_lane", "") or ""),
+        "candidate_pool_shadow_reason": str(getattr(item, "candidate_pool_shadow_reason", "") or ""),
+        "shadow_visibility_gap_selected": bool(getattr(item, "shadow_visibility_gap_selected", False)),
+        "shadow_visibility_gap_relaxed_band": bool(getattr(item, "shadow_visibility_gap_relaxed_band", False)),
+        "short_trade_catalyst_relief": dict(getattr(item, "short_trade_catalyst_relief", {}) or {}),
+        "explicit_metric_overrides": explicit_metric_overrides,
+    }
+
+
 def _resolve_historical_execution_relief(
     *,
     input_data: TargetEvaluationInput,
@@ -304,12 +406,11 @@ def _resolve_historical_execution_relief(
 ) -> dict[str, Any]:
     historical_prior = _historical_prior(input_data)
     source = str(input_data.replay_context.get("source") or "").strip()
-    candidate_reason_codes = {
-        str(code).strip()
-        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
-        if str(code or "").strip()
-    }
-    catalyst_theme_carryover_candidate = source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" in candidate_reason_codes
+    candidate_reason_codes = set(_normalized_reason_codes(input_data.replay_context.get("candidate_reason_codes")))
+    catalyst_theme_carryover_candidate = _is_catalyst_theme_carryover_candidate(
+        source=source,
+        candidate_reason_codes=candidate_reason_codes,
+    )
     base_near_miss_threshold = float(profile.near_miss_threshold)
     base_select_threshold = float(profile.select_threshold)
     execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
@@ -317,26 +418,17 @@ def _resolve_historical_execution_relief(
     next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
     next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
     next_open_to_close_return_mean = float(historical_prior.get("next_open_to_close_return_mean", 0.0) or 0.0)
-    default_result = {
-        "enabled": bool(historical_prior),
-        "eligible": False,
-        "applied": False,
-        "candidate_source": source,
-        "execution_quality_label": execution_quality_label,
-        "evaluable_count": evaluable_count,
-        "next_close_positive_rate": next_close_positive_rate,
-        "next_high_hit_rate_at_threshold": next_high_hit_rate,
-        "next_open_to_close_return_mean": next_open_to_close_return_mean,
-        "strong_close_continuation": False,
-        "gate_hits": {},
-        "reason": "historical_execution_relief",
-        "base_near_miss_threshold": base_near_miss_threshold,
-        "effective_near_miss_threshold": base_near_miss_threshold,
-        "near_miss_threshold_override": base_near_miss_threshold,
-        "base_select_threshold": base_select_threshold,
-        "effective_select_threshold": base_select_threshold,
-        "select_threshold_override": base_select_threshold,
-    }
+    default_result = _build_historical_execution_relief_default_result(
+        historical_prior=historical_prior,
+        source=source,
+        execution_quality_label=execution_quality_label,
+        evaluable_count=evaluable_count,
+        next_close_positive_rate=next_close_positive_rate,
+        next_high_hit_rate=next_high_hit_rate,
+        next_open_to_close_return_mean=next_open_to_close_return_mean,
+        base_near_miss_threshold=base_near_miss_threshold,
+        base_select_threshold=base_select_threshold,
+    )
     if not historical_prior:
         return default_result
 
@@ -422,35 +514,19 @@ def _resolve_upstream_shadow_catalyst_relief(
     historical_next_open_to_close_return_mean = float(historical_prior.get("next_open_to_close_return_mean", 0.0) or 0.0)
     base_near_miss_threshold = float(profile.near_miss_threshold)
     base_select_threshold = float(profile.select_threshold)
-    default_result = {
-        "enabled": False,
-        "eligible": False,
-        "applied": False,
-        "reason": relief_reason,
-        "gate_hits": {},
-        "base_catalyst_freshness": catalyst_freshness,
-        "effective_catalyst_freshness": catalyst_freshness,
-        "base_near_miss_threshold": base_near_miss_threshold,
-        "effective_near_miss_threshold": base_near_miss_threshold,
-        "base_select_threshold": base_select_threshold,
-        "effective_select_threshold": base_select_threshold,
-        "catalyst_freshness_floor": 0.0,
-        "near_miss_threshold_override": base_near_miss_threshold,
-        "select_threshold_override": base_select_threshold,
-        "require_no_profitability_hard_cliff": False,
-        "historical_execution_quality_label": historical_execution_quality_label,
-        "historical_evaluable_count": historical_evaluable_count,
-        "historical_next_close_positive_rate": historical_next_close_positive_rate,
-        "historical_next_high_hit_rate_at_threshold": historical_next_high_hit_rate,
-        "historical_next_open_to_close_return_mean": historical_next_open_to_close_return_mean,
-        "historical_strong_close_continuation": False,
-    }
+    default_result = _build_upstream_shadow_catalyst_relief_default_result(
+        relief_reason=relief_reason,
+        catalyst_freshness=catalyst_freshness,
+        base_near_miss_threshold=base_near_miss_threshold,
+        base_select_threshold=base_select_threshold,
+        historical_execution_quality_label=historical_execution_quality_label,
+        historical_evaluable_count=historical_evaluable_count,
+        historical_next_close_positive_rate=historical_next_close_positive_rate,
+        historical_next_high_hit_rate=historical_next_high_hit_rate,
+        historical_next_open_to_close_return_mean=historical_next_open_to_close_return_mean,
+    )
 
-    candidate_reason_codes = {
-        str(code).strip()
-        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
-        if str(code or "").strip()
-    }
+    candidate_reason_codes = set(_normalized_reason_codes(input_data.replay_context.get("candidate_reason_codes")))
     if not relief_config or not (candidate_reason_codes & {"upstream_shadow_release_candidate", "catalyst_theme_short_trade_carryover_candidate"}):
         return default_result
 
@@ -962,24 +1038,12 @@ def _build_target_input_from_item(*, trade_date: str, item: LayerCResult, includ
         strategy_signals={name: signal for name, signal in dict(item.strategy_signals or {}).items()},
         agent_contribution_summary=dict(item.agent_contribution_summary or {}),
         execution_constraints={"included_in_buy_orders": bool(included_in_buy_orders)},
-        replay_context={
-            "source": str(getattr(item, "candidate_source", "") or "layer_c_watchlist"),
-            "candidate_reason_codes": [
-                str(reason)
-                for reason in list(getattr(item, "candidate_reason_codes", []) or [])
-                if str(reason or "").strip()
-            ],
-            "historical_prior": dict(getattr(item, "historical_prior", {}) or {}),
-        },
+        replay_context=_build_item_replay_context(item),
     )
 
 
 def _build_target_input_from_entry(*, trade_date: str, entry: dict[str, Any]) -> TargetEvaluationInput:
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(entry.get("candidate_reason_codes", entry.get("reasons", [])) or [])
-        if str(reason or "").strip()
-    ]
+    candidate_reason_codes = _normalized_reason_codes(entry.get("candidate_reason_codes", entry.get("reasons", [])))
     candidate_source = str(entry.get("candidate_source") or "watchlist_filter_diagnostics")
     explicit_metric_overrides = {}
     if candidate_source == "catalyst_theme":

@@ -523,75 +523,195 @@ def _build_watchlist_filter_diagnostics(
     merge_approved_tickers: set[str],
     threshold_relaxation: float,
 ) -> dict:
-    selected_tickers = {item.ticker for item in watchlist}
-    entries: list[dict] = []
-    selected_entries: list[dict] = []
+    selected_tickers, ordered_selected_tickers = _build_watchlist_ticker_index(watchlist)
     released_shadow_entries: list[dict[str, Any]] = []
+    entries, selected_entries, ranked_released_shadow_entries = _collect_watchlist_filter_entries(
+        layer_c_results=layer_c_results,
+        selected_tickers=selected_tickers,
+        merge_approved_tickers=merge_approved_tickers,
+        threshold_relaxation=threshold_relaxation,
+    )
+    summary = _build_filter_summary(entries)
+    _append_ranked_watchlist_shadow_entries(
+        ranked_entries=ranked_released_shadow_entries,
+        released_shadow_entries=released_shadow_entries,
+    )
+    summary.update(
+        _build_watchlist_filter_summary_updates(
+            selected_tickers=ordered_selected_tickers,
+            selected_entries=selected_entries,
+            released_shadow_entries=released_shadow_entries,
+            merge_approved_tickers=merge_approved_tickers,
+            threshold_relaxation=threshold_relaxation,
+        )
+    )
+    return summary
+
+
+def _build_watchlist_ticker_index(watchlist: list[LayerCResult]) -> tuple[set[str], list[str]]:
+    ordered_tickers = [item.ticker for item in watchlist]
+    return set(ordered_tickers), ordered_tickers
+
+
+def _collect_watchlist_filter_entries(
+    *,
+    layer_c_results: list[LayerCResult],
+    selected_tickers: set[str],
+    merge_approved_tickers: set[str],
+    threshold_relaxation: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[float, float, dict[str, Any]]]]:
+    entries: list[dict[str, Any]] = []
+    selected_entries: list[dict[str, Any]] = []
     ranked_released_shadow_entries: list[tuple[float, float, dict[str, Any]]] = []
     for item in layer_c_results:
-        payload = {
-            "ticker": item.ticker,
-            "score_b": round(item.score_b, 4),
-            "score_c": round(item.score_c, 4),
-            "score_final": round(item.score_final, 4),
-            "quality_score": round(item.quality_score, 4),
-            "decision": item.decision,
-            "bc_conflict": item.bc_conflict,
-            "merge_approved_ticker": item.ticker in merge_approved_tickers,
-            "required_score_final_threshold": round(
-                _watchlist_threshold_for_ticker(item.ticker, merge_approved_tickers, threshold_relaxation),
-                4,
-            ),
-            "strategy_signals": {
-                name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-                for name, signal in dict(item.strategy_signals or {}).items()
-            },
-            "agent_contribution_summary": item.agent_contribution_summary,
-        }
+        payload = _build_watchlist_filter_payload(
+            item=item,
+            merge_approved_tickers=merge_approved_tickers,
+            threshold_relaxation=threshold_relaxation,
+        )
         if item.ticker in selected_tickers:
             selected_entries.append(payload)
             continue
-        primary_reason, reasons = _classify_watchlist_filter(item)
-        entries.append({**payload, "reason": primary_reason, "reasons": reasons})
+        filtered_entry, primary_reason, reasons = _build_watchlist_filtered_entry(item=item, payload=payload)
+        entries.append(filtered_entry)
         should_release, release_reason = _should_release_watchlist_shadow_candidate(
             item=item,
             primary_reason=primary_reason,
         )
         if should_release and release_reason is not None:
             ranked_released_shadow_entries.append(
-                (
-                    float(item.score_final),
-                    float(item.score_b),
-                    _build_watchlist_shadow_release_entry(
-                        item=item,
-                        reasons=reasons,
-                        release_reason=release_reason,
-                    ),
+                _build_ranked_watchlist_shadow_entry(
+                    item=item,
+                    reasons=reasons,
+                    release_reason=release_reason,
                 )
             )
-    summary = _build_filter_summary(entries)
-    ranked_released_shadow_entries.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
-    for rank, (_, _, entry) in enumerate(ranked_released_shadow_entries[:WATCHLIST_SHADOW_RELEASE_MAX_TICKERS], start=1):
+    return entries, selected_entries, ranked_released_shadow_entries
+
+
+def _build_watchlist_filter_payload(
+    *,
+    item: LayerCResult,
+    merge_approved_tickers: set[str],
+    threshold_relaxation: float,
+) -> dict[str, Any]:
+    return {
+        "ticker": item.ticker,
+        "score_b": round(item.score_b, 4),
+        "score_c": round(item.score_c, 4),
+        "score_final": round(item.score_final, 4),
+        "quality_score": round(item.quality_score, 4),
+        "decision": item.decision,
+        "bc_conflict": item.bc_conflict,
+        "merge_approved_ticker": item.ticker in merge_approved_tickers,
+        "required_score_final_threshold": round(
+            _watchlist_threshold_for_ticker(item.ticker, merge_approved_tickers, threshold_relaxation),
+            4,
+        ),
+        "strategy_signals": {
+            name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
+            for name, signal in dict(item.strategy_signals or {}).items()
+        },
+        "agent_contribution_summary": item.agent_contribution_summary,
+    }
+
+
+def _build_watchlist_filtered_entry(*, item: LayerCResult, payload: dict[str, Any]) -> tuple[dict[str, Any], str, list[str]]:
+    primary_reason, reasons = _classify_watchlist_filter(item)
+    return {**payload, "reason": primary_reason, "reasons": reasons}, primary_reason, reasons
+
+
+def _build_ranked_watchlist_shadow_entry(
+    *,
+    item: LayerCResult,
+    reasons: list[str],
+    release_reason: str,
+) -> tuple[float, float, dict[str, Any]]:
+    return (
+        float(item.score_final),
+        float(item.score_b),
+        _build_watchlist_shadow_release_entry(
+            item=item,
+            reasons=reasons,
+            release_reason=release_reason,
+        ),
+    )
+
+
+def _append_ranked_watchlist_shadow_entries(
+    *,
+    ranked_entries: list[tuple[float, float, dict[str, Any]]],
+    released_shadow_entries: list[dict[str, Any]],
+) -> None:
+    ranked_entries.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
+    for rank, (_, _, entry) in enumerate(ranked_entries[:WATCHLIST_SHADOW_RELEASE_MAX_TICKERS], start=1):
         entry["rank"] = rank
         released_shadow_entries.append(entry)
-    summary["selected_tickers"] = [item.ticker for item in watchlist]
-    summary["selected_entries"] = selected_entries
-    summary["released_shadow_count"] = len(released_shadow_entries)
-    summary["released_shadow_tickers"] = [entry["ticker"] for entry in released_shadow_entries]
-    summary["released_shadow_entries"] = released_shadow_entries
-    summary["prefilter_thresholds"] = {
-        "score_b_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN, 4),
-        "score_final_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN, 4),
-        "score_c_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN, 4),
-        "conflicts": sorted(WATCHLIST_SHADOW_RELEASE_CONFLICTS),
-    }
-    summary["selection_thresholds"] = {
+
+
+def _build_watchlist_selection_thresholds(*, merge_approved_tickers: set[str], threshold_relaxation: float) -> dict[str, Any]:
+    return {
         "default_score_final_min": round(WATCHLIST_SCORE_THRESHOLD, 4),
         "merge_approved_score_final_min": round(max(0.0, WATCHLIST_SCORE_THRESHOLD - threshold_relaxation), 4),
         "merge_approved_tickers": sorted(merge_approved_tickers),
         "merge_approved_threshold_relaxation": round(threshold_relaxation, 4),
     }
-    return summary
+
+
+def _build_watchlist_prefilter_thresholds() -> dict[str, Any]:
+    return {
+        "score_b_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN, 4),
+        "score_final_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN, 4),
+        "score_c_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN, 4),
+        "conflicts": sorted(WATCHLIST_SHADOW_RELEASE_CONFLICTS),
+    }
+
+
+def _build_watchlist_selected_summary(*, selected_tickers: list[str], selected_entries: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "selected_tickers": selected_tickers,
+        "selected_entries": selected_entries,
+    }
+
+
+def _build_watchlist_released_shadow_summary(released_shadow_entries: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "released_shadow_count": len(released_shadow_entries),
+        "released_shadow_tickers": [entry["ticker"] for entry in released_shadow_entries],
+        "released_shadow_entries": released_shadow_entries,
+    }
+
+
+def _build_watchlist_threshold_summaries(*, merge_approved_tickers: set[str], threshold_relaxation: float) -> dict[str, Any]:
+    return {
+        "prefilter_thresholds": _build_watchlist_prefilter_thresholds(),
+        "selection_thresholds": _build_watchlist_selection_thresholds(
+            merge_approved_tickers=merge_approved_tickers,
+            threshold_relaxation=threshold_relaxation,
+        ),
+    }
+
+
+def _build_watchlist_filter_summary_updates(
+    *,
+    selected_tickers: list[str],
+    selected_entries: list[dict[str, Any]],
+    released_shadow_entries: list[dict[str, Any]],
+    merge_approved_tickers: set[str],
+    threshold_relaxation: float,
+) -> dict[str, Any]:
+    updates = _build_watchlist_selected_summary(
+        selected_tickers=selected_tickers,
+        selected_entries=selected_entries,
+    )
+    updates.update(_build_watchlist_released_shadow_summary(released_shadow_entries))
+    updates.update(
+        _build_watchlist_threshold_summaries(
+            merge_approved_tickers=merge_approved_tickers,
+            threshold_relaxation=threshold_relaxation,
+        )
+    )
+    return updates
 
 
 def _watchlist_threshold_for_ticker(ticker: str, merge_approved_tickers: set[str], threshold_relaxation: float) -> float:
@@ -625,19 +745,98 @@ def _apply_merge_approved_fused_boost(
             boosted.append(item)
             continue
         boosted_score_b = min(1.0, float(item.score_b) + score_boost)
-        arbitration_applied = list(item.arbitration_applied or [])
-        if "merge_approved_score_boost_applied" not in arbitration_applied:
-            arbitration_applied.append("merge_approved_score_boost_applied")
         boosted.append(
             item.model_copy(
                 update={
                     "score_b": boosted_score_b,
                     "decision": item.classify_decision(boosted_score_b),
-                    "arbitration_applied": arbitration_applied,
+                    "arbitration_applied": _merge_approved_arbitration_applied(item, "merge_approved_score_boost_applied"),
                 }
             )
         )
     return boosted
+
+
+def _merge_approved_arbitration_applied(item: Any, tag: str) -> list[str]:
+    arbitration_applied = list(item.arbitration_applied or [])
+    if tag not in arbitration_applied:
+        arbitration_applied.append(tag)
+    return arbitration_applied
+
+
+def _empty_merge_approved_breakout_signal_uplift_result() -> dict[str, Any]:
+    return {
+        "applied_tickers": [],
+        "eligible_tickers": [],
+        "by_ticker": {},
+        "config": summarize_merge_approved_breakout_uplift_config(),
+    }
+
+
+def _build_merge_approved_breakout_signal_uplift_result(
+    *,
+    by_ticker: dict[str, Any],
+    eligible_tickers: list[str],
+    applied_tickers: list[str],
+) -> dict[str, Any]:
+    return {
+        "config": summarize_merge_approved_breakout_uplift_config(),
+        "eligible_tickers": sorted(eligible_tickers),
+        "applied_tickers": sorted(applied_tickers),
+        "by_ticker": by_ticker,
+    }
+
+
+def _empty_merge_approved_layer_c_alignment_uplift_result() -> dict[str, Any]:
+    return {
+        "applied_tickers": [],
+        "eligible_tickers": [],
+        "by_ticker": {},
+    }
+
+
+def _build_merge_approved_layer_c_alignment_uplift_result(
+    *,
+    by_ticker: dict[str, Any],
+    eligible_tickers: list[str],
+    applied_tickers: list[str],
+) -> dict[str, Any]:
+    return {
+        "eligible_tickers": sorted(eligible_tickers),
+        "applied_tickers": sorted(applied_tickers),
+        "by_ticker": by_ticker,
+    }
+
+
+def _empty_merge_approved_sector_resonance_uplift_result() -> dict[str, Any]:
+    return {
+        "applied_tickers": [],
+        "eligible_tickers": [],
+        "by_ticker": {},
+    }
+
+
+def _build_merge_approved_sector_resonance_uplift_result(
+    *,
+    by_ticker: dict[str, Any],
+    eligible_tickers: list[str],
+    applied_tickers: list[str],
+) -> dict[str, Any]:
+    return {
+        "eligible_tickers": sorted(eligible_tickers),
+        "applied_tickers": sorted(applied_tickers),
+        "by_ticker": by_ticker,
+    }
+
+
+def _merge_approved_breakout_diagnostics_for_ticker(breakout_signal_uplift: dict[str, Any], ticker: str) -> dict[str, Any]:
+    breakout_by_ticker = dict(breakout_signal_uplift.get("by_ticker") or {})
+    return dict(breakout_by_ticker.get(ticker) or {})
+
+
+def _merge_approved_alignment_diagnostics_for_ticker(layer_c_alignment_uplift: dict[str, Any], ticker: str) -> dict[str, Any]:
+    alignment_by_ticker = dict(layer_c_alignment_uplift.get("by_ticker") or {})
+    return dict(alignment_by_ticker.get(ticker) or {})
 
 
 def _apply_merge_approved_breakout_signal_uplift(
@@ -645,7 +844,7 @@ def _apply_merge_approved_breakout_signal_uplift(
     merge_approved_tickers: set[str],
 ) -> tuple[list, dict[str, Any]]:
     if not merge_approved_tickers:
-        return fused, {"applied_tickers": [], "eligible_tickers": [], "by_ticker": {}, "config": summarize_merge_approved_breakout_uplift_config()}
+        return fused, _empty_merge_approved_breakout_signal_uplift_result()
     uplifted: list = []
     by_ticker: dict[str, Any] = {}
     applied_tickers: list[str] = []
@@ -663,25 +862,21 @@ def _apply_merge_approved_breakout_signal_uplift(
             eligible_tickers.append(item.ticker)
         if diagnostics.get("applied"):
             applied_tickers.append(item.ticker)
-            arbitration_applied = list(item.arbitration_applied or [])
-            if "merge_approved_breakout_signal_uplift_applied" not in arbitration_applied:
-                arbitration_applied.append("merge_approved_breakout_signal_uplift_applied")
             uplifted.append(
                 item.model_copy(
                     update={
                         "strategy_signals": updated_signals,
-                        "arbitration_applied": arbitration_applied,
+                        "arbitration_applied": _merge_approved_arbitration_applied(item, "merge_approved_breakout_signal_uplift_applied"),
                     }
                 )
             )
             continue
         uplifted.append(item)
-    return uplifted, {
-        "config": summarize_merge_approved_breakout_uplift_config(),
-        "eligible_tickers": sorted(eligible_tickers),
-        "applied_tickers": sorted(applied_tickers),
-        "by_ticker": by_ticker,
-    }
+    return uplifted, _build_merge_approved_breakout_signal_uplift_result(
+        by_ticker=by_ticker,
+        eligible_tickers=eligible_tickers,
+        applied_tickers=applied_tickers,
+    )
 
 
 def _apply_merge_approved_layer_c_alignment_uplift(
@@ -690,19 +885,18 @@ def _apply_merge_approved_layer_c_alignment_uplift(
     breakout_signal_uplift: dict[str, Any],
 ) -> tuple[list[LayerCResult], dict[str, Any]]:
     if not merge_approved_tickers:
-        return layer_c_results, {"applied_tickers": [], "eligible_tickers": [], "by_ticker": {}}
+        return layer_c_results, _empty_merge_approved_layer_c_alignment_uplift_result()
     uplifted: list[LayerCResult] = []
     by_ticker: dict[str, Any] = {}
     applied_tickers: list[str] = []
     eligible_tickers: list[str] = []
-    breakout_by_ticker = dict(breakout_signal_uplift.get("by_ticker") or {})
     for item in layer_c_results:
         if item.ticker not in merge_approved_tickers:
             uplifted.append(item)
             continue
         updated_payload, diagnostics = apply_merge_approved_layer_c_alignment_uplift(
             item.model_dump(mode="json"),
-            breakout_diagnostics=dict(breakout_by_ticker.get(item.ticker) or {}),
+            breakout_diagnostics=_merge_approved_breakout_diagnostics_for_ticker(breakout_signal_uplift, item.ticker),
         )
         by_ticker[item.ticker] = diagnostics
         if diagnostics.get("eligible"):
@@ -721,11 +915,11 @@ def _apply_merge_approved_layer_c_alignment_uplift(
             )
             continue
         uplifted.append(item)
-    return uplifted, {
-        "eligible_tickers": sorted(eligible_tickers),
-        "applied_tickers": sorted(applied_tickers),
-        "by_ticker": by_ticker,
-    }
+    return uplifted, _build_merge_approved_layer_c_alignment_uplift_result(
+        by_ticker=by_ticker,
+        eligible_tickers=eligible_tickers,
+        applied_tickers=applied_tickers,
+    )
 
 
 def _apply_merge_approved_sector_resonance_uplift(
@@ -734,19 +928,18 @@ def _apply_merge_approved_sector_resonance_uplift(
     layer_c_alignment_uplift: dict[str, Any],
 ) -> tuple[list[LayerCResult], dict[str, Any]]:
     if not merge_approved_tickers:
-        return layer_c_results, {"applied_tickers": [], "eligible_tickers": [], "by_ticker": {}}
+        return layer_c_results, _empty_merge_approved_sector_resonance_uplift_result()
     uplifted: list[LayerCResult] = []
     by_ticker: dict[str, Any] = {}
     applied_tickers: list[str] = []
     eligible_tickers: list[str] = []
-    alignment_by_ticker = dict(layer_c_alignment_uplift.get("by_ticker") or {})
     for item in layer_c_results:
         if item.ticker not in merge_approved_tickers:
             uplifted.append(item)
             continue
         updated_payload, diagnostics = apply_merge_approved_sector_resonance_uplift(
             item.model_dump(mode="json"),
-            alignment_diagnostics=dict(alignment_by_ticker.get(item.ticker) or {}),
+            alignment_diagnostics=_merge_approved_alignment_diagnostics_for_ticker(layer_c_alignment_uplift, item.ticker),
         )
         by_ticker[item.ticker] = diagnostics
         if diagnostics.get("eligible"):
@@ -756,11 +949,11 @@ def _apply_merge_approved_sector_resonance_uplift(
             uplifted.append(item.model_copy(update={"agent_contribution_summary": updated_payload["agent_contribution_summary"]}))
             continue
         uplifted.append(item)
-    return uplifted, {
-        "eligible_tickers": sorted(eligible_tickers),
-        "applied_tickers": sorted(applied_tickers),
-        "by_ticker": by_ticker,
-    }
+    return uplifted, _build_merge_approved_sector_resonance_uplift_result(
+        by_ticker=by_ticker,
+        eligible_tickers=eligible_tickers,
+        applied_tickers=applied_tickers,
+    )
 
 
 def _tag_merge_approved_layer_c_results(layer_c_results: list[LayerCResult], merge_approved_tickers: set[str]) -> list[LayerCResult]:
@@ -771,18 +964,30 @@ def _tag_merge_approved_layer_c_results(layer_c_results: list[LayerCResult], mer
         if item.ticker not in merge_approved_tickers:
             tagged_results.append(item)
             continue
-        candidate_reason_codes = [str(code) for code in list(item.candidate_reason_codes or []) if str(code or "").strip()]
-        if "merge_approved_continuation" not in candidate_reason_codes:
-            candidate_reason_codes.append("merge_approved_continuation")
-        tagged_results.append(
-            item.model_copy(
-                update={
-                    "candidate_source": "layer_c_watchlist_merge_approved",
-                    "candidate_reason_codes": candidate_reason_codes,
-                }
-            )
-        )
+        tagged_results.append(item.model_copy(update=_build_merge_approved_layer_c_tag_update(item)))
     return tagged_results
+
+
+def _merge_approved_candidate_reason_codes(item: LayerCResult) -> list[str]:
+    candidate_reason_codes = [str(code) for code in list(item.candidate_reason_codes or []) if str(code or "").strip()]
+    if "merge_approved_continuation" not in candidate_reason_codes:
+        candidate_reason_codes.append("merge_approved_continuation")
+    return candidate_reason_codes
+
+
+def _build_merge_approved_layer_c_tag_update(item: LayerCResult) -> dict[str, Any]:
+    return {
+        "candidate_source": "layer_c_watchlist_merge_approved",
+        "candidate_reason_codes": _merge_approved_candidate_reason_codes(item),
+    }
+
+
+def _dedupe_reason_codes(reason_codes: list[str]) -> list[str]:
+    deduped_reason_codes: list[str] = []
+    for code in reason_codes:
+        if code not in deduped_reason_codes:
+            deduped_reason_codes.append(code)
+    return deduped_reason_codes
 
 
 def _should_release_watchlist_shadow_candidate(*, item: LayerCResult, primary_reason: str) -> tuple[bool, str | None]:
@@ -802,42 +1007,89 @@ def _should_release_watchlist_shadow_candidate(*, item: LayerCResult, primary_re
 
 
 def _build_watchlist_shadow_release_entry(*, item: LayerCResult, reasons: list[str], release_reason: str) -> dict[str, Any]:
+    deduped_reason_codes = _build_watchlist_shadow_release_reason_codes(
+        reasons=reasons,
+        release_reason=release_reason,
+    )
+
+    return {
+        "ticker": item.ticker,
+        **_build_watchlist_shadow_release_score_fields(item),
+        **_build_watchlist_shadow_release_source_fields(item),
+        **_build_watchlist_shadow_release_reason_fields(
+            reason_codes=deduped_reason_codes,
+            release_reason=release_reason,
+        ),
+        **_build_watchlist_shadow_release_metadata_fields(item),
+    }
+
+
+def _build_watchlist_shadow_release_reason_codes(*, reasons: list[str], release_reason: str) -> list[str]:
     resolved_reason_codes = [
         "watchlist_avoid_shadow_release",
         release_reason,
         *[str(reason) for reason in list(reasons or []) if str(reason or "").strip()],
     ]
-    deduped_reason_codes: list[str] = []
-    for code in resolved_reason_codes:
-        if code not in deduped_reason_codes:
-            deduped_reason_codes.append(code)
+    return _dedupe_reason_codes(resolved_reason_codes)
 
+
+def _build_watchlist_shadow_release_thresholds() -> dict[str, float]:
     return {
-        "ticker": item.ticker,
+        "score_b_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN, 4),
+        "score_final_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN, 4),
+        "score_c_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN, 4),
+    }
+
+
+def _build_watchlist_shadow_release_score_fields(item: LayerCResult) -> dict[str, float]:
+    return {
         "score_b": round(float(item.score_b), 4),
         "score_c": round(float(item.score_c), 4),
         "score_final": round(float(item.score_final), 4),
         "quality_score": round(float(item.quality_score), 4),
-        "decision": str(item.decision or "avoid"),
+    }
+
+
+def _build_watchlist_shadow_release_strategy_signals(item: LayerCResult) -> dict[str, Any]:
+    return {
+        name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
+        for name, signal in dict(item.strategy_signals or {}).items()
+    }
+
+
+def _build_watchlist_shadow_release_agent_summary(item: LayerCResult) -> dict[str, Any]:
+    return dict(item.agent_contribution_summary or {})
+
+
+def _watchlist_shadow_release_promotion_trigger() -> str:
+    return "主 watchlist veto 保持不变；仅把边界 avoid 样本送入 short-trade supplemental replay，验证是否属于 000960 式 false negative。"
+
+
+def _build_watchlist_shadow_release_reason_fields(*, reason_codes: list[str], release_reason: str) -> dict[str, Any]:
+    return {
         "reason": "watchlist_avoid_shadow_release",
-        "reasons": deduped_reason_codes,
+        "reasons": reason_codes,
         "candidate_source": "watchlist_avoid_shadow_release",
-        "candidate_reason_codes": deduped_reason_codes,
+        "candidate_reason_codes": reason_codes,
+        "shadow_release_reason": release_reason,
+    }
+
+
+def _build_watchlist_shadow_release_metadata_fields(item: LayerCResult) -> dict[str, Any]:
+    return {
+        "shadow_release_thresholds": _build_watchlist_shadow_release_thresholds(),
+        "strategy_signals": _build_watchlist_shadow_release_strategy_signals(item),
+        "agent_contribution_summary": _build_watchlist_shadow_release_agent_summary(item),
+        "promotion_trigger": _watchlist_shadow_release_promotion_trigger(),
+    }
+
+
+def _build_watchlist_shadow_release_source_fields(item: LayerCResult) -> dict[str, Any]:
+    return {
+        "decision": str(item.decision or "avoid"),
         "bc_conflict": None,
         "source_decision": str(item.decision or ""),
         "source_bc_conflict": item.bc_conflict,
-        "shadow_release_reason": release_reason,
-        "shadow_release_thresholds": {
-            "score_b_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN, 4),
-            "score_final_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN, 4),
-            "score_c_min": round(WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN, 4),
-        },
-        "strategy_signals": {
-            name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-            for name, signal in dict(item.strategy_signals or {}).items()
-        },
-        "agent_contribution_summary": dict(item.agent_contribution_summary or {}),
-        "promotion_trigger": "主 watchlist veto 保持不变；仅把边界 avoid 样本送入 short-trade supplemental replay，验证是否属于 000960 式 false negative。",
     }
 
 
@@ -993,6 +1245,104 @@ def _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff
     )
 
 
+def _parse_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_upstream_shadow_catalyst_relief_metrics(metrics_payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "candidate_score": float(metrics_payload.get("candidate_score", 0.0) or 0.0),
+        "breakout_freshness": float(metrics_payload.get("breakout_freshness", 0.0) or 0.0),
+        "trend_acceleration": float(metrics_payload.get("trend_acceleration", 0.0) or 0.0),
+        "close_strength": float(metrics_payload.get("close_strength", 0.0) or 0.0),
+        "profitability_hard_cliff": bool(metrics_payload.get("profitability_hard_cliff")),
+    }
+
+
+def _passes_upstream_shadow_catalyst_relief_gates(
+    *,
+    threshold_config: dict[str, float],
+    historical_prior: dict[str, Any] | None,
+    metric_snapshot: dict[str, Any],
+) -> bool:
+    if not _supports_upstream_shadow_catalyst_relief_history(historical_prior):
+        return False
+    if float(metric_snapshot["candidate_score"]) < threshold_config["candidate_score_min"]:
+        return False
+    if float(metric_snapshot["breakout_freshness"]) < UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN:
+        return False
+    if float(metric_snapshot["trend_acceleration"]) < threshold_config["trend_acceleration_min"]:
+        return False
+    if float(metric_snapshot["close_strength"]) < threshold_config["close_strength_min"]:
+        return False
+    return True
+
+
+def _build_upstream_shadow_catalyst_relief_threshold_inputs(
+    *,
+    candidate_pool_lane: str,
+    profitability_hard_cliff: bool,
+    historical_next_close_positive_rate: float | None,
+) -> dict[str, Any]:
+    return {
+        "candidate_pool_lane": candidate_pool_lane,
+        "profitability_hard_cliff": profitability_hard_cliff,
+        "historical_next_close_positive_rate": historical_next_close_positive_rate,
+        "candidate_score_min": float(UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN),
+        "trend_acceleration_min": float(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN),
+        "close_strength_min": float(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN),
+        "near_miss_threshold": float(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD),
+        "post_gate_history_next_close_min": float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN),
+        "post_gate_hard_cliff_candidate_score_min": float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN),
+        "post_gate_hard_cliff_trend_min": float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN),
+        "post_gate_hard_cliff_close_min": float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN),
+        "post_gate_hard_cliff_near_miss_threshold": float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD),
+    }
+
+
+def _resolve_upstream_shadow_selected_threshold(
+    *,
+    candidate_pool_lane: str,
+    profitability_hard_cliff: bool,
+    shadow_visibility_gap_selected: bool,
+) -> tuple[bool, float]:
+    return resolve_selected_threshold(
+        candidate_pool_lane=candidate_pool_lane,
+        profitability_hard_cliff=profitability_hard_cliff,
+        shadow_visibility_gap_selected=shadow_visibility_gap_selected,
+        post_gate_selected_threshold=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD),
+        post_gate_hard_cliff_selected_threshold=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD),
+    )
+
+
+def _build_upstream_shadow_catalyst_relief_payload_kwargs(
+    *,
+    threshold_config: dict[str, float],
+    selected_threshold_override_enabled: bool,
+    selected_threshold: float,
+    require_no_profitability_hard_cliff: bool,
+) -> dict[str, Any]:
+    return {
+        "near_miss_threshold": threshold_config["near_miss_threshold"],
+        "selected_threshold_override_enabled": selected_threshold_override_enabled,
+        "selected_threshold": selected_threshold,
+        "breakout_freshness_min": UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN,
+        "trend_acceleration_min": threshold_config["trend_acceleration_min"],
+        "close_strength_min": threshold_config["close_strength_min"],
+        "require_no_profitability_hard_cliff": require_no_profitability_hard_cliff,
+        "required_execution_quality_labels": UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY,
+        "min_historical_evaluable_count": UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT,
+        "min_historical_next_close_positive_rate": UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN,
+        "min_historical_next_open_to_close_return_mean": UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN,
+        "catalyst_freshness_floor": UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR,
+    }
+
+
 def _build_upstream_shadow_catalyst_relief_config(
     *,
     candidate_pool_lane: str,
@@ -1004,69 +1354,45 @@ def _build_upstream_shadow_catalyst_relief_config(
     if filter_reason != "catalyst_freshness_below_short_trade_boundary_floor":
         return {}
 
-    candidate_score = float(metrics_payload.get("candidate_score", 0.0) or 0.0)
-    breakout_freshness = float(metrics_payload.get("breakout_freshness", 0.0) or 0.0)
-    trend_acceleration = float(metrics_payload.get("trend_acceleration", 0.0) or 0.0)
-    close_strength = float(metrics_payload.get("close_strength", 0.0) or 0.0)
-    profitability_hard_cliff = bool(metrics_payload.get("profitability_hard_cliff"))
+    metric_snapshot = _extract_upstream_shadow_catalyst_relief_metrics(metrics_payload)
+    candidate_score = float(metric_snapshot["candidate_score"])
+    breakout_freshness = float(metric_snapshot["breakout_freshness"])
+    trend_acceleration = float(metric_snapshot["trend_acceleration"])
+    close_strength = float(metric_snapshot["close_strength"])
+    profitability_hard_cliff = bool(metric_snapshot["profitability_hard_cliff"])
     candidate_score_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN)
     trend_acceleration_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN)
     close_strength_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN)
-    historical_next_close_positive_rate_raw = dict(historical_prior or {}).get("next_close_positive_rate")
-    historical_next_close_positive_rate = None
-    if historical_next_close_positive_rate_raw is not None:
-        try:
-            historical_next_close_positive_rate = float(historical_next_close_positive_rate_raw)
-        except (TypeError, ValueError):
-            historical_next_close_positive_rate = None
+    historical_next_close_positive_rate = _parse_optional_float(dict(historical_prior or {}).get("next_close_positive_rate"))
     threshold_config = resolve_catalyst_relief_thresholds(
-        candidate_pool_lane=candidate_pool_lane,
-        profitability_hard_cliff=profitability_hard_cliff,
-        historical_next_close_positive_rate=historical_next_close_positive_rate,
-        candidate_score_min=float(UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN),
-        trend_acceleration_min=float(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN),
-        close_strength_min=float(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN),
-        near_miss_threshold=float(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD),
-        post_gate_history_next_close_min=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN),
-        post_gate_hard_cliff_candidate_score_min=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN),
-        post_gate_hard_cliff_trend_min=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN),
-        post_gate_hard_cliff_close_min=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN),
-        post_gate_hard_cliff_near_miss_threshold=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD),
+        **_build_upstream_shadow_catalyst_relief_threshold_inputs(
+            candidate_pool_lane=candidate_pool_lane,
+            profitability_hard_cliff=profitability_hard_cliff,
+            historical_next_close_positive_rate=historical_next_close_positive_rate,
+        )
     )
     if threshold_config is None:
         return {}
-    if not _supports_upstream_shadow_catalyst_relief_history(historical_prior):
-        return {}
-    if candidate_score < threshold_config["candidate_score_min"]:
-        return {}
-    if breakout_freshness < UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN:
-        return {}
-    if trend_acceleration < threshold_config["trend_acceleration_min"]:
-        return {}
-    if close_strength < threshold_config["close_strength_min"]:
+    if not _passes_upstream_shadow_catalyst_relief_gates(
+        threshold_config=threshold_config,
+        historical_prior=historical_prior,
+        metric_snapshot=metric_snapshot,
+    ):
         return {}
 
     require_no_profitability_hard_cliff = _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(candidate_pool_lane)
-    selected_threshold_override_enabled, selected_threshold = resolve_selected_threshold(
+    selected_threshold_override_enabled, selected_threshold = _resolve_upstream_shadow_selected_threshold(
         candidate_pool_lane=candidate_pool_lane,
         profitability_hard_cliff=profitability_hard_cliff,
         shadow_visibility_gap_selected=shadow_visibility_gap_selected,
-        post_gate_selected_threshold=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD),
-        post_gate_hard_cliff_selected_threshold=float(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD),
     )
     return build_upstream_shadow_catalyst_relief_payload(
-        near_miss_threshold=threshold_config["near_miss_threshold"],
-        selected_threshold_override_enabled=selected_threshold_override_enabled,
-        selected_threshold=selected_threshold,
-        breakout_freshness_min=UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN,
-        trend_acceleration_min=threshold_config["trend_acceleration_min"],
-        close_strength_min=threshold_config["close_strength_min"],
-        require_no_profitability_hard_cliff=require_no_profitability_hard_cliff,
-        required_execution_quality_labels=UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY,
-        min_historical_evaluable_count=UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT,
-        min_historical_next_close_positive_rate=UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN,
-        min_historical_next_open_to_close_return_mean=UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN,
-        catalyst_freshness_floor=UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR,
+        **_build_upstream_shadow_catalyst_relief_payload_kwargs(
+            threshold_config=threshold_config,
+            selected_threshold_override_enabled=selected_threshold_override_enabled,
+            selected_threshold=selected_threshold,
+            require_no_profitability_hard_cliff=require_no_profitability_hard_cliff,
+        )
     )
 
 

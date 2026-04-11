@@ -10,9 +10,14 @@ from src.agents.rakesh_jhunjhunwala_helpers import (
     _resolve_rakesh_discount_profile,
     _resolve_rakesh_historical_growth,
     _resolve_rakesh_sustainable_growth,
+    _score_rakesh_current_ratio,
+    _score_rakesh_debt_ratio,
     _score_rakesh_eps_cagr,
+    _score_rakesh_dividends,
+    _score_rakesh_free_cash_flow,
     _score_rakesh_growth_consistency,
     _score_rakesh_income_cagr,
+    _score_rakesh_share_issuance,
     _score_rakesh_operating_margin,
     _score_rakesh_quality_debt_factor,
     _score_rakesh_quality_growth_consistency,
@@ -226,38 +231,12 @@ def analyze_balance_sheet(financial_line_items: list) -> dict[str, any]:
         return {"score": 0, "details": "No balance sheet data"}
 
     latest = financial_line_items[0]
-    score = 0
-    reasoning = []
-
-    # Debt to asset ratio
-    if getattr(latest, "total_assets", None) and getattr(latest, "total_liabilities", None) and latest.total_assets and latest.total_liabilities and latest.total_assets > 0:
-        debt_ratio = latest.total_liabilities / latest.total_assets
-        if debt_ratio < 0.5:
-            score += 2
-            reasoning.append(f"Low debt ratio: {debt_ratio:.2f}")
-        elif debt_ratio < 0.7:
-            score += 1
-            reasoning.append(f"Moderate debt ratio: {debt_ratio:.2f}")
-        else:
-            reasoning.append(f"High debt ratio: {debt_ratio:.2f}")
-    else:
-        reasoning.append("Insufficient data to calculate debt ratio")
-
-    # Current ratio (liquidity)
-    if getattr(latest, "current_assets", None) and getattr(latest, "current_liabilities", None) and latest.current_assets and latest.current_liabilities and latest.current_liabilities > 0:
-        current_ratio = latest.current_assets / latest.current_liabilities
-        if current_ratio > 2.0:
-            score += 2
-            reasoning.append(f"Excellent liquidity with current ratio: {current_ratio:.2f}")
-        elif current_ratio > 1.5:
-            score += 1
-            reasoning.append(f"Good liquidity with current ratio: {current_ratio:.2f}")
-        else:
-            reasoning.append(f"Weak liquidity with current ratio: {current_ratio:.2f}")
-    else:
-        reasoning.append("Insufficient data to calculate current ratio")
-
-    return {"score": score, "details": "; ".join(reasoning)}
+    debt_score, debt_reason = _score_rakesh_debt_ratio(latest)
+    current_ratio_score, current_ratio_reason = _score_rakesh_current_ratio(latest)
+    return {
+        "score": debt_score + current_ratio_score,
+        "details": "; ".join([debt_reason, current_ratio_reason]),
+    }
 
 
 def analyze_cash_flow(financial_line_items: list) -> dict[str, any]:
@@ -269,30 +248,12 @@ def analyze_cash_flow(financial_line_items: list) -> dict[str, any]:
         return {"score": 0, "details": "No cash flow data"}
 
     latest = financial_line_items[0]
-    score = 0
-    reasoning = []
-
-    # Free cash flow analysis
-    if getattr(latest, "free_cash_flow", None) and latest.free_cash_flow:
-        if latest.free_cash_flow > 0:
-            score += 2
-            reasoning.append(f"Positive free cash flow: {latest.free_cash_flow}")
-        else:
-            reasoning.append(f"Negative free cash flow: {latest.free_cash_flow}")
-    else:
-        reasoning.append("Free cash flow data not available")
-
-    # Dividend analysis
-    if getattr(latest, "dividends_and_other_cash_distributions", None) and latest.dividends_and_other_cash_distributions:
-        if latest.dividends_and_other_cash_distributions < 0:  # Negative indicates cash outflow for dividends
-            score += 1
-            reasoning.append("Company pays dividends to shareholders")
-        else:
-            reasoning.append("No significant dividend payments")
-    else:
-        reasoning.append("No dividend payment data available")
-
-    return {"score": score, "details": "; ".join(reasoning)}
+    free_cash_flow_score, free_cash_flow_reason = _score_rakesh_free_cash_flow(latest)
+    dividend_score, dividend_reason = _score_rakesh_dividends(latest)
+    return {
+        "score": free_cash_flow_score + dividend_score,
+        "details": "; ".join([free_cash_flow_reason, dividend_reason]),
+    }
 
 
 def analyze_management_actions(financial_line_items: list) -> dict[str, any]:
@@ -304,23 +265,8 @@ def analyze_management_actions(financial_line_items: list) -> dict[str, any]:
         return {"score": 0, "details": "No management action data"}
 
     latest = financial_line_items[0]
-    score = 0
-    reasoning = []
-
-    issuance = getattr(latest, "issuance_or_purchase_of_equity_shares", None)
-    if issuance is not None:
-        if issuance < 0:  # Negative indicates share buybacks
-            score += 2
-            reasoning.append(f"Company buying back shares: {abs(issuance)}")
-        elif issuance > 0:
-            reasoning.append(f"Share issuance detected (potential dilution): {issuance}")
-        else:
-            score += 1
-            reasoning.append("No recent share issuance or buyback")
-    else:
-        reasoning.append("No data on share issuance or buybacks")
-
-    return {"score": score, "details": "; ".join(reasoning)}
+    issuance_score, issuance_reason = _score_rakesh_share_issuance(latest)
+    return {"score": issuance_score, "details": issuance_reason}
 
 
 def assess_quality_metrics(financial_line_items: list) -> float:
