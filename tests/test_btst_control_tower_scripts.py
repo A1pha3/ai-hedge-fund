@@ -975,6 +975,8 @@ def test_prioritize_control_tower_next_actions_demotes_low_urgency_selected_reso
                 "tractability_tier": "second_shadow_probe",
                 "uplift_to_cutoff_multiple_mean": 6.5919,
                 "closed_cycle_count": 4,
+                "t_plus_2_positive_rate": 1.0,
+                "t_plus_2_return_hit_rate_at_target": 1.0,
                 "mean_t_plus_2_return": 0.1051,
             },
             "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
@@ -1049,6 +1051,8 @@ def test_prioritize_control_tower_next_actions_drops_generic_carryover_when_sele
                 "tractability_tier": "second_shadow_probe",
                 "uplift_to_cutoff_multiple_mean": 6.5919,
                 "closed_cycle_count": 4,
+                "t_plus_2_positive_rate": 1.0,
+                "t_plus_2_return_hit_rate_at_target": 1.0,
                 "mean_t_plus_2_return": 0.1051,
             },
             "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
@@ -1168,6 +1172,8 @@ def test_prioritize_control_tower_next_actions_prefers_corridor_primary_shadow_r
                 "tractability_tier": "second_shadow_probe",
                 "uplift_to_cutoff_multiple_mean": 6.5919,
                 "closed_cycle_count": 4,
+                "t_plus_2_positive_rate": 1.0,
+                "t_plus_2_return_hit_rate_at_target": 1.0,
                 "mean_t_plus_2_return": 0.1051,
             },
             "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
@@ -1191,6 +1197,7 @@ def test_prioritize_control_tower_next_actions_prefers_corridor_primary_shadow_r
     assert "min_rank_gap_to_cutoff=1599" in actions[0]["why_now"]
     assert "pressure_peer_cluster_type=diffuse_recurring_liquidity_wall" in actions[0]["why_now"]
     assert "uplift_to_cutoff_multiple_mean=12.5602" in actions[0]["why_now"]
+    assert "t_plus_2_positive_rate=1.0" in actions[0]["why_now"]
     assert "closest_pre_truncation_avg_amount_share_of_cutoff=0.158" in actions[0]["why_now"]
     assert "frontier_peers=['603077', '001330', '001267']" in actions[0]["why_now"]
     assert "最近 distinct 样本仍差 1599 名，avg_amount/cutoff≈0.158" in actions[0]["next_step"]
@@ -3490,6 +3497,8 @@ def test_control_tower_recall_priority_prefers_active_upstream_handoff_focus_tic
                     "tractability_tier": "second_shadow_probe",
                     "uplift_to_cutoff_multiple_mean": 6.5919,
                     "closed_cycle_count": 4,
+                    "t_plus_2_positive_rate": 1.0,
+                    "t_plus_2_return_hit_rate_at_target": 1.0,
                     "mean_t_plus_2_return": 0.1051,
                 },
                 "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
@@ -3507,6 +3516,7 @@ def test_control_tower_recall_priority_prefers_active_upstream_handoff_focus_tic
     assert "300683" in next_action["title"]
     assert "shadow_status=ready_for_primary_shadow_replay" in next_action["why_now"]
     assert "earliest_breakpoint=absent_from_candidate_pool" in next_action["why_now"]
+    assert "t_plus_2_positive_rate=1.0" in next_action["why_now"]
     assert next_action["next_step"] == "先回查 300683 为什么连 candidate_pool snapshot 都没有进入，优先补 watchlist -> candidate_pool handoff，再执行 corridor uplift primary shadow replay。"
     assert next_actions[1]["task_id"] == "candidate_pool_recall_priority"
     assert "candidate-pool truncation" in next_actions[1]["title"]

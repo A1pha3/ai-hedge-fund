@@ -715,7 +715,10 @@ def _append_primary_shadow_replay_context(why_now_parts: list[str], primary_shad
         "tractability_tier",
         "uplift_to_cutoff_multiple_mean",
         "closed_cycle_count",
+        "t_plus_2_positive_rate",
+        "t_plus_2_return_hit_rate_at_target",
         "mean_t_plus_2_return",
+        "objective_fit_score",
     ):
         value = primary_shadow_replay.get(key)
         if value is not None and str(value).strip() != "":

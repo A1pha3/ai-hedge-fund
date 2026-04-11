@@ -628,11 +628,33 @@ def _build_corridor_validation_pack_summary(analysis: dict[str, Any]) -> dict[st
     }
 
 
+def _build_corridor_shadow_pack_ticker_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ticker": payload.get("ticker"),
+        "validation_priority_rank": payload.get("validation_priority_rank"),
+        "tractability_tier": payload.get("tractability_tier"),
+        "closed_cycle_count": payload.get("closed_cycle_count"),
+        "t_plus_2_positive_rate": payload.get("t_plus_2_positive_rate"),
+        "t_plus_2_return_hit_rate_at_target": payload.get("t_plus_2_return_hit_rate_at_target"),
+        "mean_t_plus_2_return": payload.get("mean_t_plus_2_return"),
+        "objective_fit_score": payload.get("objective_fit_score"),
+        "uplift_to_cutoff_multiple_mean": payload.get("uplift_to_cutoff_multiple_mean"),
+    }
+
+
 def _build_corridor_shadow_pack_summary(analysis: dict[str, Any]) -> dict[str, Any]:
+    primary_shadow_replay_raw = analysis.get("primary_shadow_replay")
+    primary_shadow_replay_payload = dict(primary_shadow_replay_raw or {}) if isinstance(primary_shadow_replay_raw, dict) else {"ticker": primary_shadow_replay_raw}
     return {
         "shadow_status": analysis.get("shadow_status"),
-        "primary_shadow_replay": dict(analysis.get("primary_shadow_replay") or {}).get("ticker"),
+        "primary_shadow_replay": _build_corridor_shadow_pack_ticker_summary(primary_shadow_replay_payload),
         "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(analysis.get("parallel_watch_lanes") or [])[:3] if str(row.get("ticker") or "").strip()],
+        "parallel_watch_outcome_loop": [
+            _build_corridor_shadow_pack_ticker_summary(dict(row or {}))
+            for row in list(analysis.get("parallel_watch_lanes") or [])[:3]
+            if str(dict(row or {}).get("ticker") or "").strip()
+        ],
+        "excluded_low_gate_tail_tickers": [str(ticker) for ticker in list(analysis.get("excluded_low_gate_tail_tickers") or [])[:3] if str(ticker).strip()],
     }
 
 

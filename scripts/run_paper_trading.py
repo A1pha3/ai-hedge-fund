@@ -196,13 +196,89 @@ def _extend_shadow_focus_from_candidate_pool_recall_dossier(
         )
 
 
+def _append_unique_ticker(target: list[str], ticker: str) -> None:
+    if ticker and ticker not in target:
+        target.append(ticker)
+
+
+def _ticker_supports_overnight_shadow_focus(reports_root: Path, ticker: str) -> bool:
+    candidate_dossier = _load_json_if_exists(reports_root / f"btst_tplus2_candidate_dossier_{ticker}_latest.json")
+    return not candidate_dossier or _latest_followup_supports_overnight_shadow_focus(candidate_dossier)
+
+
 def _recall_row_meets_shadow_focus_prerequisites(reports_root: Path, payload: dict[str, Any], *, ticker: str) -> bool:
     strict_goal_case_count = int(payload.get("strict_btst_goal_case_count") or 0)
     if strict_goal_case_count < AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES:
         return False
 
-    candidate_dossier = _load_json_if_exists(reports_root / f"btst_tplus2_candidate_dossier_{ticker}_latest.json")
-    return not candidate_dossier or _latest_followup_supports_overnight_shadow_focus(candidate_dossier)
+    return _ticker_supports_overnight_shadow_focus(reports_root, ticker)
+
+
+def _extract_manifest_primary_shadow_replay_ticker(summary: dict[str, Any]) -> str:
+    primary_shadow_replay = summary.get("primary_shadow_replay")
+    if isinstance(primary_shadow_replay, dict):
+        return str(primary_shadow_replay.get("ticker") or "").strip()
+    return str(primary_shadow_replay or "").strip()
+
+
+def _resolve_manifest_excluded_low_gate_tail_tickers(manifest: dict[str, Any]) -> set[str]:
+    summary = dict(manifest.get("candidate_pool_corridor_shadow_pack_summary") or {})
+    excluded = summary.get("excluded_low_gate_tail_tickers")
+    if excluded is None:
+        excluded = manifest.get("excluded_low_gate_tail_tickers")
+    return {str(ticker).strip() for ticker in list(excluded or []) if str(ticker or "").strip()}
+
+
+def _extend_shadow_focus_from_report_manifest(
+    reports_root: Path,
+    *,
+    all_focus: set[str],
+    corridor_focus: set[str],
+    corridor_release_priority: list[str],
+) -> None:
+    manifest = _load_json_if_exists(reports_root / "report_manifest_latest.json")
+    status = str(manifest.get("candidate_pool_corridor_shadow_pack_status") or "").strip()
+    if status != "ready_for_primary_shadow_replay":
+        return
+
+    summary = dict(manifest.get("candidate_pool_corridor_shadow_pack_summary") or {})
+    focus_tickers = [
+        _extract_manifest_primary_shadow_replay_ticker(summary),
+        *[str(ticker).strip() for ticker in list(summary.get("parallel_watch_tickers") or []) if str(ticker or "").strip()],
+    ]
+    for ticker in focus_tickers:
+        if not ticker:
+            continue
+        if not _ticker_supports_overnight_shadow_focus(reports_root, ticker):
+            continue
+        all_focus.add(ticker)
+        corridor_focus.add(ticker)
+        _append_unique_ticker(corridor_release_priority, ticker)
+
+
+def _apply_manifest_low_gate_tail_exclusions(
+    reports_root: Path,
+    *,
+    all_focus: set[str],
+    corridor_focus: set[str],
+    corridor_release_priority: list[str],
+    visibility_gap_all_focus: set[str],
+    visibility_gap_corridor_focus: set[str],
+    rebucket_focus: set[str],
+    visibility_gap_rebucket_focus: set[str],
+) -> None:
+    manifest = _load_json_if_exists(reports_root / "report_manifest_latest.json")
+    excluded_tickers = _resolve_manifest_excluded_low_gate_tail_tickers(manifest)
+    if not excluded_tickers:
+        return
+
+    corridor_focus.difference_update(excluded_tickers)
+    visibility_gap_corridor_focus.difference_update(excluded_tickers)
+    corridor_release_priority[:] = [ticker for ticker in corridor_release_priority if ticker not in excluded_tickers]
+    for ticker in excluded_tickers:
+        if ticker not in rebucket_focus and ticker not in visibility_gap_rebucket_focus:
+            all_focus.discard(ticker)
+            visibility_gap_all_focus.discard(ticker)
 
 
 def _resolve_recall_liquidity_thresholds(payload: dict[str, Any]) -> tuple[str, Any, Any]:
@@ -350,6 +426,8 @@ def _derive_shadow_focus_tickers_from_reports(reports_root: Path | None) -> dict
         "all": [],
         "layer_a_liquidity_corridor": [],
         "post_gate_liquidity_competition": [],
+        "release_priority_layer_a_liquidity_corridor": [],
+        "release_priority_post_gate_liquidity_competition": [],
         "visibility_gap_all": [],
         "visibility_gap_layer_a_liquidity_corridor": [],
         "visibility_gap_post_gate_liquidity_competition": [],
@@ -360,6 +438,7 @@ def _derive_shadow_focus_tickers_from_reports(reports_root: Path | None) -> dict
     all_focus: set[str] = set()
     corridor_focus: set[str] = set()
     rebucket_focus: set[str] = set()
+    corridor_release_priority: list[str] = []
     visibility_gap_all_focus: set[str] = set()
     visibility_gap_corridor_focus: set[str] = set()
     visibility_gap_rebucket_focus: set[str] = set()
@@ -381,10 +460,28 @@ def _derive_shadow_focus_tickers_from_reports(reports_root: Path | None) -> dict
         corridor_focus=corridor_focus,
         rebucket_focus=rebucket_focus,
     )
+    _extend_shadow_focus_from_report_manifest(
+        reports_root,
+        all_focus=all_focus,
+        corridor_focus=corridor_focus,
+        corridor_release_priority=corridor_release_priority,
+    )
+    _apply_manifest_low_gate_tail_exclusions(
+        reports_root,
+        all_focus=all_focus,
+        corridor_focus=corridor_focus,
+        corridor_release_priority=corridor_release_priority,
+        visibility_gap_all_focus=visibility_gap_all_focus,
+        visibility_gap_corridor_focus=visibility_gap_corridor_focus,
+        rebucket_focus=rebucket_focus,
+        visibility_gap_rebucket_focus=visibility_gap_rebucket_focus,
+    )
 
     derived_focus["all"] = sorted(all_focus)
     derived_focus["layer_a_liquidity_corridor"] = sorted(corridor_focus)
     derived_focus["post_gate_liquidity_competition"] = sorted(rebucket_focus)
+    derived_focus["release_priority_layer_a_liquidity_corridor"] = list(corridor_release_priority)
+    derived_focus["release_priority_post_gate_liquidity_competition"] = []
     derived_focus["visibility_gap_all"] = sorted(visibility_gap_all_focus)
     derived_focus["visibility_gap_layer_a_liquidity_corridor"] = sorted(visibility_gap_corridor_focus)
     derived_focus["visibility_gap_post_gate_liquidity_competition"] = sorted(visibility_gap_rebucket_focus)
@@ -428,16 +525,28 @@ def _apply_shadow_focus_env_overrides(args: argparse.Namespace, auto_shadow_focu
     resolved_shadow_visibility_gap_rebucket_tickers = _join_csv_tokens(
         _parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS")) + list(auto_shadow_focus["visibility_gap_post_gate_liquidity_competition"])
     )
+    resolved_release_priority_corridor_tickers = _join_csv_tokens(
+        _parse_csv_tokens(os.getenv("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_LIQUIDITY_CORRIDOR_TICKERS"))
+        + list(auto_shadow_focus["release_priority_layer_a_liquidity_corridor"])
+    )
+    resolved_release_priority_rebucket_tickers = _join_csv_tokens(
+        _parse_csv_tokens(os.getenv("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_POST_GATE_REBUCKET_TICKERS"))
+        + list(auto_shadow_focus["release_priority_post_gate_liquidity_competition"])
+    )
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS", resolved_shadow_focus_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", resolved_shadow_corridor_focus_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS", resolved_shadow_rebucket_focus_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_TICKERS", resolved_shadow_visibility_gap_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS", resolved_shadow_visibility_gap_corridor_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS", resolved_shadow_visibility_gap_rebucket_tickers)
+    _apply_optional_env_override("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_LIQUIDITY_CORRIDOR_TICKERS", resolved_release_priority_corridor_tickers)
+    _apply_optional_env_override("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_POST_GATE_REBUCKET_TICKERS", resolved_release_priority_rebucket_tickers)
     return {
         "resolved_shadow_focus_tickers": resolved_shadow_focus_tickers,
         "resolved_shadow_corridor_focus_tickers": resolved_shadow_corridor_focus_tickers,
         "resolved_shadow_rebucket_focus_tickers": resolved_shadow_rebucket_focus_tickers,
+        "resolved_release_priority_corridor_tickers": resolved_release_priority_corridor_tickers,
+        "resolved_release_priority_rebucket_tickers": resolved_release_priority_rebucket_tickers,
         "resolved_shadow_visibility_gap_tickers": resolved_shadow_visibility_gap_tickers,
         "resolved_shadow_visibility_gap_corridor_tickers": resolved_shadow_visibility_gap_corridor_tickers,
         "resolved_shadow_visibility_gap_rebucket_tickers": resolved_shadow_visibility_gap_rebucket_tickers,
@@ -496,7 +605,13 @@ def _print_paper_trading_runtime_summary(
 
 
 def _print_shadow_focus_summary(auto_shadow_focus: dict[str, list[str]], shadow_focus_env: dict[str, str]) -> None:
-    if auto_shadow_focus["all"] or auto_shadow_focus["layer_a_liquidity_corridor"] or auto_shadow_focus["post_gate_liquidity_competition"]:
+    if (
+        auto_shadow_focus["all"]
+        or auto_shadow_focus["layer_a_liquidity_corridor"]
+        or auto_shadow_focus["post_gate_liquidity_competition"]
+        or auto_shadow_focus["release_priority_layer_a_liquidity_corridor"]
+        or auto_shadow_focus["release_priority_post_gate_liquidity_competition"]
+    ):
         print(f"paper_trading_auto_shadow_focus={json.dumps(auto_shadow_focus, ensure_ascii=False, sort_keys=True)}")
     if shadow_focus_env["resolved_shadow_focus_tickers"]:
         print(f"paper_trading_shadow_focus_tickers={shadow_focus_env['resolved_shadow_focus_tickers']}")
@@ -504,6 +619,10 @@ def _print_shadow_focus_summary(auto_shadow_focus: dict[str, list[str]], shadow_
         print(f"paper_trading_shadow_corridor_focus_tickers={shadow_focus_env['resolved_shadow_corridor_focus_tickers']}")
     if shadow_focus_env["resolved_shadow_rebucket_focus_tickers"]:
         print(f"paper_trading_shadow_rebucket_focus_tickers={shadow_focus_env['resolved_shadow_rebucket_focus_tickers']}")
+    if shadow_focus_env["resolved_release_priority_corridor_tickers"]:
+        print(f"paper_trading_shadow_release_priority_corridor_tickers={shadow_focus_env['resolved_release_priority_corridor_tickers']}")
+    if shadow_focus_env["resolved_release_priority_rebucket_tickers"]:
+        print(f"paper_trading_shadow_release_priority_rebucket_tickers={shadow_focus_env['resolved_release_priority_rebucket_tickers']}")
     if shadow_focus_env["resolved_shadow_visibility_gap_tickers"]:
         print(f"paper_trading_shadow_visibility_gap_tickers={shadow_focus_env['resolved_shadow_visibility_gap_tickers']}")
     if shadow_focus_env["resolved_shadow_visibility_gap_corridor_tickers"]:
@@ -547,12 +666,6 @@ def main() -> None:
     output_dir = runtime_inputs["output_dir"]
     auto_shadow_focus = runtime_inputs["auto_shadow_focus"]
     shadow_focus_env = _apply_shadow_focus_env_overrides(args, auto_shadow_focus)
-    resolved_shadow_focus_tickers = shadow_focus_env["resolved_shadow_focus_tickers"]
-    resolved_shadow_corridor_focus_tickers = shadow_focus_env["resolved_shadow_corridor_focus_tickers"]
-    resolved_shadow_rebucket_focus_tickers = shadow_focus_env["resolved_shadow_rebucket_focus_tickers"]
-    resolved_shadow_visibility_gap_tickers = shadow_focus_env["resolved_shadow_visibility_gap_tickers"]
-    resolved_shadow_visibility_gap_corridor_tickers = shadow_focus_env["resolved_shadow_visibility_gap_corridor_tickers"]
-    resolved_shadow_visibility_gap_rebucket_tickers = shadow_focus_env["resolved_shadow_visibility_gap_rebucket_tickers"]
     _apply_optional_env_override("ANALYST_CONCURRENCY_LIMIT", args.analyst_concurrency_limit)
     if args.disable_data_snapshots:
         _apply_optional_env_override("DATA_SNAPSHOT_ENABLED", "false")
@@ -599,7 +712,7 @@ def main() -> None:
     if args.selection_target != "research_only":
         _print_btst_followup_artifacts(output_dir, args.end_date)
     if args.cache_benchmark:
-        print(f"paper_trading_cache_benchmark=enabled")
+        print("paper_trading_cache_benchmark=enabled")
     if args.frozen_plan_source:
         print(f"paper_trading_frozen_plan_source={Path(args.frozen_plan_source).resolve()}")
 

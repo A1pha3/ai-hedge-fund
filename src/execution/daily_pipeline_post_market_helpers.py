@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
 from src.execution.models import LayerCResult
 from src.screening.models import CandidateStock
+from src.targets.candidate_entry_filters import (
+    apply_candidate_entry_filters,
+    build_default_btst_candidate_entry_filter_rules,
+    summarize_candidate_entry_filter_observability,
+)
 from src.targets.models import DualTargetEvaluation
 
 
@@ -52,6 +58,7 @@ class PostMarketOrderContext:
 class PostMarketSelectionTargetInputs:
     rejected_entries: list[dict[str, Any]]
     supplemental_short_trade_entries: list[dict[str, Any]]
+    candidate_entry_filter_diagnostics: dict[str, Any]
 
 
 def build_high_pool(
@@ -171,11 +178,14 @@ def build_post_market_timing_seconds(
 
 def build_selection_target_inputs(
     *,
+    trade_date: str,
     watchlist_filter_diagnostics: dict[str, Any],
     short_trade_candidate_diagnostics: dict[str, Any],
     catalyst_theme_candidate_diagnostics: dict[str, Any],
     target_mode: str,
 ) -> PostMarketSelectionTargetInputs:
+    entry_filter_rules = build_default_btst_candidate_entry_filter_rules()
+    rejected_entries = list((watchlist_filter_diagnostics or {}).get("tickers", []) or [])
     supplemental_short_trade_entries = [
         *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
         *list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
@@ -186,7 +196,52 @@ def build_selection_target_inputs(
             else []
         ),
     ]
+    rejected_filter_observability = summarize_candidate_entry_filter_observability(
+        rejected_entries,
+        entry_filter_rules,
+        trade_date=trade_date,
+        default_candidate_source="watchlist_filter_diagnostics",
+    )
+    supplemental_filter_observability = summarize_candidate_entry_filter_observability(
+        supplemental_short_trade_entries,
+        entry_filter_rules,
+        trade_date=trade_date,
+        default_candidate_source="layer_b_boundary",
+    )
+    filtered_rejected_entries: list[dict[str, Any]]
+    filtered_supplemental_entries: list[dict[str, Any]]
+    rejected_entries, filtered_rejected_entries = apply_candidate_entry_filters(
+        rejected_entries,
+        entry_filter_rules,
+        trade_date=trade_date,
+        default_candidate_source="watchlist_filter_diagnostics",
+    )
+    supplemental_short_trade_entries, filtered_supplemental_entries = apply_candidate_entry_filters(
+        supplemental_short_trade_entries,
+        entry_filter_rules,
+        trade_date=trade_date,
+        default_candidate_source="layer_b_boundary",
+    )
+    candidate_entry_filter_observability: dict[str, Counter[str]] = {}
+    for observability in [rejected_filter_observability, supplemental_filter_observability]:
+        for rule_name, counters in observability.items():
+            candidate_entry_filter_observability.setdefault(rule_name, Counter()).update(counters)
+    filtered_entries = filtered_rejected_entries + filtered_supplemental_entries
+    filtered_reason_counts = Counter(str(entry.get("matched_filter") or "unknown") for entry in filtered_entries)
     return PostMarketSelectionTargetInputs(
-        rejected_entries=list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
+        rejected_entries=rejected_entries,
         supplemental_short_trade_entries=supplemental_short_trade_entries,
+        candidate_entry_filter_diagnostics={
+            "rule_names": [str(rule.get("name") or "unnamed_filter") for rule in entry_filter_rules],
+            "filtered_count": len(filtered_entries),
+            "filtered_tickers": [str(entry.get("ticker") or "") for entry in filtered_entries],
+            "filtered_entries": filtered_entries,
+            "filtered_rejected_entries": filtered_rejected_entries,
+            "filtered_supplemental_entries": filtered_supplemental_entries,
+            "filtered_reason_counts": {key: int(value) for key, value in sorted(filtered_reason_counts.items())},
+            "candidate_entry_filter_observability": {
+                rule_name: {key: int(value) for key, value in counters.items()}
+                for rule_name, counters in sorted(candidate_entry_filter_observability.items())
+            },
+        },
     )

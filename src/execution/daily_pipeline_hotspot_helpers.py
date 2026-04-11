@@ -58,7 +58,11 @@ def _should_suppress_shadow_release(
     execution_quality_label: str,
     evaluable_count: int,
     next_close_positive_rate: float | None,
+    pruned_from_opportunity_pool: bool,
+    prune_reason: str,
 ) -> bool:
+    if pruned_from_opportunity_pool and prune_reason == "historical_zero_follow_through":
+        return True
     return evaluable_count >= 3 and (
         execution_quality_label == "zero_follow_through"
         or (execution_quality_label == "intraday_only" and (next_close_positive_rate or 0.0) <= 0.0)
@@ -83,6 +87,8 @@ def summarize_shadow_release_historical_support(
     evaluable_count: int,
     next_close_positive_rate: float | None,
     next_high_hit_rate: float | None,
+    pruned_from_opportunity_pool: bool = False,
+    prune_reason: str = "",
 ) -> dict[str, Any]:
     support_score = _execution_quality_support_delta(execution_quality_label)
     support_score = _apply_historical_rate_support(
@@ -103,6 +109,8 @@ def summarize_shadow_release_historical_support(
         execution_quality_label=execution_quality_label,
         evaluable_count=evaluable_count,
         next_close_positive_rate=next_close_positive_rate,
+        pruned_from_opportunity_pool=pruned_from_opportunity_pool,
+        prune_reason=prune_reason,
     )
     return {
         "support_score": round(support_score, 4),

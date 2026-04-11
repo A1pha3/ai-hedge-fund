@@ -3396,6 +3396,18 @@ def _append_candidate_entry_shadow_board_rows(lines: list[str], payload: dict[st
 
 
 def _append_candidate_entry_shadow_summary_rows(lines: list[str], payload: dict[str, Any]) -> None:
+    def _format_corridor_shadow_pack_summary(summary: dict[str, Any]) -> str:
+        primary_shadow_replay = dict(summary.get("primary_shadow_replay") or {})
+        return (
+            "- candidate_entry_shadow_candidate_pool_corridor_shadow_pack_summary: "
+            f"shadow_status={summary.get('shadow_status')} "
+            f"primary_shadow_replay={primary_shadow_replay.get('ticker')} "
+            f"parallel_watch_tickers={summary.get('parallel_watch_tickers')} "
+            f"excluded_low_gate_tail_tickers={summary.get('excluded_low_gate_tail_tickers')} "
+            f"t_plus_2_positive_rate={primary_shadow_replay.get('t_plus_2_positive_rate')} "
+            f"mean_t_plus_2_return={primary_shadow_replay.get('mean_t_plus_2_return')}"
+        )
+
     for key, formatter in (
         (
             "candidate_pool_corridor_validation_pack_summary",
@@ -3403,7 +3415,7 @@ def _append_candidate_entry_shadow_summary_rows(lines: list[str], payload: dict[
         ),
         (
             "candidate_pool_corridor_shadow_pack_summary",
-            lambda summary: f"- candidate_entry_shadow_candidate_pool_corridor_shadow_pack_summary: shadow_status={summary.get('shadow_status')} primary_shadow_replay={summary.get('primary_shadow_replay')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}",
+            _format_corridor_shadow_pack_summary,
         ),
         (
             "candidate_pool_rebucket_shadow_pack_experiment",

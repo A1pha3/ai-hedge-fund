@@ -1766,6 +1766,11 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["candidate_pool_corridor_validation_pack_summary"]["pack_status"] == refresh["candidate_pool_corridor_validation_pack_status"]
     assert refresh["candidate_pool_corridor_shadow_pack_status"] in {"ready_for_primary_shadow_replay", "hold_for_more_corridor_evidence", "skipped_no_corridor_lane"}
     assert refresh["candidate_pool_corridor_shadow_pack_summary"]["shadow_status"] == refresh["candidate_pool_corridor_shadow_pack_status"]
+    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["primary_shadow_replay"]["ticker"] == "300683"
+    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["primary_shadow_replay"]["t_plus_2_positive_rate"] == 1.0
+    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["primary_shadow_replay"]["mean_t_plus_2_return"] == 0.1051
+    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["parallel_watch_outcome_loop"][0]["ticker"] == "301188"
+    assert "excluded_low_gate_tail_tickers" in refresh["candidate_pool_corridor_shadow_pack_summary"]
     assert refresh["candidate_pool_rebucket_shadow_pack_status"] in {"ready_for_rebucket_shadow_replay", "persistence_diagnostics_only", "skipped_no_rebucket_candidate"}
     assert refresh["candidate_pool_rebucket_shadow_pack_json"] == str((reports_root / "btst_candidate_pool_rebucket_shadow_pack_latest.json").resolve())
     assert refresh["candidate_pool_rebucket_objective_validation_status"] in {"refreshed", "skipped_no_rebucket_candidate"}
