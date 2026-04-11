@@ -5,10 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import signature
-from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Optional
-import os
 
 from scripts.btst_latest_followup_utils import load_latest_btst_historical_prior_by_ticker
 from src.execution.daily_pipeline_candidate_helpers import (
@@ -39,8 +37,81 @@ from src.execution.daily_pipeline_post_market_helpers import (
     build_selection_target_inputs,
     merge_agent_results,
 )
+from src.execution.daily_pipeline_runtime_helpers import (
+    build_filter_summary as _build_filter_summary_impl,
+    default_exit_checker as _default_exit_checker_impl,
+    load_candidate_pool_bundle as _load_candidate_pool_bundle_impl,
+    load_latest_historical_prior_by_ticker as _load_latest_historical_prior_by_ticker_impl,
+    resolve_historical_prior_for_ticker as _resolve_historical_prior_for_ticker_impl,
+)
+from src.execution.daily_pipeline_settings import (
+    BTST_REPORTS_ROOT,
+    CATALYST_THEME_BREAKOUT_MIN,
+    CATALYST_THEME_CANDIDATE_SCORE_MIN,
+    CATALYST_THEME_CATALYST_MIN,
+    CATALYST_THEME_CLOSE_MIN,
+    CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN,
+    CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN,
+    CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN,
+    CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN,
+    CATALYST_THEME_MAX_TICKERS,
+    CATALYST_THEME_SECTOR_MIN,
+    CATALYST_THEME_SHADOW_MAX_TICKERS,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+    CONTINUATION_EXECUTION_ENABLED,
+    CONTINUATION_WATCHLIST_EDGE_EXECUTION_RATIO,
+    CONTINUATION_WATCHLIST_MIN_SCORE,
+    EXIT_REENTRY_CONFIRM_SCORE_MIN,
+    EXIT_REENTRY_WEAK_CONFIRMATION_SCORE_MIN,
+    FAST_AGENT_MAX_TICKERS,
+    FAST_AGENT_SCORE_THRESHOLD,
+    MERGE_APPROVED_MERGE_REVIEW_PATH,
+    MERGE_APPROVED_RANKING_PATH,
+    MERGE_APPROVED_SCORE_BOOST,
+    MERGE_APPROVED_TICKERS,
+    MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
+    PRECISE_AGENT_MAX_TICKERS,
+    SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
+    SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
+    SHORT_TRADE_BOUNDARY_CATALYST_MIN,
+    SHORT_TRADE_BOUNDARY_MAX_TICKERS,
+    SHORT_TRADE_BOUNDARY_SCORE_BUFFER,
+    SHORT_TRADE_BOUNDARY_TREND_MIN,
+    SHORT_TRADE_BOUNDARY_VOLUME_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_BY_LANE,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN,
+    UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+    UPSTREAM_SHADOW_RELEASE_LANES,
+    UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
+    UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
+    WATCHLIST_DIAGNOSTICS_CONFIG,
+    WATCHLIST_SCORE_THRESHOLD,
+)
 from src.execution.daily_pipeline_watchlist_helpers import (
-    WatchlistDiagnosticsConfig,
     build_merge_approved_watchlist,
     build_watchlist_filter_diagnostics,
     tag_merge_approved_layer_c_results,
@@ -60,7 +131,7 @@ from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
-from src.portfolio.position_calculator import STANDARD_EXECUTION_SCORE, calculate_position, enforce_daily_trade_limit
+from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
 from src.screening.candidate_pool import build_candidate_pool, build_candidate_pool_with_shadow
 from src.screening.models import CandidateStock
 from src.screening.market_state import detect_market_state
@@ -76,190 +147,6 @@ from src.tools.tushare_api import get_daily_basic_batch
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
 ExitChecker = Callable[..., list]
-
-
-def _get_env_float(name: str, default: float) -> float:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    try:
-        return float(raw_value)
-    except ValueError:
-        return default
-
-
-def _get_env_int(name: str, default: int) -> int:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    try:
-        return int(raw_value)
-    except ValueError:
-        return default
-
-
-def _get_env_csv_set(name: str, default: str) -> set[str]:
-    raw_value = os.getenv(name, default)
-    return {item.strip() for item in str(raw_value or "").split(",") if item.strip()}
-
-
-def _get_env_csv_list(name: str, default: str) -> list[str]:
-    raw_value = os.getenv(name, default)
-    return [item.strip() for item in str(raw_value or "").split(",") if item.strip()]
-
-
-FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD", 0.38)
-FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
-PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
-WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.20)
-MERGE_APPROVED_SCORE_BOOST = _get_env_float("DAILY_PIPELINE_MERGE_APPROVED_SCORE_BOOST", 0.08)
-MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION = _get_env_float("DAILY_PIPELINE_MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION", 0.05)
-EXIT_REENTRY_CONFIRM_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_CONFIRM_SCORE_MIN", STANDARD_EXECUTION_SCORE)
-EXIT_REENTRY_WEAK_CONFIRMATION_SCORE_MIN = _get_env_float("PIPELINE_EXIT_REENTRY_WEAK_CONFIRMATION_SCORE_MIN", 0.30)
-CONTINUATION_EXECUTION_ENABLED = bool(_get_env_int("PIPELINE_CONTINUATION_EXECUTION_ENABLED", 1))
-CONTINUATION_WATCHLIST_MIN_SCORE = _get_env_float("PIPELINE_CONTINUATION_WATCHLIST_MIN_SCORE", 0.21)
-CONTINUATION_WATCHLIST_EDGE_EXECUTION_RATIO = _get_env_float("PIPELINE_CONTINUATION_WATCHLIST_EDGE_EXECUTION_RATIO", 0.3)
-SHORT_TRADE_BOUNDARY_SCORE_BUFFER = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_SCORE_BUFFER", 0.08)
-SHORT_TRADE_BOUNDARY_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_MAX_TICKERS", 6)
-SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN", 0.24)
-SHORT_TRADE_BOUNDARY_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_BREAKOUT_MIN", 0.18)
-SHORT_TRADE_BOUNDARY_TREND_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_TREND_MIN", 0.22)
-SHORT_TRADE_BOUNDARY_VOLUME_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_VOLUME_MIN", 0.15)
-SHORT_TRADE_BOUNDARY_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_SHORT_TRADE_BOUNDARY_CATALYST_MIN", 0.12)
-UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS", 3)
-UPSTREAM_SHADOW_RELEASE_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_MAX_TICKERS", 5)
-UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN", 0.30)
-UPSTREAM_SHADOW_RELEASE_LANES = _get_env_csv_set(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LANES",
-    "layer_a_liquidity_corridor,post_gate_liquidity_competition",
-)
-UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS = {
-    "layer_a_liquidity_corridor": _get_env_float(
-        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LIQUIDITY_CORRIDOR_SCORE_MIN",
-        0.28,
-    ),
-    "post_gate_liquidity_competition": _get_env_float(
-        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_POST_GATE_REBUCKET_SCORE_MIN",
-        UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
-    ),
-}
-UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS = {
-    "layer_a_liquidity_corridor": _get_env_int(
-        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_LIQUIDITY_CORRIDOR_MAX_TICKERS",
-        4,
-    ),
-    "post_gate_liquidity_competition": _get_env_int(
-        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_POST_GATE_REBUCKET_MAX_TICKERS",
-        1,
-    ),
-}
-UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE = {
-    "layer_a_liquidity_corridor": _get_env_csv_list(
-        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_LIQUIDITY_CORRIDOR_TICKERS",
-        "",
-    ),
-    "post_gate_liquidity_competition": _get_env_csv_list(
-        "DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_POST_GATE_REBUCKET_TICKERS",
-        "",
-    ),
-}
-UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN", 0.47)
-UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN", 0.38)
-UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN", 0.80)
-UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN", 0.85)
-UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR", 1.0)
-UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD = _get_env_float("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD", 0.45)
-UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD",
-    0.42,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD",
-    0.45,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD",
-    0.43,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN",
-    0.75,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN",
-    0.80,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN",
-    0.50,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY = _get_env_csv_set(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY",
-    "close_continuation",
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT = _get_env_int(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT",
-    2,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN",
-    0.50,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN",
-    0.0,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN = _get_env_float(
-    "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN",
-    0.44,
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT = bool(
-    _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 1)
-)
-UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_BY_LANE = {
-    "layer_a_liquidity_corridor": bool(
-        _get_env_int("DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_LIQUIDITY_CORRIDOR_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 0)
-    ),
-    "post_gate_liquidity_competition": bool(
-        _get_env_int(
-            "DAILY_PIPELINE_UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_REBUCKET_REQUIRE_NO_PROFITABILITY_HARD_CLIFF",
-            0,
-        )
-    ),
-}
-WATCHLIST_SHADOW_RELEASE_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_MAX_TICKERS", 2)
-WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN = _get_env_float("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN", FAST_AGENT_SCORE_THRESHOLD)
-WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN = _get_env_float("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN", 0.18)
-WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN = _get_env_float("DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN", -0.08)
-WATCHLIST_SHADOW_RELEASE_CONFLICTS = _get_env_csv_set(
-    "DAILY_PIPELINE_WATCHLIST_SHADOW_RELEASE_CONFLICTS",
-    "b_positive_c_strong_bearish",
-)
-CATALYST_THEME_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_CATALYST_THEME_MAX_TICKERS", 8)
-CATALYST_THEME_SHADOW_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_CATALYST_THEME_SHADOW_MAX_TICKERS", 8)
-CATALYST_THEME_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CANDIDATE_SCORE_MIN", 0.34)
-CATALYST_THEME_BREAKOUT_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_BREAKOUT_MIN", 0.10)
-CATALYST_THEME_CLOSE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CLOSE_MIN", 0.20)
-CATALYST_THEME_SECTOR_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SECTOR_MIN", 0.25)
-CATALYST_THEME_CATALYST_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_CATALYST_MIN", 0.45)
-CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN = 0.35
-CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN = 0.72
-CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN = 0.85
-CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN = 0.10
-CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN", 0.45)
-CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR", 1.0)
-CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD = _get_env_float("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD", 0.44)
-CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT = _get_env_int(
-    "DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT",
-    3,
-)
-CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF = bool(
-    _get_env_int("DAILY_PIPELINE_CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF", 1)
-)
-BTST_REPORTS_ROOT = Path(os.getenv("DAILY_PIPELINE_BTST_REPORTS_ROOT", "data/reports")).expanduser()
-MERGE_APPROVED_TICKERS = _get_env_csv_set("DAILY_PIPELINE_MERGE_APPROVED_TICKERS", "")
-MERGE_APPROVED_MERGE_REVIEW_PATH = os.getenv("DAILY_PIPELINE_MERGE_APPROVED_MERGE_REVIEW_PATH", "")
-MERGE_APPROVED_RANKING_PATH = os.getenv("DAILY_PIPELINE_MERGE_APPROVED_RANKING_PATH", "")
 _ORIGINAL_BUILD_CANDIDATE_POOL = build_candidate_pool
 _ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW = build_candidate_pool_with_shadow
 WEAK_CONFIRMATION_REENTRY_NEGATIVE_TAGS = frozenset(
@@ -274,29 +161,16 @@ WEAK_CONFIRMATION_REENTRY_GUARD_KEYS = (
     "watchlist_zero_catalyst_crowded_guard",
     "watchlist_zero_catalyst_flat_trend_guard",
 )
-WATCHLIST_DIAGNOSTICS_CONFIG = WatchlistDiagnosticsConfig(
-    watchlist_score_threshold=WATCHLIST_SCORE_THRESHOLD,
-    shadow_release_max_tickers=WATCHLIST_SHADOW_RELEASE_MAX_TICKERS,
-    shadow_release_score_b_min=WATCHLIST_SHADOW_RELEASE_SCORE_B_MIN,
-    shadow_release_score_final_min=WATCHLIST_SHADOW_RELEASE_SCORE_FINAL_MIN,
-    shadow_release_score_c_min=WATCHLIST_SHADOW_RELEASE_SCORE_C_MIN,
-    shadow_release_conflicts=frozenset(WATCHLIST_SHADOW_RELEASE_CONFLICTS),
-)
 
 
 def _load_candidate_pool_bundle(trade_date: str) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
-    if build_candidate_pool is not _ORIGINAL_BUILD_CANDIDATE_POOL and build_candidate_pool_with_shadow is _ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW:
-        candidates = build_candidate_pool(trade_date)
-        return candidates, [], {
-            "pool_size": len(candidates),
-            "selected_count": len(candidates),
-            "overflow_count": 0,
-            "selected_cutoff_avg_volume_20d": round(float(candidates[-1].avg_volume_20d), 4) if candidates else 0.0,
-            "lane_counts": {},
-            "selected_tickers": [],
-            "tickers": [],
-        }
-    return build_candidate_pool_with_shadow(trade_date)
+    return _load_candidate_pool_bundle_impl(
+        trade_date,
+        build_candidate_pool=build_candidate_pool,
+        build_candidate_pool_with_shadow=build_candidate_pool_with_shadow,
+        original_build_candidate_pool=_ORIGINAL_BUILD_CANDIDATE_POOL,
+        original_build_candidate_pool_with_shadow=_ORIGINAL_BUILD_CANDIDATE_POOL_WITH_SHADOW,
+    )
 
 
 def _resolve_pipeline_model_config(model_tier: str, base_model_name: str, base_model_provider: str) -> tuple[str, str]:
@@ -334,89 +208,33 @@ def _build_logic_score_map(layer_c_results: list[LayerCResult]) -> dict[str, flo
 
 
 def _default_exit_checker(portfolio_snapshot: dict, trade_date: str, logic_scores: dict[str, float] | None = None) -> list:
-    positions = portfolio_snapshot.get("positions", {})
-    active_tickers = [ticker for ticker, position in positions.items() if float(position.get("long", 0.0)) > 0]
-    if not active_tickers:
-        return []
-
-    price_map = build_watchlist_price_map(trade_date, active_tickers)
-    exits = []
-    for ticker in active_tickers:
-        current_price = price_map.get(ticker)
-        if current_price is None or current_price <= 0:
-            continue
-        position = positions.get(ticker, {})
-        shares = int(position.get("long", 0))
-        entry_price = float(position.get("long_cost_basis", 0.0))
-        if shares <= 0 or entry_price <= 0:
-            continue
-        holding = HoldingState(
-            ticker=ticker,
-            entry_price=entry_price,
-            entry_date=str(position.get("entry_date") or trade_date),
-            shares=shares,
-            cost_basis=entry_price * shares,
-            industry_sw=str(position.get("industry_sw", "")),
-            max_unrealized_pnl_pct=float(position.get("max_unrealized_pnl_pct", 0.0)),
-            holding_days=int(position.get("holding_days", 0)),
-            profit_take_stage=int(position.get("profit_take_stage", 0)),
-            entry_score=float(position.get("entry_score", 0.0)),
-            quality_score=float(position.get("quality_score", 0.5)),
-            is_fundamental_driven=bool(position.get("is_fundamental_driven", False)),
-        )
-        signal = check_exit_signal(
-            holding,
-            current_price=float(current_price),
-            trade_date=trade_date,
-            logic_score=(logic_scores or {}).get(ticker),
-        )
-        if signal is not None:
-            exits.append(signal)
-    return exits
+    return _default_exit_checker_impl(
+        portfolio_snapshot,
+        trade_date,
+        logic_scores,
+        build_watchlist_price_map=build_watchlist_price_map,
+        check_exit_signal=check_exit_signal,
+        holding_state_cls=HoldingState,
+    )
 
 
 def _build_filter_summary(entries: list[dict]) -> dict:
-    reason_counts: dict[str, int] = {}
-    for entry in entries:
-        reason = str(entry.get("reason") or "unknown")
-        reason_counts[reason] = reason_counts.get(reason, 0) + 1
-    return {
-        "filtered_count": len(entries),
-        "reason_counts": reason_counts,
-        "tickers": entries,
-    }
+    return _build_filter_summary_impl(entries)
 
 
 def _load_latest_btst_historical_prior_by_ticker() -> dict[str, dict[str, Any]]:
-    return load_latest_btst_historical_prior_by_ticker(BTST_REPORTS_ROOT)
-
-
-def _historical_prior_value_is_missing(key: str, value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        normalized = value.strip()
-        if not normalized:
-            return True
-        if key == "execution_quality_label" and normalized == "unknown":
-            return True
-    return False
+    return _load_latest_historical_prior_by_ticker_impl(
+        reports_root=BTST_REPORTS_ROOT,
+        loader=load_latest_btst_historical_prior_by_ticker,
+    )
 
 
 def _resolve_historical_prior_for_ticker(*, ticker: str, historical_prior: dict[str, Any] | None, prior_by_ticker: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    embedded_historical_prior = dict(historical_prior or {})
-    latest_historical_prior = dict(prior_by_ticker.get(ticker) or {})
-    if not embedded_historical_prior:
-        return latest_historical_prior
-    if not latest_historical_prior:
-        return embedded_historical_prior
-
-    resolved_historical_prior = dict(latest_historical_prior)
-    for key, value in embedded_historical_prior.items():
-        if _historical_prior_value_is_missing(str(key), value):
-            continue
-        resolved_historical_prior[str(key)] = value
-    return resolved_historical_prior
+    return _resolve_historical_prior_for_ticker_impl(
+        ticker=ticker,
+        historical_prior=historical_prior,
+        prior_by_ticker=prior_by_ticker,
+    )
 
 
 def _refresh_attached_entry_relief(entry: dict[str, Any]) -> dict[str, Any]:

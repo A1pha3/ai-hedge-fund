@@ -29,6 +29,18 @@ class _DummyPriceCache:
         self.saved = value
 
 
+class _DummyFinancialCache:
+    def __init__(self, cached=None):
+        self.cached = cached
+        self.saved = None
+
+    def get_financial_metrics(self, _key):
+        return self.cached
+
+    def set_financial_metrics(self, _key, value):
+        self.saved = value
+
+
 def test_cached_akshare_dataframe_call_times_out_for_stock_news(monkeypatch):
     monkeypatch.setattr(akshare_api, "_persistent_cache", _DummyPersistentCache())
     monkeypatch.setattr(akshare_api, "AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS", 0.01)
@@ -115,6 +127,76 @@ def test_get_prices_falls_back_to_tencent_when_akshare_fails(monkeypatch):
 
     assert prices is sentinel
     assert cache.saved == [price.model_dump() for price in sentinel]
+
+
+def test_get_financial_metrics_uses_analysis_indicator_and_caches(monkeypatch):
+    cache = _DummyFinancialCache()
+    monkeypatch.setattr(akshare_api, "_cache", cache)
+    monkeypatch.setattr(
+        akshare_api,
+        "_get_akshare",
+        lambda: SimpleNamespace(
+            stock_financial_analysis_indicator=object(),
+            stock_financial_report_sina=object(),
+        ),
+    )
+    monkeypatch.setattr(
+        akshare_api.AShareTicker,
+        "from_symbol",
+        classmethod(lambda cls, symbol: SimpleNamespace(symbol=symbol)),
+    )
+    monkeypatch.setattr(
+        akshare_api,
+        "_cached_akshare_dataframe_call",
+        lambda api_name, *_args, **_kwargs: pd.DataFrame(
+            [{"报告期": "2026Q1", "市盈率": 15.2, "市净率": 2.3, "净资产收益率": 12.5, "资产负债率": 34.0}]
+        )
+        if api_name == "stock_financial_analysis_indicator"
+        else pytest.fail(f"unexpected api call: {api_name}"),
+    )
+
+    metrics = akshare_api.get_financial_metrics("000001", "2026-04-02", limit=1)
+
+    assert len(metrics) == 1
+    assert metrics[0].report_period == "2026Q1"
+    assert metrics[0].price_to_earnings_ratio == 15.2
+    assert metrics[0].return_on_equity == pytest.approx(0.125)
+    assert metrics[0].debt_to_equity == pytest.approx(0.34)
+    assert cache.saved == [metric.model_dump() for metric in metrics]
+
+
+def test_get_financial_metrics_falls_back_to_sina_profit_when_indicator_empty(monkeypatch):
+    cache = _DummyFinancialCache()
+    monkeypatch.setattr(akshare_api, "_cache", cache)
+    monkeypatch.setattr(
+        akshare_api,
+        "_get_akshare",
+        lambda: SimpleNamespace(
+            stock_financial_analysis_indicator=object(),
+            stock_financial_report_sina=object(),
+        ),
+    )
+    monkeypatch.setattr(
+        akshare_api.AShareTicker,
+        "from_symbol",
+        classmethod(lambda cls, symbol: SimpleNamespace(symbol=symbol)),
+    )
+
+    def _fake_cached_call(api_name, *_args, **_kwargs):
+        if api_name == "stock_financial_analysis_indicator":
+            return pd.DataFrame()
+        if api_name == "stock_financial_report_sina":
+            return pd.DataFrame([{"报告日": "2026-03-31", "营业收入": 100.0, "净利润": 12.0}])
+        pytest.fail(f"unexpected api call: {api_name}")
+
+    monkeypatch.setattr(akshare_api, "_cached_akshare_dataframe_call", _fake_cached_call)
+
+    metrics = akshare_api.get_financial_metrics("000001", "2026-04-02", limit=1)
+
+    assert len(metrics) == 1
+    assert metrics[0].report_period == "2026-03-31"
+    assert metrics[0].price_to_earnings_ratio is None
+    assert cache.saved == [metric.model_dump() for metric in metrics]
 
 
 def test_get_ashare_company_news_sorts_filters_and_deduplicates(monkeypatch, capsys):

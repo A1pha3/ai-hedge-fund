@@ -21,8 +21,26 @@ from src.data.models import (
     FinancialMetrics,
     Price,
 )
-from src.tools.akshare_news_helpers import build_company_news_entry, news_date_in_range, normalize_news_symbol, resolve_stock_name, sort_news_dataframe
-from src.tools.akshare_price_helpers import build_prices_from_dataframe, dump_prices_for_cache, hydrate_cached_prices
+from src.tools.akshare_news_helpers import (
+    build_filtered_company_news,
+    classify_news_sentiment as _classify_news_sentiment_impl,
+    deduplicate_news as _deduplicate_news_impl,
+    is_news_relevant_to_stock as _is_news_relevant_to_stock_impl,
+    normalize_news_symbol,
+    resolve_stock_name,
+    sort_news_dataframe,
+)
+from src.tools.akshare_financial_metrics_helpers import (
+    dump_financial_metrics_for_cache,
+    hydrate_cached_financial_metrics,
+    load_financial_metrics_with_fallback,
+)
+from src.tools.akshare_price_helpers import (
+    build_prices_from_dataframe,
+    dump_prices_for_cache,
+    hydrate_cached_prices,
+    load_prices_with_fallback,
+)
 from src.tools.akshare_runtime_helpers import (
     SINA_QUOTE_HEADERS,
     cached_akshare_dataframe_call as _cached_akshare_dataframe_call_impl,
@@ -294,19 +312,20 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
     saved_proxies = _disable_system_proxies()
 
     try:
-        try:
-            akshare_prices = _fetch_prices_from_akshare(ak_module, ticker, start_date, end_date, period)
-            if akshare_prices:
-                return _cache_prices(cache_key, akshare_prices)
-        except Exception as e:
-            print(f"AKShare 获取数据失败，尝试腾讯接口: {e}")
-
-        try:
-            prices = _get_prices_from_tencent(ticker, start_date, end_date)
-            if prices:
-                return _cache_prices(cache_key, prices)
-        except Exception as e:
-            raise AShareDataError(f"无法获取股票 {ticker} 的历史数据（所有数据源都失败）。\n" f"AKShare 错误: {e}\n" f"腾讯接口错误: {e}\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
+        prices = load_prices_with_fallback(
+            ticker=ticker,
+            start_date=start_date,
+            end_date=end_date,
+            period=period,
+            ak_module=ak_module,
+            fetch_prices_from_akshare_fn=_fetch_prices_from_akshare,
+            fetch_prices_from_tencent_fn=_get_prices_from_tencent,
+            cache_prices_fn=_cache_prices,
+            cache_key=cache_key,
+            error_factory=AShareDataError,
+        )
+        if prices:
+            return prices
 
     except AShareDataError:
         raise
@@ -337,7 +356,7 @@ def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_mock:
 
     # 检查缓存
     if cached_data := _cache.get_financial_metrics(cache_key):
-        return [FinancialMetrics(**metric) for metric in cached_data]
+        return hydrate_cached_financial_metrics(cached_data)
 
     # 如果指定使用模拟数据，直接返回
     if use_mock:
@@ -348,125 +367,17 @@ def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_mock:
         raise AShareDataError("AKShare 模块不可用，无法获取 A 股财务数据。\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
 
     try:
-        ashare = AShareTicker.from_symbol(ticker)
-
-        # 尝试使用 stock_financial_analysis_indicator 获取主要财务指标
-        df = _cached_akshare_dataframe_call("stock_financial_analysis_indicator", ak_module.stock_financial_analysis_indicator, symbol=ashare.symbol)
-
-        # 如果返回空数据，尝试使用 stock_financial_report_sina 接口
-        if df is None or df.empty:
-            # 使用新浪财务数据接口，对科创板等股票更可靠
-            df_profit = _cached_akshare_dataframe_call("stock_financial_report_sina", ak_module.stock_financial_report_sina, stock=ashare.symbol, symbol="利润表")
-
-            if df_profit is None or df_profit.empty:
-                raise AShareDataError(f"无法获取股票 {ticker} 的财务数据（AKShare 返回空数据）。\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
-
-            # 从新浪接口数据中提取财务指标
-            metrics = []
-            for _, row in df_profit.head(limit).iterrows():
-                # 计算净利润率（如果有数据）
-                revenue = float(row.get("营业收入", 0)) if pd.notna(row.get("营业收入")) else None
-                net_income = float(row.get("净利润", 0)) if pd.notna(row.get("净利润")) else None
-
-                metric = FinancialMetrics(
-                    ticker=ticker,
-                    report_period=str(row.get("报告日", "")),
-                    period="ttm",
-                    currency="CNY",
-                    market_cap=None,
-                    enterprise_value=None,
-                    price_to_earnings_ratio=None,
-                    price_to_book_ratio=None,
-                    price_to_sales_ratio=None,
-                    enterprise_value_to_ebitda_ratio=None,
-                    enterprise_value_to_revenue_ratio=None,
-                    free_cash_flow_yield=None,
-                    peg_ratio=None,
-                    gross_margin=None,
-                    operating_margin=None,
-                    net_margin=None,
-                    return_on_equity=None,
-                    return_on_assets=None,
-                    return_on_invested_capital=None,
-                    asset_turnover=None,
-                    inventory_turnover=None,
-                    receivables_turnover=None,
-                    days_sales_outstanding=None,
-                    operating_cycle=None,
-                    working_capital_turnover=None,
-                    current_ratio=None,
-                    quick_ratio=None,
-                    cash_ratio=None,
-                    operating_cash_flow_ratio=None,
-                    debt_to_equity=None,
-                    debt_to_assets=None,
-                    interest_coverage=None,
-                    revenue_growth=None,
-                    earnings_growth=None,
-                    book_value_growth=None,
-                    earnings_per_share_growth=None,
-                    free_cash_flow_growth=None,
-                    operating_income_growth=None,
-                    ebitda_growth=None,
-                    payout_ratio=None,
-                    earnings_per_share=None,
-                    book_value_per_share=None,
-                    free_cash_flow_per_share=None,
-                )
-                metrics.append(metric)
-        else:
-            # 使用 stock_financial_analysis_indicator 的数据
-            metrics = []
-            for _, row in df.head(limit).iterrows():
-                metric = FinancialMetrics(
-                    ticker=ticker,
-                    report_period=str(row.get("报告期", "")),
-                    period="ttm",
-                    currency="CNY",
-                    market_cap=None,
-                    enterprise_value=None,
-                    price_to_earnings_ratio=float(row.get("市盈率", 0)) if pd.notna(row.get("市盈率")) else None,
-                    price_to_book_ratio=float(row.get("市净率", 0)) if pd.notna(row.get("市净率")) else None,
-                    price_to_sales_ratio=None,
-                    enterprise_value_to_ebitda_ratio=None,
-                    enterprise_value_to_revenue_ratio=None,
-                    free_cash_flow_yield=None,
-                    peg_ratio=None,
-                    gross_margin=None,
-                    operating_margin=None,
-                    net_margin=None,
-                    return_on_equity=float(row.get("净资产收益率", 0)) / 100 if pd.notna(row.get("净资产收益率")) else None,
-                    return_on_assets=None,
-                    return_on_invested_capital=None,
-                    asset_turnover=None,
-                    inventory_turnover=None,
-                    receivables_turnover=None,
-                    days_sales_outstanding=None,
-                    operating_cycle=None,
-                    working_capital_turnover=None,
-                    current_ratio=None,
-                    quick_ratio=None,
-                    cash_ratio=None,
-                    operating_cash_flow_ratio=None,
-                    debt_to_equity=float(row.get("资产负债率", 0)) / 100 if pd.notna(row.get("资产负债率")) else None,
-                    debt_to_assets=None,
-                    interest_coverage=None,
-                    revenue_growth=None,
-                    earnings_growth=None,
-                    book_value_growth=None,
-                    earnings_per_share_growth=None,
-                    free_cash_flow_growth=None,
-                    operating_income_growth=None,
-                    ebitda_growth=None,
-                    payout_ratio=None,
-                    earnings_per_share=None,
-                    book_value_per_share=None,
-                    free_cash_flow_per_share=None,
-                )
-                metrics.append(metric)
+        metrics = load_financial_metrics_with_fallback(
+            ticker=ticker,
+            limit=limit,
+            ak_module=ak_module,
+            cached_dataframe_call_fn=_cached_akshare_dataframe_call,
+            ticker_parser=AShareTicker,
+            error_factory=AShareDataError,
+        )
 
         # 缓存结果
-        _cache.set_financial_metrics(cache_key, [m.model_dump() for m in metrics])
+        _cache.set_financial_metrics(cache_key, dump_financial_metrics_for_cache(metrics))
 
         return metrics
 
@@ -792,171 +703,15 @@ def get_prices_robust(ticker: str, start_date: str, end_date: str, period: str =
 
 
 def _classify_news_sentiment(title: str, content: str = "") -> str:
-    """
-    基于关键词对A股新闻进行简单情感分类
-
-    Returns:
-        "positive", "negative", 或 "neutral"
-    """
-    text = (title + " " + content).lower()
-
-    # 对数据表类文章（标题含"一览"且内容主要是列表数据）直接返回 neutral
-    if "一览" in title and len(content) < 50:
-        return "neutral"
-
-    positive_keywords = [
-        # 极端正面
-        "涨停", "大涨", "暴涨", "利好", "突破", "创新高", "增长", "盈利",
-        "超预期", "上调", "买入", "推荐", "看好", "回购", "增持", "签约",
-        "中标", "获批", "扭亏", "新高", "强势", "反弹", "爆发", "景气",
-        "丰收", "提价", "提升", "改善", "加速", "翻倍", "分红", "派息",
-        # 温和正面：市场面
-        "上涨", "走强", "拉升", "领涨", "飘红", "翻红", "放量上攻",
-        "底部放量", "企稳", "回暖", "复苏",
-        # 温和正面：资金面
-        "资金流入", "净买入", "青睐", "布局", "加仓", "建仓",
-        "机构加仓", "北向资金",
-        # 温和正面：业务面
-        "合作", "订单", "营收", "净利润", "业绩预增", "预增",
-        "高送转", "定增", "重组", "复牌", "龙头", "优质", "稳健",
-        "战略合作", "产能扩张", "市占率", "竞争优势", "行业领先",
-        # 温和正面：补贴/政策/分红
-        "补贴", "收到补贴", "补贴资金", "政策支持", "获得补助",
-        "补助", "政府补助", "分派", "每股派", "权益分派",
-    ]
-    negative_keywords = [
-        # 极端负面
-        "跌停", "大跌", "暴跌", "利空", "下调", "亏损", "减持", "卖出",
-        "风险", "预警", "违规", "处罚", "退市", "st",  # 修复: ST → st 匹配 .lower()
-        "爆雷", "债务", "诉讼", "下滑", "萎缩", "破发", "破位",
-        "新低", "弱势", "下行", "缩水", "低于预期", "恶化",
-        "暂停", "终止", "警告", "质押",
-        # 温和负面：市场面
-        "下跌", "跳水", "回调", "低迷", "承压", "拖累", "走低",
-        "杀跌", "闪崩", "阴跌", "缩量下跌",
-        # 温和负面：资金面
-        "抛售", "出逃", "净流出", "资金流出", "主力流出", "清仓",
-        # 温和负面：业绩面
-        "负增长", "收缩", "亏", "业绩变脸", "业绩不及预期",
-        "利润下滑", "营收下降", "收入下降",
-        "预降", "预减", "净利下降", "同比下降", "同比减少", "业绩下滑",
-        "净利同比预降", "利润下降", "收入减少",
-        # 温和负面：监管/法律
-        "监管", "问询函", "关注函", "立案", "调查", "侵权",
-        "裁员", "关停", "破产", "清算",
-    ]
-
-    pos_count = sum(1 for kw in positive_keywords if kw in text)
-    neg_count = sum(1 for kw in negative_keywords if kw in text)
-
-    if pos_count > neg_count:
-        return "positive"
-    elif neg_count > pos_count:
-        return "negative"
-    return "neutral"
+    return _classify_news_sentiment_impl(title, content)
 
 
 def _deduplicate_news(articles: list, similarity_threshold: float = 0.5) -> list:
-    """
-    对新闻列表去重，移除标题高度相似的重复报道（同一事件不同来源）。
-
-    使用基于字符集合的 Jaccard 相似度，对中文标题效果良好且计算高效。
-    保留每组重复文章中最早出现的那篇（通常是最新的，因为列表已按时间倒序排列）。
-
-    Args:
-        articles: CompanyNews 列表（已按发布时间倒序排列）
-        similarity_threshold: 相似度阈值 (0-1)，超过此值视为重复
-
-    Returns:
-        去重后的 CompanyNews 列表
-    """
-    if len(articles) <= 1:
-        return articles
-
-    import re as _re
-
-    def _extract_key_chars(title: str) -> set:
-        """提取标题中的关键字符集合（去除标点、空格、股票代码前缀等）"""
-        # 移除常见前缀模板如 "节能风电：" 或 "节能风电（601016）"
-        cleaned = _re.sub(r'^[\w\u4e00-\u9fff]+[：:]\s*', '', title)
-        # 移除标点符号和空格，只保留有意义的汉字和数字
-        cleaned = _re.sub(r'[^\u4e00-\u9fff0-9a-zA-Z%.]', '', cleaned)
-        return set(cleaned)
-
-    def _jaccard_similarity(set_a: set, set_b: set) -> float:
-        """计算两个集合的 Jaccard 相似度"""
-        if not set_a or not set_b:
-            return 0.0
-        intersection = len(set_a & set_b)
-        union = len(set_a | set_b)
-        return intersection / union if union > 0 else 0.0
-
-    unique_articles = []
-    seen_char_sets = []
-
-    for article in articles:
-        title = getattr(article, 'title', '')
-        char_set = _extract_key_chars(title)
-
-        is_duplicate = False
-        for existing_set in seen_char_sets:
-            if _jaccard_similarity(char_set, existing_set) >= similarity_threshold:
-                is_duplicate = True
-                break
-
-        if not is_duplicate:
-            unique_articles.append(article)
-            seen_char_sets.append(char_set)
-
-    dedup_count = len(articles) - len(unique_articles)
-    if dedup_count > 0:
-        print(f"[AKShare] 新闻去重：移除 {dedup_count} 篇重复报道（同一事件不同来源），保留 {len(unique_articles)} 篇")
-
-    return unique_articles
+    return _deduplicate_news_impl(articles, similarity_threshold=similarity_threshold)
 
 
 def _is_news_relevant_to_stock(title: str, content: str, ticker: str, stock_name: str = "") -> bool:
-    """
-    判断新闻文章是否与目标股票直接相关（而非仅在多股票列表中被提及）。
-
-    Args:
-        title: 新闻标题
-        content: 新闻内容
-        ticker: 股票代码
-        stock_name: 股票名称
-
-    Returns:
-        bool: True 如果文章主要关于目标股票
-    """
-    # 如果标题中包含股票名称或代码，高置信度相关
-    if stock_name and stock_name in title:
-        return True
-    if ticker in title:
-        return True
-
-    # 通用市场文章模式（多股票列表类）
-    generic_list_patterns = [
-        "解密主力资金出逃股", "主力资金出逃", "短线防风险",
-        "只个股", "一览", "榜单", "排行", "盘点",
-        "连续.*净流出.*股", "连续.*净流入.*股",
-        "只股票", "股名单",
-    ]
-    import re
-    for pattern in generic_list_patterns:
-        if re.search(pattern, title):
-            return False
-
-    # 如果内容主要是数字/表格数据（如多股排行表），大概率是通用文章
-    if content:
-        content_sample = content[:300]
-        # 统计内容中数字和空格的比例，表格类内容数字密度高
-        digit_count = sum(1 for c in content_sample if c.isdigit() or c in '. -')
-        if len(content_sample) > 0 and digit_count / len(content_sample) > 0.5:
-            # 内容以数字为主，很可能是排行表，检查标题是否提到目标股票
-            if stock_name and stock_name not in content_sample[:100]:
-                return False
-
-    return True
+    return _is_news_relevant_to_stock_impl(title, content, ticker, stock_name)
 
 
 def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, limit: int = 100) -> list:
@@ -989,32 +744,20 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
         stock_name = resolve_stock_name(get_stock_name, ticker)
 
         df = sort_news_dataframe(df)
-
-        results = []
-        filtered_count = 0
-        for _, row in df.iterrows():
-            pub_time = str(row.get("发布时间", ""))
-            if not news_date_in_range(pub_time, start_date, end_date):
-                continue
-
-            title = str(row.get("新闻标题", ""))
-            content = str(row.get("新闻内容", ""))
-
-            if not _is_news_relevant_to_stock(title, content, ticker, stock_name):
-                filtered_count += 1
-                continue
-
-            sentiment = _classify_news_sentiment(title, content)
-            news = build_company_news_entry(ticker, row, sentiment)
-            results.append(news)
-
-            if len(results) >= limit:
-                break
+        results, filtered_count = build_filtered_company_news(
+            ticker=ticker,
+            df=df,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            stock_name=stock_name,
+            is_news_relevant_to_stock_fn=_is_news_relevant_to_stock,
+            classify_news_sentiment_fn=_classify_news_sentiment,
+            deduplicate_news_fn=_deduplicate_news,
+        )
 
         if filtered_count > 0:
             print(f"[AKShare] 已过滤 {filtered_count} 篇与 {ticker}({stock_name}) 无直接关联的通用市场文章")
-
-        results = _deduplicate_news(results)
 
         return results
     except Exception as e:
