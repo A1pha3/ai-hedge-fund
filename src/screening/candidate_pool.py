@@ -36,12 +36,32 @@ from src.screening.candidate_pool_compute_helpers import (
     normalize_sw_map,
     resolve_cooldown_tickers,
 )
+from src.screening.candidate_pool_compute_pipeline_helpers import (
+    compute_candidate_pool_candidates as compute_candidate_pool_candidates_helper,
+)
 from src.screening.candidate_pool_shadow_helpers import (
     build_shadow_summary_payload,
     build_cooldown_review_shadow_payload,
     build_shadow_lane_payload,
     classify_overflow_candidate,
     select_shadow_rows,
+)
+from src.screening.candidate_pool_shadow_payload_helpers import (
+    build_shadow_candidate_pool_payload as build_shadow_candidate_pool_payload_helper,
+)
+from src.screening.candidate_pool_run_helpers import (
+    build_candidate_pool_with_shadow as build_candidate_pool_with_shadow_helper,
+)
+from src.screening.candidate_pool_persistence_helpers import (
+    add_cooldown as add_cooldown_helper,
+    get_cooled_tickers as get_cooled_tickers_helper,
+    load_candidate_pool_shadow_snapshot as load_candidate_pool_shadow_snapshot_helper,
+    load_candidate_pool_snapshot as load_candidate_pool_snapshot_helper,
+    load_cooldown_registry as load_cooldown_registry_helper,
+    normalize_shadow_summary as normalize_shadow_summary_helper,
+    save_cooldown_registry as save_cooldown_registry_helper,
+    write_candidate_pool_shadow_snapshot as write_candidate_pool_shadow_snapshot_helper,
+    write_candidate_pool_snapshot as write_candidate_pool_snapshot_helper,
 )
 from src.screening.models import CandidateStock
 from src.tools.tushare_api import (
@@ -114,60 +134,33 @@ def _candidate_pool_shadow_snapshot_path(trade_date: str, pool_size: Optional[in
 
 
 def _load_candidate_pool_snapshot(snapshot_path: Path) -> List[CandidateStock]:
-    with open(snapshot_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return [CandidateStock(**item) for item in data]
+    return load_candidate_pool_snapshot_helper(snapshot_path, candidate_stock_cls=CandidateStock)
 
 
 def _normalize_shadow_summary(shadow_summary: dict[str, Any], *, shadow_candidates: list[CandidateStock]) -> dict[str, Any]:
-    normalized_summary = dict(shadow_summary or {})
-    if "shadow_recall_complete" in normalized_summary and "shadow_recall_status" in normalized_summary:
-        return normalized_summary
-
-    has_shadow_entries = bool(normalized_summary.get("tickers")) or bool(shadow_candidates)
-    if has_shadow_entries:
-        normalized_summary.setdefault("shadow_recall_complete", True)
-        normalized_summary.setdefault("shadow_recall_status", "computed_legacy")
-        return normalized_summary
-
-    normalized_summary.setdefault("shadow_recall_complete", False)
-    normalized_summary.setdefault("shadow_recall_status", "legacy_unknown")
-    return normalized_summary
+    return normalize_shadow_summary_helper(shadow_summary, shadow_candidates=shadow_candidates)
 
 
 def _write_candidate_pool_snapshot(snapshot_path: Path, candidates: List[CandidateStock]) -> None:
-    _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(snapshot_path, "w", encoding="utf-8") as f:
-        json.dump([candidate.model_dump() for candidate in candidates], f, ensure_ascii=False, indent=2)
+    return write_candidate_pool_snapshot_helper(snapshot_path, candidates, snapshot_dir=_SNAPSHOT_DIR)
 
 
 def _load_candidate_pool_shadow_snapshot(snapshot_path: Path) -> dict[str, Any]:
-    with open(snapshot_path, "r", encoding="utf-8") as f:
-        payload = json.load(f)
-    shadow_candidates = [CandidateStock(**item) for item in list(payload.get("shadow_candidates") or [])]
-    return {
-        "selected_candidates": [CandidateStock(**item) for item in list(payload.get("selected_candidates") or [])],
-        "shadow_candidates": shadow_candidates,
-        "shadow_summary": _normalize_shadow_summary(
-            dict(payload.get("shadow_summary") or {}),
-            shadow_candidates=shadow_candidates,
-        ),
-    }
+    return load_candidate_pool_shadow_snapshot_helper(
+        snapshot_path,
+        candidate_stock_cls=CandidateStock,
+        normalize_shadow_summary_fn=_normalize_shadow_summary,
+    )
 
 
 def _write_candidate_pool_shadow_snapshot(snapshot_path: Path, *, selected_candidates: List[CandidateStock], shadow_candidates: List[CandidateStock], shadow_summary: dict[str, Any]) -> None:
-    _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(snapshot_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "selected_candidates": [candidate.model_dump() for candidate in selected_candidates],
-                "shadow_candidates": [candidate.model_dump() for candidate in shadow_candidates],
-                "shadow_summary": shadow_summary,
-            },
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
+    return write_candidate_pool_shadow_snapshot_helper(
+        snapshot_path,
+        selected_candidates=selected_candidates,
+        shadow_candidates=shadow_candidates,
+        shadow_summary=shadow_summary,
+        snapshot_dir=_SNAPSHOT_DIR,
+    )
 
 
 def _candidate_liquidity_sort_key(candidate: CandidateStock) -> tuple[int, float, float, str]:
@@ -287,126 +280,36 @@ def _build_shadow_candidate_pool_payload(
     cooldown_review_candidates: Optional[List[CandidateStock]] = None,
     focus_filter_diagnostics: Optional[list[dict[str, Any]]] = None,
 ) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
-    ranked_candidates = sorted(candidates, key=_candidate_liquidity_sort_key, reverse=True)
-    selected_candidates = [candidate.model_copy(update={"candidate_pool_rank": rank}) for rank, candidate in enumerate(ranked_candidates[:pool_size], start=1)]
-    cooldown_review_candidates = list(cooldown_review_candidates or [])
-    cutoff_avg_volume = round(float(ranked_candidates[-1].avg_volume_20d), 4) if ranked_candidates else 0.0
-    cutoff_reference = max(float(selected_candidates[-1].avg_volume_20d), 1.0) if selected_candidates else 1.0
-
-    shadow_candidates: list[CandidateStock] = []
-    shadow_entries: list[dict[str, Any]] = []
-
-    if cooldown_review_candidates:
-        cooldown_shadow_candidates, cooldown_shadow_entries = build_cooldown_review_shadow_payload(
-            candidates=cooldown_review_candidates,
-            cutoff_reference=cutoff_reference,
-            min_avg_amount_20d=float(MIN_AVG_AMOUNT_20D),
-            review_focus_tickers=_resolve_cooldown_shadow_review_tickers(),
-            visibility_gap_tickers=set(SHADOW_VISIBILITY_GAP_TICKERS),
-        )
-        shadow_candidates.extend(cooldown_shadow_candidates)
-        shadow_entries.extend(cooldown_shadow_entries)
-
-    if len(ranked_candidates) <= pool_size:
-        return selected_candidates, shadow_candidates, build_shadow_summary_payload(
-            pool_size=pool_size,
-            selected_count=len(selected_candidates),
-            overflow_count=0,
-            selected_cutoff_avg_volume_20d=cutoff_avg_volume,
-            shadow_candidates=shadow_candidates,
-            shadow_entries=shadow_entries,
-            focus_signature=_shadow_focus_signature(),
-            focus_filter_diagnostics=focus_filter_diagnostics,
-        )
-
-    cutoff_avg_volume = max(float(ranked_candidates[pool_size - 1].avg_volume_20d), 1.0)
-    overflow_candidates = ranked_candidates[pool_size:]
-    corridor_candidates: list[tuple[float, int, CandidateStock, bool, bool]] = []
-    rebucket_candidates: list[tuple[float, int, CandidateStock, bool, bool]] = []
-    corridor_focus_tickers = _resolve_shadow_focus_tickers(lane="layer_a_liquidity_corridor")
-    rebucket_focus_tickers = _resolve_shadow_focus_tickers(lane="post_gate_liquidity_competition")
-    corridor_visibility_gap_tickers = _resolve_shadow_visibility_gap_tickers(lane="layer_a_liquidity_corridor")
-    rebucket_visibility_gap_tickers = _resolve_shadow_visibility_gap_tickers(lane="post_gate_liquidity_competition")
-
-    for rank, candidate in enumerate(overflow_candidates, start=pool_size + 1):
-        cutoff_share = round(float(candidate.avg_volume_20d) / cutoff_avg_volume, 4)
-        min_gate_share = round(float(candidate.avg_volume_20d) / float(MIN_AVG_AMOUNT_20D), 4)
-        classified_row = classify_overflow_candidate(
-            candidate=candidate,
-            rank=rank,
-            cutoff_share=cutoff_share,
-            min_gate_share=min_gate_share,
-            corridor_focus_tickers=corridor_focus_tickers,
-            rebucket_focus_tickers=rebucket_focus_tickers,
-            corridor_visibility_gap_tickers=corridor_visibility_gap_tickers,
-            rebucket_visibility_gap_tickers=rebucket_visibility_gap_tickers,
-            corridor_min_gate_share=SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
-            corridor_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE,
-            corridor_focus_min_gate_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
-            corridor_focus_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE,
-            corridor_focus_low_gate_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
-            corridor_visibility_gap_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE,
-            rebucket_min_gate_share=SHADOW_REBUCKET_MIN_GATE_SHARE,
-            rebucket_min_cutoff_share=SHADOW_REBUCKET_MIN_CUTOFF_SHARE,
-            rebucket_max_cutoff_share=SHADOW_REBUCKET_MAX_CUTOFF_SHARE,
-            rebucket_focus_min_cutoff_share=SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE,
-            rebucket_visibility_gap_min_cutoff_share=SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE,
-        )
-        if classified_row is None:
-            continue
-        lane, row = classified_row
-        if lane == "layer_a_liquidity_corridor":
-            corridor_candidates.append(row)
-        else:
-            rebucket_candidates.append(row)
-
-    for rows, max_tickers, lane, reason, rank_key in [
-        (
-            corridor_candidates,
-            SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS,
-            "layer_a_liquidity_corridor",
-            "upstream_base_liquidity_uplift_shadow",
-            "gate_share_score",
-        ),
-        (
-            rebucket_candidates,
-            SHADOW_REBUCKET_MAX_TICKERS,
-            "post_gate_liquidity_competition",
-            "post_gate_liquidity_competition_shadow",
-            "cutoff_share_score",
-        ),
-    ]:
-        focus_tickers = _resolve_shadow_focus_tickers(lane=lane)
-        visibility_gap_tickers = _resolve_shadow_visibility_gap_tickers(lane=lane)
-        selected_rows = select_shadow_rows(
-            rows=rows,
-            max_tickers=max_tickers,
-            focus_tickers=focus_tickers,
-            visibility_gap_tickers=visibility_gap_tickers,
-            liquidity_sort_key=_candidate_liquidity_sort_key,
-        )
-        lane_shadow_candidates, lane_shadow_entries = build_shadow_lane_payload(
-            selected_rows=selected_rows,
-            cutoff_reference=cutoff_avg_volume,
-            min_avg_amount_20d=float(MIN_AVG_AMOUNT_20D),
-            lane=lane,
-            reason=reason,
-            rank_key=rank_key,
-            focus_tickers=focus_tickers,
-            visibility_gap_tickers=visibility_gap_tickers,
-        )
-        shadow_candidates.extend(lane_shadow_candidates)
-        shadow_entries.extend(lane_shadow_entries)
-
-    return selected_candidates, shadow_candidates, build_shadow_summary_payload(
+    return build_shadow_candidate_pool_payload_helper(
+        candidates,
         pool_size=pool_size,
-        selected_count=len(selected_candidates),
-        overflow_count=len(overflow_candidates),
-        selected_cutoff_avg_volume_20d=round(cutoff_avg_volume, 4),
-        shadow_candidates=shadow_candidates,
-        shadow_entries=shadow_entries,
-        focus_signature=_shadow_focus_signature(),
+        cooldown_review_candidates=cooldown_review_candidates,
         focus_filter_diagnostics=focus_filter_diagnostics,
+        candidate_liquidity_sort_key_fn=_candidate_liquidity_sort_key,
+        build_cooldown_review_shadow_payload_fn=build_cooldown_review_shadow_payload,
+        build_shadow_summary_payload_fn=build_shadow_summary_payload,
+        shadow_focus_signature_fn=_shadow_focus_signature,
+        resolve_cooldown_shadow_review_tickers_fn=_resolve_cooldown_shadow_review_tickers,
+        resolve_shadow_focus_tickers_fn=_resolve_shadow_focus_tickers,
+        resolve_shadow_visibility_gap_tickers_fn=_resolve_shadow_visibility_gap_tickers,
+        classify_overflow_candidate_fn=classify_overflow_candidate,
+        select_shadow_rows_fn=select_shadow_rows,
+        build_shadow_lane_payload_fn=build_shadow_lane_payload,
+        min_avg_amount_20d=float(MIN_AVG_AMOUNT_20D),
+        shadow_visibility_gap_tickers=set(SHADOW_VISIBILITY_GAP_TICKERS),
+        shadow_liquidity_corridor_min_gate_share=SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
+        shadow_liquidity_corridor_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE,
+        shadow_liquidity_corridor_focus_min_gate_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
+        shadow_liquidity_corridor_focus_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE,
+        shadow_liquidity_corridor_focus_low_gate_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+        shadow_liquidity_corridor_visibility_gap_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE,
+        shadow_rebucket_min_gate_share=SHADOW_REBUCKET_MIN_GATE_SHARE,
+        shadow_rebucket_min_cutoff_share=SHADOW_REBUCKET_MIN_CUTOFF_SHARE,
+        shadow_rebucket_max_cutoff_share=SHADOW_REBUCKET_MAX_CUTOFF_SHARE,
+        shadow_rebucket_focus_min_cutoff_share=SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE,
+        shadow_rebucket_visibility_gap_min_cutoff_share=SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE,
+        shadow_liquidity_corridor_max_tickers=SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS,
+        shadow_rebucket_max_tickers=SHADOW_REBUCKET_MAX_TICKERS,
     )
 
 
@@ -434,170 +337,40 @@ def _compute_candidate_pool_candidates(
     cooldown_tickers: Optional[Set[str]] = None,
 ) -> tuple[List[CandidateStock], List[CandidateStock], list[dict[str, Any]]]:
     """计算未截断的候选池，供主池与 shadow recall 共同消费。"""
-    pro = _get_pro()
-    if pro is None:
-        print("[CandidatePool] Tushare 未初始化，无法构建候选池")
-        return [], [], []
-
-    stock_df = get_all_stock_basic()
-    if stock_df is None or stock_df.empty:
-        print("[CandidatePool] 无法获取全 A 股基本信息")
-        return [], [], []
-
-    focus_review_tickers = _resolve_cooldown_shadow_review_tickers()
-    focus_filter_diagnostics = _init_focus_filter_diagnostics(stock_df, focus_tickers=focus_review_tickers)
-
-    initial_count = len(stock_df)
-    print(f"[CandidatePool] 全 A 股标的: {initial_count}")
-
-    mask_st = stock_df["name"].str.contains("ST", case=False, na=False)
-    stock_df = stock_df[~mask_st].copy()
-    print(f"[CandidatePool] 排除 ST 后: {len(stock_df)} (过滤 {mask_st.sum()})")
-    _record_focus_filter_stage(
-        focus_filter_diagnostics,
-        stage="st_filter",
-        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
-    )
-
-    mask_bj = build_beijing_exchange_mask(stock_df)
-    stock_df = stock_df[~mask_bj].copy()
-    print(f"[CandidatePool] 排除北交所后: {len(stock_df)} (过滤 {mask_bj.sum()})")
-    _record_focus_filter_stage(
-        focus_filter_diagnostics,
-        stage="beijing_exchange_filter",
-        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
-    )
-
-    mask_new = stock_df["list_date"].apply(
-        lambda d: _estimate_trading_days(str(d) if pd.notna(d) else "", trade_date) < MIN_LISTING_DAYS
-    )
-    stock_df = stock_df[~mask_new].copy()
-    print(f"[CandidatePool] 排除新股后: {len(stock_df)} (过滤 {mask_new.sum()})")
-    _record_focus_filter_stage(
-        focus_filter_diagnostics,
-        stage="listing_days_filter",
-        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
-    )
-
-    suspend_df = get_suspend_list(trade_date)
-    if suspend_df is not None and not suspend_df.empty:
-        suspend_codes = set(suspend_df["ts_code"].tolist())
-        mask_suspend = stock_df["ts_code"].isin(suspend_codes)
-        stock_df = stock_df[~mask_suspend].copy()
-        print(f"[CandidatePool] 排除停牌后: {len(stock_df)} (过滤 {mask_suspend.sum()})")
-    _record_focus_filter_stage(
-        focus_filter_diagnostics,
-        stage="suspend_filter",
-        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
-    )
-
-    limit_df = get_limit_list(trade_date)
-    if limit_df is not None and not limit_df.empty:
-        limit_up_codes = set(limit_df[limit_df["limit"] == "U"]["ts_code"].tolist())
-        mask_limit_up = stock_df["ts_code"].isin(limit_up_codes)
-        stock_df = stock_df[~mask_limit_up].copy()
-        print(f"[CandidatePool] 排除涨停后: {len(stock_df)} (过滤 {mask_limit_up.sum()})")
-    _record_focus_filter_stage(
-        focus_filter_diagnostics,
-        stage="limit_up_filter",
-        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
-    )
-
-    cooldown_tickers = resolve_cooldown_tickers(
+    return compute_candidate_pool_candidates_helper(
+        trade_date=trade_date,
         cooldown_tickers=set(cooldown_tickers) if cooldown_tickers is not None else None,
-        trade_date=trade_date,
-        get_cooled_tickers_fn=get_cooled_tickers,
-    )
-    stock_df, cooldown_review_df, cooldown_filtered_count = apply_cooldown_filter(
-        stock_df=stock_df,
-        cooldown_tickers=set(cooldown_tickers),
-        cooldown_review_tickers=_resolve_cooldown_shadow_review_tickers(),
-    )
-    _record_focus_filter_stage(
-        focus_filter_diagnostics,
-        stage="cooldown_filter",
-        active_symbols=set(stock_df["symbol"].astype(str).tolist()) | set(cooldown_review_df["symbol"].astype(str).tolist()),
-    )
-    if cooldown_tickers:
-        print(f"[CandidatePool] 排除冷却期后: {len(stock_df)} (过滤 {cooldown_filtered_count})")
-        if not cooldown_review_df.empty:
-            print(f"[CandidatePool] 保留冷却期 focus shadow review: {len(cooldown_review_df)}")
-
-    daily_df = get_daily_basic_batch(trade_date)
-    amount_map: Dict[str, float] = {}
-    estimated_amount_map, mv_map = build_daily_basic_maps(
-        daily_df=daily_df,
-        estimate_amount_fn=_estimate_amount_from_daily_basic,
-    )
-
-    stock_df, cooldown_review_df = apply_estimated_liquidity_filter_with_logging(
-        stock_df=stock_df,
-        cooldown_review_df=cooldown_review_df,
-        estimated_amount_map=estimated_amount_map,
+        min_listing_days=MIN_LISTING_DAYS,
         min_estimated_amount_1d=MIN_ESTIMATED_AMOUNT_1D,
-    )
-    _record_focus_filter_stage(
-        focus_filter_diagnostics,
-        stage="estimated_liquidity_filter",
-        active_symbols=set(stock_df["symbol"].astype(str).tolist()) | set(cooldown_review_df["symbol"].astype(str).tolist()),
-    )
-
-    remaining_codes = stock_df["ts_code"].tolist() + cooldown_review_df["ts_code"].tolist()
-    print(f"[CandidatePool] 开始计算 {len(remaining_codes)} 只标的的 20 日均成交额...")
-
-    amount_map, low_liq_codes, used_batch_daily = load_amount_map_and_low_liquidity_codes(
-        pro=pro,
-        remaining_codes=remaining_codes,
-        trade_date=trade_date,
         min_avg_amount_20d=MIN_AVG_AMOUNT_20D,
-        batch_size=TUSHARE_DAILY_BATCH_SIZE,
-        get_avg_amount_map_fn=_get_avg_amount_20d_map,
-        get_avg_amount_fn=_get_avg_amount_20d,
-        enforce_rate_limit_fn=_enforce_tushare_daily_rate_limit,
+        tushare_daily_batch_size=TUSHARE_DAILY_BATCH_SIZE,
+        get_pro_fn=_get_pro,
+        get_all_stock_basic_fn=get_all_stock_basic,
+        resolve_cooldown_shadow_review_tickers_fn=_resolve_cooldown_shadow_review_tickers,
+        init_focus_filter_diagnostics_fn=_init_focus_filter_diagnostics,
+        record_focus_filter_stage_fn=_record_focus_filter_stage,
+        build_beijing_exchange_mask_fn=build_beijing_exchange_mask,
+        estimate_trading_days_fn=_estimate_trading_days,
+        get_suspend_list_fn=get_suspend_list,
+        get_limit_list_fn=get_limit_list,
+        resolve_cooldown_tickers_fn=resolve_cooldown_tickers,
+        get_cooled_tickers_fn=get_cooled_tickers,
+        apply_cooldown_filter_fn=apply_cooldown_filter,
+        get_daily_basic_batch_fn=get_daily_basic_batch,
+        build_daily_basic_maps_fn=build_daily_basic_maps,
+        estimate_amount_from_daily_basic_fn=_estimate_amount_from_daily_basic,
+        apply_estimated_liquidity_filter_with_logging_fn=apply_estimated_liquidity_filter_with_logging,
+        load_amount_map_and_low_liquidity_codes_fn=load_amount_map_and_low_liquidity_codes,
+        get_avg_amount_20d_map_fn=_get_avg_amount_20d_map,
+        get_avg_amount_20d_fn=_get_avg_amount_20d,
+        enforce_tushare_daily_rate_limit_fn=_enforce_tushare_daily_rate_limit,
+        filter_low_liquidity_candidates_fn=filter_low_liquidity_candidates,
+        normalize_sw_map_fn=normalize_sw_map,
+        get_sw_industry_classification_fn=get_sw_industry_classification,
+        is_disclosure_window_fn=_is_disclosure_window,
+        build_candidate_stocks_fn=build_candidate_stocks,
+        finalize_focus_filter_diagnostics_fn=_finalize_focus_filter_diagnostics,
     )
-    if used_batch_daily:
-        print("[CandidatePool] 使用批量 daily 聚合完成 20 日均成交额计算")
-
-    stock_df, cooldown_review_df, low_liq_filtered_count = filter_low_liquidity_candidates(
-        stock_df=stock_df,
-        cooldown_review_df=cooldown_review_df,
-        low_liq_codes=low_liq_codes,
-    )
-    print(f"[CandidatePool] 排除低流动性后: {len(stock_df)} (过滤 {low_liq_filtered_count})")
-    _record_focus_filter_stage(
-        focus_filter_diagnostics,
-        stage="avg_amount_20d_filter",
-        active_symbols=set(stock_df["symbol"].astype(str).tolist()) | set(cooldown_review_df["symbol"].astype(str).tolist()),
-    )
-
-    sw_map = normalize_sw_map(get_sw_industry_classification())
-
-    is_disclosure = _is_disclosure_window(trade_date)
-    candidates = build_candidate_stocks(
-        stock_df=stock_df,
-        sw_map=sw_map,
-        mv_map=mv_map,
-        amount_map=amount_map,
-        is_disclosure=is_disclosure,
-    )
-    cooldown_review_candidates = build_candidate_stocks(
-        stock_df=cooldown_review_df,
-        sw_map=sw_map,
-        mv_map=mv_map,
-        amount_map=amount_map,
-        is_disclosure=is_disclosure,
-        cooldown_review=True,
-    )
-
-    finalized_focus_filter_diagnostics = _finalize_focus_filter_diagnostics(
-        focus_filter_diagnostics,
-        candidate_tickers={candidate.ticker for candidate in candidates},
-        cooldown_review_tickers={candidate.ticker for candidate in cooldown_review_candidates},
-        selected_tickers=set(),
-        shadow_tickers=set(),
-    )
-
-    return candidates, cooldown_review_candidates, finalized_focus_filter_diagnostics
 
 
 def build_candidate_pool_with_shadow(
@@ -605,99 +378,24 @@ def build_candidate_pool_with_shadow(
     use_cache: bool = True,
     cooldown_tickers: Optional[Set[str]] = None,
 ) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
-    snapshot_path = _candidate_pool_snapshot_path(trade_date)
-    legacy_snapshot_path = _candidate_pool_legacy_snapshot_path(trade_date)
-    shadow_snapshot_path = _candidate_pool_shadow_snapshot_path(trade_date)
-    cached_selected_candidates: List[CandidateStock] = []
-    focus_signature = _shadow_focus_signature()
-    focus_label = f", focus={focus_signature}" if focus_signature else ""
-
-    if use_cache and snapshot_path.exists() and shadow_snapshot_path.exists():
-        try:
-            shadow_payload = _load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
-            _write_candidate_pool_snapshot(legacy_snapshot_path, shadow_payload["selected_candidates"])
-            print(
-                f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE}{focus_label})"
-            )
-            return shadow_payload["selected_candidates"], shadow_payload["shadow_candidates"], shadow_payload["shadow_summary"]
-        except Exception as e:
-            print(f"[CandidatePool] shadow 缓存读取失败，重新计算: {e}")
-    elif use_cache and snapshot_path.exists():
-        print(f"[CandidatePool] 发现仅主池缓存 {snapshot_path.name}，补算 shadow recall 快照{focus_label}")
-        try:
-            cached_selected_candidates = _load_candidate_pool_snapshot(snapshot_path)
-            if cached_selected_candidates and not focus_signature:
-                shadow_summary = _build_shadow_summary_from_selected_candidates(
-                    cached_selected_candidates,
-                    pool_size=MAX_CANDIDATE_POOL_SIZE,
-                )
-                _write_candidate_pool_shadow_snapshot(
-                    shadow_snapshot_path,
-                    selected_candidates=cached_selected_candidates,
-                    shadow_candidates=[],
-                    shadow_summary=shadow_summary,
-                )
-                _write_candidate_pool_snapshot(legacy_snapshot_path, cached_selected_candidates)
-                print(
-                    f"[CandidatePool] 使用已有主池缓存直接回填空 shadow 快照 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE})"
-                )
-                return cached_selected_candidates, [], shadow_summary
-        except Exception as e:
-            print(f"[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: {e}")
-
-    candidates, cooldown_review_candidates, focus_filter_diagnostics = _compute_candidate_pool_candidates(
-        trade_date,
-        cooldown_tickers=cooldown_tickers,
+    return build_candidate_pool_with_shadow_helper(
+        trade_date=trade_date,
+        use_cache=use_cache,
+        cooldown_tickers=set(cooldown_tickers) if cooldown_tickers is not None else None,
+        snapshot_path=_candidate_pool_snapshot_path(trade_date),
+        legacy_snapshot_path=_candidate_pool_legacy_snapshot_path(trade_date),
+        shadow_snapshot_path=_candidate_pool_shadow_snapshot_path(trade_date),
+        max_candidate_pool_size=MAX_CANDIDATE_POOL_SIZE,
+        shadow_focus_signature_fn=_shadow_focus_signature,
+        load_candidate_pool_shadow_snapshot_fn=_load_candidate_pool_shadow_snapshot,
+        write_candidate_pool_snapshot_fn=_write_candidate_pool_snapshot,
+        load_candidate_pool_snapshot_fn=_load_candidate_pool_snapshot,
+        build_shadow_summary_from_selected_candidates_fn=_build_shadow_summary_from_selected_candidates,
+        write_candidate_pool_shadow_snapshot_fn=_write_candidate_pool_shadow_snapshot,
+        compute_candidate_pool_candidates_fn=_compute_candidate_pool_candidates,
+        build_shadow_candidate_pool_payload_fn=_build_shadow_candidate_pool_payload,
+        finalize_focus_filter_diagnostics_fn=_finalize_focus_filter_diagnostics,
     )
-    if not candidates and cached_selected_candidates:
-        shadow_summary = _build_shadow_summary_from_selected_candidates(
-            cached_selected_candidates,
-            pool_size=MAX_CANDIDATE_POOL_SIZE,
-        )
-        shadow_summary["shadow_recall_status"] = "selected_cache_fallback_after_recompute_failure"
-        _write_candidate_pool_shadow_snapshot(
-            shadow_snapshot_path,
-            selected_candidates=cached_selected_candidates,
-            shadow_candidates=[],
-            shadow_summary=shadow_summary,
-        )
-        _write_candidate_pool_snapshot(legacy_snapshot_path, cached_selected_candidates)
-        print(
-            f"[CandidatePool] 候选池重算失败，保留已有主池缓存并回填空 shadow 快照 ({trade_date}, top{MAX_CANDIDATE_POOL_SIZE})"
-        )
-        return cached_selected_candidates, [], shadow_summary
-
-    selected_candidates, shadow_candidates, shadow_summary = _build_shadow_candidate_pool_payload(
-        candidates,
-        pool_size=MAX_CANDIDATE_POOL_SIZE,
-        cooldown_review_candidates=cooldown_review_candidates,
-        focus_filter_diagnostics=focus_filter_diagnostics,
-    )
-    shadow_summary["focus_filter_diagnostics"] = _finalize_focus_filter_diagnostics(
-        {item["ticker"]: item for item in focus_filter_diagnostics},
-        candidate_tickers={candidate.ticker for candidate in candidates},
-        cooldown_review_tickers={candidate.ticker for candidate in cooldown_review_candidates},
-        selected_tickers={candidate.ticker for candidate in selected_candidates},
-        shadow_tickers={candidate.ticker for candidate in shadow_candidates},
-    )
-
-    _write_candidate_pool_snapshot(snapshot_path, selected_candidates)
-    _write_candidate_pool_snapshot(legacy_snapshot_path, selected_candidates)
-    _write_candidate_pool_shadow_snapshot(
-        shadow_snapshot_path,
-        selected_candidates=selected_candidates,
-        shadow_candidates=shadow_candidates,
-        shadow_summary=shadow_summary,
-    )
-
-    if len(candidates) > MAX_CANDIDATE_POOL_SIZE:
-        print(f"[CandidatePool] 候选池截断至 Top {MAX_CANDIDATE_POOL_SIZE}（按20日均成交额/市值排序）")
-    if shadow_candidates:
-        print(
-            f"[CandidatePool] shadow recall 标的: {len(shadow_candidates)} 只 ({shadow_summary.get('lane_counts')})"
-        )
-    print(f"[CandidatePool] 最终候选池: {len(selected_candidates)} 只 → {snapshot_path}")
-    return selected_candidates, shadow_candidates, shadow_summary
 
 
 # ============================================================================
@@ -706,48 +404,32 @@ def build_candidate_pool_with_shadow(
 
 def load_cooldown_registry() -> Dict[str, str]:
     """加载冷却期注册表：{ticker: expire_date_YYYYMMDD}"""
-    if _COOLDOWN_FILE.exists():
-        try:
-            with open(_COOLDOWN_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {}
-    return {}
+    return load_cooldown_registry_helper(_COOLDOWN_FILE)
 
 
 def save_cooldown_registry(registry: Dict[str, str]) -> None:
     """保存冷却期注册表"""
-    _SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(_COOLDOWN_FILE, "w", encoding="utf-8") as f:
-        json.dump(registry, f, ensure_ascii=False, indent=2)
+    return save_cooldown_registry_helper(registry, cooldown_file=_COOLDOWN_FILE, snapshot_dir=_SNAPSHOT_DIR)
 
 
 def add_cooldown(ticker: str, trade_date: str, days: int = COOLDOWN_TRADING_DAYS) -> None:
     """将标的加入冷却期。trade_date 格式 YYYYMMDD。"""
-    registry = load_cooldown_registry()
-    dt = datetime.strptime(trade_date, "%Y%m%d")
-    # 近似用自然日（交易日转换需要交易日历，此处用 1.5 倍近似）
-    expire_dt = dt + timedelta(days=int(days * 1.5))
-    registry[ticker] = expire_dt.strftime("%Y%m%d")
-    save_cooldown_registry(registry)
+    return add_cooldown_helper(
+        ticker,
+        trade_date,
+        days=days,
+        load_cooldown_registry_fn=load_cooldown_registry,
+        save_cooldown_registry_fn=save_cooldown_registry,
+    )
 
 
 def get_cooled_tickers(trade_date: str) -> Set[str]:
     """获取当前处于冷却期的标的集合"""
-    registry = load_cooldown_registry()
-    cooled: Set[str] = set()
-    expired: list[str] = []
-    for ticker, expire_date in registry.items():
-        if expire_date > trade_date:
-            cooled.add(ticker)
-        else:
-            expired.append(ticker)
-    # 清理过期的冷却记录
-    if expired:
-        for t in expired:
-            del registry[t]
-        save_cooldown_registry(registry)
-    return cooled
+    return get_cooled_tickers_helper(
+        trade_date,
+        load_cooldown_registry_fn=load_cooldown_registry,
+        save_cooldown_registry_fn=save_cooldown_registry,
+    )
 
 
 def is_beijing_exchange_stock(*, ts_code: str | None = None, symbol: str | None = None, market: str | None = None) -> bool:

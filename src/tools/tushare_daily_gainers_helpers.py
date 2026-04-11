@@ -59,3 +59,64 @@ def build_daily_gainer_item(row, include_name: bool, name_map: dict[str, str], a
         item["market"] = market_map.get(ts_code)
         item["list_date"] = list_date_map.get(ts_code)
     return item
+
+
+def build_daily_gainers_with_tushare_data(
+    *,
+    pro,
+    trade_fmt: str,
+    pct_threshold: float,
+    include_name: bool,
+    fetch_dataframe,
+    fallback_trade_date_dataframe_fn,
+    fill_missing_pct_change_fn,
+    build_stock_basic_maps_fn,
+    build_daily_gainer_item_fn,
+) -> list[dict]:
+    fields = "ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg"
+    df = fetch_dataframe(pro, "daily", trade_date=trade_fmt, fields=fields)
+    if df is None or df.empty:
+        df = fallback_trade_date_dataframe_fn(fetch_dataframe, pro, trade_fmt, fields)
+    if df is None or df.empty:
+        return []
+
+    df = fill_missing_pct_change_fn(df)
+    df = df[pd.notna(df["pct_chg"])]
+    df = df[df["pct_chg"] > pct_threshold]
+    if df.empty:
+        return []
+
+    name_map: dict[str, str] = {}
+    area_map: dict[str, str] = {}
+    industry_map: dict[str, str] = {}
+    market_map: dict[str, str] = {}
+    list_date_map: dict[str, str] = {}
+    st_codes: set[str] = set()
+    if include_name:
+        df_basic = fetch_dataframe(
+            pro,
+            "stock_basic",
+            exchange="",
+            list_status="L",
+            fields="ts_code,name,area,industry,market,list_date",
+        )
+        name_map, area_map, industry_map, market_map, list_date_map, st_codes = build_stock_basic_maps_fn(df_basic)
+
+    results = []
+    df_sorted = df.sort_values("pct_chg", ascending=False)
+    for _, row in df_sorted.iterrows():
+        ts_code = str(row["ts_code"])
+        if ts_code in st_codes:
+            continue
+        results.append(
+            build_daily_gainer_item_fn(
+                row,
+                include_name,
+                name_map,
+                area_map,
+                industry_map,
+                market_map,
+                list_date_map,
+            )
+        )
+    return results

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from src.execution.models import LayerCResult
 from src.screening.models import CandidateStock
@@ -59,6 +59,14 @@ class PostMarketSelectionTargetInputs:
     rejected_entries: list[dict[str, Any]]
     supplemental_short_trade_entries: list[dict[str, Any]]
     candidate_entry_filter_diagnostics: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PlanTargetShellInputs:
+    watchlist: list[Any]
+    rejected_entries: list[dict[str, Any]]
+    supplemental_short_trade_entries: list[dict[str, Any]]
+    buy_order_tickers: set[str]
 
 
 def build_high_pool(
@@ -176,6 +184,38 @@ def build_post_market_timing_seconds(
     }
 
 
+def build_sell_order_diagnostics(
+    *,
+    sell_orders: list[Any],
+    build_filter_summary_fn: Callable[[list[dict[str, Any]]], dict[str, Any]],
+) -> dict[str, Any]:
+    def _extract_sell_order_value(order: Any, field_name: str, default: Any = None) -> Any:
+        if isinstance(order, dict):
+            return order.get(field_name, default)
+        return getattr(order, field_name, default)
+
+    entries: list[dict[str, Any]] = []
+    for order in sell_orders:
+        reason = (
+            _extract_sell_order_value(order, "trigger_reason")
+            or _extract_sell_order_value(order, "level")
+            or _extract_sell_order_value(order, "reason")
+            or "sell_signal"
+        )
+        entries.append(
+            {
+                "ticker": _extract_sell_order_value(order, "ticker", ""),
+                "reason": str(reason),
+                "level": _extract_sell_order_value(order, "level"),
+                "urgency": _extract_sell_order_value(order, "urgency"),
+                "sell_ratio": _extract_sell_order_value(order, "sell_ratio"),
+            }
+        )
+    summary = build_filter_summary_fn(entries)
+    summary["count"] = len(sell_orders)
+    return summary
+
+
 def build_selection_target_inputs(
     *,
     trade_date: str,
@@ -244,4 +284,102 @@ def build_selection_target_inputs(
                 for rule_name, counters in sorted(candidate_entry_filter_observability.items())
             },
         },
+    )
+
+
+def build_plan_target_shell_inputs(
+    *,
+    plan: Any,
+    target_mode: str,
+    historical_prior_by_ticker: dict[str, dict[str, Any]],
+    attach_historical_prior_to_entries_fn,
+    attach_historical_prior_to_watchlist_fn,
+) -> PlanTargetShellInputs:
+    funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
+    funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
+    watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
+    short_trade_candidate_diagnostics = dict(funnel_filters.get("short_trade_candidates", {}) or {})
+    catalyst_theme_candidates = (
+        list(dict(funnel_filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
+        if target_mode == "short_trade_only"
+        else []
+    )
+    return PlanTargetShellInputs(
+        rejected_entries=attach_historical_prior_to_entries_fn(
+            list(watchlist_filter_diagnostics.get("tickers", []) or []),
+            prior_by_ticker=historical_prior_by_ticker,
+        ),
+        watchlist=attach_historical_prior_to_watchlist_fn(
+            list(plan.watchlist or []),
+            prior_by_ticker=historical_prior_by_ticker,
+        ),
+        supplemental_short_trade_entries=attach_historical_prior_to_entries_fn(
+            [
+                *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
+                *list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []),
+                *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
+                *catalyst_theme_candidates,
+            ],
+            prior_by_ticker=historical_prior_by_ticker,
+        ),
+        buy_order_tickers={order.ticker for order in list(plan.buy_orders or [])},
+    )
+
+
+def prepare_plan_target_shell_context(
+    *,
+    plan: Any,
+    target_mode: str,
+    dual_target_summary_cls: type,
+    load_latest_historical_prior_by_ticker_fn: Callable[[], dict[str, dict[str, Any]]],
+    attach_historical_prior_to_entries_fn,
+    attach_historical_prior_to_watchlist_fn,
+) -> tuple[dict[str, Any], Any, PlanTargetShellInputs]:
+    selection_targets = dict(plan.selection_targets or {})
+    summary = (
+        plan.dual_target_summary
+        if isinstance(plan.dual_target_summary, dual_target_summary_cls)
+        else dual_target_summary_cls.model_validate(plan.dual_target_summary or {})
+    )
+    historical_prior_by_ticker = load_latest_historical_prior_by_ticker_fn()
+    shell_inputs = build_plan_target_shell_inputs(
+        plan=plan,
+        target_mode=target_mode,
+        historical_prior_by_ticker=historical_prior_by_ticker,
+        attach_historical_prior_to_entries_fn=attach_historical_prior_to_entries_fn,
+        attach_historical_prior_to_watchlist_fn=attach_historical_prior_to_watchlist_fn,
+    )
+    return selection_targets, summary, shell_inputs
+
+
+def resolve_plan_target_shell_selection(
+    *,
+    plan_date: str,
+    selection_targets: dict[str, Any],
+    shell_inputs: PlanTargetShellInputs,
+    target_mode: str,
+    short_trade_target_profile_name: str,
+    short_trade_target_profile_overrides: dict[str, object] | None,
+    use_short_trade_target_profile_fn: Callable[..., Any],
+    build_selection_targets_fn: Callable[..., tuple[dict[str, Any], Any]],
+    summarize_selection_targets_fn: Callable[..., Any],
+) -> tuple[dict[str, Any], Any]:
+    if not selection_targets and (
+        shell_inputs.watchlist or shell_inputs.rejected_entries or shell_inputs.supplemental_short_trade_entries
+    ):
+        with use_short_trade_target_profile_fn(
+            profile_name=short_trade_target_profile_name,
+            overrides=short_trade_target_profile_overrides,
+        ):
+            return build_selection_targets_fn(
+                trade_date=plan_date,
+                watchlist=shell_inputs.watchlist,
+                rejected_entries=shell_inputs.rejected_entries,
+                supplemental_short_trade_entries=shell_inputs.supplemental_short_trade_entries,
+                buy_order_tickers=shell_inputs.buy_order_tickers,
+                target_mode=target_mode,
+            )
+    return selection_targets, summarize_selection_targets_fn(
+        selection_targets=selection_targets,
+        target_mode=target_mode,
     )

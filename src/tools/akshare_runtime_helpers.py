@@ -174,6 +174,42 @@ def parse_sina_realtime_quote_text(text: str, error_cls: type[Exception]) -> dic
     }
 
 
+def execute_sina_realtime_quote_request(
+    *,
+    ticker: str,
+    resolve_ticker_fn,
+    create_session_fn,
+    headers: dict[str, str],
+    parse_quote_fn,
+    error_factory,
+) -> dict[str, Any]:
+    session = create_session_fn()
+    ashare = resolve_ticker_fn(ticker)
+    response = session.get(f"https://hq.sinajs.cn/list={ashare.full_code}", headers=headers, timeout=30)
+    if response.status_code != 200:
+        raise error_factory(f"新浪 API 返回错误状态码: {response.status_code}")
+    return parse_quote_fn(response.text, error_factory)
+
+
+def execute_wrapped_ashare_request(
+    *,
+    run,
+    error_factory,
+    message_prefix: str,
+    passthrough_errors: tuple[type[Exception], ...] = (),
+    message_suffix: str = "",
+):
+    try:
+        return run()
+    except passthrough_errors:
+        raise
+    except Exception as error:
+        message = f"{message_prefix}: {error}"
+        if message_suffix:
+            message = f"{message}\n{message_suffix}"
+        raise error_factory(message)
+
+
 def _call_with_timeout(*, func, timeout_seconds: float, timeout_label: str, **kwargs):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = executor.submit(func, **kwargs)

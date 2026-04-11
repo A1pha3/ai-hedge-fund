@@ -19,6 +19,26 @@ from src.targets.short_trade_prepared_breakout_helpers import (
     resolve_prepared_breakout_selected_catalyst_relief as _resolve_prepared_breakout_selected_catalyst_relief,
     resolve_prepared_breakout_volume_relief as _resolve_prepared_breakout_volume_relief,
 )
+from src.targets.short_trade_target_input_helpers import (
+    build_item_replay_context as _build_item_replay_context_impl,
+    build_target_input_from_entry as _build_target_input_from_entry_impl,
+    build_target_input_from_item as _build_target_input_from_item_impl,
+)
+from src.targets.short_trade_target_profitability_helpers import (
+    resolve_profitability_hard_cliff_boundary_relief_impl,
+    resolve_profitability_relief_impl,
+)
+from src.targets.short_trade_target_watchlist_helpers import (
+    resolve_t_plus_2_continuation_candidate_impl,
+    resolve_watchlist_zero_catalyst_crowded_penalty_impl,
+    resolve_watchlist_zero_catalyst_flat_trend_penalty_impl,
+    resolve_watchlist_zero_catalyst_penalty_impl,
+)
+from src.targets.short_trade_target_signal_snapshot_helpers import build_short_trade_signal_snapshot
+from src.targets.short_trade_target_snapshot_label_helpers import (
+    collect_short_trade_snapshot_labels_and_gates as _collect_short_trade_snapshot_labels_and_gates_impl,
+)
+from src.targets.short_trade_target_snapshot_payload_helpers import build_short_trade_target_snapshot_payload
 from src.targets.profiles import get_active_short_trade_target_profile, use_short_trade_target_profile
 
 STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE = 0.001
@@ -208,46 +228,15 @@ def _resolve_profitability_relief(
     sector_resonance: float,
     profile: Any,
 ) -> dict[str, Any]:
-    profitability = _profitability_snapshot(fundamental_signal)
-    profitability_metrics = profitability.get("metrics", {}) if isinstance(profitability.get("metrics", {}), dict) else {}
-    positive_count_raw = profitability_metrics.get("positive_count")
-    try:
-        profitability_positive_count = int(positive_count_raw) if positive_count_raw is not None else None
-    except (TypeError, ValueError):
-        profitability_positive_count = None
-    profitability_confidence = float(profitability.get("confidence", 0.0) or 0.0)
-    hard_cliff = profitability.get("direction") == -1 and profitability_positive_count == 0
-
-    base_layer_c_avoid_penalty = float(profile.layer_c_avoid_penalty) if input_data.layer_c_decision == "avoid" else 0.0
-    relief_gate_hits = {
-        "breakout_freshness": breakout_freshness >= float(profile.profitability_relief_breakout_freshness_min),
-        "catalyst_freshness": catalyst_freshness >= float(profile.profitability_relief_catalyst_freshness_min),
-        "sector_resonance": sector_resonance >= float(profile.profitability_relief_sector_resonance_min),
-    }
-    relief_eligible = (
-        bool(profile.profitability_relief_enabled)
-        and input_data.layer_c_decision == "avoid"
-        and hard_cliff
-        and all(relief_gate_hits.values())
+    return resolve_profitability_relief_impl(
+        input_data=input_data,
+        fundamental_signal=fundamental_signal,
+        breakout_freshness=breakout_freshness,
+        catalyst_freshness=catalyst_freshness,
+        sector_resonance=sector_resonance,
+        profile=profile,
+        profitability_snapshot_fn=_profitability_snapshot,
     )
-    effective_avoid_penalty = base_layer_c_avoid_penalty
-    if relief_eligible and base_layer_c_avoid_penalty > 0:
-        effective_avoid_penalty = min(base_layer_c_avoid_penalty, float(profile.profitability_relief_avoid_penalty))
-
-    return {
-        "hard_cliff": hard_cliff,
-        "profitability_direction": int(profitability.get("direction", 0) or 0),
-        "profitability_positive_count": profitability_positive_count,
-        "profitability_confidence": profitability_confidence,
-        "relief_enabled": bool(profile.profitability_relief_enabled),
-        "relief_gate_hits": relief_gate_hits,
-        "relief_eligible": relief_eligible,
-        "relief_applied": relief_eligible and effective_avoid_penalty < base_layer_c_avoid_penalty,
-        "base_layer_c_avoid_penalty": base_layer_c_avoid_penalty,
-        "effective_avoid_penalty": effective_avoid_penalty,
-        "soft_penalty": float(profile.profitability_relief_avoid_penalty),
-        "metrics": profitability_metrics,
-    }
 
 
 def _resolve_profitability_hard_cliff_boundary_relief(
@@ -263,74 +252,25 @@ def _resolve_profitability_hard_cliff_boundary_relief(
     extension_without_room_penalty: float,
     profile: Any,
 ) -> dict[str, Any]:
-    source = str(input_data.replay_context.get("source") or "").strip()
-    base_near_miss_threshold = float(profile.near_miss_threshold)
-    near_miss_threshold_override = float(profile.profitability_hard_cliff_boundary_relief_near_miss_threshold)
-    default_result = {
-        "enabled": bool(profile.profitability_hard_cliff_boundary_relief_enabled),
-        "eligible": False,
-        "applied": False,
-        "candidate_source": source,
-        "gate_hits": {},
-        "base_near_miss_threshold": base_near_miss_threshold,
-        "effective_near_miss_threshold": base_near_miss_threshold,
-        "near_miss_threshold_override": base_near_miss_threshold,
-        "reason": "profitability_hard_cliff_boundary_relief",
-    }
-    if not bool(profile.profitability_hard_cliff_boundary_relief_enabled):
-        return default_result
-
-    gate_hits = {
-        "candidate_source": source == "short_trade_boundary",
-        "profitability_hard_cliff": profitability_hard_cliff,
-        "layer_c_decision": input_data.layer_c_decision != "avoid",
-        "breakout_freshness": breakout_freshness >= float(profile.profitability_hard_cliff_boundary_relief_breakout_freshness_min),
-        "trend_acceleration": trend_acceleration >= float(profile.profitability_hard_cliff_boundary_relief_trend_acceleration_min),
-        "catalyst_freshness": catalyst_freshness >= float(profile.profitability_hard_cliff_boundary_relief_catalyst_freshness_min),
-        "sector_resonance": sector_resonance >= float(profile.profitability_hard_cliff_boundary_relief_sector_resonance_min),
-        "close_strength": close_strength >= float(profile.profitability_hard_cliff_boundary_relief_close_strength_min),
-        "stale_trend_repair_penalty": stale_trend_repair_penalty <= float(profile.profitability_hard_cliff_boundary_relief_stale_penalty_max),
-        "extension_without_room_penalty": extension_without_room_penalty <= float(profile.profitability_hard_cliff_boundary_relief_extension_penalty_max),
-    }
-    eligible = all(gate_hits.values())
-    effective_near_miss_threshold = base_near_miss_threshold
-    if eligible:
-        effective_near_miss_threshold = min(base_near_miss_threshold, near_miss_threshold_override)
-
-    return {
-        "enabled": True,
-        "eligible": eligible,
-        "applied": eligible and effective_near_miss_threshold < base_near_miss_threshold,
-        "candidate_source": source,
-        "gate_hits": gate_hits,
-        "base_near_miss_threshold": base_near_miss_threshold,
-        "effective_near_miss_threshold": effective_near_miss_threshold,
-        "near_miss_threshold_override": near_miss_threshold_override,
-        "reason": "profitability_hard_cliff_boundary_relief",
-    }
+    return resolve_profitability_hard_cliff_boundary_relief_impl(
+        input_data=input_data,
+        profitability_hard_cliff=profitability_hard_cliff,
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        catalyst_freshness=catalyst_freshness,
+        sector_resonance=sector_resonance,
+        close_strength=close_strength,
+        stale_trend_repair_penalty=stale_trend_repair_penalty,
+        extension_without_room_penalty=extension_without_room_penalty,
+        profile=profile,
+    )
 
 
 def _build_item_replay_context(item: LayerCResult) -> dict[str, Any]:
-    candidate_source = str(getattr(item, "candidate_source", "") or "layer_c_watchlist")
-    explicit_metric_overrides = {}
-    if candidate_source == "catalyst_theme":
-        explicit_metric_overrides = dict(
-            getattr(item, "catalyst_theme_metrics", None)
-            or getattr(item, "metrics", None)
-            or {}
-        )
-    return {
-        "source": candidate_source,
-        "reason": str(getattr(item, "reason", "") or ""),
-        "candidate_reason_codes": _normalized_reason_codes(getattr(item, "candidate_reason_codes", [])),
-        "historical_prior": dict(getattr(item, "historical_prior", {}) or {}),
-        "candidate_pool_lane": str(getattr(item, "candidate_pool_lane", "") or ""),
-        "candidate_pool_shadow_reason": str(getattr(item, "candidate_pool_shadow_reason", "") or ""),
-        "shadow_visibility_gap_selected": bool(getattr(item, "shadow_visibility_gap_selected", False)),
-        "shadow_visibility_gap_relaxed_band": bool(getattr(item, "shadow_visibility_gap_relaxed_band", False)),
-        "short_trade_catalyst_relief": dict(getattr(item, "short_trade_catalyst_relief", {}) or {}),
-        "explicit_metric_overrides": explicit_metric_overrides,
-    }
+    return _build_item_replay_context_impl(
+        item,
+        normalized_reason_codes_fn=_normalized_reason_codes,
+    )
 
 
 def _resolve_historical_execution_relief(
@@ -435,39 +375,15 @@ def _resolve_watchlist_zero_catalyst_penalty(
     layer_c_alignment: float,
     profile: Any,
 ) -> dict[str, Any]:
-    source = str(input_data.replay_context.get("source") or "").strip()
-    penalty = clamp_unit_interval(float(profile.watchlist_zero_catalyst_penalty or 0.0))
-    default_result = {
-        "enabled": penalty > 0.0,
-        "eligible": False,
-        "applied": False,
-        "candidate_source": source,
-        "gate_hits": {},
-        "effective_penalty": 0.0,
-    }
-    if penalty <= 0.0 or source != "layer_c_watchlist":
-        return default_result
-
-    catalyst_freshness_max = clamp_unit_interval(float(profile.watchlist_zero_catalyst_catalyst_freshness_max or 0.0))
-    close_strength_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_close_strength_min or 0.0))
-    layer_c_alignment_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_layer_c_alignment_min or 0.0))
-    sector_resonance_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_sector_resonance_min or 0.0))
-    gate_hits = {
-        "candidate_source": source == "layer_c_watchlist",
-        "catalyst_freshness": catalyst_freshness <= catalyst_freshness_max,
-        "close_strength": close_strength >= close_strength_min,
-        "layer_c_alignment": layer_c_alignment >= layer_c_alignment_min,
-        "sector_resonance": sector_resonance >= sector_resonance_min,
-    }
-    eligible = all(gate_hits.values())
-    return {
-        "enabled": True,
-        "eligible": eligible,
-        "applied": eligible,
-        "candidate_source": source,
-        "gate_hits": gate_hits,
-        "effective_penalty": penalty if eligible else 0.0,
-    }
+    return resolve_watchlist_zero_catalyst_penalty_impl(
+        input_data=input_data,
+        catalyst_freshness=catalyst_freshness,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        layer_c_alignment=layer_c_alignment,
+        profile=profile,
+        clamp_unit_interval_fn=clamp_unit_interval,
+    )
 
 
 def _resolve_watchlist_zero_catalyst_crowded_penalty(
@@ -479,39 +395,15 @@ def _resolve_watchlist_zero_catalyst_crowded_penalty(
     layer_c_alignment: float,
     profile: Any,
 ) -> dict[str, Any]:
-    source = str(input_data.replay_context.get("source") or "").strip()
-    penalty = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_penalty or 0.0))
-    default_result = {
-        "enabled": penalty > 0.0,
-        "eligible": False,
-        "applied": False,
-        "candidate_source": source,
-        "gate_hits": {},
-        "effective_penalty": 0.0,
-    }
-    if penalty <= 0.0 or source != "layer_c_watchlist":
-        return default_result
-
-    catalyst_freshness_max = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_catalyst_freshness_max or 0.0))
-    close_strength_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_close_strength_min or 0.0))
-    layer_c_alignment_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_layer_c_alignment_min or 0.0))
-    sector_resonance_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_crowded_sector_resonance_min or 0.0))
-    gate_hits = {
-        "candidate_source": source == "layer_c_watchlist",
-        "catalyst_freshness": catalyst_freshness <= catalyst_freshness_max,
-        "close_strength": close_strength >= close_strength_min,
-        "layer_c_alignment": layer_c_alignment >= layer_c_alignment_min,
-        "sector_resonance": sector_resonance >= sector_resonance_min,
-    }
-    eligible = all(gate_hits.values())
-    return {
-        "enabled": True,
-        "eligible": eligible,
-        "applied": eligible,
-        "candidate_source": source,
-        "gate_hits": gate_hits,
-        "effective_penalty": penalty if eligible else 0.0,
-    }
+    return resolve_watchlist_zero_catalyst_crowded_penalty_impl(
+        input_data=input_data,
+        catalyst_freshness=catalyst_freshness,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        layer_c_alignment=layer_c_alignment,
+        profile=profile,
+        clamp_unit_interval_fn=clamp_unit_interval,
+    )
 
 
 def _resolve_watchlist_zero_catalyst_flat_trend_penalty(
@@ -524,41 +416,16 @@ def _resolve_watchlist_zero_catalyst_flat_trend_penalty(
     trend_acceleration: float,
     profile: Any,
 ) -> dict[str, Any]:
-    source = str(input_data.replay_context.get("source") or "").strip()
-    penalty = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_penalty or 0.0))
-    default_result = {
-        "enabled": penalty > 0.0,
-        "eligible": False,
-        "applied": False,
-        "candidate_source": source,
-        "gate_hits": {},
-        "effective_penalty": 0.0,
-    }
-    if penalty <= 0.0 or source != "layer_c_watchlist":
-        return default_result
-
-    catalyst_freshness_max = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_catalyst_freshness_max or 0.0))
-    close_strength_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_close_strength_min or 0.0))
-    layer_c_alignment_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_layer_c_alignment_min or 0.0))
-    sector_resonance_min = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_sector_resonance_min or 0.0))
-    trend_acceleration_max = clamp_unit_interval(float(profile.watchlist_zero_catalyst_flat_trend_trend_acceleration_max or 0.0))
-    gate_hits = {
-        "candidate_source": source == "layer_c_watchlist",
-        "catalyst_freshness": catalyst_freshness <= catalyst_freshness_max,
-        "close_strength": close_strength >= close_strength_min,
-        "layer_c_alignment": layer_c_alignment >= layer_c_alignment_min,
-        "sector_resonance": sector_resonance >= sector_resonance_min,
-        "trend_acceleration": trend_acceleration <= trend_acceleration_max,
-    }
-    eligible = all(gate_hits.values())
-    return {
-        "enabled": True,
-        "eligible": eligible,
-        "applied": eligible,
-        "candidate_source": source,
-        "gate_hits": gate_hits,
-        "effective_penalty": penalty if eligible else 0.0,
-    }
+    return resolve_watchlist_zero_catalyst_flat_trend_penalty_impl(
+        input_data=input_data,
+        catalyst_freshness=catalyst_freshness,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        layer_c_alignment=layer_c_alignment,
+        trend_acceleration=trend_acceleration,
+        profile=profile,
+        clamp_unit_interval_fn=clamp_unit_interval,
+    )
 
 
 def _resolve_t_plus_2_continuation_candidate(
@@ -572,93 +439,33 @@ def _resolve_t_plus_2_continuation_candidate(
     layer_c_alignment: float,
     profile: Any,
 ) -> dict[str, Any]:
-    source = str(input_data.replay_context.get("source") or "").strip()
-    enabled = bool(profile.t_plus_2_continuation_enabled)
-    default_result = {
-        "enabled": enabled,
-        "eligible": False,
-        "applied": False,
-        "candidate_source": source,
-        "gate_hits": {},
-    }
-    if not enabled or source != "layer_c_watchlist":
-        return default_result
-
-    catalyst_freshness_max = clamp_unit_interval(float(profile.t_plus_2_continuation_catalyst_freshness_max or 0.0))
-    breakout_freshness_min = clamp_unit_interval(float(profile.t_plus_2_continuation_breakout_freshness_min or 0.0))
-    trend_acceleration_min = clamp_unit_interval(float(profile.t_plus_2_continuation_trend_acceleration_min or 0.0))
-    trend_acceleration_max = clamp_unit_interval(float(profile.t_plus_2_continuation_trend_acceleration_max or 0.0))
-    layer_c_alignment_min = clamp_unit_interval(float(profile.t_plus_2_continuation_layer_c_alignment_min or 0.0))
-    layer_c_alignment_max = clamp_unit_interval(float(profile.t_plus_2_continuation_layer_c_alignment_max or 0.0))
-    close_strength_max = clamp_unit_interval(float(profile.t_plus_2_continuation_close_strength_max or 0.0))
-    sector_resonance_max = clamp_unit_interval(float(profile.t_plus_2_continuation_sector_resonance_max or 0.0))
-    gate_hits = {
-        "candidate_source": source == "layer_c_watchlist",
-        "catalyst_freshness": raw_catalyst_freshness <= catalyst_freshness_max,
-        "breakout_freshness": breakout_freshness >= breakout_freshness_min,
-        "trend_acceleration": trend_acceleration >= trend_acceleration_min,
-        "trend_acceleration_cap": trend_acceleration <= trend_acceleration_max,
-        "layer_c_alignment_min": layer_c_alignment >= layer_c_alignment_min,
-        "layer_c_alignment_max": layer_c_alignment <= layer_c_alignment_max,
-        "close_strength": close_strength <= close_strength_max,
-        "sector_resonance": sector_resonance <= sector_resonance_max,
-    }
-    eligible = all(gate_hits.values())
-    return {
-        "enabled": True,
-        "eligible": eligible,
-        "applied": eligible,
-        "candidate_source": source,
-        "gate_hits": gate_hits,
-    }
+    return resolve_t_plus_2_continuation_candidate_impl(
+        input_data=input_data,
+        raw_catalyst_freshness=raw_catalyst_freshness,
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        layer_c_alignment=layer_c_alignment,
+        profile=profile,
+        clamp_unit_interval_fn=clamp_unit_interval,
+    )
 
 
 def _build_target_input_from_item(*, trade_date: str, item: LayerCResult, included_in_buy_orders: bool) -> TargetEvaluationInput:
-    return TargetEvaluationInput(
+    return _build_target_input_from_item_impl(
         trade_date=trade_date,
-        ticker=item.ticker,
-        score_b=float(item.score_b),
-        score_c=float(item.score_c),
-        score_final=float(item.score_final),
-        quality_score=float(item.quality_score),
-        layer_c_decision=str(item.decision or ""),
-        bc_conflict=item.bc_conflict,
-        strategy_signals={name: signal for name, signal in dict(item.strategy_signals or {}).items()},
-        agent_contribution_summary=dict(item.agent_contribution_summary or {}),
-        execution_constraints={"included_in_buy_orders": bool(included_in_buy_orders)},
-        replay_context=_build_item_replay_context(item),
+        item=item,
+        included_in_buy_orders=included_in_buy_orders,
+        build_item_replay_context_fn=_build_item_replay_context,
     )
 
 
 def _build_target_input_from_entry(*, trade_date: str, entry: dict[str, Any]) -> TargetEvaluationInput:
-    candidate_reason_codes = _normalized_reason_codes(entry.get("candidate_reason_codes", entry.get("reasons", [])))
-    candidate_source = str(entry.get("candidate_source") or "watchlist_filter_diagnostics")
-    explicit_metric_overrides = {}
-    if candidate_source == "catalyst_theme":
-        explicit_metric_overrides = dict(entry.get("catalyst_theme_metrics") or entry.get("metrics") or {})
-    return TargetEvaluationInput(
+    return _build_target_input_from_entry_impl(
         trade_date=trade_date,
-        ticker=str(entry.get("ticker") or ""),
-        score_b=float(entry.get("score_b", 0.0) or 0.0),
-        score_c=float(entry.get("score_c", 0.0) or 0.0),
-        score_final=float(entry.get("score_final", 0.0) or 0.0),
-        quality_score=float(entry.get("quality_score", 0.5) or 0.5),
-        layer_c_decision=str(entry.get("decision") or ""),
-        bc_conflict=entry.get("bc_conflict"),
-        strategy_signals=dict(entry.get("strategy_signals") or {}),
-        agent_contribution_summary=dict(entry.get("agent_contribution_summary") or {}),
-        replay_context={
-            "source": candidate_source,
-            "reason": str(entry.get("reason") or ""),
-            "candidate_reason_codes": candidate_reason_codes,
-            "historical_prior": dict(entry.get("historical_prior") or {}),
-            "candidate_pool_lane": str(entry.get("candidate_pool_lane") or ""),
-            "candidate_pool_shadow_reason": str(entry.get("candidate_pool_shadow_reason") or ""),
-            "shadow_visibility_gap_selected": bool(entry.get("shadow_visibility_gap_selected")),
-            "shadow_visibility_gap_relaxed_band": bool(entry.get("shadow_visibility_gap_relaxed_band")),
-            "short_trade_catalyst_relief": dict(entry.get("short_trade_catalyst_relief") or {}),
-            "explicit_metric_overrides": explicit_metric_overrides,
-        },
+        entry=entry,
+        normalized_reason_codes_fn=_normalized_reason_codes,
     )
 
 
@@ -709,94 +516,19 @@ def _resolve_positive_score_weights(profile: Any) -> dict[str, float]:
 
 
 def _compute_short_trade_signal_snapshot(input_data: TargetEvaluationInput, *, profile: Any) -> dict[str, Any]:
-    trend_signal = _load_signal(input_data.strategy_signals.get("trend"))
-    event_signal = _load_signal(input_data.strategy_signals.get("event_sentiment"))
-    fundamental_signal = _load_signal(input_data.strategy_signals.get("fundamental"))
-    mean_reversion_signal = _load_signal(input_data.strategy_signals.get("mean_reversion"))
-
-    momentum_strength = _subfactor_positive_strength(trend_signal, "momentum")
-    momentum_metrics = _subfactor_metrics(trend_signal, "momentum")
-    momentum_1m = float(momentum_metrics.get("momentum_1m", 0.0) or 0.0)
-    momentum_3m = clamp_unit_interval(float(momentum_metrics.get("momentum_3m", 0.0) or 0.0))
-    momentum_6m = clamp_unit_interval(float(momentum_metrics.get("momentum_6m", 0.0) or 0.0))
-    volume_momentum = clamp_unit_interval(float(momentum_metrics.get("volume_momentum", 0.0) or 0.0))
-    adx_strength = _subfactor_positive_strength(trend_signal, "adx_strength")
-    ema_strength = _subfactor_positive_strength(trend_signal, "ema_alignment")
-    volatility_strength = _subfactor_positive_strength(trend_signal, "volatility")
-    volatility_metrics = _subfactor_metrics(trend_signal, "volatility")
-    volatility_regime = clamp_unit_interval(float(volatility_metrics.get("volatility_regime", 0.0) or 0.0))
-    atr_ratio = clamp_unit_interval(float(volatility_metrics.get("atr_ratio", 0.0) or 0.0))
-    long_trend_strength = _subfactor_positive_strength(trend_signal, "long_trend_alignment")
-    event_freshness_strength = _subfactor_positive_strength(event_signal, "event_freshness")
-    news_sentiment_strength = _subfactor_positive_strength(event_signal, "news_sentiment")
-    event_signal_strength = _positive_strength(event_signal)
-    mean_reversion_strength = _positive_strength(mean_reversion_signal)
-
-    analyst_alignment = _cohort_alignment(input_data.agent_contribution_summary, "analyst")
-    investor_alignment = _cohort_alignment(input_data.agent_contribution_summary, "investor")
-    analyst_penalty = _cohort_penalty(input_data.agent_contribution_summary, "analyst")
-    investor_penalty = _cohort_penalty(input_data.agent_contribution_summary, "investor")
-    score_b_strength = _normalize_score(input_data.score_b)
-    score_c_strength = _normalize_score(input_data.score_c)
-    score_final_strength = _normalize_score(input_data.score_final)
-    explicit_metric_overrides = dict(input_data.replay_context.get("explicit_metric_overrides") or {})
-
-    breakout_freshness = clamp_unit_interval((0.40 * momentum_strength) + (0.35 * event_freshness_strength) + (0.25 * event_signal_strength))
-    trend_acceleration = clamp_unit_interval((0.40 * momentum_strength) + (0.35 * adx_strength) + (0.25 * ema_strength))
-    volume_expansion_quality = clamp_unit_interval((0.55 * volatility_strength) + (0.25 * momentum_strength) + (0.20 * event_signal_strength))
-    close_strength = clamp_unit_interval((0.55 * ema_strength) + (0.25 * momentum_strength) + (0.20 * score_b_strength))
-    sector_resonance = clamp_unit_interval((0.45 * analyst_alignment) + (0.20 * investor_alignment) + (0.20 * score_c_strength) + (0.15 * event_signal_strength))
-    raw_catalyst_freshness = clamp_unit_interval((0.65 * event_freshness_strength) + (0.35 * news_sentiment_strength))
-    layer_c_alignment = clamp_unit_interval((0.55 * score_c_strength) + (0.25 * analyst_alignment) + (0.20 * clamp_unit_interval(1.0 if input_data.layer_c_decision != "avoid" else 0.0)))
-    if explicit_metric_overrides:
-        breakout_freshness = clamp_unit_interval(float(explicit_metric_overrides.get("breakout_freshness", breakout_freshness) or breakout_freshness))
-        trend_acceleration = clamp_unit_interval(float(explicit_metric_overrides.get("trend_acceleration", trend_acceleration) or trend_acceleration))
-        volume_expansion_quality = clamp_unit_interval(float(explicit_metric_overrides.get("volume_expansion_quality", volume_expansion_quality) or volume_expansion_quality))
-        close_strength = clamp_unit_interval(float(explicit_metric_overrides.get("close_strength", close_strength) or close_strength))
-        sector_resonance = clamp_unit_interval(float(explicit_metric_overrides.get("sector_resonance", sector_resonance) or sector_resonance))
-        raw_catalyst_freshness = clamp_unit_interval(float(explicit_metric_overrides.get("catalyst_freshness", raw_catalyst_freshness) or raw_catalyst_freshness))
-    breakout_stage, _, _ = _classify_breakout_stage(
-        breakout_freshness=breakout_freshness,
-        trend_acceleration=trend_acceleration,
+    return build_short_trade_signal_snapshot(
+        input_data,
         profile=profile,
+        load_signal_fn=_load_signal,
+        subfactor_positive_strength_fn=_subfactor_positive_strength,
+        subfactor_metrics_fn=_subfactor_metrics,
+        positive_strength_fn=_positive_strength,
+        cohort_alignment_fn=_cohort_alignment,
+        cohort_penalty_fn=_cohort_penalty,
+        normalize_score_fn=_normalize_score,
+        clamp_unit_interval_fn=clamp_unit_interval,
+        classify_breakout_stage_fn=_classify_breakout_stage,
     )
-    return {
-        "trend_signal": trend_signal,
-        "event_signal": event_signal,
-        "fundamental_signal": fundamental_signal,
-        "mean_reversion_signal": mean_reversion_signal,
-        "momentum_strength": momentum_strength,
-        "momentum_1m": momentum_1m,
-        "momentum_3m": momentum_3m,
-        "momentum_6m": momentum_6m,
-        "volume_momentum": volume_momentum,
-        "adx_strength": adx_strength,
-        "ema_strength": ema_strength,
-        "volatility_strength": volatility_strength,
-        "volatility_metrics": volatility_metrics,
-        "volatility_regime": volatility_regime,
-        "atr_ratio": atr_ratio,
-        "long_trend_strength": long_trend_strength,
-        "event_freshness_strength": event_freshness_strength,
-        "news_sentiment_strength": news_sentiment_strength,
-        "event_signal_strength": event_signal_strength,
-        "mean_reversion_strength": mean_reversion_strength,
-        "analyst_alignment": analyst_alignment,
-        "investor_alignment": investor_alignment,
-        "analyst_penalty": analyst_penalty,
-        "investor_penalty": investor_penalty,
-        "score_b_strength": score_b_strength,
-        "score_c_strength": score_c_strength,
-        "score_final_strength": score_final_strength,
-        "breakout_freshness": breakout_freshness,
-        "trend_acceleration": trend_acceleration,
-        "volume_expansion_quality": volume_expansion_quality,
-        "close_strength": close_strength,
-        "sector_resonance": sector_resonance,
-        "raw_catalyst_freshness": raw_catalyst_freshness,
-        "layer_c_alignment": layer_c_alignment,
-        "breakout_stage": breakout_stage,
-    }
 
 
 def _resolve_short_trade_snapshot_reliefs(
@@ -833,150 +565,6 @@ def _resolve_short_trade_snapshot_reliefs(
     )
 
 
-def _append_short_trade_snapshot_profitability_tags(
-    *,
-    input_data: TargetEvaluationInput,
-    profitability_relief: dict[str, Any],
-    profitability_hard_cliff_boundary_relief: dict[str, Any],
-    historical_execution_relief: dict[str, Any],
-    positive_tags: list[str],
-    negative_tags: list[str],
-) -> None:
-    if input_data.layer_c_decision == "avoid":
-        negative_tags.append("layer_c_avoid_signal")
-    if profitability_relief["hard_cliff"]:
-        negative_tags.append("profitability_hard_cliff")
-    if profitability_relief["relief_applied"]:
-        positive_tags.append("profitability_relief_applied")
-    elif profitability_relief["relief_enabled"] and profitability_relief["hard_cliff"] and input_data.layer_c_decision == "avoid":
-        negative_tags.append("profitability_relief_not_triggered")
-    if profitability_hard_cliff_boundary_relief["applied"]:
-        positive_tags.append("profitability_hard_cliff_boundary_relief_applied")
-    if historical_execution_relief["applied"]:
-        positive_tags.append("historical_execution_relief_applied")
-
-
-def _append_short_trade_snapshot_catalyst_tags(
-    *,
-    raw_catalyst_freshness: float,
-    catalyst_relief: dict[str, Any],
-    positive_tags: list[str],
-    negative_tags: list[str],
-) -> None:
-    if catalyst_relief["applied"]:
-        if str(catalyst_relief["reason"]) == "catalyst_theme_short_trade_carryover":
-            positive_tags.append("catalyst_theme_short_trade_carryover_applied")
-        else:
-            positive_tags.append("upstream_shadow_catalyst_relief_applied")
-    elif catalyst_relief["enabled"] and raw_catalyst_freshness < float(catalyst_relief["catalyst_freshness_floor"]):
-        if str(catalyst_relief["reason"]) == "catalyst_theme_short_trade_carryover":
-            negative_tags.append("catalyst_theme_short_trade_carryover_not_triggered")
-        else:
-            negative_tags.append("upstream_shadow_catalyst_relief_not_triggered")
-
-
-def _append_short_trade_snapshot_continuation_relief_tags(
-    *,
-    visibility_gap_continuation_relief: dict[str, Any],
-    merge_approved_continuation_relief: dict[str, Any],
-    prepared_breakout_penalty_relief: dict[str, Any],
-    prepared_breakout_catalyst_relief: dict[str, Any],
-    prepared_breakout_volume_relief: dict[str, Any],
-    prepared_breakout_continuation_relief: dict[str, Any],
-    prepared_breakout_selected_catalyst_relief: dict[str, Any],
-    positive_tags: list[str],
-) -> None:
-    if visibility_gap_continuation_relief["applied"]:
-        positive_tags.append("visibility_gap_continuation_relief_applied")
-    if merge_approved_continuation_relief["applied"]:
-        positive_tags.append("merge_approved_continuation_relief_applied")
-    if prepared_breakout_penalty_relief["applied"]:
-        positive_tags.append("prepared_breakout_penalty_relief_applied")
-    if prepared_breakout_catalyst_relief["applied"]:
-        positive_tags.append("prepared_breakout_catalyst_relief_applied")
-    if prepared_breakout_volume_relief["applied"]:
-        positive_tags.append("prepared_breakout_volume_relief_applied")
-    if prepared_breakout_continuation_relief["applied"]:
-        positive_tags.append("prepared_breakout_continuation_relief_applied")
-    if prepared_breakout_selected_catalyst_relief["applied"]:
-        positive_tags.append("prepared_breakout_selected_catalyst_relief_applied")
-
-
-def _append_short_trade_snapshot_penalty_tags(
-    *,
-    watchlist_zero_catalyst_penalty: dict[str, Any],
-    watchlist_zero_catalyst_crowded_penalty: dict[str, Any],
-    watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any],
-    t_plus_2_continuation_candidate: dict[str, Any],
-    positive_tags: list[str],
-    negative_tags: list[str],
-) -> None:
-    if watchlist_zero_catalyst_penalty["applied"]:
-        negative_tags.append("watchlist_zero_catalyst_penalty_applied")
-    if watchlist_zero_catalyst_crowded_penalty["applied"]:
-        negative_tags.append("watchlist_zero_catalyst_crowded_penalty_applied")
-    if watchlist_zero_catalyst_flat_trend_penalty["applied"]:
-        negative_tags.append("watchlist_zero_catalyst_flat_trend_penalty_applied")
-    if t_plus_2_continuation_candidate["applied"]:
-        positive_tags.append("t_plus_2_continuation_candidate")
-
-
-def _append_short_trade_snapshot_blockers(
-    *,
-    input_data: TargetEvaluationInput,
-    profile: Any,
-    trend_signal: Any,
-    stale_trend_repair_penalty: float,
-    overhead_supply_penalty: float,
-    extension_without_room_penalty: float,
-    blockers: list[str],
-    gate_status: dict[str, Any],
-) -> None:
-    if trend_signal is None or float(trend_signal.completeness) <= 0:
-        blockers.append("missing_trend_signal")
-        gate_status["data"] = "fail"
-    if input_data.bc_conflict in profile.hard_block_bearish_conflicts:
-        blockers.append("layer_c_bearish_conflict")
-        gate_status["structural"] = "fail"
-    if _signal_signed_strength(trend_signal) <= 0.0:
-        blockers.append("trend_not_constructive")
-        gate_status["structural"] = "fail"
-    if stale_trend_repair_penalty >= profile.stale_penalty_block_threshold:
-        blockers.append("stale_trend_repair_penalty")
-        gate_status["structural"] = "fail"
-    if overhead_supply_penalty >= profile.overhead_penalty_block_threshold:
-        blockers.append("overhead_supply_penalty")
-        gate_status["structural"] = "fail"
-    if extension_without_room_penalty >= profile.extension_penalty_block_threshold:
-        blockers.append("extension_without_room_penalty")
-        gate_status["structural"] = "fail"
-
-
-def _append_short_trade_snapshot_strength_tags(
-    *,
-    input_data: TargetEvaluationInput,
-    breakout_freshness: float,
-    trend_acceleration: float,
-    catalyst_freshness: float,
-    sector_resonance: float,
-    event_signal: Any,
-    positive_tags: list[str],
-    negative_tags: list[str],
-) -> None:
-    if event_signal is None or float(event_signal.completeness) <= 0:
-        negative_tags.append("event_signal_incomplete")
-    if breakout_freshness >= 0.50:
-        positive_tags.append("fresh_breakout_candidate")
-    if trend_acceleration >= 0.50:
-        positive_tags.append("trend_acceleration_confirmed")
-    if catalyst_freshness >= 0.45:
-        positive_tags.append("fresh_catalyst_support")
-    if sector_resonance >= 0.45:
-        positive_tags.append("sector_alignment_support")
-    if input_data.execution_constraints.get("included_in_buy_orders"):
-        positive_tags.append("execution_bridge_ready")
-
-
 def _collect_short_trade_snapshot_labels_and_gates(
     input_data: TargetEvaluationInput,
     *,
@@ -984,101 +572,13 @@ def _collect_short_trade_snapshot_labels_and_gates(
     signal_snapshot: dict[str, Any],
     relief_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
-    trend_signal = signal_snapshot["trend_signal"]
-    event_signal = signal_snapshot["event_signal"]
-    breakout_freshness = float(relief_snapshot["breakout_freshness"])
-    trend_acceleration = float(relief_snapshot["trend_acceleration"])
-    raw_catalyst_freshness = float(signal_snapshot["raw_catalyst_freshness"])
-    catalyst_freshness = float(relief_snapshot["catalyst_freshness"])
-    sector_resonance = float(signal_snapshot["sector_resonance"])
-    profitability_relief = dict(relief_snapshot["profitability_relief"])
-    profitability_hard_cliff_boundary_relief = dict(relief_snapshot["profitability_hard_cliff_boundary_relief"])
-    historical_execution_relief = dict(relief_snapshot["historical_execution_relief"])
-    catalyst_relief = dict(relief_snapshot["upstream_shadow_catalyst_relief"])
-    visibility_gap_continuation_relief = dict(relief_snapshot["visibility_gap_continuation_relief"])
-    merge_approved_continuation_relief = dict(relief_snapshot["merge_approved_continuation_relief"])
-    prepared_breakout_penalty_relief = dict(relief_snapshot["prepared_breakout_penalty_relief"])
-    prepared_breakout_catalyst_relief = dict(relief_snapshot["prepared_breakout_catalyst_relief"])
-    prepared_breakout_volume_relief = dict(relief_snapshot["prepared_breakout_volume_relief"])
-    prepared_breakout_continuation_relief = dict(relief_snapshot["prepared_breakout_continuation_relief"])
-    prepared_breakout_selected_catalyst_relief = dict(relief_snapshot["prepared_breakout_selected_catalyst_relief"])
-    watchlist_zero_catalyst_penalty = dict(relief_snapshot["watchlist_zero_catalyst_penalty"])
-    watchlist_zero_catalyst_crowded_penalty = dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"])
-    watchlist_zero_catalyst_flat_trend_penalty = dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"])
-    t_plus_2_continuation_candidate = dict(relief_snapshot["t_plus_2_continuation_candidate"])
-    stale_trend_repair_penalty = float(relief_snapshot["stale_trend_repair_penalty"])
-    overhead_supply_penalty = float(relief_snapshot["overhead_supply_penalty"])
-    extension_without_room_penalty = float(relief_snapshot["extension_without_room_penalty"])
-
-    positive_tags: list[str] = []
-    negative_tags: list[str] = []
-    blockers: list[str] = []
-    gate_status = {
-        "data": "pass",
-        "execution": "pass" if input_data.execution_constraints.get("included_in_buy_orders") else "proxy_only",
-        "structural": "pass",
-        "score": "fail",
-    }
-
-    _append_short_trade_snapshot_profitability_tags(
-        input_data=input_data,
-        profitability_relief=profitability_relief,
-        profitability_hard_cliff_boundary_relief=profitability_hard_cliff_boundary_relief,
-        historical_execution_relief=historical_execution_relief,
-        positive_tags=positive_tags,
-        negative_tags=negative_tags,
-    )
-    _append_short_trade_snapshot_catalyst_tags(
-        raw_catalyst_freshness=raw_catalyst_freshness,
-        catalyst_relief=catalyst_relief,
-        positive_tags=positive_tags,
-        negative_tags=negative_tags,
-    )
-    _append_short_trade_snapshot_continuation_relief_tags(
-        visibility_gap_continuation_relief=visibility_gap_continuation_relief,
-        merge_approved_continuation_relief=merge_approved_continuation_relief,
-        prepared_breakout_penalty_relief=prepared_breakout_penalty_relief,
-        prepared_breakout_catalyst_relief=prepared_breakout_catalyst_relief,
-        prepared_breakout_volume_relief=prepared_breakout_volume_relief,
-        prepared_breakout_continuation_relief=prepared_breakout_continuation_relief,
-        prepared_breakout_selected_catalyst_relief=prepared_breakout_selected_catalyst_relief,
-        positive_tags=positive_tags,
-    )
-    _append_short_trade_snapshot_penalty_tags(
-        watchlist_zero_catalyst_penalty=watchlist_zero_catalyst_penalty,
-        watchlist_zero_catalyst_crowded_penalty=watchlist_zero_catalyst_crowded_penalty,
-        watchlist_zero_catalyst_flat_trend_penalty=watchlist_zero_catalyst_flat_trend_penalty,
-        t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
-        positive_tags=positive_tags,
-        negative_tags=negative_tags,
-    )
-    _append_short_trade_snapshot_blockers(
-        input_data=input_data,
+    return _collect_short_trade_snapshot_labels_and_gates_impl(
+        input_data,
         profile=profile,
-        trend_signal=trend_signal,
-        stale_trend_repair_penalty=stale_trend_repair_penalty,
-        overhead_supply_penalty=overhead_supply_penalty,
-        extension_without_room_penalty=extension_without_room_penalty,
-        blockers=blockers,
-        gate_status=gate_status,
+        signal_snapshot=signal_snapshot,
+        relief_snapshot=relief_snapshot,
+        signal_signed_strength_fn=_signal_signed_strength,
     )
-    _append_short_trade_snapshot_strength_tags(
-        input_data=input_data,
-        breakout_freshness=breakout_freshness,
-        trend_acceleration=trend_acceleration,
-        catalyst_freshness=catalyst_freshness,
-        sector_resonance=sector_resonance,
-        event_signal=event_signal,
-        positive_tags=positive_tags,
-        negative_tags=negative_tags,
-    )
-
-    return {
-        "positive_tags": positive_tags,
-        "negative_tags": negative_tags,
-        "blockers": blockers,
-        "gate_status": gate_status,
-    }
 
 
 def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dict[str, Any]:
@@ -1095,103 +595,12 @@ def _build_short_trade_target_snapshot(input_data: TargetEvaluationInput) -> dic
         signal_snapshot=signal_snapshot,
         relief_snapshot=relief_snapshot,
     )
-
-    volatility_metrics = dict(signal_snapshot["volatility_metrics"])
-    profitability_relief = dict(relief_snapshot["profitability_relief"])
-    profitability_hard_cliff_boundary_relief = dict(relief_snapshot["profitability_hard_cliff_boundary_relief"])
-    historical_execution_relief = dict(relief_snapshot["historical_execution_relief"])
-    catalyst_relief = dict(relief_snapshot["upstream_shadow_catalyst_relief"])
-    watchlist_zero_catalyst_penalty = dict(relief_snapshot["watchlist_zero_catalyst_penalty"])
-    watchlist_zero_catalyst_crowded_penalty = dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"])
-    watchlist_zero_catalyst_flat_trend_penalty = dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"])
-
-    return {
-        "profile": profile,
-        "breakout_freshness": relief_snapshot["breakout_freshness"],
-        "trend_acceleration": relief_snapshot["trend_acceleration"],
-        "volume_expansion_quality": relief_snapshot["volume_expansion_quality"],
-        "close_strength": signal_snapshot["close_strength"],
-        "sector_resonance": signal_snapshot["sector_resonance"],
-        "raw_catalyst_freshness": signal_snapshot["raw_catalyst_freshness"],
-        "catalyst_freshness": relief_snapshot["catalyst_freshness"],
-        "layer_c_alignment": signal_snapshot["layer_c_alignment"],
-        "effective_near_miss_threshold": relief_snapshot["effective_near_miss_threshold"],
-        "effective_select_threshold": relief_snapshot["effective_select_threshold"],
-        "selected_score_tolerance": relief_snapshot["selected_score_tolerance"],
-        "profitability_hard_cliff": profitability_relief["hard_cliff"],
-        "profitability_positive_count": profitability_relief["profitability_positive_count"],
-        "profitability_confidence": profitability_relief["profitability_confidence"],
-        "profitability_relief_enabled": profitability_relief["relief_enabled"],
-        "profitability_relief_gate_hits": profitability_relief["relief_gate_hits"],
-        "profitability_relief_eligible": profitability_relief["relief_eligible"],
-        "profitability_relief_applied": profitability_relief["relief_applied"],
-        "profitability_hard_cliff_boundary_relief": profitability_hard_cliff_boundary_relief,
-        "profitability_relief_soft_penalty": profitability_relief["soft_penalty"],
-        "base_layer_c_avoid_penalty": profitability_relief["base_layer_c_avoid_penalty"],
-        "layer_c_avoid_penalty": relief_snapshot["layer_c_avoid_penalty"],
-        "watchlist_zero_catalyst_guard": watchlist_zero_catalyst_penalty,
-        "watchlist_zero_catalyst_penalty": relief_snapshot["watchlist_zero_catalyst_penalty_effective"],
-        "watchlist_zero_catalyst_crowded_guard": watchlist_zero_catalyst_crowded_penalty,
-        "watchlist_zero_catalyst_crowded_penalty": relief_snapshot["watchlist_zero_catalyst_crowded_penalty_effective"],
-        "watchlist_zero_catalyst_flat_trend_guard": watchlist_zero_catalyst_flat_trend_penalty,
-        "watchlist_zero_catalyst_flat_trend_penalty": relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty_effective"],
-        "t_plus_2_continuation_candidate": relief_snapshot["t_plus_2_continuation_candidate"],
-        "upstream_shadow_catalyst_relief_enabled": catalyst_relief["enabled"],
-        "upstream_shadow_catalyst_relief_gate_hits": catalyst_relief["gate_hits"],
-        "upstream_shadow_catalyst_relief_eligible": catalyst_relief["eligible"],
-        "upstream_shadow_catalyst_relief_applied": catalyst_relief["applied"],
-        "upstream_shadow_catalyst_relief_reason": catalyst_relief["reason"],
-        "upstream_shadow_catalyst_relief_catalyst_freshness_floor": catalyst_relief["catalyst_freshness_floor"],
-        "upstream_shadow_catalyst_relief_base_near_miss_threshold": catalyst_relief["base_near_miss_threshold"],
-        "upstream_shadow_catalyst_relief_near_miss_threshold_override": catalyst_relief["near_miss_threshold_override"],
-        "upstream_shadow_catalyst_relief_base_select_threshold": catalyst_relief["base_select_threshold"],
-        "upstream_shadow_catalyst_relief_select_threshold_override": catalyst_relief["select_threshold_override"],
-        "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": catalyst_relief["require_no_profitability_hard_cliff"],
-        "visibility_gap_continuation_relief": relief_snapshot["visibility_gap_continuation_relief"],
-        "merge_approved_continuation_relief": relief_snapshot["merge_approved_continuation_relief"],
-        "historical_execution_relief": historical_execution_relief,
-        "historical_prior": relief_snapshot["historical_prior"],
-        "prepared_breakout_penalty_relief": relief_snapshot["prepared_breakout_penalty_relief"],
-        "prepared_breakout_catalyst_relief": relief_snapshot["prepared_breakout_catalyst_relief"],
-        "prepared_breakout_volume_relief": relief_snapshot["prepared_breakout_volume_relief"],
-        "prepared_breakout_continuation_relief": relief_snapshot["prepared_breakout_continuation_relief"],
-        "prepared_breakout_selected_catalyst_relief": relief_snapshot["prepared_breakout_selected_catalyst_relief"],
-        "stale_trend_repair_penalty": relief_snapshot["stale_trend_repair_penalty"],
-        "overhead_supply_penalty": relief_snapshot["overhead_supply_penalty"],
-        "extension_without_room_penalty": relief_snapshot["extension_without_room_penalty"],
-        "positive_score_weights": relief_snapshot["positive_score_weights"],
-        "weighted_positive_contributions": relief_snapshot["weighted_positive_contributions"],
-        "weighted_negative_contributions": relief_snapshot["weighted_negative_contributions"],
-        "total_positive_contribution": relief_snapshot["total_positive_contribution"],
-        "total_negative_contribution": relief_snapshot["total_negative_contribution"],
-        "score_target": relief_snapshot["score_target"],
-        "positive_tags": labels_and_gates["positive_tags"],
-        "negative_tags": labels_and_gates["negative_tags"],
-        "blockers": labels_and_gates["blockers"],
-        "gate_status": labels_and_gates["gate_status"],
-        "score_b_strength": signal_snapshot["score_b_strength"],
-        "score_c_strength": signal_snapshot["score_c_strength"],
-        "score_final_strength": signal_snapshot["score_final_strength"],
-        "momentum_strength": signal_snapshot["momentum_strength"],
-        "momentum_1m": signal_snapshot["momentum_1m"],
-        "momentum_3m": signal_snapshot["momentum_3m"],
-        "momentum_6m": signal_snapshot["momentum_6m"],
-        "volume_momentum": signal_snapshot["volume_momentum"],
-        "adx_strength": signal_snapshot["adx_strength"],
-        "ema_strength": signal_snapshot["ema_strength"],
-        "volatility_strength": signal_snapshot["volatility_strength"],
-        "volatility_regime": float(volatility_metrics.get("volatility_regime", 0.0) or 0.0),
-        "atr_ratio": float(volatility_metrics.get("atr_ratio", 0.0) or 0.0),
-        "long_trend_strength": signal_snapshot["long_trend_strength"],
-        "event_freshness_strength": signal_snapshot["event_freshness_strength"],
-        "news_sentiment_strength": signal_snapshot["news_sentiment_strength"],
-        "event_signal_strength": signal_snapshot["event_signal_strength"],
-        "mean_reversion_strength": signal_snapshot["mean_reversion_strength"],
-        "analyst_alignment": signal_snapshot["analyst_alignment"],
-        "investor_alignment": signal_snapshot["investor_alignment"],
-        "analyst_penalty": signal_snapshot["analyst_penalty"],
-        "investor_penalty": signal_snapshot["investor_penalty"],
-    }
+    return build_short_trade_target_snapshot_payload(
+        profile=profile,
+        signal_snapshot=signal_snapshot,
+        relief_snapshot=relief_snapshot,
+        labels_and_gates=labels_and_gates,
+    )
 
 
 def _resolve_short_trade_decision(

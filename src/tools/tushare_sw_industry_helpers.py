@@ -4,6 +4,33 @@ from typing import Dict, Optional
 import pandas as pd
 
 
+def extract_open_trade_dates(df: pd.DataFrame | None) -> list[str]:
+    if df is None or df.empty:
+        return []
+    return sorted({str(row["cal_date"]) for _, row in df.iterrows() if str(row.get("cal_date") or "").strip()})
+
+
+def resolve_cached_sw_industry_mapping(
+    *,
+    cached_mapping: Dict[str, str] | None,
+    load_index_df,
+    build_mapping,
+    cache_mapping,
+) -> Optional[Dict[str, str]]:
+    if cached_mapping is not None:
+        return cached_mapping.copy()
+
+    index_df = load_index_df()
+    if index_df is None or index_df.empty:
+        return None
+
+    result = build_mapping(index_df)
+    if result:
+        cache_mapping(result)
+        return result.copy()
+    return None
+
+
 def load_sw_index_classification(fetch_dataframe, pro) -> Optional[pd.DataFrame]:
     index_df = fetch_dataframe(pro, "index_classify", level="L1", src="SW2021", ttl=7 * 86400)
     if index_df is None or index_df.empty:

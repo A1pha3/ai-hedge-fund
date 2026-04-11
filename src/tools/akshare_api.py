@@ -9,7 +9,6 @@ A股数据接口模块 - 使用 AKShare 获取中国股票数据
 - 公司新闻和公告
 """
 
-import datetime
 import os
 from typing import Any, Dict, List, Optional
 
@@ -26,27 +25,38 @@ from src.tools.akshare_news_helpers import (
     classify_news_sentiment as _classify_news_sentiment_impl,
     deduplicate_news as _deduplicate_news_impl,
     is_news_relevant_to_stock as _is_news_relevant_to_stock_impl,
+    load_company_news_results,
     normalize_news_symbol,
     resolve_stock_name,
     sort_news_dataframe,
 )
 from src.tools.akshare_financial_metrics_helpers import (
     dump_financial_metrics_for_cache,
+    execute_financial_metrics_request,
     hydrate_cached_financial_metrics,
     load_financial_metrics_with_fallback,
 )
+from src.tools.akshare_market_helpers import load_optional_market_dataframe
+from src.tools.akshare_mock_data_helpers import build_mock_financial_metrics, build_mock_prices
 from src.tools.akshare_price_helpers import (
     build_prices_from_dataframe,
+    execute_tencent_price_request,
     dump_prices_for_cache,
+    execute_robust_price_request,
+    execute_price_request,
     hydrate_cached_prices,
     load_prices_with_fallback,
 )
+from src.tools.akshare_search_helpers import build_stock_search_results
+from src.tools.akshare_stock_info_helpers import build_stock_info_dict
 from src.tools.akshare_runtime_helpers import (
     SINA_QUOTE_HEADERS,
     cached_akshare_dataframe_call as _cached_akshare_dataframe_call_impl,
     create_session as _create_session_impl,
     disable_proxy_temporarily as _disable_proxy_temporarily_impl,
     disable_system_proxies as _disable_system_proxies_impl,
+    execute_sina_realtime_quote_request,
+    execute_wrapped_ashare_request,
     make_akshare_df_cache_key as _make_akshare_df_cache_key_impl,
     normalize_akshare_cache_value as _normalize_akshare_cache_value_impl,
     parse_sina_realtime_quote_text,
@@ -170,23 +180,19 @@ def get_realtime_quote_sina(ticker: str) -> Dict[str, Any]:
     Returns:
         dict: 实时行情数据
     """
-    session = _create_session()
-
-    try:
-        ashare = AShareTicker.from_symbol(ticker)
-        symbol = ashare.full_code
-
-        url = f"https://hq.sinajs.cn/list={symbol}"
-        response = session.get(url, headers=SINA_QUOTE_HEADERS, timeout=30)
-
-        if response.status_code != 200:
-            raise AShareDataError(f"新浪 API 返回错误状态码: {response.status_code}")
-        return parse_sina_realtime_quote_text(response.text, AShareDataError)
-
-    except Exception as e:
-        if isinstance(e, AShareDataError):
-            raise
-        raise AShareDataError(f"获取新浪实时行情失败: {e}")
+    return execute_wrapped_ashare_request(
+        run=lambda: execute_sina_realtime_quote_request(
+            ticker=ticker,
+            resolve_ticker_fn=AShareTicker.from_symbol,
+            create_session_fn=_create_session,
+            headers=SINA_QUOTE_HEADERS,
+            parse_quote_fn=parse_sina_realtime_quote_text,
+            error_factory=AShareDataError,
+        ),
+        error_factory=AShareDataError,
+        message_prefix="获取新浪实时行情失败",
+        passthrough_errors=(AShareDataError,),
+    )
 
 
 def _disable_system_proxies():
@@ -211,45 +217,14 @@ def _get_prices_from_tencent(ticker: str, start_date: str, end_date: str) -> Lis
     Returns:
         List[Price]: 价格数据列表
     """
-    import requests
-
-    ashare = AShareTicker.from_symbol(ticker)
-
-    # 构建腾讯接口参数
-    # 格式: 股票代码,day,开始日期,结束日期,数据条数,复权类型
-    param = f"{ashare.full_code},day,{start_date},{end_date},640,qfq"
-
-    url = "http://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-    params = {"param": param}
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-    }
-
-    session = requests.Session()
-    session.trust_env = False  # 禁用系统代理
-
-    response = session.get(url, params=params, headers=headers, timeout=30)
-    response.raise_for_status()
-
-    data = response.json()
-
-    # 检查数据
-    if data.get("code") != 0:
-        raise AShareDataError(f"腾讯接口返回错误: {data.get('msg', '未知错误')}")
-
-    stock_data = data.get("data", {}).get(ashare.full_code, {})
-    kline_data = stock_data.get("qfqday") or stock_data.get("day")
-
-    if not kline_data:
-        raise AShareDataError(f"腾讯接口返回空数据")
-
-    prices = []
-    for item in kline_data:
-        # 腾讯数据格式: [日期, 开盘价, 收盘价, 最高价, 最低价, 成交量]
-        price = Price(time=item[0], open=float(item[1]), close=float(item[2]), high=float(item[3]), low=float(item[4]), volume=int(float(item[5])))
-        prices.append(price)
-
-    return prices
+    return execute_tencent_price_request(
+        ticker=ticker,
+        start_date=start_date,
+        end_date=end_date,
+        resolve_ticker_fn=AShareTicker.from_symbol,
+        create_session_fn=_create_session,
+        error_factory=AShareDataError,
+    )
 
 
 def _get_cached_prices(cache_key: str) -> List[Price] | None:
@@ -273,6 +248,14 @@ def _fetch_prices_from_akshare(ak_module, ticker: str, start_date: str, end_date
     if df is None or df.empty:
         return None
     return build_prices_from_dataframe(df)
+
+
+def _load_stock_info(ak_module, ticker: str) -> Dict[str, Any]:
+    ashare = AShareTicker.from_symbol(ticker)
+    df = ak_module.stock_individual_info_em(symbol=ashare.symbol)
+    if df.empty:
+        raise AShareDataError(f"无法获取股票 {ticker} 的基本信息（AKShare 返回空数据）")
+    return build_stock_info_dict(df)
 
 
 def _cache_prices(cache_key: str, prices: List[Price]) -> List[Price]:
@@ -299,38 +282,36 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
     """
     cache_key = f"ashare_{ticker}_{start_date}_{end_date}_{period}"
 
-    if cached_prices := _get_cached_prices(cache_key):
-        return cached_prices
-
-    if use_mock:
-        return get_mock_prices(ticker, start_date, end_date)
-
-    ak_module = _get_akshare()
-    if ak_module is None:
-        raise AShareDataError("AKShare 模块不可用，无法获取 A 股数据。\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
-
     saved_proxies = _disable_system_proxies()
 
     try:
-        prices = load_prices_with_fallback(
-            ticker=ticker,
-            start_date=start_date,
-            end_date=end_date,
-            period=period,
-            ak_module=ak_module,
-            fetch_prices_from_akshare_fn=_fetch_prices_from_akshare,
-            fetch_prices_from_tencent_fn=_get_prices_from_tencent,
-            cache_prices_fn=_cache_prices,
+        return execute_wrapped_ashare_request(
+            run=lambda: execute_price_request(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                period=period,
+                use_mock=use_mock,
             cache_key=cache_key,
+            cache=_cache,
+            hydrate_cached_fn=hydrate_cached_prices,
+            get_mock_prices_fn=get_mock_prices,
+            get_akshare_fn=_get_akshare,
+            load_prices_fn=lambda **kwargs: load_prices_with_fallback(
+                fetch_prices_from_akshare_fn=_fetch_prices_from_akshare,
+                fetch_prices_from_tencent_fn=_get_prices_from_tencent,
+                cache_prices_fn=_cache_prices,
+                cache_key=cache_key,
+                error_factory=AShareDataError,
+                **kwargs,
+            ),
+                error_factory=AShareDataError,
+            ),
             error_factory=AShareDataError,
+            message_prefix=f"获取股票 {ticker} 的历史数据失败",
+            passthrough_errors=(AShareDataError,),
+            message_suffix="请检查网络连接，或使用 use_mock=True 参数使用模拟数据。",
         )
-        if prices:
-            return prices
-
-    except AShareDataError:
-        raise
-    except Exception as e:
-        raise AShareDataError(f"获取股票 {ticker} 的历史数据失败: {e}\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
     finally:
         _restore_proxies(saved_proxies)
 
@@ -354,37 +335,31 @@ def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_mock:
     """
     cache_key = f"ashare_metrics_{ticker}_{end_date}_{limit}"
 
-    # 检查缓存
-    if cached_data := _cache.get_financial_metrics(cache_key):
-        return hydrate_cached_financial_metrics(cached_data)
-
-    # 如果指定使用模拟数据，直接返回
-    if use_mock:
-        return get_mock_financial_metrics(ticker, end_date, limit)
-
-    ak_module = _get_akshare()
-    if ak_module is None:
-        raise AShareDataError("AKShare 模块不可用，无法获取 A 股财务数据。\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
-
-    try:
-        metrics = load_financial_metrics_with_fallback(
+    return execute_wrapped_ashare_request(
+        run=lambda: execute_financial_metrics_request(
             ticker=ticker,
+            end_date=end_date,
             limit=limit,
-            ak_module=ak_module,
-            cached_dataframe_call_fn=_cached_akshare_dataframe_call,
-            ticker_parser=AShareTicker,
+            use_mock=use_mock,
+            cache_key=cache_key,
+            cache=_cache,
+            hydrate_cached_fn=hydrate_cached_financial_metrics,
+            get_mock_metrics_fn=get_mock_financial_metrics,
+            get_akshare_fn=_get_akshare,
+            load_financial_metrics_fn=lambda **kwargs: load_financial_metrics_with_fallback(
+                cached_dataframe_call_fn=_cached_akshare_dataframe_call,
+                ticker_parser=AShareTicker,
+                error_factory=AShareDataError,
+                **kwargs,
+            ),
+            dump_metrics_fn=dump_financial_metrics_for_cache,
             error_factory=AShareDataError,
-        )
-
-        # 缓存结果
-        _cache.set_financial_metrics(cache_key, dump_financial_metrics_for_cache(metrics))
-
-        return metrics
-
-    except AShareDataError:
-        raise
-    except Exception as e:
-        raise AShareDataError(f"获取股票 {ticker} 的财务数据失败: {e}\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
+        ),
+        error_factory=AShareDataError,
+        message_prefix=f"获取股票 {ticker} 的财务数据失败",
+        passthrough_errors=(AShareDataError,),
+        message_suffix="请检查网络连接，或使用 use_mock=True 参数使用模拟数据。",
+    )
 
 
 @_disable_proxy_temporarily()
@@ -405,26 +380,12 @@ def get_stock_info(ticker: str) -> Dict[str, Any]:
     if ak_module is None:
         raise AShareDataError("AKShare 模块不可用，无法获取 A 股股票信息")
 
-    try:
-        ashare = AShareTicker.from_symbol(ticker)
-
-        # 获取个股信息
-        df = ak_module.stock_individual_info_em(symbol=ashare.symbol)
-
-        if df.empty:
-            raise AShareDataError(f"无法获取股票 {ticker} 的基本信息（AKShare 返回空数据）")
-
-        # 转换为字典
-        info = {}
-        for _, row in df.iterrows():
-            info[row["item"]] = row["value"]
-
-        return info
-
-    except AShareDataError:
-        raise
-    except Exception as e:
-        raise AShareDataError(f"获取股票 {ticker} 的基本信息失败: {e}")
+    return execute_wrapped_ashare_request(
+        run=lambda: _load_stock_info(ak_module, ticker),
+        error_factory=AShareDataError,
+        message_prefix=f"获取股票 {ticker} 的基本信息失败",
+        passthrough_errors=(AShareDataError,),
+    )
 
 
 @_disable_proxy_temporarily()
@@ -445,30 +406,11 @@ def search_stocks(keyword: str) -> List[Dict[str, Any]]:
     if ak_module is None:
         raise AShareDataError("AKShare 模块不可用，无法搜索 A 股")
 
-    try:
-        # 获取所有A股列表
-        df = ak_module.stock_zh_a_spot_em()
-
-        # 按关键词过滤
-        mask = df["名称"].str.contains(keyword, na=False) | df["代码"].str.contains(keyword, na=False)
-        filtered = df[mask]
-
-        # 转换为列表
-        results = []
-        for _, row in filtered.head(10).iterrows():
-            results.append(
-                {
-                    "symbol": row["代码"],
-                    "name": row["名称"],
-                    "price": row["最新价"],
-                    "change": row["涨跌幅"],
-                }
-            )
-
-        return results
-
-    except Exception as e:
-        raise AShareDataError(f"搜索 A 股失败: {e}")
+    return execute_wrapped_ashare_request(
+        run=lambda: build_stock_search_results(ak_module.stock_zh_a_spot_em(), keyword),
+        error_factory=AShareDataError,
+        message_prefix="搜索 A 股失败",
+    )
 
 
 def is_ashare(ticker: str) -> bool:
@@ -508,31 +450,7 @@ def get_mock_prices(ticker: str, start_date: str, end_date: str) -> List[Price]:
         List[Price]: 模拟价格数据
     """
     import random
-    from datetime import datetime, timedelta
-
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-
-    prices = []
-    current = start
-    base_price = 50.0
-
-    while current <= end:
-        if current.weekday() < 5:
-            change = random.uniform(-0.02, 0.02)
-            close = base_price * (1 + change)
-            open_price = base_price * (1 + random.uniform(-0.01, 0.01))
-            high = max(open_price, close) * (1 + random.uniform(0, 0.01))
-            low = min(open_price, close) * (1 - random.uniform(0, 0.01))
-            volume = random.randint(1000000, 10000000)
-
-            price = Price(time=current.strftime("%Y-%m-%d"), open=round(open_price, 2), high=round(high, 2), low=round(low, 2), close=round(close, 2), volume=volume)
-            prices.append(price)
-            base_price = close
-
-        current += timedelta(days=1)
-
-    return prices
+    return build_mock_prices(start_date, end_date, random)
 
 
 def get_mock_financial_metrics(ticker: str, end_date: str, limit: int = 10) -> List[FinancialMetrics]:
@@ -540,73 +458,15 @@ def get_mock_financial_metrics(ticker: str, end_date: str, limit: int = 10) -> L
     获取模拟财务指标数据（用于测试或网络不可用的情况）
     """
     import random
-    from datetime import datetime
+    return build_mock_financial_metrics(ticker, end_date, limit, random)
 
-    metrics = []
-    base_date = datetime.strptime(end_date, "%Y-%m-%d")
 
-    for i in range(limit):
-        quarter = (base_date.month - 1) // 3
-        year = base_date.year
+def _load_sina_historical_prices(ticker: str, start_date: str, end_date: str) -> List[Price]:
+    import random
 
-        pe_ratio = random.uniform(10.0, 30.0)
-        pb_ratio = random.uniform(1.0, 5.0)
-        roe = random.uniform(0.10, 0.20)
-        debt_to_equity = random.uniform(0.3, 0.7)
-
-        metric = FinancialMetrics(
-            ticker=ticker,
-            report_period=f"{year}Q{quarter + 1}",
-            period="quarterly",
-            currency="CNY",
-            market_cap=random.uniform(100000000000, 1000000000000),
-            enterprise_value=random.uniform(100000000000, 1000000000000),
-            price_to_earnings_ratio=pe_ratio,
-            price_to_book_ratio=pb_ratio,
-            price_to_sales_ratio=random.uniform(1.0, 10.0),
-            enterprise_value_to_ebitda_ratio=random.uniform(5.0, 20.0),
-            enterprise_value_to_revenue_ratio=random.uniform(1.0, 5.0),
-            free_cash_flow_yield=random.uniform(0.02, 0.08),
-            peg_ratio=random.uniform(0.5, 2.0),
-            gross_margin=random.uniform(0.3, 0.6),
-            operating_margin=random.uniform(0.15, 0.35),
-            net_margin=random.uniform(0.1, 0.25),
-            return_on_equity=roe,
-            return_on_assets=random.uniform(0.05, 0.15),
-            return_on_invested_capital=random.uniform(0.08, 0.18),
-            asset_turnover=random.uniform(0.5, 1.5),
-            inventory_turnover=random.uniform(2.0, 10.0),
-            receivables_turnover=random.uniform(5.0, 15.0),
-            days_sales_outstanding=random.uniform(20.0, 60.0),
-            operating_cycle=random.uniform(50.0, 150.0),
-            working_capital_turnover=random.uniform(2.0, 8.0),
-            current_ratio=random.uniform(1.0, 3.0),
-            quick_ratio=random.uniform(0.8, 2.5),
-            cash_ratio=random.uniform(0.3, 1.5),
-            operating_cash_flow_ratio=random.uniform(0.1, 0.4),
-            debt_to_equity=debt_to_equity,
-            debt_to_assets=random.uniform(0.2, 0.6),
-            interest_coverage=random.uniform(5.0, 20.0),
-            revenue_growth=random.uniform(-0.1, 0.3),
-            earnings_growth=random.uniform(-0.1, 0.4),
-            book_value_growth=random.uniform(0.05, 0.25),
-            earnings_per_share_growth=random.uniform(-0.1, 0.4),
-            free_cash_flow_growth=random.uniform(-0.1, 0.3),
-            operating_income_growth=random.uniform(-0.05, 0.3),
-            ebitda_growth=random.uniform(-0.05, 0.35),
-            payout_ratio=random.uniform(0.2, 0.6),
-            earnings_per_share=random.uniform(1.0, 10.0),
-            book_value_per_share=random.uniform(10.0, 50.0),
-            free_cash_flow_per_share=random.uniform(2.0, 15.0),
-        )
-        metrics.append(metric)
-
-        if quarter == 0:
-            base_date = base_date.replace(year=year - 1, month=10)
-        else:
-            base_date = base_date.replace(month=(quarter - 1) * 3 + 1)
-
-    return metrics
+    AShareTicker.from_symbol(ticker)
+    _create_session()
+    return build_mock_prices(start_date, end_date, random)
 
 
 def get_sina_historical_data(ticker: str, start_date: str, end_date: str, period: str = "daily") -> List[Price]:
@@ -622,38 +482,11 @@ def get_sina_historical_data(ticker: str, start_date: str, end_date: str, period
     Returns:
         List[Price]: 价格数据列表
     """
-    try:
-        ashare = AShareTicker.from_symbol(ticker)
-        session = _create_session()
-
-        start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
-        end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d")
-
-        prices = []
-        base_price = 50.0
-        current = start_dt
-
-        while current <= end_dt:
-            if current.weekday() < 5:
-                import random
-
-                change = random.uniform(-0.02, 0.02)
-                close = base_price * (1 + change)
-                open_price = base_price * (1 + random.uniform(-0.01, 0.01))
-                high = max(open_price, close) * (1 + random.uniform(0, 0.01))
-                low = min(open_price, close) * (1 - random.uniform(0, 0.01))
-                volume = random.randint(1000000, 10000000)
-
-                price = Price(time=current.strftime("%Y-%m-%d"), open=round(open_price, 2), high=round(high, 2), low=round(low, 2), close=round(close, 2), volume=volume)
-                prices.append(price)
-                base_price = close
-
-            current += datetime.timedelta(days=1)
-
-        return prices
-
-    except Exception as e:
-        raise AShareDataError(f"获取新浪历史数据失败: {e}")
+    return execute_wrapped_ashare_request(
+        run=lambda: _load_sina_historical_prices(ticker, start_date, end_date),
+        error_factory=AShareDataError,
+        message_prefix="获取新浪历史数据失败",
+    )
 
 
 def get_prices_robust(ticker: str, start_date: str, end_date: str, period: str = "daily", use_mock_on_fail: bool = True) -> List[Price]:
@@ -670,36 +503,20 @@ def get_prices_robust(ticker: str, start_date: str, end_date: str, period: str =
     Returns:
         List[Price]: 价格数据列表
     """
-    errors = []
+    from src.tools.ashare_data_sources import get_prices_multi_source
 
-    try:
-        print(f"[1/4] 尝试 AKShare...")
-        return get_prices(ticker, start_date, end_date, period, use_mock=False)
-    except Exception as e:
-        errors.append(f"AKShare: {e}")
-        print(f"  ✗ 失败: {e}")
-
-    try:
-        print(f"[2/4] 尝试新浪财经历史数据...")
-        return get_sina_historical_data(ticker, start_date, end_date, period)
-    except Exception as e:
-        errors.append(f"新浪财经: {e}")
-        print(f"  ✗ 失败: {e}")
-
-    try:
-        print(f"[3/4] 尝试 Tushare/BaoStock...")
-        from src.tools.ashare_data_sources import get_prices_multi_source
-
-        return get_prices_multi_source(ticker, start_date, end_date, period)
-    except Exception as e:
-        errors.append(f"多数据源: {e}")
-        print(f"  ✗ 失败: {e}")
-
-    if use_mock_on_fail:
-        print(f"[4/4] 使用模拟数据...")
-        return get_mock_prices(ticker, start_date, end_date)
-
-    raise AShareDataError(f"所有数据源都失败: {'; '.join(errors)}")
+    return execute_robust_price_request(
+        ticker=ticker,
+        start_date=start_date,
+        end_date=end_date,
+        period=period,
+        use_mock_on_fail=use_mock_on_fail,
+        get_prices_fn=get_prices,
+        get_sina_historical_data_fn=get_sina_historical_data,
+        get_prices_multi_source_fn=get_prices_multi_source,
+        get_mock_prices_fn=get_mock_prices,
+        error_factory=AShareDataError,
+    )
 
 
 def _classify_news_sentiment(title: str, content: str = "") -> str:
@@ -733,27 +550,25 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
     try:
         symbol = normalize_news_symbol(ticker)
 
-        df = _cached_akshare_dataframe_call("stock_news_em", ak.stock_news_em, symbol=symbol)
-        if df is None or df.empty:
-            return []
-
         try:
             from src.tools.tushare_api import get_stock_name
         except Exception:
             get_stock_name = lambda _ticker: ""
-        stock_name = resolve_stock_name(get_stock_name, ticker)
 
-        df = sort_news_dataframe(df)
-        results, filtered_count = build_filtered_company_news(
+        results, filtered_count, stock_name = load_company_news_results(
             ticker=ticker,
-            df=df,
-            start_date=start_date,
             end_date=end_date,
+            start_date=start_date,
             limit=limit,
-            stock_name=stock_name,
-            is_news_relevant_to_stock_fn=_is_news_relevant_to_stock,
-            classify_news_sentiment_fn=_classify_news_sentiment,
-            deduplicate_news_fn=_deduplicate_news,
+            fetch_news_df_fn=lambda: _cached_akshare_dataframe_call("stock_news_em", ak.stock_news_em, symbol=symbol),
+            resolve_stock_name_fn=lambda: resolve_stock_name(get_stock_name, ticker),
+            sort_news_dataframe_fn=sort_news_dataframe,
+            build_filtered_company_news_fn=lambda **kwargs: build_filtered_company_news(
+                is_news_relevant_to_stock_fn=_is_news_relevant_to_stock,
+                classify_news_sentiment_fn=_classify_news_sentiment,
+                deduplicate_news_fn=_deduplicate_news,
+                **kwargs,
+            ),
         )
 
         if filtered_count > 0:
@@ -780,20 +595,13 @@ def get_realtime_quotes(tickers: List[str] = None) -> Optional[pd.DataFrame]:
     返回 DataFrame 列: 代码, 名称, 最新价, 涨跌幅, 涨跌额, 成交量, 成交额,
                        振幅, 最高, 最低, 今开, 昨收, 量比, 换手率, 市盈率, 市净率
     """
-    if not _akshare_available:
-        print("[AKShare] akshare 未安装")
-        return None
-
-    try:
-        df = ak.stock_zh_a_spot_em()
-        if df is None or df.empty:
-            return None
-        if tickers:
-            df = df[df["代码"].isin(tickers)]
-        return df
-    except Exception as e:
-        print(f"[AKShare] get_realtime_quotes 失败: {e}")
-        return None
+    return load_optional_market_dataframe(
+        is_available=_akshare_available,
+        unavailable_message="[AKShare] akshare 未安装",
+        fetch_dataframe_fn=ak.stock_zh_a_spot_em,
+        error_message="[AKShare] get_realtime_quotes 失败",
+        transform_fn=(lambda df: df[df["代码"].isin(tickers)] if tickers else df),
+    )
 
 
 def get_industry_realtime() -> Optional[pd.DataFrame]:
@@ -803,18 +611,12 @@ def get_industry_realtime() -> Optional[pd.DataFrame]:
     返回 DataFrame 列: 排名, 板块名称, 板块代码, 最新价, 涨跌幅, 涨跌额,
                        成交量, 成交额, 换手率, 上涨家数, 下跌家数, 领涨股票, 最新价_领涨
     """
-    if not _akshare_available:
-        print("[AKShare] akshare 未安装")
-        return None
-
-    try:
-        df = ak.stock_board_industry_name_em()
-        if df is not None and not df.empty:
-            return df
-        return None
-    except Exception as e:
-        print(f"[AKShare] get_industry_realtime 失败: {e}")
-        return None
+    return load_optional_market_dataframe(
+        is_available=_akshare_available,
+        unavailable_message="[AKShare] akshare 未安装",
+        fetch_dataframe_fn=ak.stock_board_industry_name_em,
+        error_message="[AKShare] get_industry_realtime 失败",
+    )
 
 
 def get_money_flow(ticker: str) -> Optional[pd.DataFrame]:
@@ -827,18 +629,12 @@ def get_money_flow(ticker: str) -> Optional[pd.DataFrame]:
     返回 DataFrame 列: 日期, 收盘价, 涨跌幅, 主力净流入, 主力净流入占比,
                        超大单净流入, 大单净流入, 中单净流入, 小单净流入
     """
-    if not _akshare_available:
-        print("[AKShare] akshare 未安装")
-        return None
-
-    try:
-        df = ak.stock_individual_fund_flow(stock=ticker, market="sh" if ticker.startswith("6") else "sz")
-        if df is not None and not df.empty:
-            return df
-        return None
-    except Exception as e:
-        print(f"[AKShare] get_money_flow({ticker}) 失败: {e}")
-        return None
+    return load_optional_market_dataframe(
+        is_available=_akshare_available,
+        unavailable_message="[AKShare] akshare 未安装",
+        fetch_dataframe_fn=lambda: ak.stock_individual_fund_flow(stock=ticker, market="sh" if ticker.startswith("6") else "sz"),
+        error_message=f"[AKShare] get_money_flow({ticker}) 失败",
+    )
 
 
 # 导出函数

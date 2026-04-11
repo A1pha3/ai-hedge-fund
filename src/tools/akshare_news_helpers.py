@@ -204,3 +204,31 @@ def build_filtered_company_news(
             break
 
     return deduplicate_news_fn(results), filtered_count
+
+
+def load_company_news_results(
+    *,
+    ticker: str,
+    end_date: str,
+    start_date: str | None,
+    limit: int,
+    fetch_news_df_fn,
+    resolve_stock_name_fn,
+    sort_news_dataframe_fn,
+    build_filtered_company_news_fn,
+) -> tuple[list[CompanyNews], int, str]:
+    df = fetch_news_df_fn()
+    if df is None or df.empty:
+        return [], 0, ""
+
+    stock_name = resolve_stock_name_fn()
+    sorted_df = sort_news_dataframe_fn(df)
+    results, filtered_count = build_filtered_company_news_fn(
+        ticker=ticker,
+        df=sorted_df,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        stock_name=stock_name,
+    )
+    return results, filtered_count, stock_name

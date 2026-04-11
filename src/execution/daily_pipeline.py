@@ -10,32 +10,63 @@ from typing import Any, Callable, Optional
 
 from scripts.btst_latest_followup_utils import load_latest_btst_historical_prior_by_ticker
 from src.execution.daily_pipeline_candidate_helpers import (
-    build_catalyst_theme_metrics_payload,
-    build_catalyst_theme_tags,
+    qualify_catalyst_theme_candidate_from_snapshot,
+    qualify_short_trade_boundary_candidate_from_snapshot,
     rank_scored_entries,
-    resolve_catalyst_theme_filter_reason,
     resolve_short_trade_candidate_context,
 )
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
+    build_catalyst_theme_shadow_entry as build_catalyst_theme_shadow_entry_impl,
+    build_catalyst_theme_candidate_diagnostics_payload,
+    build_catalyst_theme_short_trade_carryover_relief_config as build_catalyst_theme_short_trade_carryover_relief_config_impl,
+    finalize_catalyst_theme_candidate_diagnostics,
+    build_catalyst_theme_prefilter_thresholds,
+    build_catalyst_theme_ranked_outputs,
+    build_upstream_catalyst_theme_candidates,
+    collect_catalyst_theme_diagnostic_rankings,
+    resolve_catalyst_theme_close_momentum_relief as resolve_catalyst_theme_close_momentum_relief_impl,
+)
+from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    prepare_buy_order_execution_context,
+    build_reentry_filter_payload,
+    resolve_buy_orders_with_diagnostics,
+)
 from src.execution.daily_pipeline_hotspot_helpers import (
-    build_upstream_shadow_catalyst_relief_payload,
-    resolve_catalyst_relief_thresholds,
+    apply_merge_approved_fused_boost as apply_merge_approved_fused_boost_impl,
+    apply_merge_approved_breakout_signal_uplift_batch,
+    apply_merge_approved_layer_c_alignment_uplift_batch,
+    apply_merge_approved_sector_resonance_uplift_batch,
+    build_upstream_shadow_release_entry as build_upstream_shadow_release_entry_impl,
+    build_upstream_shadow_catalyst_relief_config as build_upstream_shadow_catalyst_relief_config_impl,
     resolve_selected_threshold,
+    select_upstream_shadow_release_entries as select_upstream_shadow_release_entries_impl,
     summarize_shadow_release_historical_support,
 )
 from src.execution.daily_pipeline_phase4_entry_helpers import (
     _build_short_trade_boundary_entry,
     _build_upstream_shadow_observation_entry,
 )
+from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
+    build_short_trade_candidate_diagnostics_payload,
+    finalize_short_trade_candidate_diagnostics,
+    build_short_trade_prefilter_thresholds,
+    build_short_trade_ranked_outputs,
+    collect_short_trade_diagnostic_rankings,
+    prepare_short_trade_candidate_diagnostics_state,
+)
 from src.execution.daily_pipeline_post_market_helpers import (
     PostMarketCandidateContext,
     PostMarketOrderContext,
     PostMarketWatchlistContext,
+    build_sell_order_diagnostics as build_sell_order_diagnostics_impl,
     build_high_pool,
     build_post_market_counts,
     build_post_market_funnel_diagnostics,
     build_post_market_timing_seconds,
+    resolve_plan_target_shell_selection,
     build_selection_target_inputs,
     merge_agent_results,
+    prepare_plan_target_shell_context,
 )
 from src.execution.daily_pipeline_runtime_helpers import (
     build_filter_summary as _build_filter_summary_impl,
@@ -409,22 +440,12 @@ def _apply_merge_approved_fused_boost(
 ) -> list:
     if not merge_approved_tickers or score_boost <= 0:
         return fused
-    boosted: list = []
-    for item in fused:
-        if item.ticker not in merge_approved_tickers:
-            boosted.append(item)
-            continue
-        boosted_score_b = min(1.0, float(item.score_b) + score_boost)
-        boosted.append(
-            item.model_copy(
-                update={
-                    "score_b": boosted_score_b,
-                    "decision": item.classify_decision(boosted_score_b),
-                    "arbitration_applied": _merge_approved_arbitration_applied(item, "merge_approved_score_boost_applied"),
-                }
-            )
-        )
-    return boosted
+    return apply_merge_approved_fused_boost_impl(
+        fused=fused,
+        merge_approved_tickers=merge_approved_tickers,
+        score_boost=score_boost,
+        merge_approved_arbitration_applied_fn=_merge_approved_arbitration_applied,
+    )
 
 
 def _merge_approved_arbitration_applied(item: Any, tag: str) -> list[str]:
@@ -515,38 +536,14 @@ def _apply_merge_approved_breakout_signal_uplift(
 ) -> tuple[list, dict[str, Any]]:
     if not merge_approved_tickers:
         return fused, _empty_merge_approved_breakout_signal_uplift_result()
-    uplifted: list = []
-    by_ticker: dict[str, Any] = {}
-    applied_tickers: list[str] = []
-    eligible_tickers: list[str] = []
-    for item in fused:
-        if item.ticker not in merge_approved_tickers:
-            uplifted.append(item)
-            continue
-        updated_signals, diagnostics = apply_merge_approved_breakout_uplift_to_signal_map(
-            item.strategy_signals,
-            score_b=float(item.score_b),
-        )
-        by_ticker[item.ticker] = diagnostics
-        if diagnostics.get("eligible"):
-            eligible_tickers.append(item.ticker)
-        if diagnostics.get("applied"):
-            applied_tickers.append(item.ticker)
-            uplifted.append(
-                item.model_copy(
-                    update={
-                        "strategy_signals": updated_signals,
-                        "arbitration_applied": _merge_approved_arbitration_applied(item, "merge_approved_breakout_signal_uplift_applied"),
-                    }
-                )
-            )
-            continue
-        uplifted.append(item)
-    return uplifted, _build_merge_approved_breakout_signal_uplift_result(
-        by_ticker=by_ticker,
-        eligible_tickers=eligible_tickers,
-        applied_tickers=applied_tickers,
+    uplifted, diagnostics = apply_merge_approved_breakout_signal_uplift_batch(
+        fused=fused,
+        merge_approved_tickers=merge_approved_tickers,
+        apply_uplift_fn=apply_merge_approved_breakout_uplift_to_signal_map,
+        merge_approved_arbitration_applied_fn=_merge_approved_arbitration_applied,
+        build_result_fn=_build_merge_approved_breakout_signal_uplift_result,
     )
+    return uplifted, diagnostics
 
 
 def _apply_merge_approved_layer_c_alignment_uplift(
@@ -556,40 +553,15 @@ def _apply_merge_approved_layer_c_alignment_uplift(
 ) -> tuple[list[LayerCResult], dict[str, Any]]:
     if not merge_approved_tickers:
         return layer_c_results, _empty_merge_approved_layer_c_alignment_uplift_result()
-    uplifted: list[LayerCResult] = []
-    by_ticker: dict[str, Any] = {}
-    applied_tickers: list[str] = []
-    eligible_tickers: list[str] = []
-    for item in layer_c_results:
-        if item.ticker not in merge_approved_tickers:
-            uplifted.append(item)
-            continue
-        updated_payload, diagnostics = apply_merge_approved_layer_c_alignment_uplift(
-            item.model_dump(mode="json"),
-            breakout_diagnostics=_merge_approved_breakout_diagnostics_for_ticker(breakout_signal_uplift, item.ticker),
-        )
-        by_ticker[item.ticker] = diagnostics
-        if diagnostics.get("eligible"):
-            eligible_tickers.append(item.ticker)
-        if diagnostics.get("applied"):
-            applied_tickers.append(item.ticker)
-            uplifted.append(
-                item.model_copy(
-                    update={
-                        "score_c": updated_payload["score_c"],
-                        "score_final": updated_payload["score_final"],
-                        "decision": updated_payload["decision"],
-                        "agent_contribution_summary": updated_payload["agent_contribution_summary"],
-                    }
-                )
-            )
-            continue
-        uplifted.append(item)
-    return uplifted, _build_merge_approved_layer_c_alignment_uplift_result(
-        by_ticker=by_ticker,
-        eligible_tickers=eligible_tickers,
-        applied_tickers=applied_tickers,
+    uplifted, diagnostics = apply_merge_approved_layer_c_alignment_uplift_batch(
+        layer_c_results=layer_c_results,
+        merge_approved_tickers=merge_approved_tickers,
+        breakout_signal_uplift=breakout_signal_uplift,
+        apply_uplift_fn=apply_merge_approved_layer_c_alignment_uplift,
+        breakout_diagnostics_for_ticker_fn=_merge_approved_breakout_diagnostics_for_ticker,
+        build_result_fn=_build_merge_approved_layer_c_alignment_uplift_result,
     )
+    return uplifted, diagnostics
 
 
 def _apply_merge_approved_sector_resonance_uplift(
@@ -599,31 +571,15 @@ def _apply_merge_approved_sector_resonance_uplift(
 ) -> tuple[list[LayerCResult], dict[str, Any]]:
     if not merge_approved_tickers:
         return layer_c_results, _empty_merge_approved_sector_resonance_uplift_result()
-    uplifted: list[LayerCResult] = []
-    by_ticker: dict[str, Any] = {}
-    applied_tickers: list[str] = []
-    eligible_tickers: list[str] = []
-    for item in layer_c_results:
-        if item.ticker not in merge_approved_tickers:
-            uplifted.append(item)
-            continue
-        updated_payload, diagnostics = apply_merge_approved_sector_resonance_uplift(
-            item.model_dump(mode="json"),
-            alignment_diagnostics=_merge_approved_alignment_diagnostics_for_ticker(layer_c_alignment_uplift, item.ticker),
-        )
-        by_ticker[item.ticker] = diagnostics
-        if diagnostics.get("eligible"):
-            eligible_tickers.append(item.ticker)
-        if diagnostics.get("applied"):
-            applied_tickers.append(item.ticker)
-            uplifted.append(item.model_copy(update={"agent_contribution_summary": updated_payload["agent_contribution_summary"]}))
-            continue
-        uplifted.append(item)
-    return uplifted, _build_merge_approved_sector_resonance_uplift_result(
-        by_ticker=by_ticker,
-        eligible_tickers=eligible_tickers,
-        applied_tickers=applied_tickers,
+    uplifted, diagnostics = apply_merge_approved_sector_resonance_uplift_batch(
+        layer_c_results=layer_c_results,
+        merge_approved_tickers=merge_approved_tickers,
+        layer_c_alignment_uplift=layer_c_alignment_uplift,
+        apply_uplift_fn=apply_merge_approved_sector_resonance_uplift,
+        alignment_diagnostics_for_ticker_fn=_merge_approved_alignment_diagnostics_for_ticker,
+        build_result_fn=_build_merge_approved_sector_resonance_uplift_result,
     )
+    return uplifted, diagnostics
 
 
 def _build_merge_approved_watchlist(
@@ -695,43 +651,13 @@ def _resolve_upstream_shadow_release_priority_rank(candidate_pool_lane: str, tic
 def _select_upstream_shadow_release_entries(
     ranked_released_shadow_entries: list[tuple[float, float, float, dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    def _sort_key(row: tuple[float, float, float, dict[str, Any]]) -> tuple[float, float, float, float, str]:
-        entry = row[-1]
-        priority_rank = _resolve_upstream_shadow_release_priority_rank(
-            str(entry.get("candidate_pool_lane") or ""),
-            str(entry.get("ticker") or ""),
-        )
-        return (
-            1.0 if priority_rank is not None else 0.0,
-            float(-(priority_rank or 0)),
-            float(row[0]),
-            float(row[1]),
-            str(entry.get("ticker") or ""),
-        )
-
-    ranked_released_shadow_entries.sort(
-        key=_sort_key,
-        reverse=True,
+    return select_upstream_shadow_release_entries_impl(
+        ranked_released_shadow_entries=ranked_released_shadow_entries,
+        resolve_priority_rank_fn=_resolve_upstream_shadow_release_priority_rank,
+        resolve_lane_limit_fn=_resolve_upstream_shadow_release_max_tickers,
+        max_tickers=UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
+        rank_scored_entries_fn=rank_scored_entries,
     )
-    selected_rows: list[tuple[float, float, float, dict[str, Any]]] = []
-    lane_counts: dict[str, int] = {}
-    for row in ranked_released_shadow_entries:
-        entry = dict(row[-1])
-        candidate_pool_lane = str(entry.get("candidate_pool_lane") or "")
-        lane_limit = _resolve_upstream_shadow_release_max_tickers(candidate_pool_lane)
-        if lane_limit <= 0:
-            continue
-        if lane_counts.get(candidate_pool_lane, 0) >= lane_limit:
-            continue
-        priority_rank = _resolve_upstream_shadow_release_priority_rank(candidate_pool_lane, str(entry.get("ticker") or ""))
-        if priority_rank is not None:
-            entry["shadow_release_priority_selected"] = True
-            entry["shadow_release_priority_rank"] = int(priority_rank + 1)
-        selected_rows.append((row[0], row[1], row[2], entry))
-        lane_counts[candidate_pool_lane] = lane_counts.get(candidate_pool_lane, 0) + 1
-        if len(selected_rows) >= UPSTREAM_SHADOW_RELEASE_MAX_TICKERS:
-            break
-    return rank_scored_entries(selected_rows, limit=len(selected_rows))
 
 
 def _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(candidate_pool_lane: str) -> bool:
@@ -849,140 +775,60 @@ def _build_upstream_shadow_catalyst_relief_config(
     historical_prior: dict[str, Any] | None = None,
     shadow_visibility_gap_selected: bool = False,
 ) -> dict[str, Any]:
-    if filter_reason != "catalyst_freshness_below_short_trade_boundary_floor":
-        return {}
-
-    metric_snapshot = _extract_upstream_shadow_catalyst_relief_metrics(metrics_payload)
-    profitability_hard_cliff = bool(metric_snapshot["profitability_hard_cliff"])
-    historical_next_close_positive_rate = _parse_optional_float(dict(historical_prior or {}).get("next_close_positive_rate"))
-    threshold_config = resolve_catalyst_relief_thresholds(
-        **_build_upstream_shadow_catalyst_relief_threshold_inputs(
-            candidate_pool_lane=candidate_pool_lane,
-            profitability_hard_cliff=profitability_hard_cliff,
-            historical_next_close_positive_rate=historical_next_close_positive_rate,
-        )
-    )
-    if threshold_config is None:
-        return {}
-    if not _passes_upstream_shadow_catalyst_relief_gates(
-        threshold_config=threshold_config,
-        historical_prior=historical_prior,
-        metric_snapshot=metric_snapshot,
-    ):
-        return {}
-
-    require_no_profitability_hard_cliff = _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(candidate_pool_lane)
-    selected_threshold_override_enabled, selected_threshold = _resolve_upstream_shadow_selected_threshold(
+    return build_upstream_shadow_catalyst_relief_config_impl(
         candidate_pool_lane=candidate_pool_lane,
-        profitability_hard_cliff=profitability_hard_cliff,
+        filter_reason=filter_reason,
+        metrics_payload=metrics_payload,
+        historical_prior=historical_prior,
         shadow_visibility_gap_selected=shadow_visibility_gap_selected,
-    )
-    return build_upstream_shadow_catalyst_relief_payload(
-        **_build_upstream_shadow_catalyst_relief_payload_kwargs(
-            threshold_config=threshold_config,
-            selected_threshold_override_enabled=selected_threshold_override_enabled,
-            selected_threshold=selected_threshold,
-            require_no_profitability_hard_cliff=require_no_profitability_hard_cliff,
-        )
+        extract_metric_snapshot_fn=_extract_upstream_shadow_catalyst_relief_metrics,
+        parse_optional_float_fn=_parse_optional_float,
+        build_threshold_inputs_fn=_build_upstream_shadow_catalyst_relief_threshold_inputs,
+        passes_relief_gates_fn=_passes_upstream_shadow_catalyst_relief_gates,
+        resolve_require_no_profitability_hard_cliff_fn=_resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+        resolve_selected_threshold_fn=_resolve_upstream_shadow_selected_threshold,
+        build_payload_kwargs_fn=_build_upstream_shadow_catalyst_relief_payload_kwargs,
     )
 
 
 def _build_catalyst_theme_short_trade_carryover_relief_config(*, metrics_payload: dict[str, Any]) -> dict[str, Any]:
-    close_momentum_catalyst_relief = dict(metrics_payload.get("close_momentum_catalyst_relief") or {})
-    if not bool(close_momentum_catalyst_relief.get("applied")):
-        return {}
-
-    candidate_score = float(metrics_payload.get("candidate_score", 0.0) or 0.0)
-    breakout_freshness = float(metrics_payload.get("breakout_freshness", 0.0) or 0.0)
-    trend_acceleration = float(metrics_payload.get("trend_acceleration", 0.0) or 0.0)
-    close_strength = float(metrics_payload.get("close_strength", 0.0) or 0.0)
-    if candidate_score < CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN:
-        return {}
-    if breakout_freshness < CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN:
-        return {}
-    if trend_acceleration < CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN:
-        return {}
-    if close_strength < CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN:
-        return {}
-
-    return {
-        "enabled": True,
-        "reason": "catalyst_theme_short_trade_carryover",
-        "catalyst_freshness_floor": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR, 4),
-        "near_miss_threshold": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD, 4),
-        "breakout_freshness_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN, 4),
-        "trend_acceleration_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN, 4),
-        "close_strength_min": round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN, 4),
-        "min_historical_evaluable_count": int(CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT),
-        "require_no_profitability_hard_cliff": CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
-    }
+    return build_catalyst_theme_short_trade_carryover_relief_config_impl(
+        metrics_payload=metrics_payload,
+        candidate_score_min=CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN,
+        breakout_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN,
+        trend_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN,
+        close_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN,
+        catalyst_freshness_floor=CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR,
+        near_miss_threshold=CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD,
+        min_historical_evaluable_count=CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT,
+        require_no_profitability_hard_cliff=CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+    )
 
 
 def _build_upstream_shadow_release_entry(*, candidate_entry: dict[str, Any], filter_reason: str, metrics_payload: dict[str, Any], release_reason: str) -> dict[str, Any]:
-    candidate_score = round(float(metrics_payload.get("candidate_score", 0.0) or 0.0), 4)
-    candidate_pool_lane = str(candidate_entry.get("candidate_pool_lane") or "")
-    lane_score_floor = round(float(UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.get(candidate_pool_lane, UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN)), 4)
-    historical_support = _summarize_upstream_shadow_release_historical_support(dict(candidate_entry.get("historical_prior") or {}))
-    catalyst_relief_config = _build_upstream_shadow_catalyst_relief_config(
-        candidate_pool_lane=candidate_pool_lane,
+    return build_upstream_shadow_release_entry_impl(
+        candidate_entry=candidate_entry,
         filter_reason=filter_reason,
         metrics_payload=metrics_payload,
-        historical_prior=dict(candidate_entry.get("historical_prior") or {}),
-        shadow_visibility_gap_selected=bool(candidate_entry.get("shadow_visibility_gap_selected")),
+        release_reason=release_reason,
+        upstream_shadow_release_lane_score_mins=UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
+        upstream_shadow_release_candidate_score_min=UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+        summarize_shadow_release_historical_support_fn=_summarize_upstream_shadow_release_historical_support,
+        build_upstream_shadow_catalyst_relief_config_fn=_build_upstream_shadow_catalyst_relief_config,
     )
-    resolved_reason_codes = [
-        str(code)
-        for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or [])
-        if str(code or "").strip()
-    ]
-    for code in [filter_reason, release_reason, "upstream_shadow_release_candidate"]:
-        if code not in resolved_reason_codes:
-            resolved_reason_codes.append(code)
-    return {
-        **candidate_entry,
-        "reasons": resolved_reason_codes,
-        "candidate_reason_codes": resolved_reason_codes,
-        "short_trade_boundary_metrics": dict(metrics_payload),
-        "shadow_release_filter_reason": filter_reason,
-        "shadow_release_reason": release_reason,
-        "shadow_release_score_floor": lane_score_floor,
-        "shadow_release_candidate_score": candidate_score,
-        "shadow_release_historical_support": historical_support,
-        "promotion_trigger": "受控 upstream shadow release 样本，仅进入 short-trade supplemental replay，默认不直接进入正式买入名单。",
-        **({"short_trade_catalyst_relief": catalyst_relief_config} if catalyst_relief_config else {}),
-    }
 
 
 def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
     snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
-    gate_status = dict(snapshot.get("gate_status") or {})
-    blockers = sorted({str(blocker) for blocker in list(snapshot.get("blockers") or []) if str(blocker or "").strip()})
-    metrics_payload = {
-        "breakout_freshness": round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4),
-        "trend_acceleration": round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4),
-        "volume_expansion_quality": round(float(snapshot.get("volume_expansion_quality", 0.0) or 0.0), 4),
-        "catalyst_freshness": round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4),
-        "close_strength": round(float(snapshot.get("close_strength", 0.0) or 0.0), 4),
-        "candidate_score": _compute_short_trade_boundary_candidate_score(snapshot),
-        "gate_status": gate_status,
-        "blockers": blockers,
-    }
-
-    if str(gate_status.get("data") or "") != "pass":
-        return False, "metric_data_fail", metrics_payload
-    if str(gate_status.get("structural") or "") == "fail" or blockers:
-        return False, "structural_prefilter_fail", metrics_payload
-    if float(metrics_payload.get("breakout_freshness", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_BREAKOUT_MIN:
-        return False, "breakout_freshness_below_short_trade_boundary_floor", metrics_payload
-    if float(metrics_payload.get("trend_acceleration", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_TREND_MIN:
-        return False, "trend_acceleration_below_short_trade_boundary_floor", metrics_payload
-    if float(metrics_payload.get("volume_expansion_quality", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_VOLUME_MIN:
-        return False, "volume_expansion_below_short_trade_boundary_floor", metrics_payload
-    if float(metrics_payload.get("catalyst_freshness", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_CATALYST_MIN:
-        return False, "catalyst_freshness_below_short_trade_boundary_floor", metrics_payload
-    if float(metrics_payload.get("candidate_score", 0.0) or 0.0) < SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN:
-        return False, "candidate_score_below_short_trade_boundary_floor", metrics_payload
-    return True, "short_trade_prequalified", metrics_payload
+    return qualify_short_trade_boundary_candidate_from_snapshot(
+        snapshot=snapshot,
+        compute_candidate_score_fn=_compute_short_trade_boundary_candidate_score,
+        breakout_min=SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
+        trend_min=SHORT_TRADE_BOUNDARY_TREND_MIN,
+        volume_min=SHORT_TRADE_BOUNDARY_VOLUME_MIN,
+        catalyst_min=SHORT_TRADE_BOUNDARY_CATALYST_MIN,
+        candidate_score_min=SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
+    )
 
 
 def _build_short_trade_candidate_diagnostics(
@@ -994,161 +840,58 @@ def _build_short_trade_candidate_diagnostics(
     shadow_candidate_by_ticker: dict[str, CandidateStock] | None = None,
     historical_prior_by_ticker: dict[str, dict[str, Any]] | None = None,
 ) -> dict:
-    selected_tickers = {item.ticker for item in high_pool}
-    entries: list[dict] = []
-    shadow_observation_entries: list[dict] = []
-    released_shadow_entries: list[dict] = []
-    reason_counts: dict[str, int] = {}
-    filtered_reason_counts: dict[str, int] = {}
-    ranked_candidates: list[tuple[float, float, dict]] = []
-    ranked_shadow_observations: list[tuple[float, float, dict]] = []
-    ranked_released_shadow_entries: list[tuple[float, float, dict]] = []
     shadow_candidate_by_ticker = dict(shadow_candidate_by_ticker or {})
-    upstream_candidates_by_ticker = {item.ticker: item for item in fused if item.ticker not in selected_tickers}
-    for item in list(shadow_fused or []):
-        if item.ticker not in selected_tickers:
-            upstream_candidates_by_ticker.setdefault(item.ticker, item)
-    upstream_candidates = sorted(upstream_candidates_by_ticker.values(), key=lambda current: current.score_b, reverse=True)
-
-    for item in upstream_candidates:
-        shadow_candidate = shadow_candidate_by_ticker.get(item.ticker)
-        reason, candidate_source, upstream_candidate_source, candidate_reason_codes = resolve_short_trade_candidate_context(shadow_candidate)
-
-        candidate_entry = _build_short_trade_boundary_entry(
-            item=item,
-            reason=reason,
-            rank=0,
-            candidate_source=candidate_source,
-            upstream_candidate_source=upstream_candidate_source,
-            candidate_reason_codes=candidate_reason_codes,
-            candidate_pool_rank=int(shadow_candidate.candidate_pool_rank or 0) if shadow_candidate else None,
-            candidate_pool_lane=str(shadow_candidate.candidate_pool_lane or "") if shadow_candidate else None,
-            candidate_pool_shadow_reason=str(shadow_candidate.candidate_pool_shadow_reason or "") if shadow_candidate else None,
-            candidate_pool_avg_amount_share_of_cutoff=round(float(shadow_candidate.candidate_pool_avg_amount_share_of_cutoff), 4) if shadow_candidate else None,
-            candidate_pool_avg_amount_share_of_min_gate=round(float(shadow_candidate.candidate_pool_avg_amount_share_of_min_gate), 4) if shadow_candidate else None,
-            shadow_visibility_gap_selected=bool(shadow_candidate.shadow_visibility_gap_selected) if shadow_candidate else False,
-            shadow_visibility_gap_relaxed_band=bool(shadow_candidate.shadow_visibility_gap_relaxed_band) if shadow_candidate else False,
-        )
-        historical_prior = _resolve_historical_prior_for_ticker(
-            ticker=str(item.ticker or ""),
-            historical_prior=dict(candidate_entry.get("historical_prior") or {}),
-            prior_by_ticker=historical_prior_by_ticker or {},
-        )
-        if historical_prior:
-            candidate_entry["historical_prior"] = historical_prior
-        qualified, filter_reason, metrics_payload = _qualifies_short_trade_boundary_candidate(trade_date=trade_date, entry=candidate_entry)
-        if not qualified:
-            filtered_reason_counts[filter_reason] = filtered_reason_counts.get(filter_reason, 0) + 1
-            if shadow_candidate is not None:
-                historical_support = _summarize_upstream_shadow_release_historical_support(historical_prior)
-                should_release, release_reason = _should_release_upstream_shadow_candidate(
-                    candidate_entry=candidate_entry,
-                    filter_reason=filter_reason,
-                    metrics_payload=metrics_payload,
-                    historical_support=historical_support,
-                )
-                if should_release and release_reason is not None:
-                    ranked_released_shadow_entries.append(
-                        (
-                            float(historical_support.get("support_score", 0.0) or 0.0),
-                            float(metrics_payload.get("candidate_score", 0.0) or 0.0),
-                            float(item.score_b),
-                            _build_upstream_shadow_release_entry(
-                                candidate_entry=candidate_entry,
-                                filter_reason=filter_reason,
-                                metrics_payload=metrics_payload,
-                                release_reason=release_reason,
-                            ),
-                        )
-                    )
-                ranked_shadow_observations.append(
-                    (
-                        float(historical_support.get("support_score", 0.0) or 0.0),
-                        float(metrics_payload.get("candidate_score", 0.0) or 0.0),
-                        float(item.score_b),
-                        _build_upstream_shadow_observation_entry(
-                            candidate_entry=candidate_entry,
-                            filter_reason=filter_reason,
-                            metrics_payload=metrics_payload,
-                        ),
-                    )
-                )
-            continue
-
-        historical_support = _summarize_upstream_shadow_release_historical_support(historical_prior)
-        ranked_candidates.append(
-            (
-                float(historical_support.get("support_score", 0.0) or 0.0),
-                float(metrics_payload.get("candidate_score", 0.0) or 0.0),
-                float(item.score_b),
-                {
-                    **candidate_entry,
-                    "short_trade_boundary_metrics": metrics_payload,
-                    **({"shadow_release_historical_support": historical_support} if historical_prior else {}),
-                },
-            )
-        )
-
-    for entry in rank_scored_entries(ranked_candidates, limit=SHORT_TRADE_BOUNDARY_MAX_TICKERS):
-        reason = str(entry.get("reason") or "short_trade_candidate_score_ranked")
-        reason_counts[reason] = reason_counts.get(reason, 0) + 1
-        entries.append(entry)
-
-    shadow_observation_entries.extend(rank_scored_entries(ranked_shadow_observations, limit=UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS))
-
-    released_shadow_entries.extend(_select_upstream_shadow_release_entries(ranked_released_shadow_entries))
-
-    return {
-        "upstream_candidate_count": len(upstream_candidates),
-        "candidate_count": len(entries),
-        "shadow_observation_count": len(shadow_observation_entries),
-        "released_shadow_count": len(released_shadow_entries),
-        "reason_counts": reason_counts,
-        "filtered_reason_counts": filtered_reason_counts,
-        "prefilter_thresholds": {
-            "candidate_score_min": round(SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN, 4),
-            "breakout_freshness_min": round(SHORT_TRADE_BOUNDARY_BREAKOUT_MIN, 4),
-            "trend_acceleration_min": round(SHORT_TRADE_BOUNDARY_TREND_MIN, 4),
-            "volume_expansion_quality_min": round(SHORT_TRADE_BOUNDARY_VOLUME_MIN, 4),
-            "catalyst_freshness_min": round(SHORT_TRADE_BOUNDARY_CATALYST_MIN, 4),
-            "upstream_shadow_release_candidate_score_min": round(UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN, 4),
-            "upstream_shadow_catalyst_relief_candidate_score_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN, 4),
-            "upstream_shadow_catalyst_relief_breakout_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN, 4),
-            "upstream_shadow_catalyst_relief_trend_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN, 4),
-            "upstream_shadow_catalyst_relief_close_min": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN, 4),
-            "upstream_shadow_catalyst_relief_catalyst_freshness_floor": round(UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR, 4),
-            "upstream_shadow_catalyst_relief_near_miss_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD, 4),
-            "upstream_shadow_catalyst_relief_post_gate_selected_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD, 4),
-            "upstream_shadow_catalyst_relief_visibility_gap_corridor_selected_threshold": round(UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD, 4),
-            "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
-            "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane": {
-                lane: _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff(lane)
-                for lane in sorted(UPSTREAM_SHADOW_RELEASE_LANES)
-            },
-            "upstream_shadow_release_lane_score_mins": {
-                lane: round(float(score_min), 4)
-                for lane, score_min in UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS.items()
-            },
-            "upstream_shadow_release_lane_max_tickers": {
-                lane: int(limit)
-                for lane, limit in UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS.items()
-            },
-            "upstream_shadow_release_priority_tickers_by_lane": {
-                lane: list(priority_tickers)
-                for lane, priority_tickers in sorted(UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE.items())
-                if priority_tickers
-            },
-        },
-        "selected_tickers": [entry["ticker"] for entry in entries],
-        "shadow_observation_tickers": [entry["ticker"] for entry in shadow_observation_entries],
-        "released_shadow_tickers": [entry["ticker"] for entry in released_shadow_entries],
-        "score_buffer": round(SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
-        "minimum_score_b": round(FAST_AGENT_SCORE_THRESHOLD - SHORT_TRADE_BOUNDARY_SCORE_BUFFER, 4),
-        "max_candidates": SHORT_TRADE_BOUNDARY_MAX_TICKERS,
-        "tickers": entries,
-        "shadow_observation_entries": shadow_observation_entries,
-        "released_shadow_entries": released_shadow_entries,
-    }
+    upstream_candidates, ranking_state, ranked_outputs = prepare_short_trade_candidate_diagnostics_state(
+        fused=fused,
+        high_pool=high_pool,
+        shadow_fused=shadow_fused,
+        trade_date=trade_date,
+        shadow_candidate_by_ticker=shadow_candidate_by_ticker,
+        historical_prior_by_ticker=historical_prior_by_ticker or {},
+        collect_short_trade_diagnostic_rankings_fn=collect_short_trade_diagnostic_rankings,
+        resolve_short_trade_candidate_context_fn=resolve_short_trade_candidate_context,
+        build_short_trade_boundary_entry_fn=_build_short_trade_boundary_entry,
+        resolve_historical_prior_for_ticker_fn=_resolve_historical_prior_for_ticker,
+        qualifies_short_trade_boundary_candidate_fn=_qualifies_short_trade_boundary_candidate,
+        summarize_shadow_release_historical_support_fn=_summarize_upstream_shadow_release_historical_support,
+        should_release_upstream_shadow_candidate_fn=_should_release_upstream_shadow_candidate,
+        build_upstream_shadow_release_entry_fn=_build_upstream_shadow_release_entry,
+        build_upstream_shadow_observation_entry_fn=_build_upstream_shadow_observation_entry,
+        build_short_trade_ranked_outputs_fn=build_short_trade_ranked_outputs,
+        rank_scored_entries_fn=rank_scored_entries,
+        select_upstream_shadow_release_entries_fn=_select_upstream_shadow_release_entries,
+        short_trade_boundary_max_tickers=SHORT_TRADE_BOUNDARY_MAX_TICKERS,
+        upstream_shadow_observation_max_tickers=UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS,
+    )
+    return finalize_short_trade_candidate_diagnostics(
+        upstream_candidates=upstream_candidates,
+        ranking_state=ranking_state,
+        ranked_outputs=ranked_outputs,
+        build_short_trade_candidate_diagnostics_payload_fn=build_short_trade_candidate_diagnostics_payload,
+        build_short_trade_prefilter_thresholds_fn=build_short_trade_prefilter_thresholds,
+        resolve_no_profitability_hard_cliff_fn=_resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+        short_trade_boundary_candidate_score_min=SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
+        short_trade_boundary_breakout_min=SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
+        short_trade_boundary_trend_min=SHORT_TRADE_BOUNDARY_TREND_MIN,
+        short_trade_boundary_volume_min=SHORT_TRADE_BOUNDARY_VOLUME_MIN,
+        short_trade_boundary_catalyst_min=SHORT_TRADE_BOUNDARY_CATALYST_MIN,
+        upstream_shadow_release_candidate_score_min=UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+        upstream_shadow_catalyst_relief_candidate_score_min=UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN,
+        upstream_shadow_catalyst_relief_breakout_min=UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN,
+        upstream_shadow_catalyst_relief_trend_min=UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN,
+        upstream_shadow_catalyst_relief_close_min=UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN,
+        upstream_shadow_catalyst_relief_catalyst_freshness_floor=UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR,
+        upstream_shadow_catalyst_relief_near_miss_threshold=UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD,
+        upstream_shadow_catalyst_relief_post_gate_selected_threshold=UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD,
+        upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_default=UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
+        upstream_shadow_release_lanes=list(UPSTREAM_SHADOW_RELEASE_LANES),
+        upstream_shadow_release_lane_score_mins=UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
+        upstream_shadow_release_lane_max_tickers=UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
+        upstream_shadow_release_priority_tickers_by_lane=UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
+        score_buffer=SHORT_TRADE_BOUNDARY_SCORE_BUFFER,
+        minimum_score_b=FAST_AGENT_SCORE_THRESHOLD - SHORT_TRADE_BOUNDARY_SCORE_BUFFER,
+        max_candidates=SHORT_TRADE_BOUNDARY_MAX_TICKERS,
+    )
 
 
 def _build_catalyst_theme_entry(*, item, reason: str, rank: int) -> dict:
@@ -1193,22 +936,19 @@ def _resolve_catalyst_theme_close_momentum_relief(
     sector_resonance: float,
     catalyst_freshness: float,
 ) -> dict[str, Any]:
-    eligible = (
-        catalyst_freshness < CATALYST_THEME_CATALYST_MIN
-        and breakout_freshness >= CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN
-        and trend_acceleration >= CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN
-        and close_strength >= CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN
-        and sector_resonance >= CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN
+    return resolve_catalyst_theme_close_momentum_relief_impl(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        catalyst_freshness=catalyst_freshness,
+        catalyst_theme_catalyst_min=CATALYST_THEME_CATALYST_MIN,
+        catalyst_theme_close_momentum_relief_breakout_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN,
+        catalyst_theme_close_momentum_relief_trend_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN,
+        catalyst_theme_close_momentum_relief_close_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN,
+        catalyst_theme_close_momentum_relief_sector_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN,
+        catalyst_theme_sector_min=CATALYST_THEME_SECTOR_MIN,
     )
-    effective_catalyst_freshness = round(max(catalyst_freshness, CATALYST_THEME_CATALYST_MIN if eligible else catalyst_freshness), 4)
-    effective_sector_min = round(CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN if eligible else CATALYST_THEME_SECTOR_MIN, 4)
-    return {
-        "enabled": True,
-        "eligible": eligible,
-        "applied": eligible,
-        "effective_catalyst_freshness": effective_catalyst_freshness,
-        "effective_sector_min": effective_sector_min,
-    }
 
 
 def _compute_catalyst_theme_threshold_shortfalls(metric_values: dict[str, Any], threshold_checks: dict[str, float] | None = None) -> dict[str, float]:
@@ -1229,119 +969,27 @@ def _compute_catalyst_theme_threshold_shortfalls(metric_values: dict[str, Any], 
 
 
 def _build_catalyst_theme_shadow_entry(*, item, filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
-    threshold_shortfalls = _compute_catalyst_theme_threshold_shortfalls(
-        dict(metrics_payload.get("threshold_metric_values") or metrics_payload),
-        dict(metrics_payload.get("threshold_checks") or {}),
+    return build_catalyst_theme_shadow_entry_impl(
+        item=item,
+        filter_reason=filter_reason,
+        metrics_payload=metrics_payload,
+        build_catalyst_theme_entry_fn=_build_catalyst_theme_entry,
+        compute_threshold_shortfalls_fn=_compute_catalyst_theme_threshold_shortfalls,
     )
-    total_shortfall = round(sum(threshold_shortfalls.values()), 4)
-    return {
-        **_build_catalyst_theme_entry(item=item, reason=filter_reason, rank=0),
-        "decision": "catalyst_theme_shadow",
-        "candidate_source": "catalyst_theme_shadow",
-        "score_target": float(metrics_payload.get("candidate_score", 0.0) or 0.0),
-        "confidence": round(min(1.0, max(0.0, float(metrics_payload.get("candidate_score", 0.0) or 0.0))), 4),
-        "top_reasons": [
-            f"candidate_score={float(metrics_payload.get('candidate_score', 0.0) or 0.0):.2f}",
-            f"catalyst_freshness={float(metrics_payload.get('catalyst_freshness', 0.0) or 0.0):.2f}",
-            f"total_shortfall={total_shortfall:.2f}",
-        ],
-        "positive_tags": list(metrics_payload.get("theme_tags") or []),
-        "gate_status": dict(metrics_payload.get("gate_status") or {}),
-        "blockers": list(metrics_payload.get("blockers") or []),
-        "metrics": {
-            "breakout_freshness": metrics_payload.get("breakout_freshness"),
-            "trend_acceleration": metrics_payload.get("trend_acceleration"),
-            "close_strength": metrics_payload.get("close_strength"),
-            "sector_resonance": metrics_payload.get("sector_resonance"),
-            "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
-        },
-        "filter_reason": filter_reason,
-        "threshold_shortfalls": threshold_shortfalls,
-        "failed_threshold_count": len(threshold_shortfalls),
-        "total_shortfall": total_shortfall,
-        "promotion_trigger": "若催化继续发酵，或在受控实验里适度放宽题材催化门槛，可升级到题材催化研究池。",
-        "catalyst_theme_metrics": metrics_payload,
-    }
 
 
 def _qualifies_catalyst_theme_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict[str, Any]]:
     snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
-    gate_status = dict(snapshot.get("gate_status") or {})
-    blockers = sorted({str(blocker) for blocker in list(snapshot.get("blockers") or []) if str(blocker or "").strip()})
-
-    breakout_freshness = round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4)
-    trend_acceleration = round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4)
-    close_strength = round(float(snapshot.get("close_strength", 0.0) or 0.0), 4)
-    sector_resonance = round(float(snapshot.get("sector_resonance", 0.0) or 0.0), 4)
-    catalyst_freshness = round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4)
-    close_momentum_catalyst_relief = _resolve_catalyst_theme_close_momentum_relief(
-        breakout_freshness=breakout_freshness,
-        trend_acceleration=trend_acceleration,
-        close_strength=close_strength,
-        sector_resonance=sector_resonance,
-        catalyst_freshness=catalyst_freshness,
+    return qualify_catalyst_theme_candidate_from_snapshot(
+        snapshot=snapshot,
+        resolve_close_momentum_relief_fn=_resolve_catalyst_theme_close_momentum_relief,
+        compute_candidate_score_fn=_compute_catalyst_theme_candidate_score,
+        catalyst_theme_sector_min=CATALYST_THEME_SECTOR_MIN,
+        catalyst_theme_candidate_score_min=CATALYST_THEME_CANDIDATE_SCORE_MIN,
+        catalyst_theme_breakout_min=CATALYST_THEME_BREAKOUT_MIN,
+        catalyst_theme_close_min=CATALYST_THEME_CLOSE_MIN,
+        catalyst_theme_catalyst_min=CATALYST_THEME_CATALYST_MIN,
     )
-    effective_catalyst_freshness = round(float(close_momentum_catalyst_relief.get("effective_catalyst_freshness") or catalyst_freshness), 4)
-    effective_sector_min = round(float(close_momentum_catalyst_relief.get("effective_sector_min") or CATALYST_THEME_SECTOR_MIN), 4)
-    candidate_score = _compute_catalyst_theme_candidate_score(
-        {
-            "breakout_freshness": breakout_freshness,
-            "trend_acceleration": trend_acceleration,
-            "close_strength": close_strength,
-            "sector_resonance": sector_resonance,
-            "catalyst_freshness": effective_catalyst_freshness,
-        }
-    )
-    threshold_checks = {
-        "candidate_score": round(float(CATALYST_THEME_CANDIDATE_SCORE_MIN), 4),
-        "breakout_freshness": round(float(CATALYST_THEME_BREAKOUT_MIN), 4),
-        "close_strength": round(float(CATALYST_THEME_CLOSE_MIN), 4),
-        "sector_resonance": effective_sector_min,
-        "catalyst_freshness": round(float(CATALYST_THEME_CATALYST_MIN), 4),
-    }
-    threshold_metric_values = {
-        "candidate_score": candidate_score,
-        "breakout_freshness": breakout_freshness,
-        "close_strength": close_strength,
-        "sector_resonance": sector_resonance,
-        "catalyst_freshness": effective_catalyst_freshness,
-    }
-    metrics_payload = build_catalyst_theme_metrics_payload(
-        gate_status=gate_status,
-        blockers=blockers,
-        breakout_freshness=breakout_freshness,
-        trend_acceleration=trend_acceleration,
-        close_strength=close_strength,
-        sector_resonance=sector_resonance,
-        catalyst_freshness=catalyst_freshness,
-        candidate_score=candidate_score,
-        effective_catalyst_freshness=effective_catalyst_freshness,
-        close_momentum_catalyst_relief=close_momentum_catalyst_relief,
-        threshold_checks=threshold_checks,
-        threshold_metric_values=threshold_metric_values,
-        theme_tags=build_catalyst_theme_tags(
-            catalyst_freshness=catalyst_freshness,
-            catalyst_freshness_min=CATALYST_THEME_CATALYST_MIN,
-            breakout_freshness=breakout_freshness,
-            close_strength=close_strength,
-            sector_resonance=sector_resonance,
-            close_momentum_catalyst_relief_applied=bool(close_momentum_catalyst_relief.get("applied")),
-        ),
-    )
-    filter_reason = resolve_catalyst_theme_filter_reason(
-        gate_status=gate_status,
-        effective_catalyst_freshness=effective_catalyst_freshness,
-        catalyst_freshness_min=CATALYST_THEME_CATALYST_MIN,
-        sector_resonance=sector_resonance,
-        effective_sector_min=effective_sector_min,
-        close_strength=close_strength,
-        close_strength_min=CATALYST_THEME_CLOSE_MIN,
-        breakout_freshness=breakout_freshness,
-        breakout_freshness_min=CATALYST_THEME_BREAKOUT_MIN,
-        candidate_score=candidate_score,
-        candidate_score_min=CATALYST_THEME_CANDIDATE_SCORE_MIN,
-    )
-    return filter_reason == "catalyst_theme_candidate_score_ranked", filter_reason, metrics_payload
 
 
 def _build_catalyst_theme_candidate_diagnostics(
@@ -1350,144 +998,50 @@ def _build_catalyst_theme_candidate_diagnostics(
     short_trade_candidate_diagnostics: dict[str, Any],
     trade_date: str,
 ) -> dict[str, Any]:
-    excluded_tickers = {item.ticker for item in watchlist}
-    excluded_tickers.update(str(ticker) for ticker in list((short_trade_candidate_diagnostics or {}).get("selected_tickers", []) or []))
-
-    entries: list[dict[str, Any]] = []
-    shadow_entries: list[dict[str, Any]] = []
-    reason_counts: dict[str, int] = {}
-    filtered_reason_counts: dict[str, int] = {}
-    ranked_candidates: list[tuple[float, float, dict[str, Any]]] = []
-    ranked_shadow_candidates: list[tuple[float, float, float, dict[str, Any]]] = []
-    upstream_candidates = sorted(
-        [item for item in fused if item.ticker not in excluded_tickers],
-        key=lambda current: current.score_b,
-        reverse=True,
+    upstream_candidates = build_upstream_catalyst_theme_candidates(
+        fused=fused,
+        watchlist=watchlist,
+        short_trade_candidate_diagnostics=short_trade_candidate_diagnostics,
     )
-
-    for item in upstream_candidates:
-        reason = "catalyst_theme_candidate_score_ranked"
-        candidate_entry = _build_catalyst_theme_entry(item=item, reason=reason, rank=0)
-        qualified, filter_reason, metrics_payload = _qualifies_catalyst_theme_candidate(trade_date=trade_date, entry=candidate_entry)
-        if not qualified:
-            filtered_reason_counts[filter_reason] = filtered_reason_counts.get(filter_reason, 0) + 1
-            if filter_reason != "metric_data_fail":
-                shadow_entry = _build_catalyst_theme_shadow_entry(item=item, filter_reason=filter_reason, metrics_payload=metrics_payload)
-                ranked_shadow_candidates.append(
-                    (
-                        float(metrics_payload.get("candidate_score", 0.0) or 0.0),
-                        -float(shadow_entry.get("total_shortfall", 0.0) or 0.0),
-                        float(item.score_b),
-                        shadow_entry,
-                    )
-                )
-            continue
-
-        carryover_relief_config = _build_catalyst_theme_short_trade_carryover_relief_config(metrics_payload=metrics_payload)
-        resolved_reason_codes = [
-            str(code)
-            for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or [])
-            if str(code or "").strip()
-        ]
-        if carryover_relief_config and "catalyst_theme_short_trade_carryover_candidate" not in resolved_reason_codes:
-            resolved_reason_codes.append("catalyst_theme_short_trade_carryover_candidate")
-        ranked_candidates.append(
-            (
-                float(metrics_payload.get("candidate_score", 0.0) or 0.0),
-                float(item.score_b),
-                {
-                    **candidate_entry,
-                    "reasons": resolved_reason_codes,
-                    "candidate_reason_codes": resolved_reason_codes,
-                    "score_target": float(metrics_payload.get("candidate_score", 0.0) or 0.0),
-                    "confidence": round(min(1.0, max(0.0, float(metrics_payload.get("candidate_score", 0.0) or 0.0))), 4),
-                    "top_reasons": [
-                        f"catalyst_freshness={float(metrics_payload.get('catalyst_freshness', 0.0) or 0.0):.2f}",
-                        f"sector_resonance={float(metrics_payload.get('sector_resonance', 0.0) or 0.0):.2f}",
-                        f"candidate_score={float(metrics_payload.get('candidate_score', 0.0) or 0.0):.2f}",
-                    ],
-                    "positive_tags": list(metrics_payload.get("theme_tags") or []),
-                    "gate_status": dict(metrics_payload.get("gate_status") or {}),
-                    "blockers": list(metrics_payload.get("blockers") or []),
-                    "metrics": {
-                        "breakout_freshness": metrics_payload.get("breakout_freshness"),
-                        "trend_acceleration": metrics_payload.get("trend_acceleration"),
-                        "close_strength": metrics_payload.get("close_strength"),
-                        "sector_resonance": metrics_payload.get("sector_resonance"),
-                        "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
-                    },
-                    "promotion_trigger": "若催化继续扩散并形成量价确认，可升级到 short-trade shadow 观察。",
-                    "catalyst_theme_metrics": metrics_payload,
-                    **({"short_trade_catalyst_relief": carryover_relief_config} if carryover_relief_config else {}),
-                },
-            )
-        )
-
-    ranked_candidates.sort(key=lambda row: (row[0], row[1], str(row[2].get("ticker") or "")), reverse=True)
-    for rank, (_, _, entry) in enumerate(ranked_candidates[:CATALYST_THEME_MAX_TICKERS], start=1):
-        entry["rank"] = rank
-        reason = str(entry.get("reason") or "catalyst_theme_candidate_score_ranked")
-        reason_counts[reason] = reason_counts.get(reason, 0) + 1
-        entries.append(entry)
-
-    ranked_shadow_candidates.sort(key=lambda row: (row[0], row[1], row[2], str(row[3].get("ticker") or "")), reverse=True)
-    for rank, (_, _, _, entry) in enumerate(ranked_shadow_candidates[:CATALYST_THEME_SHADOW_MAX_TICKERS], start=1):
-        entry["rank"] = rank
-        shadow_entries.append(entry)
-
-    return {
-        "upstream_candidate_count": len(upstream_candidates),
-        "candidate_count": len(entries),
-        "shadow_candidate_count": len(shadow_entries),
-        "reason_counts": reason_counts,
-        "filtered_reason_counts": filtered_reason_counts,
-        "prefilter_thresholds": {
-            "candidate_score_min": round(CATALYST_THEME_CANDIDATE_SCORE_MIN, 4),
-            "breakout_freshness_min": round(CATALYST_THEME_BREAKOUT_MIN, 4),
-            "close_strength_min": round(CATALYST_THEME_CLOSE_MIN, 4),
-            "sector_resonance_min": round(CATALYST_THEME_SECTOR_MIN, 4),
-            "catalyst_freshness_min": round(CATALYST_THEME_CATALYST_MIN, 4),
-            "short_trade_carryover_candidate_score_min": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN, 4),
-            "short_trade_carryover_catalyst_freshness_floor": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR, 4),
-            "short_trade_carryover_near_miss_threshold": round(CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD, 4),
-            "short_trade_carryover_min_historical_evaluable_count": int(CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT),
-            "short_trade_carryover_require_no_profitability_hard_cliff": CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
-        },
-        "selected_tickers": [entry["ticker"] for entry in entries],
-        "shadow_tickers": [entry["ticker"] for entry in shadow_entries],
-        "max_candidates": CATALYST_THEME_MAX_TICKERS,
-        "tickers": entries,
-        "shadow_candidates": shadow_entries,
-    }
-
-
-def _extract_sell_order_value(order, field_name: str, default=None):
-    if isinstance(order, dict):
-        return order.get(field_name, default)
-    return getattr(order, field_name, default)
+    ranking_state = collect_catalyst_theme_diagnostic_rankings(
+        upstream_candidates=upstream_candidates,
+        trade_date=trade_date,
+        build_catalyst_theme_entry_fn=_build_catalyst_theme_entry,
+        qualifies_catalyst_theme_candidate_fn=_qualifies_catalyst_theme_candidate,
+        build_catalyst_theme_shadow_entry_fn=_build_catalyst_theme_shadow_entry,
+        build_catalyst_theme_short_trade_carryover_relief_config_fn=_build_catalyst_theme_short_trade_carryover_relief_config,
+    )
+    ranked_outputs = build_catalyst_theme_ranked_outputs(
+        ranked_candidates=ranking_state["ranked_candidates"],
+        ranked_shadow_candidates=ranking_state["ranked_shadow_candidates"],
+        catalyst_theme_max_tickers=CATALYST_THEME_MAX_TICKERS,
+        catalyst_theme_shadow_max_tickers=CATALYST_THEME_SHADOW_MAX_TICKERS,
+    )
+    return finalize_catalyst_theme_candidate_diagnostics(
+        upstream_candidates=upstream_candidates,
+        ranking_state=ranking_state,
+        ranked_outputs=ranked_outputs,
+        build_catalyst_theme_candidate_diagnostics_payload_fn=build_catalyst_theme_candidate_diagnostics_payload,
+        build_catalyst_theme_prefilter_thresholds_fn=build_catalyst_theme_prefilter_thresholds,
+        catalyst_theme_candidate_score_min=CATALYST_THEME_CANDIDATE_SCORE_MIN,
+        catalyst_theme_breakout_min=CATALYST_THEME_BREAKOUT_MIN,
+        catalyst_theme_close_min=CATALYST_THEME_CLOSE_MIN,
+        catalyst_theme_sector_min=CATALYST_THEME_SECTOR_MIN,
+        catalyst_theme_catalyst_min=CATALYST_THEME_CATALYST_MIN,
+        short_trade_carryover_candidate_score_min=CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN,
+        short_trade_carryover_catalyst_freshness_floor=CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR,
+        short_trade_carryover_near_miss_threshold=CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD,
+        short_trade_carryover_min_historical_evaluable_count=CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT,
+        short_trade_carryover_require_no_profitability_hard_cliff=CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+        max_candidates=CATALYST_THEME_MAX_TICKERS,
+    )
 
 
 def _build_sell_order_diagnostics(sell_orders: list) -> dict:
-    entries: list[dict] = []
-    for order in sell_orders:
-        reason = (
-            _extract_sell_order_value(order, "trigger_reason")
-            or _extract_sell_order_value(order, "level")
-            or _extract_sell_order_value(order, "reason")
-            or "sell_signal"
-        )
-        entries.append(
-            {
-                "ticker": _extract_sell_order_value(order, "ticker", ""),
-                "reason": str(reason),
-                "level": _extract_sell_order_value(order, "level"),
-                "urgency": _extract_sell_order_value(order, "urgency"),
-                "sell_ratio": _extract_sell_order_value(order, "sell_ratio"),
-            }
-        )
-    summary = _build_filter_summary(entries)
-    summary["count"] = len(sell_orders)
-    return summary
+    return build_sell_order_diagnostics_impl(
+        sell_orders=sell_orders,
+        build_filter_summary_fn=_build_filter_summary,
+    )
 
 
 def _normalize_blocked_buy_tickers(blocked_buy_tickers: dict[str, dict] | None) -> dict[str, dict]:
@@ -1527,35 +1081,14 @@ def _build_reentry_filter_payload(
     trade_date: str,
     selection_target: DualTargetEvaluation | None = None,
 ) -> dict | None:
-    normalized_ticker = str(ticker)
-    blocked_until = str(cooldown_payload.get("blocked_until") or "")
-    trigger_reason = str(cooldown_payload.get("trigger_reason") or "")
-    exit_trade_date = str(cooldown_payload.get("exit_trade_date") or "")
-    if blocked_until and trade_date and trade_date < blocked_until:
-        return {
-            "ticker": normalized_ticker,
-            "reason": "blocked_by_exit_cooldown",
-            "score_final": round(score_final, 4),
-            "blocked_until": blocked_until,
-            "trigger_reason": trigger_reason,
-            "exit_trade_date": exit_trade_date,
-        }
-
-    reentry_review_until = str(cooldown_payload.get("reentry_review_until") or "")
-    required_score, weak_confirmation_reentry_guard = _resolve_reentry_required_score(cooldown_payload, selection_target)
-    if reentry_review_until and trade_date and trade_date <= reentry_review_until and score_final < required_score:
-        return {
-            "ticker": normalized_ticker,
-            "reason": "blocked_by_reentry_score_confirmation",
-            "score_final": round(score_final, 4),
-            "required_score": round(required_score, 4),
-            "weak_confirmation_reentry_guard": weak_confirmation_reentry_guard,
-            "reentry_review_until": reentry_review_until,
-            "trigger_reason": trigger_reason,
-            "exit_trade_date": exit_trade_date,
-        }
-
-    return None
+    return build_reentry_filter_payload(
+        ticker=ticker,
+        score_final=score_final,
+        cooldown_payload=cooldown_payload,
+        trade_date=trade_date,
+        selection_target=selection_target,
+        resolve_reentry_required_score_fn=_resolve_reentry_required_score,
+    )
 
 
 def _build_reentry_filter_entry(
@@ -1649,44 +1182,25 @@ def _ensure_plan_target_shells(
     short_trade_target_profile_name: str = "default",
     short_trade_target_profile_overrides: dict[str, object] | None = None,
 ) -> ExecutionPlan:
-    selection_targets = dict(plan.selection_targets or {})
-    summary = plan.dual_target_summary if isinstance(plan.dual_target_summary, DualTargetSummary) else DualTargetSummary.model_validate(plan.dual_target_summary or {})
-    watchlist_filter_diagnostics = ((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("watchlist", {}) or {})
-    short_trade_candidate_diagnostics = ((((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {}).get("filters", {}) or {}).get("short_trade_candidates", {}) or {})
-    historical_prior_by_ticker = _load_latest_btst_historical_prior_by_ticker()
-    rejected_entries = _attach_historical_prior_to_entries(
-        list(watchlist_filter_diagnostics.get("tickers", []) or []),
-        prior_by_ticker=historical_prior_by_ticker,
+    selection_targets, summary, shell_inputs = prepare_plan_target_shell_context(
+        plan=plan,
+        target_mode=target_mode,
+        dual_target_summary_cls=DualTargetSummary,
+        load_latest_historical_prior_by_ticker_fn=_load_latest_btst_historical_prior_by_ticker,
+        attach_historical_prior_to_entries_fn=_attach_historical_prior_to_entries,
+        attach_historical_prior_to_watchlist_fn=_attach_historical_prior_to_watchlist,
     )
-    watchlist = _attach_historical_prior_to_watchlist(
-        list(plan.watchlist or []),
-        prior_by_ticker=historical_prior_by_ticker,
+    selection_targets, summary = resolve_plan_target_shell_selection(
+        plan_date=plan.date,
+        selection_targets=selection_targets,
+        shell_inputs=shell_inputs,
+        target_mode=target_mode,
+        short_trade_target_profile_name=short_trade_target_profile_name,
+        short_trade_target_profile_overrides=short_trade_target_profile_overrides,
+        use_short_trade_target_profile_fn=use_short_trade_target_profile,
+        build_selection_targets_fn=build_selection_targets,
+        summarize_selection_targets_fn=summarize_selection_targets,
     )
-    funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
-    funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
-    catalyst_theme_candidates = list(dict(funnel_filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []) if target_mode == "short_trade_only" else []
-    supplemental_short_trade_entries = _attach_historical_prior_to_entries(
-        [
-            *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
-            *list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []),
-            *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
-            *catalyst_theme_candidates,
-        ],
-        prior_by_ticker=historical_prior_by_ticker,
-    )
-    buy_order_tickers = {order.ticker for order in list(plan.buy_orders or [])}
-    if not selection_targets and (watchlist or rejected_entries or supplemental_short_trade_entries):
-        with use_short_trade_target_profile(profile_name=short_trade_target_profile_name, overrides=short_trade_target_profile_overrides):
-            selection_targets, summary = build_selection_targets(
-                trade_date=plan.date,
-                watchlist=watchlist,
-                rejected_entries=rejected_entries,
-                supplemental_short_trade_entries=supplemental_short_trade_entries,
-                buy_order_tickers=buy_order_tickers,
-                target_mode=target_mode,
-            )
-    else:
-        summary = summarize_selection_targets(selection_targets=selection_targets, target_mode=target_mode)
 
     plan.selection_targets = selection_targets
     plan.target_mode = target_mode
@@ -1707,103 +1221,28 @@ def build_buy_orders_with_diagnostics(
     blocked_buy_tickers: dict[str, dict] | None = None,
     selection_targets: dict[str, DualTargetEvaluation] | None = None,
 ) -> tuple[list, dict]:
-    cash = float(portfolio_snapshot.get("cash", 0.0))
-    nav = cash + sum(
-        float(position.get("long", 0)) * float(position.get("long_cost_basis", 0.0))
-        for position in portfolio_snapshot.get("positions", {}).values()
-    )
-    nav = nav if nav > 0 else cash
-    candidate_by_ticker = candidate_by_ticker or {}
-    price_map = price_map or {}
     blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
     if not watchlist:
         return [], _build_filter_summary([])
-    if cash <= 0:
-        entries = [
-            {
-                "ticker": item.ticker,
-                "reason": "no_available_cash",
-                "score_final": round(item.score_final, 4),
-            }
-            for item in watchlist
-        ]
-        summary = _build_filter_summary(entries)
-        summary["selected_tickers"] = []
-        return [], summary
-
-    per_name_cash = cash / max(1, min(3, len(watchlist)))
-    candidate_plans = []
-    filtered_entries: list[dict] = []
-    selection_targets = selection_targets or {}
-    for item in watchlist:
-        cooldown_payload = blocked_buy_tickers.get(item.ticker)
-        if cooldown_payload is not None:
-            reentry_filter_entry = _build_reentry_filter_entry(
-                item,
-                cooldown_payload,
-                trade_date,
-                selection_target=selection_targets.get(item.ticker),
-            )
-            if reentry_filter_entry is not None:
-                filtered_entries.append(reentry_filter_entry)
-                continue
-        current_price = float(price_map.get(item.ticker, 10.0))
-        candidate = candidate_by_ticker.get(item.ticker)
-        avg_volume_20d = float(candidate.avg_volume_20d) if candidate and candidate.avg_volume_20d > 0 else 10_000_000.0
-        industry_quota = nav * 0.25
-        existing_position = portfolio_snapshot.get("positions", {}).get(item.ticker, {})
-        existing_long_shares = float(existing_position.get("long", 0.0))
-        existing_position_ratio = ((existing_long_shares * current_price) / nav) if nav > 0 else 0.0
-        continuation_overrides = _resolve_continuation_execution_overrides(item=item, selection_target=selection_targets.get(item.ticker))
-        plan = calculate_position(
-            ticker=item.ticker,
-            current_price=current_price,
-            score_final=item.score_final,
-            portfolio_nav=nav,
-            available_cash=min(cash, per_name_cash),
-            avg_volume_20d=avg_volume_20d,
-            industry_remaining_quota=industry_quota,
-            quality_score=item.quality_score,
-            existing_position_ratio=existing_position_ratio,
-            watchlist_min_score_override=continuation_overrides.get("watchlist_min_score_override"),
-            watchlist_edge_execution_ratio_override=continuation_overrides.get("watchlist_edge_execution_ratio_override"),
-        )
-        if plan.shares > 0:
-            candidate_plans.append(plan)
-            continue
-        filtered_entries.append(
-            {
-                "ticker": item.ticker,
-                "reason": f"position_blocked_{plan.constraint_binding or 'unknown'}",
-                "score_final": round(item.score_final, 4),
-                "constraint_binding": plan.constraint_binding,
-                "amount": round(plan.amount, 4),
-                "execution_ratio": plan.execution_ratio,
-                "quality_score": round(plan.quality_score, 4),
-                "continuation_execution_override": bool(continuation_overrides.get("applied")),
-            }
-        )
-
-    buy_orders = enforce_daily_trade_limit(candidate_plans, nav)
-    selected_tickers = {plan.ticker for plan in buy_orders}
-    for plan in candidate_plans:
-        if plan.ticker in selected_tickers:
-            continue
-        filtered_entries.append(
-            {
-                "ticker": plan.ticker,
-                "reason": "filtered_by_daily_trade_limit",
-                "score_final": round(plan.score_final, 4),
-                "constraint_binding": plan.constraint_binding,
-                "amount": round(plan.amount, 4),
-                "execution_ratio": plan.execution_ratio,
-                "quality_score": round(plan.quality_score, 4),
-            }
-        )
-
-    summary = _build_filter_summary(filtered_entries)
-    summary["selected_tickers"] = [plan.ticker for plan in buy_orders]
-    return buy_orders, summary
+    execution_context = prepare_buy_order_execution_context(
+        watchlist=watchlist,
+        portfolio_snapshot=portfolio_snapshot,
+        candidate_by_ticker=candidate_by_ticker,
+        price_map=price_map,
+        blocked_buy_tickers=blocked_buy_tickers,
+        selection_targets=selection_targets,
+    )
+    return resolve_buy_orders_with_diagnostics(
+        watchlist=watchlist,
+        portfolio_snapshot=portfolio_snapshot,
+        trade_date=trade_date,
+        execution_context=execution_context,
+        build_reentry_filter_entry_fn=_build_reentry_filter_entry,
+        resolve_continuation_execution_overrides_fn=_resolve_continuation_execution_overrides,
+        calculate_position_fn=calculate_position,
+        enforce_daily_trade_limit_fn=enforce_daily_trade_limit,
+        build_filter_summary_fn=_build_filter_summary,
+    )
 
 
 def _resolve_continuation_execution_overrides(*, item: LayerCResult, selection_target: DualTargetEvaluation | None) -> dict[str, Any]:

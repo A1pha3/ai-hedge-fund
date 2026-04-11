@@ -2,18 +2,42 @@ import hashlib
 import json
 import os
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from src.data.enhanced_cache import get_enhanced_cache
 from src.data.models import FinancialMetrics, InsiderTrade, LineItem, Price
-from src.tools.tushare_daily_gainers_helpers import build_daily_gainer_item, build_stock_basic_maps, fallback_trade_date_dataframe, fill_missing_pct_change
+from src.tools.tushare_daily_basic_helpers import load_daily_basic_batch, select_latest_daily_basic_row
+from src.tools.tushare_daily_gainers_helpers import (
+    build_daily_gainer_item,
+    build_daily_gainers_with_tushare_data,
+    build_stock_basic_maps,
+    fallback_trade_date_dataframe,
+    fill_missing_pct_change,
+)
+from src.tools.tushare_batch_fetch_helpers import fetch_batch_cached_frame, fetch_process_cached_frame
 from src.tools.tushare_financial_metrics_helpers import build_financial_metric_support_maps, build_financial_metrics_from_frames, fetch_financial_metric_frames, resolve_financial_metrics_fetch_limit
 from src.tools.tushare_insider_trade_helpers import build_holdertrade_query_kwargs, build_insider_trade_from_row
 from src.tools.tushare_line_items_helpers import build_line_items_from_frames, fetch_line_item_statement_frames
-from src.tools.tushare_sw_industry_helpers import build_sw_industry_mapping, load_sw_index_classification
+from src.tools.tushare_market_data_helpers import (
+    build_index_daily_query_kwargs,
+    build_northbound_flow_query_kwargs,
+    fetch_sorted_cached_market_frame,
+)
+from src.tools.tushare_stock_details_helpers import (
+    build_default_stock_details,
+    build_prices_from_tushare_daily_df,
+    build_stock_basic_details,
+    build_stock_price_details,
+)
+from src.tools.tushare_sw_industry_helpers import (
+    build_sw_industry_mapping,
+    extract_open_trade_dates,
+    load_sw_index_classification,
+    resolve_cached_sw_industry_mapping,
+)
 
 _pro = None
 _stock_name_cache: Dict[str, str] = {}
@@ -218,23 +242,7 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
         print(f"[Tushare] 调用 daily API: ts_code={ts_code}, start_date={start_fmt}, end_date={end_fmt}")
         df = _cached_tushare_dataframe_call(pro, "daily", ts_code=ts_code, start_date=start_fmt, end_date=end_fmt)
         print(f"[Tushare] 返回数据: {df.shape if df is not None else 'None'}")
-        if df is None or df.empty:
-            return []
-        prices = []
-        for _, row in df.iterrows():
-            date_str = str(row["trade_date"])
-            date_formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-            prices.append(
-                Price(
-                    time=date_formatted,
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=int(row["vol"]),
-                )
-            )
-        prices.reverse()
+        prices = build_prices_from_tushare_daily_df(df)
         print(f"[Tushare] 成功获取 {len(prices)} 条数据")
         return prices
     except Exception as e:
@@ -255,36 +263,17 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
         return []
     try:
         trade_fmt = trade_date.replace("-", "")
-        fields = "ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg"
-        df = _cached_tushare_dataframe_call(pro, "daily", trade_date=trade_fmt, fields=fields)
-        if df is None or df.empty:
-            df = fallback_trade_date_dataframe(_cached_tushare_dataframe_call, pro, trade_fmt, fields)
-        if df is None or df.empty:
-            return []
-        df = fill_missing_pct_change(df)
-        df = df[pd.notna(df["pct_chg"])]
-        df = df[df["pct_chg"] > pct_threshold]
-        if df.empty:
-            return []
-
-        name_map: dict[str, str] = {}
-        area_map: dict[str, str] = {}
-        industry_map: dict[str, str] = {}
-        market_map: dict[str, str] = {}
-        list_date_map: dict[str, str] = {}
-        st_codes: set[str] = set()
-        if include_name:
-            df_basic = _cached_tushare_dataframe_call(pro, "stock_basic", exchange="", list_status="L", fields="ts_code,name,area,industry,market,list_date")
-            name_map, area_map, industry_map, market_map, list_date_map, st_codes = build_stock_basic_maps(df_basic)
-
-        results = []
-        df_sorted = df.sort_values("pct_chg", ascending=False)
-        for _, row in df_sorted.iterrows():
-            ts_code = str(row["ts_code"])
-            if ts_code in st_codes:
-                continue
-            results.append(build_daily_gainer_item(row, include_name, name_map, area_map, industry_map, market_map, list_date_map))
-        return results
+        return build_daily_gainers_with_tushare_data(
+            pro=pro,
+            trade_fmt=trade_fmt,
+            pct_threshold=pct_threshold,
+            include_name=include_name,
+            fetch_dataframe=_cached_tushare_dataframe_call,
+            fallback_trade_date_dataframe_fn=fallback_trade_date_dataframe,
+            fill_missing_pct_change_fn=fill_missing_pct_change,
+            build_stock_basic_maps_fn=build_stock_basic_maps,
+            build_daily_gainer_item_fn=build_daily_gainer_item,
+        )
     except Exception as e:
         print(f"[Tushare] 获取涨幅榜失败: {e}")
         import traceback
@@ -338,46 +327,16 @@ def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: 
     如果找不到数据则返回 None。
     内置内存缓存：同一 ts_code 批量获取一次 daily_basic，后续按日期过滤。
     """
-    # 批量缓存：首次调用时获取近2年的 daily_basic 数据，后续按日期过滤
     batch_cache_key = f"{ts_code}_daily_basic_batch"
-    date_fmt = anchor_date.replace("-", "")
-
-    # 检查批量缓存
-    df_batch = _get_tushare_cached_df(batch_cache_key)
-
-    # 首次调用：批量获取近2年的 daily_basic 数据（一次 API 调用覆盖所有周期）
-    if df_batch is None:
-        # 始终以当前日期为终点，确保覆盖最新交易日数据
-        today_fmt = datetime.now().strftime("%Y%m%d")
-        try:
-            # 使用 anchor_date 和 today 中较晚的作为终止日期
-            actual_end = max(date_fmt, today_fmt)
-            date_obj = datetime.strptime(actual_end, "%Y%m%d")
-        except Exception:
-            return None
-        # 获取最近 730 天（约2年）的数据，覆盖所有财报周期
-        start_fmt = (date_obj - timedelta(days=730)).strftime("%Y%m%d")
-        try:
-            # 使用 query 通用调用，避开 pro.daily_basic 可能的属性缺失
-            df_batch = pro.query("daily_basic", ts_code=ts_code, start_date=start_fmt, end_date=actual_end)
-            if df_batch is not None and not df_batch.empty and "trade_date" in df_batch.columns:
-                df_batch = df_batch.sort_values("trade_date", ascending=False).reset_index(drop=True)
-        except Exception as e:
-            print(f"[Tushare] daily_basic 批量获取({ts_code}, {start_fmt}~{actual_end}) 失败: {e}")
-            df_batch = pd.DataFrame()  # 空 DataFrame 表示已尝试
-
-        _store_tushare_cached_df(batch_cache_key, df_batch)
-
-    # 从批量数据中查找 <= anchor_date 的最近交易日
-    if df_batch is None or df_batch.empty:
-        return None
-
-    mask = df_batch["trade_date"] <= date_fmt
-    filtered = df_batch[mask]
-    if filtered.empty:
-        return None
-
-    return filtered.iloc[0].to_dict()
+    df_batch = load_daily_basic_batch(
+        pro=pro,
+        ts_code=ts_code,
+        anchor_date=anchor_date,
+        cache_key=batch_cache_key,
+        get_cached_df=_get_tushare_cached_df,
+        store_cached_df=_store_tushare_cached_df,
+    )
+    return select_latest_daily_basic_row(df_batch, anchor_date)
 
 
 def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> float | None:
@@ -558,72 +517,23 @@ def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
     """
     pro = _get_pro()
     if not pro:
-        return {
-            "name": ticker,
-            "area": "N/A",
-            "industry": "N/A",
-            "market": "N/A",
-            "list_date": "N/A",
-            "pct_chg": "N/A",
-            "pre_close": "N/A",
-            "close": "N/A",
-        }
+        return build_default_stock_details(ticker)
 
     try:
         ts_code = _to_ts_code(ticker)
-        
-        # 获取基本信息
         df_basic = _cached_tushare_dataframe_call(pro, "stock_basic", ts_code=ts_code, fields="ts_code,name,area,industry,market,list_date")
-        basic_info = {
-            "name": ticker,
-            "area": "N/A",
-            "industry": "N/A",
-            "market": "N/A",
-            "list_date": "N/A",
-        }
-        
-        if df_basic is not None and not df_basic.empty:
-            row = df_basic.iloc[0]
-            basic_info["name"] = str(row["name"]) if pd.notna(row["name"]) else ticker
-            basic_info["area"] = str(row["area"]) if pd.notna(row["area"]) else "N/A"
-            basic_info["industry"] = str(row["industry"]) if pd.notna(row["industry"]) else "N/A"
-            basic_info["market"] = str(row["market"]) if pd.notna(row["market"]) else "N/A"
-            basic_info["list_date"] = str(row["list_date"]) if pd.notna(row["list_date"]) else "N/A"
-        
-        # 获取最新价格数据
-        price_info = {
-            "pct_chg": "N/A",
-            "pre_close": "N/A",
-            "close": "N/A",
-        }
-        
         if trade_date is None:
-            # 获取最新日期的数据
             df_daily = _cached_tushare_dataframe_call(pro, "daily", ts_code=ts_code, limit=1, fields="trade_date,close,pre_close,pct_chg")
         else:
-            # 获取指定日期的数据
             df_daily = _cached_tushare_dataframe_call(pro, "daily", trade_date=trade_date, ts_code=ts_code, fields="trade_date,close,pre_close,pct_chg")
-        
-        if df_daily is not None and not df_daily.empty:
-            row = df_daily.iloc[0]
-            price_info["pct_chg"] = f"{float(row['pct_chg']):.2f}%" if pd.notna(row["pct_chg"]) else "N/A"
-            price_info["pre_close"] = f"{float(row['pre_close']):.2f}" if pd.notna(row["pre_close"]) else "N/A"
-            price_info["close"] = f"{float(row['close']):.2f}" if pd.notna(row["close"]) else "N/A"
-        
-        return {**basic_info, **price_info}
-        
+
+        return {
+            **build_stock_basic_details(ticker, df_basic),
+            **build_stock_price_details(df_daily),
+        }
     except Exception as e:
         print(f"[Tushare] 获取股票详细信息失败 ({ticker}): {e}")
-        return {
-            "name": ticker,
-            "area": "N/A",
-            "industry": "N/A",
-            "market": "N/A",
-            "list_date": "N/A",
-            "pct_chg": "N/A",
-            "pre_close": "N/A",
-            "close": "N/A",
-        }
+        return build_default_stock_details(ticker)
 
 
 # ============================================================================
@@ -649,27 +559,25 @@ def get_all_stock_basic() -> Optional[pd.DataFrame]:
     """
     global _stock_basic_cache
     with _stock_basic_cache_lock:
-        if _stock_basic_cache is not None:
-            return _stock_basic_cache.copy()
+        cached_stock_basic = _stock_basic_cache
 
     pro = _get_pro()
     if pro is None:
         return None
 
     try:
-        df = _cached_tushare_dataframe_call(
-            pro,
-            "stock_basic",
-            exchange="",
-            list_status="L",
-            fields="ts_code,symbol,name,area,industry,market,list_date,list_status,is_hs",
-            ttl=7 * 86400,
+        return fetch_process_cached_frame(
+            cached_frame=cached_stock_basic,
+            fetch_frame=lambda: _cached_tushare_dataframe_call(
+                pro,
+                "stock_basic",
+                exchange="",
+                list_status="L",
+                fields="ts_code,symbol,name,area,industry,market,list_date,list_status,is_hs",
+                ttl=7 * 86400,
+            ),
+            cache_frame=lambda df: _cache_stock_basic_frame(df),
         )
-        if df is not None and not df.empty:
-            with _stock_basic_cache_lock:
-                _stock_basic_cache = df
-            return df.copy()
-        return None
     except Exception as e:
         print(f"[Tushare] get_all_stock_basic 失败: {e}")
         return None
@@ -687,26 +595,24 @@ def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
                        free_share, total_mv, circ_mv, volume, amount
     """
     cache_key = f"daily_basic_batch_{trade_date}"
-    cached_df = _get_tushare_cached_df(cache_key)
-    if cached_df is not None:
-        return cached_df
 
     pro = _get_pro()
     if pro is None:
         return None
 
     try:
-        df = _cached_tushare_dataframe_call(
-            pro,
-            "daily_basic",
-            trade_date=trade_date,
-            fields="ts_code,trade_date,close,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm,"
-                   "dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv",
+        return fetch_batch_cached_frame(
+            cache_key=cache_key,
+            get_cached_df=_get_tushare_cached_df,
+            store_cached_df=_store_tushare_cached_df,
+            fetch_frame=lambda: _cached_tushare_dataframe_call(
+                pro,
+                "daily_basic",
+                trade_date=trade_date,
+                fields="ts_code,trade_date,close,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm,"
+                "dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv",
+            ),
         )
-        if df is not None and not df.empty:
-            _store_tushare_cached_df(cache_key, df)
-            return df.copy()
-        return None
     except Exception as e:
         print(f"[Tushare] get_daily_basic_batch({trade_date}) 失败: {e}")
         return None
@@ -723,28 +629,32 @@ def get_daily_price_batch(trade_date: str) -> Optional[pd.DataFrame]:
                        pre_close, vol, amount, pct_chg
     """
     cache_key = f"daily_price_batch_{trade_date}"
-    cached_df = _get_tushare_cached_df(cache_key)
-    if cached_df is not None:
-        return cached_df
 
     pro = _get_pro()
     if pro is None:
         return None
 
     try:
-        df = _cached_tushare_dataframe_call(
-            pro,
-            "daily",
-            trade_date=trade_date,
-            fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
+        return fetch_batch_cached_frame(
+            cache_key=cache_key,
+            get_cached_df=_get_tushare_cached_df,
+            store_cached_df=_store_tushare_cached_df,
+            fetch_frame=lambda: _cached_tushare_dataframe_call(
+                pro,
+                "daily",
+                trade_date=trade_date,
+                fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
+            ),
         )
-        if df is not None and not df.empty:
-            _store_tushare_cached_df(cache_key, df)
-            return df.copy()
-        return None
     except Exception as e:
         print(f"[Tushare] get_daily_price_batch({trade_date}) 失败: {e}")
         return None
+
+
+def _cache_stock_basic_frame(df: pd.DataFrame) -> None:
+    global _stock_basic_cache
+    with _stock_basic_cache_lock:
+        _stock_basic_cache = df
 
 
 def get_open_trade_dates(start_date: str, end_date: str) -> list[str]:
@@ -769,9 +679,7 @@ def get_open_trade_dates(start_date: str, end_date: str) -> list[str]:
             is_open=1,
             fields="cal_date,is_open",
         )
-        if df is None or df.empty:
-            return []
-        return sorted({str(row["cal_date"]) for _, row in df.iterrows() if str(row.get("cal_date") or "").strip()})
+        return extract_open_trade_dates(df)
     except Exception as e:
         print(f"[Tushare] get_open_trade_dates({start_date}, {end_date}) 失败: {e}")
         return []
@@ -787,28 +695,31 @@ def get_sw_industry_classification() -> Optional[Dict[str, str]]:
     """
     global _sw_industry_cache
     with _sw_industry_cache_lock:
-        if _sw_industry_cache is not None:
-            return _sw_industry_cache.copy()
+        cached_mapping = _sw_industry_cache
 
     pro = _get_pro()
     if pro is None:
         return None
 
     try:
-        index_df = load_sw_index_classification(_cached_tushare_dataframe_call, pro)
-        if index_df is None or index_df.empty:
+        result = resolve_cached_sw_industry_mapping(
+            cached_mapping=cached_mapping,
+            load_index_df=lambda: load_sw_index_classification(_cached_tushare_dataframe_call, pro),
+            build_mapping=lambda index_df: build_sw_industry_mapping(_cached_tushare_dataframe_call, pro, index_df),
+            cache_mapping=_cache_sw_industry_mapping,
+        )
+        if result is None and cached_mapping is None:
             print("[Tushare] 无法获取申万行业分类")
-            return None
-
-        result = build_sw_industry_mapping(_cached_tushare_dataframe_call, pro, index_df)
-
-        if result:
-            with _sw_industry_cache_lock:
-                _sw_industry_cache = result
-        return result.copy() if result else None
+        return result
     except Exception as e:
         print(f"[Tushare] get_sw_industry_classification 失败: {e}")
         return None
+
+
+def _cache_sw_industry_mapping(mapping: Dict[str, str]) -> None:
+    global _sw_industry_cache
+    with _sw_industry_cache_lock:
+        _sw_industry_cache = mapping
 
 
 def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
@@ -824,20 +735,18 @@ def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
     其中 limit 字段: U=涨停, D=跌停, Z=炸板
     """
     cache_key = f"limit_list_{trade_date}"
-    cached_df = _get_tushare_cached_df(cache_key)
-    if cached_df is not None:
-        return cached_df
 
     pro = _get_pro()
     if pro is None:
         return None
 
     try:
-        df = _cached_tushare_dataframe_call(pro, "limit_list_d", trade_date=trade_date)
-        if df is not None and not df.empty:
-            _store_tushare_cached_df(cache_key, df)
-            return df.copy()
-        return None
+        return fetch_batch_cached_frame(
+            cache_key=cache_key,
+            get_cached_df=_get_tushare_cached_df,
+            store_cached_df=_store_tushare_cached_df,
+            fetch_frame=lambda: _cached_tushare_dataframe_call(pro, "limit_list_d", trade_date=trade_date),
+        )
     except Exception as e:
         print(f"[Tushare] get_limit_list({trade_date}) 失败: {e}")
         return None
@@ -853,20 +762,18 @@ def get_suspend_list(trade_date: str) -> Optional[pd.DataFrame]:
     返回 DataFrame 列: ts_code, trade_date, suspend_timing, suspend_type
     """
     cache_key = f"suspend_list_{trade_date}"
-    cached_df = _get_tushare_cached_df(cache_key)
-    if cached_df is not None:
-        return cached_df
 
     pro = _get_pro()
     if pro is None:
         return None
 
     try:
-        df = _cached_tushare_dataframe_call(pro, "suspend_d", trade_date=trade_date)
-        if df is not None and not df.empty:
-            _store_tushare_cached_df(cache_key, df)
-            return df.copy()
-        return None
+        return fetch_batch_cached_frame(
+            cache_key=cache_key,
+            get_cached_df=_get_tushare_cached_df,
+            store_cached_df=_store_tushare_cached_df,
+            fetch_frame=lambda: _cached_tushare_dataframe_call(pro, "suspend_d", trade_date=trade_date),
+        )
     except Exception as e:
         print(f"[Tushare] get_suspend_list({trade_date}) 失败: {e}")
         return None
@@ -886,29 +793,18 @@ def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", l
                        change, pct_chg, vol, amount
     """
     cache_key = f"index_daily_{index_code}_{start_date}_{end_date}_{limit}"
-    cached_df = _get_tushare_cached_df(cache_key)
-    if cached_df is not None:
-        return cached_df
-
     pro = _get_pro()
     if pro is None:
         return None
 
     try:
-        kwargs = {"ts_code": index_code}
-        if start_date:
-            kwargs["start_date"] = start_date
-        if end_date:
-            kwargs["end_date"] = end_date
-        if not start_date and not end_date:
-            kwargs["limit"] = limit
-
-        df = pro.index_daily(**kwargs)
-        if df is not None and not df.empty:
-            df = df.sort_values("trade_date").reset_index(drop=True)
-            _store_tushare_cached_df(cache_key, df)
-            return df.copy()
-        return None
+        kwargs = build_index_daily_query_kwargs(index_code, start_date, end_date, limit)
+        return fetch_sorted_cached_market_frame(
+            cache_key=cache_key,
+            get_cached_df=_get_tushare_cached_df,
+            store_cached_df=_store_tushare_cached_df,
+            fetch_frame=lambda: pro.index_daily(**kwargs),
+        )
     except Exception as e:
         print(f"[Tushare] get_index_daily({index_code}) 失败: {e}")
         return None
@@ -927,31 +823,18 @@ def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: st
                        hgt（沪股通）, sgt（深股通）, north_money（北向合计）, south_money（南向合计）
     """
     cache_key = f"northbound_{trade_date}_{start_date}_{end_date}_{limit}"
-    cached_df = _get_tushare_cached_df(cache_key)
-    if cached_df is not None:
-        return cached_df
-
     pro = _get_pro()
     if pro is None:
         return None
 
     try:
-        kwargs: Dict = {}
-        if trade_date:
-            kwargs["trade_date"] = trade_date
-        if start_date:
-            kwargs["start_date"] = start_date
-        if end_date:
-            kwargs["end_date"] = end_date
-        if not trade_date and not start_date:
-            kwargs["limit"] = limit
-
-        df = pro.moneyflow_hsgt(**kwargs)
-        if df is not None and not df.empty:
-            df = df.sort_values("trade_date").reset_index(drop=True)
-            _store_tushare_cached_df(cache_key, df)
-            return df.copy()
-        return None
+        kwargs = build_northbound_flow_query_kwargs(trade_date, start_date, end_date, limit)
+        return fetch_sorted_cached_market_frame(
+            cache_key=cache_key,
+            get_cached_df=_get_tushare_cached_df,
+            store_cached_df=_store_tushare_cached_df,
+            fetch_frame=lambda: pro.moneyflow_hsgt(**kwargs),
+        )
     except Exception as e:
         print(f"[Tushare] get_northbound_flow 失败: {e}")
         return None

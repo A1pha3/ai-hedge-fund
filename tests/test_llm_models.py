@@ -286,6 +286,33 @@ def test_get_registered_provider_model_builds_volcengine_client(monkeypatch):
     }
 
 
+def test_load_models_from_json_builds_typed_models(tmp_path):
+    json_path = tmp_path / "models.json"
+    json_path.write_text('[{"display_name":"Demo","model_name":"demo-1","provider":"OpenAI"}]')
+
+    models = llm_models.load_models_from_json(str(json_path))
+
+    assert len(models) == 1
+    assert models[0].display_name == "Demo"
+    assert models[0].provider == llm_models.ModelProvider.OPENAI
+
+
+def test_get_model_info_builds_fallback_model_for_known_provider():
+    result = llm_models.get_model_info("custom-model", "OpenAI")
+
+    assert result is not None
+    assert result.display_name == "custom-model"
+    assert result.model_name == "custom-model"
+    assert result.provider == llm_models.ModelProvider.OPENAI
+
+
+def test_get_models_list_uses_available_models_contract():
+    result = llm_models.get_models_list()
+
+    assert result
+    assert {"display_name", "model_name", "provider"} <= set(result[0].keys())
+
+
 def test_volcengine_doubao_model_disables_json_mode():
     model = llm_models.LLMModel(display_name="Doubao", model_name="doubao-seed-2.0-code", provider=llm_models.ModelProvider.VOLCENGINE)
 

@@ -204,6 +204,300 @@ def test_get_ashare_daily_gainers_with_tushare_filters_st_and_formats_results(mo
     ]
 
 
+def test_get_ashare_prices_with_tushare_formats_and_reverses_results(monkeypatch):
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+    monkeypatch.setattr(tushare_api, "_to_ts_code", lambda ticker: "000001.SZ")
+    monkeypatch.setattr(
+        tushare_api,
+        "_cached_tushare_dataframe_call",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {
+                    "trade_date": "20260410",
+                    "open": 10.0,
+                    "high": 11.0,
+                    "low": 9.8,
+                    "close": 10.8,
+                    "vol": 1000,
+                },
+                {
+                    "trade_date": "20260409",
+                    "open": 9.5,
+                    "high": 10.2,
+                    "low": 9.4,
+                    "close": 10.0,
+                    "vol": 900,
+                },
+            ]
+        ),
+    )
+
+    prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-04-09", "2026-04-10")
+
+    assert [price.time for price in prices] == ["2026-04-09", "2026-04-10"]
+    assert prices[0].open == 9.5
+    assert prices[1].close == 10.8
+
+
+def test_get_ashare_prices_with_tushare_returns_empty_when_uninitialized(monkeypatch):
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: None)
+
+    prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-04-09", "2026-04-10")
+
+    assert prices == []
+
+
+def test_get_latest_daily_basic_returns_latest_row_on_or_before_anchor(monkeypatch):
+    tushare_api._tushare_df_cache.clear()
+    pro = SimpleNamespace(
+        query=lambda api_name, **kwargs: pd.DataFrame(
+            [
+                {"trade_date": "20260410", "total_mv": 110.0},
+                {"trade_date": "20260408", "total_mv": 105.0},
+            ]
+        )
+    )
+
+    result = tushare_api._get_latest_daily_basic(pro, "000001.SZ", "2026-04-09")
+
+    assert result == {"trade_date": "20260408", "total_mv": 105.0}
+
+
+def test_get_index_daily_sorts_and_caches_results(monkeypatch):
+    tushare_api._tushare_df_cache.clear()
+    calls = []
+
+    pro = SimpleNamespace(
+        index_daily=lambda **kwargs: (
+            calls.append(kwargs)
+            or pd.DataFrame(
+                [
+                    {"trade_date": "20260410", "close": 11.0},
+                    {"trade_date": "20260409", "close": 10.5},
+                ]
+            )
+        )
+    )
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+
+    first = tushare_api.get_index_daily("000300.SH", limit=2)
+    second = tushare_api.get_index_daily("000300.SH", limit=2)
+
+    assert [row["trade_date"] for row in first.to_dict("records")] == ["20260409", "20260410"]
+    assert [row["close"] for row in second.to_dict("records")] == [10.5, 11.0]
+    assert calls == [{"ts_code": "000300.SH", "limit": 2}]
+
+
+def test_get_northbound_flow_builds_query_and_sorts_results(monkeypatch):
+    tushare_api._tushare_df_cache.clear()
+    calls = []
+    pro = SimpleNamespace(
+        moneyflow_hsgt=lambda **kwargs: (
+            calls.append(kwargs)
+            or pd.DataFrame(
+                [
+                    {"trade_date": "20260410", "north_money": 12.0},
+                    {"trade_date": "20260408", "north_money": 8.0},
+                ]
+            )
+        )
+    )
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+
+    result = tushare_api.get_northbound_flow(end_date="20260410", limit=5)
+
+    assert [row["trade_date"] for row in result.to_dict("records")] == ["20260408", "20260410"]
+    assert calls == [{"end_date": "20260410", "limit": 5}]
+
+
+def test_get_open_trade_dates_sorts_and_deduplicates(monkeypatch):
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+    monkeypatch.setattr(
+        tushare_api,
+        "_cached_tushare_dataframe_call",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {"cal_date": "20260410", "is_open": 1},
+                {"cal_date": "20260408", "is_open": 1},
+                {"cal_date": "20260410", "is_open": 1},
+                {"cal_date": "", "is_open": 1},
+            ]
+        ),
+    )
+
+    result = tushare_api.get_open_trade_dates("20260401", "20260410")
+
+    assert result == ["20260408", "20260410"]
+
+
+def test_get_all_stock_basic_uses_process_cache(monkeypatch):
+    tushare_api._stock_basic_cache = None
+    calls = []
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+
+    def fake_cached_call(_pro, api_name, **kwargs):
+        calls.append((api_name, kwargs))
+        return pd.DataFrame([{"ts_code": "000001.SZ", "name": "平安银行"}])
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+
+    first = tushare_api.get_all_stock_basic()
+    second = tushare_api.get_all_stock_basic()
+
+    assert first.to_dict("records") == [{"ts_code": "000001.SZ", "name": "平安银行"}]
+    assert second.to_dict("records") == [{"ts_code": "000001.SZ", "name": "平安银行"}]
+    assert len(calls) == 1
+    tushare_api._stock_basic_cache = None
+
+
+def test_get_daily_basic_batch_uses_dataframe_cache(monkeypatch):
+    tushare_api._tushare_df_cache.clear()
+    calls = []
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+
+    def fake_cached_call(_pro, api_name, **kwargs):
+        calls.append((api_name, kwargs))
+        return pd.DataFrame([{"ts_code": "000001.SZ", "trade_date": "20260410", "total_mv": 100.0}])
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+
+    first = tushare_api.get_daily_basic_batch("20260410")
+    second = tushare_api.get_daily_basic_batch("20260410")
+
+    assert first.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "total_mv": 100.0}]
+    assert second.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "total_mv": 100.0}]
+    assert len(calls) == 1
+
+
+def test_get_daily_price_batch_uses_dataframe_cache(monkeypatch):
+    tushare_api._tushare_df_cache.clear()
+    calls = []
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+
+    def fake_cached_call(_pro, api_name, **kwargs):
+        calls.append((api_name, kwargs))
+        return pd.DataFrame([{"ts_code": "000001.SZ", "trade_date": "20260410", "close": 10.8}])
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+
+    first = tushare_api.get_daily_price_batch("20260410")
+    second = tushare_api.get_daily_price_batch("20260410")
+
+    assert first.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "close": 10.8}]
+    assert second.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "close": 10.8}]
+    assert len(calls) == 1
+
+
+def test_get_limit_list_uses_dataframe_cache(monkeypatch):
+    tushare_api._tushare_df_cache.clear()
+    calls = []
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+
+    def fake_cached_call(_pro, api_name, **kwargs):
+        calls.append((api_name, kwargs))
+        return pd.DataFrame([{"ts_code": "000001.SZ", "trade_date": "20260410", "limit": "U"}])
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+
+    first = tushare_api.get_limit_list("20260410")
+    second = tushare_api.get_limit_list("20260410")
+
+    assert first.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "limit": "U"}]
+    assert second.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "limit": "U"}]
+    assert len(calls) == 1
+
+
+def test_get_suspend_list_uses_dataframe_cache(monkeypatch):
+    tushare_api._tushare_df_cache.clear()
+    calls = []
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+
+    def fake_cached_call(_pro, api_name, **kwargs):
+        calls.append((api_name, kwargs))
+        return pd.DataFrame([{"ts_code": "000001.SZ", "trade_date": "20260410", "suspend_type": "S"}])
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+
+    first = tushare_api.get_suspend_list("20260410")
+    second = tushare_api.get_suspend_list("20260410")
+
+    assert first.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "suspend_type": "S"}]
+    assert second.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "suspend_type": "S"}]
+    assert len(calls) == 1
+
+
+def test_get_stock_details_merges_basic_and_price_fields(monkeypatch):
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+    monkeypatch.setattr(tushare_api, "_to_ts_code", lambda ticker: "000001.SZ")
+
+    def fake_cached_call(_pro, api_name, **kwargs):
+        if api_name == "stock_basic":
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": "000001.SZ",
+                        "name": "平安银行",
+                        "area": "深圳",
+                        "industry": "银行",
+                        "market": "主板",
+                        "list_date": "19910403",
+                    }
+                ]
+            )
+        if api_name == "daily":
+            return pd.DataFrame(
+                [
+                    {
+                        "trade_date": "20260410",
+                        "close": 10.8,
+                        "pre_close": 10.0,
+                        "pct_chg": 8.0,
+                    }
+                ]
+            )
+        raise AssertionError(api_name)
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+
+    result = tushare_api.get_stock_details("000001", "20260410")
+
+    assert result == {
+        "name": "平安银行",
+        "area": "深圳",
+        "industry": "银行",
+        "market": "主板",
+        "list_date": "19910403",
+        "pct_chg": "8.00%",
+        "pre_close": "10.00",
+        "close": "10.80",
+    }
+
+
+def test_get_stock_details_returns_default_payload_when_uninitialized(monkeypatch):
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: None)
+
+    result = tushare_api.get_stock_details("000001")
+
+    assert result == {
+        "name": "000001",
+        "area": "N/A",
+        "industry": "N/A",
+        "market": "N/A",
+        "list_date": "N/A",
+        "pct_chg": "N/A",
+        "pre_close": "N/A",
+        "close": "N/A",
+    }
+
+
 def test_get_sw_industry_classification_merges_members_and_caches(monkeypatch):
     pro = object()
     monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)

@@ -24,6 +24,83 @@ def resolve_short_trade_candidate_context(shadow_candidate: Any) -> tuple[str, s
     return reason, "short_trade_boundary", "layer_b_boundary", [reason, "short_trade_prequalified"]
 
 
+def _extract_gate_status_and_blockers(snapshot: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    gate_status = dict(snapshot.get("gate_status") or {})
+    blockers = sorted({str(blocker) for blocker in list(snapshot.get("blockers") or []) if str(blocker or "").strip()})
+    return gate_status, blockers
+
+
+def build_short_trade_boundary_metrics_payload(
+    *,
+    snapshot: dict[str, Any],
+    compute_candidate_score_fn,
+) -> dict[str, Any]:
+    gate_status, blockers = _extract_gate_status_and_blockers(snapshot)
+    return {
+        "breakout_freshness": round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4),
+        "trend_acceleration": round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4),
+        "volume_expansion_quality": round(float(snapshot.get("volume_expansion_quality", 0.0) or 0.0), 4),
+        "catalyst_freshness": round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4),
+        "close_strength": round(float(snapshot.get("close_strength", 0.0) or 0.0), 4),
+        "candidate_score": compute_candidate_score_fn(snapshot),
+        "gate_status": gate_status,
+        "blockers": blockers,
+    }
+
+
+def resolve_short_trade_boundary_filter_reason(
+    *,
+    metrics_payload: dict[str, Any],
+    breakout_min: float,
+    trend_min: float,
+    volume_min: float,
+    catalyst_min: float,
+    candidate_score_min: float,
+) -> str:
+    gate_status = dict(metrics_payload.get("gate_status") or {})
+    blockers = list(metrics_payload.get("blockers") or [])
+    if str(gate_status.get("data") or "") != "pass":
+        return "metric_data_fail"
+    if str(gate_status.get("structural") or "") == "fail" or blockers:
+        return "structural_prefilter_fail"
+    if float(metrics_payload.get("breakout_freshness", 0.0) or 0.0) < breakout_min:
+        return "breakout_freshness_below_short_trade_boundary_floor"
+    if float(metrics_payload.get("trend_acceleration", 0.0) or 0.0) < trend_min:
+        return "trend_acceleration_below_short_trade_boundary_floor"
+    if float(metrics_payload.get("volume_expansion_quality", 0.0) or 0.0) < volume_min:
+        return "volume_expansion_below_short_trade_boundary_floor"
+    if float(metrics_payload.get("catalyst_freshness", 0.0) or 0.0) < catalyst_min:
+        return "catalyst_freshness_below_short_trade_boundary_floor"
+    if float(metrics_payload.get("candidate_score", 0.0) or 0.0) < candidate_score_min:
+        return "candidate_score_below_short_trade_boundary_floor"
+    return "short_trade_prequalified"
+
+
+def qualify_short_trade_boundary_candidate_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    compute_candidate_score_fn,
+    breakout_min: float,
+    trend_min: float,
+    volume_min: float,
+    catalyst_min: float,
+    candidate_score_min: float,
+) -> tuple[bool, str, dict[str, Any]]:
+    metrics_payload = build_short_trade_boundary_metrics_payload(
+        snapshot=snapshot,
+        compute_candidate_score_fn=compute_candidate_score_fn,
+    )
+    filter_reason = resolve_short_trade_boundary_filter_reason(
+        metrics_payload=metrics_payload,
+        breakout_min=breakout_min,
+        trend_min=trend_min,
+        volume_min=volume_min,
+        catalyst_min=catalyst_min,
+        candidate_score_min=candidate_score_min,
+    )
+    return filter_reason == "short_trade_prequalified", filter_reason, metrics_payload
+
+
 def rank_scored_entries(
     rows: list[tuple[float, ...]],
     *,
@@ -123,3 +200,96 @@ def resolve_catalyst_theme_filter_reason(
     if candidate_score < candidate_score_min:
         return "candidate_score_below_catalyst_theme_floor"
     return "catalyst_theme_candidate_score_ranked"
+
+
+def qualify_catalyst_theme_candidate_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    resolve_close_momentum_relief_fn,
+    compute_candidate_score_fn,
+    catalyst_theme_sector_min: float,
+    catalyst_theme_candidate_score_min: float,
+    catalyst_theme_breakout_min: float,
+    catalyst_theme_close_min: float,
+    catalyst_theme_catalyst_min: float,
+) -> tuple[bool, str, dict[str, Any]]:
+    gate_status, blockers = _extract_gate_status_and_blockers(snapshot)
+    breakout_freshness = round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4)
+    trend_acceleration = round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4)
+    close_strength = round(float(snapshot.get("close_strength", 0.0) or 0.0), 4)
+    sector_resonance = round(float(snapshot.get("sector_resonance", 0.0) or 0.0), 4)
+    catalyst_freshness = round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4)
+    close_momentum_catalyst_relief = resolve_close_momentum_relief_fn(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        catalyst_freshness=catalyst_freshness,
+    )
+    effective_catalyst_freshness = round(
+        float(close_momentum_catalyst_relief.get("effective_catalyst_freshness") or catalyst_freshness),
+        4,
+    )
+    effective_sector_min = round(
+        float(close_momentum_catalyst_relief.get("effective_sector_min") or catalyst_theme_sector_min),
+        4,
+    )
+    candidate_score = compute_candidate_score_fn(
+        {
+            "breakout_freshness": breakout_freshness,
+            "trend_acceleration": trend_acceleration,
+            "close_strength": close_strength,
+            "sector_resonance": sector_resonance,
+            "catalyst_freshness": effective_catalyst_freshness,
+        }
+    )
+    threshold_checks = {
+        "candidate_score": round(float(catalyst_theme_candidate_score_min), 4),
+        "breakout_freshness": round(float(catalyst_theme_breakout_min), 4),
+        "close_strength": round(float(catalyst_theme_close_min), 4),
+        "sector_resonance": effective_sector_min,
+        "catalyst_freshness": round(float(catalyst_theme_catalyst_min), 4),
+    }
+    threshold_metric_values = {
+        "candidate_score": candidate_score,
+        "breakout_freshness": breakout_freshness,
+        "close_strength": close_strength,
+        "sector_resonance": sector_resonance,
+        "catalyst_freshness": effective_catalyst_freshness,
+    }
+    metrics_payload = build_catalyst_theme_metrics_payload(
+        gate_status=gate_status,
+        blockers=blockers,
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        catalyst_freshness=catalyst_freshness,
+        candidate_score=candidate_score,
+        effective_catalyst_freshness=effective_catalyst_freshness,
+        close_momentum_catalyst_relief=close_momentum_catalyst_relief,
+        threshold_checks=threshold_checks,
+        threshold_metric_values=threshold_metric_values,
+        theme_tags=build_catalyst_theme_tags(
+            catalyst_freshness=catalyst_freshness,
+            catalyst_freshness_min=catalyst_theme_catalyst_min,
+            breakout_freshness=breakout_freshness,
+            close_strength=close_strength,
+            sector_resonance=sector_resonance,
+            close_momentum_catalyst_relief_applied=bool(close_momentum_catalyst_relief.get("applied")),
+        ),
+    )
+    filter_reason = resolve_catalyst_theme_filter_reason(
+        gate_status=gate_status,
+        effective_catalyst_freshness=effective_catalyst_freshness,
+        catalyst_freshness_min=catalyst_theme_catalyst_min,
+        sector_resonance=sector_resonance,
+        effective_sector_min=effective_sector_min,
+        close_strength=close_strength,
+        close_strength_min=catalyst_theme_close_min,
+        breakout_freshness=breakout_freshness,
+        breakout_freshness_min=catalyst_theme_breakout_min,
+        candidate_score=candidate_score,
+        candidate_score_min=catalyst_theme_candidate_score_min,
+    )
+    return filter_reason == "catalyst_theme_candidate_score_ranked", filter_reason, metrics_payload

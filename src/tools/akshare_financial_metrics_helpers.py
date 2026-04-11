@@ -15,6 +15,36 @@ def dump_financial_metrics_for_cache(metrics: List[FinancialMetrics]) -> list[di
     return [metric.model_dump() for metric in metrics]
 
 
+def execute_financial_metrics_request(
+    *,
+    ticker: str,
+    end_date: str,
+    limit: int,
+    use_mock: bool,
+    cache_key: str,
+    cache,
+    hydrate_cached_fn,
+    get_mock_metrics_fn,
+    get_akshare_fn,
+    load_financial_metrics_fn,
+    dump_metrics_fn,
+    error_factory,
+) -> List[FinancialMetrics]:
+    if cached_data := cache.get_financial_metrics(cache_key):
+        return hydrate_cached_fn(cached_data)
+
+    if use_mock:
+        return get_mock_metrics_fn(ticker, end_date, limit)
+
+    ak_module = get_akshare_fn()
+    if ak_module is None:
+        raise error_factory("AKShare 模块不可用，无法获取 A 股财务数据。\n请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
+
+    metrics = load_financial_metrics_fn(ticker=ticker, limit=limit, ak_module=ak_module)
+    cache.set_financial_metrics(cache_key, dump_metrics_fn(metrics))
+    return metrics
+
+
 def load_financial_metrics_with_fallback(
     *,
     ticker: str,

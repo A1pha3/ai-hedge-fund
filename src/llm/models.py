@@ -1,4 +1,3 @@
-import json
 import os
 from dataclasses import dataclass, field
 from enum import Enum
@@ -14,6 +13,23 @@ from langchain_ollama import ChatOllama
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain_xai import ChatXAI
 from pydantic import BaseModel
+
+from src.llm.model_catalog_helpers import (
+    build_fallback_model_info,
+    build_llm_models,
+    build_model_list_payload,
+    find_model_in_catalog,
+    load_model_records_from_json,
+)
+from src.llm.model_builder_helpers import build_openai_family_model_impl, build_registered_route_model_impl
+from src.llm.provider_registry_defaults import build_default_provider_profile_specs
+from src.llm.provider_route_helpers import (
+    collect_provider_routes,
+    get_provider_route_allowlist,
+    resolve_api_key,
+    resolve_provider_route_impl,
+)
+from src.llm.zhipu_model_helpers import resolve_zhipu_route_inputs, should_route_zhipu_to_coding_plan
 
 
 class ModelProvider(str, Enum):
@@ -89,15 +105,7 @@ class LLMModel(BaseModel):
 # Load models from JSON file
 def load_models_from_json(json_path: str) -> List[LLMModel]:
     """Load models from a JSON file"""
-    with open(json_path, "r") as f:
-        models_data = json.load(f)
-
-    models = []
-    for model_data in models_data:
-        # Convert string provider to ModelProvider enum
-        provider_enum = ModelProvider(model_data["provider"])
-        models.append(LLMModel(display_name=model_data["display_name"], model_name=model_data["model_name"], provider=provider_enum))
-    return models
+    return build_llm_models(load_model_records_from_json(json_path), LLMModel, ModelProvider)
 
 
 # Get the path to the JSON files
@@ -205,29 +213,16 @@ class ProviderProfile:
 
 
 def _resolve_api_key(api_keys: dict | None, key_name: str) -> Any:
-    return (api_keys or {}).get(key_name) or os.getenv(key_name)
+    return resolve_api_key(api_keys, key_name)
 
 
 def _resolve_provider_route(profile: ProviderProfile, variant: ProviderVariantProfile, api_keys: dict | None) -> ProviderRoute | None:
-    resolved_api_keys: dict[str, Any] = {}
-    for api_key_name in variant.api_key_names:
-        api_key_value = _resolve_api_key(api_keys, api_key_name)
-        if not api_key_value:
-            return None
-        resolved_api_keys[api_key_name] = api_key_value
-
-    resolved_api_keys.update(variant.extra_api_keys)
-    model_name = os.getenv(variant.model_env_var, variant.default_model_name) if variant.model_env_var else variant.default_model_name
-
-    return ProviderRoute(
-        provider_name=profile.name,
-        variant_name=variant.variant_name,
-        display_name=variant.display_name,
-        model_name=model_name,
-        api_keys=resolved_api_keys,
-        route_order=variant.route_order,
-        capabilities=profile.capabilities,
-        openai_compatible_transport=variant.openai_compatible_transport,
+    return resolve_provider_route_impl(
+        profile=profile,
+        variant=variant,
+        api_keys=api_keys,
+        resolve_api_key_fn=_resolve_api_key,
+        provider_route_cls=ProviderRoute,
     )
 
 
@@ -238,12 +233,7 @@ def _default_concurrency_env_var(provider_name: str) -> str:
 
 def _get_provider_route_allowlist() -> set[str] | None:
     """Returns an optional global allowlist for routable providers."""
-    raw_value = os.getenv("LLM_PROVIDER_ROUTE_ALLOWLIST", "").strip()
-    if not raw_value:
-        return None
-
-    providers = {item.strip().lower() for item in raw_value.split(",") if item.strip()}
-    return providers or None
+    return get_provider_route_allowlist()
 
 
 _PROVIDER_REGISTRY: dict[str, ProviderProfile] = {}
@@ -266,23 +256,13 @@ def get_provider_registry() -> dict[str, ProviderProfile]:
 
 def get_provider_routes(api_keys: dict | None, *, enabled_only_for: str | None = None) -> list[ProviderRoute]:
     """Returns all available provider routes ordered by routing priority."""
-    routes: list[ProviderRoute] = []
-    provider_allowlist = _get_provider_route_allowlist()
-
-    for profile in _PROVIDER_REGISTRY.values():
-        if provider_allowlist and profile.name.lower() not in provider_allowlist:
-            continue
-        if enabled_only_for == "parallel" and not profile.enable_parallel_scheduler:
-            continue
-        if enabled_only_for == "priority" and not profile.enable_priority_routing:
-            continue
-
-        for variant in profile.variants:
-            route = _resolve_provider_route(profile, variant, api_keys)
-            if route:
-                routes.append(route)
-
-    return sorted(routes, key=lambda route: (route.route_order, route.provider_name, route.variant_name))
+    return collect_provider_routes(
+        registry=_PROVIDER_REGISTRY,
+        api_keys=api_keys,
+        enabled_only_for=enabled_only_for,
+        provider_allowlist=_get_provider_route_allowlist(),
+        resolve_provider_route_fn=_resolve_provider_route,
+    )
 
 
 def get_provider_primary_route(provider_name: str, api_keys: dict | None, *, enabled_only_for: str | None = None) -> ProviderRoute | None:
@@ -299,126 +279,45 @@ def get_provider_concurrency_limit_env_var(provider_name: str) -> str:
     return _default_concurrency_env_var(str(provider_name))
 
 
+def _build_openai_transport_config(spec: dict[str, Any] | None) -> OpenAICompatibleTransportConfig | None:
+    if not spec:
+        return None
+    return OpenAICompatibleTransportConfig(**spec)
+
+
+def _build_provider_variant_profile(spec: dict[str, Any]) -> ProviderVariantProfile:
+    variant_spec = dict(spec)
+    transport_spec = variant_spec.pop("openai_compatible_transport", None)
+    return ProviderVariantProfile(
+        **variant_spec,
+        openai_compatible_transport=_build_openai_transport_config(transport_spec),
+    )
+
+
+def _build_provider_profile(spec: dict[str, Any]) -> ProviderProfile:
+    profile_spec = dict(spec)
+    capability_spec = profile_spec.pop("capabilities", {})
+    variant_specs = profile_spec.pop("variants")
+    return ProviderProfile(
+        **profile_spec,
+        variants=tuple(_build_provider_variant_profile(variant_spec) for variant_spec in variant_specs),
+        capabilities=ProviderCapabilities(**capability_spec),
+    )
+
+
+def _get_default_provider_profiles() -> list[ProviderProfile]:
+    specs = build_default_provider_profile_specs(
+        zhipu_standard_base_url=ZHIPU_STANDARD_BASE_URL,
+        zhipu_coding_plan_base_url=ZHIPU_CODING_PLAN_BASE_URL,
+        volcengine_ark_coding_base_url=VOLCENGINE_ARK_CODING_BASE_URL,
+        normalize_zhipu_coding_plan_model_name=_normalize_zhipu_coding_plan_model_name,
+    )
+    return [_build_provider_profile(spec) for spec in specs]
+
+
 def _register_default_provider_profiles() -> None:
-    register_provider_profile(
-        ProviderProfile(
-            name="Zhipu",
-            variants=(
-                ProviderVariantProfile(
-                    variant_name="coding_plan",
-                    display_name="Coding Plan Zhipu",
-                    api_key_names=("ZHIPU_CODE_API_KEY",),
-                    default_model_name="glm-4.7",
-                    model_env_var="ZHIPU_MODEL",
-                    extra_api_keys={"ZHIPU_USE_CODING_PLAN": True},
-                    openai_compatible_transport=OpenAICompatibleTransportConfig(
-                        api_key_name="ZHIPU_CODE_API_KEY",
-                        base_url=ZHIPU_CODING_PLAN_BASE_URL,
-                        base_url_env_var="ZHIPU_CODING_API_BASE",
-                        model_name_transform=_normalize_zhipu_coding_plan_model_name,
-                    ),
-                    route_order=30,
-                ),
-                ProviderVariantProfile(
-                    variant_name="standard",
-                    display_name="standard Zhipu",
-                    api_key_names=("ZHIPU_API_KEY",),
-                    default_model_name="glm-4.7",
-                    model_env_var="ZHIPU_MODEL",
-                    openai_compatible_transport=OpenAICompatibleTransportConfig(
-                        api_key_name="ZHIPU_API_KEY",
-                        base_url=ZHIPU_STANDARD_BASE_URL,
-                        base_url_env_var="ZHIPU_API_BASE",
-                    ),
-                    route_order=40,
-                ),
-            ),
-            capabilities=ProviderCapabilities(supports_json_mode=True, supports_coding_plan=True, openai_compatible=True),
-            concurrency_limit_env_var="ZHIPU_PROVIDER_CONCURRENCY_LIMIT",
-            default_parallel_limit=1,
-            enable_priority_routing=True,
-            enable_parallel_scheduler=True,
-        )
-    )
-    register_provider_profile(
-        ProviderProfile(
-            name="MiniMax",
-            variants=(
-                ProviderVariantProfile(
-                    variant_name="default",
-                    display_name="MiniMax",
-                    api_key_names=("MINIMAX_API_KEY",),
-                    default_model_name="MiniMax-M2.5",
-                    model_env_var="MINIMAX_MODEL",
-                    openai_compatible_transport=OpenAICompatibleTransportConfig(
-                        api_key_name="MINIMAX_API_KEY",
-                        base_url="https://api.minimaxi.com/v1",
-                    ),
-                    route_order=10,
-                ),
-            ),
-            capabilities=ProviderCapabilities(supports_json_mode=False, openai_compatible=True),
-            concurrency_limit_env_var="MINIMAX_PROVIDER_CONCURRENCY_LIMIT",
-            default_parallel_limit=1,
-            enable_priority_routing=True,
-            enable_parallel_scheduler=True,
-        )
-    )
-    register_provider_profile(
-        ProviderProfile(
-            name="Volcengine",
-            variants=(
-                ProviderVariantProfile(
-                    variant_name="coding_plan",
-                    display_name="Volcengine Ark",
-                    api_key_names=("ARK_API_KEY",),
-                    default_model_name="doubao-seed-2.0-code",
-                    model_env_var="ARK_MODEL",
-                    openai_compatible_transport=OpenAICompatibleTransportConfig(
-                        api_key_name="ARK_API_KEY",
-                        base_url=VOLCENGINE_ARK_CODING_BASE_URL,
-                        base_url_env_var="ARK_API_BASE",
-                    ),
-                    route_order=20,
-                ),
-            ),
-            capabilities=ProviderCapabilities(supports_json_mode=True, supports_coding_plan=True, openai_compatible=True),
-            concurrency_limit_env_var="VOLCENGINE_PROVIDER_CONCURRENCY_LIMIT",
-            default_parallel_limit=1,
-            enable_priority_routing=True,
-            enable_parallel_scheduler=True,
-        )
-    )
-    register_provider_profile(
-        ProviderProfile(
-            name="OpenRouter",
-            variants=(
-                ProviderVariantProfile(
-                    variant_name="default",
-                    display_name="OpenRouter",
-                    api_key_names=("OPENROUTER_API_KEY",),
-                    default_model_name="openai/gpt-4.1-mini",
-                    model_env_var="OPENROUTER_MODEL",
-                    openai_compatible_transport=OpenAICompatibleTransportConfig(
-                        api_key_name="OPENROUTER_API_KEY",
-                        base_url="https://openrouter.ai/api/v1",
-                        base_url_kwarg="openai_api_base",
-                        api_key_kwarg="openai_api_key",
-                        dynamic_model_kwargs_factory=lambda: {
-                            "extra_headers": {
-                                "HTTP-Referer": os.getenv("YOUR_SITE_URL", "https://github.com/virattt/ai-hedge-fund"),
-                                "X-Title": os.getenv("YOUR_SITE_NAME", "AI Hedge Fund"),
-                            }
-                        },
-                    ),
-                    route_order=40,
-                ),
-            ),
-            capabilities=ProviderCapabilities(supports_json_mode=True, openai_compatible=True),
-            enable_priority_routing=False,
-            enable_parallel_scheduler=False,
-        )
-    )
+    for profile in _get_default_provider_profiles():
+        register_provider_profile(profile)
 
 
 def _normalize_zhipu_coding_plan_model_name(model_name: str) -> str:
@@ -478,57 +377,39 @@ def get_zhipu_coding_plan_model(model_name: str, api_keys: dict | None = None) -
 
 def get_zhipu_model(model_name: str, api_keys: dict | None = None) -> ChatOpenAI:
     """Build a Zhipu client, routing to Coding Plan when a dedicated key is intended."""
-    if api_keys is None:
-        standard_api_key = os.getenv("ZHIPU_API_KEY")
-        coding_api_key = os.getenv("ZHIPU_CODE_API_KEY")
-        prefer_coding_plan = os.getenv("ZHIPU_USE_CODING_PLAN", "").lower() in {"1", "true", "yes"}
-    else:
-        standard_api_key = api_keys.get("ZHIPU_API_KEY")
-        coding_api_key = api_keys.get("ZHIPU_CODE_API_KEY")
-        prefer_coding_plan = bool(api_keys.get("ZHIPU_USE_CODING_PLAN"))
-
-    if coding_api_key:
-        prefer_coding_plan = True
-
-    if prefer_coding_plan:
+    standard_api_key, coding_api_key, prefer_coding_plan = resolve_zhipu_route_inputs(api_keys)
+    if should_route_zhipu_to_coding_plan(coding_api_key, prefer_coding_plan):
         return get_zhipu_coding_plan_model(model_name, api_keys)
 
-    api_key = standard_api_key
-    if not api_key:
+    if not standard_api_key:
         print("API Key Error: Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
         raise ValueError("Zhipu API key not found. Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
 
     return build_openai_compatible_model(
         model_name,
         OpenAICompatibleTransportConfig(api_key_name="ZHIPU_API_KEY", base_url=ZHIPU_STANDARD_BASE_URL, base_url_env_var="ZHIPU_API_BASE"),
-        {"ZHIPU_API_KEY": api_key},
+        {"ZHIPU_API_KEY": standard_api_key},
     )
 
 
 def get_model_info(model_name: str, model_provider: str) -> LLMModel | None:
     """Get model information by model_name"""
     all_models = AVAILABLE_MODELS + OLLAMA_MODELS
-    matched_model = next((model for model in all_models if model.model_name == model_name and model.provider == model_provider), None)
+    matched_model = find_model_in_catalog(all_models, model_name, model_provider)
     if matched_model:
         return matched_model
-
-    try:
-        provider_enum = model_provider if isinstance(model_provider, ModelProvider) else ModelProvider(str(model_provider))
-    except ValueError:
-        return None
-
-    return LLMModel(display_name=str(model_name), model_name=str(model_name), provider=provider_enum)
+    return build_fallback_model_info(model_name, model_provider, ModelProvider, LLMModel)
 
 
 def find_model_by_name(model_name: str) -> LLMModel | None:
     """Find a model by its name across all available models."""
     all_models = AVAILABLE_MODELS + OLLAMA_MODELS
-    return next((model for model in all_models if model.model_name == model_name), None)
+    return find_model_in_catalog(all_models, model_name)
 
 
 def get_models_list():
     """Get the list of models for API responses."""
-    return [{"display_name": model.display_name, "model_name": model.model_name, "provider": model.provider.value} for model in AVAILABLE_MODELS]
+    return build_model_list_payload(AVAILABLE_MODELS)
 
 
 def _get_required_api_key(api_keys: dict | None, key_name: str, provider_label: str) -> str:
@@ -554,47 +435,26 @@ def _build_native_provider_model(model_name: str, model_provider: ModelProvider,
 
 
 def _build_openai_family_model(model_name: str, model_provider: ModelProvider, api_keys: dict | None = None):
-    if model_provider == ModelProvider.OPENAI:
-        return build_openai_compatible_model(
-            model_name,
-            OpenAICompatibleTransportConfig(api_key_name="OPENAI_API_KEY", base_url=os.getenv("OPENAI_API_BASE")),
-            {"OPENAI_API_KEY": _get_required_api_key(api_keys, "OPENAI_API_KEY", "OpenAI")},
-        )
-    if model_provider == ModelProvider.AZURE_OPENAI:
-        api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        if not api_key:
-            print("API Key Error: Please make sure AZURE_OPENAI_API_KEY is set in your .env file.")
-            raise ValueError("Azure OpenAI API key not found.  Please make sure AZURE_OPENAI_API_KEY is set in your .env file.")
-        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        if not azure_endpoint:
-            print("Azure Endpoint Error: Please make sure AZURE_OPENAI_ENDPOINT is set in your .env file.")
-            raise ValueError("Azure OpenAI endpoint not found.  Please make sure AZURE_OPENAI_ENDPOINT is set in your .env file.")
-        azure_deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-        if not azure_deployment_name:
-            print("Azure Deployment Name Error: Please make sure AZURE_OPENAI_DEPLOYMENT_NAME is set in your .env file.")
-            raise ValueError("Azure OpenAI deployment name not found.  Please make sure AZURE_OPENAI_DEPLOYMENT_NAME is set in your .env file.")
-        return AzureChatOpenAI(azure_endpoint=azure_endpoint, azure_deployment=azure_deployment_name, api_key=api_key, api_version="2024-10-21")
-    return None
+    provider_name = model_provider.value if hasattr(model_provider, "value") else str(model_provider)
+    return build_openai_family_model_impl(
+        model_name=model_name,
+        provider_name=provider_name,
+        api_keys=api_keys,
+        build_openai_compatible_model_fn=build_openai_compatible_model,
+        openai_transport_config_cls=OpenAICompatibleTransportConfig,
+        get_required_api_key_fn=_get_required_api_key,
+        azure_chat_openai_cls=AzureChatOpenAI,
+    )
 
 
 def _build_registered_route_model(model_name: str, model_provider: ModelProvider, provider_value: str, api_keys: dict | None = None):
-    if model_provider == ModelProvider.OPENROUTER:
-        registered_model = get_registered_provider_model(model_name, provider_value, api_keys)
-        if registered_model is None:
-            raise ValueError("OpenRouter route is not available. Please make sure OPENROUTER_API_KEY is set.")
-        return registered_model
-    if model_provider == ModelProvider.MINIMAX:
-        registered_model = get_registered_provider_model(model_name, provider_value, api_keys)
-        if registered_model is None:
-            raise ValueError("MiniMax route is not available. Please make sure MINIMAX_API_KEY is set.")
-        return registered_model
-    if model_provider == ModelProvider.ZHIPU:
-        registered_model = get_registered_provider_model(model_name, provider_value, api_keys)
-        return registered_model or get_zhipu_model(model_name, api_keys)
-    registered_model = get_registered_provider_model(model_name, provider_value, api_keys)
-    if registered_model is not None:
-        return registered_model
-    return None
+    return build_registered_route_model_impl(
+        model_name=model_name,
+        provider_name=provider_value,
+        api_keys=api_keys,
+        get_registered_provider_model_fn=get_registered_provider_model,
+        get_zhipu_model_fn=get_zhipu_model,
+    )
 
 
 def _build_ollama_or_gigachat_model(model_name: str, model_provider: ModelProvider, api_keys: dict | None = None):
