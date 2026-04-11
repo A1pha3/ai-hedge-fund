@@ -39,6 +39,7 @@ POST_GATE_SELECTIVE_EXEMPTION_MAX_REBUCKET_RANK_GAP = 300
 DEFAULT_TRADEABLE_OPPORTUNITY_POOL_PATH = REPORTS_DIR / "btst_tradeable_opportunity_pool_march.json"
 DEFAULT_FAILURE_DOSSIER_PATH = REPORTS_DIR / "btst_no_candidate_entry_failure_dossier_latest.json"
 DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH = REPORTS_DIR / "btst_watchlist_recall_dossier_latest.json"
+DEFAULT_REPORT_MANIFEST_PATH = REPORTS_DIR / "report_manifest_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.md"
 DEFAULT_PRIORITY_LIMIT = 5
@@ -110,9 +111,42 @@ def _snapshot_paths(snapshots_root: Path, trade_date: str) -> list[Path]:
     ]
 
 
-def _shadow_snapshot_path(snapshots_root: Path, trade_date: str) -> Path:
+def _shadow_snapshot_paths(snapshots_root: Path, trade_date: str) -> list[Path]:
     compact_trade_date = _compact_trade_date(trade_date)
-    return snapshots_root / f"candidate_pool_{compact_trade_date}_top300_shadow.json"
+    focus_paths = sorted(snapshots_root.glob(f"candidate_pool_{compact_trade_date}_top300_shadow_focus_*.json"))
+    default_path = snapshots_root / f"candidate_pool_{compact_trade_date}_top300_shadow.json"
+    ordered_paths = [*focus_paths]
+    if default_path.exists():
+        ordered_paths.append(default_path)
+    return ordered_paths
+
+
+def _shadow_summary_priority(summary: dict[str, Any]) -> tuple[int, int, int]:
+    status = str(summary.get("shadow_recall_status") or "").strip()
+    status_score = {
+        "computed": 4,
+        "computed_legacy": 3,
+        "selected_cache_backfill": 2,
+        "selected_cache_fallback_after_recompute_failure": 1,
+        "legacy_unknown": 0,
+    }.get(status, 0)
+    focus_score = 1 if str(summary.get("focus_signature") or "").strip() else 0
+    entry_count = len(list(summary.get("tickers") or []))
+    return status_score, focus_score, entry_count
+
+
+def _iter_shadow_snapshot_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    shadow_summary = dict(payload.get("shadow_summary") or {})
+    summary_entries = [dict(entry) for entry in list(shadow_summary.get("tickers") or []) if isinstance(entry, dict)]
+    if summary_entries:
+        return summary_entries
+    entries: list[dict[str, Any]] = []
+    for candidate in list(payload.get("shadow_candidates") or []):
+        if hasattr(candidate, "model_dump"):
+            entries.append(candidate.model_dump())
+        elif isinstance(candidate, dict):
+            entries.append(dict(candidate))
+    return entries
 
 
 def _find_local_prices_snapshot_path(snapshots_root: Path, ticker: str, trade_date: str) -> Path | None:
@@ -169,9 +203,32 @@ def _load_candidate_pool_snapshot(
     if cached is not None:
         return cached
 
-    shadow_snapshot_path = _shadow_snapshot_path(snapshots_root, trade_date)
-    shadow_snapshot_payload = _load_candidate_pool_shadow_snapshot(shadow_snapshot_path) if shadow_snapshot_path.exists() else {}
-    shadow_summary = dict(shadow_snapshot_payload.get("shadow_summary") or {})
+    shadow_snapshot_paths = _shadow_snapshot_paths(snapshots_root, trade_date)
+    preferred_shadow_summary: dict[str, Any] = {}
+    preferred_shadow_snapshot_path: Path | None = None
+    shadow_ticker_entries: dict[str, dict[str, Any]] = {}
+    for shadow_snapshot_path in shadow_snapshot_paths:
+        shadow_snapshot_payload = _load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
+        shadow_summary = dict(shadow_snapshot_payload.get("shadow_summary") or {})
+        if (
+            preferred_shadow_snapshot_path is None
+            or _shadow_summary_priority(shadow_summary) > _shadow_summary_priority(preferred_shadow_summary)
+        ):
+            preferred_shadow_summary = shadow_summary
+            preferred_shadow_snapshot_path = shadow_snapshot_path
+        for entry in _iter_shadow_snapshot_entries(shadow_snapshot_payload):
+            ticker = str(entry.get("ticker") or "").strip()
+            if not ticker or ticker in shadow_ticker_entries:
+                continue
+            shadow_ticker_entries[ticker] = {
+                **entry,
+                "shadow_snapshot_path": shadow_snapshot_path.as_posix(),
+                "shadow_snapshot_name": shadow_snapshot_path.name,
+                "shadow_recall_complete": shadow_summary.get("shadow_recall_complete"),
+                "shadow_recall_status": shadow_summary.get("shadow_recall_status"),
+                "shadow_selected_cutoff_avg_volume_20d": shadow_summary.get("selected_cutoff_avg_volume_20d"),
+                "shadow_focus_signature": shadow_summary.get("focus_signature"),
+            }
     for path in _snapshot_paths(snapshots_root, trade_date):
         if not path.exists():
             continue
@@ -196,10 +253,12 @@ def _load_candidate_pool_snapshot(
             "ticker_ranks": ticker_ranks,
             "selected_cutoff_ticker": snapshot_cutoff_ticker,
             "selected_cutoff_avg_volume_20d": snapshot_cutoff_avg_amount_20d,
-            "shadow_snapshot_path": shadow_snapshot_path.as_posix() if shadow_snapshot_path.exists() else None,
-            "shadow_recall_complete": shadow_summary.get("shadow_recall_complete"),
-            "shadow_recall_status": shadow_summary.get("shadow_recall_status"),
-            "shadow_selected_cutoff_avg_volume_20d": shadow_summary.get("selected_cutoff_avg_volume_20d"),
+            "shadow_snapshot_path": preferred_shadow_snapshot_path.as_posix() if preferred_shadow_snapshot_path else None,
+            "shadow_snapshot_paths": [path.as_posix() for path in shadow_snapshot_paths],
+            "shadow_ticker_entries": shadow_ticker_entries,
+            "shadow_recall_complete": preferred_shadow_summary.get("shadow_recall_complete"),
+            "shadow_recall_status": preferred_shadow_summary.get("shadow_recall_status"),
+            "shadow_selected_cutoff_avg_volume_20d": preferred_shadow_summary.get("selected_cutoff_avg_volume_20d"),
         }
         snapshot_cache[compact_trade_date] = cached
         return cached
@@ -211,10 +270,12 @@ def _load_candidate_pool_snapshot(
         "ticker_ranks": {},
         "selected_cutoff_ticker": None,
         "selected_cutoff_avg_volume_20d": None,
-        "shadow_snapshot_path": shadow_snapshot_path.as_posix() if shadow_snapshot_path.exists() else None,
-        "shadow_recall_complete": shadow_summary.get("shadow_recall_complete"),
-        "shadow_recall_status": shadow_summary.get("shadow_recall_status"),
-        "shadow_selected_cutoff_avg_volume_20d": shadow_summary.get("selected_cutoff_avg_volume_20d"),
+        "shadow_snapshot_path": preferred_shadow_snapshot_path.as_posix() if preferred_shadow_snapshot_path else None,
+        "shadow_snapshot_paths": [path.as_posix() for path in shadow_snapshot_paths],
+        "shadow_ticker_entries": shadow_ticker_entries,
+        "shadow_recall_complete": preferred_shadow_summary.get("shadow_recall_complete"),
+        "shadow_recall_status": preferred_shadow_summary.get("shadow_recall_status"),
+        "shadow_selected_cutoff_avg_volume_20d": preferred_shadow_summary.get("selected_cutoff_avg_volume_20d"),
     }
     snapshot_cache[compact_trade_date] = cached
     return cached
@@ -337,6 +398,65 @@ def _build_trade_date_allowlist(watchlist_recall_dossier: dict[str, Any]) -> dic
         if trade_dates:
             allowlist[ticker] = trade_dates
     return allowlist
+
+
+def _build_latest_shadow_visible_rows(
+    focus_tickers: list[str],
+    existing_rows: list[dict[str, Any]],
+    *,
+    report_manifest_path: Path,
+    snapshots_root: Path,
+) -> list[dict[str, Any]]:
+    manifest = _safe_load_json(report_manifest_path)
+    latest_btst_run = dict(manifest.get("latest_btst_run") or {})
+    compact_trade_date = _compact_trade_date(str(latest_btst_run.get("trade_date") or ""))
+    if not compact_trade_date:
+        return []
+
+    existing_trade_dates_by_ticker: dict[str, set[str]] = {}
+    for row in existing_rows:
+        ticker = str(row.get("ticker") or "").strip()
+        trade_date = _compact_trade_date(str(row.get("trade_date") or ""))
+        if ticker and trade_date:
+            existing_trade_dates_by_ticker.setdefault(ticker, set()).add(trade_date)
+
+    report_dir = str(latest_btst_run.get("report_dir") or latest_btst_run.get("report_dir_abs") or "").strip()
+    report_dir_name = Path(report_dir).name if report_dir else None
+    shadow_snapshot_paths = _shadow_snapshot_paths(snapshots_root, compact_trade_date)
+    if not shadow_snapshot_paths:
+        return []
+
+    shadow_entries_by_ticker: dict[str, dict[str, Any]] = {}
+    for snapshot_path in shadow_snapshot_paths:
+        payload = _safe_load_json(snapshot_path)
+        for entry in _iter_shadow_snapshot_entries(payload):
+            ticker = str(entry.get("ticker") or "").strip()
+            if ticker and ticker not in shadow_entries_by_ticker:
+                shadow_entries_by_ticker[ticker] = entry
+
+    supplemental_rows: list[dict[str, Any]] = []
+    for ticker in focus_tickers:
+        normalized_ticker = str(ticker or "").strip()
+        if not normalized_ticker:
+            continue
+        if compact_trade_date in existing_trade_dates_by_ticker.get(normalized_ticker, set()):
+            continue
+        if normalized_ticker not in shadow_entries_by_ticker:
+            continue
+        supplemental_rows.append(
+            {
+                "ticker": normalized_ticker,
+                "trade_date": compact_trade_date,
+                "report_dir": report_dir_name,
+                "report_mode": "live_pipeline",
+                "report_selection_target": latest_btst_run.get("selection_target"),
+                "strict_btst_goal_case": False,
+                "first_kill_switch": "no_candidate_entry",
+                "candidate_source": str(shadow_entries_by_ticker[normalized_ticker].get("candidate_pool_lane") or ""),
+                "shadow_visible_backfill": True,
+            }
+        )
+    return supplemental_rows
 
 
 def _build_stock_basic_by_symbol() -> dict[str, dict[str, Any]]:
@@ -1010,8 +1130,6 @@ def _build_priority_handoff_branch_experiment_queue(
         occurrences = list(grouped_occurrences.get(priority_handoff) or [])
         occurrence_summary = _summarize_branch_experiment_occurrences(occurrences)
         uplift_to_cutoff_multiple_mean = occurrence_summary["uplift_to_cutoff_multiple_mean"]
-        uplift_to_cutoff_multiple_min = occurrence_summary["uplift_to_cutoff_multiple_min"]
-        uplift_to_cutoff_multiple_max = occurrence_summary["uplift_to_cutoff_multiple_max"]
         target_cutoff_avg_amount_20d_mean = occurrence_summary["target_cutoff_avg_amount_20d_mean"]
         top300_lower_market_cap_hot_peer_count_mean = occurrence_summary["top300_lower_market_cap_hot_peer_count_mean"]
         lower_cap_hot_peer_case_share = occurrence_summary["lower_cap_hot_peer_case_share"]
@@ -1816,14 +1934,12 @@ def _evaluate_ticker_stage(
         frontier_context=frontier_context,
     )
     snapshot = stage_context["snapshot"]
-    frontier_row = stage_context["frontier_row"]
     cutoff_row = stage_context["cutoff_row"]
     snapshot_cutoff_ticker = stage_context["snapshot_cutoff_ticker"]
     snapshot_cutoff_avg_amount_20d = stage_context["snapshot_cutoff_avg_amount_20d"]
     candidate_pool_rank = stage_context["candidate_pool_rank"]
     pre_truncation_frontier_window = stage_context["pre_truncation_frontier_window"]
     pre_truncation_cutoff_rank = stage_context["pre_truncation_cutoff_rank"]
-    current_avg_amount_20d = stage_context["current_avg_amount_20d"]
     cutoff_avg_amount_20d = stage_context["cutoff_avg_amount_20d"]
     current_market_cap = stage_context["current_market_cap"]
     pre_truncation_rank = stage_context["pre_truncation_rank"]
@@ -2050,6 +2166,23 @@ def _build_ticker_stage_payload(
     failed_filters: list[str],
     blocking_stage: str,
 ) -> dict[str, Any]:
+    shadow_entry = dict(dict(snapshot.get("shadow_ticker_entries") or {}).get(ticker) or {})
+    resolved_shadow_snapshot_path = shadow_entry.get("shadow_snapshot_path") or snapshot.get("shadow_snapshot_path")
+    resolved_shadow_recall_complete = (
+        shadow_entry.get("shadow_recall_complete")
+        if shadow_entry
+        else snapshot.get("shadow_recall_complete")
+    )
+    resolved_shadow_recall_status = (
+        shadow_entry.get("shadow_recall_status")
+        if shadow_entry
+        else snapshot.get("shadow_recall_status")
+    )
+    resolved_shadow_cutoff_avg_volume_20d = (
+        shadow_entry.get("shadow_selected_cutoff_avg_volume_20d")
+        if shadow_entry
+        else snapshot.get("shadow_selected_cutoff_avg_volume_20d")
+    )
     return {
         "ticker": ticker,
         "trade_date": compact_trade_date,
@@ -2063,12 +2196,19 @@ def _build_ticker_stage_payload(
         "candidate_pool_snapshot": snapshot.get("snapshot_name"),
         "candidate_pool_snapshot_path": snapshot.get("snapshot_path"),
         "candidate_pool_snapshot_size": snapshot.get("snapshot_size"),
-        "candidate_pool_shadow_snapshot_path": snapshot.get("shadow_snapshot_path"),
+        "candidate_pool_shadow_visible": bool(shadow_entry),
+        "candidate_pool_shadow_rank": shadow_entry.get("candidate_pool_rank"),
+        "candidate_pool_shadow_lane": shadow_entry.get("candidate_pool_lane"),
+        "candidate_pool_shadow_reason": shadow_entry.get("candidate_pool_shadow_reason"),
+        "candidate_pool_shadow_focus_selected": shadow_entry.get("shadow_focus_selected"),
+        "candidate_pool_shadow_focus_signature": shadow_entry.get("shadow_focus_signature"),
+        "candidate_pool_shadow_snapshot_name": shadow_entry.get("shadow_snapshot_name"),
+        "candidate_pool_shadow_snapshot_path": resolved_shadow_snapshot_path,
         "candidate_pool_selected_cutoff_ticker": snapshot_cutoff_ticker,
         "candidate_pool_selected_cutoff_avg_volume_20d": snapshot_cutoff_avg_amount_20d,
-        "candidate_pool_shadow_recall_complete": snapshot.get("shadow_recall_complete"),
-        "candidate_pool_shadow_recall_status": snapshot.get("shadow_recall_status"),
-        "candidate_pool_shadow_selected_cutoff_avg_volume_20d": snapshot.get("shadow_selected_cutoff_avg_volume_20d"),
+        "candidate_pool_shadow_recall_complete": resolved_shadow_recall_complete,
+        "candidate_pool_shadow_recall_status": resolved_shadow_recall_status,
+        "candidate_pool_shadow_selected_cutoff_avg_volume_20d": resolved_shadow_cutoff_avg_volume_20d,
         "pre_truncation_total_candidates": frontier_context.get("pre_truncation_total_candidates"),
         "pre_truncation_cutoff_rank": pre_truncation_cutoff_rank,
         "pre_truncation_rank": pre_truncation_rank,
@@ -2375,11 +2515,12 @@ def _resolve_ticker_stage_resolution(
     pro: Any,
     ts_code: str,
 ) -> dict[str, Any]:
-    if candidate_pool_rank is not None:
+    shadow_entry = dict(dict(snapshot.get("shadow_ticker_entries") or {}).get(ticker) or {})
+    if candidate_pool_rank is not None or shadow_entry:
         return _build_ticker_stage_resolution_payload(
             blocking_stage="candidate_pool_visible_or_later_stage",
             estimated_amount_1d=_estimate_amount_from_daily_row(daily_row),
-            avg_amount_20d=None,
+            avg_amount_20d=_safe_float(shadow_entry.get("avg_volume_20d")),
             local_prices_snapshot_path=None,
             failed_filters=failed_filters,
         )
@@ -2502,6 +2643,7 @@ def _build_priority_ticker_dossiers(
     tradeable_pool: dict[str, Any],
     *,
     watchlist_trade_date_allowlist: dict[str, set[str]],
+    report_manifest_path: Path,
     snapshots_root: Path,
     diagnostics_override: dict[tuple[str, str], dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
@@ -2510,6 +2652,14 @@ def _build_priority_ticker_dossiers(
         for row in list(tradeable_pool.get("rows") or [])
         if str(row.get("first_kill_switch") or "") == "no_candidate_entry"
     ]
+    no_candidate_rows.extend(
+        _build_latest_shadow_visible_rows(
+            focus_tickers,
+            no_candidate_rows,
+            report_manifest_path=report_manifest_path,
+            snapshots_root=snapshots_root,
+        )
+    )
     stock_basic_universe, stock_basic_by_symbol = _load_stock_basic_universe()
     fallback_stock_basic_universe, fallback_stock_basic_by_symbol = _build_tradeable_pool_stock_basic_fallback(no_candidate_rows)
     if stock_basic_universe.empty:
@@ -2566,7 +2716,12 @@ def _filter_priority_ticker_rows(
 ) -> list[dict[str, Any]]:
     ticker_rows = [row for row in no_candidate_rows if str(row.get("ticker") or "").strip() == ticker]
     if allowed_trade_dates:
-        ticker_rows = [row for row in ticker_rows if _compact_trade_date(str(row.get("trade_date") or "")) in allowed_trade_dates]
+        ticker_rows = [
+            row
+            for row in ticker_rows
+            if bool(row.get("shadow_visible_backfill"))
+            or _compact_trade_date(str(row.get("trade_date") or "")) in allowed_trade_dates
+        ]
     return ticker_rows
 
 
@@ -3411,6 +3566,7 @@ def analyze_btst_candidate_pool_recall_dossier(
     *,
     watchlist_recall_dossier_path: str | Path | None = None,
     failure_dossier_path: str | Path | None = None,
+    report_manifest_path: str | Path | None = None,
     priority_limit: int = DEFAULT_PRIORITY_LIMIT,
     diagnostics_override: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -3420,6 +3576,11 @@ def analyze_btst_candidate_pool_recall_dossier(
     resolved_tradeable_pool_path, reports_root, snapshots_root = _resolve_recall_dossier_paths(
         tradeable_opportunity_pool_path=tradeable_opportunity_pool_path,
         tradeable_pool=tradeable_pool,
+    )
+    resolved_report_manifest_path = (
+        Path(report_manifest_path).expanduser().resolve()
+        if report_manifest_path
+        else reports_root / DEFAULT_REPORT_MANIFEST_PATH.name
     )
     focus_tickers = _build_focus_tickers(
         tradeable_pool,
@@ -3432,6 +3593,7 @@ def analyze_btst_candidate_pool_recall_dossier(
         focus_tickers,
         tradeable_pool,
         watchlist_trade_date_allowlist=watchlist_trade_date_allowlist,
+        report_manifest_path=resolved_report_manifest_path,
         snapshots_root=snapshots_root,
         diagnostics_override=diagnostics_override,
     )
@@ -3481,6 +3643,7 @@ def _build_candidate_pool_recall_sections(
     tradeable_pool: dict[str, Any],
     *,
     watchlist_trade_date_allowlist: dict[str, set[str]],
+    report_manifest_path: Path,
     snapshots_root: Path,
     diagnostics_override: dict[tuple[str, str], dict[str, Any]] | None,
 ) -> dict[str, Any]:
@@ -3488,6 +3651,7 @@ def _build_candidate_pool_recall_sections(
         focus_tickers,
         tradeable_pool,
         watchlist_trade_date_allowlist=watchlist_trade_date_allowlist,
+        report_manifest_path=report_manifest_path,
         snapshots_root=snapshots_root,
         diagnostics_override=diagnostics_override,
     )
@@ -3554,6 +3718,10 @@ def _build_candidate_pool_recall_analysis(
     next_actions: list[str],
     recommendation: str,
 ) -> dict[str, Any]:
+    shadow_visible_focus_profiles = _build_shadow_visible_focus_profiles(
+        priority_ticker_dossiers,
+        focus_liquidity_profile_summary=focus_liquidity_profile_summary,
+    )
     analysis = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "reports_root": reports_root.as_posix(),
@@ -3566,6 +3734,8 @@ def _build_candidate_pool_recall_analysis(
         "truncation_frontier_summary": truncation_frontier_summary,
         "focus_liquidity_profile_summary": focus_liquidity_profile_summary,
         "focus_liquidity_profiles": list(dict(focus_liquidity_profile_summary).get("primary_focus_tickers") or []),
+        "shadow_visible_focus_tickers": [row.get("ticker") for row in shadow_visible_focus_profiles if row.get("ticker")],
+        "shadow_visible_focus_profiles": shadow_visible_focus_profiles,
         "priority_handoff_counts": dict(dict(focus_liquidity_profile_summary).get("priority_handoff_counts") or {}),
         "priority_handoff_branch_diagnoses": priority_handoff_branch_diagnoses,
         "priority_handoff_branch_mechanisms": priority_handoff_branch_mechanisms,
@@ -3583,6 +3753,45 @@ def _build_candidate_pool_recall_analysis(
         )
     )
     return analysis
+
+
+def _build_shadow_visible_focus_profiles(
+    priority_ticker_dossiers: list[dict[str, Any]],
+    *,
+    focus_liquidity_profile_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    focus_profiles = {
+        str(row.get("ticker") or "").strip(): dict(row)
+        for row in list(dict(focus_liquidity_profile_summary).get("primary_focus_tickers") or [])
+        if str(row.get("ticker") or "").strip()
+    }
+    visible_profiles: list[dict[str, Any]] = []
+    for dossier in list(priority_ticker_dossiers or []):
+        ticker = str(dossier.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        visible_occurrences = [
+            dict(row)
+            for row in list(dossier.get("occurrence_evidence") or [])
+            if bool(row.get("candidate_pool_shadow_visible"))
+        ]
+        if not visible_occurrences:
+            continue
+        visible_occurrences.sort(key=lambda row: str(row.get("trade_date") or ""), reverse=True)
+        occurrence = visible_occurrences[0]
+        visible_profiles.append(
+            {
+                **focus_profiles.get(ticker, {"ticker": ticker}),
+                "candidate_pool_shadow_visible": True,
+                "candidate_pool_shadow_rank": occurrence.get("candidate_pool_shadow_rank"),
+                "candidate_pool_shadow_lane": occurrence.get("candidate_pool_shadow_lane"),
+                "candidate_pool_shadow_reason": occurrence.get("candidate_pool_shadow_reason"),
+                "candidate_pool_shadow_focus_signature": occurrence.get("candidate_pool_shadow_focus_signature"),
+                "candidate_pool_shadow_snapshot_path": occurrence.get("candidate_pool_shadow_snapshot_path"),
+                "dominant_blocking_stage": dossier.get("dominant_blocking_stage"),
+            }
+        )
+    return visible_profiles[:3]
 
 
 def _build_candidate_pool_recall_path_payload(
@@ -3668,6 +3877,7 @@ def main() -> None:
     parser.add_argument("--tradeable-opportunity-pool", default=str(DEFAULT_TRADEABLE_OPPORTUNITY_POOL_PATH))
     parser.add_argument("--watchlist-recall-dossier", default=str(DEFAULT_WATCHLIST_RECALL_DOSSIER_PATH))
     parser.add_argument("--failure-dossier", default=str(DEFAULT_FAILURE_DOSSIER_PATH))
+    parser.add_argument("--report-manifest", default=str(DEFAULT_REPORT_MANIFEST_PATH))
     parser.add_argument("--priority-limit", type=int, default=DEFAULT_PRIORITY_LIMIT)
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
@@ -3677,6 +3887,7 @@ def main() -> None:
         args.tradeable_opportunity_pool,
         watchlist_recall_dossier_path=args.watchlist_recall_dossier or None,
         failure_dossier_path=args.failure_dossier or None,
+        report_manifest_path=args.report_manifest or None,
         priority_limit=args.priority_limit,
     )
     output_json = Path(args.output_json).expanduser().resolve()

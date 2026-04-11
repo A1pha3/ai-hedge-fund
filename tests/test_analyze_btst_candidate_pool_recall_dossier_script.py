@@ -713,6 +713,278 @@ def test_analyze_btst_candidate_pool_recall_dossier_uses_local_prices_fallback_f
     assert analysis["priority_ticker_dossiers"][0]["truncation_liquidity_profile"]["priority_handoff"] == "layer_a_liquidity_corridor"
 
 
+def test_analyze_btst_candidate_pool_recall_dossier_recognizes_focus_shadow_snapshot_visibility(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    snapshots_root = tmp_path / "data" / "snapshots"
+    tradeable_pool_path = _write_json(
+        reports_root / "btst_tradeable_opportunity_pool_march.json",
+        {
+            "reports_root": str(reports_root.resolve()),
+            "rows": [
+                {
+                    "trade_date": "2026-04-09",
+                    "ticker": "300683",
+                    "first_kill_switch": "no_candidate_entry",
+                    "report_dir": "paper_trading_window_b",
+                    "report_mode": "live_pipeline",
+                    "strict_btst_goal_case": True,
+                    "next_high_return": 0.12,
+                    "t_plus_2_close_return": 0.18,
+                },
+            ],
+            "no_candidate_entry_summary": {"top_ticker_rows": [{"ticker": "300683"}]},
+        },
+    )
+    watchlist_recall_dossier_path = _write_json(
+        reports_root / "btst_watchlist_recall_dossier_latest.json",
+        {
+            "top_absent_from_candidate_pool_tickers": ["300683"],
+            "priority_ticker_dossiers": [
+                {
+                    "ticker": "300683",
+                    "occurrence_evidence": [{"trade_date": "2026-04-09", "recall_stage": "absent_from_candidate_pool"}],
+                }
+            ],
+        },
+    )
+    _write_json(
+        snapshots_root / "candidate_pool_20260409_top300.json",
+        [
+            {
+                "ticker": "600001",
+                "name": "A",
+                "industry_sw": "银行",
+                "market_cap": 10.0,
+                "avg_volume_20d": 165000.0,
+                "listing_date": "20200101",
+            }
+        ],
+    )
+    _write_json(
+        snapshots_root / "candidate_pool_20260409_top300_shadow.json",
+        {
+            "selected_candidates": [],
+            "shadow_candidates": [],
+            "shadow_summary": {
+                "pool_size": 300,
+                "selected_count": 300,
+                "overflow_count": 0,
+                "selected_tickers": [],
+                "tickers": [],
+            },
+        },
+    )
+    focus_shadow_path = snapshots_root / "candidate_pool_20260409_top300_shadow_focus_live300683.json"
+    _write_json(
+        focus_shadow_path,
+        {
+            "selected_candidates": [],
+            "shadow_candidates": [
+                {
+                    "ticker": "300683",
+                    "name": "海特生物",
+                    "industry_sw": "医药",
+                    "market_cap": 49.0069,
+                    "avg_volume_20d": 25582.204,
+                    "listing_date": "20170725",
+                    "candidate_pool_rank": 1880,
+                    "candidate_pool_lane": "layer_a_liquidity_corridor",
+                    "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow",
+                }
+            ],
+            "shadow_summary": {
+                "pool_size": 300,
+                "selected_count": 300,
+                "overflow_count": 4118,
+                "selected_cutoff_avg_volume_20d": 164728.0,
+                "selected_tickers": ["300683"],
+                "focus_tickers": ["300683"],
+                "focus_signature": "live300683",
+                "shadow_recall_complete": True,
+                "shadow_recall_status": "computed",
+                "tickers": [
+                    {
+                        "ticker": "300683",
+                        "candidate_pool_rank": 1880,
+                        "candidate_pool_lane": "layer_a_liquidity_corridor",
+                        "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow",
+                        "avg_volume_20d": 25582.204,
+                        "market_cap": 49.0069,
+                        "shadow_focus_selected": True,
+                        "shadow_visibility_gap_selected": False,
+                    }
+                ],
+            },
+        },
+    )
+
+    stock_basic = pd.DataFrame(
+        [
+            {"symbol": "300683", "ts_code": "300683.SZ", "name": "海特生物", "list_date": "20170725", "market": "创业板"},
+        ]
+    )
+    daily_basic = pd.DataFrame(
+        [
+            {"ts_code": "300683.SZ", "turnover_rate": 5.0, "circ_mv": 500000.0, "total_mv": 490069.0},
+        ]
+    )
+
+    monkeypatch.setattr(recall_script, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(recall_script, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(recall_script, "get_suspend_list", lambda trade_date: pd.DataFrame(columns=["ts_code"]))
+    monkeypatch.setattr(recall_script, "get_limit_list", lambda trade_date: pd.DataFrame(columns=["ts_code", "limit"]))
+    monkeypatch.setattr(recall_script, "get_cooled_tickers", lambda trade_date: set())
+    monkeypatch.setattr(recall_script, "_get_pro", lambda: None)
+
+    analysis = analyze_btst_candidate_pool_recall_dossier(
+        tradeable_pool_path,
+        watchlist_recall_dossier_path=watchlist_recall_dossier_path,
+    )
+
+    occurrence = analysis["priority_ticker_dossiers"][0]["occurrence_evidence"][0]
+    assert occurrence["blocking_stage"] == "candidate_pool_visible_or_later_stage"
+    assert occurrence["candidate_pool_visible"] is False
+    assert occurrence["candidate_pool_shadow_visible"] is True
+    assert occurrence["candidate_pool_shadow_rank"] == 1880
+    assert occurrence["candidate_pool_shadow_lane"] == "layer_a_liquidity_corridor"
+    assert occurrence["candidate_pool_shadow_reason"] == "upstream_base_liquidity_uplift_shadow"
+    assert occurrence["candidate_pool_shadow_focus_selected"] is True
+    assert occurrence["candidate_pool_shadow_focus_signature"] == "live300683"
+    assert occurrence["candidate_pool_shadow_recall_status"] == "computed"
+    assert occurrence["candidate_pool_shadow_selected_cutoff_avg_volume_20d"] == 164728.0
+    assert occurrence["candidate_pool_shadow_snapshot_path"].endswith(focus_shadow_path.name)
+
+
+def test_analyze_btst_candidate_pool_recall_dossier_backfills_latest_shadow_visible_run_when_tradeable_pool_is_stale(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    snapshots_root = tmp_path / "data" / "snapshots"
+    tradeable_pool_path = _write_json(
+        reports_root / "btst_tradeable_opportunity_pool_march.json",
+        {
+            "reports_root": str(reports_root.resolve()),
+            "rows": [
+                {
+                    "trade_date": "2026-03-31",
+                    "ticker": "300683",
+                    "first_kill_switch": "no_candidate_entry",
+                    "report_dir": "paper_trading_20260331_old",
+                    "report_mode": "live_pipeline",
+                    "report_selection_target": "short_trade_only",
+                    "strict_btst_goal_case": True,
+                }
+            ],
+        },
+    )
+    watchlist_recall_dossier_path = _write_json(
+        reports_root / "btst_watchlist_recall_dossier_latest.json",
+        {
+            "top_absent_from_candidate_pool_tickers": ["300683"],
+            "priority_ticker_dossiers": [
+                {
+                    "ticker": "300683",
+                    "occurrence_evidence": [{"trade_date": "2026-03-31", "recall_stage": "absent_from_candidate_pool"}],
+                }
+            ],
+        },
+    )
+    _write_json(
+        reports_root / "report_manifest_latest.json",
+        {
+            "latest_btst_run": {
+                "report_dir": "paper_trading_2026-04-09_2026-04-09_live_m2_7_short_trade_only_20260409_core6_catalyst_governed",
+                "trade_date": "2026-04-09",
+                "selection_target": "short_trade_only",
+            }
+        },
+    )
+    _write_json(
+        snapshots_root / "candidate_pool_20260409_top300.json",
+        [
+            {
+                "ticker": "600001",
+                "name": "A",
+                "industry_sw": "银行",
+                "market_cap": 10.0,
+                "avg_volume_20d": 165000.0,
+                "listing_date": "20200101",
+            }
+        ],
+    )
+    focus_shadow_path = snapshots_root / "candidate_pool_20260409_top300_shadow_focus_live300683.json"
+    _write_json(
+        focus_shadow_path,
+        {
+            "selected_candidates": [],
+            "shadow_candidates": [
+                {
+                    "ticker": "300683",
+                    "name": "海特生物",
+                    "industry_sw": "医药",
+                    "market_cap": 49.0069,
+                    "avg_volume_20d": 25582.204,
+                    "listing_date": "20170725",
+                    "candidate_pool_rank": 1880,
+                    "candidate_pool_lane": "layer_a_liquidity_corridor",
+                    "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow",
+                }
+            ],
+            "shadow_summary": {
+                "pool_size": 300,
+                "selected_count": 300,
+                "overflow_count": 4118,
+                "selected_cutoff_avg_volume_20d": 164728.0,
+                "focus_tickers": ["300683"],
+                "focus_signature": "live300683",
+                "shadow_recall_complete": True,
+                "shadow_recall_status": "computed",
+                "tickers": [
+                    {
+                        "ticker": "300683",
+                        "candidate_pool_rank": 1880,
+                        "candidate_pool_lane": "layer_a_liquidity_corridor",
+                        "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow",
+                        "shadow_focus_selected": True,
+                    }
+                ],
+            },
+        },
+    )
+
+    stock_basic = pd.DataFrame(
+        [
+            {"symbol": "300683", "ts_code": "300683.SZ", "name": "海特生物", "list_date": "20170725", "market": "创业板"},
+        ]
+    )
+    daily_basic = pd.DataFrame(
+        [
+            {"ts_code": "300683.SZ", "turnover_rate": 5.0, "circ_mv": 500000.0, "total_mv": 490069.0},
+        ]
+    )
+
+    monkeypatch.setattr(recall_script, "get_all_stock_basic", lambda: stock_basic.copy())
+    monkeypatch.setattr(recall_script, "get_daily_basic_batch", lambda trade_date: daily_basic.copy())
+    monkeypatch.setattr(recall_script, "get_suspend_list", lambda trade_date: pd.DataFrame(columns=["ts_code"]))
+    monkeypatch.setattr(recall_script, "get_limit_list", lambda trade_date: pd.DataFrame(columns=["ts_code", "limit"]))
+    monkeypatch.setattr(recall_script, "get_cooled_tickers", lambda trade_date: set())
+    monkeypatch.setattr(recall_script, "_get_pro", lambda: None)
+
+    analysis = analyze_btst_candidate_pool_recall_dossier(
+        tradeable_pool_path,
+        watchlist_recall_dossier_path=watchlist_recall_dossier_path,
+        report_manifest_path=reports_root / "report_manifest_latest.json",
+    )
+
+    evidence = analysis["priority_ticker_dossiers"][0]["occurrence_evidence"]
+    latest_occurrence = next(row for row in evidence if row["trade_date"] == "20260409")
+
+    assert latest_occurrence["report_dir"] == "paper_trading_2026-04-09_2026-04-09_live_m2_7_short_trade_only_20260409_core6_catalyst_governed"
+    assert latest_occurrence["blocking_stage"] == "candidate_pool_visible_or_later_stage"
+    assert latest_occurrence["candidate_pool_shadow_visible"] is True
+    assert latest_occurrence["candidate_pool_shadow_focus_signature"] == "live300683"
+    assert latest_occurrence["candidate_pool_shadow_snapshot_path"].endswith(focus_shadow_path.name)
+    assert analysis["shadow_visible_focus_tickers"] == ["300683"]
+    assert analysis["shadow_visible_focus_profiles"][0]["candidate_pool_shadow_lane"] == "layer_a_liquidity_corridor"
+
 def test_analyze_btst_candidate_pool_recall_dossier_uses_tradeable_pool_stock_basic_fallback(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     snapshots_root = tmp_path / "data" / "snapshots"

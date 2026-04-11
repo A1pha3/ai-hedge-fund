@@ -232,6 +232,7 @@ def build_shadow_summary_payload(
     shadow_candidates: list[CandidateStock],
     shadow_entries: list[dict[str, Any]],
     focus_signature: str,
+    focus_filter_diagnostics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "pool_size": pool_size,
@@ -246,4 +247,5 @@ def build_shadow_summary_payload(
         "shadow_recall_complete": True,
         "shadow_recall_status": "computed",
         "tickers": shadow_entries,
+        "focus_filter_diagnostics": list(focus_filter_diagnostics or []),
     }

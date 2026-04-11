@@ -225,11 +225,67 @@ def _resolve_cooldown_shadow_review_tickers() -> set[str]:
     )
 
 
+def _init_focus_filter_diagnostics(stock_df: pd.DataFrame, *, focus_tickers: set[str]) -> dict[str, dict[str, Any]]:
+    available_symbols = set(stock_df["symbol"].astype(str).tolist()) if "symbol" in stock_df else set()
+    return {
+        ticker: {
+            "ticker": ticker,
+            "present_in_stock_basic": ticker in available_symbols,
+            "first_removed_stage": None,
+            "final_visibility": "pending",
+        }
+        for ticker in sorted(focus_tickers)
+    }
+
+
+def _record_focus_filter_stage(
+    focus_filter_diagnostics: dict[str, dict[str, Any]],
+    *,
+    stage: str,
+    active_symbols: set[str],
+) -> None:
+    if not focus_filter_diagnostics:
+        return
+    for entry in focus_filter_diagnostics.values():
+        visible = entry["ticker"] in active_symbols
+        entry[f"visible_after_{stage}"] = visible
+        if entry["present_in_stock_basic"] and entry["first_removed_stage"] is None and not visible:
+            entry["first_removed_stage"] = stage
+
+
+def _finalize_focus_filter_diagnostics(
+    focus_filter_diagnostics: dict[str, dict[str, Any]],
+    *,
+    candidate_tickers: set[str],
+    cooldown_review_tickers: set[str],
+    selected_tickers: set[str],
+    shadow_tickers: set[str],
+) -> list[dict[str, Any]]:
+    finalized: list[dict[str, Any]] = []
+    for ticker in sorted(focus_filter_diagnostics):
+        entry = dict(focus_filter_diagnostics[ticker])
+        if not entry["present_in_stock_basic"]:
+            entry["final_visibility"] = "missing_from_stock_basic"
+        elif ticker in selected_tickers:
+            entry["final_visibility"] = "selected_pool"
+        elif ticker in shadow_tickers:
+            entry["final_visibility"] = "shadow_pool"
+        elif ticker in candidate_tickers:
+            entry["final_visibility"] = "overflow_pool"
+        elif ticker in cooldown_review_tickers:
+            entry["final_visibility"] = "cooldown_review_pool"
+        else:
+            entry["final_visibility"] = "filtered_out"
+        finalized.append(entry)
+    return finalized
+
+
 def _build_shadow_candidate_pool_payload(
     candidates: List[CandidateStock],
     *,
     pool_size: int,
     cooldown_review_candidates: Optional[List[CandidateStock]] = None,
+    focus_filter_diagnostics: Optional[list[dict[str, Any]]] = None,
 ) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
     ranked_candidates = sorted(candidates, key=_candidate_liquidity_sort_key, reverse=True)
     selected_candidates = [candidate.model_copy(update={"candidate_pool_rank": rank}) for rank, candidate in enumerate(ranked_candidates[:pool_size], start=1)]
@@ -260,6 +316,7 @@ def _build_shadow_candidate_pool_payload(
             shadow_candidates=shadow_candidates,
             shadow_entries=shadow_entries,
             focus_signature=_shadow_focus_signature(),
+            focus_filter_diagnostics=focus_filter_diagnostics,
         )
 
     cutoff_avg_volume = max(float(ranked_candidates[pool_size - 1].avg_volume_20d), 1.0)
@@ -349,6 +406,7 @@ def _build_shadow_candidate_pool_payload(
         shadow_candidates=shadow_candidates,
         shadow_entries=shadow_entries,
         focus_signature=_shadow_focus_signature(),
+        focus_filter_diagnostics=focus_filter_diagnostics,
     )
 
 
@@ -367,23 +425,27 @@ def _build_shadow_summary_from_selected_candidates(selected_candidates: List[Can
         "shadow_recall_complete": False,
         "shadow_recall_status": "selected_cache_backfill",
         "tickers": [],
+        "focus_filter_diagnostics": [],
     }
 
 
 def _compute_candidate_pool_candidates(
     trade_date: str,
     cooldown_tickers: Optional[Set[str]] = None,
-) -> tuple[List[CandidateStock], List[CandidateStock]]:
+) -> tuple[List[CandidateStock], List[CandidateStock], list[dict[str, Any]]]:
     """计算未截断的候选池，供主池与 shadow recall 共同消费。"""
     pro = _get_pro()
     if pro is None:
         print("[CandidatePool] Tushare 未初始化，无法构建候选池")
-        return []
+        return [], [], []
 
     stock_df = get_all_stock_basic()
     if stock_df is None or stock_df.empty:
         print("[CandidatePool] 无法获取全 A 股基本信息")
-        return [], []
+        return [], [], []
+
+    focus_review_tickers = _resolve_cooldown_shadow_review_tickers()
+    focus_filter_diagnostics = _init_focus_filter_diagnostics(stock_df, focus_tickers=focus_review_tickers)
 
     initial_count = len(stock_df)
     print(f"[CandidatePool] 全 A 股标的: {initial_count}")
@@ -391,16 +453,31 @@ def _compute_candidate_pool_candidates(
     mask_st = stock_df["name"].str.contains("ST", case=False, na=False)
     stock_df = stock_df[~mask_st].copy()
     print(f"[CandidatePool] 排除 ST 后: {len(stock_df)} (过滤 {mask_st.sum()})")
+    _record_focus_filter_stage(
+        focus_filter_diagnostics,
+        stage="st_filter",
+        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
+    )
 
     mask_bj = build_beijing_exchange_mask(stock_df)
     stock_df = stock_df[~mask_bj].copy()
     print(f"[CandidatePool] 排除北交所后: {len(stock_df)} (过滤 {mask_bj.sum()})")
+    _record_focus_filter_stage(
+        focus_filter_diagnostics,
+        stage="beijing_exchange_filter",
+        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
+    )
 
     mask_new = stock_df["list_date"].apply(
         lambda d: _estimate_trading_days(str(d) if pd.notna(d) else "", trade_date) < MIN_LISTING_DAYS
     )
     stock_df = stock_df[~mask_new].copy()
     print(f"[CandidatePool] 排除新股后: {len(stock_df)} (过滤 {mask_new.sum()})")
+    _record_focus_filter_stage(
+        focus_filter_diagnostics,
+        stage="listing_days_filter",
+        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
+    )
 
     suspend_df = get_suspend_list(trade_date)
     if suspend_df is not None and not suspend_df.empty:
@@ -408,6 +485,11 @@ def _compute_candidate_pool_candidates(
         mask_suspend = stock_df["ts_code"].isin(suspend_codes)
         stock_df = stock_df[~mask_suspend].copy()
         print(f"[CandidatePool] 排除停牌后: {len(stock_df)} (过滤 {mask_suspend.sum()})")
+    _record_focus_filter_stage(
+        focus_filter_diagnostics,
+        stage="suspend_filter",
+        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
+    )
 
     limit_df = get_limit_list(trade_date)
     if limit_df is not None and not limit_df.empty:
@@ -415,6 +497,11 @@ def _compute_candidate_pool_candidates(
         mask_limit_up = stock_df["ts_code"].isin(limit_up_codes)
         stock_df = stock_df[~mask_limit_up].copy()
         print(f"[CandidatePool] 排除涨停后: {len(stock_df)} (过滤 {mask_limit_up.sum()})")
+    _record_focus_filter_stage(
+        focus_filter_diagnostics,
+        stage="limit_up_filter",
+        active_symbols=set(stock_df["symbol"].astype(str).tolist()),
+    )
 
     cooldown_tickers = resolve_cooldown_tickers(
         cooldown_tickers=set(cooldown_tickers) if cooldown_tickers is not None else None,
@@ -425,6 +512,11 @@ def _compute_candidate_pool_candidates(
         stock_df=stock_df,
         cooldown_tickers=set(cooldown_tickers),
         cooldown_review_tickers=_resolve_cooldown_shadow_review_tickers(),
+    )
+    _record_focus_filter_stage(
+        focus_filter_diagnostics,
+        stage="cooldown_filter",
+        active_symbols=set(stock_df["symbol"].astype(str).tolist()) | set(cooldown_review_df["symbol"].astype(str).tolist()),
     )
     if cooldown_tickers:
         print(f"[CandidatePool] 排除冷却期后: {len(stock_df)} (过滤 {cooldown_filtered_count})")
@@ -443,6 +535,11 @@ def _compute_candidate_pool_candidates(
         cooldown_review_df=cooldown_review_df,
         estimated_amount_map=estimated_amount_map,
         min_estimated_amount_1d=MIN_ESTIMATED_AMOUNT_1D,
+    )
+    _record_focus_filter_stage(
+        focus_filter_diagnostics,
+        stage="estimated_liquidity_filter",
+        active_symbols=set(stock_df["symbol"].astype(str).tolist()) | set(cooldown_review_df["symbol"].astype(str).tolist()),
     )
 
     remaining_codes = stock_df["ts_code"].tolist() + cooldown_review_df["ts_code"].tolist()
@@ -467,6 +564,11 @@ def _compute_candidate_pool_candidates(
         low_liq_codes=low_liq_codes,
     )
     print(f"[CandidatePool] 排除低流动性后: {len(stock_df)} (过滤 {low_liq_filtered_count})")
+    _record_focus_filter_stage(
+        focus_filter_diagnostics,
+        stage="avg_amount_20d_filter",
+        active_symbols=set(stock_df["symbol"].astype(str).tolist()) | set(cooldown_review_df["symbol"].astype(str).tolist()),
+    )
 
     sw_map = normalize_sw_map(get_sw_industry_classification())
 
@@ -487,7 +589,15 @@ def _compute_candidate_pool_candidates(
         cooldown_review=True,
     )
 
-    return candidates, cooldown_review_candidates
+    finalized_focus_filter_diagnostics = _finalize_focus_filter_diagnostics(
+        focus_filter_diagnostics,
+        candidate_tickers={candidate.ticker for candidate in candidates},
+        cooldown_review_tickers={candidate.ticker for candidate in cooldown_review_candidates},
+        selected_tickers=set(),
+        shadow_tickers=set(),
+    )
+
+    return candidates, cooldown_review_candidates, finalized_focus_filter_diagnostics
 
 
 def build_candidate_pool_with_shadow(
@@ -535,7 +645,10 @@ def build_candidate_pool_with_shadow(
         except Exception as e:
             print(f"[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: {e}")
 
-    candidates, cooldown_review_candidates = _compute_candidate_pool_candidates(trade_date, cooldown_tickers=cooldown_tickers)
+    candidates, cooldown_review_candidates, focus_filter_diagnostics = _compute_candidate_pool_candidates(
+        trade_date,
+        cooldown_tickers=cooldown_tickers,
+    )
     if not candidates and cached_selected_candidates:
         shadow_summary = _build_shadow_summary_from_selected_candidates(
             cached_selected_candidates,
@@ -558,6 +671,14 @@ def build_candidate_pool_with_shadow(
         candidates,
         pool_size=MAX_CANDIDATE_POOL_SIZE,
         cooldown_review_candidates=cooldown_review_candidates,
+        focus_filter_diagnostics=focus_filter_diagnostics,
+    )
+    shadow_summary["focus_filter_diagnostics"] = _finalize_focus_filter_diagnostics(
+        {item["ticker"]: item for item in focus_filter_diagnostics},
+        candidate_tickers={candidate.ticker for candidate in candidates},
+        cooldown_review_tickers={candidate.ticker for candidate in cooldown_review_candidates},
+        selected_tickers={candidate.ticker for candidate in selected_candidates},
+        shadow_tickers={candidate.ticker for candidate in shadow_candidates},
     )
 
     _write_candidate_pool_snapshot(snapshot_path, selected_candidates)
@@ -837,13 +958,13 @@ def main():
     args = parser.parse_args()
 
     candidates = build_candidate_pool(args.trade_date, use_cache=not args.no_cache)
-    print(f"\n=== 候选池结果 ===")
+    print("\n=== 候选池结果 ===")
     print(f"日期: {args.trade_date}")
     print(f"标的数: {len(candidates)}")
     if candidates:
         # 按市值降序显示前 20 只
         sorted_candidates = sorted(candidates, key=lambda c: c.market_cap, reverse=True)
-        print(f"\n市值 Top 20:")
+        print("\n市值 Top 20:")
         for i, c in enumerate(sorted_candidates[:20], 1):
             print(f"  {i:2d}. {c.ticker} {c.name:<8s} 行业={c.industry_sw:<6s} 市值={c.market_cap:.1f}亿 均额={c.avg_volume_20d:.0f}万")
 

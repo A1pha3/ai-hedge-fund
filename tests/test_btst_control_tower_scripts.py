@@ -852,7 +852,7 @@ def test_prioritize_control_tower_next_actions_prefers_btst_flip_tasks_over_reca
 
     assert actions[0]["source"] == "selected_contract_monitor"
     assert actions[1]["source"] == "carryover_peer_proof"
-    assert actions[2]["source"] == "carryover_contract"
+    assert actions[2]["source"] == "candidate_pool_recall_dossier"
 
 
 def test_prioritize_control_tower_next_actions_prefers_pending_peer_close_loop_over_recall() -> None:
@@ -903,8 +903,8 @@ def test_prioritize_control_tower_next_actions_prefers_pending_peer_close_loop_o
     actions = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
 
     assert actions[0]["source"] == "selected_contract_monitor"
-    assert actions[1]["source"] == "carryover_peer_close_loop_monitor"
-    assert actions[2]["source"] == "carryover_contract"
+    assert actions[1]["source"] == "candidate_pool_recall_dossier"
+    assert actions[2]["source"] == "carryover_peer_close_loop_monitor"
 
 
 def test_prioritize_control_tower_next_actions_demotes_low_urgency_selected_resolution_below_live_peer_and_corridor_tasks() -> None:
@@ -992,12 +992,12 @@ def test_prioritize_control_tower_next_actions_demotes_low_urgency_selected_reso
     actions = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
 
     assert [row["source"] for row in actions[:3]] == [
-        "carryover_peer_close_loop_monitor",
-        "carryover_contract",
         "candidate_pool_corridor_shadow_replay",
+        "candidate_pool_recall_dossier",
+        "carryover_peer_close_loop_monitor",
     ]
     assert all(row["source"] != "selected_contract_resolution" for row in actions[:3])
-    assert "['300620', '301396']" in actions[1]["next_step"]
+    assert "300620" in actions[2]["next_step"]
 
 
 def test_prioritize_control_tower_next_actions_drops_generic_carryover_when_selected_contract_is_violated() -> None:
@@ -1070,8 +1070,8 @@ def test_prioritize_control_tower_next_actions_drops_generic_carryover_when_sele
 
     assert [action["source"] for action in actions] == [
         "selected_contract_resolution",
-        "carryover_peer_close_loop_monitor",
         "candidate_pool_corridor_shadow_replay",
+        "candidate_pool_recall_dossier",
     ]
 
 
@@ -1208,6 +1208,63 @@ def test_prioritize_control_tower_next_actions_prefers_corridor_primary_shadow_r
     assert "excluded_low_gate_tail=['688796']" in actions[0]["next_step"]
     assert "guardrail：保持 Layer A liquidity gate 与 top300 cutoff 默认口径不变。" in actions[0]["next_step"]
     assert actions[1]["source"] == "candidate_pool_recall_dossier"
+
+
+def test_prioritize_control_tower_next_actions_prefers_shadow_visible_handoff_over_absent_candidate_pool_label() -> None:
+    latest_btst_snapshot = {"summary": {"primary_count": 0}}
+    control_tower_snapshot = {
+        "candidate_pool_recall_dossier": {
+            "dominant_stage": "candidate_pool_truncated_after_filters",
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["300683", "688796", "688383"]},
+            "truncation_frontier_summary": {"frontier_verdict": "far_below_cutoff_not_boundary"},
+            "next_actions": ["先补 recall 链路"],
+        },
+        "active_candidate_pool_upstream_handoff_focus_tickers": ["688796", "300683", "688383"],
+        "active_no_candidate_entry_absent_from_watchlist_tickers": ["300683"],
+        "active_watchlist_recall_absent_from_candidate_pool_tickers": ["300683"],
+        "candidate_pool_recall_dominant_stage": "candidate_pool_truncated_after_filters",
+        "candidate_pool_recall_focus_liquidity_profiles": [
+            {
+                "ticker": "300683",
+                "dominant_liquidity_gap_mode": "barely_above_gate_and_far_below_cutoff",
+                "pressure_peer_cluster_type": "diffuse_recurring_liquidity_wall",
+                "uplift_to_cutoff_multiple_mean": 12.5602,
+                "closest_case": {
+                    "pre_truncation_rank_gap_to_cutoff": 1599,
+                    "pre_truncation_avg_amount_share_of_cutoff": 0.158,
+                },
+            }
+        ],
+        "candidate_pool_recall_shadow_visible_focus_tickers": ["300683"],
+        "candidate_pool_recall_shadow_visible_focus_profiles": [
+            {
+                "ticker": "300683",
+                "candidate_pool_shadow_visible": True,
+                "candidate_pool_shadow_rank": 1880,
+                "candidate_pool_shadow_lane": "layer_a_liquidity_corridor",
+                "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow",
+            }
+        ],
+        "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+        "candidate_pool_corridor_shadow_pack_summary": {
+            "primary_shadow_replay": {"ticker": "300683"},
+            "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
+        },
+        "candidate_pool_corridor_uplift_runbook_summary": {
+            "primary_shadow_replay": "300683",
+            "execution_step_head": "保持 300683 为唯一 primary shadow replay 槽位。",
+        },
+    }
+
+    actions = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
+
+    assert actions[0]["task_id"] == "candidate_pool_corridor_primary_shadow_priority"
+    assert "earliest_breakpoint=focused_shadow_visible" in actions[0]["why_now"]
+    assert "shadow_visible_lane=layer_a_liquidity_corridor" in actions[0]["why_now"]
+    assert "shadow_visible_reason=upstream_base_liquidity_uplift_shadow" in actions[0]["why_now"]
+    assert "shadow_visible_rank=1880" in actions[0]["why_now"]
+    assert "earliest_breakpoint=absent_from_candidate_pool" not in actions[0]["why_now"]
+    assert actions[0]["next_step"] == "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。"
 
 
 def test_prioritize_control_tower_next_actions_accepts_legacy_string_corridor_primary_shadow_replay() -> None:
@@ -2829,6 +2886,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["latest_btst_snapshot"]["llm_error_digest"]["fallback_gap_detected"] is True
     assert payload["latest_btst_snapshot"]["catalyst_theme_frontier_summary"]["status"] == "promotable_shadow_exists"
     assert payload["latest_btst_snapshot"]["catalyst_theme_frontier_summary"]["recommended_promoted_tickers"] == ["301001"]
+    assert "shadow_threshold_blocker_summary" in payload["latest_btst_snapshot"]["catalyst_theme_frontier_summary"]
     assert payload["latest_btst_snapshot"]["score_fail_frontier_summary"]["status"] == "refreshed"
     assert payload["latest_btst_snapshot"]["score_fail_frontier_summary"]["rejected_short_trade_boundary_count"] == 0
     assert payload["recommended_reading_order"][0]["entry_id"] == "btst_governance_synthesis_latest"
@@ -2863,6 +2921,10 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["control_tower_snapshot"]["candidate_pool_recall_dominant_liquidity_gap_mode"] == "near_cutoff_liquidity_gap"
     assert payload["control_tower_snapshot"]["candidate_pool_recall_focus_liquidity_profiles"][0]["ticker"] == "300502"
     assert payload["control_tower_snapshot"]["candidate_pool_recall_focus_liquidity_profiles"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_shadow_visible_focus_tickers"] == []
+    assert payload["control_tower_snapshot"]["candidate_pool_recall_shadow_visible_focus_profiles"] == []
+    assert payload["control_tower_snapshot"]["active_candidate_pool_recall_shadow_visible_focus_tickers"] == []
+    assert payload["control_tower_snapshot"]["active_candidate_pool_recall_shadow_visible_focus_profiles"] == []
     assert payload["control_tower_snapshot"]["candidate_pool_recall_priority_handoff_counts"] == {"top300_boundary_micro_tuning": 1}
     assert payload["control_tower_snapshot"]["candidate_pool_recall_priority_handoff_branch_diagnoses"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
     assert payload["control_tower_snapshot"]["candidate_pool_recall_priority_handoff_branch_mechanisms"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
@@ -2913,19 +2975,18 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert payload["control_tower_snapshot"]["carryover_peer_promotion_gate_summary"]["focus_ticker"] == "301396"
     assert payload["control_tower_snapshot"]["carryover_peer_promotion_gate_summary"]["focus_gate_verdict"] == "blocked_selected_contract_open"
     assert payload["control_tower_snapshot"]["carryover_peer_promotion_gate_summary"]["blocked_open_tickers"] == ["301396"]
-    carryover_task = next(task for task in payload["control_tower_snapshot"]["next_actions"] if task.get("source") == "carryover_contract")
-    assert "002001" in carryover_task["title"]
-    assert "301396" in carryover_task["title"]
-    assert "t_plus_2_bias_only" in carryover_task["why_now"]
-    assert "peer_proof_focus=301396" in carryover_task["why_now"]
-    assert "peer_proof_verdict=ready_for_promotion_review" in carryover_task["why_now"]
-    assert "peer_gate_focus=301396" in carryover_task["why_now"]
-    assert "peer_gate_verdict=blocked_selected_contract_open" in carryover_task["why_now"]
-    assert "watch_with_risk=['688498']" in carryover_task["why_now"]
-    assert "T+2 bias" in carryover_task["next_step"]
-    assert "['301396', '300408']" in carryover_task["next_step"]
-    assert "['301396']" in carryover_task["next_step"]
-    assert "['688498']" in carryover_task["next_step"]
+    next_actions = payload["control_tower_snapshot"]["next_actions"]
+    assert next_actions[0]["task_id"] == "selected_contract_monitor_priority"
+    assert next_actions[0]["source"] == "selected_contract_monitor"
+    assert next_actions[1]["task_id"] == "carryover_peer_proof_priority"
+    assert next_actions[1]["source"] == "carryover_peer_proof"
+    assert next_actions[2]["task_id"] == "candidate_pool_recall_priority"
+    assert next_actions[2]["source"] == "candidate_pool_recall_dossier"
+    assert "candidate-pool truncation" in next_actions[2]["title"]
+    assert "dominant recall stage=candidate_pool_truncated_after_filters" in next_actions[2]["why_now"]
+    assert "uplift_to_cutoff_multiple_min=0.1001" in next_actions[2]["why_now"]
+    assert next_actions[2]["next_step"]
+    assert all(task.get("source") != "carryover_contract" for task in next_actions)
     assert payload["control_tower_snapshot"]["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
     assert "historical_shadow_probe_tickers" in payload["control_tower_snapshot"]["candidate_pool_upstream_handoff_board_summary"]
     assert payload["control_tower_snapshot"]["candidate_pool_corridor_uplift_runbook_status"] in {"ready_for_upstream_uplift_probe", "skipped_no_corridor_probe"}
@@ -2955,6 +3016,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "## T+1/T+2 Objective Monitor" in markdown
     assert "## Tradeable Opportunity Pool" in markdown
     assert "## Catalyst Theme Frontier" in markdown
+    assert "catalyst_frontier_shadow_threshold_blocker_summary:" in markdown
     assert "## Score-Fail Frontier Queue" in markdown
     assert "301001" in markdown
     assert "tradeable_opportunity_pool_count: 11" in markdown
@@ -2976,6 +3038,10 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "candidate_pool_recall_dominant_ranking_driver: mixed_post_filter_gap" in markdown
     assert "candidate_pool_recall_dominant_liquidity_gap_mode: near_cutoff_liquidity_gap" in markdown
     assert "candidate_pool_recall_focus_liquidity_profiles:" in markdown
+    assert "candidate_pool_recall_shadow_visible_focus_tickers:" in markdown
+    assert "candidate_pool_recall_shadow_visible_focus_profiles:" in markdown
+    assert "active_candidate_pool_recall_shadow_visible_focus_tickers:" in markdown
+    assert "active_candidate_pool_recall_shadow_visible_focus_profiles:" in markdown
     assert "candidate_pool_recall_priority_handoff_counts: {'top300_boundary_micro_tuning': 1}" in markdown
     assert "candidate_pool_recall_priority_handoff_branch_diagnoses:" in markdown
     assert "candidate_pool_recall_priority_handoff_branch_mechanisms:" in markdown
@@ -2984,6 +3050,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert "candidate_pool_branch_priority_alignment_status:" in markdown
     assert "candidate_pool_lane_objective_support_status:" in markdown
     assert "candidate_pool_corridor_validation_pack_status:" in markdown
+    assert "promotion_readiness_status=" in markdown
     assert "candidate_pool_corridor_shadow_pack_status:" in markdown
     assert "candidate_pool_rebucket_shadow_pack_status:" in markdown
     assert "candidate_pool_rebucket_objective_validation_status:" in markdown
@@ -3528,6 +3595,185 @@ def test_control_tower_recall_priority_prefers_active_upstream_handoff_focus_tic
     assert "pre-truncation 排名观测与 top300 frontier" in next_actions[1]["next_step"]
     assert "通过 Layer A 过滤后仍在 candidate_pool truncation 被压掉" in next_actions[1]["next_step"]
     assert "当前最轻样本门槛仍需约 6.3291 倍成交额抬升" in next_actions[1]["next_step"]
+
+
+def test_build_btst_nightly_control_tower_payload_threads_shadow_visible_focus_profiles(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    report_dir = _write_btst_followup_report(
+        reports_root,
+        report_name="paper_trading_20260409_20260409_live_m2_7_short_trade_only_20260410",
+        selection_target="short_trade_only",
+        mode="live_pipeline",
+        trade_date="2026-04-09",
+        next_trade_date="2026-04-10",
+        summary_counts={
+            "selected_count": 0,
+            "near_miss_count": 1,
+            "blocked_count": 0,
+            "rejected_count": 0,
+            "opportunity_pool_count": 0,
+            "research_upside_radar_count": 0,
+        },
+    )
+
+    synthesis_json = reports_root / "btst_governance_synthesis_latest.json"
+    validation_json = reports_root / "btst_governance_validation_latest.json"
+    independent_json = reports_root / "btst_independent_window_monitor_latest.json"
+    tplus_json = reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json"
+    replay_json = reports_root / "btst_replay_cohort_latest.json"
+    failure_dossier_json = reports_root / "btst_no_candidate_entry_failure_dossier_latest.json"
+    watchlist_dossier_json = reports_root / "btst_watchlist_recall_dossier_latest.json"
+    candidate_pool_dossier_json = reports_root / "btst_candidate_pool_recall_dossier_latest.json"
+
+    _write_json(synthesis_json, {"lane_matrix": [], "waiting_lane_count": 0, "ready_lane_count": 0, "recommendation": "聚焦 recall。", "lane_status_counts": {}, "closed_frontiers": [], "next_actions": []})
+    _write_json(validation_json, {"overall_verdict": "pass", "warn_count": 0, "fail_count": 0})
+    _write_json(independent_json, {"report_dir_count": 0, "rows": [], "recommendation": "n/a"})
+    _write_json(tplus_json, {"tradeable_surface": {"verdict": "n/a"}})
+    _write_json(replay_json, {"report_count": 1, "selection_target_counts": {"short_trade_only": 1}, "cohort_summaries": [], "recommendation": "n/a"})
+    _write_json(failure_dossier_json, {"top_absent_from_watchlist_tickers": ["300683"]})
+    _write_json(watchlist_dossier_json, {"top_absent_from_candidate_pool_tickers": ["300683"], "priority_ticker_dossiers": [{"ticker": "300683", "dominant_recall_stage": "absent_from_candidate_pool"}]})
+    _write_json(
+        candidate_pool_dossier_json,
+        {
+            "priority_stage_counts": {"candidate_pool_visible_or_later_stage": 1},
+            "dominant_stage": "candidate_pool_visible_or_later_stage",
+            "top_stage_tickers": {"candidate_pool_visible_or_later_stage": ["300683"]},
+            "focus_liquidity_profile_summary": {
+                "primary_focus_tickers": [
+                    {"ticker": "300683", "priority_handoff": "layer_a_liquidity_corridor", "prototype_type": "upstream_base_liquidity_uplift_probe"},
+                    {"ticker": "688796", "priority_handoff": "layer_a_liquidity_corridor", "prototype_type": "upstream_base_liquidity_uplift_probe"},
+                ]
+            },
+            "shadow_visible_focus_tickers": ["300683", "688796", "301292"],
+            "shadow_visible_focus_profiles": [
+                {
+                    "ticker": "300683",
+                    "candidate_pool_shadow_visible": True,
+                    "candidate_pool_shadow_rank": 1880,
+                    "candidate_pool_shadow_lane": "layer_a_liquidity_corridor",
+                    "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow",
+                },
+                {
+                    "ticker": "688796",
+                    "candidate_pool_shadow_visible": True,
+                    "candidate_pool_shadow_rank": 3114,
+                    "candidate_pool_shadow_lane": "layer_a_liquidity_corridor",
+                    "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow_focus_relaxed_band",
+                },
+            ],
+            "priority_ticker_dossiers": [
+                {
+                    "ticker": "300683",
+                    "dominant_blocking_stage": "candidate_pool_visible_or_later_stage",
+                    "occurrence_evidence": [
+                        {
+                            "trade_date": "20260409",
+                            "candidate_pool_shadow_visible": True,
+                            "candidate_pool_shadow_rank": 1880,
+                            "candidate_pool_shadow_lane": "layer_a_liquidity_corridor",
+                            "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow",
+                            "candidate_pool_shadow_focus_signature": "live300683",
+                            "candidate_pool_shadow_snapshot_path": "data/snapshots/candidate_pool_20260409_top300_shadow_focus_live300683.json",
+                        }
+                    ],
+                }
+            ],
+            "recommendation": "优先沿 focused shadow recall 推进 downstream handoff。",
+        },
+    )
+
+    manifest = {
+        "reports_root": str(reports_root.resolve()),
+        "latest_btst_run": {
+            "report_dir_abs": str(report_dir.resolve()),
+            "report_dir": report_dir.name,
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-04-09",
+            "next_trade_date": "2026-04-10",
+        },
+        "btst_governance_synthesis_refresh": {"status": "refreshed", "output_json": str(synthesis_json.resolve())},
+        "btst_governance_validation_refresh": {"status": "refreshed", "output_json": str(validation_json.resolve())},
+        "btst_independent_window_monitor_refresh": {"status": "refreshed", "output_json": str(independent_json.resolve())},
+        "btst_tplus1_tplus2_objective_monitor_refresh": {"status": "refreshed", "output_json": str(tplus_json.resolve())},
+        "btst_replay_cohort_refresh": {"status": "refreshed", "output_json": str(replay_json.resolve())},
+        "candidate_entry_shadow_refresh": {
+            "status": "refreshed",
+            "candidate_pool_recall_dossier_json": str(candidate_pool_dossier_json.resolve()),
+            "candidate_pool_recall_shadow_visible_focus_tickers": ["300683", "688796", "301292"],
+            "candidate_pool_recall_shadow_visible_focus_profiles": [
+                {
+                    "ticker": "300683",
+                    "candidate_pool_shadow_visible": True,
+                    "candidate_pool_shadow_rank": 1880,
+                    "candidate_pool_shadow_lane": "layer_a_liquidity_corridor",
+                    "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow",
+                },
+                {
+                    "ticker": "688796",
+                    "candidate_pool_shadow_visible": True,
+                    "candidate_pool_shadow_rank": 3114,
+                    "candidate_pool_shadow_lane": "layer_a_liquidity_corridor",
+                    "candidate_pool_shadow_reason": "upstream_base_liquidity_uplift_shadow_focus_relaxed_band",
+                },
+                {
+                    "ticker": "301292",
+                    "candidate_pool_shadow_visible": True,
+                    "candidate_pool_shadow_rank": 2762,
+                    "candidate_pool_shadow_lane": "post_gate_liquidity_competition",
+                    "candidate_pool_shadow_reason": "post_gate_competition_rebucket_probe",
+                },
+            ],
+            "candidate_pool_upstream_handoff_board_summary": {
+                "focus_tickers": ["300683"],
+            },
+            "candidate_pool_corridor_shadow_pack_status": "ready_for_primary_shadow_replay",
+            "candidate_pool_corridor_shadow_pack_summary": {
+                "primary_shadow_replay": {
+                    "ticker": "300683",
+                    "validation_priority_rank": 1,
+                    "tractability_tier": "second_shadow_probe",
+                    "uplift_to_cutoff_multiple_mean": 6.5919,
+                    "closed_cycle_count": 4,
+                    "t_plus_2_positive_rate": 1.0,
+                    "t_plus_2_return_hit_rate_at_target": 1.0,
+                    "mean_t_plus_2_return": 0.1051,
+                },
+                "next_step": "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。",
+            },
+            "candidate_pool_corridor_uplift_runbook_summary": {
+                "primary_shadow_replay": "300683",
+                "excluded_low_gate_tail_tickers": ["688796"],
+            },
+            "candidate_pool_rebucket_shadow_pack_status": "persistence_diagnostics_only",
+            "candidate_pool_rebucket_shadow_pack_experiment": {
+                "tickers": ["301292"],
+                "priority_handoff": "post_gate_liquidity_competition",
+                "prototype_type": "post_gate_competition_rebucket_probe",
+            },
+        },
+        "entries": [],
+    }
+
+    payload = build_btst_nightly_control_tower_payload(manifest)
+    control = payload["control_tower_snapshot"]
+    next_action = control["next_actions"][0]
+
+    assert control["candidate_pool_recall_shadow_visible_focus_tickers"] == ["300683", "688796", "301292"]
+    assert control["candidate_pool_recall_shadow_visible_focus_profiles"][0]["ticker"] == "300683"
+    assert control["candidate_pool_recall_shadow_visible_focus_profiles"][0]["candidate_pool_shadow_lane"] == "layer_a_liquidity_corridor"
+    assert control["candidate_pool_recall_shadow_visible_focus_profiles"][0]["candidate_pool_shadow_reason"] == "upstream_base_liquidity_uplift_shadow"
+    assert control["candidate_pool_recall_shadow_visible_focus_profiles"][2]["ticker"] == "301292"
+    assert control["candidate_pool_recall_shadow_visible_focus_profiles"][2]["candidate_pool_shadow_lane"] == "post_gate_liquidity_competition"
+    assert control["active_candidate_pool_recall_shadow_visible_focus_tickers"] == ["300683"]
+    assert [row["ticker"] for row in control["active_candidate_pool_recall_shadow_visible_focus_profiles"]] == ["300683"]
+    assert next_action["task_id"] == "candidate_pool_corridor_primary_shadow_priority"
+    assert next_action["source"] == "candidate_pool_corridor_shadow_replay"
+    assert "earliest_breakpoint=focused_shadow_visible" in next_action["why_now"]
+    assert "shadow_visible_lane=layer_a_liquidity_corridor" in next_action["why_now"]
+    assert "shadow_visible_reason=upstream_base_liquidity_uplift_shadow" in next_action["why_now"]
+    assert "shadow_visible_rank=1880" in next_action["why_now"]
+    assert "earliest_breakpoint=absent_from_candidate_pool" not in next_action["why_now"]
+    assert next_action["next_step"] == "先对 300683 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。"
 
 
 def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_path: Path) -> None:

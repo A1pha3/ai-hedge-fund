@@ -591,6 +591,8 @@ def _build_common_artifact_summary(paths: CandidateEntryShadowPaths, state: Cand
         "candidate_pool_recall_truncation_frontier_summary": state.candidate_pool_recall_dossier.analysis.get("truncation_frontier_summary"),
         "candidate_pool_recall_dominant_liquidity_gap_mode": dict(state.candidate_pool_recall_dossier.analysis.get("truncation_frontier_summary") or {}).get("dominant_liquidity_gap_mode"),
         "candidate_pool_recall_focus_liquidity_profiles": list(dict(state.candidate_pool_recall_dossier.analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or [])[:3],
+        "candidate_pool_recall_shadow_visible_focus_tickers": list(state.candidate_pool_recall_dossier.analysis.get("shadow_visible_focus_tickers") or []),
+        "candidate_pool_recall_shadow_visible_focus_profiles": list(state.candidate_pool_recall_dossier.analysis.get("shadow_visible_focus_profiles") or []),
         "candidate_pool_recall_priority_handoff_counts": dict(dict(state.candidate_pool_recall_dossier.analysis.get("focus_liquidity_profile_summary") or {}).get("priority_handoff_counts") or {}),
         "candidate_pool_recall_priority_handoff_branch_diagnoses": list(state.candidate_pool_recall_dossier.analysis.get("priority_handoff_branch_diagnoses") or [])[:3],
         "candidate_pool_recall_priority_handoff_branch_mechanisms": list(state.candidate_pool_recall_dossier.analysis.get("priority_handoff_branch_mechanisms") or [])[:3],

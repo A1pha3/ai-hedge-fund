@@ -58,6 +58,31 @@ def extract_control_tower_snapshot(
     no_candidate_entry_priority_tickers = overlay_inputs["no_candidate_entry_priority_tickers"]
     absent_from_watchlist_tickers = overlay_inputs["absent_from_watchlist_tickers"]
     watchlist_absent_from_candidate_pool_tickers = overlay_inputs["watchlist_absent_from_candidate_pool_tickers"]
+    shadow_visible_focus_tickers = [str(ticker) for ticker in list(candidate_pool_recall_dossier.get("shadow_visible_focus_tickers") or []) if str(ticker).strip()]
+    shadow_visible_focus_profiles = [dict(row) for row in list(candidate_pool_recall_dossier.get("shadow_visible_focus_profiles") or [])]
+    excluded_low_gate_tail_tickers = {
+        str(ticker).strip()
+        for ticker in list(dict(candidate_pool_recall_dossier.get("corridor_uplift_runbook_summary") or {}).get("excluded_low_gate_tail_tickers") or [])
+        if str(ticker).strip()
+    }
+    rebucket_shadow_pack_status = str(candidate_pool_recall_dossier.get("rebucket_shadow_pack_status") or "").strip()
+    rebucket_shadow_pack_experiment = dict(candidate_pool_recall_dossier.get("rebucket_shadow_pack_experiment") or {})
+    transient_rebucket_probe_tickers = {
+        str(ticker).strip()
+        for ticker in list(rebucket_shadow_pack_experiment.get("tickers") or [])
+        if str(ticker).strip()
+    } if rebucket_shadow_pack_status == "persistence_diagnostics_only" else set()
+    active_shadow_visible_focus_tickers = [
+        ticker
+        for ticker in shadow_visible_focus_tickers
+        if ticker not in excluded_low_gate_tail_tickers and ticker not in transient_rebucket_probe_tickers
+    ]
+    active_shadow_visible_focus_profiles = [
+        dict(row)
+        for row in shadow_visible_focus_profiles
+        if str(row.get("ticker") or "").strip() not in excluded_low_gate_tail_tickers
+        and str(row.get("ticker") or "").strip() not in transient_rebucket_probe_tickers
+    ]
     return {
         "synthesis": synthesis,
         "validation": validation,
@@ -114,6 +139,10 @@ def extract_control_tower_snapshot(
         "candidate_pool_recall_dominant_ranking_driver": dict(candidate_pool_recall_dossier.get("truncation_frontier_summary") or {}).get("dominant_ranking_driver"),
         "candidate_pool_recall_dominant_liquidity_gap_mode": dict(candidate_pool_recall_dossier.get("truncation_frontier_summary") or {}).get("dominant_liquidity_gap_mode"),
         "candidate_pool_recall_focus_liquidity_profiles": list(candidate_pool_recall_dossier.get("focus_liquidity_profiles") or []),
+        "candidate_pool_recall_shadow_visible_focus_tickers": shadow_visible_focus_tickers,
+        "candidate_pool_recall_shadow_visible_focus_profiles": shadow_visible_focus_profiles,
+        "active_candidate_pool_recall_shadow_visible_focus_tickers": active_shadow_visible_focus_tickers,
+        "active_candidate_pool_recall_shadow_visible_focus_profiles": active_shadow_visible_focus_profiles,
         "candidate_pool_recall_priority_handoff_counts": dict(candidate_pool_recall_dossier.get("priority_handoff_counts") or {}),
         "candidate_pool_recall_priority_handoff_branch_diagnoses": list(candidate_pool_recall_dossier.get("priority_handoff_branch_diagnoses") or []),
         "candidate_pool_recall_priority_handoff_branch_mechanisms": list(candidate_pool_recall_dossier.get("priority_handoff_branch_mechanisms") or []),

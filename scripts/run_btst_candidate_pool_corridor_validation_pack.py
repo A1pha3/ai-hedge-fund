@@ -94,6 +94,30 @@ def _resolve_parallel_watch_rows(
     return [row for row in selected_rows if str(row.get("ticker") or "") not in excluded_low_gate_tail_tickers]
 
 
+def _resolve_promotion_readiness_status(primary_ticker_row: dict[str, Any]) -> str:
+    tractability_tier = str(primary_ticker_row.get("tractability_tier") or "")
+    closed_cycle_count = primary_ticker_row.get("closed_cycle_count")
+    objective_fit_score = primary_ticker_row.get("objective_fit_score")
+    t_plus_2_positive_rate = primary_ticker_row.get("t_plus_2_positive_rate")
+    t_plus_2_return_hit_rate_at_target = primary_ticker_row.get("t_plus_2_return_hit_rate_at_target")
+
+    if (
+        tractability_tier in {"second_shadow_probe", "parallel_probe", "primary"}
+        and isinstance(closed_cycle_count, (int, float))
+        and float(closed_cycle_count) >= 8
+        and isinstance(objective_fit_score, (int, float))
+        and float(objective_fit_score) >= 0.99
+        and isinstance(t_plus_2_positive_rate, (int, float))
+        and float(t_plus_2_positive_rate) >= 0.9
+        and isinstance(t_plus_2_return_hit_rate_at_target, (int, float))
+        and float(t_plus_2_return_hit_rate_at_target) >= 0.75
+    ):
+        return "corridor_promotion_candidate_ready"
+    if tractability_tier in {"second_shadow_probe", "parallel_probe", "primary"}:
+        return "corridor_shadow_probe_ready"
+    return "corridor_shadow_probe_pending"
+
+
 def analyze_btst_candidate_pool_corridor_validation_pack(
     dossier_path: str | Path,
     *,
@@ -140,11 +164,7 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         if isinstance(primary_ticker_row.get("objective_fit_score"), (int, float))
         else None
     )
-    promotion_readiness_status = (
-        "corridor_shadow_probe_ready"
-        if str(primary_ticker_row.get("tractability_tier") or "") in {"second_shadow_probe", "parallel_probe", "primary"}
-        else "corridor_shadow_probe_pending"
-    )
+    promotion_readiness_status = _resolve_promotion_readiness_status(primary_ticker_row)
 
     if not corridor_objective_row:
         pack_status = "skipped_no_corridor_lane"
@@ -156,6 +176,13 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
             f"mean_t_plus_2_return={corridor_objective_row.get('mean_t_plus_2_return')}。"
             f" 应先验证 {primary_ticker_row.get('ticker')} 的 tractable uplift 路线，并把其余 ticker 作为并行确认样本。"
         )
+        if promotion_readiness_status == "corridor_promotion_candidate_ready":
+            recommendation += (
+                f" {primary_ticker_row.get('ticker')} 当前 closed_cycle_count={primary_ticker_row.get('closed_cycle_count')}、"
+                f"t_plus_2_positive_rate={primary_ticker_row.get('t_plus_2_positive_rate')}、"
+                f"t_plus_2_return_hit_rate_at_target={primary_ticker_row.get('t_plus_2_return_hit_rate_at_target')}，"
+                "已进入可升级为 promotion-candidate 的 corridor 强证据区间。"
+            )
         if excluded_low_gate_tail_tickers:
             recommendation += f" 已从并行样本中剔除 excluded low-gate tail={sorted(excluded_low_gate_tail_tickers)}。"
     else:

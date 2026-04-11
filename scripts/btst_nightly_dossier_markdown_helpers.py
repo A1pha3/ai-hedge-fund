@@ -141,7 +141,9 @@ def append_candidate_pool_recall_corridor_details_markdown(lines: list[str], sum
     lines.append(f"- corridor_validation_pack_status: {summary.get('corridor_validation_pack_status')}")
     corridor_summary = dict(summary.get("corridor_validation_pack_summary") or {})
     if corridor_summary:
-        lines.append(f"- corridor_validation_pack_summary: pack_status={corridor_summary.get('pack_status')} primary_validation_ticker={corridor_summary.get('primary_validation_ticker')} parallel_watch_tickers={corridor_summary.get('parallel_watch_tickers')}")
+        lines.append(
+            f"- corridor_validation_pack_summary: pack_status={corridor_summary.get('pack_status')} primary_validation_ticker={corridor_summary.get('primary_validation_ticker')} promotion_readiness_status={corridor_summary.get('promotion_readiness_status')} parallel_watch_tickers={corridor_summary.get('parallel_watch_tickers')}"
+        )
     lines.append(f"- corridor_shadow_pack_status: {summary.get('corridor_shadow_pack_status')}")
     corridor_shadow_summary = dict(summary.get("corridor_shadow_pack_summary") or {})
     if corridor_shadow_summary:

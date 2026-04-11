@@ -32,6 +32,7 @@ def extract_catalyst_theme_frontier_summary(frontier: dict[str, Any]) -> dict[st
         "status": status,
         "shadow_candidate_count": shadow_candidate_count,
         "baseline_selected_count": baseline_selected_count,
+        "shadow_threshold_blocker_summary": dict(frontier.get("shadow_threshold_blocker_summary") or {}),
         "recommended_variant_name": recommended_variant.get("variant_name"),
         "recommended_promoted_shadow_count": promoted_shadow_count,
         "recommended_relaxation_cost": recommended_variant.get("threshold_relaxation_cost"),

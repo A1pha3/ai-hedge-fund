@@ -104,11 +104,34 @@ def build_candidate_pool_corridor_primary_shadow_task(
     why_now_parts = [f"focus_ticker={focus_ticker}", f"shadow_status={shadow_status}"]
     active_absent_from_watchlist_tickers = collect_control_tower_ticker_set(control_tower_snapshot, "active_no_candidate_entry_absent_from_watchlist_tickers")
     active_absent_from_candidate_pool_tickers = collect_control_tower_ticker_set(control_tower_snapshot, "active_watchlist_recall_absent_from_candidate_pool_tickers")
+    active_shadow_visible_focus_tickers = collect_control_tower_ticker_set(control_tower_snapshot, "active_candidate_pool_recall_shadow_visible_focus_tickers")
+    if not active_shadow_visible_focus_tickers:
+        active_shadow_visible_focus_tickers = collect_control_tower_ticker_set(control_tower_snapshot, "candidate_pool_recall_shadow_visible_focus_tickers")
     candidate_pool_recall_dominant_stage = str(control_tower_snapshot.get("candidate_pool_recall_dominant_stage") or "").strip()
     focus_liquidity_profile = find_candidate_pool_focus_liquidity_profile(control_tower_snapshot, focus_ticker)
     corridor_uplift_runbook_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_uplift_runbook_summary") or {})
     append_primary_shadow_replay_context(why_now_parts, primary_shadow_replay)
-    if focus_ticker in active_absent_from_candidate_pool_tickers:
+    shadow_visible_profile = next(
+        (
+            dict(row)
+            for row in list(
+                control_tower_snapshot.get("active_candidate_pool_recall_shadow_visible_focus_profiles")
+                or control_tower_snapshot.get("candidate_pool_recall_shadow_visible_focus_profiles")
+                or []
+            )
+            if str(row.get("ticker") or "").strip() == focus_ticker
+        ),
+        {},
+    )
+    if focus_ticker in active_shadow_visible_focus_tickers:
+        why_now_parts.append("earliest_breakpoint=focused_shadow_visible")
+        if shadow_visible_profile.get("candidate_pool_shadow_lane"):
+            why_now_parts.append(f"shadow_visible_lane={shadow_visible_profile.get('candidate_pool_shadow_lane')}")
+        if shadow_visible_profile.get("candidate_pool_shadow_reason"):
+            why_now_parts.append(f"shadow_visible_reason={shadow_visible_profile.get('candidate_pool_shadow_reason')}")
+        if shadow_visible_profile.get("candidate_pool_shadow_rank") is not None:
+            why_now_parts.append(f"shadow_visible_rank={shadow_visible_profile.get('candidate_pool_shadow_rank')}")
+    elif focus_ticker in active_absent_from_candidate_pool_tickers:
         why_now_parts.append("earliest_breakpoint=absent_from_candidate_pool")
     elif focus_ticker in active_absent_from_watchlist_tickers:
         why_now_parts.append("earliest_breakpoint=absent_from_watchlist")
@@ -125,6 +148,7 @@ def build_candidate_pool_corridor_primary_shadow_task(
         focus_liquidity_profile=focus_liquidity_profile,
         active_absent_from_candidate_pool_tickers=active_absent_from_candidate_pool_tickers,
         active_absent_from_watchlist_tickers=active_absent_from_watchlist_tickers,
+        active_shadow_visible_focus_tickers=active_shadow_visible_focus_tickers,
     )
 
     return {
@@ -200,10 +224,10 @@ def collect_control_tower_priority_candidates(
         build_selected_contract_monitor_task(control_tower_snapshot),
         build_gate_ready_priority_task(control_tower_snapshot),
         build_peer_proof_priority_task(control_tower_snapshot),
-        build_peer_close_loop_monitor_task(control_tower_snapshot),
-        build_carryover_contract_task(control_tower_snapshot),
         build_candidate_pool_corridor_primary_shadow_task(control_tower_snapshot),
         build_recall_priority_task(latest_btst_snapshot, control_tower_snapshot),
+        build_peer_close_loop_monitor_task(control_tower_snapshot),
+        build_carryover_contract_task(control_tower_snapshot),
     ]
     if low_urgency_selected_contract_resolution:
         prioritized_tasks.append(selected_contract_resolution_task)

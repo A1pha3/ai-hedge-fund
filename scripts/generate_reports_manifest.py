@@ -2422,6 +2422,7 @@ def refresh_latest_btst_catalyst_theme_frontier_artifacts(latest_btst_run: dict[
         "report_dir": report_dir.name,
         "shadow_candidate_count": int(analysis.get("shadow_candidate_count") or 0),
         "baseline_selected_count": int(analysis.get("baseline_selected_count") or 0),
+        "shadow_threshold_blocker_summary": dict(analysis.get("shadow_threshold_blocker_summary") or {}),
         "recommended_variant_name": recommended_variant.get("variant_name"),
         "recommended_promoted_shadow_count": int(recommended_variant.get("promoted_shadow_count") or 0),
         "recommended_relaxation_cost": recommended_variant.get("threshold_relaxation_cost"),
@@ -3292,6 +3293,7 @@ def _append_manifest_header(lines: list[str], manifest: dict[str, Any]) -> None:
                 ("catalyst_theme_frontier_shadow_candidate_count", "shadow_candidate_count", "always"),
                 ("catalyst_theme_frontier_promoted_shadow_count", "recommended_promoted_shadow_count", "always"),
                 ("catalyst_theme_frontier_recommended_variant", "recommended_variant_name", "always"),
+                ("catalyst_theme_frontier_shadow_threshold_blocker_summary", "shadow_threshold_blocker_summary", "always"),
             ],
         ),
         (
@@ -3350,6 +3352,8 @@ def _candidate_entry_shadow_refresh_field_specs() -> list[tuple[str, str, str]]:
         ("candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary", "candidate_pool_recall_truncation_frontier_summary", "not_none"),
         ("candidate_entry_shadow_candidate_pool_recall_dominant_liquidity_gap_mode", "candidate_pool_recall_dominant_liquidity_gap_mode", "not_none"),
         ("candidate_entry_shadow_candidate_pool_recall_focus_liquidity_profiles", "candidate_pool_recall_focus_liquidity_profiles", "truthy"),
+        ("candidate_entry_shadow_candidate_pool_recall_shadow_visible_focus_tickers", "candidate_pool_recall_shadow_visible_focus_tickers", "not_none"),
+        ("candidate_entry_shadow_candidate_pool_recall_shadow_visible_focus_profiles", "candidate_pool_recall_shadow_visible_focus_profiles", "not_none"),
         ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_counts", "candidate_pool_recall_priority_handoff_counts", "truthy"),
         ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_diagnoses", "candidate_pool_recall_priority_handoff_branch_diagnoses", "truthy"),
         ("candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_mechanisms", "candidate_pool_recall_priority_handoff_branch_mechanisms", "truthy"),
@@ -3411,7 +3415,7 @@ def _append_candidate_entry_shadow_summary_rows(lines: list[str], payload: dict[
     for key, formatter in (
         (
             "candidate_pool_corridor_validation_pack_summary",
-            lambda summary: f"- candidate_entry_shadow_candidate_pool_corridor_validation_pack_summary: pack_status={summary.get('pack_status')} primary_validation_ticker={summary.get('primary_validation_ticker')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}",
+            lambda summary: f"- candidate_entry_shadow_candidate_pool_corridor_validation_pack_summary: pack_status={summary.get('pack_status')} primary_validation_ticker={summary.get('primary_validation_ticker')} promotion_readiness_status={summary.get('promotion_readiness_status')} parallel_watch_tickers={summary.get('parallel_watch_tickers')}",
         ),
         (
             "candidate_pool_corridor_shadow_pack_summary",

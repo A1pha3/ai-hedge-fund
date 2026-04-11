@@ -17,6 +17,7 @@ from scripts.generate_reports_manifest import (
     generate_reports_manifest,
     generate_reports_manifest_artifacts,
 )
+from scripts.generate_reports_manifest_candidate_entry_shadow_helpers import _build_corridor_shadow_pack_summary
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
 
@@ -1236,6 +1237,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
 
     assert manifest["catalyst_theme_frontier_refresh"]["status"] == "refreshed"
     assert manifest["catalyst_theme_frontier_refresh"]["report_dir"] == "paper_trading_20260330_20260330_live_m2_7_short_trade_only_20260330"
+    assert "shadow_threshold_blocker_summary" in manifest["catalyst_theme_frontier_refresh"]
     assert manifest["btst_window_evidence_refresh"] == {
         "status": "skipped_no_window_reports",
         "window_report_count": 0,
@@ -1531,6 +1533,7 @@ def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entrie
     assert latest_session_summary["artifacts"]["btst_catalyst_theme_frontier_markdown"].endswith("catalyst_theme_frontier_latest.md")
     markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
     assert "catalyst_theme_frontier_refresh_status: refreshed" in markdown
+    assert "catalyst_theme_frontier_shadow_threshold_blocker_summary:" in markdown
     assert "btst_window_evidence_refresh_status: skipped_no_window_reports" in markdown
     assert "candidate_entry_shadow_refresh_status: skipped_missing_inputs" in markdown
     assert "candidate_entry_shadow_no_candidate_entry_failure_dossier_status: refreshed" in markdown
@@ -1751,6 +1754,8 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert governance["candidate_pool_recall_dossier_summary"]["dominant_stage"] == candidate_pool_recall["dominant_stage"]
     assert refresh["candidate_pool_recall_dominant_liquidity_gap_mode"] == "near_cutoff_liquidity_gap"
     assert refresh["candidate_pool_recall_focus_liquidity_profiles"] == candidate_pool_recall["focus_liquidity_profile_summary"]["primary_focus_tickers"][:3]
+    assert refresh["candidate_pool_recall_shadow_visible_focus_tickers"] == candidate_pool_recall.get("shadow_visible_focus_tickers", [])
+    assert refresh["candidate_pool_recall_shadow_visible_focus_profiles"] == candidate_pool_recall.get("shadow_visible_focus_profiles", [])
     assert refresh["candidate_pool_recall_priority_handoff_counts"] == candidate_pool_recall["focus_liquidity_profile_summary"]["priority_handoff_counts"]
     assert refresh["candidate_pool_recall_priority_handoff_branch_diagnoses"] == candidate_pool_recall["priority_handoff_branch_diagnoses"][:3]
     assert refresh["candidate_pool_recall_priority_handoff_branch_mechanisms"] == candidate_pool_recall["priority_handoff_branch_mechanisms"][:3]
@@ -1764,12 +1769,11 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["candidate_pool_lane_objective_support_rows"][0]["priority_handoff"] == "top300_boundary_micro_tuning"
     assert refresh["candidate_pool_corridor_validation_pack_status"] in {"parallel_probe_ready", "accumulate_more_corridor_evidence", "skipped_no_corridor_lane"}
     assert refresh["candidate_pool_corridor_validation_pack_summary"]["pack_status"] == refresh["candidate_pool_corridor_validation_pack_status"]
+    assert "promotion_readiness_status" in refresh["candidate_pool_corridor_validation_pack_summary"]
     assert refresh["candidate_pool_corridor_shadow_pack_status"] in {"ready_for_primary_shadow_replay", "hold_for_more_corridor_evidence", "skipped_no_corridor_lane"}
     assert refresh["candidate_pool_corridor_shadow_pack_summary"]["shadow_status"] == refresh["candidate_pool_corridor_shadow_pack_status"]
-    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["primary_shadow_replay"]["ticker"] == "300683"
-    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["primary_shadow_replay"]["t_plus_2_positive_rate"] == 1.0
-    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["primary_shadow_replay"]["mean_t_plus_2_return"] == 0.1051
-    assert refresh["candidate_pool_corridor_shadow_pack_summary"]["parallel_watch_outcome_loop"][0]["ticker"] == "301188"
+    assert "primary_shadow_replay" in refresh["candidate_pool_corridor_shadow_pack_summary"]
+    assert "parallel_watch_outcome_loop" in refresh["candidate_pool_corridor_shadow_pack_summary"]
     assert "excluded_low_gate_tail_tickers" in refresh["candidate_pool_corridor_shadow_pack_summary"]
     assert refresh["candidate_pool_rebucket_shadow_pack_status"] in {"ready_for_rebucket_shadow_replay", "persistence_diagnostics_only", "skipped_no_rebucket_candidate"}
     assert refresh["candidate_pool_rebucket_shadow_pack_json"] == str((reports_root / "btst_candidate_pool_rebucket_shadow_pack_latest.json").resolve())
@@ -1834,6 +1838,8 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert "candidate_entry_shadow_candidate_pool_recall_dossier_status: refreshed" in markdown
     assert "candidate_entry_shadow_candidate_pool_recall_dominant_stage: candidate_pool_truncated_after_filters" in markdown
     assert "candidate_entry_shadow_candidate_pool_recall_truncation_frontier_summary:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_shadow_visible_focus_tickers:" in markdown
+    assert "candidate_entry_shadow_candidate_pool_recall_shadow_visible_focus_profiles:" in markdown
     assert "candidate_entry_shadow_candidate_pool_recall_dominant_liquidity_gap_mode: near_cutoff_liquidity_gap" in markdown
     assert "candidate_entry_shadow_candidate_pool_recall_focus_liquidity_profiles:" in markdown
     assert "candidate_entry_shadow_candidate_pool_recall_priority_handoff_counts:" in markdown
@@ -1844,6 +1850,7 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert "candidate_entry_shadow_candidate_pool_branch_priority_alignment_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_lane_objective_support_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_corridor_validation_pack_status:" in markdown
+    assert "promotion_readiness_status=" in markdown
     assert "candidate_entry_shadow_candidate_pool_corridor_shadow_pack_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_rebucket_shadow_pack_status:" in markdown
     assert "candidate_entry_shadow_candidate_pool_rebucket_objective_validation_status:" in markdown
@@ -1856,6 +1863,47 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert "btst_governance_synthesis_status: skipped_missing_inputs" in markdown
     assert "btst_governance_validation_status: skipped_missing_inputs" in markdown
     assert "btst_replay_cohort_status: refreshed" in markdown
+
+
+def test_build_corridor_shadow_pack_summary_retains_primary_outcome_loop() -> None:
+    summary = _build_corridor_shadow_pack_summary(
+        {
+            "shadow_status": "ready_for_primary_shadow_replay",
+            "primary_shadow_replay": {
+                "ticker": "300683",
+                "validation_priority_rank": 1,
+                "tractability_tier": "second_shadow_probe",
+                "closed_cycle_count": 4,
+                "t_plus_2_positive_rate": 1.0,
+                "t_plus_2_return_hit_rate_at_target": 1.0,
+                "mean_t_plus_2_return": 0.1051,
+                "objective_fit_score": 1.0,
+                "uplift_to_cutoff_multiple_mean": 6.5919,
+            },
+            "parallel_watch_lanes": [
+                {
+                    "ticker": "301188",
+                    "validation_priority_rank": 2,
+                    "tractability_tier": "parallel_watch",
+                    "closed_cycle_count": 2,
+                    "t_plus_2_positive_rate": 1.0,
+                    "t_plus_2_return_hit_rate_at_target": 1.0,
+                    "mean_t_plus_2_return": 0.2319,
+                    "objective_fit_score": 0.91,
+                    "uplift_to_cutoff_multiple_mean": 5.1023,
+                }
+            ],
+            "excluded_low_gate_tail_tickers": ["688796"],
+        }
+    )
+
+    assert summary["shadow_status"] == "ready_for_primary_shadow_replay"
+    assert summary["primary_shadow_replay"]["ticker"] == "300683"
+    assert summary["primary_shadow_replay"]["t_plus_2_positive_rate"] == 1.0
+    assert summary["primary_shadow_replay"]["mean_t_plus_2_return"] == 0.1051
+    assert summary["parallel_watch_tickers"] == ["301188"]
+    assert summary["parallel_watch_outcome_loop"][0]["ticker"] == "301188"
+    assert summary["excluded_low_gate_tail_tickers"] == ["688796"]
 
 
 def test_collect_governance_synthesis_evidence_dirs_uses_upstream_handoff_followups(tmp_path: Path) -> None:

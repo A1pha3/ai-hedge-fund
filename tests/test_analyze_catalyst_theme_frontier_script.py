@@ -187,3 +187,69 @@ def test_analyze_catalyst_theme_frontier_summarizes_t1_t2_outcomes(tmp_path: Pat
     markdown = render_catalyst_theme_frontier_markdown(analysis)
     assert "## Realized Outcomes" in markdown
     assert "second_close_positive_rate" in markdown
+
+
+def test_analyze_catalyst_theme_frontier_surfaces_multi_metric_shadow_blockers_when_no_variant_promotes(tmp_path: Path, monkeypatch) -> None:
+    report_dir = tmp_path / "paper_trading_20260409_20260409_live_m2_7_short_trade_only"
+    _write_json(
+        report_dir / "selection_artifacts" / "2026-04-09" / "selection_snapshot.json",
+        {
+            "trade_date": "20260409",
+            "catalyst_theme_candidates": [],
+            "catalyst_theme_shadow_candidates": [
+                {
+                    "ticker": "603778",
+                    "decision": "catalyst_theme_shadow",
+                    "score_target": 0.3041,
+                    "candidate_source": "catalyst_theme_shadow",
+                    "filter_reason": "catalyst_freshness_below_catalyst_theme_floor",
+                    "threshold_shortfalls": {"candidate_score": 0.0359, "sector_resonance": 0.1219, "catalyst_freshness": 0.3333},
+                    "failed_threshold_count": 3,
+                    "total_shortfall": 0.4911,
+                    "gate_status": {"data": "pass"},
+                    "metrics": {
+                        "breakout_freshness": 0.4469,
+                        "trend_acceleration": 0.18,
+                        "close_strength": 0.8,
+                        "sector_resonance": 0.1281,
+                        "catalyst_freshness": 0.1167,
+                    },
+                },
+                {
+                    "ticker": "300394",
+                    "decision": "catalyst_theme_shadow",
+                    "score_target": 0.2966,
+                    "candidate_source": "catalyst_theme_shadow",
+                    "filter_reason": "catalyst_freshness_below_catalyst_theme_floor",
+                    "threshold_shortfalls": {"candidate_score": 0.0434, "sector_resonance": 0.1214, "catalyst_freshness": 0.3545},
+                    "failed_threshold_count": 3,
+                    "total_shortfall": 0.5193,
+                    "gate_status": {"data": "pass"},
+                    "metrics": {
+                        "breakout_freshness": 0.4477,
+                        "trend_acceleration": 0.19,
+                        "close_strength": 0.9411,
+                        "sector_resonance": 0.1286,
+                        "catalyst_freshness": 0.0955,
+                    },
+                },
+            ],
+        },
+    )
+
+    monkeypatch.setattr("scripts.analyze_catalyst_theme_frontier.get_price_data", lambda *args, **kwargs: pd.DataFrame())
+
+    analysis = analyze_catalyst_theme_frontier(report_dir)
+
+    assert analysis["recommended_variant"]["promoted_shadow_count"] == 0
+    assert analysis["shadow_threshold_blocker_summary"]["multi_metric_row_count"] == 2
+    assert analysis["shadow_threshold_blocker_summary"]["threshold_metric_counts"] == {
+        "candidate_score": 2,
+        "sector_resonance": 2,
+        "catalyst_freshness": 2,
+    }
+    assert "多重弱结构共振" in analysis["recommendation"]
+    assert "catalyst-theme 默认阈值" in analysis["recommendation"]
+
+    markdown = render_catalyst_theme_frontier_markdown(analysis)
+    assert "shadow_threshold_blocker_summary" in markdown

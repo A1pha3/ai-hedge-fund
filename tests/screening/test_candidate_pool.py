@@ -636,6 +636,56 @@ class TestExcludeRules:
         assert shadow_candidates[0].candidate_pool_shadow_reason == "cooldown_review_shadow"
         assert shadow_summary["lane_counts"]["cooldown_review"] == 1
         assert "000001" in shadow_summary["focus_tickers"]
+        diagnostic = next(item for item in shadow_summary["focus_filter_diagnostics"] if item["ticker"] == "000001")
+        assert diagnostic["first_removed_stage"] is None
+        assert diagnostic["final_visibility"] == "shadow_pool"
+
+    @patch("src.screening.candidate_pool.get_sw_industry_classification")
+    @patch("src.screening.candidate_pool.get_daily_basic_batch")
+    @patch("src.screening.candidate_pool.get_limit_list")
+    @patch("src.screening.candidate_pool.get_suspend_list")
+    @patch("src.screening.candidate_pool.get_all_stock_basic")
+    @patch("src.screening.candidate_pool._get_pro")
+    def test_candidate_pool_shadow_focus_reports_first_drop_stage_for_filtered_focus_ticker(
+        self,
+        mock_pro,
+        mock_basic,
+        mock_suspend,
+        mock_limit,
+        mock_daily,
+        mock_sw,
+    ):
+        stocks = [
+            {"ts_code": "000001.SZ", "symbol": "000001", "name": "focus低流动", "list_date": "20100101"},
+            {"ts_code": "000002.SZ", "symbol": "000002", "name": "正常标的", "list_date": "20100101"},
+        ]
+        mock_pro.return_value = MagicMock()
+        mock_basic.return_value = _make_stock_basic_df(stocks)
+        mock_suspend.return_value = pd.DataFrame()
+        mock_limit.return_value = pd.DataFrame()
+        mock_daily.return_value = _make_daily_basic_df(
+            [
+                {"ts_code": "000001.SZ", "turnover_rate": 0.2, "circ_mv": 100000.0, "total_mv": 1000000},
+                {"ts_code": "000002.SZ", "turnover_rate": 4.0, "circ_mv": 1000000.0, "total_mv": 1000000},
+            ]
+        )
+        mock_sw.return_value = {}
+
+        with patch("src.screening.candidate_pool._SNAPSHOT_DIR", Path(tempfile.mkdtemp())), \
+             patch("src.screening.candidate_pool._get_avg_amount_20d_map", return_value={"000002.SZ": 15000.0}), \
+             patch.object(candidate_pool_module, "SHADOW_FOCUS_TICKERS", {"000001"}):
+            selected_candidates, shadow_candidates, shadow_summary = build_candidate_pool_with_shadow(
+                "20260305",
+                use_cache=False,
+            )
+
+        assert [candidate.ticker for candidate in selected_candidates] == ["000002"]
+        assert shadow_candidates == []
+        diagnostic = next(item for item in shadow_summary["focus_filter_diagnostics"] if item["ticker"] == "000001")
+        assert diagnostic["first_removed_stage"] == "estimated_liquidity_filter"
+        assert diagnostic["visible_after_cooldown_filter"] is True
+        assert diagnostic["visible_after_estimated_liquidity_filter"] is False
+        assert diagnostic["final_visibility"] == "filtered_out"
 
     def test_load_candidate_pool_shadow_snapshot_marks_legacy_empty_shadow_as_unknown(self):
         snapshot_dir = Path(tempfile.mkdtemp())

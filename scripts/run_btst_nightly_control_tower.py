@@ -809,12 +809,17 @@ def _build_corridor_primary_shadow_next_step(
     focus_liquidity_profile: dict[str, Any],
     active_absent_from_candidate_pool_tickers: set[str],
     active_absent_from_watchlist_tickers: set[str],
+    active_shadow_visible_focus_tickers: set[str],
 ) -> str:
     next_step = str(shadow_summary.get("next_step") or "").strip()
     runbook_suffix = _build_corridor_runbook_suffix(
         focus_ticker=focus_ticker,
         corridor_uplift_runbook_summary=corridor_uplift_runbook_summary,
     )
+    if focus_ticker in active_shadow_visible_focus_tickers:
+        if next_step:
+            return next_step
+        return f"保持 {focus_ticker} 在 focused shadow recall 可见，优先沿 shadow -> Layer B / watchlist handoff 推进 corridor uplift primary shadow replay。{runbook_suffix}"
     if focus_ticker in active_absent_from_candidate_pool_tickers:
         if candidate_pool_recall_dominant_stage == "candidate_pool_truncated_after_filters" and focus_liquidity_profile:
             return _build_truncated_corridor_shadow_next_step(
@@ -2186,7 +2191,9 @@ def _append_nightly_overview_candidate_pool_corridor_markdown(lines: list[str], 
     lines.append(f"- candidate_pool_corridor_validation_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_validation_pack_status')}")
     corridor_validation_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_validation_pack_summary") or {})
     if corridor_validation_summary:
-        lines.append(f"- candidate_pool_corridor_validation_pack_summary: pack_status={corridor_validation_summary.get('pack_status')} primary_validation_ticker={corridor_validation_summary.get('primary_validation_ticker')} parallel_watch_tickers={corridor_validation_summary.get('parallel_watch_tickers')}")
+        lines.append(
+            f"- candidate_pool_corridor_validation_pack_summary: pack_status={corridor_validation_summary.get('pack_status')} primary_validation_ticker={corridor_validation_summary.get('primary_validation_ticker')} promotion_readiness_status={corridor_validation_summary.get('promotion_readiness_status')} parallel_watch_tickers={corridor_validation_summary.get('parallel_watch_tickers')}"
+        )
     lines.append(f"- candidate_pool_corridor_shadow_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_shadow_pack_status')}")
     corridor_shadow_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_shadow_pack_summary") or {})
     if corridor_shadow_summary:

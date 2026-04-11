@@ -8,6 +8,46 @@ SafeLoadJson = Callable[[str | None], dict[str, Any]]
 EntryById = Callable[[dict[str, Any], str], dict[str, Any]]
 
 
+def _extract_candidate_pool_shadow_visible_focus_profiles(analysis: dict[str, Any]) -> list[dict[str, Any]]:
+    focus_profiles = {
+        str(row.get("ticker") or "").strip(): dict(row)
+        for row in list(dict(analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or [])
+        if str(row.get("ticker") or "").strip()
+    }
+    visible_profiles: list[dict[str, Any]] = []
+    seen_tickers: set[str] = set()
+    for dossier in list(analysis.get("priority_ticker_dossiers") or []):
+        ticker = str(dossier.get("ticker") or "").strip()
+        if not ticker or ticker in seen_tickers:
+            continue
+        occurrence = next(
+            (
+                dict(row)
+                for row in list(dossier.get("occurrence_evidence") or [])
+                if bool(row.get("candidate_pool_shadow_visible"))
+            ),
+            None,
+        )
+        if occurrence is None:
+            continue
+        visible_profiles.append(
+            {
+                **focus_profiles.get(ticker, {"ticker": ticker}),
+                "candidate_pool_shadow_visible": True,
+                "candidate_pool_shadow_rank": occurrence.get("candidate_pool_shadow_rank"),
+                "candidate_pool_shadow_lane": occurrence.get("candidate_pool_shadow_lane"),
+                "candidate_pool_shadow_reason": occurrence.get("candidate_pool_shadow_reason"),
+                "candidate_pool_shadow_focus_signature": occurrence.get("candidate_pool_shadow_focus_signature"),
+                "candidate_pool_shadow_snapshot_path": occurrence.get("candidate_pool_shadow_snapshot_path"),
+                "dominant_blocking_stage": dossier.get("dominant_blocking_stage"),
+            }
+        )
+        seen_tickers.add(ticker)
+        if len(visible_profiles) >= 3:
+            break
+    return visible_profiles
+
+
 def extract_no_candidate_entry_action_board_summary(
     manifest: dict[str, Any],
     *,
@@ -128,6 +168,10 @@ def extract_candidate_pool_recall_dossier_summary(
     if not any([refresh, analysis, dossier_entry]):
         return {}
 
+    shadow_visible_focus_profiles = (
+        refresh.get("candidate_pool_recall_shadow_visible_focus_profiles")
+        or _extract_candidate_pool_shadow_visible_focus_profiles(analysis)
+    )
     return {
         "status": refresh.get("candidate_pool_recall_dossier_status") or ("available" if analysis else None),
         "priority_stage_counts": refresh.get("candidate_pool_recall_stage_counts") or analysis.get("priority_stage_counts"),
@@ -135,6 +179,8 @@ def extract_candidate_pool_recall_dossier_summary(
         "top_stage_tickers": refresh.get("candidate_pool_recall_top_stage_tickers") or analysis.get("top_stage_tickers"),
         "truncation_frontier_summary": refresh.get("candidate_pool_recall_truncation_frontier_summary") or analysis.get("truncation_frontier_summary"),
         "focus_liquidity_profiles": refresh.get("candidate_pool_recall_focus_liquidity_profiles") or list(dict(analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or [])[:3],
+        "shadow_visible_focus_tickers": refresh.get("candidate_pool_recall_shadow_visible_focus_tickers") or [row.get("ticker") for row in shadow_visible_focus_profiles if row.get("ticker")],
+        "shadow_visible_focus_profiles": shadow_visible_focus_profiles,
         "priority_handoff_counts": refresh.get("candidate_pool_recall_priority_handoff_counts") or dict(dict(analysis.get("focus_liquidity_profile_summary") or {}).get("priority_handoff_counts") or {}),
         "priority_handoff_branch_diagnoses": refresh.get("candidate_pool_recall_priority_handoff_branch_diagnoses") or list(analysis.get("priority_handoff_branch_diagnoses") or [])[:3],
         "priority_handoff_branch_mechanisms": refresh.get("candidate_pool_recall_priority_handoff_branch_mechanisms") or list(analysis.get("priority_handoff_branch_mechanisms") or [])[:3],

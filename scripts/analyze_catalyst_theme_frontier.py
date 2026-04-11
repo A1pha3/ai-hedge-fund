@@ -320,6 +320,24 @@ def _pick_recommended_variant(variants: list[dict[str, Any]]) -> dict[str, Any] 
     return promotable[0]
 
 
+def _summarize_shadow_threshold_blockers(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    shadow_rows = [row for row in rows if row.get("baseline_status") == "shadow"]
+    threshold_metric_counts: Counter[str] = Counter()
+    multi_metric_rows = 0
+    for row in shadow_rows:
+        threshold_shortfalls = dict(row.get("threshold_shortfalls") or {})
+        if len(threshold_shortfalls) > 1:
+            multi_metric_rows += 1
+        for metric_key in threshold_shortfalls:
+            threshold_metric_counts[str(metric_key)] += 1
+    return {
+        "shadow_row_count": len(shadow_rows),
+        "multi_metric_row_count": multi_metric_rows,
+        "multi_metric_row_share": round(multi_metric_rows / len(shadow_rows), 4) if shadow_rows else None,
+        "threshold_metric_counts": dict(threshold_metric_counts.most_common()),
+    }
+
+
 def analyze_catalyst_theme_frontier(
     report_dir: str | Path,
     *,
@@ -442,6 +460,7 @@ def analyze_catalyst_theme_frontier(
     )
     baseline_variant = next((variant for variant in variants if variant.get("is_baseline")), variants[0] if variants else None)
     recommended_variant = _pick_recommended_variant(variants)
+    shadow_threshold_blocker_summary = _summarize_shadow_threshold_blockers(rows)
 
     if not rows:
         recommendation = "当前报告中没有题材催化正式池或影子池样本，无法做前沿诊断。"
@@ -452,7 +471,15 @@ def analyze_catalyst_theme_frontier(
             f"这是基于最小阈值放宽成本 {recommended_variant['threshold_relaxation_cost']:.4f} 的解释性前沿，不代表直接采用该阈值。"
         )
     else:
-        recommendation = "baseline 下没有可提升到正式题材研究池的影子候选；当前更适合继续积累样本并观察影子池短板分布。"
+        dominant_primary_reason = next(iter(candidate_payload["shadow_filter_reason_counts"]), "shadow_blockers_unclassified")
+        dominant_metric_counts = shadow_threshold_blocker_summary.get("threshold_metric_counts") or {}
+        recommendation = (
+            "baseline 下没有可提升到正式题材研究池的影子候选；"
+            f"当前影子池虽然主要记为 {dominant_primary_reason}，"
+            f"但真实短板分布为 {dominant_metric_counts}，"
+            "说明更像多重弱结构共振，而不是单一 catalyst floor 过严。"
+            "当前应优先补充影子池短板分层诊断，不应直接放松 catalyst-theme 默认阈值。"
+        )
 
     return {
         "report_dir": candidate_payload["report_dir"],
@@ -461,6 +488,7 @@ def analyze_catalyst_theme_frontier(
         "shadow_candidate_count": candidate_payload["shadow_candidate_count"],
         "candidate_source_counts": candidate_payload["candidate_source_counts"],
         "shadow_filter_reason_counts": candidate_payload["shadow_filter_reason_counts"],
+        "shadow_threshold_blocker_summary": shadow_threshold_blocker_summary,
         "max_candidates_per_trade_date": int(max_candidates_per_trade_date),
         "realized_hit_threshold": round(float(realized_hit_threshold), 4),
         "overall_outcome_summary": _summarize_realized_outcomes(rows, hit_threshold=realized_hit_threshold),
@@ -490,6 +518,7 @@ def render_catalyst_theme_frontier_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- shadow_candidate_count: {analysis.get('shadow_candidate_count')}")
     lines.append(f"- candidate_source_counts: {analysis.get('candidate_source_counts')}")
     lines.append(f"- shadow_filter_reason_counts: {analysis.get('shadow_filter_reason_counts')}")
+    lines.append(f"- shadow_threshold_blocker_summary: {analysis.get('shadow_threshold_blocker_summary')}")
     lines.append("")
 
     lines.append("## Realized Outcomes")
