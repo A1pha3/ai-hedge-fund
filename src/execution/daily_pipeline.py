@@ -24,6 +24,10 @@ from src.execution.daily_pipeline_hotspot_helpers import (
     resolve_selected_threshold,
     summarize_shadow_release_historical_support,
 )
+from src.execution.daily_pipeline_phase4_entry_helpers import (
+    _build_short_trade_boundary_entry,
+    _build_upstream_shadow_observation_entry,
+)
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.execution.merge_approved_loader import load_merge_approved_tickers
@@ -1014,13 +1018,11 @@ def _build_watchlist_shadow_release_entry(*, item: LayerCResult, reasons: list[s
 
     return {
         "ticker": item.ticker,
-        **_build_watchlist_shadow_release_score_fields(item),
-        **_build_watchlist_shadow_release_source_fields(item),
-        **_build_watchlist_shadow_release_reason_fields(
+        **_build_watchlist_shadow_release_payload(
+            item=item,
             reason_codes=deduped_reason_codes,
             release_reason=release_reason,
         ),
-        **_build_watchlist_shadow_release_metadata_fields(item),
     }
 
 
@@ -1065,11 +1067,19 @@ def _watchlist_shadow_release_promotion_trigger() -> str:
     return "主 watchlist veto 保持不变；仅把边界 avoid 样本送入 short-trade supplemental replay，验证是否属于 000960 式 false negative。"
 
 
+def _watchlist_shadow_release_reason_label() -> str:
+    return "watchlist_avoid_shadow_release"
+
+
+def _watchlist_shadow_release_candidate_source() -> str:
+    return "watchlist_avoid_shadow_release"
+
+
 def _build_watchlist_shadow_release_reason_fields(*, reason_codes: list[str], release_reason: str) -> dict[str, Any]:
     return {
-        "reason": "watchlist_avoid_shadow_release",
+        "reason": _watchlist_shadow_release_reason_label(),
         "reasons": reason_codes,
-        "candidate_source": "watchlist_avoid_shadow_release",
+        "candidate_source": _watchlist_shadow_release_candidate_source(),
         "candidate_reason_codes": reason_codes,
         "shadow_release_reason": release_reason,
     }
@@ -1093,51 +1103,38 @@ def _build_watchlist_shadow_release_source_fields(item: LayerCResult) -> dict[st
     }
 
 
-def _build_short_trade_boundary_entry(
+def _build_watchlist_shadow_release_core_fields(
     *,
-    item,
-    reason: str,
-    rank: int,
-    candidate_source: str = "short_trade_boundary",
-    upstream_candidate_source: str = "layer_b_boundary",
-    candidate_reason_codes: list[str] | None = None,
-    candidate_pool_rank: int | None = None,
-    candidate_pool_lane: str | None = None,
-    candidate_pool_shadow_reason: str | None = None,
-    candidate_pool_avg_amount_share_of_cutoff: float | None = None,
-    candidate_pool_avg_amount_share_of_min_gate: float | None = None,
-    shadow_visibility_gap_selected: bool = False,
-    shadow_visibility_gap_relaxed_band: bool = False,
-) -> dict:
-    resolved_reason_codes = [str(code) for code in list(candidate_reason_codes or [reason, "short_trade_prequalified"]) if str(code or "").strip()]
-    if reason not in resolved_reason_codes:
-        resolved_reason_codes.insert(0, reason)
-    return {
-        "ticker": item.ticker,
-        "score_b": round(float(item.score_b), 4),
-        "score_c": 0.0,
-        "score_final": round(float(item.score_b), 4),
-        "quality_score": 0.5,
-        "decision": str(item.decision or "neutral"),
-        "reason": reason,
-        "reasons": resolved_reason_codes,
-        "candidate_source": candidate_source,
-        "upstream_candidate_source": upstream_candidate_source,
-        "candidate_reason_codes": resolved_reason_codes,
-        "strategy_signals": {
-            name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-            for name, signal in dict(item.strategy_signals or {}).items()
-        },
-        "agent_contribution_summary": {},
-        "rank": rank,
-        "candidate_pool_rank": candidate_pool_rank,
-        "candidate_pool_lane": candidate_pool_lane,
-        "candidate_pool_shadow_reason": candidate_pool_shadow_reason,
-        "candidate_pool_avg_amount_share_of_cutoff": candidate_pool_avg_amount_share_of_cutoff,
-        "candidate_pool_avg_amount_share_of_min_gate": candidate_pool_avg_amount_share_of_min_gate,
-        "shadow_visibility_gap_selected": shadow_visibility_gap_selected,
-        "shadow_visibility_gap_relaxed_band": shadow_visibility_gap_relaxed_band,
-    }
+    item: LayerCResult,
+    reason_codes: list[str],
+    release_reason: str,
+) -> dict[str, Any]:
+    core_fields = _build_watchlist_shadow_release_source_fields(item)
+    core_fields.update(
+        _build_watchlist_shadow_release_reason_fields(
+            reason_codes=reason_codes,
+            release_reason=release_reason,
+        )
+    )
+    return core_fields
+
+
+def _build_watchlist_shadow_release_payload(
+    *,
+    item: LayerCResult,
+    reason_codes: list[str],
+    release_reason: str,
+) -> dict[str, Any]:
+    payload = _build_watchlist_shadow_release_score_fields(item)
+    payload.update(
+        _build_watchlist_shadow_release_core_fields(
+            item=item,
+            reason_codes=reason_codes,
+            release_reason=release_reason,
+        )
+    )
+    payload.update(_build_watchlist_shadow_release_metadata_fields(item))
+    return payload
 
 
 def _compute_short_trade_boundary_candidate_score(snapshot: dict) -> float:
@@ -1149,37 +1146,6 @@ def _compute_short_trade_boundary_candidate_score(snapshot: dict) -> float:
         + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0)),
         4,
     )
-
-
-def _build_upstream_shadow_observation_entry(*, candidate_entry: dict[str, Any], filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
-    candidate_score = round(float(metrics_payload.get("candidate_score", 0.0) or 0.0), 4)
-    gate_status = dict(metrics_payload.get("gate_status") or {})
-    gate_status.setdefault("score", "shadow_observation")
-    blockers = list(metrics_payload.get("blockers") or [])
-    return {
-        **candidate_entry,
-        "decision": "observation",
-        "score_target": candidate_score,
-        "confidence": round(min(1.0, max(0.0, candidate_score)), 4),
-        "top_reasons": [
-            f"candidate_score={candidate_score:.2f}",
-            f"filter_reason={filter_reason}",
-            f"breakout_freshness={float(metrics_payload.get('breakout_freshness', 0.0) or 0.0):.2f}",
-        ],
-        "rejection_reasons": [filter_reason],
-        "filter_reason": filter_reason,
-        "gate_status": gate_status,
-        "blockers": blockers,
-        "metrics": {
-            "breakout_freshness": metrics_payload.get("breakout_freshness"),
-            "trend_acceleration": metrics_payload.get("trend_acceleration"),
-            "volume_expansion_quality": metrics_payload.get("volume_expansion_quality"),
-            "close_strength": metrics_payload.get("close_strength"),
-            "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
-        },
-        "promotion_trigger": "仅作上游影子补票观察；只有盘中新强度确认后才允许升级到 near-miss 或 selected 观察层。",
-        "short_trade_boundary_metrics": metrics_payload,
-    }
 
 
 def _should_release_upstream_shadow_candidate(
