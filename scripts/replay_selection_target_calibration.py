@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import Any, Iterator, cast
 
 from scripts.btst_candidate_entry_utils import build_watchlist_avoid_weak_structure_filter as _build_watchlist_avoid_weak_structure_filter
+from scripts.replay_selection_target_calibration_helpers import (
+    build_replay_analysis_config,
+    build_replay_analysis_result,
+    build_replay_analysis_state,
+    ingest_replay_source_analysis,
+    prepare_replay_source_context,
+)
 from src.execution.models import LayerCResult
 from src.targets import SHORT_TRADE_TARGET_PROFILES, get_active_short_trade_target_profile, get_short_trade_target_profile
 from src.targets.router import build_selection_targets
@@ -812,178 +819,86 @@ def analyze_selection_target_replay_sources(
     if not replay_input_sources:
         raise FileNotFoundError("No replay input sources provided.")
 
-    stored_decision_counts: Counter[str] = Counter()
-    replayed_decision_counts: Counter[str] = Counter()
-    transition_counts: Counter[str] = Counter()
-    candidate_source_counts: Counter[str] = Counter()
-    mismatch_examples: list[dict[str, Any]] = []
-    focused_score_diagnostics: list[dict[str, Any]] = []
-    per_day: list[dict[str, Any]] = []
-    overall_signal_availability: Counter[str] = Counter()
-    overall_signal_name_counts: Counter[str] = Counter()
-    filtered_candidate_entry_counts: Counter[str] = Counter()
-    candidate_entry_filter_observability: dict[str, Counter[str]] = {}
-    effective_structural_overrides = dict(STRUCTURAL_VARIANTS.get(structural_variant, {}))
-    if structural_overrides:
-        effective_structural_overrides.update(dict(structural_overrides or {}))
-    entry_filter_rules = list(effective_structural_overrides.get("exclude_candidate_entries") or [])
-    focus_ticker_set = {ticker for ticker in (focus_tickers or []) if str(ticker).strip()}
-    structural_profile_overrides = _resolve_structural_profile_overrides(effective_structural_overrides)
+    config = build_replay_analysis_config(
+        structural_variants=STRUCTURAL_VARIANTS,
+        profile_name=profile_name,
+        structural_variant=structural_variant,
+        structural_overrides=structural_overrides,
+        focus_tickers=focus_tickers,
+        resolve_structural_profile_overrides=_resolve_structural_profile_overrides,
+    )
+    state = build_replay_analysis_state()
+    default_profile = _default_short_trade_target_profile()
 
     with _override_short_trade_thresholds(
-        profile_name=profile_name,
-        profile_overrides=structural_profile_overrides or None,
+        profile_name=config.profile_name,
+        profile_overrides=config.structural_profile_overrides or None,
         select_threshold=select_threshold,
         near_miss_threshold=near_miss_threshold,
-        breakout_freshness_weight=effective_structural_overrides.get("breakout_freshness_weight"),
-        trend_acceleration_weight=effective_structural_overrides.get("trend_acceleration_weight"),
-        volume_expansion_quality_weight=effective_structural_overrides.get("volume_expansion_quality_weight"),
-        close_strength_weight=effective_structural_overrides.get("close_strength_weight"),
-        sector_resonance_weight=effective_structural_overrides.get("sector_resonance_weight"),
-        catalyst_freshness_weight=effective_structural_overrides.get("catalyst_freshness_weight"),
-        layer_c_alignment_weight=effective_structural_overrides.get("layer_c_alignment_weight"),
-        stale_penalty_block_threshold=effective_structural_overrides.get("stale_penalty_block_threshold"),
-        overhead_penalty_block_threshold=effective_structural_overrides.get("overhead_penalty_block_threshold"),
-        extension_penalty_block_threshold=effective_structural_overrides.get("extension_penalty_block_threshold"),
-        layer_c_avoid_penalty=effective_structural_overrides.get("layer_c_avoid_penalty"),
-        strong_bearish_conflicts=effective_structural_overrides.get("strong_bearish_conflicts"),
-        stale_score_penalty_weight=effective_structural_overrides.get("stale_score_penalty_weight"),
-        overhead_score_penalty_weight=effective_structural_overrides.get("overhead_score_penalty_weight"),
-        extension_score_penalty_weight=effective_structural_overrides.get("extension_score_penalty_weight"),
+        breakout_freshness_weight=config.effective_structural_overrides.get("breakout_freshness_weight"),
+        trend_acceleration_weight=config.effective_structural_overrides.get("trend_acceleration_weight"),
+        volume_expansion_quality_weight=config.effective_structural_overrides.get("volume_expansion_quality_weight"),
+        close_strength_weight=config.effective_structural_overrides.get("close_strength_weight"),
+        sector_resonance_weight=config.effective_structural_overrides.get("sector_resonance_weight"),
+        catalyst_freshness_weight=config.effective_structural_overrides.get("catalyst_freshness_weight"),
+        layer_c_alignment_weight=config.effective_structural_overrides.get("layer_c_alignment_weight"),
+        stale_penalty_block_threshold=config.effective_structural_overrides.get("stale_penalty_block_threshold"),
+        overhead_penalty_block_threshold=config.effective_structural_overrides.get("overhead_penalty_block_threshold"),
+        extension_penalty_block_threshold=config.effective_structural_overrides.get("extension_penalty_block_threshold"),
+        layer_c_avoid_penalty=config.effective_structural_overrides.get("layer_c_avoid_penalty"),
+        strong_bearish_conflicts=config.effective_structural_overrides.get("strong_bearish_conflicts"),
+        stale_score_penalty_weight=config.effective_structural_overrides.get("stale_score_penalty_weight"),
+        overhead_score_penalty_weight=config.effective_structural_overrides.get("overhead_score_penalty_weight"),
+        extension_score_penalty_weight=config.effective_structural_overrides.get("extension_score_penalty_weight"),
     ):
         for replay_input_path, payload in replay_input_sources:
-            trade_date = str(payload.get("trade_date") or "")
-            target_mode = str(payload.get("target_mode") or "research_only")
-            watchlist_entries = list(payload.get("watchlist") or [])
-            replay_short_trade_entries, upstream_shadow_observation_entries = _merge_replay_short_trade_entries(payload)
-            rejected_filter_observability = _summarize_candidate_entry_filter_observability(
-                list(payload.get("rejected_entries") or []),
-                entry_filter_rules,
-                trade_date=trade_date,
-                default_candidate_source="watchlist_filter_diagnostics",
+            source_context = prepare_replay_source_context(
+                replay_input_path=replay_input_path,
+                payload=payload,
+                entry_filter_rules=config.entry_filter_rules,
+                candidate_entry_default_source="watchlist_filter_diagnostics",
+                supplemental_default_source="layer_b_boundary",
+                merge_replay_entries=_merge_replay_short_trade_entries,
+                summarize_filter_observability=_summarize_candidate_entry_filter_observability,
+                apply_candidate_entry_filters=_apply_candidate_entry_filters,
+                coerce_watchlist_entries=_coerce_watchlist_entries,
+                merge_candidate_entry_filter_observability=_merge_candidate_entry_filter_observability,
+                state_candidate_entry_filter_observability=state.candidate_entry_filter_observability,
+                summarize_signal_availability=_summarize_signal_availability,
             )
-            supplemental_filter_observability = _summarize_candidate_entry_filter_observability(
-                replay_short_trade_entries,
-                entry_filter_rules,
-                trade_date=trade_date,
-                default_candidate_source="layer_b_boundary",
-            )
-            rejected_entries, filtered_rejected_entries = _apply_candidate_entry_filters(
-                list(payload.get("rejected_entries") or []),
-                entry_filter_rules,
-                trade_date=trade_date,
-                default_candidate_source="watchlist_filter_diagnostics",
-            )
-            supplemental_entries, filtered_supplemental_entries = _apply_candidate_entry_filters(
-                replay_short_trade_entries,
-                entry_filter_rules,
-                trade_date=trade_date,
-                default_candidate_source="layer_b_boundary",
-            )
-            filtered_entry_index = {
-                str(entry.get("ticker") or ""): entry for entry in filtered_rejected_entries + filtered_supplemental_entries if str(entry.get("ticker") or "").strip()
-            }
-            replay_entry_index = {
-                str(entry.get("ticker") or ""): entry
-                for entry in list(watchlist_entries) + rejected_entries + supplemental_entries
-                if str(entry.get("ticker") or "").strip()
-            }
-            buy_order_tickers = {str(ticker) for ticker in list(payload.get("buy_order_tickers") or []) if str(ticker or "").strip()}
-            watchlist = _coerce_watchlist_entries(watchlist_entries)
             replayed_targets, replayed_summary = build_selection_targets(
-                trade_date=trade_date.replace("-", ""),
-                watchlist=watchlist,
-                rejected_entries=rejected_entries,
-                supplemental_short_trade_entries=supplemental_entries,
-                buy_order_tickers=buy_order_tickers,
-                target_mode=target_mode,
-            )
-            stored_decisions = _extract_short_trade_decision_map(dict(payload.get("selection_targets") or {}))
-            replayed_decisions = _extract_short_trade_decision_map(replayed_targets)
-            stored_snapshots = _extract_short_trade_snapshot_map(dict(payload.get("selection_targets") or {}))
-            replayed_snapshots = _extract_short_trade_snapshot_map(replayed_targets)
-            day_transition_counts: Counter[str] = Counter()
-            day_mismatch_count = 0
-
-            signal_availability, signal_name_counts = _summarize_signal_availability(watchlist_entries + supplemental_entries)
-            overall_signal_availability.update(signal_availability)
-            overall_signal_name_counts.update(signal_name_counts)
-            filtered_candidate_entry_counts.update(entry["matched_filter"] for entry in filtered_rejected_entries + filtered_supplemental_entries)
-            day_candidate_entry_filter_observability = _merge_candidate_entry_filter_observability(
-                candidate_entry_filter_observability,
-                [rejected_filter_observability, supplemental_filter_observability],
+                trade_date=source_context.trade_date.replace("-", ""),
+                watchlist=source_context.watchlist,
+                rejected_entries=source_context.rejected_entries,
+                supplemental_short_trade_entries=source_context.supplemental_entries,
+                buy_order_tickers=source_context.buy_order_tickers,
+                target_mode=source_context.target_mode,
             )
             source_analysis = _analyze_replay_source_decisions(
-                trade_date=trade_date,
+                trade_date=source_context.trade_date,
                 payload=payload,
                 replay_input_path=replay_input_path,
-                replay_entry_index=replay_entry_index,
-                filtered_entry_index=filtered_entry_index,
+                replay_entry_index=source_context.replay_entry_index,
+                filtered_entry_index=source_context.filtered_entry_index,
                 replayed_targets=replayed_targets,
-                focus_ticker_set=focus_ticker_set,
-                mismatch_budget=max(0, 20 - len(mismatch_examples)),
+                focus_ticker_set=config.focus_ticker_set,
+                mismatch_budget=max(0, 20 - len(state.mismatch_examples)),
             )
-            stored_decision_counts.update(source_analysis["stored_decision_counts"])
-            replayed_decision_counts.update(source_analysis["replayed_decision_counts"])
-            transition_counts.update(source_analysis["transition_counts"])
-            candidate_source_counts.update(source_analysis["candidate_source_counts"])
-            mismatch_examples.extend(source_analysis["mismatch_examples"])
-            focused_score_diagnostics.extend(source_analysis["focused_score_diagnostics"])
-            day_transition_counts = source_analysis["day_transition_counts"]
-            day_mismatch_count = int(source_analysis["day_mismatch_count"])
-
-            per_day.append(
-                {
-                    "trade_date": trade_date,
-                    "target_mode": target_mode,
-                    "replay_input_path": str(replay_input_path),
-                    "stored_short_trade_decision_counts": dict(Counter(str(stored_decisions.get(ticker) or "none") for ticker in stored_decisions).most_common()),
-                    "replayed_short_trade_decision_counts": {
-                        "selected": int(replayed_summary.short_trade_selected_count),
-                        "near_miss": int(replayed_summary.short_trade_near_miss_count),
-                        "blocked": int(replayed_summary.short_trade_blocked_count),
-                        "rejected": int(replayed_summary.short_trade_rejected_count),
-                    },
-                    "decision_transition_counts": dict(day_transition_counts.most_common()),
-                    "decision_mismatch_count": day_mismatch_count,
-                    "source_summary": dict(payload.get("source_summary") or {}),
-                    "upstream_shadow_observation_entry_count": len(upstream_shadow_observation_entries),
-                    "candidate_entry_filter_observability": {
-                        rule_name: {key: int(value) for key, value in counters.items()}
-                        for rule_name, counters in sorted(day_candidate_entry_filter_observability.items())
-                    },
-                    "filtered_candidate_entries": filtered_rejected_entries + filtered_supplemental_entries,
-                    "signal_availability": signal_availability,
-                    "available_strategy_signal_counts": signal_name_counts,
-                }
+            ingest_replay_source_analysis(
+                state=state,
+                source_context=source_context,
+                source_analysis=source_analysis,
+                replayed_summary=replayed_summary,
             )
 
-    return {
-        "replay_input_count": len(replay_input_sources),
-        "trade_date_count": len(per_day),
-        "profile_name": str(profile_name or "default"),
-        "structural_variant": structural_variant,
-        "structural_overrides": effective_structural_overrides,
-        "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
-        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
-        "stored_short_trade_decision_counts": dict(stored_decision_counts.most_common()),
-        "replayed_short_trade_decision_counts": dict(replayed_decision_counts.most_common()),
-        "decision_transition_counts": dict(transition_counts.most_common()),
-        "decision_mismatch_count": int(sum(row["decision_mismatch_count"] for row in per_day)),
-        "candidate_source_counts": dict(candidate_source_counts.most_common()),
-        "entry_filter_rules": entry_filter_rules,
-        "filtered_candidate_entry_counts": dict(filtered_candidate_entry_counts.most_common()),
-        "candidate_entry_filter_observability": {
-            rule_name: {key: int(value) for key, value in counters.items()}
-            for rule_name, counters in sorted(candidate_entry_filter_observability.items())
-        },
-        "signal_availability": dict(overall_signal_availability.most_common()),
-        "available_strategy_signal_counts": dict(overall_signal_name_counts.most_common()),
-        "by_trade_date": sorted(per_day, key=lambda row: row["trade_date"]),
-        "mismatch_examples": mismatch_examples,
-        "focus_tickers": sorted(focus_ticker_set),
-        "focused_score_diagnostics": sorted(focused_score_diagnostics, key=lambda row: (row["trade_date"], row["ticker"])),
-    }
+    return build_replay_analysis_result(
+        replay_input_count=len(replay_input_sources),
+        config=config,
+        state=state,
+        select_threshold=select_threshold,
+        near_miss_threshold=near_miss_threshold,
+        default_profile=default_profile,
+    )
 
 
 def analyze_selection_target_replay_inputs(

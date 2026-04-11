@@ -1,0 +1,1338 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from src.targets.explainability import derive_confidence, trim_reasons
+from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
+
+
+@dataclass(frozen=True)
+class ShortTradeEvaluationContext:
+    snapshot: dict[str, Any]
+    carryover_evidence_deficiency: dict[str, Any]
+    selected_historical_proof_deficiency: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ShortTradeThresholdState:
+    breakout_freshness: float
+    trend_acceleration: float
+    effective_near_miss_threshold: float
+    effective_select_threshold: float
+    selected_score_tolerance: float
+    breakout_stage: str
+    selected_breakout_gate_pass: bool
+    near_miss_breakout_gate_pass: bool
+
+
+@dataclass(frozen=True)
+class ShortTradeVerdict:
+    decision: str
+    confidence: float
+    positive_tags: list[str]
+    negative_tags: list[str]
+    blockers: list[str]
+    gate_status: dict[str, Any]
+    top_reasons: list[str]
+    rejection_reasons: list[str]
+
+
+def build_short_trade_evaluation_context(
+    *,
+    snapshot: dict[str, Any],
+    carryover_evidence_deficiency: dict[str, Any],
+    selected_historical_proof_deficiency: dict[str, Any],
+) -> ShortTradeEvaluationContext:
+    return ShortTradeEvaluationContext(
+        snapshot=dict(snapshot),
+        carryover_evidence_deficiency=dict(carryover_evidence_deficiency),
+        selected_historical_proof_deficiency=dict(selected_historical_proof_deficiency),
+    )
+
+
+def _summarize_positive_factor(name: str, value: float) -> str | None:
+    if value >= 0.8:
+        return f"{name}_strong"
+    if value >= 0.65:
+        return f"{name}_supportive"
+    return None
+
+
+def _summarize_penalty(name: str, value: float) -> str | None:
+    if value >= 0.25:
+        return f"{name}_heavy"
+    if value >= 0.1:
+        return f"{name}_active"
+    return None
+
+
+def _classify_breakout_stage(*, breakout_freshness: float, trend_acceleration: float, profile: Any) -> tuple[str, bool, bool]:
+    selected_breakout_gate_pass = breakout_freshness >= float(profile.selected_breakout_freshness_min) and trend_acceleration >= float(profile.selected_trend_acceleration_min)
+    near_miss_breakout_gate_pass = breakout_freshness >= float(profile.near_miss_breakout_freshness_min) and trend_acceleration >= float(profile.near_miss_trend_acceleration_min)
+    if selected_breakout_gate_pass:
+        return "confirmed_breakout", True, True
+    if near_miss_breakout_gate_pass:
+        return "prepared_breakout", False, True
+    return "watchlist_breakout", False, False
+
+
+def _collect_breakout_gate_misses(*, breakout_freshness: float, trend_acceleration: float, breakout_min: float, trend_min: float, label: str) -> list[str]:
+    misses: list[str] = []
+    if breakout_freshness < breakout_min:
+        misses.append(f"{label}_breakout_freshness_below_min")
+    if trend_acceleration < trend_min:
+        misses.append(f"{label}_trend_acceleration_below_min")
+    return misses
+
+
+def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any] | None) -> str:
+    execution_quality_label = str((historical_prior or {}).get("execution_quality_label") or "unknown")
+    if execution_quality_label == "intraday_only":
+        return "intraday_confirmation_only"
+    if execution_quality_label == "gap_chase_risk":
+        return "avoid_open_chase_confirmation"
+    if execution_quality_label == "close_continuation":
+        return "confirm_then_hold_breakout"
+    if execution_quality_label == "zero_follow_through":
+        return "strong_reconfirmation_only"
+    return "next_day_breakout_confirmation"
+
+
+def _resolve_short_trade_decision(
+    *,
+    blockers: list[str],
+    gate_status: dict[str, Any],
+    score_target: float,
+    effective_near_miss_threshold: float,
+    effective_select_threshold: float,
+    selected_score_tolerance: float,
+    selected_breakout_gate_pass: bool,
+    near_miss_breakout_gate_pass: bool,
+    carryover_evidence_deficiency: dict[str, Any],
+    selected_historical_proof_deficiency: dict[str, Any],
+) -> str:
+    selected_score_pass = score_target >= (effective_select_threshold - selected_score_tolerance)
+
+    if blockers:
+        decision = "blocked" if gate_status["data"] == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers else "rejected"
+    elif selected_score_pass and selected_breakout_gate_pass:
+        decision = "selected"
+        gate_status["score"] = "pass"
+    elif selected_score_pass and near_miss_breakout_gate_pass:
+        decision = "near_miss"
+        gate_status["score"] = "near_miss"
+    elif score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass:
+        decision = "near_miss"
+        gate_status["score"] = "near_miss"
+    else:
+        decision = "rejected"
+
+    if carryover_evidence_deficiency["evidence_deficient"] and decision in {"selected", "near_miss"}:
+        gate_status["score"] = "fail"
+        return "rejected"
+    if selected_historical_proof_deficiency["proof_missing"] and decision == "selected":
+        gate_status["score"] = "near_miss"
+        return "near_miss"
+    return decision
+
+
+def _annotate_short_trade_tags(
+    *,
+    positive_tags: list[str],
+    negative_tags: list[str],
+    breakout_stage: str,
+    carryover_evidence_deficiency: dict[str, Any],
+    selected_historical_proof_deficiency: dict[str, Any],
+) -> None:
+    if breakout_stage == "confirmed_breakout":
+        positive_tags.append("confirmed_breakout_stage")
+    elif breakout_stage == "prepared_breakout":
+        positive_tags.append("prepared_breakout_stage")
+
+    if carryover_evidence_deficiency["evidence_deficient"]:
+        negative_tags.append("evidence_deficient_broad_family_only")
+    if selected_historical_proof_deficiency["proof_missing"]:
+        negative_tags.append("selected_historical_proof_missing")
+
+
+def _build_short_trade_top_reasons(
+    *,
+    breakout_freshness: float,
+    trend_acceleration: float,
+    raw_catalyst_freshness: float,
+    upstream_shadow_catalyst_relief_applied: bool,
+    upstream_shadow_catalyst_relief_reason: str,
+    visibility_gap_continuation_relief: dict[str, Any],
+    merge_approved_continuation_relief: dict[str, Any],
+    prepared_breakout_penalty_relief: dict[str, Any],
+    prepared_breakout_catalyst_relief: dict[str, Any],
+    prepared_breakout_volume_relief: dict[str, Any],
+    prepared_breakout_continuation_relief: dict[str, Any],
+    prepared_breakout_selected_catalyst_relief: dict[str, Any],
+    profitability_relief_applied: bool,
+    profitability_hard_cliff_boundary_relief: dict[str, Any],
+    historical_execution_relief: dict[str, Any],
+    profitability_hard_cliff: bool,
+    breakout_stage: str,
+    layer_c_avoid_penalty: float,
+    stale_trend_repair_penalty: float,
+    overhead_supply_penalty: float,
+    extension_without_room_penalty: float,
+    watchlist_zero_catalyst_guard: dict[str, Any],
+    watchlist_zero_catalyst_crowded_guard: dict[str, Any],
+    watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
+    carryover_evidence_deficiency: dict[str, Any],
+    selected_historical_proof_deficiency: dict[str, Any],
+    t_plus_2_continuation_candidate: dict[str, Any],
+    score_target: float,
+) -> list[str]:
+    return trim_reasons(
+        [
+            reason
+            for reason in [
+                _summarize_positive_factor("breakout_freshness", breakout_freshness),
+                _summarize_positive_factor("trend_acceleration", trend_acceleration),
+                _summarize_positive_factor("catalyst_freshness", raw_catalyst_freshness),
+                upstream_shadow_catalyst_relief_reason if upstream_shadow_catalyst_relief_applied else None,
+                "visibility_gap_continuation_relief" if visibility_gap_continuation_relief["applied"] else None,
+                "merge_approved_continuation_relief" if merge_approved_continuation_relief["applied"] else None,
+                "prepared_breakout_penalty_relief" if prepared_breakout_penalty_relief["applied"] else None,
+                "prepared_breakout_catalyst_relief" if prepared_breakout_catalyst_relief["applied"] else None,
+                "prepared_breakout_volume_relief" if prepared_breakout_volume_relief["applied"] else None,
+                "prepared_breakout_continuation_relief" if prepared_breakout_continuation_relief["applied"] else None,
+                "prepared_breakout_selected_catalyst_relief" if prepared_breakout_selected_catalyst_relief["applied"] else None,
+                "profitability_relief_applied" if profitability_relief_applied else None,
+                "profitability_hard_cliff_boundary_relief" if profitability_hard_cliff_boundary_relief.get("applied") else None,
+                "historical_execution_relief" if historical_execution_relief.get("applied") else None,
+                "profitability_hard_cliff" if profitability_hard_cliff and not profitability_relief_applied else None,
+                breakout_stage,
+                _summarize_penalty("layer_c_avoid_penalty", layer_c_avoid_penalty),
+                _summarize_penalty("stale_trend_repair_penalty", stale_trend_repair_penalty),
+                _summarize_penalty("overhead_supply_penalty", overhead_supply_penalty),
+                _summarize_penalty("extension_without_room_penalty", extension_without_room_penalty),
+                "watchlist_zero_catalyst_penalty_applied" if watchlist_zero_catalyst_guard["applied"] else None,
+                "watchlist_zero_catalyst_crowded_penalty_applied" if watchlist_zero_catalyst_crowded_guard["applied"] else None,
+                "watchlist_zero_catalyst_flat_trend_penalty_applied" if watchlist_zero_catalyst_flat_trend_guard["applied"] else None,
+                "evidence_deficient_broad_family_only" if carryover_evidence_deficiency["evidence_deficient"] else None,
+                "selected_historical_proof_missing" if selected_historical_proof_deficiency["proof_missing"] else None,
+                "t_plus_2_continuation_candidate" if t_plus_2_continuation_candidate["applied"] else None,
+                f"score_short={score_target:.2f}",
+            ]
+            if reason is not None
+        ]
+    )
+
+
+def _build_short_trade_rejection_reasons(
+    *,
+    decision: str,
+    blockers: list[str],
+    breakout_freshness: float,
+    trend_acceleration: float,
+    effective_near_miss_threshold: float,
+    score_target: float,
+    near_miss_breakout_gate_pass: bool,
+    profile: Any,
+    carryover_evidence_deficiency: dict[str, Any],
+) -> list[str]:
+    rejection_reasons = trim_reasons(
+        blockers
+        if blockers
+        else _collect_breakout_gate_misses(
+            breakout_freshness=breakout_freshness,
+            trend_acceleration=trend_acceleration,
+            breakout_min=float(profile.near_miss_breakout_freshness_min),
+            trend_min=float(profile.near_miss_trend_acceleration_min),
+            label="near_miss",
+        )
+        if decision == "rejected" and score_target >= effective_near_miss_threshold and not near_miss_breakout_gate_pass
+        else ["score_short_below_threshold"]
+        if decision == "rejected"
+        else []
+    )
+    if decision == "rejected" and carryover_evidence_deficiency["evidence_deficient"]:
+        return trim_reasons(["evidence_deficient_broad_family_only", *rejection_reasons])
+    return rejection_reasons
+
+
+def resolve_short_trade_thresholds(context: ShortTradeEvaluationContext) -> ShortTradeThresholdState:
+    snapshot = context.snapshot
+    profile = snapshot["profile"]
+    breakout_freshness = float(snapshot["breakout_freshness"])
+    trend_acceleration = float(snapshot["trend_acceleration"])
+    breakout_stage, selected_breakout_gate_pass, near_miss_breakout_gate_pass = _classify_breakout_stage(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        profile=profile,
+    )
+    return ShortTradeThresholdState(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        effective_near_miss_threshold=float(snapshot["effective_near_miss_threshold"]),
+        effective_select_threshold=float(snapshot["effective_select_threshold"]),
+        selected_score_tolerance=float(snapshot["selected_score_tolerance"]),
+        breakout_stage=breakout_stage,
+        selected_breakout_gate_pass=selected_breakout_gate_pass,
+        near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
+    )
+
+
+def resolve_short_trade_verdict(
+    context: ShortTradeEvaluationContext,
+    *,
+    thresholds: ShortTradeThresholdState,
+    quality_score: float,
+) -> ShortTradeVerdict:
+    snapshot = context.snapshot
+    gate_status = dict(snapshot["gate_status"])
+    positive_tags = list(snapshot["positive_tags"])
+    negative_tags = list(snapshot["negative_tags"])
+    blockers = list(snapshot["blockers"])
+
+    decision = _resolve_short_trade_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=float(snapshot["score_target"]),
+        effective_near_miss_threshold=thresholds.effective_near_miss_threshold,
+        effective_select_threshold=thresholds.effective_select_threshold,
+        selected_score_tolerance=thresholds.selected_score_tolerance,
+        selected_breakout_gate_pass=thresholds.selected_breakout_gate_pass,
+        near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
+        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
+    )
+    _annotate_short_trade_tags(
+        positive_tags=positive_tags,
+        negative_tags=negative_tags,
+        breakout_stage=thresholds.breakout_stage,
+        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
+    )
+    top_reasons = _build_short_trade_top_reasons(
+        breakout_freshness=thresholds.breakout_freshness,
+        trend_acceleration=thresholds.trend_acceleration,
+        raw_catalyst_freshness=float(snapshot["raw_catalyst_freshness"]),
+        upstream_shadow_catalyst_relief_applied=bool(snapshot["upstream_shadow_catalyst_relief_applied"]),
+        upstream_shadow_catalyst_relief_reason=str(snapshot["upstream_shadow_catalyst_relief_reason"]),
+        visibility_gap_continuation_relief=dict(snapshot["visibility_gap_continuation_relief"]),
+        merge_approved_continuation_relief=dict(snapshot["merge_approved_continuation_relief"]),
+        prepared_breakout_penalty_relief=dict(snapshot["prepared_breakout_penalty_relief"]),
+        prepared_breakout_catalyst_relief=dict(snapshot["prepared_breakout_catalyst_relief"]),
+        prepared_breakout_volume_relief=dict(snapshot["prepared_breakout_volume_relief"]),
+        prepared_breakout_continuation_relief=dict(snapshot["prepared_breakout_continuation_relief"]),
+        prepared_breakout_selected_catalyst_relief=dict(snapshot["prepared_breakout_selected_catalyst_relief"]),
+        profitability_relief_applied=bool(snapshot["profitability_relief_applied"]),
+        profitability_hard_cliff_boundary_relief=dict(snapshot["profitability_hard_cliff_boundary_relief"]),
+        historical_execution_relief=dict(snapshot["historical_execution_relief"]),
+        profitability_hard_cliff=bool(snapshot["profitability_hard_cliff"]),
+        breakout_stage=thresholds.breakout_stage,
+        layer_c_avoid_penalty=float(snapshot["layer_c_avoid_penalty"]),
+        stale_trend_repair_penalty=float(snapshot["stale_trend_repair_penalty"]),
+        overhead_supply_penalty=float(snapshot["overhead_supply_penalty"]),
+        extension_without_room_penalty=float(snapshot["extension_without_room_penalty"]),
+        watchlist_zero_catalyst_guard=dict(snapshot["watchlist_zero_catalyst_guard"]),
+        watchlist_zero_catalyst_crowded_guard=dict(snapshot["watchlist_zero_catalyst_crowded_guard"]),
+        watchlist_zero_catalyst_flat_trend_guard=dict(snapshot["watchlist_zero_catalyst_flat_trend_guard"]),
+        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
+        t_plus_2_continuation_candidate=dict(snapshot["t_plus_2_continuation_candidate"]),
+        score_target=float(snapshot["score_target"]),
+    )
+    rejection_reasons = _build_short_trade_rejection_reasons(
+        decision=decision,
+        blockers=blockers,
+        breakout_freshness=thresholds.breakout_freshness,
+        trend_acceleration=thresholds.trend_acceleration,
+        effective_near_miss_threshold=thresholds.effective_near_miss_threshold,
+        score_target=float(snapshot["score_target"]),
+        near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
+        profile=snapshot["profile"],
+        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
+    )
+    confidence = derive_confidence(
+        float(snapshot["score_target"]),
+        thresholds.breakout_freshness,
+        thresholds.trend_acceleration,
+        float(snapshot["catalyst_freshness"]),
+        quality_score,
+    )
+    return ShortTradeVerdict(
+        decision=decision,
+        confidence=confidence,
+        positive_tags=positive_tags,
+        negative_tags=trim_reasons(negative_tags),
+        blockers=trim_reasons(blockers),
+        gate_status=gate_status,
+        top_reasons=top_reasons,
+        rejection_reasons=rejection_reasons,
+    )
+
+
+def build_short_trade_metrics_payload(
+    *,
+    context: ShortTradeEvaluationContext,
+    thresholds: ShortTradeThresholdState,
+    input_data: TargetEvaluationInput,
+) -> dict[str, Any]:
+    snapshot = context.snapshot
+    positive_score_weights = dict(snapshot["positive_score_weights"])
+    return {
+        "score_b": round(float(input_data.score_b), 4),
+        "score_c": round(float(input_data.score_c), 4),
+        "score_final": round(float(input_data.score_final), 4),
+        "quality_score": round(float(input_data.quality_score), 4),
+        "score_b_strength": round(float(snapshot["score_b_strength"]), 4),
+        "score_c_strength": round(float(snapshot["score_c_strength"]), 4),
+        "score_final_strength": round(float(snapshot["score_final_strength"]), 4),
+        "momentum_strength": round(float(snapshot["momentum_strength"]), 4),
+        "momentum_1m": round(float(snapshot["momentum_1m"]), 4),
+        "momentum_3m": round(float(snapshot["momentum_3m"]), 4),
+        "momentum_6m": round(float(snapshot["momentum_6m"]), 4),
+        "volume_momentum": round(float(snapshot["volume_momentum"]), 4),
+        "adx_strength": round(float(snapshot["adx_strength"]), 4),
+        "ema_strength": round(float(snapshot["ema_strength"]), 4),
+        "volatility_strength": round(float(snapshot["volatility_strength"]), 4),
+        "volatility_regime": round(float(snapshot["volatility_regime"]), 4),
+        "atr_ratio": round(float(snapshot["atr_ratio"]), 4),
+        "long_trend_strength": round(float(snapshot["long_trend_strength"]), 4),
+        "event_freshness_strength": round(float(snapshot["event_freshness_strength"]), 4),
+        "news_sentiment_strength": round(float(snapshot["news_sentiment_strength"]), 4),
+        "event_signal_strength": round(float(snapshot["event_signal_strength"]), 4),
+        "mean_reversion_strength": round(float(snapshot["mean_reversion_strength"]), 4),
+        "analyst_alignment": round(float(snapshot["analyst_alignment"]), 4),
+        "investor_alignment": round(float(snapshot["investor_alignment"]), 4),
+        "analyst_penalty": round(float(snapshot["analyst_penalty"]), 4),
+        "investor_penalty": round(float(snapshot["investor_penalty"]), 4),
+        "breakout_freshness": round(thresholds.breakout_freshness, 4),
+        "trend_acceleration": round(thresholds.trend_acceleration, 4),
+        "volume_expansion_quality": round(float(snapshot["volume_expansion_quality"]), 4),
+        "close_strength": round(float(snapshot["close_strength"]), 4),
+        "sector_resonance": round(float(snapshot["sector_resonance"]), 4),
+        "catalyst_freshness": round(float(snapshot["raw_catalyst_freshness"]), 4),
+        "effective_catalyst_freshness": round(float(snapshot["catalyst_freshness"]), 4),
+        "layer_c_alignment": round(float(snapshot["layer_c_alignment"]), 4),
+        "positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
+        "breakout_stage": thresholds.breakout_stage,
+        "selected_breakout_gate_pass": thresholds.selected_breakout_gate_pass,
+        "near_miss_breakout_gate_pass": thresholds.near_miss_breakout_gate_pass,
+        "carryover_evidence_deficiency": {
+            "enabled": bool(context.carryover_evidence_deficiency["enabled"]),
+            "evidence_deficient": bool(context.carryover_evidence_deficiency["evidence_deficient"]),
+            "gate_hits": dict(context.carryover_evidence_deficiency["gate_hits"]),
+            "same_ticker_sample_count": int(context.carryover_evidence_deficiency["same_ticker_sample_count"]),
+            "same_family_sample_count": int(context.carryover_evidence_deficiency["same_family_sample_count"]),
+            "same_family_source_sample_count": int(context.carryover_evidence_deficiency["same_family_source_sample_count"]),
+            "same_family_source_score_catalyst_sample_count": int(context.carryover_evidence_deficiency["same_family_source_score_catalyst_sample_count"]),
+            "same_source_score_sample_count": int(context.carryover_evidence_deficiency["same_source_score_sample_count"]),
+            "evaluable_count": int(context.carryover_evidence_deficiency["evaluable_count"]),
+        },
+        "selected_historical_proof_deficiency": {
+            "enabled": bool(context.selected_historical_proof_deficiency["enabled"]),
+            "proof_missing": bool(context.selected_historical_proof_deficiency["proof_missing"]),
+            "gate_hits": dict(context.selected_historical_proof_deficiency["gate_hits"]),
+            "candidate_source": str(context.selected_historical_proof_deficiency["candidate_source"]),
+            "evaluable_count": int(context.selected_historical_proof_deficiency["evaluable_count"]),
+        },
+        "thresholds": {
+            "profile_name": snapshot["profile"].name,
+            "effective_select_threshold": round(thresholds.effective_select_threshold, 4),
+            "selected_score_tolerance": round(thresholds.selected_score_tolerance, 4),
+            "near_miss_threshold": round(thresholds.effective_near_miss_threshold, 4),
+        },
+    }
+
+
+def build_short_trade_explainability_payload(
+    *,
+    context: ShortTradeEvaluationContext,
+    thresholds: ShortTradeThresholdState,
+    input_data: TargetEvaluationInput,
+) -> dict[str, Any]:
+    snapshot = context.snapshot
+    return {
+        "source": str(input_data.replay_context.get("source") or "short_trade_target_rules_v1"),
+        "target_profile": snapshot["profile"].name,
+        "breakout_stage": thresholds.breakout_stage,
+        "trade_date": input_data.trade_date,
+        "layer_c_decision": input_data.layer_c_decision,
+        "bc_conflict": input_data.bc_conflict,
+        "candidate_source": str(input_data.replay_context.get("source") or ""),
+        "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {}).keys()),
+        "historical_prior": dict(snapshot["historical_prior"]),
+        "carryover_evidence_deficiency": dict(context.carryover_evidence_deficiency),
+        "selected_historical_proof_deficiency": dict(context.selected_historical_proof_deficiency),
+        "replay_context": dict(input_data.replay_context or {}),
+    }
+
+
+def evaluate_short_trade_target_impl(
+    input_data: TargetEvaluationInput,
+    *,
+    rank_hint: int | None = None,
+    build_short_trade_target_snapshot: Any,
+    resolve_carryover_evidence_deficiency: Any,
+    resolve_selected_historical_proof_deficiency: Any,
+    classify_breakout_stage: Any,
+    resolve_short_trade_decision: Any,
+    annotate_short_trade_tags: Any,
+    build_short_trade_top_reasons: Any,
+    build_short_trade_rejection_reasons: Any,
+    preferred_entry_mode_from_historical_prior: Any,
+) -> TargetEvaluationResult:
+    snapshot = build_short_trade_target_snapshot(input_data)
+    profile = snapshot["profile"]
+    breakout_freshness = float(snapshot["breakout_freshness"])
+    trend_acceleration = float(snapshot["trend_acceleration"])
+    raw_catalyst_freshness = float(snapshot["raw_catalyst_freshness"])
+    catalyst_freshness = float(snapshot["catalyst_freshness"])
+    score_target = float(snapshot["score_target"])
+    effective_near_miss_threshold = float(snapshot["effective_near_miss_threshold"])
+    effective_select_threshold = float(snapshot["effective_select_threshold"])
+    base_layer_c_avoid_penalty = float(snapshot["base_layer_c_avoid_penalty"])
+    layer_c_avoid_penalty = float(snapshot["layer_c_avoid_penalty"])
+    watchlist_zero_catalyst_guard = dict(snapshot["watchlist_zero_catalyst_guard"])
+    effective_watchlist_zero_catalyst_penalty = float(snapshot["watchlist_zero_catalyst_penalty"])
+    watchlist_zero_catalyst_crowded_guard = dict(snapshot["watchlist_zero_catalyst_crowded_guard"])
+    effective_watchlist_zero_catalyst_crowded_penalty = float(snapshot["watchlist_zero_catalyst_crowded_penalty"])
+    watchlist_zero_catalyst_flat_trend_guard = dict(snapshot["watchlist_zero_catalyst_flat_trend_guard"])
+    effective_watchlist_zero_catalyst_flat_trend_penalty = float(snapshot["watchlist_zero_catalyst_flat_trend_penalty"])
+    t_plus_2_continuation_candidate = dict(snapshot["t_plus_2_continuation_candidate"])
+    profitability_hard_cliff = bool(snapshot["profitability_hard_cliff"])
+    profitability_positive_count = snapshot["profitability_positive_count"]
+    profitability_confidence = float(snapshot["profitability_confidence"])
+    profitability_relief_enabled = bool(snapshot["profitability_relief_enabled"])
+    profitability_relief_gate_hits = dict(snapshot["profitability_relief_gate_hits"])
+    profitability_relief_eligible = bool(snapshot["profitability_relief_eligible"])
+    profitability_relief_applied = bool(snapshot["profitability_relief_applied"])
+    profitability_hard_cliff_boundary_relief = dict(snapshot["profitability_hard_cliff_boundary_relief"])
+    historical_execution_relief = dict(snapshot["historical_execution_relief"])
+    historical_prior = dict(snapshot["historical_prior"])
+    carryover_evidence_deficiency = resolve_carryover_evidence_deficiency(input_data)
+    selected_historical_proof_deficiency = resolve_selected_historical_proof_deficiency(input_data)
+    profitability_relief_soft_penalty = float(snapshot["profitability_relief_soft_penalty"])
+    upstream_shadow_catalyst_relief_enabled = bool(snapshot["upstream_shadow_catalyst_relief_enabled"])
+    upstream_shadow_catalyst_relief_gate_hits = dict(snapshot["upstream_shadow_catalyst_relief_gate_hits"])
+    upstream_shadow_catalyst_relief_eligible = bool(snapshot["upstream_shadow_catalyst_relief_eligible"])
+    upstream_shadow_catalyst_relief_applied = bool(snapshot["upstream_shadow_catalyst_relief_applied"])
+    upstream_shadow_catalyst_relief_reason = str(snapshot["upstream_shadow_catalyst_relief_reason"])
+    upstream_shadow_catalyst_relief_catalyst_freshness_floor = float(snapshot["upstream_shadow_catalyst_relief_catalyst_freshness_floor"])
+    upstream_shadow_catalyst_relief_base_near_miss_threshold = float(snapshot["upstream_shadow_catalyst_relief_base_near_miss_threshold"])
+    upstream_shadow_catalyst_relief_near_miss_threshold_override = float(snapshot["upstream_shadow_catalyst_relief_near_miss_threshold_override"])
+    upstream_shadow_catalyst_relief_base_select_threshold = float(snapshot["upstream_shadow_catalyst_relief_base_select_threshold"])
+    upstream_shadow_catalyst_relief_select_threshold_override = float(snapshot["upstream_shadow_catalyst_relief_select_threshold_override"])
+    upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff = bool(snapshot["upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff"])
+    selected_score_tolerance = float(snapshot["selected_score_tolerance"])
+    visibility_gap_continuation_relief = dict(snapshot["visibility_gap_continuation_relief"])
+    merge_approved_continuation_relief = dict(snapshot["merge_approved_continuation_relief"])
+    prepared_breakout_penalty_relief = dict(snapshot["prepared_breakout_penalty_relief"])
+    prepared_breakout_catalyst_relief = dict(snapshot["prepared_breakout_catalyst_relief"])
+    prepared_breakout_volume_relief = dict(snapshot["prepared_breakout_volume_relief"])
+    prepared_breakout_continuation_relief = dict(snapshot["prepared_breakout_continuation_relief"])
+    prepared_breakout_selected_catalyst_relief = dict(snapshot["prepared_breakout_selected_catalyst_relief"])
+    stale_trend_repair_penalty = float(snapshot["stale_trend_repair_penalty"])
+    overhead_supply_penalty = float(snapshot["overhead_supply_penalty"])
+    extension_without_room_penalty = float(snapshot["extension_without_room_penalty"])
+    weighted_positive_contributions = dict(snapshot["weighted_positive_contributions"])
+    weighted_negative_contributions = dict(snapshot["weighted_negative_contributions"])
+    total_positive_contribution = float(snapshot["total_positive_contribution"])
+    total_negative_contribution = float(snapshot["total_negative_contribution"])
+    positive_tags = list(snapshot["positive_tags"])
+    negative_tags = list(snapshot["negative_tags"])
+    blockers = list(snapshot["blockers"])
+    gate_status = dict(snapshot["gate_status"])
+    score_b_strength = float(snapshot["score_b_strength"])
+    score_c_strength = float(snapshot["score_c_strength"])
+    score_final_strength = float(snapshot["score_final_strength"])
+    momentum_strength = float(snapshot["momentum_strength"])
+    momentum_1m = float(snapshot["momentum_1m"])
+    momentum_3m = float(snapshot["momentum_3m"])
+    momentum_6m = float(snapshot["momentum_6m"])
+    volume_momentum = float(snapshot["volume_momentum"])
+    adx_strength = float(snapshot["adx_strength"])
+    ema_strength = float(snapshot["ema_strength"])
+    volatility_strength = float(snapshot["volatility_strength"])
+    volatility_regime = float(snapshot["volatility_regime"])
+    atr_ratio = float(snapshot["atr_ratio"])
+    long_trend_strength = float(snapshot["long_trend_strength"])
+    event_freshness_strength = float(snapshot["event_freshness_strength"])
+    news_sentiment_strength = float(snapshot["news_sentiment_strength"])
+    event_signal_strength = float(snapshot["event_signal_strength"])
+    mean_reversion_strength = float(snapshot["mean_reversion_strength"])
+    analyst_alignment = float(snapshot["analyst_alignment"])
+    investor_alignment = float(snapshot["investor_alignment"])
+    analyst_penalty = float(snapshot["analyst_penalty"])
+    investor_penalty = float(snapshot["investor_penalty"])
+    volume_expansion_quality = float(snapshot["volume_expansion_quality"])
+    close_strength = float(snapshot["close_strength"])
+    sector_resonance = float(snapshot["sector_resonance"])
+    layer_c_alignment = float(snapshot["layer_c_alignment"])
+    positive_score_weights = dict(snapshot["positive_score_weights"])
+    breakout_stage, selected_breakout_gate_pass, near_miss_breakout_gate_pass = classify_breakout_stage(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        profile=profile,
+    )
+
+    decision = resolve_short_trade_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=score_target,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        effective_select_threshold=effective_select_threshold,
+        selected_score_tolerance=selected_score_tolerance,
+        selected_breakout_gate_pass=selected_breakout_gate_pass,
+        near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
+        carryover_evidence_deficiency=carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=selected_historical_proof_deficiency,
+    )
+    annotate_short_trade_tags(
+        positive_tags=positive_tags,
+        negative_tags=negative_tags,
+        breakout_stage=breakout_stage,
+        carryover_evidence_deficiency=carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=selected_historical_proof_deficiency,
+    )
+
+    top_reasons = build_short_trade_top_reasons(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        raw_catalyst_freshness=raw_catalyst_freshness,
+        upstream_shadow_catalyst_relief_applied=upstream_shadow_catalyst_relief_applied,
+        upstream_shadow_catalyst_relief_reason=upstream_shadow_catalyst_relief_reason,
+        visibility_gap_continuation_relief=visibility_gap_continuation_relief,
+        merge_approved_continuation_relief=merge_approved_continuation_relief,
+        prepared_breakout_penalty_relief=prepared_breakout_penalty_relief,
+        prepared_breakout_catalyst_relief=prepared_breakout_catalyst_relief,
+        prepared_breakout_volume_relief=prepared_breakout_volume_relief,
+        prepared_breakout_continuation_relief=prepared_breakout_continuation_relief,
+        prepared_breakout_selected_catalyst_relief=prepared_breakout_selected_catalyst_relief,
+        profitability_relief_applied=profitability_relief_applied,
+        profitability_hard_cliff_boundary_relief=profitability_hard_cliff_boundary_relief,
+        historical_execution_relief=historical_execution_relief,
+        profitability_hard_cliff=profitability_hard_cliff,
+        breakout_stage=breakout_stage,
+        layer_c_avoid_penalty=layer_c_avoid_penalty,
+        stale_trend_repair_penalty=stale_trend_repair_penalty,
+        overhead_supply_penalty=overhead_supply_penalty,
+        extension_without_room_penalty=extension_without_room_penalty,
+        watchlist_zero_catalyst_guard=watchlist_zero_catalyst_guard,
+        watchlist_zero_catalyst_crowded_guard=watchlist_zero_catalyst_crowded_guard,
+        watchlist_zero_catalyst_flat_trend_guard=watchlist_zero_catalyst_flat_trend_guard,
+        carryover_evidence_deficiency=carryover_evidence_deficiency,
+        selected_historical_proof_deficiency=selected_historical_proof_deficiency,
+        t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
+        score_target=score_target,
+    )
+    rejection_reasons = build_short_trade_rejection_reasons(
+        decision=decision,
+        blockers=blockers,
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        score_target=score_target,
+        near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
+        profile=profile,
+        carryover_evidence_deficiency=carryover_evidence_deficiency,
+    )
+    confidence = derive_confidence(score_target, breakout_freshness, trend_acceleration, catalyst_freshness, float(input_data.quality_score or 0.0))
+
+    return TargetEvaluationResult(
+        target_type="short_trade",
+        decision=decision,
+        score_target=score_target,
+        confidence=confidence,
+        rank_hint=rank_hint,
+        positive_tags=positive_tags,
+        negative_tags=trim_reasons(negative_tags),
+        blockers=trim_reasons(blockers),
+        top_reasons=top_reasons,
+        rejection_reasons=rejection_reasons,
+        gate_status=gate_status,
+        expected_holding_window="t1_short_trade",
+        preferred_entry_mode=preferred_entry_mode_from_historical_prior(historical_prior),
+        candidate_source=str(input_data.replay_context.get("source") or "") or None,
+        effective_near_miss_threshold=round(effective_near_miss_threshold, 4),
+        effective_select_threshold=round(effective_select_threshold, 4),
+        breakout_freshness=round(breakout_freshness, 4),
+        trend_acceleration=round(trend_acceleration, 4),
+        volume_expansion_quality=round(volume_expansion_quality, 4),
+        close_strength=round(close_strength, 4),
+        sector_resonance=round(sector_resonance, 4),
+        catalyst_freshness=round(raw_catalyst_freshness, 4),
+        layer_c_alignment=round(layer_c_alignment, 4),
+        weighted_positive_contributions={name: round(float(value), 4) for name, value in weighted_positive_contributions.items()},
+        weighted_negative_contributions={name: round(float(value), 4) for name, value in weighted_negative_contributions.items()},
+        metrics_payload={
+            "score_b": round(float(input_data.score_b), 4),
+            "score_c": round(float(input_data.score_c), 4),
+            "score_final": round(float(input_data.score_final), 4),
+            "quality_score": round(float(input_data.quality_score), 4),
+            "score_b_strength": round(score_b_strength, 4),
+            "score_c_strength": round(score_c_strength, 4),
+            "score_final_strength": round(score_final_strength, 4),
+            "momentum_strength": round(momentum_strength, 4),
+            "momentum_1m": round(momentum_1m, 4),
+            "momentum_3m": round(momentum_3m, 4),
+            "momentum_6m": round(momentum_6m, 4),
+            "volume_momentum": round(volume_momentum, 4),
+            "adx_strength": round(adx_strength, 4),
+            "ema_strength": round(ema_strength, 4),
+            "volatility_strength": round(volatility_strength, 4),
+            "volatility_regime": round(volatility_regime, 4),
+            "atr_ratio": round(atr_ratio, 4),
+            "long_trend_strength": round(long_trend_strength, 4),
+            "event_freshness_strength": round(event_freshness_strength, 4),
+            "news_sentiment_strength": round(news_sentiment_strength, 4),
+            "event_signal_strength": round(event_signal_strength, 4),
+            "mean_reversion_strength": round(mean_reversion_strength, 4),
+            "analyst_alignment": round(analyst_alignment, 4),
+            "investor_alignment": round(investor_alignment, 4),
+            "analyst_penalty": round(analyst_penalty, 4),
+            "investor_penalty": round(investor_penalty, 4),
+            "breakout_freshness": round(breakout_freshness, 4),
+            "trend_acceleration": round(trend_acceleration, 4),
+            "volume_expansion_quality": round(volume_expansion_quality, 4),
+            "close_strength": round(close_strength, 4),
+            "sector_resonance": round(sector_resonance, 4),
+            "catalyst_freshness": round(raw_catalyst_freshness, 4),
+            "effective_catalyst_freshness": round(catalyst_freshness, 4),
+            "layer_c_alignment": round(layer_c_alignment, 4),
+            "positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
+            "breakout_stage": breakout_stage,
+            "selected_breakout_gate_pass": selected_breakout_gate_pass,
+            "near_miss_breakout_gate_pass": near_miss_breakout_gate_pass,
+            "profitability_hard_cliff": profitability_hard_cliff,
+            "profitability_positive_count": profitability_positive_count,
+            "profitability_confidence": round(profitability_confidence, 4),
+            "profitability_relief_enabled": profitability_relief_enabled,
+            "profitability_relief_gate_hits": profitability_relief_gate_hits,
+            "profitability_relief_eligible": profitability_relief_eligible,
+            "profitability_relief_applied": profitability_relief_applied,
+            "historical_execution_relief": {
+                "enabled": bool(historical_execution_relief["enabled"]),
+                "eligible": bool(historical_execution_relief["eligible"]),
+                "applied": bool(historical_execution_relief["applied"]),
+                "candidate_source": str(historical_execution_relief["candidate_source"]),
+                "execution_quality_label": str(historical_execution_relief["execution_quality_label"]),
+                "evaluable_count": int(historical_execution_relief["evaluable_count"]),
+                "next_close_positive_rate": round(float(historical_execution_relief["next_close_positive_rate"]), 4),
+                "next_high_hit_rate_at_threshold": round(float(historical_execution_relief["next_high_hit_rate_at_threshold"]), 4),
+                "next_open_to_close_return_mean": round(float(historical_execution_relief["next_open_to_close_return_mean"]), 4),
+                "strong_close_continuation": bool(historical_execution_relief["strong_close_continuation"]),
+                "gate_hits": dict(historical_execution_relief["gate_hits"]),
+                "base_near_miss_threshold": round(float(historical_execution_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(historical_execution_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(historical_execution_relief["near_miss_threshold_override"]), 4),
+                "base_select_threshold": round(float(historical_execution_relief["base_select_threshold"]), 4),
+                "effective_select_threshold": round(float(historical_execution_relief["effective_select_threshold"]), 4),
+                "select_threshold_override": round(float(historical_execution_relief["select_threshold_override"]), 4),
+            },
+            "carryover_evidence_deficiency": {
+                "enabled": bool(carryover_evidence_deficiency["enabled"]),
+                "evidence_deficient": bool(carryover_evidence_deficiency["evidence_deficient"]),
+                "gate_hits": dict(carryover_evidence_deficiency["gate_hits"]),
+                "same_ticker_sample_count": int(carryover_evidence_deficiency["same_ticker_sample_count"]),
+                "same_family_sample_count": int(carryover_evidence_deficiency["same_family_sample_count"]),
+                "same_family_source_sample_count": int(carryover_evidence_deficiency["same_family_source_sample_count"]),
+                "same_family_source_score_catalyst_sample_count": int(carryover_evidence_deficiency["same_family_source_score_catalyst_sample_count"]),
+                "same_source_score_sample_count": int(carryover_evidence_deficiency["same_source_score_sample_count"]),
+                "evaluable_count": int(carryover_evidence_deficiency["evaluable_count"]),
+            },
+            "selected_historical_proof_deficiency": {
+                "enabled": bool(selected_historical_proof_deficiency["enabled"]),
+                "proof_missing": bool(selected_historical_proof_deficiency["proof_missing"]),
+                "gate_hits": dict(selected_historical_proof_deficiency["gate_hits"]),
+                "candidate_source": str(selected_historical_proof_deficiency["candidate_source"]),
+                "evaluable_count": int(selected_historical_proof_deficiency["evaluable_count"]),
+            },
+            "base_layer_c_avoid_penalty": round(base_layer_c_avoid_penalty, 4),
+            "profitability_relief_soft_penalty": round(profitability_relief_soft_penalty, 4),
+            "layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
+            "watchlist_zero_catalyst_penalty": round(effective_watchlist_zero_catalyst_penalty, 4),
+            "watchlist_zero_catalyst_crowded_penalty": round(effective_watchlist_zero_catalyst_crowded_penalty, 4),
+            "watchlist_zero_catalyst_flat_trend_penalty": round(effective_watchlist_zero_catalyst_flat_trend_penalty, 4),
+            "t_plus_2_continuation_candidate": {
+                "enabled": bool(t_plus_2_continuation_candidate["enabled"]),
+                "eligible": bool(t_plus_2_continuation_candidate["eligible"]),
+                "applied": bool(t_plus_2_continuation_candidate["applied"]),
+                "candidate_source": str(t_plus_2_continuation_candidate["candidate_source"]),
+                "gate_hits": dict(t_plus_2_continuation_candidate["gate_hits"]),
+            },
+            "watchlist_zero_catalyst_guard": {
+                "enabled": bool(watchlist_zero_catalyst_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_guard["gate_hits"]),
+            },
+            "watchlist_zero_catalyst_crowded_guard": {
+                "enabled": bool(watchlist_zero_catalyst_crowded_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_crowded_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_crowded_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_crowded_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_crowded_guard["gate_hits"]),
+            },
+            "watchlist_zero_catalyst_flat_trend_guard": {
+                "enabled": bool(watchlist_zero_catalyst_flat_trend_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_flat_trend_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_flat_trend_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_flat_trend_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_flat_trend_guard["gate_hits"]),
+            },
+            "upstream_shadow_catalyst_relief_enabled": upstream_shadow_catalyst_relief_enabled,
+            "upstream_shadow_catalyst_relief_gate_hits": upstream_shadow_catalyst_relief_gate_hits,
+            "upstream_shadow_catalyst_relief_eligible": upstream_shadow_catalyst_relief_eligible,
+            "upstream_shadow_catalyst_relief_applied": upstream_shadow_catalyst_relief_applied,
+            "upstream_shadow_catalyst_relief_reason": upstream_shadow_catalyst_relief_reason,
+            "upstream_shadow_catalyst_relief_catalyst_freshness_floor": round(upstream_shadow_catalyst_relief_catalyst_freshness_floor, 4),
+            "upstream_shadow_catalyst_relief_base_near_miss_threshold": round(upstream_shadow_catalyst_relief_base_near_miss_threshold, 4),
+            "upstream_shadow_catalyst_relief_near_miss_threshold_override": round(upstream_shadow_catalyst_relief_near_miss_threshold_override, 4),
+            "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+            "profitability_hard_cliff_boundary_relief": {
+                "enabled": bool(profitability_hard_cliff_boundary_relief["enabled"]),
+                "eligible": bool(profitability_hard_cliff_boundary_relief["eligible"]),
+                "applied": bool(profitability_hard_cliff_boundary_relief["applied"]),
+                "candidate_source": str(profitability_hard_cliff_boundary_relief["candidate_source"]),
+                "gate_hits": dict(profitability_hard_cliff_boundary_relief["gate_hits"]),
+                "base_near_miss_threshold": round(float(profitability_hard_cliff_boundary_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(profitability_hard_cliff_boundary_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(profitability_hard_cliff_boundary_relief["near_miss_threshold_override"]), 4),
+            },
+            "visibility_gap_continuation_relief": {
+                "enabled": bool(visibility_gap_continuation_relief["enabled"]),
+                "eligible": bool(visibility_gap_continuation_relief["eligible"]),
+                "applied": bool(visibility_gap_continuation_relief["applied"]),
+                "candidate_source": str(visibility_gap_continuation_relief["candidate_source"]),
+                "candidate_pool_lane": str(visibility_gap_continuation_relief["candidate_pool_lane"]),
+                "candidate_pool_shadow_reason": str(visibility_gap_continuation_relief["candidate_pool_shadow_reason"]),
+                "shadow_visibility_gap_selected": bool(visibility_gap_continuation_relief["shadow_visibility_gap_selected"]),
+                "shadow_visibility_gap_relaxed_band": bool(visibility_gap_continuation_relief["shadow_visibility_gap_relaxed_band"]),
+                "gate_hits": dict(visibility_gap_continuation_relief["gate_hits"]),
+                "historical_execution_quality_label": str(visibility_gap_continuation_relief["historical_execution_quality_label"]),
+                "historical_applied_scope": str(visibility_gap_continuation_relief["historical_applied_scope"]),
+                "historical_evaluable_count": int(visibility_gap_continuation_relief["historical_evaluable_count"]),
+                "historical_next_close_positive_rate": round(float(visibility_gap_continuation_relief["historical_next_close_positive_rate"]), 4),
+                "catalyst_freshness_floor": round(float(visibility_gap_continuation_relief["catalyst_freshness_floor"]), 4),
+                "near_miss_threshold_override": round(float(visibility_gap_continuation_relief["near_miss_threshold_override"]), 4),
+                "require_relaxed_band": bool(visibility_gap_continuation_relief["require_relaxed_band"]),
+            },
+            "merge_approved_continuation_relief": {
+                "enabled": bool(merge_approved_continuation_relief["enabled"]),
+                "eligible": bool(merge_approved_continuation_relief["eligible"]),
+                "applied": bool(merge_approved_continuation_relief["applied"]),
+                "reason": str(merge_approved_continuation_relief["reason"]),
+                "gate_hits": dict(merge_approved_continuation_relief["gate_hits"]),
+                "historical_execution_quality_label": str(merge_approved_continuation_relief["historical_execution_quality_label"]),
+                "historical_applied_scope": str(merge_approved_continuation_relief["historical_applied_scope"]),
+                "historical_evaluable_count": int(merge_approved_continuation_relief["historical_evaluable_count"]),
+                "historical_next_close_positive_rate": round(float(merge_approved_continuation_relief["historical_next_close_positive_rate"]), 4),
+                "base_near_miss_threshold": round(float(merge_approved_continuation_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(merge_approved_continuation_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(merge_approved_continuation_relief["near_miss_threshold_override"]), 4),
+                "base_select_threshold": round(float(merge_approved_continuation_relief["base_select_threshold"]), 4),
+                "effective_select_threshold": round(float(merge_approved_continuation_relief["effective_select_threshold"]), 4),
+                "select_threshold_override": round(float(merge_approved_continuation_relief["select_threshold_override"]), 4),
+                "require_no_profitability_hard_cliff": bool(merge_approved_continuation_relief["require_no_profitability_hard_cliff"]),
+            },
+            "prepared_breakout_penalty_relief": {
+                "enabled": bool(prepared_breakout_penalty_relief["enabled"]),
+                "eligible": bool(prepared_breakout_penalty_relief["eligible"]),
+                "applied": bool(prepared_breakout_penalty_relief["applied"]),
+                "candidate_source": str(prepared_breakout_penalty_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_penalty_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_penalty_relief["gate_hits"]),
+                "base_positive_score_weights": {name: round(float(value), 4) for name, value in dict(prepared_breakout_penalty_relief["base_positive_score_weights"]).items()},
+                "effective_positive_score_weights": {name: round(float(value), 4) for name, value in dict(prepared_breakout_penalty_relief["effective_positive_score_weights"]).items()},
+                "base_stale_score_penalty_weight": round(float(prepared_breakout_penalty_relief["base_stale_score_penalty_weight"]), 4),
+                "effective_stale_score_penalty_weight": round(float(prepared_breakout_penalty_relief["effective_stale_score_penalty_weight"]), 4),
+                "base_extension_score_penalty_weight": round(float(prepared_breakout_penalty_relief["base_extension_score_penalty_weight"]), 4),
+                "effective_extension_score_penalty_weight": round(float(prepared_breakout_penalty_relief["effective_extension_score_penalty_weight"]), 4),
+            },
+            "prepared_breakout_catalyst_relief": {
+                "enabled": bool(prepared_breakout_catalyst_relief["enabled"]),
+                "eligible": bool(prepared_breakout_catalyst_relief["eligible"]),
+                "applied": bool(prepared_breakout_catalyst_relief["applied"]),
+                "candidate_source": str(prepared_breakout_catalyst_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_catalyst_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_catalyst_relief["gate_hits"]),
+                "base_catalyst_freshness": round(float(prepared_breakout_catalyst_relief["base_catalyst_freshness"]), 4),
+                "effective_catalyst_freshness": round(float(prepared_breakout_catalyst_relief["effective_catalyst_freshness"]), 4),
+                "catalyst_freshness_floor": round(float(prepared_breakout_catalyst_relief["catalyst_freshness_floor"]), 4),
+            },
+            "prepared_breakout_volume_relief": {
+                "enabled": bool(prepared_breakout_volume_relief["enabled"]),
+                "eligible": bool(prepared_breakout_volume_relief["eligible"]),
+                "applied": bool(prepared_breakout_volume_relief["applied"]),
+                "candidate_source": str(prepared_breakout_volume_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_volume_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_volume_relief["gate_hits"]),
+                "base_volume_expansion_quality": round(float(prepared_breakout_volume_relief["base_volume_expansion_quality"]), 4),
+                "effective_volume_expansion_quality": round(float(prepared_breakout_volume_relief["effective_volume_expansion_quality"]), 4),
+                "volatility_regime": round(float(prepared_breakout_volume_relief["volatility_regime"]), 4),
+                "atr_ratio": round(float(prepared_breakout_volume_relief["atr_ratio"]), 4),
+                "volume_expansion_quality_floor": round(float(prepared_breakout_volume_relief["volume_expansion_quality_floor"]), 4),
+            },
+            "prepared_breakout_continuation_relief": {
+                "enabled": bool(prepared_breakout_continuation_relief["enabled"]),
+                "eligible": bool(prepared_breakout_continuation_relief["eligible"]),
+                "applied": bool(prepared_breakout_continuation_relief["applied"]),
+                "candidate_source": str(prepared_breakout_continuation_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_continuation_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_continuation_relief["gate_hits"]),
+                "base_breakout_freshness": round(float(prepared_breakout_continuation_relief["base_breakout_freshness"]), 4),
+                "effective_breakout_freshness": round(float(prepared_breakout_continuation_relief["effective_breakout_freshness"]), 4),
+                "base_trend_acceleration": round(float(prepared_breakout_continuation_relief["base_trend_acceleration"]), 4),
+                "effective_trend_acceleration": round(float(prepared_breakout_continuation_relief["effective_trend_acceleration"]), 4),
+                "momentum_1m": round(float(prepared_breakout_continuation_relief["momentum_1m"]), 4),
+                "momentum_3m": round(float(prepared_breakout_continuation_relief["momentum_3m"]), 4),
+                "momentum_6m": round(float(prepared_breakout_continuation_relief["momentum_6m"]), 4),
+                "volume_momentum": round(float(prepared_breakout_continuation_relief["volume_momentum"]), 4),
+                "continuation_support": round(float(prepared_breakout_continuation_relief["continuation_support"]), 4),
+                "breakout_freshness_floor": round(float(prepared_breakout_continuation_relief["breakout_freshness_floor"]), 4),
+                "trend_acceleration_floor": round(float(prepared_breakout_continuation_relief["trend_acceleration_floor"]), 4),
+            },
+            "prepared_breakout_selected_catalyst_relief": {
+                "enabled": bool(prepared_breakout_selected_catalyst_relief["enabled"]),
+                "eligible": bool(prepared_breakout_selected_catalyst_relief["eligible"]),
+                "applied": bool(prepared_breakout_selected_catalyst_relief["applied"]),
+                "candidate_source": str(prepared_breakout_selected_catalyst_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_selected_catalyst_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_selected_catalyst_relief["gate_hits"]),
+                "base_breakout_freshness": round(float(prepared_breakout_selected_catalyst_relief["base_breakout_freshness"]), 4),
+                "effective_breakout_freshness": round(float(prepared_breakout_selected_catalyst_relief["effective_breakout_freshness"]), 4),
+                "base_catalyst_freshness": round(float(prepared_breakout_selected_catalyst_relief["base_catalyst_freshness"]), 4),
+                "effective_catalyst_freshness": round(float(prepared_breakout_selected_catalyst_relief["effective_catalyst_freshness"]), 4),
+                "selected_breakout_freshness_floor": round(float(prepared_breakout_selected_catalyst_relief["selected_breakout_freshness_floor"]), 4),
+                "catalyst_freshness_floor": round(float(prepared_breakout_selected_catalyst_relief["catalyst_freshness_floor"]), 4),
+            },
+            "stale_trend_repair_penalty": round(stale_trend_repair_penalty, 4),
+            "overhead_supply_penalty": round(overhead_supply_penalty, 4),
+            "extension_without_room_penalty": round(extension_without_room_penalty, 4),
+            "weighted_positive_contributions": weighted_positive_contributions,
+            "weighted_negative_contributions": weighted_negative_contributions,
+            "total_positive_contribution": total_positive_contribution,
+            "total_negative_contribution": total_negative_contribution,
+            "thresholds": {
+                "profile_name": profile.name,
+                "select_threshold": round(float(profile.select_threshold), 4),
+                "effective_select_threshold": round(effective_select_threshold, 4),
+                "selected_score_tolerance": round(selected_score_tolerance, 4),
+                "near_miss_threshold": round(effective_near_miss_threshold, 4),
+                "base_near_miss_threshold": round(float(profile.near_miss_threshold), 4),
+                "selected_breakout_freshness_min": round(float(profile.selected_breakout_freshness_min), 4),
+                "selected_trend_acceleration_min": round(float(profile.selected_trend_acceleration_min), 4),
+                "near_miss_breakout_freshness_min": round(float(profile.near_miss_breakout_freshness_min), 4),
+                "near_miss_trend_acceleration_min": round(float(profile.near_miss_trend_acceleration_min), 4),
+                "breakout_freshness_weight": round(float(profile.breakout_freshness_weight), 4),
+                "trend_acceleration_weight": round(float(profile.trend_acceleration_weight), 4),
+                "volume_expansion_quality_weight": round(float(profile.volume_expansion_quality_weight), 4),
+                "close_strength_weight": round(float(profile.close_strength_weight), 4),
+                "sector_resonance_weight": round(float(profile.sector_resonance_weight), 4),
+                "catalyst_freshness_weight": round(float(profile.catalyst_freshness_weight), 4),
+                "layer_c_alignment_weight": round(float(profile.layer_c_alignment_weight), 4),
+                "effective_positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
+                "stale_penalty_block_threshold": round(float(profile.stale_penalty_block_threshold), 4),
+                "overhead_penalty_block_threshold": round(float(profile.overhead_penalty_block_threshold), 4),
+                "extension_penalty_block_threshold": round(float(profile.extension_penalty_block_threshold), 4),
+                "layer_c_avoid_penalty": round(float(profile.layer_c_avoid_penalty), 4),
+                "profitability_relief_enabled": bool(profile.profitability_relief_enabled),
+                "profitability_relief_breakout_freshness_min": round(float(profile.profitability_relief_breakout_freshness_min), 4),
+                "profitability_relief_catalyst_freshness_min": round(float(profile.profitability_relief_catalyst_freshness_min), 4),
+                "profitability_relief_sector_resonance_min": round(float(profile.profitability_relief_sector_resonance_min), 4),
+                "profitability_relief_avoid_penalty": round(float(profile.profitability_relief_avoid_penalty), 4),
+                "profitability_hard_cliff_boundary_relief_enabled": bool(profile.profitability_hard_cliff_boundary_relief_enabled),
+                "profitability_hard_cliff_boundary_relief_breakout_freshness_min": round(float(profile.profitability_hard_cliff_boundary_relief_breakout_freshness_min), 4),
+                "profitability_hard_cliff_boundary_relief_trend_acceleration_min": round(float(profile.profitability_hard_cliff_boundary_relief_trend_acceleration_min), 4),
+                "profitability_hard_cliff_boundary_relief_catalyst_freshness_min": round(float(profile.profitability_hard_cliff_boundary_relief_catalyst_freshness_min), 4),
+                "profitability_hard_cliff_boundary_relief_sector_resonance_min": round(float(profile.profitability_hard_cliff_boundary_relief_sector_resonance_min), 4),
+                "profitability_hard_cliff_boundary_relief_close_strength_min": round(float(profile.profitability_hard_cliff_boundary_relief_close_strength_min), 4),
+                "profitability_hard_cliff_boundary_relief_stale_penalty_max": round(float(profile.profitability_hard_cliff_boundary_relief_stale_penalty_max), 4),
+                "profitability_hard_cliff_boundary_relief_extension_penalty_max": round(float(profile.profitability_hard_cliff_boundary_relief_extension_penalty_max), 4),
+                "profitability_hard_cliff_boundary_relief_near_miss_threshold": round(float(profile.profitability_hard_cliff_boundary_relief_near_miss_threshold), 4),
+                "prepared_breakout_penalty_relief_enabled": bool(profile.prepared_breakout_penalty_relief_enabled),
+                "prepared_breakout_penalty_relief_breakout_freshness_max": round(float(profile.prepared_breakout_penalty_relief_breakout_freshness_max), 4),
+                "prepared_breakout_penalty_relief_trend_acceleration_min": round(float(profile.prepared_breakout_penalty_relief_trend_acceleration_min), 4),
+                "prepared_breakout_penalty_relief_close_strength_min": round(float(profile.prepared_breakout_penalty_relief_close_strength_min), 4),
+                "prepared_breakout_penalty_relief_sector_resonance_min": round(float(profile.prepared_breakout_penalty_relief_sector_resonance_min), 4),
+                "prepared_breakout_penalty_relief_layer_c_alignment_min": round(float(profile.prepared_breakout_penalty_relief_layer_c_alignment_min), 4),
+                "prepared_breakout_penalty_relief_catalyst_freshness_max": round(float(profile.prepared_breakout_penalty_relief_catalyst_freshness_max), 4),
+                "prepared_breakout_penalty_relief_long_trend_strength_min": round(float(profile.prepared_breakout_penalty_relief_long_trend_strength_min), 4),
+                "prepared_breakout_penalty_relief_mean_reversion_strength_max": round(float(profile.prepared_breakout_penalty_relief_mean_reversion_strength_max), 4),
+                "prepared_breakout_penalty_relief_breakout_freshness_weight": round(float(profile.prepared_breakout_penalty_relief_breakout_freshness_weight), 4),
+                "prepared_breakout_penalty_relief_trend_acceleration_weight": round(float(profile.prepared_breakout_penalty_relief_trend_acceleration_weight), 4),
+                "prepared_breakout_penalty_relief_volume_expansion_quality_weight": round(float(profile.prepared_breakout_penalty_relief_volume_expansion_quality_weight), 4),
+                "prepared_breakout_penalty_relief_close_strength_weight": round(float(profile.prepared_breakout_penalty_relief_close_strength_weight), 4),
+                "prepared_breakout_penalty_relief_sector_resonance_weight": round(float(profile.prepared_breakout_penalty_relief_sector_resonance_weight), 4),
+                "prepared_breakout_penalty_relief_catalyst_freshness_weight": round(float(profile.prepared_breakout_penalty_relief_catalyst_freshness_weight), 4),
+                "prepared_breakout_penalty_relief_layer_c_alignment_weight": round(float(profile.prepared_breakout_penalty_relief_layer_c_alignment_weight), 4),
+                "prepared_breakout_penalty_relief_stale_score_penalty_weight": round(float(profile.prepared_breakout_penalty_relief_stale_score_penalty_weight), 4),
+                "prepared_breakout_penalty_relief_extension_score_penalty_weight": round(float(profile.prepared_breakout_penalty_relief_extension_score_penalty_weight), 4),
+                "prepared_breakout_catalyst_relief_enabled": bool(profile.prepared_breakout_catalyst_relief_enabled),
+                "prepared_breakout_catalyst_relief_breakout_freshness_max": round(float(profile.prepared_breakout_catalyst_relief_breakout_freshness_max), 4),
+                "prepared_breakout_catalyst_relief_trend_acceleration_min": round(float(profile.prepared_breakout_catalyst_relief_trend_acceleration_min), 4),
+                "prepared_breakout_catalyst_relief_close_strength_min": round(float(profile.prepared_breakout_catalyst_relief_close_strength_min), 4),
+                "prepared_breakout_catalyst_relief_sector_resonance_min": round(float(profile.prepared_breakout_catalyst_relief_sector_resonance_min), 4),
+                "prepared_breakout_catalyst_relief_layer_c_alignment_min": round(float(profile.prepared_breakout_catalyst_relief_layer_c_alignment_min), 4),
+                "prepared_breakout_catalyst_relief_catalyst_freshness_max": round(float(profile.prepared_breakout_catalyst_relief_catalyst_freshness_max), 4),
+                "prepared_breakout_catalyst_relief_long_trend_strength_min": round(float(profile.prepared_breakout_catalyst_relief_long_trend_strength_min), 4),
+                "prepared_breakout_catalyst_relief_mean_reversion_strength_max": round(float(profile.prepared_breakout_catalyst_relief_mean_reversion_strength_max), 4),
+                "prepared_breakout_catalyst_relief_catalyst_freshness_floor": round(float(profile.prepared_breakout_catalyst_relief_catalyst_freshness_floor), 4),
+                "prepared_breakout_volume_relief_enabled": bool(profile.prepared_breakout_volume_relief_enabled),
+                "prepared_breakout_volume_relief_breakout_freshness_max": round(float(profile.prepared_breakout_volume_relief_breakout_freshness_max), 4),
+                "prepared_breakout_volume_relief_trend_acceleration_min": round(float(profile.prepared_breakout_volume_relief_trend_acceleration_min), 4),
+                "prepared_breakout_volume_relief_close_strength_min": round(float(profile.prepared_breakout_volume_relief_close_strength_min), 4),
+                "prepared_breakout_volume_relief_sector_resonance_min": round(float(profile.prepared_breakout_volume_relief_sector_resonance_min), 4),
+                "prepared_breakout_volume_relief_layer_c_alignment_min": round(float(profile.prepared_breakout_volume_relief_layer_c_alignment_min), 4),
+                "prepared_breakout_volume_relief_catalyst_freshness_max": round(float(profile.prepared_breakout_volume_relief_catalyst_freshness_max), 4),
+                "prepared_breakout_volume_relief_long_trend_strength_min": round(float(profile.prepared_breakout_volume_relief_long_trend_strength_min), 4),
+                "prepared_breakout_volume_relief_mean_reversion_strength_max": round(float(profile.prepared_breakout_volume_relief_mean_reversion_strength_max), 4),
+                "prepared_breakout_volume_relief_volatility_strength_max": round(float(profile.prepared_breakout_volume_relief_volatility_strength_max), 4),
+                "prepared_breakout_volume_relief_volatility_regime_min": round(float(profile.prepared_breakout_volume_relief_volatility_regime_min), 4),
+                "prepared_breakout_volume_relief_atr_ratio_min": round(float(profile.prepared_breakout_volume_relief_atr_ratio_min), 4),
+                "prepared_breakout_volume_relief_volume_expansion_quality_floor": round(float(profile.prepared_breakout_volume_relief_volume_expansion_quality_floor), 4),
+                "prepared_breakout_continuation_relief_enabled": bool(profile.prepared_breakout_continuation_relief_enabled),
+                "prepared_breakout_continuation_relief_breakout_freshness_max": round(float(profile.prepared_breakout_continuation_relief_breakout_freshness_max), 4),
+                "prepared_breakout_continuation_relief_trend_acceleration_min": round(float(profile.prepared_breakout_continuation_relief_trend_acceleration_min), 4),
+                "prepared_breakout_continuation_relief_trend_acceleration_max": round(float(profile.prepared_breakout_continuation_relief_trend_acceleration_max), 4),
+                "prepared_breakout_continuation_relief_close_strength_min": round(float(profile.prepared_breakout_continuation_relief_close_strength_min), 4),
+                "prepared_breakout_continuation_relief_sector_resonance_min": round(float(profile.prepared_breakout_continuation_relief_sector_resonance_min), 4),
+                "prepared_breakout_continuation_relief_layer_c_alignment_min": round(float(profile.prepared_breakout_continuation_relief_layer_c_alignment_min), 4),
+                "prepared_breakout_continuation_relief_catalyst_freshness_max": round(float(profile.prepared_breakout_continuation_relief_catalyst_freshness_max), 4),
+                "prepared_breakout_continuation_relief_long_trend_strength_min": round(float(profile.prepared_breakout_continuation_relief_long_trend_strength_min), 4),
+                "prepared_breakout_continuation_relief_mean_reversion_strength_max": round(float(profile.prepared_breakout_continuation_relief_mean_reversion_strength_max), 4),
+                "prepared_breakout_continuation_relief_momentum_1m_max": round(float(profile.prepared_breakout_continuation_relief_momentum_1m_max), 4),
+                "prepared_breakout_continuation_relief_continuation_support_min": round(float(profile.prepared_breakout_continuation_relief_continuation_support_min), 4),
+                "prepared_breakout_continuation_relief_breakout_freshness_floor": round(float(profile.prepared_breakout_continuation_relief_breakout_freshness_floor), 4),
+                "prepared_breakout_continuation_relief_trend_acceleration_floor": round(float(profile.prepared_breakout_continuation_relief_trend_acceleration_floor), 4),
+                "prepared_breakout_selected_catalyst_relief_enabled": bool(profile.prepared_breakout_selected_catalyst_relief_enabled),
+                "prepared_breakout_selected_catalyst_relief_breakout_freshness_min": round(float(profile.prepared_breakout_selected_catalyst_relief_breakout_freshness_min), 4),
+                "prepared_breakout_selected_catalyst_relief_trend_acceleration_min": round(float(profile.prepared_breakout_selected_catalyst_relief_trend_acceleration_min), 4),
+                "prepared_breakout_selected_catalyst_relief_close_strength_min": round(float(profile.prepared_breakout_selected_catalyst_relief_close_strength_min), 4),
+                "prepared_breakout_selected_catalyst_relief_sector_resonance_min": round(float(profile.prepared_breakout_selected_catalyst_relief_sector_resonance_min), 4),
+                "prepared_breakout_selected_catalyst_relief_layer_c_alignment_min": round(float(profile.prepared_breakout_selected_catalyst_relief_layer_c_alignment_min), 4),
+                "prepared_breakout_selected_catalyst_relief_volume_expansion_quality_min": round(float(profile.prepared_breakout_selected_catalyst_relief_volume_expansion_quality_min), 4),
+                "prepared_breakout_selected_catalyst_relief_catalyst_freshness_max": round(float(profile.prepared_breakout_selected_catalyst_relief_catalyst_freshness_max), 4),
+                "prepared_breakout_selected_catalyst_relief_long_trend_strength_min": round(float(profile.prepared_breakout_selected_catalyst_relief_long_trend_strength_min), 4),
+                "prepared_breakout_selected_catalyst_relief_mean_reversion_strength_max": round(float(profile.prepared_breakout_selected_catalyst_relief_mean_reversion_strength_max), 4),
+                "prepared_breakout_selected_catalyst_relief_selected_breakout_freshness_floor": round(float(profile.prepared_breakout_selected_catalyst_relief_selected_breakout_freshness_floor), 4),
+                "prepared_breakout_selected_catalyst_relief_catalyst_freshness_floor": round(float(profile.prepared_breakout_selected_catalyst_relief_catalyst_freshness_floor), 4),
+                "stale_score_penalty_weight": round(float(profile.stale_score_penalty_weight), 4),
+                "overhead_score_penalty_weight": round(float(profile.overhead_score_penalty_weight), 4),
+                "extension_score_penalty_weight": round(float(profile.extension_score_penalty_weight), 4),
+                "watchlist_zero_catalyst_penalty": round(float(profile.watchlist_zero_catalyst_penalty), 4),
+                "watchlist_zero_catalyst_catalyst_freshness_max": round(float(profile.watchlist_zero_catalyst_catalyst_freshness_max), 4),
+                "watchlist_zero_catalyst_close_strength_min": round(float(profile.watchlist_zero_catalyst_close_strength_min), 4),
+                "watchlist_zero_catalyst_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_layer_c_alignment_min), 4),
+                "watchlist_zero_catalyst_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_sector_resonance_min), 4),
+                "watchlist_zero_catalyst_crowded_penalty": round(float(profile.watchlist_zero_catalyst_crowded_penalty), 4),
+                "watchlist_zero_catalyst_crowded_catalyst_freshness_max": round(float(profile.watchlist_zero_catalyst_crowded_catalyst_freshness_max), 4),
+                "watchlist_zero_catalyst_crowded_close_strength_min": round(float(profile.watchlist_zero_catalyst_crowded_close_strength_min), 4),
+                "watchlist_zero_catalyst_crowded_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_crowded_layer_c_alignment_min), 4),
+                "watchlist_zero_catalyst_crowded_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_crowded_sector_resonance_min), 4),
+                "watchlist_zero_catalyst_flat_trend_penalty": round(float(profile.watchlist_zero_catalyst_flat_trend_penalty), 4),
+                "watchlist_zero_catalyst_flat_trend_catalyst_freshness_max": round(float(profile.watchlist_zero_catalyst_flat_trend_catalyst_freshness_max), 4),
+                "watchlist_zero_catalyst_flat_trend_close_strength_min": round(float(profile.watchlist_zero_catalyst_flat_trend_close_strength_min), 4),
+                "watchlist_zero_catalyst_flat_trend_layer_c_alignment_min": round(float(profile.watchlist_zero_catalyst_flat_trend_layer_c_alignment_min), 4),
+                "watchlist_zero_catalyst_flat_trend_sector_resonance_min": round(float(profile.watchlist_zero_catalyst_flat_trend_sector_resonance_min), 4),
+                "watchlist_zero_catalyst_flat_trend_trend_acceleration_max": round(float(profile.watchlist_zero_catalyst_flat_trend_trend_acceleration_max), 4),
+                "t_plus_2_continuation_enabled": bool(profile.t_plus_2_continuation_enabled),
+                "t_plus_2_continuation_catalyst_freshness_max": round(float(profile.t_plus_2_continuation_catalyst_freshness_max), 4),
+                "t_plus_2_continuation_breakout_freshness_min": round(float(profile.t_plus_2_continuation_breakout_freshness_min), 4),
+                "t_plus_2_continuation_trend_acceleration_min": round(float(profile.t_plus_2_continuation_trend_acceleration_min), 4),
+                "t_plus_2_continuation_trend_acceleration_max": round(float(profile.t_plus_2_continuation_trend_acceleration_max), 4),
+                "t_plus_2_continuation_layer_c_alignment_min": round(float(profile.t_plus_2_continuation_layer_c_alignment_min), 4),
+                "t_plus_2_continuation_layer_c_alignment_max": round(float(profile.t_plus_2_continuation_layer_c_alignment_max), 4),
+                "t_plus_2_continuation_close_strength_max": round(float(profile.t_plus_2_continuation_close_strength_max), 4),
+                "t_plus_2_continuation_sector_resonance_max": round(float(profile.t_plus_2_continuation_sector_resonance_max), 4),
+                "merge_approved_continuation_relief_enabled": bool(profile.merge_approved_continuation_relief_enabled),
+                "merge_approved_continuation_select_threshold": round(float(profile.merge_approved_continuation_select_threshold), 4),
+                "merge_approved_continuation_near_miss_threshold": round(float(profile.merge_approved_continuation_near_miss_threshold), 4),
+                "hard_block_bearish_conflicts": sorted(str(item) for item in profile.hard_block_bearish_conflicts),
+                "overhead_conflict_penalty_conflicts": sorted(str(item) for item in profile.overhead_conflict_penalty_conflicts),
+                "upstream_shadow_catalyst_relief_enabled": upstream_shadow_catalyst_relief_enabled,
+                "upstream_shadow_catalyst_relief_applied": upstream_shadow_catalyst_relief_applied,
+                "upstream_shadow_catalyst_relief_catalyst_freshness_floor": round(upstream_shadow_catalyst_relief_catalyst_freshness_floor, 4),
+                "upstream_shadow_catalyst_relief_near_miss_threshold_override": round(upstream_shadow_catalyst_relief_near_miss_threshold_override, 4),
+                "upstream_shadow_catalyst_relief_base_select_threshold": round(upstream_shadow_catalyst_relief_base_select_threshold, 4),
+                "upstream_shadow_catalyst_relief_select_threshold_override": round(upstream_shadow_catalyst_relief_select_threshold_override, 4),
+                "visibility_gap_continuation_relief_enabled": bool(profile.visibility_gap_continuation_relief_enabled),
+                "visibility_gap_continuation_breakout_freshness_min": round(float(profile.visibility_gap_continuation_breakout_freshness_min), 4),
+                "visibility_gap_continuation_trend_acceleration_min": round(float(profile.visibility_gap_continuation_trend_acceleration_min), 4),
+                "visibility_gap_continuation_close_strength_min": round(float(profile.visibility_gap_continuation_close_strength_min), 4),
+                "visibility_gap_continuation_catalyst_freshness_floor": round(float(profile.visibility_gap_continuation_catalyst_freshness_floor), 4),
+                "visibility_gap_continuation_near_miss_threshold": round(float(profile.visibility_gap_continuation_near_miss_threshold), 4),
+                "visibility_gap_continuation_require_relaxed_band": bool(profile.visibility_gap_continuation_require_relaxed_band),
+            },
+        },
+        explainability_payload={
+            "source": str(input_data.replay_context.get("source") or "short_trade_target_rules_v1"),
+            "target_profile": profile.name,
+            "breakout_stage": breakout_stage,
+            "trade_date": input_data.trade_date,
+            "layer_c_decision": input_data.layer_c_decision,
+            "bc_conflict": input_data.bc_conflict,
+            "candidate_source": str(input_data.replay_context.get("source") or ""),
+            "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {}).keys()),
+            "profitability_relief": {
+                "enabled": profitability_relief_enabled,
+                "hard_cliff": profitability_hard_cliff,
+                "eligible": profitability_relief_eligible,
+                "applied": profitability_relief_applied,
+                "gate_hits": profitability_relief_gate_hits,
+                "base_layer_c_avoid_penalty": round(base_layer_c_avoid_penalty, 4),
+                "effective_layer_c_avoid_penalty": round(layer_c_avoid_penalty, 4),
+                "soft_penalty": round(profitability_relief_soft_penalty, 4),
+            },
+            "profitability_hard_cliff_boundary_relief": {
+                "enabled": bool(profitability_hard_cliff_boundary_relief["enabled"]),
+                "eligible": bool(profitability_hard_cliff_boundary_relief["eligible"]),
+                "applied": bool(profitability_hard_cliff_boundary_relief["applied"]),
+                "candidate_source": str(profitability_hard_cliff_boundary_relief["candidate_source"]),
+                "gate_hits": dict(profitability_hard_cliff_boundary_relief["gate_hits"]),
+                "base_near_miss_threshold": round(float(profitability_hard_cliff_boundary_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(profitability_hard_cliff_boundary_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(profitability_hard_cliff_boundary_relief["near_miss_threshold_override"]), 4),
+            },
+            "historical_prior": historical_prior,
+            "historical_execution_relief": {
+                "enabled": bool(historical_execution_relief["enabled"]),
+                "eligible": bool(historical_execution_relief["eligible"]),
+                "applied": bool(historical_execution_relief["applied"]),
+                "candidate_source": str(historical_execution_relief["candidate_source"]),
+                "execution_quality_label": str(historical_execution_relief["execution_quality_label"]),
+                "evaluable_count": int(historical_execution_relief["evaluable_count"]),
+                "next_close_positive_rate": round(float(historical_execution_relief["next_close_positive_rate"]), 4),
+                "next_high_hit_rate_at_threshold": round(float(historical_execution_relief["next_high_hit_rate_at_threshold"]), 4),
+                "next_open_to_close_return_mean": round(float(historical_execution_relief["next_open_to_close_return_mean"]), 4),
+                "strong_close_continuation": bool(historical_execution_relief["strong_close_continuation"]),
+                "gate_hits": dict(historical_execution_relief["gate_hits"]),
+                "base_near_miss_threshold": round(float(historical_execution_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(historical_execution_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(historical_execution_relief["near_miss_threshold_override"]), 4),
+                "base_select_threshold": round(float(historical_execution_relief["base_select_threshold"]), 4),
+                "effective_select_threshold": round(float(historical_execution_relief["effective_select_threshold"]), 4),
+                "select_threshold_override": round(float(historical_execution_relief["select_threshold_override"]), 4),
+            },
+            "carryover_evidence_deficiency": {
+                "enabled": bool(carryover_evidence_deficiency["enabled"]),
+                "evidence_deficient": bool(carryover_evidence_deficiency["evidence_deficient"]),
+                "gate_hits": dict(carryover_evidence_deficiency["gate_hits"]),
+                "same_ticker_sample_count": int(carryover_evidence_deficiency["same_ticker_sample_count"]),
+                "same_family_sample_count": int(carryover_evidence_deficiency["same_family_sample_count"]),
+                "same_family_source_sample_count": int(carryover_evidence_deficiency["same_family_source_sample_count"]),
+                "same_family_source_score_catalyst_sample_count": int(carryover_evidence_deficiency["same_family_source_score_catalyst_sample_count"]),
+                "same_source_score_sample_count": int(carryover_evidence_deficiency["same_source_score_sample_count"]),
+                "evaluable_count": int(carryover_evidence_deficiency["evaluable_count"]),
+            },
+            "selected_historical_proof_deficiency": {
+                "enabled": bool(selected_historical_proof_deficiency["enabled"]),
+                "proof_missing": bool(selected_historical_proof_deficiency["proof_missing"]),
+                "gate_hits": dict(selected_historical_proof_deficiency["gate_hits"]),
+                "candidate_source": str(selected_historical_proof_deficiency["candidate_source"]),
+                "evaluable_count": int(selected_historical_proof_deficiency["evaluable_count"]),
+            },
+            "upstream_shadow_catalyst_relief": {
+                "enabled": upstream_shadow_catalyst_relief_enabled,
+                "eligible": upstream_shadow_catalyst_relief_eligible,
+                "applied": upstream_shadow_catalyst_relief_applied,
+                "reason": upstream_shadow_catalyst_relief_reason,
+                "gate_hits": upstream_shadow_catalyst_relief_gate_hits,
+                "base_catalyst_freshness": round(raw_catalyst_freshness, 4),
+                "effective_catalyst_freshness": round(catalyst_freshness, 4),
+                "catalyst_freshness_floor": round(upstream_shadow_catalyst_relief_catalyst_freshness_floor, 4),
+                "base_near_miss_threshold": round(upstream_shadow_catalyst_relief_base_near_miss_threshold, 4),
+                "effective_near_miss_threshold": round(effective_near_miss_threshold, 4),
+                "near_miss_threshold_override": round(upstream_shadow_catalyst_relief_near_miss_threshold_override, 4),
+                "base_select_threshold": round(upstream_shadow_catalyst_relief_base_select_threshold, 4),
+                "effective_select_threshold": round(effective_select_threshold, 4),
+                "selected_score_tolerance": round(selected_score_tolerance, 4),
+                "select_threshold_override": round(upstream_shadow_catalyst_relief_select_threshold_override, 4),
+                "require_no_profitability_hard_cliff": upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+            },
+            "visibility_gap_continuation_relief": {
+                "enabled": bool(visibility_gap_continuation_relief["enabled"]),
+                "eligible": bool(visibility_gap_continuation_relief["eligible"]),
+                "applied": bool(visibility_gap_continuation_relief["applied"]),
+                "candidate_source": str(visibility_gap_continuation_relief["candidate_source"]),
+                "candidate_pool_lane": str(visibility_gap_continuation_relief["candidate_pool_lane"]),
+                "candidate_pool_shadow_reason": str(visibility_gap_continuation_relief["candidate_pool_shadow_reason"]),
+                "shadow_visibility_gap_selected": bool(visibility_gap_continuation_relief["shadow_visibility_gap_selected"]),
+                "shadow_visibility_gap_relaxed_band": bool(visibility_gap_continuation_relief["shadow_visibility_gap_relaxed_band"]),
+                "gate_hits": dict(visibility_gap_continuation_relief["gate_hits"]),
+                "historical_execution_quality_label": str(visibility_gap_continuation_relief["historical_execution_quality_label"]),
+                "historical_applied_scope": str(visibility_gap_continuation_relief["historical_applied_scope"]),
+                "historical_evaluable_count": int(visibility_gap_continuation_relief["historical_evaluable_count"]),
+                "historical_next_close_positive_rate": round(float(visibility_gap_continuation_relief["historical_next_close_positive_rate"]), 4),
+                "base_catalyst_freshness": round(float(visibility_gap_continuation_relief["base_catalyst_freshness"]), 4),
+                "effective_catalyst_freshness": round(float(visibility_gap_continuation_relief["effective_catalyst_freshness"]), 4),
+                "base_near_miss_threshold": round(float(visibility_gap_continuation_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(visibility_gap_continuation_relief["effective_near_miss_threshold"]), 4),
+                "catalyst_freshness_floor": round(float(visibility_gap_continuation_relief["catalyst_freshness_floor"]), 4),
+                "near_miss_threshold_override": round(float(visibility_gap_continuation_relief["near_miss_threshold_override"]), 4),
+                "require_relaxed_band": bool(visibility_gap_continuation_relief["require_relaxed_band"]),
+            },
+            "merge_approved_continuation_relief": {
+                "enabled": bool(merge_approved_continuation_relief["enabled"]),
+                "eligible": bool(merge_approved_continuation_relief["eligible"]),
+                "applied": bool(merge_approved_continuation_relief["applied"]),
+                "reason": str(merge_approved_continuation_relief["reason"]),
+                "gate_hits": dict(merge_approved_continuation_relief["gate_hits"]),
+                "historical_execution_quality_label": str(merge_approved_continuation_relief["historical_execution_quality_label"]),
+                "historical_applied_scope": str(merge_approved_continuation_relief["historical_applied_scope"]),
+                "historical_evaluable_count": int(merge_approved_continuation_relief["historical_evaluable_count"]),
+                "historical_next_close_positive_rate": round(float(merge_approved_continuation_relief["historical_next_close_positive_rate"]), 4),
+                "base_near_miss_threshold": round(float(merge_approved_continuation_relief["base_near_miss_threshold"]), 4),
+                "effective_near_miss_threshold": round(float(merge_approved_continuation_relief["effective_near_miss_threshold"]), 4),
+                "near_miss_threshold_override": round(float(merge_approved_continuation_relief["near_miss_threshold_override"]), 4),
+                "base_select_threshold": round(float(merge_approved_continuation_relief["base_select_threshold"]), 4),
+                "effective_select_threshold": round(float(merge_approved_continuation_relief["effective_select_threshold"]), 4),
+                "select_threshold_override": round(float(merge_approved_continuation_relief["select_threshold_override"]), 4),
+                "require_no_profitability_hard_cliff": bool(merge_approved_continuation_relief["require_no_profitability_hard_cliff"]),
+            },
+            "prepared_breakout_penalty_relief": {
+                "enabled": bool(prepared_breakout_penalty_relief["enabled"]),
+                "eligible": bool(prepared_breakout_penalty_relief["eligible"]),
+                "applied": bool(prepared_breakout_penalty_relief["applied"]),
+                "candidate_source": str(prepared_breakout_penalty_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_penalty_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_penalty_relief["gate_hits"]),
+                "base_positive_score_weights": {name: round(float(value), 4) for name, value in dict(prepared_breakout_penalty_relief["base_positive_score_weights"]).items()},
+                "effective_positive_score_weights": {name: round(float(value), 4) for name, value in dict(prepared_breakout_penalty_relief["effective_positive_score_weights"]).items()},
+                "base_stale_score_penalty_weight": round(float(prepared_breakout_penalty_relief["base_stale_score_penalty_weight"]), 4),
+                "effective_stale_score_penalty_weight": round(float(prepared_breakout_penalty_relief["effective_stale_score_penalty_weight"]), 4),
+                "base_extension_score_penalty_weight": round(float(prepared_breakout_penalty_relief["base_extension_score_penalty_weight"]), 4),
+                "effective_extension_score_penalty_weight": round(float(prepared_breakout_penalty_relief["effective_extension_score_penalty_weight"]), 4),
+            },
+            "prepared_breakout_catalyst_relief": {
+                "enabled": bool(prepared_breakout_catalyst_relief["enabled"]),
+                "eligible": bool(prepared_breakout_catalyst_relief["eligible"]),
+                "applied": bool(prepared_breakout_catalyst_relief["applied"]),
+                "candidate_source": str(prepared_breakout_catalyst_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_catalyst_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_catalyst_relief["gate_hits"]),
+                "base_catalyst_freshness": round(float(prepared_breakout_catalyst_relief["base_catalyst_freshness"]), 4),
+                "effective_catalyst_freshness": round(float(prepared_breakout_catalyst_relief["effective_catalyst_freshness"]), 4),
+                "catalyst_freshness_floor": round(float(prepared_breakout_catalyst_relief["catalyst_freshness_floor"]), 4),
+            },
+            "prepared_breakout_volume_relief": {
+                "enabled": bool(prepared_breakout_volume_relief["enabled"]),
+                "eligible": bool(prepared_breakout_volume_relief["eligible"]),
+                "applied": bool(prepared_breakout_volume_relief["applied"]),
+                "candidate_source": str(prepared_breakout_volume_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_volume_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_volume_relief["gate_hits"]),
+                "base_volume_expansion_quality": round(float(prepared_breakout_volume_relief["base_volume_expansion_quality"]), 4),
+                "effective_volume_expansion_quality": round(float(prepared_breakout_volume_relief["effective_volume_expansion_quality"]), 4),
+                "volatility_regime": round(float(prepared_breakout_volume_relief["volatility_regime"]), 4),
+                "atr_ratio": round(float(prepared_breakout_volume_relief["atr_ratio"]), 4),
+                "volume_expansion_quality_floor": round(float(prepared_breakout_volume_relief["volume_expansion_quality_floor"]), 4),
+            },
+            "prepared_breakout_continuation_relief": {
+                "enabled": bool(prepared_breakout_continuation_relief["enabled"]),
+                "eligible": bool(prepared_breakout_continuation_relief["eligible"]),
+                "applied": bool(prepared_breakout_continuation_relief["applied"]),
+                "candidate_source": str(prepared_breakout_continuation_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_continuation_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_continuation_relief["gate_hits"]),
+                "base_breakout_freshness": round(float(prepared_breakout_continuation_relief["base_breakout_freshness"]), 4),
+                "effective_breakout_freshness": round(float(prepared_breakout_continuation_relief["effective_breakout_freshness"]), 4),
+                "base_trend_acceleration": round(float(prepared_breakout_continuation_relief["base_trend_acceleration"]), 4),
+                "effective_trend_acceleration": round(float(prepared_breakout_continuation_relief["effective_trend_acceleration"]), 4),
+                "momentum_1m": round(float(prepared_breakout_continuation_relief["momentum_1m"]), 4),
+                "momentum_3m": round(float(prepared_breakout_continuation_relief["momentum_3m"]), 4),
+                "momentum_6m": round(float(prepared_breakout_continuation_relief["momentum_6m"]), 4),
+                "volume_momentum": round(float(prepared_breakout_continuation_relief["volume_momentum"]), 4),
+                "continuation_support": round(float(prepared_breakout_continuation_relief["continuation_support"]), 4),
+                "breakout_freshness_floor": round(float(prepared_breakout_continuation_relief["breakout_freshness_floor"]), 4),
+                "trend_acceleration_floor": round(float(prepared_breakout_continuation_relief["trend_acceleration_floor"]), 4),
+            },
+            "prepared_breakout_selected_catalyst_relief": {
+                "enabled": bool(prepared_breakout_selected_catalyst_relief["enabled"]),
+                "eligible": bool(prepared_breakout_selected_catalyst_relief["eligible"]),
+                "applied": bool(prepared_breakout_selected_catalyst_relief["applied"]),
+                "candidate_source": str(prepared_breakout_selected_catalyst_relief["candidate_source"]),
+                "breakout_stage": str(prepared_breakout_selected_catalyst_relief["breakout_stage"]),
+                "gate_hits": dict(prepared_breakout_selected_catalyst_relief["gate_hits"]),
+                "base_breakout_freshness": round(float(prepared_breakout_selected_catalyst_relief["base_breakout_freshness"]), 4),
+                "effective_breakout_freshness": round(float(prepared_breakout_selected_catalyst_relief["effective_breakout_freshness"]), 4),
+                "base_catalyst_freshness": round(float(prepared_breakout_selected_catalyst_relief["base_catalyst_freshness"]), 4),
+                "effective_catalyst_freshness": round(float(prepared_breakout_selected_catalyst_relief["effective_catalyst_freshness"]), 4),
+                "selected_breakout_freshness_floor": round(float(prepared_breakout_selected_catalyst_relief["selected_breakout_freshness_floor"]), 4),
+                "catalyst_freshness_floor": round(float(prepared_breakout_selected_catalyst_relief["catalyst_freshness_floor"]), 4),
+            },
+            "watchlist_zero_catalyst_guard": {
+                "enabled": bool(watchlist_zero_catalyst_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_guard["gate_hits"]),
+                "effective_penalty": round(effective_watchlist_zero_catalyst_penalty, 4),
+            },
+            "watchlist_zero_catalyst_crowded_guard": {
+                "enabled": bool(watchlist_zero_catalyst_crowded_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_crowded_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_crowded_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_crowded_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_crowded_guard["gate_hits"]),
+                "effective_penalty": round(effective_watchlist_zero_catalyst_crowded_penalty, 4),
+            },
+            "watchlist_zero_catalyst_flat_trend_guard": {
+                "enabled": bool(watchlist_zero_catalyst_flat_trend_guard["enabled"]),
+                "eligible": bool(watchlist_zero_catalyst_flat_trend_guard["eligible"]),
+                "applied": bool(watchlist_zero_catalyst_flat_trend_guard["applied"]),
+                "candidate_source": str(watchlist_zero_catalyst_flat_trend_guard["candidate_source"]),
+                "gate_hits": dict(watchlist_zero_catalyst_flat_trend_guard["gate_hits"]),
+                "effective_penalty": round(effective_watchlist_zero_catalyst_flat_trend_penalty, 4),
+            },
+            "t_plus_2_continuation_candidate": {
+                "enabled": bool(t_plus_2_continuation_candidate["enabled"]),
+                "eligible": bool(t_plus_2_continuation_candidate["eligible"]),
+                "applied": bool(t_plus_2_continuation_candidate["applied"]),
+                "candidate_source": str(t_plus_2_continuation_candidate["candidate_source"]),
+                "gate_hits": dict(t_plus_2_continuation_candidate["gate_hits"]),
+            },
+            "replay_context": dict(input_data.replay_context or {}),
+        },
+    )
+
+
+
+def build_short_trade_target_result(
+    *,
+    context: ShortTradeEvaluationContext,
+    thresholds: ShortTradeThresholdState,
+    verdict: ShortTradeVerdict,
+    input_data: TargetEvaluationInput,
+    rank_hint: int | None,
+) -> TargetEvaluationResult:
+    snapshot = context.snapshot
+    return TargetEvaluationResult(
+        target_type="short_trade",
+        decision=verdict.decision,
+        score_target=float(snapshot["score_target"]),
+        confidence=verdict.confidence,
+        rank_hint=rank_hint,
+        positive_tags=verdict.positive_tags,
+        negative_tags=verdict.negative_tags,
+        blockers=verdict.blockers,
+        top_reasons=verdict.top_reasons,
+        rejection_reasons=verdict.rejection_reasons,
+        gate_status=verdict.gate_status,
+        expected_holding_window="t1_short_trade",
+        preferred_entry_mode=_preferred_entry_mode_from_historical_prior(dict(snapshot["historical_prior"])),
+        candidate_source=str(input_data.replay_context.get("source") or "") or None,
+        effective_near_miss_threshold=round(thresholds.effective_near_miss_threshold, 4),
+        effective_select_threshold=round(thresholds.effective_select_threshold, 4),
+        breakout_freshness=round(thresholds.breakout_freshness, 4),
+        trend_acceleration=round(thresholds.trend_acceleration, 4),
+        volume_expansion_quality=round(float(snapshot["volume_expansion_quality"]), 4),
+        close_strength=round(float(snapshot["close_strength"]), 4),
+        sector_resonance=round(float(snapshot["sector_resonance"]), 4),
+        catalyst_freshness=round(float(snapshot["raw_catalyst_freshness"]), 4),
+        layer_c_alignment=round(float(snapshot["layer_c_alignment"]), 4),
+        weighted_positive_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_positive_contributions"]).items()},
+        weighted_negative_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_negative_contributions"]).items()},
+        metrics_payload=build_short_trade_metrics_payload(context=context, thresholds=thresholds, input_data=input_data),
+        explainability_payload=build_short_trade_explainability_payload(context=context, thresholds=thresholds, input_data=input_data),
+    )

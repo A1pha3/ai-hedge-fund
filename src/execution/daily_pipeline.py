@@ -28,6 +28,17 @@ from src.execution.daily_pipeline_phase4_entry_helpers import (
     _build_short_trade_boundary_entry,
     _build_upstream_shadow_observation_entry,
 )
+from src.execution.daily_pipeline_post_market_helpers import (
+    PostMarketCandidateContext,
+    PostMarketOrderContext,
+    PostMarketWatchlistContext,
+    build_high_pool,
+    build_post_market_counts,
+    build_post_market_funnel_diagnostics,
+    build_post_market_timing_seconds,
+    build_selection_target_inputs,
+    merge_agent_results,
+)
 from src.execution.daily_pipeline_watchlist_helpers import (
     WatchlistDiagnosticsConfig,
     build_merge_approved_watchlist,
@@ -977,14 +988,7 @@ def _build_upstream_shadow_catalyst_relief_config(
         return {}
 
     metric_snapshot = _extract_upstream_shadow_catalyst_relief_metrics(metrics_payload)
-    candidate_score = float(metric_snapshot["candidate_score"])
-    breakout_freshness = float(metric_snapshot["breakout_freshness"])
-    trend_acceleration = float(metric_snapshot["trend_acceleration"])
-    close_strength = float(metric_snapshot["close_strength"])
     profitability_hard_cliff = bool(metric_snapshot["profitability_hard_cliff"])
-    candidate_score_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN)
-    trend_acceleration_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN)
-    close_strength_min = float(UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN)
     historical_next_close_positive_rate = _parse_optional_float(dict(historical_prior or {}).get("next_close_positive_rate"))
     threshold_config = resolve_catalyst_relief_thresholds(
         **_build_upstream_shadow_catalyst_relief_threshold_inputs(
@@ -2121,7 +2125,104 @@ class DailyPipeline:
 
         total_started_at = perf_counter()
         portfolio_snapshot = portfolio_snapshot or {"cash": 1_000_000, "positions": {}}
+        candidate_context, candidate_timing = self._collect_post_market_candidate_context(trade_date)
+        watchlist_context = self._build_post_market_watchlist_context(candidate_context, trade_date)
+        order_context, order_timing = self._build_post_market_order_context(
+            trade_date=trade_date,
+            portfolio_snapshot=portfolio_snapshot,
+            blocked_buy_tickers=blocked_buy_tickers,
+            watchlist_context=watchlist_context,
+            logic_scores=candidate_context.logic_scores,
+        )
 
+        skipped_precise_ticker_count = len(candidate_context.top_precise_pool) if self._skip_precise_stage else 0
+        counts = build_post_market_counts(
+            candidate_context=candidate_context,
+            watchlist_context=watchlist_context,
+            order_context=order_context,
+            precise_stage_skipped=self._skip_precise_stage,
+            skipped_precise_ticker_count=skipped_precise_ticker_count,
+            fast_agent_score_threshold=FAST_AGENT_SCORE_THRESHOLD,
+            fast_agent_max_tickers=FAST_AGENT_MAX_TICKERS,
+            precise_agent_max_tickers=PRECISE_AGENT_MAX_TICKERS,
+            watchlist_score_threshold=WATCHLIST_SCORE_THRESHOLD,
+        )
+        funnel_diagnostics = build_post_market_funnel_diagnostics(
+            counts=counts,
+            candidate_context=candidate_context,
+            watchlist_context=watchlist_context,
+            order_context=order_context,
+            blocked_buy_tickers=blocked_buy_tickers,
+        )
+        timing_seconds = build_post_market_timing_seconds(
+            candidate_pool_seconds=candidate_timing["candidate_pool_seconds"],
+            market_state_seconds=candidate_timing["market_state_seconds"],
+            score_batch_seconds=candidate_timing["score_batch_seconds"],
+            fuse_batch_seconds=candidate_timing["fuse_batch_seconds"],
+            shadow_score_batch_seconds=candidate_timing["shadow_score_batch_seconds"],
+            shadow_fuse_batch_seconds=candidate_timing["shadow_fuse_batch_seconds"],
+            fast_agent_seconds=candidate_timing["fast_agent_seconds"],
+            precise_agent_seconds=candidate_timing["precise_agent_seconds"],
+            estimated_skipped_precise_seconds=candidate_timing["estimated_skipped_precise_seconds"],
+            aggregate_layer_c_seconds=candidate_timing["aggregate_layer_c_seconds"],
+            build_buy_orders_seconds=order_timing["build_buy_orders_seconds"],
+            sell_check_seconds=order_timing["sell_check_seconds"],
+            total_post_market_seconds=perf_counter() - total_started_at,
+        )
+        selection_target_inputs = build_selection_target_inputs(
+            watchlist_filter_diagnostics=watchlist_context.watchlist_filter_diagnostics,
+            short_trade_candidate_diagnostics=watchlist_context.short_trade_candidate_diagnostics,
+            catalyst_theme_candidate_diagnostics=watchlist_context.catalyst_theme_candidate_diagnostics,
+            target_mode=self.target_mode,
+        )
+        with use_short_trade_target_profile(profile_name=self.short_trade_target_profile_name, overrides=self.short_trade_target_profile_overrides):
+            selection_targets, dual_target_summary = build_selection_targets(
+                trade_date=trade_date,
+                watchlist=watchlist_context.watchlist,
+                rejected_entries=_attach_historical_prior_to_entries(
+                    selection_target_inputs.rejected_entries,
+                    prior_by_ticker=watchlist_context.historical_prior_by_ticker,
+                ),
+                supplemental_short_trade_entries=_attach_historical_prior_to_entries(
+                    selection_target_inputs.supplemental_short_trade_entries,
+                    prior_by_ticker=watchlist_context.historical_prior_by_ticker,
+                ),
+                buy_order_tickers={order.ticker for order in order_context.buy_orders},
+                target_mode=self.target_mode,
+            )
+        return generate_execution_plan(
+            trade_date=trade_date,
+            market_state=candidate_context.market_state,
+            watchlist=watchlist_context.watchlist,
+            logic_scores=candidate_context.logic_scores,
+            buy_orders=order_context.buy_orders,
+            sell_orders=order_context.sell_orders,
+            portfolio_snapshot=portfolio_snapshot,
+            risk_alerts=[],
+            risk_metrics={
+                "timing_seconds": timing_seconds,
+                "counts": counts,
+                "funnel_diagnostics": funnel_diagnostics,
+                "merge_approved_context": {
+                    "tickers": sorted(self.merge_approved_tickers),
+                    "score_boost": round(MERGE_APPROVED_SCORE_BOOST, 4),
+                    "watchlist_threshold_relaxation": round(MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION, 4),
+                    "breakout_signal_uplift": candidate_context.merge_approved_breakout_signal_uplift,
+                    "layer_c_alignment_uplift": candidate_context.merge_approved_layer_c_alignment_uplift,
+                    "sector_resonance_uplift": candidate_context.merge_approved_sector_resonance_uplift,
+                },
+            },
+            layer_a_count=len(candidate_context.candidates),
+            layer_b_count=len(candidate_context.high_pool),
+            layer_c_count=len(candidate_context.layer_c_results),
+            selection_targets=selection_targets,
+            target_mode=self.target_mode,
+            dual_target_summary=dual_target_summary,
+            short_trade_target_profile_name=self._short_trade_target_profile.name,
+            short_trade_target_profile_config=_serialize_short_trade_target_profile(self._short_trade_target_profile),
+        )
+
+    def _collect_post_market_candidate_context(self, trade_date: str) -> tuple[PostMarketCandidateContext, dict[str, float]]:
         stage_started_at = perf_counter()
         candidates, shadow_candidates, candidate_pool_shadow_summary = _load_candidate_pool_bundle(trade_date)
         candidate_pool_seconds = perf_counter() - stage_started_at
@@ -2143,31 +2244,31 @@ class DailyPipeline:
         fused = _apply_merge_approved_fused_boost(fused, self.merge_approved_tickers, MERGE_APPROVED_SCORE_BOOST)
         fused, merge_approved_breakout_signal_uplift = _apply_merge_approved_breakout_signal_uplift(fused, self.merge_approved_tickers)
         fuse_batch_seconds = perf_counter() - stage_started_at
+
         stage_started_at = perf_counter()
         shadow_fused = fuse_batch(shadow_scored, market_state, trade_date) if shadow_scored else []
         shadow_fuse_batch_seconds = perf_counter() - stage_started_at
-        high_pool = sorted(
-            [item for item in fused if item.score_b >= FAST_AGENT_SCORE_THRESHOLD],
-            key=lambda item: item.score_b,
-            reverse=True,
-        )[:FAST_AGENT_MAX_TICKERS]
+
+        high_pool = build_high_pool(
+            fused,
+            score_threshold=FAST_AGENT_SCORE_THRESHOLD,
+            max_tickers=FAST_AGENT_MAX_TICKERS,
+        )
+        top_precise_pool = high_pool[:PRECISE_AGENT_MAX_TICKERS]
 
         stage_started_at = perf_counter()
         agent_results = self.agent_runner([item.ticker for item in high_pool], trade_date, "fast") if high_pool else {}
         fast_agent_seconds = perf_counter() - stage_started_at
 
-        top_20 = high_pool[:PRECISE_AGENT_MAX_TICKERS]
-        skipped_precise_ticker_count = len(top_20) if self._skip_precise_stage else 0
+        skipped_precise_ticker_count = len(top_precise_pool) if self._skip_precise_stage else 0
         estimated_skipped_precise_seconds = _estimate_skipped_precise_seconds(fast_agent_seconds, len(high_pool), skipped_precise_ticker_count)
         stage_started_at = perf_counter()
-        if top_20 and not self._skip_precise_stage:
-            precise_results = self.agent_runner([item.ticker for item in top_20], trade_date, "precise")
-            for agent_id, ticker_payload in precise_results.items():
-                agent_results.setdefault(agent_id, {}).update(ticker_payload)
+        precise_results = self.agent_runner([item.ticker for item in top_precise_pool], trade_date, "precise") if top_precise_pool and not self._skip_precise_stage else {}
         precise_agent_seconds = perf_counter() - stage_started_at
+        merged_agent_results = merge_agent_results(agent_results, precise_results)
 
         stage_started_at = perf_counter()
-        layer_c_results = aggregate_layer_c_results(high_pool, agent_results)
+        layer_c_results = aggregate_layer_c_results(high_pool, merged_agent_results)
         layer_c_results, merge_approved_layer_c_alignment_uplift = _apply_merge_approved_layer_c_alignment_uplift(
             layer_c_results,
             self.merge_approved_tickers,
@@ -2180,26 +2281,61 @@ class DailyPipeline:
         )
         layer_c_results = _tag_merge_approved_layer_c_results(layer_c_results, self.merge_approved_tickers)
         aggregate_layer_c_seconds = perf_counter() - stage_started_at
-        logic_scores = _build_logic_score_map(layer_c_results)
+
+        return (
+            PostMarketCandidateContext(
+                candidates=candidates,
+                shadow_candidates=shadow_candidates,
+                candidate_pool_shadow_summary=candidate_pool_shadow_summary,
+                market_state=market_state,
+                fused=fused,
+                shadow_fused=shadow_fused,
+                high_pool=high_pool,
+                top_precise_pool=top_precise_pool,
+                layer_c_results=layer_c_results,
+                logic_scores=_build_logic_score_map(layer_c_results),
+                merge_approved_breakout_signal_uplift=merge_approved_breakout_signal_uplift,
+                merge_approved_layer_c_alignment_uplift=merge_approved_layer_c_alignment_uplift,
+                merge_approved_sector_resonance_uplift=merge_approved_sector_resonance_uplift,
+            ),
+            {
+                "candidate_pool_seconds": candidate_pool_seconds,
+                "market_state_seconds": market_state_seconds,
+                "score_batch_seconds": score_batch_seconds,
+                "shadow_score_batch_seconds": shadow_score_batch_seconds,
+                "fuse_batch_seconds": fuse_batch_seconds,
+                "shadow_fuse_batch_seconds": shadow_fuse_batch_seconds,
+                "fast_agent_seconds": fast_agent_seconds,
+                "precise_agent_seconds": precise_agent_seconds,
+                "estimated_skipped_precise_seconds": estimated_skipped_precise_seconds,
+                "aggregate_layer_c_seconds": aggregate_layer_c_seconds,
+            },
+        )
+
+    def _build_post_market_watchlist_context(
+        self,
+        candidate_context: PostMarketCandidateContext,
+        trade_date: str,
+    ) -> PostMarketWatchlistContext:
         watchlist = _build_merge_approved_watchlist(
-            layer_c_results,
+            candidate_context.layer_c_results,
             self.merge_approved_tickers,
             MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
         )
-        layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(fused, high_pool)
+        layer_b_filter_diagnostics = _build_layer_b_filter_diagnostics(candidate_context.fused, candidate_context.high_pool)
         watchlist_filter_diagnostics = _build_watchlist_filter_diagnostics(
-            layer_c_results,
+            candidate_context.layer_c_results,
             watchlist,
             merge_approved_tickers=self.merge_approved_tickers,
             threshold_relaxation=MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION,
         )
         historical_prior_by_ticker = _load_latest_btst_historical_prior_by_ticker()
         short_trade_candidate_diagnostics = _build_short_trade_candidate_diagnostics(
-            fused,
-            high_pool,
+            candidate_context.fused,
+            candidate_context.high_pool,
             trade_date,
-            shadow_fused=shadow_fused,
-            shadow_candidate_by_ticker={candidate.ticker: candidate for candidate in shadow_candidates},
+            shadow_fused=candidate_context.shadow_fused,
+            shadow_candidate_by_ticker={candidate.ticker: candidate for candidate in candidate_context.shadow_candidates},
             historical_prior_by_ticker=historical_prior_by_ticker,
         )
         watchlist = _attach_historical_prior_to_watchlist(
@@ -2207,18 +2343,35 @@ class DailyPipeline:
             prior_by_ticker=historical_prior_by_ticker,
         )
         catalyst_theme_candidate_diagnostics = _build_catalyst_theme_candidate_diagnostics(
-            fused,
+            candidate_context.fused,
             watchlist,
             short_trade_candidate_diagnostics,
             trade_date,
         )
+        return PostMarketWatchlistContext(
+            watchlist=watchlist,
+            layer_b_filter_diagnostics=layer_b_filter_diagnostics,
+            watchlist_filter_diagnostics=watchlist_filter_diagnostics,
+            historical_prior_by_ticker=historical_prior_by_ticker,
+            short_trade_candidate_diagnostics=short_trade_candidate_diagnostics,
+            catalyst_theme_candidate_diagnostics=catalyst_theme_candidate_diagnostics,
+            candidate_by_ticker={candidate.ticker: candidate for candidate in candidate_context.candidates},
+            price_map=build_watchlist_price_map(trade_date, [item.ticker for item in watchlist]),
+        )
 
-        candidate_by_ticker = {candidate.ticker: candidate for candidate in candidates}
-        price_map = build_watchlist_price_map(trade_date, [item.ticker for item in watchlist])
+    def _build_post_market_order_context(
+        self,
+        *,
+        trade_date: str,
+        portfolio_snapshot: dict,
+        blocked_buy_tickers: dict[str, dict],
+        watchlist_context: PostMarketWatchlistContext,
+        logic_scores: dict[str, float],
+    ) -> tuple[PostMarketOrderContext, dict[str, float]]:
         with use_short_trade_target_profile(profile_name=self.short_trade_target_profile_name, overrides=self.short_trade_target_profile_overrides):
             prebuy_selection_targets, _ = build_selection_targets(
                 trade_date=trade_date,
-                watchlist=watchlist,
+                watchlist=watchlist_context.watchlist,
                 rejected_entries=[],
                 supplemental_short_trade_entries=[],
                 buy_order_tickers=set(),
@@ -2227,11 +2380,11 @@ class DailyPipeline:
 
         stage_started_at = perf_counter()
         buy_orders, buy_order_filter_diagnostics = self._build_buy_orders_with_diagnostics(
-            watchlist,
+            watchlist_context.watchlist,
             portfolio_snapshot,
             trade_date=trade_date,
-            candidate_by_ticker=candidate_by_ticker,
-            price_map=price_map,
+            candidate_by_ticker=watchlist_context.candidate_by_ticker,
+            price_map=watchlist_context.price_map,
             blocked_buy_tickers=blocked_buy_tickers,
             selection_targets=prebuy_selection_targets,
         )
@@ -2240,113 +2393,18 @@ class DailyPipeline:
         stage_started_at = perf_counter()
         sell_orders = self._run_exit_checker(portfolio_snapshot, trade_date, logic_scores)
         sell_check_seconds = perf_counter() - stage_started_at
-        sell_order_diagnostics = _build_sell_order_diagnostics(sell_orders)
-
-        counts = {
-            "layer_a_count": len(candidates),
-            "layer_b_count": len(high_pool),
-            "layer_c_count": len(layer_c_results),
-            "watchlist_count": len(watchlist),
-            "buy_order_count": len(buy_orders),
-            "sell_order_count": len(sell_orders),
-            "catalyst_theme_candidate_count": int((catalyst_theme_candidate_diagnostics or {}).get("candidate_count") or 0),
-            "catalyst_theme_shadow_candidate_count": int((catalyst_theme_candidate_diagnostics or {}).get("shadow_candidate_count") or 0),
-            "candidate_pool_shadow_candidate_count": len(shadow_candidates),
-            "upstream_shadow_observation_count": int((short_trade_candidate_diagnostics or {}).get("shadow_observation_count") or 0),
-            "upstream_shadow_released_count": int((short_trade_candidate_diagnostics or {}).get("released_shadow_count") or 0),
-            "watchlist_shadow_released_count": int((watchlist_filter_diagnostics or {}).get("released_shadow_count") or 0),
-            "fast_agent_ticker_count": len(high_pool),
-            "precise_agent_ticker_count": len(top_20),
-            "precise_stage_skipped": self._skip_precise_stage,
-            "skipped_precise_ticker_count": skipped_precise_ticker_count,
-            "fast_agent_score_threshold": FAST_AGENT_SCORE_THRESHOLD,
-            "fast_agent_max_tickers": FAST_AGENT_MAX_TICKERS,
-            "precise_agent_max_tickers": PRECISE_AGENT_MAX_TICKERS,
-            "watchlist_score_threshold": WATCHLIST_SCORE_THRESHOLD,
-        }
-        funnel_diagnostics = {
-            "counts": counts,
-            "filters": {
-                "layer_b": layer_b_filter_diagnostics,
-                "candidate_pool_shadow": candidate_pool_shadow_summary,
-                "watchlist": watchlist_filter_diagnostics,
-                "short_trade_candidates": short_trade_candidate_diagnostics,
-                "catalyst_theme_candidates": catalyst_theme_candidate_diagnostics,
-                "buy_orders": buy_order_filter_diagnostics,
+        return (
+            PostMarketOrderContext(
+                prebuy_selection_targets=prebuy_selection_targets,
+                buy_orders=buy_orders,
+                buy_order_filter_diagnostics=buy_order_filter_diagnostics,
+                sell_orders=sell_orders,
+                sell_order_diagnostics=_build_sell_order_diagnostics(sell_orders),
+            ),
+            {
+                "build_buy_orders_seconds": build_buy_orders_seconds,
+                "sell_check_seconds": sell_check_seconds,
             },
-            "sell_orders": sell_order_diagnostics,
-            "blocked_buy_tickers": blocked_buy_tickers,
-        }
-
-        timing_seconds = {
-            "candidate_pool": round(candidate_pool_seconds, 3),
-            "market_state": round(market_state_seconds, 3),
-            "score_batch": round(score_batch_seconds, 3),
-            "fuse_batch": round(fuse_batch_seconds, 3),
-            "shadow_score_batch": round(shadow_score_batch_seconds, 3),
-            "shadow_fuse_batch": round(shadow_fuse_batch_seconds, 3),
-            "fast_agent": round(fast_agent_seconds, 3),
-            "precise_agent": round(precise_agent_seconds, 3),
-            "estimated_skipped_precise": round(estimated_skipped_precise_seconds, 3),
-            "aggregate_layer_c": round(aggregate_layer_c_seconds, 3),
-            "build_buy_orders": round(build_buy_orders_seconds, 3),
-            "sell_check": round(sell_check_seconds, 3),
-            "total_post_market": round(perf_counter() - total_started_at, 3),
-        }
-        with use_short_trade_target_profile(profile_name=self.short_trade_target_profile_name, overrides=self.short_trade_target_profile_overrides):
-            selection_targets, dual_target_summary = build_selection_targets(
-                trade_date=trade_date,
-                watchlist=watchlist,
-                rejected_entries=_attach_historical_prior_to_entries(
-                    list((watchlist_filter_diagnostics or {}).get("tickers", []) or []),
-                    prior_by_ticker=historical_prior_by_ticker,
-                ),
-                supplemental_short_trade_entries=_attach_historical_prior_to_entries(
-                    [
-                        *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
-                        *list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
-                        *list((watchlist_filter_diagnostics or {}).get("released_shadow_entries", []) or []),
-                        *(
-                            list((catalyst_theme_candidate_diagnostics or {}).get("tickers", []) or [])
-                            if self.target_mode == "short_trade_only"
-                            else []
-                        ),
-                    ],
-                    prior_by_ticker=historical_prior_by_ticker,
-                ),
-                buy_order_tickers={order.ticker for order in buy_orders},
-                target_mode=self.target_mode,
-            )
-        return generate_execution_plan(
-            trade_date=trade_date,
-            market_state=market_state,
-            watchlist=watchlist,
-            logic_scores=logic_scores,
-            buy_orders=buy_orders,
-            sell_orders=sell_orders,
-            portfolio_snapshot=portfolio_snapshot,
-            risk_alerts=[],
-            risk_metrics={
-                "timing_seconds": timing_seconds,
-                "counts": counts,
-                "funnel_diagnostics": funnel_diagnostics,
-                "merge_approved_context": {
-                    "tickers": sorted(self.merge_approved_tickers),
-                    "score_boost": round(MERGE_APPROVED_SCORE_BOOST, 4),
-                    "watchlist_threshold_relaxation": round(MERGE_APPROVED_WATCHLIST_THRESHOLD_RELAXATION, 4),
-                    "breakout_signal_uplift": merge_approved_breakout_signal_uplift,
-                    "layer_c_alignment_uplift": merge_approved_layer_c_alignment_uplift,
-                    "sector_resonance_uplift": merge_approved_sector_resonance_uplift,
-                },
-            },
-            layer_a_count=len(candidates),
-            layer_b_count=len(high_pool),
-            layer_c_count=len(layer_c_results),
-            selection_targets=selection_targets,
-            target_mode=self.target_mode,
-            dual_target_summary=dual_target_summary,
-            short_trade_target_profile_name=self._short_trade_target_profile.name,
-            short_trade_target_profile_config=_serialize_short_trade_target_profile(self._short_trade_target_profile),
         )
 
     def run_pre_market(
