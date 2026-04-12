@@ -609,50 +609,84 @@ class ReplayArtifactService:
             return "closed"
         return "unassigned"
 
+    def _load_latest_feedback_rows(
+        self,
+        db: Session,
+        *,
+        report_name: str | None,
+    ) -> list[ReplayResearchFeedbackLedger]:
+        query = db.query(ReplayResearchFeedbackLedger)
+        if report_name:
+            query = query.filter(ReplayResearchFeedbackLedger.report_name == report_name)
+        rows = query.order_by(ReplayResearchFeedbackLedger.created_at.desc()).all()
+
+        latest_by_key: dict[tuple[str, str, str, str], ReplayResearchFeedbackLedger] = {}
+        for row in rows:
+            latest_by_key.setdefault((row.report_name, row.trade_date, row.symbol, row.review_scope), row)
+        return list(latest_by_key.values())
+
+    def _load_workflow_item_for_feedback(
+        self,
+        db: Session,
+        row: ReplayResearchFeedbackLedger,
+    ) -> ReplayResearchFeedbackWorkflowItem | None:
+        return (
+            db.query(ReplayResearchFeedbackWorkflowItem)
+            .filter(ReplayResearchFeedbackWorkflowItem.report_name == row.report_name)
+            .filter(ReplayResearchFeedbackWorkflowItem.trade_date == row.trade_date)
+            .filter(ReplayResearchFeedbackWorkflowItem.symbol == row.symbol)
+            .filter(ReplayResearchFeedbackWorkflowItem.review_scope == row.review_scope)
+            .one_or_none()
+        )
+
+    def _build_workflow_item_from_feedback(
+        self,
+        row: ReplayResearchFeedbackLedger,
+    ) -> ReplayResearchFeedbackWorkflowItem:
+        return ReplayResearchFeedbackWorkflowItem(
+            report_name=row.report_name,
+            trade_date=row.trade_date,
+            symbol=row.symbol,
+            review_scope=row.review_scope,
+            feedback_path=row.feedback_path,
+            latest_feedback_created_at=row.created_at,
+            latest_reviewer=row.reviewer,
+            latest_review_status=row.review_status,
+            latest_primary_tag=row.primary_tag,
+            latest_tags=list(row.tags or []),
+            latest_research_verdict=row.research_verdict,
+            latest_notes=row.notes,
+            workflow_status=self._default_workflow_status_for_review_status(row.review_status),
+        )
+
+    def _apply_feedback_row_to_workflow_item(
+        self,
+        item: ReplayResearchFeedbackWorkflowItem,
+        row: ReplayResearchFeedbackLedger,
+    ) -> None:
+        item.feedback_path = row.feedback_path
+        item.latest_feedback_created_at = row.created_at
+        item.latest_reviewer = row.reviewer
+        item.latest_review_status = row.review_status
+        item.latest_primary_tag = row.primary_tag
+        item.latest_tags = list(row.tags or [])
+        item.latest_research_verdict = row.research_verdict
+        item.latest_notes = row.notes
+        if row.review_status == "adjudicated":
+            item.workflow_status = "closed"
+        elif row.review_status == "final" and item.workflow_status == "unassigned":
+            item.workflow_status = "ready_for_adjudication"
+        elif row.review_status == "draft" and not item.assignee and item.workflow_status in {"ready_for_adjudication", "closed"}:
+            item.workflow_status = "unassigned"
+
     def _sync_workflow_items(self, *, report_name: str | None = None) -> None:
         with self._db_session() as db:
-            query = db.query(ReplayResearchFeedbackLedger)
-            if report_name:
-                query = query.filter(ReplayResearchFeedbackLedger.report_name == report_name)
-            rows = query.order_by(ReplayResearchFeedbackLedger.created_at.desc()).all()
-
-            latest_by_key: dict[tuple[str, str, str, str], ReplayResearchFeedbackLedger] = {}
-            for row in rows:
-                latest_by_key.setdefault((row.report_name, row.trade_date, row.symbol, row.review_scope), row)
-
-            for row in latest_by_key.values():
-                item = db.query(ReplayResearchFeedbackWorkflowItem).filter(ReplayResearchFeedbackWorkflowItem.report_name == row.report_name).filter(ReplayResearchFeedbackWorkflowItem.trade_date == row.trade_date).filter(ReplayResearchFeedbackWorkflowItem.symbol == row.symbol).filter(ReplayResearchFeedbackWorkflowItem.review_scope == row.review_scope).one_or_none()
+            for row in self._load_latest_feedback_rows(db, report_name=report_name):
+                item = self._load_workflow_item_for_feedback(db, row)
                 if item is None:
-                    item = ReplayResearchFeedbackWorkflowItem(
-                        report_name=row.report_name,
-                        trade_date=row.trade_date,
-                        symbol=row.symbol,
-                        review_scope=row.review_scope,
-                        feedback_path=row.feedback_path,
-                        latest_feedback_created_at=row.created_at,
-                        latest_reviewer=row.reviewer,
-                        latest_review_status=row.review_status,
-                        latest_primary_tag=row.primary_tag,
-                        latest_tags=list(row.tags or []),
-                        latest_research_verdict=row.research_verdict,
-                        latest_notes=row.notes,
-                        workflow_status=self._default_workflow_status_for_review_status(row.review_status),
-                    )
+                    item = self._build_workflow_item_from_feedback(row)
                 else:
-                    item.feedback_path = row.feedback_path
-                    item.latest_feedback_created_at = row.created_at
-                    item.latest_reviewer = row.reviewer
-                    item.latest_review_status = row.review_status
-                    item.latest_primary_tag = row.primary_tag
-                    item.latest_tags = list(row.tags or [])
-                    item.latest_research_verdict = row.research_verdict
-                    item.latest_notes = row.notes
-                    if row.review_status == "adjudicated":
-                        item.workflow_status = "closed"
-                    elif row.review_status == "final" and item.workflow_status == "unassigned":
-                        item.workflow_status = "ready_for_adjudication"
-                    elif row.review_status == "draft" and not item.assignee and item.workflow_status in {"ready_for_adjudication", "closed"}:
-                        item.workflow_status = "unassigned"
+                    self._apply_feedback_row_to_workflow_item(item, row)
                 db.add(item)
             db.commit()
 
@@ -1027,29 +1061,42 @@ class ReplayArtifactService:
         except (OSError, json.JSONDecodeError, FileNotFoundError):
             return {}
 
+    def _filter_btst_followup_dict_entries(self, values: Any) -> list[dict[str, Any]]:
+        return [item for item in (values or []) if isinstance(item, dict)]
+
     def _extract_btst_followup_entries(self, brief_payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         return {
-            "selected_entries": [item for item in (brief_payload.get("selected_entries") or []) if isinstance(item, dict)],
-            "near_miss_entries": [item for item in (brief_payload.get("near_miss_entries") or []) if isinstance(item, dict)],
-            "excluded_entries": [item for item in (brief_payload.get("excluded_research_entries") or []) if isinstance(item, dict)],
+            "selected_entries": self._filter_btst_followup_dict_entries(brief_payload.get("selected_entries")),
+            "near_miss_entries": self._filter_btst_followup_dict_entries(brief_payload.get("near_miss_entries")),
+            "excluded_entries": self._filter_btst_followup_dict_entries(brief_payload.get("excluded_research_entries")),
         }
 
     def _build_btst_followup_artifacts(self, artifact_paths: dict[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in artifact_paths.items() if value}
 
-    def _derive_btst_followup_overview(self, session_summary: dict[str, Any]) -> dict[str, Any] | None:
-        followup = session_summary.get("btst_followup") or {}
-        artifact_paths = self._resolve_btst_followup_artifact_paths(session_summary)
-        if not any(artifact_paths.values()):
-            return None
+    def _resolve_btst_followup_primary_entry(
+        self,
+        brief_payload: dict[str, Any],
+        selected_entries: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        primary_entry = brief_payload.get("primary_entry")
+        if isinstance(primary_entry, dict):
+            return primary_entry
+        return selected_entries[0] if selected_entries else None
 
-        brief_payload = self._load_btst_followup_brief_payload(artifact_paths["brief_json"])
-        entries = self._extract_btst_followup_entries(brief_payload)
+    def _build_btst_followup_overview(
+        self,
+        *,
+        followup: dict[str, Any],
+        session_summary: dict[str, Any],
+        brief_payload: dict[str, Any],
+        entries: dict[str, list[dict[str, Any]]],
+        primary_entry: dict[str, Any] | None,
+        artifact_paths: dict[str, Any],
+    ) -> dict[str, Any]:
         selected_entries = entries["selected_entries"]
         near_miss_entries = entries["near_miss_entries"]
         excluded_entries = entries["excluded_entries"]
-        primary_entry = brief_payload.get("primary_entry") or (selected_entries[0] if selected_entries else None)
-
         return {
             "available": True,
             "trade_date": followup.get("trade_date") or brief_payload.get("trade_date"),
@@ -1063,6 +1110,24 @@ class ReplayArtifactService:
             "excluded_research_count": len(excluded_entries),
             "artifacts": self._build_btst_followup_artifacts(artifact_paths),
         }
+
+    def _derive_btst_followup_overview(self, session_summary: dict[str, Any]) -> dict[str, Any] | None:
+        followup = session_summary.get("btst_followup") or {}
+        artifact_paths = self._resolve_btst_followup_artifact_paths(session_summary)
+        if not any(artifact_paths.values()):
+            return None
+
+        brief_payload = self._load_btst_followup_brief_payload(artifact_paths["brief_json"])
+        entries = self._extract_btst_followup_entries(brief_payload)
+        primary_entry = self._resolve_btst_followup_primary_entry(brief_payload, entries["selected_entries"])
+        return self._build_btst_followup_overview(
+            followup=followup,
+            session_summary=session_summary,
+            brief_payload=brief_payload,
+            entries=entries,
+            primary_entry=primary_entry,
+            artifact_paths=artifact_paths,
+        )
 
     def _normalize_btst_reference(self, payload: dict[str, Any] | None) -> dict[str, Any] | None:
         if not isinstance(payload, dict) or not payload:

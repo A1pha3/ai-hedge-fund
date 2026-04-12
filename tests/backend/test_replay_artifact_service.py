@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.backend.database.connection import Base
+from app.backend.database.models import ReplayResearchFeedbackLedger, ReplayResearchFeedbackWorkflowItem
 from app.backend.services.replay_artifact_service import ReplayArtifactService
 
 
@@ -28,6 +30,176 @@ def _build_service_with_db(tmp_path: Path) -> ReplayArtifactService:
     service = ReplayArtifactService(session_factory=test_session)
     service._reports_root = tmp_path
     return service
+
+
+def test_sync_workflow_items_uses_latest_feedback_per_key(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    older_created_at = datetime(2026, 3, 11, 9, 0, tzinfo=timezone.utc)
+    newer_created_at = older_created_at + timedelta(hours=2)
+
+    with service._db_session() as db:
+        db.add_all(
+            [
+                ReplayResearchFeedbackLedger(
+                    report_name="demo_report",
+                    trade_date="2026-03-11",
+                    feedback_path="older.jsonl",
+                    run_id="run-1",
+                    artifact_version="v1",
+                    label_version="v1",
+                    symbol="300724",
+                    review_scope="watchlist",
+                    reviewer="alice",
+                    review_status="draft",
+                    primary_tag="needs-review",
+                    tags=["stale"],
+                    confidence=0.6,
+                    research_verdict="watchlist",
+                    notes="older",
+                    created_at=older_created_at,
+                ),
+                ReplayResearchFeedbackLedger(
+                    report_name="demo_report",
+                    trade_date="2026-03-11",
+                    feedback_path="latest.jsonl",
+                    run_id="run-1",
+                    artifact_version="v1",
+                    label_version="v1",
+                    symbol="300724",
+                    review_scope="watchlist",
+                    reviewer="bob",
+                    review_status="final",
+                    primary_tag="promote",
+                    tags=["momentum"],
+                    confidence=0.9,
+                    research_verdict="selected",
+                    notes="latest",
+                    created_at=newer_created_at,
+                ),
+            ]
+        )
+        db.commit()
+
+    service._sync_workflow_items(report_name="demo_report")
+
+    with service._db_session() as db:
+        items = db.query(ReplayResearchFeedbackWorkflowItem).all()
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.feedback_path == "latest.jsonl"
+    assert item.latest_reviewer == "bob"
+    assert item.latest_review_status == "final"
+    assert item.latest_primary_tag == "promote"
+    assert item.latest_tags == ["momentum"]
+    assert item.latest_research_verdict == "selected"
+    assert item.latest_notes == "latest"
+    assert item.latest_feedback_created_at == newer_created_at.replace(tzinfo=None)
+    assert item.workflow_status == "ready_for_adjudication"
+
+
+def test_sync_workflow_items_preserves_assigned_final_and_reopens_unassigned_draft(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    assigned_created_at = datetime(2026, 3, 12, 9, 0, tzinfo=timezone.utc)
+    reopened_created_at = assigned_created_at + timedelta(hours=1)
+
+    with service._db_session() as db:
+        db.add_all(
+            [
+                ReplayResearchFeedbackLedger(
+                    report_name="demo_report",
+                    trade_date="2026-03-12",
+                    feedback_path="assigned-latest.jsonl",
+                    run_id="run-2",
+                    artifact_version="v1",
+                    label_version="v1",
+                    symbol="300724",
+                    review_scope="watchlist",
+                    reviewer="alice",
+                    review_status="final",
+                    primary_tag="promote",
+                    tags=["momentum"],
+                    confidence=0.8,
+                    research_verdict="selected",
+                    notes="final update",
+                    created_at=assigned_created_at,
+                ),
+                ReplayResearchFeedbackLedger(
+                    report_name="demo_report",
+                    trade_date="2026-03-12",
+                    feedback_path="reopened-latest.jsonl",
+                    run_id="run-2",
+                    artifact_version="v1",
+                    label_version="v1",
+                    symbol="002916",
+                    review_scope="near_miss",
+                    reviewer="bob",
+                    review_status="draft",
+                    primary_tag="hold",
+                    tags=["recheck"],
+                    confidence=0.5,
+                    research_verdict="near_miss",
+                    notes="reopened",
+                    created_at=reopened_created_at,
+                ),
+                ReplayResearchFeedbackWorkflowItem(
+                    report_name="demo_report",
+                    trade_date="2026-03-12",
+                    symbol="300724",
+                    review_scope="watchlist",
+                    feedback_path="assigned-old.jsonl",
+                    latest_feedback_created_at=assigned_created_at - timedelta(hours=1),
+                    latest_reviewer="zoe",
+                    latest_review_status="draft",
+                    latest_primary_tag="needs-review",
+                    latest_tags=["old"],
+                    latest_research_verdict="watchlist",
+                    latest_notes="old assigned item",
+                    assignee="owner",
+                    workflow_status="assigned",
+                ),
+                ReplayResearchFeedbackWorkflowItem(
+                    report_name="demo_report",
+                    trade_date="2026-03-12",
+                    symbol="002916",
+                    review_scope="near_miss",
+                    feedback_path="reopened-old.jsonl",
+                    latest_feedback_created_at=reopened_created_at - timedelta(hours=1),
+                    latest_reviewer="mia",
+                    latest_review_status="final",
+                    latest_primary_tag="watch",
+                    latest_tags=["old"],
+                    latest_research_verdict="selected",
+                    latest_notes="old closed item",
+                    assignee=None,
+                    workflow_status="closed",
+                ),
+            ]
+        )
+        db.commit()
+
+    service._sync_workflow_items(report_name="demo_report")
+
+    with service._db_session() as db:
+        items = (
+            db.query(ReplayResearchFeedbackWorkflowItem)
+            .order_by(ReplayResearchFeedbackWorkflowItem.symbol.asc())
+            .all()
+        )
+
+    assert len(items) == 2
+    assigned_item, reopened_item = items
+    assert assigned_item.symbol == "002916"
+    assert assigned_item.workflow_status == "unassigned"
+    assert assigned_item.assignee is None
+    assert assigned_item.feedback_path == "reopened-latest.jsonl"
+    assert assigned_item.latest_review_status == "draft"
+
+    assert reopened_item.symbol == "300724"
+    assert reopened_item.workflow_status == "assigned"
+    assert reopened_item.assignee == "owner"
+    assert reopened_item.feedback_path == "assigned-latest.jsonl"
+    assert reopened_item.latest_review_status == "final"
 
 
 def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None:
@@ -542,6 +714,99 @@ def test_get_replay_includes_selection_artifact_overview(tmp_path: Path) -> None
     }
 
 
+def test_derive_cache_benchmark_overview_falls_back_to_payload_values(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    overview = service._derive_cache_benchmark_overview(
+        {
+            "artifacts": {
+                "data_cache_benchmark_json": "cache.json",
+                "data_cache_benchmark_markdown": None,
+                "data_cache_benchmark_appended_report": "cache-report.md",
+            },
+            "data_cache_benchmark_status": {},
+            "data_cache_benchmark": {
+                "requested": True,
+                "executed": True,
+                "write_status": "payload-success",
+                "reason": "payload-reason",
+                "ticker": "300724",
+                "trade_date": "20260311",
+                "summary": {
+                    "reuse_confirmed": True,
+                    "disk_hit_gain": 6,
+                    "miss_reduction": 4,
+                    "set_reduction": 3,
+                    "first_hit_rate": 0.25,
+                    "second_hit_rate": 1.0,
+                },
+            },
+        }
+    )
+
+    assert overview == {
+        "requested": True,
+        "executed": True,
+        "write_status": "payload-success",
+        "reason": "payload-reason",
+        "ticker": "300724",
+        "trade_date": "20260311",
+        "reuse_confirmed": True,
+        "disk_hit_gain": 6,
+        "miss_reduction": 4,
+        "set_reduction": 3,
+        "first_hit_rate": 0.25,
+        "second_hit_rate": 1.0,
+        "artifacts": {
+            "data_cache_benchmark_json": "cache.json",
+            "data_cache_benchmark_appended_report": "cache-report.md",
+        },
+    }
+
+
+def test_derive_cache_benchmark_overview_ignores_invalid_summary_payload(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    overview = service._derive_cache_benchmark_overview(
+        {
+            "artifacts": {
+                "data_cache_benchmark_json": None,
+                "data_cache_benchmark_markdown": "cache.md",
+                "data_cache_benchmark_appended_report": "",
+            },
+            "data_cache_benchmark_status": {
+                "requested": False,
+                "executed": False,
+                "write_status": "skipped",
+                "reason": "not-requested",
+            },
+            "data_cache_benchmark": {
+                "ticker": "002916",
+                "trade_date": "20260312",
+                "summary": "invalid-summary",
+            },
+        }
+    )
+
+    assert overview == {
+        "requested": False,
+        "executed": False,
+        "write_status": "skipped",
+        "reason": "not-requested",
+        "ticker": "002916",
+        "trade_date": "20260312",
+        "reuse_confirmed": None,
+        "disk_hit_gain": None,
+        "miss_reduction": None,
+        "set_reduction": None,
+        "first_hit_rate": None,
+        "second_hit_rate": None,
+        "artifacts": {
+            "data_cache_benchmark_markdown": "cache.md",
+        },
+    }
+
+
 def test_get_selection_artifact_day_returns_snapshot_and_review(tmp_path: Path) -> None:
     report_dir = tmp_path / "demo_report"
     day_dir = report_dir / "selection_artifacts" / "2026-03-11"
@@ -895,6 +1160,64 @@ def test_derive_btst_followup_overview_tolerates_invalid_brief_json(tmp_path: Pa
             "brief_json": str(brief_json_path),
             "execution_card_json": str(report_dir / "btst_premarket_execution_card_latest.json"),
         },
+    }
+
+
+def test_derive_btst_followup_overview_uses_first_selected_entry_when_primary_missing(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+    brief_json_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        brief_json_path,
+        {
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+            "selected_entries": [
+                {"ticker": "300724"},
+                {"ticker": "002916"},
+            ],
+            "near_miss_entries": [{"ticker": "300502"}],
+            "excluded_research_entries": [{"ticker": "300680"}],
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_btst_followup_overview(
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "artifacts": {"btst_next_day_trade_brief_json": str(brief_json_path)},
+        }
+    ) == {
+        "available": True,
+        "trade_date": "2026-03-11",
+        "next_trade_date": "2026-03-12",
+        "selection_target": "short_trade_only",
+        "primary_entry_ticker": "300724",
+        "watchlist_tickers": ["300502"],
+        "excluded_research_tickers": ["300680"],
+        "selected_count": 2,
+        "watchlist_count": 1,
+        "excluded_research_count": 1,
+        "artifacts": {
+            "brief_json": str(brief_json_path),
+        },
+    }
+
+
+def test_extract_btst_followup_entries_filters_non_dict_values(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    assert service._extract_btst_followup_entries(
+        {
+            "selected_entries": [{"ticker": "300724"}, "invalid", None],
+            "near_miss_entries": [None, {"ticker": "002916"}],
+            "excluded_research_entries": [{"ticker": "300680"}, 1, []],
+        }
+    ) == {
+        "selected_entries": [{"ticker": "300724"}],
+        "near_miss_entries": [{"ticker": "002916"}],
+        "excluded_entries": [{"ticker": "300680"}],
     }
 
 
