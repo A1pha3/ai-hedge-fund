@@ -1066,6 +1066,39 @@ def test_derive_btst_control_tower_overview_marks_reference_mismatch(tmp_path: P
     }
 
 
+def test_build_btst_control_tower_artifacts_uses_source_fallbacks_and_filters_missing_paths(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    manifest_json_path = tmp_path / "report_manifest_latest.json"
+    nightly_json_path = tmp_path / "btst_nightly_control_tower_latest.json"
+    manifest_json_path.write_text("{}", encoding="utf-8")
+    nightly_json_path.write_text("{}", encoding="utf-8")
+
+    artifacts = service._build_btst_control_tower_artifacts(
+        paths={
+            "delta_json": tmp_path / "missing-delta.json",
+            "delta_markdown": tmp_path / "missing-delta.md",
+            "nightly_json": nightly_json_path,
+            "nightly_markdown": tmp_path / "missing-nightly.md",
+            "governance_synthesis_json": tmp_path / "missing-synthesis.json",
+            "manifest_json": manifest_json_path,
+            "manifest_markdown": tmp_path / "missing-manifest.md",
+        },
+        source_paths={
+            "current_priority_board_json": "",
+            "previous_priority_board_json": "previous-board.json",
+        },
+        governance_source_reports={
+            "rollout_governance": None,
+        },
+    )
+
+    assert artifacts == {
+        "nightly_control_tower_json": str(nightly_json_path),
+        "report_manifest_json": str(manifest_json_path),
+        "previous_priority_board_json": "previous-board.json",
+    }
+
+
 def test_derive_btst_rollout_lane_rows_returns_empty_without_rollout_governance(tmp_path: Path) -> None:
     service = _build_service_with_db(tmp_path)
 
@@ -1205,6 +1238,45 @@ def test_derive_btst_followup_overview_uses_first_selected_entry_when_primary_mi
     }
 
 
+def test_derive_btst_followup_overview_normalizes_truthy_tickers_only(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+    brief_json_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        brief_json_path,
+        {
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+            "selected_entries": [{"ticker": "300724"}],
+            "near_miss_entries": [{"ticker": 123456}, {"ticker": ""}, {"ticker": None}],
+            "excluded_research_entries": [{"ticker": 300680}, {"ticker": 0}],
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_btst_followup_overview(
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "artifacts": {"btst_next_day_trade_brief_json": str(brief_json_path)},
+        }
+    ) == {
+        "available": True,
+        "trade_date": "2026-03-11",
+        "next_trade_date": "2026-03-12",
+        "selection_target": "short_trade_only",
+        "primary_entry_ticker": "300724",
+        "watchlist_tickers": ["123456"],
+        "excluded_research_tickers": ["300680"],
+        "selected_count": 1,
+        "watchlist_count": 3,
+        "excluded_research_count": 2,
+        "artifacts": {
+            "brief_json": str(brief_json_path),
+        },
+    }
+
+
 def test_extract_btst_followup_entries_filters_non_dict_values(tmp_path: Path) -> None:
     service = _build_service_with_db(tmp_path)
 
@@ -1218,6 +1290,99 @@ def test_extract_btst_followup_entries_filters_non_dict_values(tmp_path: Path) -
         "selected_entries": [{"ticker": "300724"}],
         "near_miss_entries": [{"ticker": "002916"}],
         "excluded_entries": [{"ticker": "300680"}],
+    }
+
+
+def test_summarize_btst_followup_entries_keeps_counts_but_filters_falsy_tickers(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    assert service._summarize_btst_followup_entries(
+        {
+            "selected_entries": [{"ticker": "300724"}],
+            "near_miss_entries": [{"ticker": 123456}, {"ticker": ""}, {"ticker": None}],
+            "excluded_entries": [{"ticker": 300680}, {"ticker": 0}],
+        }
+    ) == {
+        "watchlist_tickers": ["123456"],
+        "excluded_research_tickers": ["300680"],
+        "selected_count": 1,
+        "watchlist_count": 3,
+        "excluded_research_count": 2,
+    }
+
+
+def test_derive_trade_date_target_index_merges_delta_counts_and_coerces_counts(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_trade_date_target_index(
+        [
+            (
+                "2026-03-11",
+                {
+                    "target_summary": {
+                        "target_mode": "dual_target",
+                        "delta_classification_counts": {"research_reject_short_pass": "2"},
+                        "research_selected_count": "1",
+                        "research_near_miss_count": None,
+                        "short_trade_selected_count": "3",
+                        "short_trade_blocked_count": 0,
+                    },
+                    "dual_target_delta": {
+                        "delta_counts": {
+                            "research_reject_short_pass": 1,
+                            "research_near_miss_short_blocked": "4",
+                        }
+                    },
+                },
+            )
+        ]
+    ) == [
+        {
+            "trade_date": "2026-03-11",
+            "target_mode": "dual_target",
+            "short_trade_profile_name": None,
+            "delta_classification_counts": {
+                "research_reject_short_pass": 3,
+                "research_near_miss_short_blocked": 4,
+            },
+            "research_selected_count": 1,
+            "research_near_miss_count": 0,
+            "short_trade_selected_count": 3,
+            "short_trade_blocked_count": 0,
+        }
+    ]
+
+
+def test_build_trade_date_target_index_row_prefers_snapshot_mode_and_coerces_counts(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    assert service._build_trade_date_target_index_row(
+        "2026-03-11",
+        {
+            "target_mode": "snapshot_mode",
+            "pipeline_config_snapshot": {
+                "short_trade_target_profile": {
+                    "name": "aggressive",
+                }
+            },
+        },
+        {
+            "target_mode": "summary_mode",
+            "research_selected_count": "1",
+            "research_near_miss_count": None,
+            "short_trade_selected_count": "2",
+            "short_trade_blocked_count": "3",
+        },
+        {"research_reject_short_pass": 4},
+    ) == {
+        "trade_date": "2026-03-11",
+        "target_mode": "snapshot_mode",
+        "short_trade_profile_name": "aggressive",
+        "delta_classification_counts": {"research_reject_short_pass": 4},
+        "research_selected_count": 1,
+        "research_near_miss_count": 0,
+        "short_trade_selected_count": 2,
+        "short_trade_blocked_count": 3,
     }
 
 

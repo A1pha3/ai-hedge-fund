@@ -3,7 +3,27 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from src.screening.models import StrategySignal
+from src.targets.explainability import clamp_unit_interval
 from src.targets.models import TargetEvaluationInput
+
+
+def _has_weak_profitability_hard_cliff_boundary_history(input_data: TargetEvaluationInput) -> bool:
+    historical_prior = dict(input_data.replay_context.get("historical_prior") or {})
+    historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    historical_applied_scope = str(historical_prior.get("applied_scope") or "")
+    historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
+    weak_same_ticker_intraday_history = (
+        historical_applied_scope == "same_ticker"
+        and historical_execution_quality_label == "intraday_only"
+        and historical_evaluable_count >= 3
+        and historical_next_close_positive_rate <= 0.0
+    )
+    weak_zero_follow_through_history = (
+        historical_execution_quality_label == "zero_follow_through"
+        and historical_evaluable_count >= 3
+    )
+    return weak_same_ticker_intraday_history or weak_zero_follow_through_history
 
 
 def resolve_profitability_relief_impl(
@@ -72,6 +92,7 @@ def resolve_profitability_hard_cliff_boundary_relief_impl(
     profile: Any,
 ) -> dict[str, Any]:
     source = str(input_data.replay_context.get("source") or "").strip()
+    weak_history = _has_weak_profitability_hard_cliff_boundary_history(input_data)
     base_near_miss_threshold = float(profile.near_miss_threshold)
     near_miss_threshold_override = float(profile.profitability_hard_cliff_boundary_relief_near_miss_threshold)
     default_result = {
@@ -99,6 +120,7 @@ def resolve_profitability_hard_cliff_boundary_relief_impl(
         "close_strength": close_strength >= float(profile.profitability_hard_cliff_boundary_relief_close_strength_min),
         "stale_trend_repair_penalty": stale_trend_repair_penalty <= float(profile.profitability_hard_cliff_boundary_relief_stale_penalty_max),
         "extension_without_room_penalty": extension_without_room_penalty <= float(profile.profitability_hard_cliff_boundary_relief_extension_penalty_max),
+        "historical_execution_quality": not weak_history,
     }
     eligible = all(gate_hits.values())
     effective_near_miss_threshold = base_near_miss_threshold

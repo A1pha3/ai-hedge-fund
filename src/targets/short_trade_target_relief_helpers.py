@@ -426,6 +426,7 @@ def _build_visibility_gap_continuation_relief_gate_hits(
     close_strength: float,
     profitability_hard_cliff: bool,
     weak_history: bool,
+    historical_evaluable_count: int,
     config: dict[str, Any],
 ) -> dict[str, bool]:
     return {
@@ -437,6 +438,7 @@ def _build_visibility_gap_continuation_relief_gate_hits(
         "close_strength": close_strength >= config["close_strength_min"],
         "no_profitability_hard_cliff": not profitability_hard_cliff,
         "historical_execution_quality": not weak_history,
+        "has_evaluable_history": historical_evaluable_count >= 1,
     }
 
 
@@ -459,6 +461,7 @@ def _build_merge_approved_continuation_relief_gate_hits(
     close_strength: float,
     profitability_hard_cliff: bool,
     weak_history: bool,
+    historical_evaluable_count: int,
     config: dict[str, Any],
 ) -> dict[str, bool]:
     return {
@@ -467,6 +470,7 @@ def _build_merge_approved_continuation_relief_gate_hits(
         "close_strength": close_strength >= config["close_strength_min"],
         "no_profitability_hard_cliff": (not config["require_no_profitability_hard_cliff"]) or (not profitability_hard_cliff),
         "historical_execution_quality": not weak_history,
+        "has_evaluable_history": historical_evaluable_count >= 1,
     }
 
 
@@ -697,6 +701,7 @@ def resolve_visibility_gap_continuation_relief(
         close_strength=close_strength,
         profitability_hard_cliff=profitability_hard_cliff,
         weak_history=weak_history,
+        historical_evaluable_count=historical_evaluable_count,
         config=config,
     )
     eligible = all(gate_hits.values())
@@ -773,6 +778,7 @@ def resolve_merge_approved_continuation_relief(
         close_strength=close_strength,
         profitability_hard_cliff=profitability_hard_cliff,
         weak_history=weak_history,
+        historical_evaluable_count=historical_evaluable_count,
         config=config,
     )
     eligible = all(gate_hits.values())

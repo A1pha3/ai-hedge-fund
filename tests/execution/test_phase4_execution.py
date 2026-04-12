@@ -438,7 +438,20 @@ def test_run_post_market_merge_approved_ticker_flows_into_short_trade_selected(m
             {"pool_size": 1, "selected_count": 1, "overflow_count": 0, "selected_cutoff_avg_volume_20d": 10000.0, "lane_counts": {}, "selected_tickers": ["300720"], "tickers": ["300720"]},
         ),
     )
-    monkeypatch.setattr(daily_pipeline_module, "_load_latest_btst_historical_prior_by_ticker", lambda: {})
+    monkeypatch.setattr(
+        daily_pipeline_module,
+        "_load_latest_btst_historical_prior_by_ticker",
+        lambda: {
+            "300720": {
+                "execution_quality_label": "close_continuation",
+                "applied_scope": "same_ticker",
+                "evaluable_count": 1,
+                "next_close_positive_rate": 1.0,
+                "next_high_hit_rate_at_threshold": 1.0,
+                "next_open_to_close_return_mean": 0.021,
+            }
+        },
+    )
     monkeypatch.setattr(
         daily_pipeline_module,
         "detect_market_state",
@@ -2432,7 +2445,7 @@ def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
     }
 
 
-def test_should_release_upstream_shadow_candidate_relaxes_corridor_score_floor_by_default():
+def test_should_release_upstream_shadow_candidate_requires_stronger_corridor_score_floor_by_default():
     corridor_result = daily_pipeline_module._should_release_upstream_shadow_candidate(
         candidate_entry={"candidate_pool_lane": "layer_a_liquidity_corridor"},
         filter_reason="breakout_freshness_below_short_trade_boundary_floor",
@@ -2446,8 +2459,41 @@ def test_should_release_upstream_shadow_candidate_relaxes_corridor_score_floor_b
         historical_support={},
     )
 
-    assert corridor_result == (True, "upstream_shadow_release_score_floor_pass")
+    assert corridor_result == (False, None)
     assert post_gate_result == (False, None)
+
+
+def test_should_release_upstream_shadow_candidate_keeps_corridor_release_at_new_default_floor():
+    corridor_result = daily_pipeline_module._should_release_upstream_shadow_candidate(
+        candidate_entry={"candidate_pool_lane": "layer_a_liquidity_corridor"},
+        filter_reason="breakout_freshness_below_short_trade_boundary_floor",
+        metrics_payload={"candidate_score": 0.30, "trend_acceleration": 0.45, "close_strength": 0.55},
+        historical_support={},
+    )
+
+    assert corridor_result == (True, "upstream_shadow_release_score_floor_pass")
+
+
+def test_should_release_upstream_shadow_candidate_requires_quality_confirmation_for_score_floor_release():
+    corridor_result = daily_pipeline_module._should_release_upstream_shadow_candidate(
+        candidate_entry={"candidate_pool_lane": "layer_a_liquidity_corridor"},
+        filter_reason="breakout_freshness_below_short_trade_boundary_floor",
+        metrics_payload={"candidate_score": 0.31, "trend_acceleration": 0.44, "close_strength": 0.55},
+        historical_support={},
+    )
+
+    assert corridor_result == (False, None)
+
+
+def test_should_release_upstream_shadow_candidate_keeps_supportive_history_override_above_score_floor():
+    corridor_result = daily_pipeline_module._should_release_upstream_shadow_candidate(
+        candidate_entry={"candidate_pool_lane": "layer_a_liquidity_corridor"},
+        filter_reason="breakout_freshness_below_short_trade_boundary_floor",
+        metrics_payload={"candidate_score": 0.31, "trend_acceleration": 0.40, "close_strength": 0.50},
+        historical_support={"verdict": "supportive"},
+    )
+
+    assert corridor_result == (True, "upstream_shadow_release_supported_by_historical_prior")
 
 
 def test_select_upstream_shadow_release_entries_respects_lane_caps():

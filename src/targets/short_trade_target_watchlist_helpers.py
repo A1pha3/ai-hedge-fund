@@ -5,6 +5,25 @@ from typing import Any, Callable
 from src.targets.models import TargetEvaluationInput
 
 
+def _has_weak_t_plus_2_history(*, input_data: TargetEvaluationInput, clamp_unit_interval_fn: Callable[[float], float]) -> bool:
+    historical_prior = dict(input_data.replay_context.get("historical_prior") or {})
+    historical_execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
+    historical_applied_scope = str(historical_prior.get("applied_scope") or "")
+    historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    historical_next_close_positive_rate = clamp_unit_interval_fn(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
+    weak_same_ticker_intraday_history = (
+        historical_applied_scope == "same_ticker"
+        and historical_execution_quality_label == "intraday_only"
+        and historical_evaluable_count >= 3
+        and historical_next_close_positive_rate <= 0.0
+    )
+    weak_zero_follow_through_history = (
+        historical_execution_quality_label == "zero_follow_through"
+        and historical_evaluable_count >= 3
+    )
+    return weak_same_ticker_intraday_history or weak_zero_follow_through_history
+
+
 def _build_default_watchlist_rule_result(*, enabled: bool, source: str) -> dict[str, Any]:
     return {
         "enabled": enabled,
@@ -129,6 +148,7 @@ def resolve_t_plus_2_continuation_candidate_impl(
 ) -> dict[str, Any]:
     source = str(input_data.replay_context.get("source") or "").strip()
     enabled = bool(profile.t_plus_2_continuation_enabled)
+    weak_history = _has_weak_t_plus_2_history(input_data=input_data, clamp_unit_interval_fn=clamp_unit_interval_fn)
     default_result = {
         "enabled": enabled,
         "eligible": False,
@@ -149,6 +169,7 @@ def resolve_t_plus_2_continuation_candidate_impl(
         "layer_c_alignment_max": layer_c_alignment <= clamp_unit_interval_fn(float(profile.t_plus_2_continuation_layer_c_alignment_max or 0.0)),
         "close_strength": close_strength <= clamp_unit_interval_fn(float(profile.t_plus_2_continuation_close_strength_max or 0.0)),
         "sector_resonance": sector_resonance <= clamp_unit_interval_fn(float(profile.t_plus_2_continuation_sector_resonance_max or 0.0)),
+        "historical_execution_quality": not weak_history,
     }
     eligible = all(gate_hits.values())
     return {

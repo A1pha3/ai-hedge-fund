@@ -1084,6 +1084,21 @@ class ReplayArtifactService:
             return primary_entry
         return selected_entries[0] if selected_entries else None
 
+    def _normalize_btst_followup_tickers(self, entries: list[dict[str, Any]]) -> list[str]:
+        return [str(item.get("ticker")) for item in entries if item.get("ticker")]
+
+    def _summarize_btst_followup_entries(self, entries: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+        selected_entries = entries["selected_entries"]
+        near_miss_entries = entries["near_miss_entries"]
+        excluded_entries = entries["excluded_entries"]
+        return {
+            "watchlist_tickers": self._normalize_btst_followup_tickers(near_miss_entries),
+            "excluded_research_tickers": self._normalize_btst_followup_tickers(excluded_entries),
+            "selected_count": len(selected_entries),
+            "watchlist_count": len(near_miss_entries),
+            "excluded_research_count": len(excluded_entries),
+        }
+
     def _build_btst_followup_overview(
         self,
         *,
@@ -1094,22 +1109,16 @@ class ReplayArtifactService:
         primary_entry: dict[str, Any] | None,
         artifact_paths: dict[str, Any],
     ) -> dict[str, Any]:
-        selected_entries = entries["selected_entries"]
-        near_miss_entries = entries["near_miss_entries"]
-        excluded_entries = entries["excluded_entries"]
-        return {
+        overview = {
             "available": True,
             "trade_date": followup.get("trade_date") or brief_payload.get("trade_date"),
             "next_trade_date": followup.get("next_trade_date") or brief_payload.get("next_trade_date"),
             "selection_target": brief_payload.get("selection_target") or (session_summary.get("plan_generation") or {}).get("selection_target"),
             "primary_entry_ticker": primary_entry.get("ticker") if isinstance(primary_entry, dict) else None,
-            "watchlist_tickers": [str(item.get("ticker")) for item in near_miss_entries if item.get("ticker")],
-            "excluded_research_tickers": [str(item.get("ticker")) for item in excluded_entries if item.get("ticker")],
-            "selected_count": len(selected_entries),
-            "watchlist_count": len(near_miss_entries),
-            "excluded_research_count": len(excluded_entries),
             "artifacts": self._build_btst_followup_artifacts(artifact_paths),
         }
+        overview.update(self._summarize_btst_followup_entries(entries))
+        return overview
 
     def _derive_btst_followup_overview(self, session_summary: dict[str, Any]) -> dict[str, Any] | None:
         followup = session_summary.get("btst_followup") or {}
@@ -1427,6 +1436,17 @@ class ReplayArtifactService:
             )
         return next_actions
 
+    def _existing_btst_control_tower_path(self, path: Path) -> str | None:
+        return str(path) if path.exists() else None
+
+    def _resolve_btst_control_tower_source_artifact(
+        self,
+        source_paths: dict[str, Any],
+        source_key: str,
+        fallback_path: Path | None = None,
+    ) -> Any:
+        return source_paths.get(source_key) or (self._existing_btst_control_tower_path(fallback_path) if fallback_path else None)
+
     def _build_btst_control_tower_artifacts(
         self,
         *,
@@ -1437,16 +1457,16 @@ class ReplayArtifactService:
         return {
             key: value
             for key, value in {
-                "open_ready_delta_json": str(paths["delta_json"]) if paths["delta_json"].exists() else None,
-                "open_ready_delta_markdown": str(paths["delta_markdown"]) if paths["delta_markdown"].exists() else None,
-                "nightly_control_tower_json": str(paths["nightly_json"]) if paths["nightly_json"].exists() else None,
-                "nightly_control_tower_markdown": str(paths["nightly_markdown"]) if paths["nightly_markdown"].exists() else None,
-                "governance_synthesis_json": str(paths["governance_synthesis_json"]) if paths["governance_synthesis_json"].exists() else None,
+                "open_ready_delta_json": self._existing_btst_control_tower_path(paths["delta_json"]),
+                "open_ready_delta_markdown": self._existing_btst_control_tower_path(paths["delta_markdown"]),
+                "nightly_control_tower_json": self._existing_btst_control_tower_path(paths["nightly_json"]),
+                "nightly_control_tower_markdown": self._existing_btst_control_tower_path(paths["nightly_markdown"]),
+                "governance_synthesis_json": self._existing_btst_control_tower_path(paths["governance_synthesis_json"]),
                 "rollout_governance_json": governance_source_reports.get("rollout_governance"),
-                "report_manifest_json": source_paths.get("report_manifest_json") or (str(paths["manifest_json"]) if paths["manifest_json"].exists() else None),
-                "report_manifest_markdown": source_paths.get("report_manifest_markdown") or (str(paths["manifest_markdown"]) if paths["manifest_markdown"].exists() else None),
-                "current_priority_board_json": source_paths.get("current_priority_board_json"),
-                "previous_priority_board_json": source_paths.get("previous_priority_board_json"),
+                "report_manifest_json": self._resolve_btst_control_tower_source_artifact(source_paths, "report_manifest_json", paths["manifest_json"]),
+                "report_manifest_markdown": self._resolve_btst_control_tower_source_artifact(source_paths, "report_manifest_markdown", paths["manifest_markdown"]),
+                "current_priority_board_json": self._resolve_btst_control_tower_source_artifact(source_paths, "current_priority_board_json"),
+                "previous_priority_board_json": self._resolve_btst_control_tower_source_artifact(source_paths, "previous_priority_board_json"),
             }.items()
             if value
         }
@@ -1694,28 +1714,48 @@ class ReplayArtifactService:
             "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir, resolve_contexts=resolve_btst_contexts),
         }
 
+    def _merge_trade_date_delta_counts(
+        self,
+        target_summary: dict[str, Any],
+        dual_target_delta: dict[str, Any],
+    ) -> dict[str, int]:
+        delta_counts = dict(target_summary.get("delta_classification_counts") or {})
+        for delta_name, delta_count in (dual_target_delta.get("delta_counts") or {}).items():
+            delta_key = str(delta_name)
+            delta_counts[delta_key] = int(delta_counts.get(delta_key, 0)) + int(delta_count)
+        return delta_counts
+
+    def _build_trade_date_target_counts(self, target_summary: dict[str, Any]) -> dict[str, int]:
+        return {
+            "research_selected_count": int(target_summary.get("research_selected_count") or 0),
+            "research_near_miss_count": int(target_summary.get("research_near_miss_count") or 0),
+            "short_trade_selected_count": int(target_summary.get("short_trade_selected_count") or 0),
+            "short_trade_blocked_count": int(target_summary.get("short_trade_blocked_count") or 0),
+        }
+
+    def _build_trade_date_target_index_row(
+        self,
+        trade_date: str,
+        snapshot: dict[str, Any],
+        target_summary: dict[str, Any],
+        delta_counts: dict[str, int],
+    ) -> dict[str, Any]:
+        row = {
+            "trade_date": trade_date,
+            "target_mode": snapshot.get("target_mode") or target_summary.get("target_mode"),
+            "short_trade_profile_name": self._extract_short_trade_profile_name(snapshot),
+            "delta_classification_counts": delta_counts,
+        }
+        row.update(self._build_trade_date_target_counts(target_summary))
+        return row
+
     def _derive_trade_date_target_index(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
         index_rows: list[dict[str, Any]] = []
         for trade_date, snapshot in snapshots_by_trade_date:
             target_summary = snapshot.get("target_summary") or {}
             dual_target_delta = snapshot.get("dual_target_delta") or {}
-            target_mode = snapshot.get("target_mode") or target_summary.get("target_mode")
-            delta_counts = dict(target_summary.get("delta_classification_counts") or {})
-            for delta_name, delta_count in (dual_target_delta.get("delta_counts") or {}).items():
-                delta_counts[str(delta_name)] = int(delta_counts.get(str(delta_name), 0)) + int(delta_count)
-
-            index_rows.append(
-                {
-                    "trade_date": trade_date,
-                    "target_mode": target_mode,
-                    "short_trade_profile_name": self._extract_short_trade_profile_name(snapshot),
-                    "delta_classification_counts": delta_counts,
-                    "research_selected_count": int(target_summary.get("research_selected_count") or 0),
-                    "research_near_miss_count": int(target_summary.get("research_near_miss_count") or 0),
-                    "short_trade_selected_count": int(target_summary.get("short_trade_selected_count") or 0),
-                    "short_trade_blocked_count": int(target_summary.get("short_trade_blocked_count") or 0),
-                }
-            )
+            delta_counts = self._merge_trade_date_delta_counts(target_summary, dual_target_delta)
+            index_rows.append(self._build_trade_date_target_index_row(trade_date, snapshot, target_summary, delta_counts))
         return index_rows
 
     def _extract_short_trade_profile_payload(self, snapshot: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:

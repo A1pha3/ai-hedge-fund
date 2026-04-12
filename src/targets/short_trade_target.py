@@ -44,6 +44,9 @@ from src.targets.profiles import get_active_short_trade_target_profile, use_shor
 STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE = 0.001
 STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT = 3
 STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT = STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_CLOSE_POSITIVE_RATE = 0.8
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_HIGH_HIT_RATE = 0.8
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_OPEN_TO_CLOSE_RETURN_MEAN = 0.02
 SELECTED_HISTORICAL_PROOF_REQUIRED_SOURCES = frozenset(
     {
         "upstream_liquidity_corridor_shadow",
@@ -203,6 +206,9 @@ def _resolve_selected_score_tolerance(
     historical_prior: dict[str, Any],
 ) -> float:
     evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
+    next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
+    next_open_to_close_return_mean = float(historical_prior.get("next_open_to_close_return_mean", 0.0) or 0.0)
     gap_to_selected = float(effective_select_threshold) - float(score_target)
     if gap_to_selected <= 0.0:
         return 0.0
@@ -215,6 +221,12 @@ def _resolve_selected_score_tolerance(
     if str(historical_prior.get("entry_timing_bias") or "") != "confirm_then_hold":
         return 0.0
     if evaluable_count < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT:
+        return 0.0
+    if next_close_positive_rate < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_CLOSE_POSITIVE_RATE:
+        return 0.0
+    if next_high_hit_rate < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_HIGH_HIT_RATE:
+        return 0.0
+    if next_open_to_close_return_mean < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_OPEN_TO_CLOSE_RETURN_MEAN:
         return 0.0
     return STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE if gap_to_selected <= STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE else 0.0
 

@@ -144,6 +144,8 @@ from src.execution.daily_pipeline_settings import (
     UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
     UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
     UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
+    UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_CLOSE_MIN,
+    UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_TREND_MIN,
     WATCHLIST_DIAGNOSTICS_CONFIG,
     WATCHLIST_SCORE_THRESHOLD,
 )
@@ -616,7 +618,18 @@ def _should_release_upstream_shadow_candidate(
         return False, None
     if str((historical_support or {}).get("verdict") or "") == "supportive":
         return True, "upstream_shadow_release_supported_by_historical_prior"
+    if not _passes_upstream_shadow_release_quality_floor(metrics_payload):
+        return False, None
     return True, "upstream_shadow_release_score_floor_pass"
+
+
+def _passes_upstream_shadow_release_quality_floor(metrics_payload: dict[str, Any]) -> bool:
+    trend_acceleration = float(metrics_payload.get("trend_acceleration", 0.0) or 0.0)
+    close_strength = float(metrics_payload.get("close_strength", 0.0) or 0.0)
+    return (
+        trend_acceleration >= float(UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_TREND_MIN)
+        and close_strength >= float(UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_CLOSE_MIN)
+    )
 
 
 def _resolve_upstream_shadow_release_max_tickers(candidate_pool_lane: str) -> int:

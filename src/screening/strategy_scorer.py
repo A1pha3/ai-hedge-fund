@@ -63,6 +63,8 @@ EVENT_SENTIMENT_MAX_CANDIDATES = int(
     )
 )
 HEAVY_SCORE_MIN_PROVISIONAL_SCORE = float(os.getenv("SCORE_BATCH_MIN_PROVISIONAL_SCORE", "0.05"))
+HEAVY_SCORE_MIN_TREND_CONFIDENCE = float(os.getenv("SCORE_BATCH_MIN_TREND_CONFIDENCE", "35"))
+TECHNICAL_STAGE_LIQUIDITY_RANK_BUCKET = float(os.getenv("CANDIDATE_POOL_BTST_LIQUIDITY_RANK_BUCKET", "2500"))
 
 TREND_SUBFACTOR_WEIGHTS = {
     "ema_alignment": 0.30,
@@ -1252,8 +1254,18 @@ def _provisional_score(signals: dict[str, StrategySignal]) -> float:
 def _rank_candidates_for_technical_stage(candidates: list[CandidateStock]) -> list[CandidateStock]:
     return sorted(
         candidates,
-        key=lambda candidate: (candidate.avg_volume_20d, candidate.market_cap),
+        key=_technical_stage_ranking_key,
         reverse=True,
+    )
+
+
+def _technical_stage_ranking_key(candidate: CandidateStock) -> tuple[int, float, float, str]:
+    liquidity_band = int(float(candidate.avg_volume_20d) / max(TECHNICAL_STAGE_LIQUIDITY_RANK_BUCKET, 1.0))
+    return (
+        liquidity_band,
+        -float(candidate.market_cap),
+        float(candidate.avg_volume_20d),
+        str(candidate.ticker),
     )
 
 
@@ -1307,16 +1319,26 @@ def _heavy_score_ranking_key(item: tuple[float, CandidateStock]) -> tuple[float,
     return item[0], item[1].avg_volume_20d, item[1].market_cap
 
 
-def _select_fundamental_candidates(ranked_candidates: list[tuple[float, CandidateStock]]) -> list[CandidateStock]:
+def _select_fundamental_candidates(
+    ranked_candidates: list[tuple[float, CandidateStock]],
+    results: dict[str, dict[str, StrategySignal]],
+) -> list[CandidateStock]:
     return [
         candidate
         for score, candidate in ranked_candidates
-        if _is_heavy_score_eligible(score)
+        if _is_heavy_score_eligible(score, results.get(candidate.ticker, {}))
     ][:FUNDAMENTAL_SCORE_MAX_CANDIDATES]
 
 
-def _is_heavy_score_eligible(score: float) -> bool:
-    return score >= HEAVY_SCORE_MIN_PROVISIONAL_SCORE
+def _is_heavy_score_eligible(score: float, signals: dict[str, StrategySignal]) -> bool:
+    return score >= HEAVY_SCORE_MIN_PROVISIONAL_SCORE and _has_positive_trend_confirmation(signals)
+
+
+def _has_positive_trend_confirmation(signals: dict[str, StrategySignal]) -> bool:
+    trend_signal = signals.get("trend")
+    if trend_signal is None or trend_signal.completeness <= 0:
+        return False
+    return trend_signal.direction > 0 and trend_signal.confidence >= HEAVY_SCORE_MIN_TREND_CONFIDENCE
 
 
 def _populate_heavy_signals(
@@ -1356,4 +1378,4 @@ def _prepare_heavy_score_candidates(
 ) -> list[CandidateStock]:
     provisional_ranking = _build_provisional_ranking(candidates, trade_date, results)
     ranked_candidates = _rank_candidates_for_heavy_scoring(provisional_ranking)
-    return _select_fundamental_candidates(ranked_candidates)
+    return _select_fundamental_candidates(ranked_candidates, results)
