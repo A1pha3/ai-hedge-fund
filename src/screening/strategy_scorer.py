@@ -202,7 +202,20 @@ def aggregate_sub_factors(sub_factors: list[SubFactor]) -> StrategySignal:
     consistency = _calculate_sub_factor_consistency(normalized, direction)
     confidence = _calculate_weighted_sub_factor_confidence(normalized, consistency)
     completeness = derive_completeness(sub_factors)
+    return _build_aggregated_strategy_signal(
+        direction=direction,
+        confidence=confidence,
+        completeness=completeness,
+        sub_factor_map=sub_factor_map,
+    )
 
+def _build_aggregated_strategy_signal(
+    *,
+    direction: int,
+    confidence: float,
+    completeness: float,
+    sub_factor_map: dict[str, dict],
+) -> StrategySignal:
     return StrategySignal(
         direction=direction,
         confidence=_clip(confidence, 0.0, 100.0),
@@ -277,11 +290,7 @@ def _score_ema_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
     if prices_df.empty or len(prices_df) < 60:
         return _make_sub_factor("ema_alignment", 0, 0.0, weight, completeness=0.0)
 
-    ema_10 = calculate_ema(prices_df, 10)
-    ema_30 = calculate_ema(prices_df, 30)
-    ema_60 = calculate_ema(prices_df, 60)
-    close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
-    ema_values = _extract_latest_ema_values(ema_10, ema_30, ema_60)
+    ema_values, close = _build_ema_alignment_inputs(prices_df)
     direction = _resolve_ema_alignment_direction(ema_values)
     confidence = _calculate_ema_alignment_confidence(ema_values, close)
 
@@ -292,6 +301,14 @@ def _score_ema_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
         weight,
         metrics=ema_values,
     )
+
+
+def _build_ema_alignment_inputs(prices_df: pd.DataFrame) -> tuple[dict[str, float], float]:
+    ema_10 = calculate_ema(prices_df, 10)
+    ema_30 = calculate_ema(prices_df, 30)
+    ema_60 = calculate_ema(prices_df, 60)
+    close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
+    return _extract_latest_ema_values(ema_10, ema_30, ema_60), close
 
 
 def _extract_latest_ema_values(ema_10: pd.Series, ema_30: pd.Series, ema_60: pd.Series) -> dict[str, float]:
@@ -321,10 +338,7 @@ def _score_long_trend_alignment(prices_df: pd.DataFrame, weight: float) -> SubFa
     if prices_df.empty or len(prices_df) < 200:
         return _make_sub_factor("long_trend_alignment", 0, 0.0, weight, completeness=0.0)
 
-    ema_10 = calculate_ema(prices_df, 10)
-    ema_200 = calculate_ema(prices_df, 200)
-    close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
-    ema_values = _extract_latest_long_trend_ema_values(ema_10, ema_200)
+    ema_values, close = _build_long_trend_alignment_inputs(prices_df)
     direction = _resolve_long_trend_alignment_direction(ema_values)
     confidence = _calculate_long_trend_alignment_confidence(ema_values, close)
 
@@ -335,6 +349,13 @@ def _score_long_trend_alignment(prices_df: pd.DataFrame, weight: float) -> SubFa
         weight,
         metrics=ema_values,
     )
+
+
+def _build_long_trend_alignment_inputs(prices_df: pd.DataFrame) -> tuple[dict[str, float], float]:
+    ema_10 = calculate_ema(prices_df, 10)
+    ema_200 = calculate_ema(prices_df, 200)
+    close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
+    return _extract_latest_long_trend_ema_values(ema_10, ema_200), close
 
 
 def _extract_latest_long_trend_ema_values(ema_10: pd.Series, ema_200: pd.Series) -> dict[str, float]:
@@ -363,8 +384,7 @@ def _score_adx_strength(prices_df: pd.DataFrame, weight: float) -> SubFactor:
     if prices_df.empty or len(prices_df) < 30:
         return _make_sub_factor("adx_strength", 0, 0.0, weight, completeness=0.0)
 
-    adx_df = calculate_adx(prices_df.copy(), 20)
-    adx_metrics = _extract_adx_strength_metrics(adx_df)
+    adx_metrics = _build_adx_strength_metrics(prices_df)
     direction = _resolve_adx_strength_direction(adx_metrics)
 
     return _make_sub_factor(
@@ -374,6 +394,10 @@ def _score_adx_strength(prices_df: pd.DataFrame, weight: float) -> SubFactor:
         weight,
         metrics=adx_metrics,
     )
+
+
+def _build_adx_strength_metrics(prices_df: pd.DataFrame) -> dict[str, float]:
+    return _extract_adx_strength_metrics(calculate_adx(prices_df.copy(), 20))
 
 
 def _extract_adx_strength_metrics(adx_df: pd.DataFrame) -> dict[str, float]:
@@ -398,7 +422,23 @@ def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
     trend_weights = _get_trend_subfactor_weights()
     momentum_signal = calculate_momentum_signals(prices_df) if len(prices_df) >= 126 else None
     volatility_signal = calculate_volatility_signals(prices_df) if len(prices_df) >= 126 else None
+    return aggregate_sub_factors(
+        _build_trend_sub_factors(
+            prices_df=prices_df,
+            trend_weights=trend_weights,
+            momentum_signal=momentum_signal,
+            volatility_signal=volatility_signal,
+        )
+    )
 
+
+def _build_trend_sub_factors(
+    *,
+    prices_df: pd.DataFrame,
+    trend_weights: dict[str, float],
+    momentum_signal: dict | None,
+    volatility_signal: dict | None,
+) -> list[SubFactor]:
     sub_factors = [
         _score_ema_alignment(prices_df, trend_weights["ema_alignment"]),
         _score_adx_strength(prices_df, trend_weights["adx_strength"]),
@@ -407,18 +447,18 @@ def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
     ]
     if "long_trend_alignment" in trend_weights:
         _append_long_trend_factor(sub_factors, prices_df, trend_weights["long_trend_alignment"])
-    return aggregate_sub_factors(sub_factors)
+    return sub_factors
 
 
 def _build_optional_trend_factor(name: str, signal: dict | None, weight: float) -> SubFactor:
-    return _make_sub_factor(
-        name,
-        _signal_to_direction(signal["signal"]) if signal else 0,
-        (signal["confidence"] * 100.0) if signal else 0.0,
-        weight,
-        completeness=1.0 if signal else 0.0,
-        metrics=(signal["metrics"] if signal else {}),
-    )
+    direction, confidence, completeness, metrics = _resolve_optional_trend_factor_inputs(signal)
+    return _make_sub_factor(name, direction, confidence, weight, completeness=completeness, metrics=metrics)
+
+
+def _resolve_optional_trend_factor_inputs(signal: dict | None) -> tuple[int, float, float, dict]:
+    if signal is None:
+        return 0, 0.0, 0.0, {}
+    return _signal_to_direction(signal["signal"]), signal["confidence"] * 100.0, 1.0, signal["metrics"]
 
 
 def _append_long_trend_factor(sub_factors: list[SubFactor], prices_df: pd.DataFrame, weight: float) -> None:
@@ -428,16 +468,24 @@ def _append_long_trend_factor(sub_factors: list[SubFactor], prices_df: pd.DataFr
 def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
     mean_reversion_signal = calculate_mean_reversion_signals(prices_df) if len(prices_df) >= 50 else None
     stat_arb_signal = calculate_stat_arb_signals(prices_df) if len(prices_df) >= 80 else None
-    rsi_factor = _build_rsi_extreme_factor(prices_df)
-    hurst_factor = _build_hurst_regime_factor(prices_df)
+    return aggregate_sub_factors(
+        _build_mean_reversion_sub_factors(
+            prices_df=prices_df,
+            mean_reversion_signal=mean_reversion_signal,
+            stat_arb_signal=stat_arb_signal,
+        )
+    )
 
-    sub_factors = [
+
+def _build_mean_reversion_sub_factors(
+    *, prices_df: pd.DataFrame, mean_reversion_signal: dict | None, stat_arb_signal: dict | None
+) -> list[SubFactor]:
+    return [
         _build_optional_mean_reversion_factor("zscore_bbands", mean_reversion_signal),
-        rsi_factor,
+        _build_rsi_extreme_factor(prices_df),
         _build_optional_mean_reversion_factor("stat_arb", stat_arb_signal),
-        hurst_factor,
+        _build_hurst_regime_factor(prices_df),
     ]
-    return aggregate_sub_factors(sub_factors)
 
 
 def _build_rsi_extreme_factor(prices_df: pd.DataFrame) -> SubFactor:
@@ -515,14 +563,14 @@ def _resolve_hurst_regime_signal(snapshot: HurstRegimeSnapshot) -> tuple[int, fl
 
 
 def _build_optional_mean_reversion_factor(name: str, signal: dict | None) -> SubFactor:
-    return _make_sub_factor(
-        name,
-        _signal_to_direction(signal["signal"]) if signal else 0,
-        (signal["confidence"] * 100.0) if signal else 0.0,
-        MEAN_REVERSION_SUBFACTOR_WEIGHTS[name],
-        completeness=1.0 if signal else 0.0,
-        metrics=(signal["metrics"] if signal else {}),
-    )
+    direction, confidence, completeness, metrics = _resolve_optional_mean_reversion_factor_inputs(signal)
+    return _make_sub_factor(name, direction, confidence, MEAN_REVERSION_SUBFACTOR_WEIGHTS[name], completeness=completeness, metrics=metrics)
+
+
+def _resolve_optional_mean_reversion_factor_inputs(signal: dict | None) -> tuple[int, float, float, dict]:
+    if signal is None:
+        return 0, 0.0, 0.0, {}
+    return _signal_to_direction(signal["signal"]), signal["confidence"] * 100.0, 1.0, signal["metrics"]
 
 
 def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
@@ -854,19 +902,40 @@ def _build_news_sentiment_sub_factor(
     informative_count: int,
     article_metrics: list[dict],
 ) -> SubFactor:
-    return _make_sub_factor(
-        "news_sentiment",
-        direction,
-        confidence,
-        EVENT_SUBFACTOR_WEIGHTS["news_sentiment"],
+    return _make_sub_factor(**_build_news_sentiment_sub_factor_payload(
+        direction=direction,
+        confidence=confidence,
         completeness=completeness,
-        metrics=_build_news_sentiment_metrics_payload(
+        normalized_score=normalized_score,
+        recent_count=recent_count,
+        informative_count=informative_count,
+        article_metrics=article_metrics,
+    ))
+
+
+def _build_news_sentiment_sub_factor_payload(
+    *,
+    direction: int,
+    confidence: float,
+    completeness: float,
+    normalized_score: float,
+    recent_count: int,
+    informative_count: int,
+    article_metrics: list[dict],
+) -> dict:
+    return {
+        "name": "news_sentiment",
+        "direction": direction,
+        "confidence": confidence,
+        "weight": EVENT_SUBFACTOR_WEIGHTS["news_sentiment"],
+        "completeness": completeness,
+        "metrics": _build_news_sentiment_metrics_payload(
             normalized_score=normalized_score,
             recent_count=recent_count,
             informative_count=informative_count,
             article_metrics=article_metrics,
         ),
-    )
+    }
 
 
 def _resolve_news_sentiment_signal(*, normalized_score: float, informative_count: int) -> tuple[int, float, float]:
@@ -963,9 +1032,7 @@ def _score_insider_conviction(trades: list[InsiderTrade]) -> SubFactor:
     if not trades:
         return _make_sub_factor("insider_conviction", 0, 0.0, EVENT_SUBFACTOR_WEIGHTS["insider_conviction"], completeness=0.0)
     analysis = analyze_insider_conviction(trades)
-    score = float(analysis["score"])
-    direction = 1 if score > 0.6 else -1 if score < 0.4 else 0
-    confidence = abs(score - 0.5) * 200.0
+    direction, confidence = _resolve_insider_conviction_direction_and_confidence(float(analysis["score"]))
     return _make_sub_factor(
         "insider_conviction",
         direction,
@@ -973,6 +1040,10 @@ def _score_insider_conviction(trades: list[InsiderTrade]) -> SubFactor:
         EVENT_SUBFACTOR_WEIGHTS["insider_conviction"],
         metrics=analysis,
     )
+
+
+def _resolve_insider_conviction_direction_and_confidence(score: float) -> tuple[int, float]:
+    return (1 if score > 0.6 else -1 if score < 0.4 else 0), abs(score - 0.5) * 200.0
 
 
 def _score_event_freshness(news_items: list[CompanyNews], trade_date: str) -> SubFactor:
@@ -1019,14 +1090,18 @@ def _build_event_freshness_factor(snapshot: EventFreshnessSnapshot) -> SubFactor
         direction,
         snapshot.decay * snapshot.freshness_weight * 100.0,
         EVENT_SUBFACTOR_WEIGHTS["event_freshness"],
-        metrics={
-            "days_old": snapshot.days_old,
-            "decay": snapshot.decay,
-            "positive_hits": snapshot.positive_hits,
-            "negative_hits": snapshot.negative_hits,
-            "freshness_weight": snapshot.freshness_weight,
-        },
+        metrics=_build_event_freshness_metrics(snapshot),
     )
+
+
+def _build_event_freshness_metrics(snapshot: EventFreshnessSnapshot) -> dict[str, int | float]:
+    return {
+        "days_old": snapshot.days_old,
+        "decay": snapshot.decay,
+        "positive_hits": snapshot.positive_hits,
+        "negative_hits": snapshot.negative_hits,
+        "freshness_weight": snapshot.freshness_weight,
+    }
 
 
 def _resolve_event_freshness_days_old(news_date: str, trade_date: str) -> int:
@@ -1055,8 +1130,15 @@ def _resolve_event_freshness_direction(*, pos_hits: int, neg_hits: int, strength
 def score_event_sentiment_strategy(ticker: str, trade_date: str) -> StrategySignal:
     start_date, end_date = _resolve_event_sentiment_date_window(trade_date)
     news_items, trades = _load_event_sentiment_inputs(ticker=ticker, start_date=start_date, end_date=end_date)
-    sub_factors = _build_event_sentiment_sub_factors(news_items=news_items, trades=trades, trade_date=trade_date)
-    return aggregate_sub_factors(sub_factors)
+    return _build_event_sentiment_strategy_signal(news_items=news_items, trades=trades, trade_date=trade_date)
+
+
+def _build_event_sentiment_strategy_signal(
+    *, news_items: list[CompanyNews], trades: list[InsiderTrade], trade_date: str
+) -> StrategySignal:
+    return aggregate_sub_factors(
+        _build_event_sentiment_sub_factors(news_items=news_items, trades=trades, trade_date=trade_date)
+    )
 
 
 def _resolve_event_sentiment_date_window(trade_date: str) -> tuple[str, str]:
@@ -1076,11 +1158,17 @@ def _build_event_sentiment_sub_factors(
     trades: list[InsiderTrade],
     trade_date: str,
 ) -> list[SubFactor]:
-    return [
+    return _assemble_event_sentiment_sub_factors(
         _score_news_sentiment(news_items, trade_date),
         _score_insider_conviction(trades),
         _score_event_freshness(news_items, trade_date),
-    ]
+    )
+
+
+def _assemble_event_sentiment_sub_factors(
+    news_sentiment: SubFactor, insider_conviction: SubFactor, event_freshness: SubFactor
+) -> list[SubFactor]:
+    return [news_sentiment, insider_conviction, event_freshness]
 
 
 def _build_symbol_to_industry_map(stock_basic: pd.DataFrame, sw_map: dict[str, str]) -> dict[str, str]:
@@ -1135,12 +1223,16 @@ def score_candidate(
 
 def _compute_light_signals(candidate: CandidateStock, trade_date: str) -> tuple[dict[str, StrategySignal], pd.DataFrame]:
     prices_df = _load_price_frame(candidate.ticker, trade_date)
+    return _build_light_signal_map(prices_df), prices_df
+
+
+def _build_light_signal_map(prices_df: pd.DataFrame) -> dict[str, StrategySignal]:
     return {
         "trend": score_trend_strategy(prices_df),
         "mean_reversion": score_mean_reversion_strategy(prices_df),
         "fundamental": _empty_signal(),
         "event_sentiment": _empty_signal(),
-    }, prices_df
+    }
 
 
 def _provisional_score(signals: dict[str, StrategySignal]) -> float:
@@ -1189,7 +1281,12 @@ def _build_provisional_ranking(
         light_signals, _ = _compute_light_signals(candidate, trade_date)
         results[candidate.ticker] = light_signals
         provisional_ranking.append((_provisional_score(light_signals), candidate))
+    return _append_unranked_candidates_to_provisional_ranking(provisional_ranking, candidates)
 
+
+def _append_unranked_candidates_to_provisional_ranking(
+    provisional_ranking: list[tuple[float, CandidateStock]], candidates: list[CandidateStock]
+) -> list[tuple[float, CandidateStock]]:
     ranked_tickers = {ranked_candidate.ticker for _, ranked_candidate in provisional_ranking}
     for candidate in candidates:
         if candidate.ticker in ranked_tickers:
@@ -1201,17 +1298,25 @@ def _build_provisional_ranking(
 def _rank_candidates_for_heavy_scoring(provisional_ranking: list[tuple[float, CandidateStock]]) -> list[tuple[float, CandidateStock]]:
     return sorted(
         provisional_ranking,
-        key=lambda item: (item[0], item[1].avg_volume_20d, item[1].market_cap),
+        key=_heavy_score_ranking_key,
         reverse=True,
     )
+
+
+def _heavy_score_ranking_key(item: tuple[float, CandidateStock]) -> tuple[float, float, float]:
+    return item[0], item[1].avg_volume_20d, item[1].market_cap
 
 
 def _select_fundamental_candidates(ranked_candidates: list[tuple[float, CandidateStock]]) -> list[CandidateStock]:
     return [
         candidate
         for score, candidate in ranked_candidates
-        if score >= HEAVY_SCORE_MIN_PROVISIONAL_SCORE
+        if _is_heavy_score_eligible(score)
     ][:FUNDAMENTAL_SCORE_MAX_CANDIDATES]
+
+
+def _is_heavy_score_eligible(score: float) -> bool:
+    return score >= HEAVY_SCORE_MIN_PROVISIONAL_SCORE
 
 
 def _populate_heavy_signals(
@@ -1228,16 +1333,27 @@ def _populate_heavy_signals(
             industry_pe_medians,
         )
 
-    event_candidates = fundamental_candidates[:EVENT_SENTIMENT_MAX_CANDIDATES]
-    for candidate in event_candidates:
+    for candidate in _select_event_sentiment_candidates(fundamental_candidates):
         results[candidate.ticker]["event_sentiment"] = score_event_sentiment_strategy(candidate.ticker, trade_date)
+
+
+def _select_event_sentiment_candidates(fundamental_candidates: list[CandidateStock]) -> list[CandidateStock]:
+    return fundamental_candidates[:EVENT_SENTIMENT_MAX_CANDIDATES]
 
 
 def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, dict[str, StrategySignal]]:
     industry_pe_medians = _build_industry_pe_medians(trade_date)
     results = _initialize_score_batch_results(candidates)
-    provisional_ranking = _build_provisional_ranking(candidates, trade_date, results)
-    ranked_candidates = _rank_candidates_for_heavy_scoring(provisional_ranking)
-    fundamental_candidates = _select_fundamental_candidates(ranked_candidates)
+    fundamental_candidates = _prepare_heavy_score_candidates(candidates, trade_date, results)
     _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians)
     return results
+
+
+def _prepare_heavy_score_candidates(
+    candidates: list[CandidateStock],
+    trade_date: str,
+    results: dict[str, dict[str, StrategySignal]],
+) -> list[CandidateStock]:
+    provisional_ranking = _build_provisional_ranking(candidates, trade_date, results)
+    ranked_candidates = _rank_candidates_for_heavy_scoring(provisional_ranking)
+    return _select_fundamental_candidates(ranked_candidates)

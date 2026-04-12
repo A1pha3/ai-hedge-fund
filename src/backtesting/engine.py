@@ -611,12 +611,13 @@ class BacktestEngine:
         if price is None:
             next_pending_buy.append(order)
             return
-        result = self._evaluate_pending_buy_order(
+        result = self._evaluate_pending_buy_order(**self._build_pending_buy_evaluation_kwargs(
             order=order,
-            current_score=watch_scores.get(order.ticker, order.original_score),
-            is_limit_up=normalized_ticker in limit_up,
             price=price,
-        )
+            normalized_ticker=normalized_ticker,
+            watch_scores=watch_scores,
+            limit_up=limit_up,
+        ))
         self._apply_pending_buy_result(
             order=order,
             result=result,
@@ -624,6 +625,22 @@ class BacktestEngine:
             next_pending_buy=next_pending_buy,
             alerts=alerts,
         )
+
+    @staticmethod
+    def _build_pending_buy_evaluation_kwargs(
+        *,
+        order: PendingOrder,
+        price: float,
+        normalized_ticker: str,
+        watch_scores: Dict[str, float],
+        limit_up: set[str],
+    ) -> dict[str, Any]:
+        return {
+            "order": order,
+            "current_score": watch_scores.get(order.ticker, order.original_score),
+            "is_limit_up": normalized_ticker in limit_up,
+            "price": price,
+        }
 
     @staticmethod
     def _evaluate_pending_buy_order(
@@ -784,15 +801,36 @@ class BacktestEngine:
             return None
         current_prices, daily_turnovers = market_snapshot
         limit_up, limit_down = self._load_pipeline_limit_state(current_date)
-        return build_pipeline_day_context(
+        return build_pipeline_day_context(**self._build_pipeline_day_context_kwargs(
             current_date=current_date,
             active_tickers=active_tickers,
             current_prices=current_prices,
             daily_turnovers=daily_turnovers,
             limit_up=limit_up,
             limit_down=limit_down,
-            load_market_data_seconds=perf_counter() - stage_started_at,
-        )
+            stage_started_at=stage_started_at,
+        ))
+
+    @staticmethod
+    def _build_pipeline_day_context_kwargs(
+        *,
+        current_date: pd.Timestamp,
+        active_tickers: list[str],
+        current_prices: Dict[str, float],
+        daily_turnovers: Dict[str, float],
+        limit_up: set[str],
+        limit_down: set[str],
+        stage_started_at: float,
+    ) -> dict[str, Any]:
+        return {
+            "current_date": current_date,
+            "active_tickers": active_tickers,
+            "current_prices": current_prices,
+            "daily_turnovers": daily_turnovers,
+            "limit_up": limit_up,
+            "limit_down": limit_down,
+            "load_market_data_seconds": perf_counter() - stage_started_at,
+        }
 
     def _build_pipeline_active_tickers(self, pending_plan: ExecutionPlan | None) -> list[str]:
         return build_pipeline_active_tickers(
@@ -1329,6 +1367,26 @@ class BacktestEngine:
     ) -> tuple[list, list, dict, list[str], float]:
         stage_started_at = perf_counter()
         confirmation_inputs = self._build_confirmation_inputs(prepared_plan, day_context.current_prices)
+        queue_alerts = self._run_pending_intraday_queue_stage(
+            prepared_plan=prepared_plan,
+            day_context=day_context,
+            decisions=decisions,
+        )
+        confirmed_orders, exits, crisis_response = self._run_pending_intraday_pipeline(
+            prepared_plan=prepared_plan,
+            trade_date_compact=day_context.trade_date_compact,
+            confirmation_inputs=confirmation_inputs,
+        )
+        intraday_seconds = perf_counter() - stage_started_at
+        return confirmed_orders, exits, crisis_response, queue_alerts, intraday_seconds
+
+    def _run_pending_intraday_queue_stage(
+        self,
+        *,
+        prepared_plan: ExecutionPlan,
+        day_context: PipelineDayContext,
+        decisions: Dict[str, dict],
+    ) -> list[str]:
         next_pending_buy, next_pending_sell, queue_alerts = self._process_pending_queues(
             prepared_plan=prepared_plan,
             trade_date_compact=day_context.trade_date_compact,
@@ -1339,13 +1397,7 @@ class BacktestEngine:
         )
         self._pending_buy_queue = next_pending_buy
         self._pending_sell_queue = next_pending_sell
-        confirmed_orders, exits, crisis_response = self._run_pending_intraday_pipeline(
-            prepared_plan=prepared_plan,
-            trade_date_compact=day_context.trade_date_compact,
-            confirmation_inputs=confirmation_inputs,
-        )
-        intraday_seconds = perf_counter() - stage_started_at
-        return confirmed_orders, exits, crisis_response, queue_alerts, intraday_seconds
+        return queue_alerts
 
     def _run_pending_intraday_pipeline(
         self,

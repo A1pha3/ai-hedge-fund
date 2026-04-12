@@ -257,20 +257,38 @@ def _finalize_focus_filter_diagnostics(
     finalized: list[dict[str, Any]] = []
     for ticker in sorted(focus_filter_diagnostics):
         entry = dict(focus_filter_diagnostics[ticker])
-        if not entry["present_in_stock_basic"]:
-            entry["final_visibility"] = "missing_from_stock_basic"
-        elif ticker in selected_tickers:
-            entry["final_visibility"] = "selected_pool"
-        elif ticker in shadow_tickers:
-            entry["final_visibility"] = "shadow_pool"
-        elif ticker in candidate_tickers:
-            entry["final_visibility"] = "overflow_pool"
-        elif ticker in cooldown_review_tickers:
-            entry["final_visibility"] = "cooldown_review_pool"
-        else:
-            entry["final_visibility"] = "filtered_out"
+        entry["final_visibility"] = _resolve_focus_filter_final_visibility(
+            ticker=ticker,
+            entry=entry,
+            candidate_tickers=candidate_tickers,
+            cooldown_review_tickers=cooldown_review_tickers,
+            selected_tickers=selected_tickers,
+            shadow_tickers=shadow_tickers,
+        )
         finalized.append(entry)
     return finalized
+
+
+def _resolve_focus_filter_final_visibility(
+    *,
+    ticker: str,
+    entry: dict[str, Any],
+    candidate_tickers: set[str],
+    cooldown_review_tickers: set[str],
+    selected_tickers: set[str],
+    shadow_tickers: set[str],
+) -> str:
+    if not entry["present_in_stock_basic"]:
+        return "missing_from_stock_basic"
+    if ticker in selected_tickers:
+        return "selected_pool"
+    if ticker in shadow_tickers:
+        return "shadow_pool"
+    if ticker in candidate_tickers:
+        return "overflow_pool"
+    if ticker in cooldown_review_tickers:
+        return "cooldown_review_pool"
+    return "filtered_out"
 
 
 def _build_shadow_candidate_pool_payload(
@@ -282,39 +300,54 @@ def _build_shadow_candidate_pool_payload(
 ) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
     return build_shadow_candidate_pool_payload_helper(
         candidates,
-        pool_size=pool_size,
-        cooldown_review_candidates=cooldown_review_candidates,
-        focus_filter_diagnostics=focus_filter_diagnostics,
-        candidate_liquidity_sort_key_fn=_candidate_liquidity_sort_key,
-        build_cooldown_review_shadow_payload_fn=build_cooldown_review_shadow_payload,
-        build_shadow_summary_payload_fn=build_shadow_summary_payload,
-        shadow_focus_signature_fn=_shadow_focus_signature,
-        resolve_cooldown_shadow_review_tickers_fn=_resolve_cooldown_shadow_review_tickers,
-        resolve_shadow_focus_tickers_fn=_resolve_shadow_focus_tickers,
-        resolve_shadow_visibility_gap_tickers_fn=_resolve_shadow_visibility_gap_tickers,
-        classify_overflow_candidate_fn=classify_overflow_candidate,
-        select_shadow_rows_fn=select_shadow_rows,
-        build_shadow_lane_payload_fn=build_shadow_lane_payload,
-        min_avg_amount_20d=float(MIN_AVG_AMOUNT_20D),
-        shadow_visibility_gap_tickers=set(SHADOW_VISIBILITY_GAP_TICKERS),
-        shadow_liquidity_corridor_min_gate_share=SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
-        shadow_liquidity_corridor_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE,
-        shadow_liquidity_corridor_focus_min_gate_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
-        shadow_liquidity_corridor_focus_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE,
-        shadow_liquidity_corridor_focus_low_gate_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
-        shadow_liquidity_corridor_visibility_gap_max_cutoff_share=SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE,
-        shadow_rebucket_min_gate_share=SHADOW_REBUCKET_MIN_GATE_SHARE,
-        shadow_rebucket_min_cutoff_share=SHADOW_REBUCKET_MIN_CUTOFF_SHARE,
-        shadow_rebucket_max_cutoff_share=SHADOW_REBUCKET_MAX_CUTOFF_SHARE,
-        shadow_rebucket_focus_min_cutoff_share=SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE,
-        shadow_rebucket_visibility_gap_min_cutoff_share=SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE,
-        shadow_liquidity_corridor_max_tickers=SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS,
-        shadow_rebucket_max_tickers=SHADOW_REBUCKET_MAX_TICKERS,
+        **_build_shadow_candidate_pool_payload_kwargs(
+            pool_size=pool_size,
+            cooldown_review_candidates=cooldown_review_candidates,
+            focus_filter_diagnostics=focus_filter_diagnostics,
+        ),
     )
 
 
+def _build_shadow_candidate_pool_payload_kwargs(
+    *,
+    pool_size: int,
+    cooldown_review_candidates: Optional[List[CandidateStock]],
+    focus_filter_diagnostics: Optional[list[dict[str, Any]]],
+) -> dict[str, Any]:
+    return {
+        "pool_size": pool_size,
+        "cooldown_review_candidates": cooldown_review_candidates,
+        "focus_filter_diagnostics": focus_filter_diagnostics,
+        "candidate_liquidity_sort_key_fn": _candidate_liquidity_sort_key,
+        "build_cooldown_review_shadow_payload_fn": build_cooldown_review_shadow_payload,
+        "build_shadow_summary_payload_fn": build_shadow_summary_payload,
+        "shadow_focus_signature_fn": _shadow_focus_signature,
+        "resolve_cooldown_shadow_review_tickers_fn": _resolve_cooldown_shadow_review_tickers,
+        "resolve_shadow_focus_tickers_fn": _resolve_shadow_focus_tickers,
+        "resolve_shadow_visibility_gap_tickers_fn": _resolve_shadow_visibility_gap_tickers,
+        "classify_overflow_candidate_fn": classify_overflow_candidate,
+        "select_shadow_rows_fn": select_shadow_rows,
+        "build_shadow_lane_payload_fn": build_shadow_lane_payload,
+        "min_avg_amount_20d": float(MIN_AVG_AMOUNT_20D),
+        "shadow_visibility_gap_tickers": set(SHADOW_VISIBILITY_GAP_TICKERS),
+        "shadow_liquidity_corridor_min_gate_share": SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
+        "shadow_liquidity_corridor_max_cutoff_share": SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE,
+        "shadow_liquidity_corridor_focus_min_gate_share": SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
+        "shadow_liquidity_corridor_focus_max_cutoff_share": SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE,
+        "shadow_liquidity_corridor_focus_low_gate_max_cutoff_share": SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+        "shadow_liquidity_corridor_visibility_gap_max_cutoff_share": SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE,
+        "shadow_rebucket_min_gate_share": SHADOW_REBUCKET_MIN_GATE_SHARE,
+        "shadow_rebucket_min_cutoff_share": SHADOW_REBUCKET_MIN_CUTOFF_SHARE,
+        "shadow_rebucket_max_cutoff_share": SHADOW_REBUCKET_MAX_CUTOFF_SHARE,
+        "shadow_rebucket_focus_min_cutoff_share": SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE,
+        "shadow_rebucket_visibility_gap_min_cutoff_share": SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE,
+        "shadow_liquidity_corridor_max_tickers": SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS,
+        "shadow_rebucket_max_tickers": SHADOW_REBUCKET_MAX_TICKERS,
+    }
+
+
 def _build_shadow_summary_from_selected_candidates(selected_candidates: List[CandidateStock], *, pool_size: int) -> dict[str, Any]:
-    cutoff_avg_volume = round(float(selected_candidates[-1].avg_volume_20d), 4) if selected_candidates else 0.0
+    cutoff_avg_volume = _resolve_selected_cutoff_avg_volume(selected_candidates)
     return {
         "pool_size": pool_size,
         "selected_count": len(selected_candidates),
@@ -332,45 +365,56 @@ def _build_shadow_summary_from_selected_candidates(selected_candidates: List[Can
     }
 
 
+def _resolve_selected_cutoff_avg_volume(selected_candidates: List[CandidateStock]) -> float:
+    return round(float(selected_candidates[-1].avg_volume_20d), 4) if selected_candidates else 0.0
+
+
 def _compute_candidate_pool_candidates(
     trade_date: str,
     cooldown_tickers: Optional[Set[str]] = None,
 ) -> tuple[List[CandidateStock], List[CandidateStock], list[dict[str, Any]]]:
     """计算未截断的候选池，供主池与 shadow recall 共同消费。"""
-    return compute_candidate_pool_candidates_helper(
-        trade_date=trade_date,
-        cooldown_tickers=set(cooldown_tickers) if cooldown_tickers is not None else None,
-        min_listing_days=MIN_LISTING_DAYS,
-        min_estimated_amount_1d=MIN_ESTIMATED_AMOUNT_1D,
-        min_avg_amount_20d=MIN_AVG_AMOUNT_20D,
-        tushare_daily_batch_size=TUSHARE_DAILY_BATCH_SIZE,
-        get_pro_fn=_get_pro,
-        get_all_stock_basic_fn=get_all_stock_basic,
-        resolve_cooldown_shadow_review_tickers_fn=_resolve_cooldown_shadow_review_tickers,
-        init_focus_filter_diagnostics_fn=_init_focus_filter_diagnostics,
-        record_focus_filter_stage_fn=_record_focus_filter_stage,
-        build_beijing_exchange_mask_fn=build_beijing_exchange_mask,
-        estimate_trading_days_fn=_estimate_trading_days,
-        get_suspend_list_fn=get_suspend_list,
-        get_limit_list_fn=get_limit_list,
-        resolve_cooldown_tickers_fn=resolve_cooldown_tickers,
-        get_cooled_tickers_fn=get_cooled_tickers,
-        apply_cooldown_filter_fn=apply_cooldown_filter,
-        get_daily_basic_batch_fn=get_daily_basic_batch,
-        build_daily_basic_maps_fn=build_daily_basic_maps,
-        estimate_amount_from_daily_basic_fn=_estimate_amount_from_daily_basic,
-        apply_estimated_liquidity_filter_with_logging_fn=apply_estimated_liquidity_filter_with_logging,
-        load_amount_map_and_low_liquidity_codes_fn=load_amount_map_and_low_liquidity_codes,
-        get_avg_amount_20d_map_fn=_get_avg_amount_20d_map,
-        get_avg_amount_20d_fn=_get_avg_amount_20d,
-        enforce_tushare_daily_rate_limit_fn=_enforce_tushare_daily_rate_limit,
-        filter_low_liquidity_candidates_fn=filter_low_liquidity_candidates,
-        normalize_sw_map_fn=normalize_sw_map,
-        get_sw_industry_classification_fn=get_sw_industry_classification,
-        is_disclosure_window_fn=_is_disclosure_window,
-        build_candidate_stocks_fn=build_candidate_stocks,
-        finalize_focus_filter_diagnostics_fn=_finalize_focus_filter_diagnostics,
-    )
+    return compute_candidate_pool_candidates_helper(**_build_compute_candidate_pool_candidate_kwargs(trade_date, cooldown_tickers))
+
+
+def _build_compute_candidate_pool_candidate_kwargs(
+    trade_date: str,
+    cooldown_tickers: Optional[Set[str]],
+) -> dict[str, Any]:
+    return {
+        "trade_date": trade_date,
+        "cooldown_tickers": set(cooldown_tickers) if cooldown_tickers is not None else None,
+        "min_listing_days": MIN_LISTING_DAYS,
+        "min_estimated_amount_1d": MIN_ESTIMATED_AMOUNT_1D,
+        "min_avg_amount_20d": MIN_AVG_AMOUNT_20D,
+        "tushare_daily_batch_size": TUSHARE_DAILY_BATCH_SIZE,
+        "get_pro_fn": _get_pro,
+        "get_all_stock_basic_fn": get_all_stock_basic,
+        "resolve_cooldown_shadow_review_tickers_fn": _resolve_cooldown_shadow_review_tickers,
+        "init_focus_filter_diagnostics_fn": _init_focus_filter_diagnostics,
+        "record_focus_filter_stage_fn": _record_focus_filter_stage,
+        "build_beijing_exchange_mask_fn": build_beijing_exchange_mask,
+        "estimate_trading_days_fn": _estimate_trading_days,
+        "get_suspend_list_fn": get_suspend_list,
+        "get_limit_list_fn": get_limit_list,
+        "resolve_cooldown_tickers_fn": resolve_cooldown_tickers,
+        "get_cooled_tickers_fn": get_cooled_tickers,
+        "apply_cooldown_filter_fn": apply_cooldown_filter,
+        "get_daily_basic_batch_fn": get_daily_basic_batch,
+        "build_daily_basic_maps_fn": build_daily_basic_maps,
+        "estimate_amount_from_daily_basic_fn": _estimate_amount_from_daily_basic,
+        "apply_estimated_liquidity_filter_with_logging_fn": apply_estimated_liquidity_filter_with_logging,
+        "load_amount_map_and_low_liquidity_codes_fn": load_amount_map_and_low_liquidity_codes,
+        "get_avg_amount_20d_map_fn": _get_avg_amount_20d_map,
+        "get_avg_amount_20d_fn": _get_avg_amount_20d,
+        "enforce_tushare_daily_rate_limit_fn": _enforce_tushare_daily_rate_limit,
+        "filter_low_liquidity_candidates_fn": filter_low_liquidity_candidates,
+        "normalize_sw_map_fn": normalize_sw_map,
+        "get_sw_industry_classification_fn": get_sw_industry_classification,
+        "is_disclosure_window_fn": _is_disclosure_window,
+        "build_candidate_stocks_fn": build_candidate_stocks,
+        "finalize_focus_filter_diagnostics_fn": _finalize_focus_filter_diagnostics,
+    }
 
 
 def build_candidate_pool_with_shadow(
@@ -379,23 +423,38 @@ def build_candidate_pool_with_shadow(
     cooldown_tickers: Optional[Set[str]] = None,
 ) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
     return build_candidate_pool_with_shadow_helper(
-        trade_date=trade_date,
-        use_cache=use_cache,
-        cooldown_tickers=set(cooldown_tickers) if cooldown_tickers is not None else None,
-        snapshot_path=_candidate_pool_snapshot_path(trade_date),
-        legacy_snapshot_path=_candidate_pool_legacy_snapshot_path(trade_date),
-        shadow_snapshot_path=_candidate_pool_shadow_snapshot_path(trade_date),
-        max_candidate_pool_size=MAX_CANDIDATE_POOL_SIZE,
-        shadow_focus_signature_fn=_shadow_focus_signature,
-        load_candidate_pool_shadow_snapshot_fn=_load_candidate_pool_shadow_snapshot,
-        write_candidate_pool_snapshot_fn=_write_candidate_pool_snapshot,
-        load_candidate_pool_snapshot_fn=_load_candidate_pool_snapshot,
-        build_shadow_summary_from_selected_candidates_fn=_build_shadow_summary_from_selected_candidates,
-        write_candidate_pool_shadow_snapshot_fn=_write_candidate_pool_shadow_snapshot,
-        compute_candidate_pool_candidates_fn=_compute_candidate_pool_candidates,
-        build_shadow_candidate_pool_payload_fn=_build_shadow_candidate_pool_payload,
-        finalize_focus_filter_diagnostics_fn=_finalize_focus_filter_diagnostics,
+        **_build_candidate_pool_with_shadow_kwargs(
+            trade_date=trade_date,
+            use_cache=use_cache,
+            cooldown_tickers=cooldown_tickers,
+        )
     )
+
+
+def _build_candidate_pool_with_shadow_kwargs(
+    *,
+    trade_date: str,
+    use_cache: bool,
+    cooldown_tickers: Optional[Set[str]],
+) -> dict[str, Any]:
+    return {
+        "trade_date": trade_date,
+        "use_cache": use_cache,
+        "cooldown_tickers": set(cooldown_tickers) if cooldown_tickers is not None else None,
+        "snapshot_path": _candidate_pool_snapshot_path(trade_date),
+        "legacy_snapshot_path": _candidate_pool_legacy_snapshot_path(trade_date),
+        "shadow_snapshot_path": _candidate_pool_shadow_snapshot_path(trade_date),
+        "max_candidate_pool_size": MAX_CANDIDATE_POOL_SIZE,
+        "shadow_focus_signature_fn": _shadow_focus_signature,
+        "load_candidate_pool_shadow_snapshot_fn": _load_candidate_pool_shadow_snapshot,
+        "write_candidate_pool_snapshot_fn": _write_candidate_pool_snapshot,
+        "load_candidate_pool_snapshot_fn": _load_candidate_pool_snapshot,
+        "build_shadow_summary_from_selected_candidates_fn": _build_shadow_summary_from_selected_candidates,
+        "write_candidate_pool_shadow_snapshot_fn": _write_candidate_pool_shadow_snapshot,
+        "compute_candidate_pool_candidates_fn": _compute_candidate_pool_candidates,
+        "build_shadow_candidate_pool_payload_fn": _build_shadow_candidate_pool_payload,
+        "finalize_focus_filter_diagnostics_fn": _finalize_focus_filter_diagnostics,
+    }
 
 
 # ============================================================================
@@ -483,37 +542,51 @@ def _estimate_trading_days(list_date: str, trade_date: str) -> int:
     使用自然日 × 0.7 近似（A 股年 250 交易日 / 365 自然日 ≈ 0.685）。
     """
     try:
-        dt_list = datetime.strptime(list_date, "%Y%m%d")
-        dt_trade = datetime.strptime(trade_date, "%Y%m%d")
+        dt_list, dt_trade = _parse_trading_day_estimate_dates(list_date, trade_date)
         natural_days = (dt_trade - dt_list).days
         return max(0, int(natural_days * 0.7))
     except (ValueError, TypeError):
         return 0
 
 
+def _parse_trading_day_estimate_dates(list_date: str, trade_date: str) -> tuple[datetime, datetime]:
+    return (
+        datetime.strptime(list_date, "%Y%m%d"),
+        datetime.strptime(trade_date, "%Y%m%d"),
+    )
+
+
 def _get_avg_amount_20d(pro, ts_code: str, trade_date: str) -> float:
     """获取近 20 日平均成交额（万元）。使用 daily_basic 批量缓存优先。"""
     try:
-        # 使用 daily 接口获取近 20 日成交额
-        end_dt = datetime.strptime(trade_date, "%Y%m%d")
-        start_dt = end_dt - timedelta(days=35)  # 多取几天确保覆盖 20 个交易日
         df = _cached_tushare_dataframe_call(
             pro,
             "daily",
             ts_code=ts_code,
-            start_date=start_dt.strftime("%Y%m%d"),
-            end_date=trade_date,
+            **_build_avg_amount_20d_daily_kwargs(trade_date),
             fields="trade_date,amount",
         )
         if df is None or df.empty:
             return 0.0
-        # tushare daily 的 amount 单位是千元
-        amounts = df["amount"].dropna().tail(20)
-        if amounts.empty:
-            return 0.0
-        return float(amounts.mean() / 10.0)  # 千元 → 万元
+        return _resolve_avg_amount_20d_from_daily_df(df)
     except Exception:
         return 0.0
+
+
+def _build_avg_amount_20d_daily_kwargs(trade_date: str) -> dict[str, str]:
+    end_dt = datetime.strptime(trade_date, "%Y%m%d")
+    start_dt = end_dt - timedelta(days=35)
+    return {
+        "start_date": start_dt.strftime("%Y%m%d"),
+        "end_date": trade_date,
+    }
+
+
+def _resolve_avg_amount_20d_from_daily_df(df: pd.DataFrame) -> float:
+    amounts = df["amount"].dropna().tail(20)
+    if amounts.empty:
+        return 0.0
+    return float(amounts.mean() / 10.0)
 
 
 def _get_recent_open_dates(pro, trade_date: str, lookback_sessions: int = 20) -> list[str]:
@@ -532,9 +605,13 @@ def _get_recent_open_dates(pro, trade_date: str, lookback_sessions: int = 20) ->
         )
         if df_cal is None or df_cal.empty:
             return []
-        return [str(value) for value in df_cal["cal_date"].tail(lookback_sessions).tolist()]
+        return _extract_recent_open_dates(df_cal, lookback_sessions)
     except Exception:
         return []
+
+
+def _extract_recent_open_dates(df_cal: pd.DataFrame, lookback_sessions: int) -> list[str]:
+    return [str(value) for value in df_cal["cal_date"].tail(lookback_sessions).tolist()]
 
 
 def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_sessions: int = 20) -> Dict[str, float]:
@@ -556,11 +633,19 @@ def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_
         filtered = df[df["ts_code"].isin(target_codes)]
         if filtered.empty:
             continue
-        for _, row in filtered.iterrows():
-            amount = row.get("amount")
-            if pd.notna(amount):
-                amount_buckets[str(row["ts_code"])].append(float(amount) / 10.0)
+        _accumulate_daily_amount_rows(filtered, amount_buckets)
 
+    return _build_avg_amount_map(amount_buckets)
+
+
+def _accumulate_daily_amount_rows(filtered: pd.DataFrame, amount_buckets: dict[str, list[float]]) -> None:
+    for _, row in filtered.iterrows():
+        amount = row.get("amount")
+        if pd.notna(amount):
+            amount_buckets[str(row["ts_code"])].append(float(amount) / 10.0)
+
+
+def _build_avg_amount_map(amount_buckets: dict[str, list[float]]) -> Dict[str, float]:
     return {
         ts_code: float(sum(amounts) / len(amounts))
         for ts_code, amounts in amount_buckets.items()
@@ -585,12 +670,19 @@ def _enforce_tushare_daily_rate_limit(batch_started_at: float, processed_calls: 
     if not has_more_batches or processed_calls <= 0:
         return 0.0
 
-    target_seconds = processed_calls * (60.0 / TUSHARE_DAILY_CALLS_PER_MINUTE)
-    elapsed_seconds = perf_counter() - batch_started_at
-    sleep_seconds = max(0.0, target_seconds - elapsed_seconds)
+    sleep_seconds = _resolve_tushare_daily_sleep_seconds(
+        batch_started_at=batch_started_at,
+        processed_calls=processed_calls,
+    )
     if sleep_seconds > 0:
         time.sleep(sleep_seconds)
     return sleep_seconds
+
+
+def _resolve_tushare_daily_sleep_seconds(*, batch_started_at: float, processed_calls: int) -> float:
+    target_seconds = processed_calls * (60.0 / TUSHARE_DAILY_CALLS_PER_MINUTE)
+    elapsed_seconds = perf_counter() - batch_started_at
+    return max(0.0, target_seconds - elapsed_seconds)
 
 
 def build_candidate_pool(

@@ -137,18 +137,13 @@ def process_short_trade_candidate_diagnostic(
     reason, candidate_source, upstream_candidate_source, candidate_reason_codes = resolve_short_trade_candidate_context_fn(shadow_candidate)
     candidate_entry = build_short_trade_boundary_entry_fn(
         item=item,
-        reason=reason,
-        rank=0,
-        candidate_source=candidate_source,
-        upstream_candidate_source=upstream_candidate_source,
-        candidate_reason_codes=candidate_reason_codes,
-        candidate_pool_rank=int(shadow_candidate.candidate_pool_rank or 0) if shadow_candidate else None,
-        candidate_pool_lane=str(shadow_candidate.candidate_pool_lane or "") if shadow_candidate else None,
-        candidate_pool_shadow_reason=str(shadow_candidate.candidate_pool_shadow_reason or "") if shadow_candidate else None,
-        candidate_pool_avg_amount_share_of_cutoff=round(float(shadow_candidate.candidate_pool_avg_amount_share_of_cutoff), 4) if shadow_candidate else None,
-        candidate_pool_avg_amount_share_of_min_gate=round(float(shadow_candidate.candidate_pool_avg_amount_share_of_min_gate), 4) if shadow_candidate else None,
-        shadow_visibility_gap_selected=bool(shadow_candidate.shadow_visibility_gap_selected) if shadow_candidate else False,
-        shadow_visibility_gap_relaxed_band=bool(shadow_candidate.shadow_visibility_gap_relaxed_band) if shadow_candidate else False,
+        **_build_short_trade_boundary_entry_kwargs(
+            shadow_candidate=shadow_candidate,
+            reason=reason,
+            candidate_source=candidate_source,
+            upstream_candidate_source=upstream_candidate_source,
+            candidate_reason_codes=candidate_reason_codes,
+        ),
     )
     historical_prior = resolve_historical_prior_for_ticker_fn(
         ticker=str(item.ticker or ""),
@@ -170,18 +165,14 @@ def process_short_trade_candidate_diagnostic(
         float(item.score_b),
     )
     if qualified:
-        return {
-            "qualified": True,
-            "filter_reason": filter_reason,
-            "candidate_ranked": (
-                *base_rank,
-                {
-                    **candidate_entry,
-                    "short_trade_boundary_metrics": metrics_payload,
-                    **({"shadow_release_historical_support": historical_support} if historical_prior else {}),
-                },
-            ),
-        }
+        return _build_qualified_short_trade_candidate_result(
+            base_rank=base_rank,
+            filter_reason=filter_reason,
+            candidate_entry=candidate_entry,
+            metrics_payload=metrics_payload,
+            historical_prior=historical_prior,
+            historical_support=historical_support,
+        )
 
     result: dict[str, Any] = {
         "qualified": False,
@@ -217,6 +208,51 @@ def process_short_trade_candidate_diagnostic(
             ),
         )
     return result
+
+
+def _build_short_trade_boundary_entry_kwargs(
+    *,
+    shadow_candidate: Any,
+    reason: str,
+    candidate_source: str,
+    upstream_candidate_source: str,
+    candidate_reason_codes: list[str],
+) -> dict[str, Any]:
+    return {
+        "reason": reason,
+        "rank": 0,
+        "candidate_source": candidate_source,
+        "upstream_candidate_source": upstream_candidate_source,
+        "candidate_reason_codes": candidate_reason_codes,
+        "candidate_pool_rank": int(shadow_candidate.candidate_pool_rank or 0) if shadow_candidate else None,
+        "candidate_pool_lane": str(shadow_candidate.candidate_pool_lane or "") if shadow_candidate else None,
+        "candidate_pool_shadow_reason": str(shadow_candidate.candidate_pool_shadow_reason or "") if shadow_candidate else None,
+        "candidate_pool_avg_amount_share_of_cutoff": round(float(shadow_candidate.candidate_pool_avg_amount_share_of_cutoff), 4) if shadow_candidate else None,
+        "candidate_pool_avg_amount_share_of_min_gate": round(float(shadow_candidate.candidate_pool_avg_amount_share_of_min_gate), 4) if shadow_candidate else None,
+        "shadow_visibility_gap_selected": bool(shadow_candidate.shadow_visibility_gap_selected) if shadow_candidate else False,
+        "shadow_visibility_gap_relaxed_band": bool(shadow_candidate.shadow_visibility_gap_relaxed_band) if shadow_candidate else False,
+    }
+
+
+def _build_qualified_short_trade_candidate_result(
+    *,
+    base_rank: tuple[float, float, float],
+    filter_reason: str,
+    candidate_entry: dict[str, Any],
+    metrics_payload: dict[str, Any],
+    historical_prior: dict[str, Any],
+    historical_support: dict[str, Any],
+) -> dict[str, Any]:
+    ranked_candidate_entry = {
+        **candidate_entry,
+        "short_trade_boundary_metrics": metrics_payload,
+        **({"shadow_release_historical_support": historical_support} if historical_prior else {}),
+    }
+    return {
+        "qualified": True,
+        "filter_reason": filter_reason,
+        "candidate_ranked": (*base_rank, ranked_candidate_entry),
+    }
 
 
 def build_short_trade_candidate_diagnostics_payload(
