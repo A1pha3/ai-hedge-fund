@@ -748,6 +748,112 @@ def test_derive_btst_control_tower_overview_falls_back_to_synthesis_recommendati
     }
 
 
+def test_derive_btst_control_tower_overview_marks_reference_mismatch(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+    delta_json_path = tmp_path / "btst_open_ready_delta_latest.json"
+    _write_json(
+        delta_json_path,
+        {
+            "generated_at": "2026-03-31T08:19:55",
+            "current_reference": {
+                "report_dir": "data/reports/other_report",
+                "selection_target": "short_trade_only",
+                "trade_date": "2026-03-11",
+                "next_trade_date": "2026-03-12",
+            },
+            "priority_delta": {"has_changes": True},
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_btst_control_tower_overview(report_dir) == {
+        "available": True,
+        "generated_at": "2026-03-31T08:19:55",
+        "comparison_basis": None,
+        "overall_delta_verdict": None,
+        "operator_focus": [],
+        "current_reference": {
+            "report_dir": "data/reports/other_report",
+            "report_name": "other_report",
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+        },
+        "previous_reference": None,
+        "selected_report_matches_current_reference": False,
+        "priority_has_changes": True,
+        "governance_has_changes": False,
+        "replay_has_changes": False,
+        "governance_overall_verdict": None,
+        "recommendation": None,
+        "waiting_lane_count": None,
+        "ready_lane_count": None,
+        "lane_status_counts": {},
+        "refresh_status": {},
+        "closed_frontiers": [],
+        "rollout_lane_rows": [],
+        "next_actions": [],
+        "artifacts": {
+            "open_ready_delta_json": str(delta_json_path),
+        },
+    }
+
+
+def test_derive_btst_rollout_lane_rows_returns_empty_without_rollout_governance(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_btst_rollout_lane_rows({}, resolve_contexts=False) == []
+
+
+def test_derive_btst_rollout_lane_rows_uses_governance_row_fallbacks_without_contexts(tmp_path: Path) -> None:
+    rollout_governance_json_path = tmp_path / "rollout_governance.json"
+    _write_json(
+        rollout_governance_json_path,
+        {
+            "governance_rows": [
+                {
+                    "ticker": "300724",
+                    "governance_tier": "structural_shadow_hold_only",
+                    "status": "shadow_only",
+                    "blocker": "post_release_quality_negative",
+                    "next_step": "继续结构化 shadow 观察。",
+                    "evidence": {
+                        "target_case_count": 2,
+                        "missing_window_count": 1,
+                    },
+                }
+            ]
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_btst_rollout_lane_rows(
+        {
+            "source_reports": {
+                "rollout_governance": str(rollout_governance_json_path),
+            }
+        },
+        resolve_contexts=False,
+    ) == [
+        {
+            "lane_id": None,
+            "ticker": "300724",
+            "governance_tier": "structural_shadow_hold_only",
+            "lane_status": "shadow_only",
+            "action_tier": None,
+            "blocker": "post_release_quality_negative",
+            "validation_verdict": None,
+            "missing_window_count": None,
+            "next_step": "继续结构化 shadow 观察。",
+            "evidence_highlights": ["cases 2", "missing windows 1"],
+            "context_reference": None,
+        }
+    ]
+
+
 def test_derive_btst_followup_overview_returns_none_without_artifacts(tmp_path: Path) -> None:
     service = _build_service_with_db(tmp_path)
 
@@ -1113,6 +1219,98 @@ def test_build_replay_summary_omits_ticker_details_when_not_requested(tmp_path: 
     assert summary["deployment_funnel_runtime"]["avg_post_market_seconds"] == 4.0
     assert "ticker_execution_digest" not in summary
     assert "final_portfolio_snapshot" not in summary
+
+
+def test_derive_dual_target_overview_returns_none_without_target_metadata(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_dual_target_overview([("2026-03-11", {})]) is None
+
+
+def test_derive_dual_target_overview_limits_reasons_and_cases(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    overview = service._derive_dual_target_overview(
+        [
+            (
+                "2026-03-11",
+                {
+                    "target_mode": "dual_target",
+                    "target_summary": {
+                        "selection_target_count": 1,
+                        "research_target_count": 1,
+                        "short_trade_target_count": 1,
+                        "research_selected_count": 1,
+                        "research_near_miss_count": 0,
+                        "research_rejected_count": 0,
+                        "short_trade_selected_count": 1,
+                        "short_trade_near_miss_count": 0,
+                        "short_trade_blocked_count": 0,
+                        "short_trade_rejected_count": 0,
+                        "shell_target_count": 0,
+                    },
+                    "dual_target_delta": {
+                        "dominant_delta_reasons": ["r1", "r2", "r3", "r4", "r5", "r6"],
+                        "representative_cases": [
+                            {"ticker": "000001"},
+                            {"ticker": "000002"},
+                            {"ticker": "000003"},
+                            {"ticker": "000004"},
+                            {"ticker": "000005"},
+                            {"ticker": "000006"},
+                        ],
+                    },
+                },
+            )
+        ]
+    )
+
+    assert overview["target_mode_counts"] == {"dual_target": 1}
+    assert overview["dual_target_trade_date_count"] == 1
+    assert overview["dominant_delta_reasons"] == ["r1", "r2", "r3", "r4", "r5"]
+    assert overview["dominant_delta_reason_counts"] == {"r1": 1, "r2": 1, "r3": 1, "r4": 1, "r5": 1, "r6": 1}
+    assert overview["representative_cases"] == [
+        {
+            "trade_date": "2026-03-11",
+            "ticker": "000001",
+            "delta_classification": None,
+            "research_decision": None,
+            "short_trade_decision": None,
+            "delta_summary": [],
+        },
+        {
+            "trade_date": "2026-03-11",
+            "ticker": "000002",
+            "delta_classification": None,
+            "research_decision": None,
+            "short_trade_decision": None,
+            "delta_summary": [],
+        },
+        {
+            "trade_date": "2026-03-11",
+            "ticker": "000003",
+            "delta_classification": None,
+            "research_decision": None,
+            "short_trade_decision": None,
+            "delta_summary": [],
+        },
+        {
+            "trade_date": "2026-03-11",
+            "ticker": "000004",
+            "delta_classification": None,
+            "research_decision": None,
+            "short_trade_decision": None,
+            "delta_summary": [],
+        },
+        {
+            "trade_date": "2026-03-11",
+            "ticker": "000005",
+            "delta_classification": None,
+            "research_decision": None,
+            "short_trade_decision": None,
+            "delta_summary": [],
+        },
+    ]
 
 
 def test_append_selection_artifact_feedback_updates_summary(tmp_path: Path) -> None:

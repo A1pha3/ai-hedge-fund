@@ -958,19 +958,20 @@ class ReplayArtifactService:
             "avg_post_market_seconds": self._safe_average(post_market_seconds),
         }
 
-    def _derive_cache_benchmark_overview(self, session_summary: dict[str, Any]) -> dict[str, Any]:
-        artifacts = session_summary.get("artifacts") or {}
-        benchmark_payload = session_summary.get("data_cache_benchmark") or {}
-        benchmark_status = session_summary.get("data_cache_benchmark_status") or {}
+    def _resolve_cache_benchmark_summary(self, benchmark_payload: dict[str, Any]) -> dict[str, Any]:
         benchmark_summary = benchmark_payload.get("summary") if isinstance(benchmark_payload, dict) else {}
-        if not isinstance(benchmark_summary, dict):
-            benchmark_summary = {}
+        return benchmark_summary if isinstance(benchmark_summary, dict) else {}
 
+    def _build_cache_benchmark_status(self, benchmark_status: dict[str, Any], benchmark_payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "requested": bool(benchmark_status.get("requested") or benchmark_payload.get("requested") or False),
             "executed": bool(benchmark_status.get("executed") or benchmark_payload.get("executed") or False),
             "write_status": benchmark_status.get("write_status") or benchmark_payload.get("write_status"),
             "reason": benchmark_status.get("reason") or benchmark_payload.get("reason"),
+        }
+
+    def _build_cache_benchmark_metrics(self, benchmark_payload: dict[str, Any], benchmark_summary: dict[str, Any]) -> dict[str, Any]:
+        return {
             "ticker": benchmark_payload.get("ticker"),
             "trade_date": benchmark_payload.get("trade_date"),
             "reuse_confirmed": benchmark_summary.get("reuse_confirmed"),
@@ -979,16 +980,29 @@ class ReplayArtifactService:
             "set_reduction": benchmark_summary.get("set_reduction"),
             "first_hit_rate": benchmark_summary.get("first_hit_rate"),
             "second_hit_rate": benchmark_summary.get("second_hit_rate"),
-            "artifacts": {
-                key: value
-                for key, value in {
-                    "data_cache_benchmark_json": artifacts.get("data_cache_benchmark_json"),
-                    "data_cache_benchmark_markdown": artifacts.get("data_cache_benchmark_markdown"),
-                    "data_cache_benchmark_appended_report": artifacts.get("data_cache_benchmark_appended_report"),
-                }.items()
-                if value
-            },
         }
+
+    def _build_cache_benchmark_artifacts(self, artifacts: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in {
+                "data_cache_benchmark_json": artifacts.get("data_cache_benchmark_json"),
+                "data_cache_benchmark_markdown": artifacts.get("data_cache_benchmark_markdown"),
+                "data_cache_benchmark_appended_report": artifacts.get("data_cache_benchmark_appended_report"),
+            }.items()
+            if value
+        }
+
+    def _derive_cache_benchmark_overview(self, session_summary: dict[str, Any]) -> dict[str, Any]:
+        artifacts = session_summary.get("artifacts") or {}
+        benchmark_payload = session_summary.get("data_cache_benchmark") or {}
+        benchmark_status = session_summary.get("data_cache_benchmark_status") or {}
+        benchmark_summary = self._resolve_cache_benchmark_summary(benchmark_payload)
+
+        overview = self._build_cache_benchmark_status(benchmark_status, benchmark_payload)
+        overview.update(self._build_cache_benchmark_metrics(benchmark_payload, benchmark_summary))
+        overview["artifacts"] = self._build_cache_benchmark_artifacts(artifacts)
+        return overview
 
     def _resolve_btst_followup_artifact_paths(self, session_summary: dict[str, Any]) -> dict[str, Any]:
         followup = session_summary.get("btst_followup") or {}
@@ -1232,6 +1246,45 @@ class ReplayArtifactService:
 
         return highlights
 
+    def _load_btst_rollout_governance_payload(self, governance_synthesis_payload: dict[str, Any]) -> dict[str, Any]:
+        source_reports = dict(governance_synthesis_payload.get("source_reports") or {})
+        rollout_governance_path = source_reports.get("rollout_governance")
+        if not rollout_governance_path:
+            return {}
+        rollout_governance_file = Path(rollout_governance_path)
+        if not rollout_governance_file.exists():
+            return {}
+        return self._read_json(rollout_governance_file)
+
+    def _extract_btst_governance_rows(self, rollout_governance_payload: dict[str, Any]) -> list[dict[str, Any]]:
+        return [dict(row) for row in list(rollout_governance_payload.get("governance_rows") or []) if isinstance(row, dict)]
+
+    def _build_btst_lane_matrix(self, governance_synthesis_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        return {str(row.get("ticker") or row.get("lane_id") or ""): dict(row) for row in list(governance_synthesis_payload.get("lane_matrix") or []) if isinstance(row, dict)}
+
+    def _build_btst_rollout_lane_row(
+        self,
+        governance_row: dict[str, Any],
+        *,
+        lane_matrix: dict[str, dict[str, Any]],
+        context_index: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        ticker = self._extract_btst_ticker(governance_row.get("ticker"))
+        matrix_row = lane_matrix.get(str(governance_row.get("ticker") or ""), {})
+        return {
+            "lane_id": matrix_row.get("lane_id"),
+            "ticker": governance_row.get("ticker"),
+            "governance_tier": governance_row.get("governance_tier") or matrix_row.get("governance_tier"),
+            "lane_status": governance_row.get("status") or matrix_row.get("lane_status"),
+            "action_tier": matrix_row.get("action_tier"),
+            "blocker": governance_row.get("blocker") or matrix_row.get("blocker"),
+            "validation_verdict": matrix_row.get("validation_verdict"),
+            "missing_window_count": matrix_row.get("missing_window_count"),
+            "next_step": governance_row.get("next_step") or matrix_row.get("next_step"),
+            "evidence_highlights": self._summarize_btst_lane_evidence(governance_row.get("evidence") or {}),
+            "context_reference": context_index.get(ticker) if ticker else None,
+        }
+
     def _derive_btst_rollout_lane_rows(
         self,
         governance_synthesis_payload: dict[str, Any],
@@ -1239,37 +1292,21 @@ class ReplayArtifactService:
         resolve_contexts: bool,
         preferred_report_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        source_reports = dict(governance_synthesis_payload.get("source_reports") or {})
-        rollout_governance_path = source_reports.get("rollout_governance")
-        rollout_governance_payload = self._read_json(Path(rollout_governance_path)) if rollout_governance_path and Path(rollout_governance_path).exists() else {}
-        governance_rows = [dict(row) for row in list(rollout_governance_payload.get("governance_rows") or []) if isinstance(row, dict)]
+        rollout_governance_payload = self._load_btst_rollout_governance_payload(governance_synthesis_payload)
+        governance_rows = self._extract_btst_governance_rows(rollout_governance_payload)
         if not governance_rows:
             return []
 
-        lane_matrix = {str(row.get("ticker") or row.get("lane_id") or ""): dict(row) for row in list(governance_synthesis_payload.get("lane_matrix") or []) if isinstance(row, dict)}
+        lane_matrix = self._build_btst_lane_matrix(governance_synthesis_payload)
         context_index = self._build_btst_replay_context_index(preferred_report_names=preferred_report_names) if resolve_contexts else {}
-
-        lane_rows: list[dict[str, Any]] = []
-        for governance_row in governance_rows:
-            ticker = self._extract_btst_ticker(governance_row.get("ticker"))
-            matrix_row = lane_matrix.get(str(governance_row.get("ticker") or ""), {})
-            lane_rows.append(
-                {
-                    "lane_id": matrix_row.get("lane_id"),
-                    "ticker": governance_row.get("ticker"),
-                    "governance_tier": governance_row.get("governance_tier") or matrix_row.get("governance_tier"),
-                    "lane_status": governance_row.get("status") or matrix_row.get("lane_status"),
-                    "action_tier": matrix_row.get("action_tier"),
-                    "blocker": governance_row.get("blocker") or matrix_row.get("blocker"),
-                    "validation_verdict": matrix_row.get("validation_verdict"),
-                    "missing_window_count": matrix_row.get("missing_window_count"),
-                    "next_step": governance_row.get("next_step") or matrix_row.get("next_step"),
-                    "evidence_highlights": self._summarize_btst_lane_evidence(governance_row.get("evidence") or {}),
-                    "context_reference": context_index.get(ticker) if ticker else None,
-                }
+        return [
+            self._build_btst_rollout_lane_row(
+                governance_row,
+                lane_matrix=lane_matrix,
+                context_index=context_index,
             )
-
-        return lane_rows
+            for governance_row in governance_rows
+        ]
 
     def _btst_control_tower_paths(self) -> dict[str, Path]:
         return {
@@ -1373,22 +1410,30 @@ class ReplayArtifactService:
             )
         return closed_frontiers
 
-    def _derive_btst_control_tower_overview(self, report_dir: Path, *, resolve_contexts: bool = False) -> dict[str, Any] | None:
-        paths = self._btst_control_tower_paths()
-        if not any(paths[key].exists() for key in ("delta_json", "delta_markdown", "nightly_json", "nightly_markdown")):
-            return None
-
+    def _load_btst_control_tower_payloads(self, paths: dict[str, Path]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         delta_payload = self._read_json(paths["delta_json"]) if paths["delta_json"].exists() else {}
         nightly_payload = self._read_json(paths["nightly_json"]) if paths["nightly_json"].exists() else {}
         governance_synthesis_payload = self._read_json(paths["governance_synthesis_json"]) if paths["governance_synthesis_json"].exists() else {}
-        control_tower_snapshot = nightly_payload.get("control_tower_snapshot") or {}
-        validation = control_tower_snapshot.get("validation") or {}
-        source_paths = delta_payload.get("source_paths") or {}
-        governance_source_reports = dict(governance_synthesis_payload.get("source_reports") or {})
+        return delta_payload, nightly_payload, governance_synthesis_payload
 
+    def _derive_btst_control_tower_references(
+        self,
+        delta_payload: dict[str, Any],
+        nightly_payload: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         current_reference = self._normalize_btst_reference(delta_payload.get("current_reference")) or self._normalize_btst_reference(nightly_payload.get("latest_btst_run"))
         previous_reference = self._normalize_btst_reference(delta_payload.get("previous_reference"))
+        return current_reference, previous_reference
 
+    def _derive_btst_control_tower_rollout_bundle(
+        self,
+        report_dir: Path,
+        *,
+        current_reference: dict[str, Any] | None,
+        previous_reference: dict[str, Any] | None,
+        governance_synthesis_payload: dict[str, Any],
+        resolve_contexts: bool,
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
         preferred_report_names = self._build_btst_control_tower_preferred_report_names(report_dir, current_reference, previous_reference)
         rollout_lane_rows = self._derive_btst_rollout_lane_rows(
             governance_synthesis_payload,
@@ -1396,19 +1441,27 @@ class ReplayArtifactService:
             preferred_report_names=preferred_report_names,
         )
         lane_context_by_ticker = {str(row.get("ticker")): dict(row.get("context_reference") or {}) for row in rollout_lane_rows if row.get("ticker") and row.get("context_reference")}
+        return rollout_lane_rows, lane_context_by_ticker
 
-        next_actions = self._derive_btst_control_tower_next_actions(control_tower_snapshot, lane_context_by_ticker)
-        artifacts = self._build_btst_control_tower_artifacts(
-            paths=paths,
-            source_paths=source_paths,
-            governance_source_reports=governance_source_reports,
-        )
-        priority_delta = delta_payload.get("priority_delta") or {}
-        governance_delta = delta_payload.get("governance_delta") or {}
-        replay_delta = delta_payload.get("replay_delta") or {}
-        recommendation = self._extract_btst_control_tower_recommendation(control_tower_snapshot)
-        closed_frontiers = self._derive_btst_control_tower_closed_frontiers(control_tower_snapshot)
-
+    def _build_btst_control_tower_overview(
+        self,
+        report_dir: Path,
+        *,
+        delta_payload: dict[str, Any],
+        nightly_payload: dict[str, Any],
+        control_tower_snapshot: dict[str, Any],
+        validation: dict[str, Any],
+        current_reference: dict[str, Any] | None,
+        previous_reference: dict[str, Any] | None,
+        priority_delta: dict[str, Any],
+        governance_delta: dict[str, Any],
+        replay_delta: dict[str, Any],
+        recommendation: Any,
+        closed_frontiers: list[dict[str, Any]],
+        rollout_lane_rows: list[dict[str, Any]],
+        next_actions: list[dict[str, Any]],
+        artifacts: dict[str, Any],
+    ) -> dict[str, Any]:
         return {
             "available": True,
             "generated_at": delta_payload.get("generated_at") or nightly_payload.get("generated_at"),
@@ -1432,6 +1485,55 @@ class ReplayArtifactService:
             "next_actions": next_actions,
             "artifacts": artifacts,
         }
+
+    def _derive_btst_control_tower_overview(self, report_dir: Path, *, resolve_contexts: bool = False) -> dict[str, Any] | None:
+        paths = self._btst_control_tower_paths()
+        if not any(paths[key].exists() for key in ("delta_json", "delta_markdown", "nightly_json", "nightly_markdown")):
+            return None
+
+        delta_payload, nightly_payload, governance_synthesis_payload = self._load_btst_control_tower_payloads(paths)
+        control_tower_snapshot = nightly_payload.get("control_tower_snapshot") or {}
+        validation = control_tower_snapshot.get("validation") or {}
+        source_paths = delta_payload.get("source_paths") or {}
+        governance_source_reports = dict(governance_synthesis_payload.get("source_reports") or {})
+
+        current_reference, previous_reference = self._derive_btst_control_tower_references(delta_payload, nightly_payload)
+        rollout_lane_rows, lane_context_by_ticker = self._derive_btst_control_tower_rollout_bundle(
+            report_dir,
+            current_reference=current_reference,
+            previous_reference=previous_reference,
+            governance_synthesis_payload=governance_synthesis_payload,
+            resolve_contexts=resolve_contexts,
+        )
+        next_actions = self._derive_btst_control_tower_next_actions(control_tower_snapshot, lane_context_by_ticker)
+        artifacts = self._build_btst_control_tower_artifacts(
+            paths=paths,
+            source_paths=source_paths,
+            governance_source_reports=governance_source_reports,
+        )
+        priority_delta = delta_payload.get("priority_delta") or {}
+        governance_delta = delta_payload.get("governance_delta") or {}
+        replay_delta = delta_payload.get("replay_delta") or {}
+        recommendation = self._extract_btst_control_tower_recommendation(control_tower_snapshot)
+        closed_frontiers = self._derive_btst_control_tower_closed_frontiers(control_tower_snapshot)
+
+        return self._build_btst_control_tower_overview(
+            report_dir,
+            delta_payload=delta_payload,
+            nightly_payload=nightly_payload,
+            control_tower_snapshot=control_tower_snapshot,
+            validation=validation,
+            current_reference=current_reference,
+            previous_reference=previous_reference,
+            priority_delta=priority_delta,
+            governance_delta=governance_delta,
+            replay_delta=replay_delta,
+            recommendation=recommendation,
+            closed_frontiers=closed_frontiers,
+            rollout_lane_rows=rollout_lane_rows,
+            next_actions=next_actions,
+            artifacts=artifacts,
+        )
 
     def _build_unavailable_selection_artifact_overview(
         self,
@@ -1591,47 +1693,62 @@ class ReplayArtifactService:
             "latest_profile_config": latest_profile_config or {},
         }
 
-    def _derive_dual_target_overview(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
-        target_mode_counts: Counter[str] = Counter()
-        delta_classification_counts: Counter[str] = Counter()
-        dominant_delta_reason_counts: Counter[str] = Counter()
-        aggregated_counts: Counter[str] = Counter()
-        representative_cases: list[dict[str, Any]] = []
-        dual_target_trade_date_count = 0
-        seen_any_target_metadata = False
+    def _initialize_dual_target_overview_state(self) -> dict[str, Any]:
+        return {
+            "target_mode_counts": Counter(),
+            "delta_classification_counts": Counter(),
+            "dominant_delta_reason_counts": Counter(),
+            "aggregated_counts": Counter(),
+            "representative_cases": [],
+            "dual_target_trade_date_count": 0,
+            "seen_any_target_metadata": False,
+        }
 
-        for trade_date, snapshot in snapshots_by_trade_date:
-            target_summary = snapshot.get("target_summary") or {}
-            dual_target_delta = snapshot.get("dual_target_delta") or {}
-            target_mode = snapshot.get("target_mode") or target_summary.get("target_mode")
+    def _accumulate_dual_target_overview_snapshot(
+        self,
+        *,
+        trade_date: str,
+        snapshot: dict[str, Any],
+        state: dict[str, Any],
+    ) -> None:
+        target_summary = snapshot.get("target_summary") or {}
+        dual_target_delta = snapshot.get("dual_target_delta") or {}
+        target_mode = snapshot.get("target_mode") or target_summary.get("target_mode")
 
-            if target_mode:
-                normalized_target_mode = str(target_mode)
-                target_mode_counts[normalized_target_mode] += 1
-                seen_any_target_metadata = True
-                if normalized_target_mode == "dual_target":
-                    dual_target_trade_date_count += 1
+        if target_mode:
+            normalized_target_mode = str(target_mode)
+            state["target_mode_counts"][normalized_target_mode] += 1
+            state["seen_any_target_metadata"] = True
+            if normalized_target_mode == "dual_target":
+                state["dual_target_trade_date_count"] += 1
 
-            if isinstance(target_summary, dict) and target_summary:
-                seen_any_target_metadata = True
-                self._accumulate_target_summary_metadata(target_summary, aggregated_counts, delta_classification_counts)
+        if isinstance(target_summary, dict) and target_summary:
+            state["seen_any_target_metadata"] = True
+            self._accumulate_target_summary_metadata(
+                target_summary,
+                state["aggregated_counts"],
+                state["delta_classification_counts"],
+            )
 
-            if isinstance(dual_target_delta, dict) and dual_target_delta:
-                seen_any_target_metadata = True
-                self._accumulate_dual_target_delta_metadata(
-                    trade_date,
-                    dual_target_delta,
-                    delta_classification_counts,
-                    dominant_delta_reason_counts,
-                    representative_cases,
-                )
+        if isinstance(dual_target_delta, dict) and dual_target_delta:
+            state["seen_any_target_metadata"] = True
+            self._accumulate_dual_target_delta_metadata(
+                trade_date,
+                dual_target_delta,
+                state["delta_classification_counts"],
+                state["dominant_delta_reason_counts"],
+                state["representative_cases"],
+            )
 
-        if not seen_any_target_metadata:
+    def _build_dual_target_overview_from_state(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        if not state["seen_any_target_metadata"]:
             return None
 
+        aggregated_counts: Counter[str] = state["aggregated_counts"]
+        dominant_delta_reason_counts: Counter[str] = state["dominant_delta_reason_counts"]
         return {
-            "target_mode_counts": dict(target_mode_counts),
-            "dual_target_trade_date_count": dual_target_trade_date_count,
+            "target_mode_counts": dict(state["target_mode_counts"]),
+            "dual_target_trade_date_count": state["dual_target_trade_date_count"],
             "selection_target_count": aggregated_counts["selection_target_count"],
             "research_target_count": aggregated_counts["research_target_count"],
             "short_trade_target_count": aggregated_counts["short_trade_target_count"],
@@ -1643,11 +1760,23 @@ class ReplayArtifactService:
             "short_trade_blocked_count": aggregated_counts["short_trade_blocked_count"],
             "short_trade_rejected_count": aggregated_counts["short_trade_rejected_count"],
             "shell_target_count": aggregated_counts["shell_target_count"],
-            "delta_classification_counts": dict(delta_classification_counts),
+            "delta_classification_counts": dict(state["delta_classification_counts"]),
             "dominant_delta_reasons": [reason for reason, _count in dominant_delta_reason_counts.most_common(5)],
             "dominant_delta_reason_counts": dict(dominant_delta_reason_counts),
-            "representative_cases": representative_cases[:5],
+            "representative_cases": state["representative_cases"][:5],
         }
+
+    def _derive_dual_target_overview(self, snapshots_by_trade_date: list[tuple[str, dict[str, Any]]]) -> dict[str, Any] | None:
+        state = self._initialize_dual_target_overview_state()
+
+        for trade_date, snapshot in snapshots_by_trade_date:
+            self._accumulate_dual_target_overview_snapshot(
+                trade_date=trade_date,
+                snapshot=snapshot,
+                state=state,
+            )
+
+        return self._build_dual_target_overview_from_state(state)
 
     def _get_report_dir(self, report_name: str) -> Path:
         report_dir = self._reports_root / report_name
