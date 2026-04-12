@@ -109,8 +109,13 @@ def _append_short_trade_snapshot_blockers(
         blockers.append("missing_trend_signal")
         gate_status["data"] = "fail"
     if input_data.bc_conflict in profile.hard_block_bearish_conflicts:
-        blockers.append("layer_c_bearish_conflict")
-        gate_status["structural"] = "fail"
+        score_b = float(getattr(input_data, "score_b", 0.0) or 0.0)
+        score_c = float(getattr(input_data, "score_c", 0.0) or 0.0)
+        if score_b >= 0.50 and score_c >= -0.08:
+            pass
+        else:
+            blockers.append("layer_c_bearish_conflict")
+            gate_status["structural"] = "fail"
     if signal_signed_strength_fn(trend_signal) <= 0.0:
         blockers.append("trend_not_constructive")
         gate_status["structural"] = "fail"
