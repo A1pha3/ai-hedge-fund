@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -676,6 +677,442 @@ def test_get_selection_artifact_day_returns_snapshot_and_review(tmp_path: Path) 
         "2026-03-23T10:00:00+08:00",
         "2026-03-22T10:00:00+08:00",
     ]
+
+
+def test_derive_btst_control_tower_overview_returns_none_without_artifacts(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+
+    assert service._derive_btst_control_tower_overview(report_dir) is None
+
+
+def test_derive_btst_control_tower_overview_falls_back_to_synthesis_recommendation(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+    nightly_json_path = tmp_path / "btst_nightly_control_tower_latest.json"
+
+    _write_json(
+        nightly_json_path,
+        {
+            "generated_at": "2026-03-31T08:19:55",
+            "latest_btst_run": {
+                "report_dir": str(report_dir),
+                "selection_target": "short_trade_only",
+                "trade_date": "2026-03-11",
+                "next_trade_date": "2026-03-12",
+            },
+            "control_tower_snapshot": {
+                "synthesis": {
+                    "recommendation": "通过 synthesis recommendation 回退。",
+                },
+                "next_actions": ["invalid"],
+                "closed_frontiers": ["invalid"],
+                "validation": {"overall_verdict": "pass"},
+            },
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_btst_control_tower_overview(report_dir) == {
+        "available": True,
+        "generated_at": "2026-03-31T08:19:55",
+        "comparison_basis": None,
+        "overall_delta_verdict": None,
+        "operator_focus": [],
+        "current_reference": {
+            "report_dir": str(report_dir),
+            "report_name": "demo_report",
+            "selection_target": "short_trade_only",
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+        },
+        "previous_reference": None,
+        "selected_report_matches_current_reference": True,
+        "priority_has_changes": False,
+        "governance_has_changes": False,
+        "replay_has_changes": False,
+        "governance_overall_verdict": "pass",
+        "recommendation": "通过 synthesis recommendation 回退。",
+        "waiting_lane_count": None,
+        "ready_lane_count": None,
+        "lane_status_counts": {},
+        "refresh_status": {},
+        "closed_frontiers": [],
+        "rollout_lane_rows": [],
+        "next_actions": [],
+        "artifacts": {
+            "nightly_control_tower_json": str(nightly_json_path),
+        },
+    }
+
+
+def test_derive_btst_followup_overview_returns_none_without_artifacts(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_btst_followup_overview({}) is None
+
+
+def test_derive_btst_followup_overview_tolerates_invalid_brief_json(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+    brief_json_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    brief_json_path.write_text("{", encoding="utf-8")
+
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_btst_followup_overview(
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "btst_followup": {
+                "trade_date": "2026-03-11",
+                "next_trade_date": "2026-03-12",
+            },
+            "artifacts": {
+                "btst_next_day_trade_brief_json": str(brief_json_path),
+                "btst_premarket_execution_card_json": str(report_dir / "btst_premarket_execution_card_latest.json"),
+            },
+        }
+    ) == {
+        "available": True,
+        "trade_date": "2026-03-11",
+        "next_trade_date": "2026-03-12",
+        "selection_target": "short_trade_only",
+        "primary_entry_ticker": None,
+        "watchlist_tickers": [],
+        "excluded_research_tickers": [],
+        "selected_count": 0,
+        "watchlist_count": 0,
+        "excluded_research_count": 0,
+        "artifacts": {
+            "brief_json": str(brief_json_path),
+            "execution_card_json": str(report_dir / "btst_premarket_execution_card_latest.json"),
+        },
+    }
+
+
+def test_accumulate_daily_event_record_updates_counts_blockers_and_ratios(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    layer_b_values: list[float] = []
+    watchlist_values: list[float] = []
+    buy_order_values: list[float] = []
+    buy_blockers: Counter[str] = Counter()
+    watch_blockers: Counter[str] = Counter()
+    invested_ratios: list[float] = []
+    ticker_buy_counts: Counter[str] = Counter()
+    ticker_sell_counts: Counter[str] = Counter()
+    ticker_max_unrealized: defaultdict[str, float] = defaultdict(float)
+
+    ratio = service._accumulate_daily_event_record(
+        {
+            "current_plan": {
+                "risk_metrics": {
+                    "counts": {"layer_b_count": 3, "watchlist_count": 2, "buy_order_count": 1},
+                    "funnel_diagnostics": {
+                        "filters": {
+                            "watchlist": {"reason_counts": {"needs_review": 2}},
+                            "buy_orders": {"reason_counts": {"blocked_by_signal": 1}},
+                        }
+                    },
+                }
+            },
+            "portfolio_snapshot": {
+                "positions": {
+                    "300724": {
+                        "long": 100,
+                        "max_unrealized_pnl_pct": 0.12,
+                    }
+                }
+            },
+            "current_prices": {"300724": 10.0},
+            "decisions": {
+                "300724": {"action": "buy"},
+                "002916": {"action": "sell"},
+            },
+        },
+        initial_capital=2000.0,
+        layer_b_values=layer_b_values,
+        watchlist_values=watchlist_values,
+        buy_order_values=buy_order_values,
+        buy_blockers=buy_blockers,
+        watch_blockers=watch_blockers,
+        invested_ratios=invested_ratios,
+        ticker_buy_counts=ticker_buy_counts,
+        ticker_sell_counts=ticker_sell_counts,
+        ticker_max_unrealized=ticker_max_unrealized,
+    )
+
+    assert ratio == 0.5
+    assert layer_b_values == [3.0]
+    assert watchlist_values == [2.0]
+    assert buy_order_values == [1.0]
+    assert buy_blockers == {"blocked_by_signal": 1}
+    assert watch_blockers == {"needs_review": 2}
+    assert invested_ratios == [0.5]
+    assert ticker_buy_counts == {"300724": 1}
+    assert ticker_sell_counts == {"002916": 1}
+    assert ticker_max_unrealized["300724"] == 0.12
+
+
+def test_accumulate_daily_event_record_skips_ratio_when_initial_capital_missing(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    invested_ratios: list[float] = []
+    ticker_buy_counts: Counter[str] = Counter()
+    ticker_sell_counts: Counter[str] = Counter()
+    ticker_max_unrealized: defaultdict[str, float] = defaultdict(float)
+
+    ratio = service._accumulate_daily_event_record(
+        {
+            "portfolio_snapshot": {
+                "positions": {
+                    "300724": {
+                        "long": 100,
+                        "max_unrealized_pnl_pct": 0.2,
+                    }
+                }
+            },
+            "current_prices": {"300724": 12.0},
+            "decisions": {"300724": {"action": "buy"}},
+        },
+        initial_capital=0.0,
+        layer_b_values=[],
+        watchlist_values=[],
+        buy_order_values=[],
+        buy_blockers=Counter(),
+        watch_blockers=Counter(),
+        invested_ratios=invested_ratios,
+        ticker_buy_counts=ticker_buy_counts,
+        ticker_sell_counts=ticker_sell_counts,
+        ticker_max_unrealized=ticker_max_unrealized,
+    )
+
+    assert ratio == 0.0
+    assert invested_ratios == []
+    assert ticker_buy_counts == {"300724": 1}
+    assert ticker_sell_counts == {}
+    assert ticker_max_unrealized["300724"] == 0.2
+
+
+def test_derive_selection_artifact_overview_returns_unavailable_when_root_missing(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+    brief_json_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        brief_json_path,
+        {
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+            "selection_target": "short_trade_only",
+            "selected_entries": [{"ticker": "300724"}],
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    assert service._derive_selection_artifact_overview(
+        report_dir,
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "artifacts": {"btst_next_day_trade_brief_json": str(brief_json_path)},
+        },
+        daily_events=[],
+    ) == {
+        "available": False,
+        "trade_date_count": 0,
+        "available_trade_dates": [],
+        "trade_date_target_index": [],
+        "write_status_counts": {},
+        "blocker_counts": [],
+        "short_trade_profile_overview": None,
+        "dual_target_overview": None,
+        "feedback_summary": None,
+        "btst_followup_overview": {
+            "available": True,
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+            "selection_target": "short_trade_only",
+            "primary_entry_ticker": "300724",
+            "watchlist_tickers": [],
+            "excluded_research_tickers": [],
+            "selected_count": 1,
+            "watchlist_count": 0,
+            "excluded_research_count": 0,
+            "artifacts": {
+                "brief_json": str(brief_json_path),
+            },
+        },
+        "btst_control_tower_overview": None,
+    }
+
+
+def test_collect_selection_artifact_snapshots_ignores_missing_snapshot_dirs(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "selection_artifacts"
+    skipped_day_dir = artifact_root / "2026-03-10"
+    included_day_dir = artifact_root / "2026-03-11"
+    skipped_day_dir.mkdir(parents=True)
+    included_day_dir.mkdir(parents=True)
+    _write_json(
+        included_day_dir / "selection_snapshot.json",
+        {
+            "selected": [
+                {"execution_bridge": {"block_reason": "blocked_by_signal"}},
+                "invalid",
+            ]
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    trade_dates, blocker_counts, snapshots_by_trade_date = service._collect_selection_artifact_snapshots(artifact_root)
+
+    assert trade_dates == ["2026-03-11"]
+    assert blocker_counts == {"blocked_by_signal": 1}
+    assert snapshots_by_trade_date == [("2026-03-11", {"selected": [{"execution_bridge": {"block_reason": "blocked_by_signal"}}, "invalid"]})]
+
+
+def test_build_btst_replay_context_index_prefers_preferred_report(tmp_path: Path) -> None:
+    older_report = tmp_path / "older_report"
+    newer_report = tmp_path / "newer_report"
+    older_artifact_root = older_report / "selection_artifacts"
+    newer_artifact_root = newer_report / "selection_artifacts"
+
+    _write_json(
+        older_report / "session_summary.json",
+        {
+            "artifacts": {"selection_artifact_root": str(older_artifact_root)},
+            "plan_generation": {"selection_target": "preferred_target"},
+        },
+    )
+    _write_json(
+        newer_report / "session_summary.json",
+        {
+            "artifacts": {"selection_artifact_root": str(newer_artifact_root)},
+            "plan_generation": {"selection_target": "newer_target"},
+        },
+    )
+    _write_json(
+        older_artifact_root / "2026-03-11" / "selection_snapshot.json",
+        {"selected_symbols": ["300724"]},
+    )
+    _write_json(
+        newer_artifact_root / "2026-03-12" / "selection_snapshot.json",
+        {"selected_symbols": ["300724", "002916"]},
+    )
+
+    service = _build_service_with_db(tmp_path)
+    context_index = service._build_btst_replay_context_index(preferred_report_names=["older_report"])
+
+    assert context_index["300724"] == {
+        "report_name": "older_report",
+        "trade_date": "2026-03-11",
+        "symbol": "300724",
+        "selection_target": "preferred_target",
+    }
+    assert context_index["002916"] == {
+        "report_name": "newer_report",
+        "trade_date": "2026-03-12",
+        "symbol": "002916",
+        "selection_target": "newer_target",
+    }
+
+
+def test_build_btst_replay_context_index_skips_missing_artifact_roots(tmp_path: Path) -> None:
+    valid_report = tmp_path / "valid_report"
+    missing_artifact_report = tmp_path / "missing_artifact_report"
+    valid_artifact_root = valid_report / "selection_artifacts"
+
+    _write_json(
+        valid_report / "session_summary.json",
+        {
+            "artifacts": {"selection_artifact_root": str(valid_artifact_root)},
+            "selection_target": "valid_target",
+        },
+    )
+    _write_json(
+        valid_artifact_root / "2026-03-11" / "selection_snapshot.json",
+        {"selected": [{"symbol": "300724"}]},
+    )
+    _write_json(
+        missing_artifact_report / "session_summary.json",
+        {
+            "artifacts": {"selection_artifact_root": str(missing_artifact_report / "selection_artifacts")},
+            "selection_target": "missing_target",
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+
+    assert service._build_btst_replay_context_index() == {
+        "300724": {
+            "report_name": "valid_report",
+            "trade_date": "2026-03-11",
+            "symbol": "300724",
+            "selection_target": "valid_target",
+        }
+    }
+
+
+def test_build_replay_summary_omits_ticker_details_when_not_requested(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "start_date": "2026-03-10",
+            "end_date": "2026-03-11",
+            "initial_capital": 0.0,
+            "portfolio_values": [{"Portfolio Value": 101000.0}],
+            "daily_event_stats": {"executed_trade_days": 1, "total_executed_orders": 2},
+            "performance_metrics": {"sharpe_ratio": 1.2},
+            "plan_generation": {"mode": "frozen_replay"},
+            "model_provider": "MiniMax",
+            "model_name": "MiniMax-M2.7",
+            "artifacts": {},
+            "final_portfolio_snapshot": {"positions": {"300724": {"long": 100}}},
+        },
+    )
+    _write_jsonl(
+        report_dir / "daily_events.jsonl",
+        [
+            {
+                "current_plan": {
+                    "risk_metrics": {
+                        "counts": {"layer_b_count": 2, "watchlist_count": 1, "buy_order_count": 1},
+                        "funnel_diagnostics": {
+                            "filters": {
+                                "buy_orders": {"reason_counts": {"blocked_by_signal": 1}},
+                                "watchlist": {"reason_counts": {"needs_review": 1}},
+                            }
+                        },
+                    }
+                },
+                "decisions": {"300724": {"action": "buy"}},
+                "portfolio_snapshot": {"positions": {}},
+                "current_prices": {},
+            }
+        ],
+    )
+    _write_jsonl(report_dir / "pipeline_timings.jsonl", [{"timing_seconds": {"total_day": 12.5, "post_market": 4.0}}])
+
+    service = _build_service_with_db(tmp_path)
+
+    summary = service._build_replay_summary(report_dir, include_tickers=False)
+
+    assert summary["report_dir"] == "demo_report"
+    assert summary["headline_kpi"]["initial_capital"] == 0.0
+    assert summary["headline_kpi"]["final_value"] == 101000.0
+    assert summary["headline_kpi"]["total_return_pct"] is None
+    assert summary["run_header"] == {
+        "mode": None,
+        "plan_generation_mode": "frozen_replay",
+        "model_provider": "MiniMax",
+        "model_name": "MiniMax-M2.7",
+    }
+    assert summary["deployment_funnel_runtime"]["avg_total_day_seconds"] == 12.5
+    assert summary["deployment_funnel_runtime"]["avg_post_market_seconds"] == 4.0
+    assert "ticker_execution_digest" not in summary
+    assert "final_portfolio_snapshot" not in summary
 
 
 def test_append_selection_artifact_feedback_updates_summary(tmp_path: Path) -> None:

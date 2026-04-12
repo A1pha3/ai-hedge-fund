@@ -374,20 +374,52 @@ class ReplayArtifactService:
             db.refresh(item)
             return self._serialize_workflow_item(item)
 
-    def _build_replay_summary(self, report_dir: Path, include_tickers: bool) -> dict[str, Any]:
-        session_summary = self._read_json(report_dir / "session_summary.json")
-        daily_events = self._read_jsonl(report_dir / "daily_events.jsonl")
-        pipeline_timings = self._read_jsonl(report_dir / "pipeline_timings.jsonl")
+    def _load_replay_summary_inputs(self, report_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+        return (
+            self._read_json(report_dir / "session_summary.json"),
+            self._read_jsonl(report_dir / "daily_events.jsonl"),
+            self._read_jsonl(report_dir / "pipeline_timings.jsonl"),
+        )
 
-        final_value = self._extract_final_value(session_summary)
+    def _derive_replay_total_return_pct(self, session_summary: dict[str, Any], final_value: float) -> tuple[float, float | None]:
         initial_capital = float(session_summary.get("initial_capital", 0.0) or 0.0)
-        total_return_pct = None
-        if initial_capital:
-            total_return_pct = ((final_value - initial_capital) / initial_capital) * 100
+        if not initial_capital:
+            return initial_capital, None
+        return initial_capital, ((final_value - initial_capital) / initial_capital) * 100
 
-        derived = self._derive_daily_event_metrics(daily_events, session_summary)
-        runtime = self._derive_runtime_metrics(pipeline_timings)
+    def _build_replay_headline_kpi(
+        self,
+        session_summary: dict[str, Any],
+        *,
+        initial_capital: float,
+        final_value: float,
+        total_return_pct: float | None,
+    ) -> dict[str, Any]:
+        performance_metrics = session_summary.get("performance_metrics") or {}
+        daily_event_stats = session_summary.get("daily_event_stats") or {}
+        return {
+            "initial_capital": initial_capital,
+            "final_value": final_value,
+            "total_return_pct": total_return_pct,
+            "sharpe_ratio": performance_metrics.get("sharpe_ratio"),
+            "sortino_ratio": performance_metrics.get("sortino_ratio"),
+            "max_drawdown_pct": performance_metrics.get("max_drawdown"),
+            "max_drawdown_date": performance_metrics.get("max_drawdown_date"),
+            "executed_trade_days": daily_event_stats.get("executed_trade_days"),
+            "total_executed_orders": daily_event_stats.get("total_executed_orders"),
+        }
 
+    def _build_replay_summary_body(
+        self,
+        report_dir: Path,
+        *,
+        session_summary: dict[str, Any],
+        daily_events: list[dict[str, Any]],
+        derived: dict[str, Any],
+        runtime: dict[str, Any],
+        headline_kpi: dict[str, Any],
+        include_tickers: bool,
+    ) -> dict[str, Any]:
         summary: dict[str, Any] = {
             "report_dir": report_dir.name,
             "window": {
@@ -400,17 +432,7 @@ class ReplayArtifactService:
                 "model_provider": session_summary.get("model_provider"),
                 "model_name": session_summary.get("model_name"),
             },
-            "headline_kpi": {
-                "initial_capital": initial_capital,
-                "final_value": final_value,
-                "total_return_pct": total_return_pct,
-                "sharpe_ratio": (session_summary.get("performance_metrics") or {}).get("sharpe_ratio"),
-                "sortino_ratio": (session_summary.get("performance_metrics") or {}).get("sortino_ratio"),
-                "max_drawdown_pct": (session_summary.get("performance_metrics") or {}).get("max_drawdown"),
-                "max_drawdown_date": (session_summary.get("performance_metrics") or {}).get("max_drawdown_date"),
-                "executed_trade_days": (session_summary.get("daily_event_stats") or {}).get("executed_trade_days"),
-                "total_executed_orders": (session_summary.get("daily_event_stats") or {}).get("total_executed_orders"),
-            },
+            "headline_kpi": headline_kpi,
             "deployment_funnel_runtime": {
                 **derived["funnel"],
                 **runtime,
@@ -424,12 +446,32 @@ class ReplayArtifactService:
                 resolve_btst_contexts=include_tickers,
             ),
         }
-
         if include_tickers:
             summary["ticker_execution_digest"] = derived["tickers"]
             summary["final_portfolio_snapshot"] = session_summary.get("final_portfolio_snapshot") or {}
-
         return summary
+
+    def _build_replay_summary(self, report_dir: Path, include_tickers: bool) -> dict[str, Any]:
+        session_summary, daily_events, pipeline_timings = self._load_replay_summary_inputs(report_dir)
+        final_value = self._extract_final_value(session_summary)
+        initial_capital, total_return_pct = self._derive_replay_total_return_pct(session_summary, final_value)
+        derived = self._derive_daily_event_metrics(daily_events, session_summary)
+        runtime = self._derive_runtime_metrics(pipeline_timings)
+        headline_kpi = self._build_replay_headline_kpi(
+            session_summary,
+            initial_capital=initial_capital,
+            final_value=final_value,
+            total_return_pct=total_return_pct,
+        )
+        return self._build_replay_summary_body(
+            report_dir,
+            session_summary=session_summary,
+            daily_events=daily_events,
+            derived=derived,
+            runtime=runtime,
+            headline_kpi=headline_kpi,
+            include_tickers=include_tickers,
+        )
 
     def _prepare_selection_artifact_feedback_context(self, *, report_name: str, trade_date: str) -> dict[str, Any]:
         report_dir = self._get_report_dir(report_name)
@@ -625,6 +667,62 @@ class ReplayArtifactService:
                 return float(last_value)
         return 0.0
 
+    def _extract_daily_event_funnel_metrics(self, record: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        current_plan = record.get("current_plan") or {}
+        risk_metrics = current_plan.get("risk_metrics") or {}
+        counts = risk_metrics.get("counts") or {}
+        filters = ((risk_metrics.get("funnel_diagnostics") or {}).get("filters") or {})
+        return counts, filters
+
+    def _accumulate_daily_event_count_values(
+        self,
+        counts: dict[str, Any],
+        *,
+        layer_b_values: list[float],
+        watchlist_values: list[float],
+        buy_order_values: list[float],
+    ) -> None:
+        count_targets = [
+            ("layer_b_count", layer_b_values),
+            ("watchlist_count", watchlist_values),
+            ("buy_order_count", buy_order_values),
+        ]
+        for field_name, target in count_targets:
+            field_value = counts.get(field_name)
+            if field_value is not None:
+                target.append(float(field_value))
+
+    def _accumulate_daily_event_blockers(
+        self,
+        filters: dict[str, Any],
+        *,
+        buy_blockers: Counter[str],
+        watch_blockers: Counter[str],
+    ) -> None:
+        watch_reasons = (filters.get("watchlist") or {}).get("reason_counts") or {}
+        buy_reasons = (filters.get("buy_orders") or {}).get("reason_counts") or {}
+        watch_blockers.update({str(key): int(value) for key, value in watch_reasons.items()})
+        buy_blockers.update({str(key): int(value) for key, value in buy_reasons.items()})
+
+    def _accumulate_daily_event_invested_ratio(
+        self,
+        *,
+        record: dict[str, Any],
+        initial_capital: float,
+        invested_ratios: list[float],
+        ticker_max_unrealized: defaultdict[str, float],
+    ) -> float:
+        invested_value = self._extract_invested_value(
+            record=record,
+            ticker_max_unrealized=ticker_max_unrealized,
+        )
+        if initial_capital <= 0:
+            return 0.0
+
+        invested_ratio = invested_value / initial_capital
+        invested_ratios.append(invested_ratio)
+        return invested_ratio
+
     def _accumulate_daily_event_record(
         self,
         record: dict[str, Any],
@@ -640,37 +738,24 @@ class ReplayArtifactService:
         ticker_sell_counts: Counter[str],
         ticker_max_unrealized: defaultdict[str, float],
     ) -> float:
-        current_plan = record.get("current_plan") or {}
-        risk_metrics = current_plan.get("risk_metrics") or {}
-        counts = risk_metrics.get("counts") or {}
-        funnel = risk_metrics.get("funnel_diagnostics") or {}
-        filters = funnel.get("filters") or {}
-
-        layer_b = counts.get("layer_b_count")
-        watch_count = counts.get("watchlist_count")
-        buy_count = counts.get("buy_order_count")
-        if layer_b is not None:
-            layer_b_values.append(float(layer_b))
-        if watch_count is not None:
-            watchlist_values.append(float(watch_count))
-        if buy_count is not None:
-            buy_order_values.append(float(buy_count))
-
-        watch_reasons = (filters.get("watchlist") or {}).get("reason_counts") or {}
-        buy_reasons = (filters.get("buy_orders") or {}).get("reason_counts") or {}
-        watch_blockers.update({str(key): int(value) for key, value in watch_reasons.items()})
-        buy_blockers.update({str(key): int(value) for key, value in buy_reasons.items()})
-
-        invested_value = self._extract_invested_value(
+        counts, filters = self._extract_daily_event_funnel_metrics(record)
+        self._accumulate_daily_event_count_values(
+            counts,
+            layer_b_values=layer_b_values,
+            watchlist_values=watchlist_values,
+            buy_order_values=buy_order_values,
+        )
+        self._accumulate_daily_event_blockers(
+            filters,
+            buy_blockers=buy_blockers,
+            watch_blockers=watch_blockers,
+        )
+        invested_ratio = self._accumulate_daily_event_invested_ratio(
             record=record,
+            initial_capital=initial_capital,
+            invested_ratios=invested_ratios,
             ticker_max_unrealized=ticker_max_unrealized,
         )
-        if initial_capital <= 0:
-            self._accumulate_decision_counts(record.get("decisions") or {}, ticker_buy_counts, ticker_sell_counts)
-            return 0.0
-
-        invested_ratio = invested_value / initial_capital
-        invested_ratios.append(invested_ratio)
         self._accumulate_decision_counts(record.get("decisions") or {}, ticker_buy_counts, ticker_sell_counts)
         return invested_ratio
 
@@ -905,29 +990,50 @@ class ReplayArtifactService:
             },
         }
 
-    def _derive_btst_followup_overview(self, session_summary: dict[str, Any]) -> dict[str, Any] | None:
+    def _resolve_btst_followup_artifact_paths(self, session_summary: dict[str, Any]) -> dict[str, Any]:
         followup = session_summary.get("btst_followup") or {}
         artifacts = session_summary.get("artifacts") or {}
-        brief_json_path_value = followup.get("brief_json") or artifacts.get("btst_next_day_trade_brief_json")
-        brief_markdown_path_value = followup.get("brief_markdown") or artifacts.get("btst_next_day_trade_brief_markdown")
-        card_json_path_value = followup.get("execution_card_json") or artifacts.get("btst_premarket_execution_card_json")
-        card_markdown_path_value = followup.get("execution_card_markdown") or artifacts.get("btst_premarket_execution_card_markdown")
+        return {
+            "brief_json": followup.get("brief_json") or artifacts.get("btst_next_day_trade_brief_json"),
+            "brief_markdown": followup.get("brief_markdown") or artifacts.get("btst_next_day_trade_brief_markdown"),
+            "execution_card_json": followup.get("execution_card_json") or artifacts.get("btst_premarket_execution_card_json"),
+            "execution_card_markdown": followup.get("execution_card_markdown") or artifacts.get("btst_premarket_execution_card_markdown"),
+        }
 
-        if not any([brief_json_path_value, brief_markdown_path_value, card_json_path_value, card_markdown_path_value]):
+    def _load_btst_followup_brief_payload(self, brief_json_path_value: Any) -> dict[str, Any]:
+        if not brief_json_path_value:
+            return {}
+
+        brief_json_path = Path(str(brief_json_path_value))
+        if not brief_json_path.exists():
+            return {}
+
+        try:
+            return self._read_json(brief_json_path)
+        except (OSError, json.JSONDecodeError, FileNotFoundError):
+            return {}
+
+    def _extract_btst_followup_entries(self, brief_payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        return {
+            "selected_entries": [item for item in (brief_payload.get("selected_entries") or []) if isinstance(item, dict)],
+            "near_miss_entries": [item for item in (brief_payload.get("near_miss_entries") or []) if isinstance(item, dict)],
+            "excluded_entries": [item for item in (brief_payload.get("excluded_research_entries") or []) if isinstance(item, dict)],
+        }
+
+    def _build_btst_followup_artifacts(self, artifact_paths: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in artifact_paths.items() if value}
+
+    def _derive_btst_followup_overview(self, session_summary: dict[str, Any]) -> dict[str, Any] | None:
+        followup = session_summary.get("btst_followup") or {}
+        artifact_paths = self._resolve_btst_followup_artifact_paths(session_summary)
+        if not any(artifact_paths.values()):
             return None
 
-        brief_payload: dict[str, Any] = {}
-        if brief_json_path_value:
-            brief_json_path = Path(str(brief_json_path_value))
-            if brief_json_path.exists():
-                try:
-                    brief_payload = self._read_json(brief_json_path)
-                except (OSError, json.JSONDecodeError, FileNotFoundError):
-                    brief_payload = {}
-
-        selected_entries = [item for item in (brief_payload.get("selected_entries") or []) if isinstance(item, dict)]
-        near_miss_entries = [item for item in (brief_payload.get("near_miss_entries") or []) if isinstance(item, dict)]
-        excluded_entries = [item for item in (brief_payload.get("excluded_research_entries") or []) if isinstance(item, dict)]
+        brief_payload = self._load_btst_followup_brief_payload(artifact_paths["brief_json"])
+        entries = self._extract_btst_followup_entries(brief_payload)
+        selected_entries = entries["selected_entries"]
+        near_miss_entries = entries["near_miss_entries"]
+        excluded_entries = entries["excluded_entries"]
         primary_entry = brief_payload.get("primary_entry") or (selected_entries[0] if selected_entries else None)
 
         return {
@@ -941,16 +1047,7 @@ class ReplayArtifactService:
             "selected_count": len(selected_entries),
             "watchlist_count": len(near_miss_entries),
             "excluded_research_count": len(excluded_entries),
-            "artifacts": {
-                key: value
-                for key, value in {
-                    "brief_json": brief_json_path_value,
-                    "brief_markdown": brief_markdown_path_value,
-                    "execution_card_json": card_json_path_value,
-                    "execution_card_markdown": card_markdown_path_value,
-                }.items()
-                if value
-            },
+            "artifacts": self._build_btst_followup_artifacts(artifact_paths),
         }
 
     def _normalize_btst_reference(self, payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -997,9 +1094,9 @@ class ReplayArtifactService:
             if re.fullmatch(r"\d{6}", normalized):
                 symbols.add(normalized)
 
-    def _build_btst_replay_context_index(self, *, preferred_report_names: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    def _list_btst_context_report_dirs(self, *, preferred_report_names: list[str] | None = None) -> list[Path]:
         preferred = {name for name in (preferred_report_names or []) if name}
-        report_dirs = sorted(
+        return sorted(
             [summary_path.parent for summary_path in self._reports_root.glob("*/session_summary.json")],
             key=lambda path: (
                 0 if path.name in preferred else 1,
@@ -1008,37 +1105,68 @@ class ReplayArtifactService:
             ),
         )
 
+    def _load_btst_context_source(
+        self,
+        candidate_report_dir: Path,
+    ) -> tuple[dict[str, Any], Path, str | None] | None:
+        session_summary_path = candidate_report_dir / "session_summary.json"
+        try:
+            session_summary = self._read_json(session_summary_path)
+        except FileNotFoundError:
+            return None
+
+        artifact_root = self._resolve_selection_artifact_root(candidate_report_dir, session_summary)
+        if artifact_root is None or not artifact_root.exists():
+            return None
+
+        selection_target = (session_summary.get("plan_generation") or {}).get("selection_target") or session_summary.get("selection_target")
+        return session_summary, artifact_root, selection_target
+
+    def _iter_btst_context_snapshot_days(self, artifact_root: Path) -> list[Path]:
+        return sorted((path for path in artifact_root.iterdir() if path.is_dir()), key=lambda path: path.name, reverse=True)
+
+    def _register_btst_snapshot_context(
+        self,
+        context_index: dict[str, dict[str, Any]],
+        *,
+        candidate_report_dir: Path,
+        trade_date: str,
+        snapshot: dict[str, Any],
+        selection_target: str | None,
+    ) -> None:
+        snapshot_symbols: set[str] = set()
+        self._collect_snapshot_stock_symbols(snapshot, snapshot_symbols)
+        for symbol in snapshot_symbols:
+            context_index.setdefault(
+                symbol,
+                {
+                    "report_name": candidate_report_dir.name,
+                    "trade_date": trade_date,
+                    "symbol": symbol,
+                    "selection_target": selection_target,
+                },
+            )
+
+    def _build_btst_replay_context_index(self, *, preferred_report_names: list[str] | None = None) -> dict[str, dict[str, Any]]:
         context_index: dict[str, dict[str, Any]] = {}
-        for candidate_report_dir in report_dirs:
-            session_summary_path = candidate_report_dir / "session_summary.json"
-            try:
-                session_summary = self._read_json(session_summary_path)
-            except FileNotFoundError:
+        for candidate_report_dir in self._list_btst_context_report_dirs(preferred_report_names=preferred_report_names):
+            context_source = self._load_btst_context_source(candidate_report_dir)
+            if context_source is None:
                 continue
-
-            artifact_root = self._resolve_selection_artifact_root(candidate_report_dir, session_summary)
-            if artifact_root is None or not artifact_root.exists():
-                continue
-
-            selection_target = (session_summary.get("plan_generation") or {}).get("selection_target") or session_summary.get("selection_target")
-            for day_dir in sorted((path for path in artifact_root.iterdir() if path.is_dir()), key=lambda path: path.name, reverse=True):
+            _session_summary, artifact_root, selection_target = context_source
+            for day_dir in self._iter_btst_context_snapshot_days(artifact_root):
                 snapshot_path = day_dir / "selection_snapshot.json"
                 if not snapshot_path.exists():
                     continue
 
                 snapshot = self._read_json(snapshot_path)
-                snapshot_symbols: set[str] = set()
-                self._collect_snapshot_stock_symbols(snapshot, snapshot_symbols)
-                for symbol in snapshot_symbols:
-                    context_index.setdefault(
-                        symbol,
-                        {
-                            "report_name": candidate_report_dir.name,
-                            "trade_date": day_dir.name,
-                            "symbol": symbol,
-                            "selection_target": selection_target,
-                        },
-                    )
+                self._register_btst_snapshot_context(
+                    context_index,
+                    candidate_report_dir=candidate_report_dir,
+                    trade_date=day_dir.name,
+                    snapshot=snapshot,
+                    selection_target=selection_target,
+                )
 
         return context_index
 
@@ -1143,30 +1271,24 @@ class ReplayArtifactService:
 
         return lane_rows
 
-    def _derive_btst_control_tower_overview(self, report_dir: Path, *, resolve_contexts: bool = False) -> dict[str, Any] | None:
-        delta_json_path = self._reports_root / "btst_open_ready_delta_latest.json"
-        delta_markdown_path = self._reports_root / "btst_open_ready_delta_latest.md"
-        nightly_json_path = self._reports_root / "btst_nightly_control_tower_latest.json"
-        nightly_markdown_path = self._reports_root / "btst_nightly_control_tower_latest.md"
-        manifest_json_path = self._reports_root / "report_manifest_latest.json"
-        manifest_markdown_path = self._reports_root / "report_manifest_latest.md"
-        governance_synthesis_json_path = self._reports_root / "btst_governance_synthesis_latest.json"
+    def _btst_control_tower_paths(self) -> dict[str, Path]:
+        return {
+            "delta_json": self._reports_root / "btst_open_ready_delta_latest.json",
+            "delta_markdown": self._reports_root / "btst_open_ready_delta_latest.md",
+            "nightly_json": self._reports_root / "btst_nightly_control_tower_latest.json",
+            "nightly_markdown": self._reports_root / "btst_nightly_control_tower_latest.md",
+            "manifest_json": self._reports_root / "report_manifest_latest.json",
+            "manifest_markdown": self._reports_root / "report_manifest_latest.md",
+            "governance_synthesis_json": self._reports_root / "btst_governance_synthesis_latest.json",
+        }
 
-        if not any(path.exists() for path in [delta_json_path, delta_markdown_path, nightly_json_path, nightly_markdown_path]):
-            return None
-
-        delta_payload = self._read_json(delta_json_path) if delta_json_path.exists() else {}
-        nightly_payload = self._read_json(nightly_json_path) if nightly_json_path.exists() else {}
-        governance_synthesis_payload = self._read_json(governance_synthesis_json_path) if governance_synthesis_json_path.exists() else {}
-        control_tower_snapshot = nightly_payload.get("control_tower_snapshot") or {}
-        validation = control_tower_snapshot.get("validation") or {}
-        source_paths = delta_payload.get("source_paths") or {}
-        governance_source_reports = dict(governance_synthesis_payload.get("source_reports") or {})
-
-        current_reference = self._normalize_btst_reference(delta_payload.get("current_reference")) or self._normalize_btst_reference(nightly_payload.get("latest_btst_run"))
-        previous_reference = self._normalize_btst_reference(delta_payload.get("previous_reference"))
-
-        preferred_report_names = [
+    def _build_btst_control_tower_preferred_report_names(
+        self,
+        report_dir: Path,
+        current_reference: dict[str, Any] | None,
+        previous_reference: dict[str, Any] | None,
+    ) -> list[str]:
+        return [
             str(item)
             for item in [
                 report_dir.name,
@@ -1175,13 +1297,12 @@ class ReplayArtifactService:
             ]
             if item
         ]
-        rollout_lane_rows = self._derive_btst_rollout_lane_rows(
-            governance_synthesis_payload,
-            resolve_contexts=resolve_contexts,
-            preferred_report_names=preferred_report_names,
-        )
-        lane_context_by_ticker = {str(row.get("ticker")): dict(row.get("context_reference") or {}) for row in rollout_lane_rows if row.get("ticker") and row.get("context_reference")}
 
+    def _derive_btst_control_tower_next_actions(
+        self,
+        control_tower_snapshot: dict[str, Any],
+        lane_context_by_ticker: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         next_actions: list[dict[str, Any]] = []
         for item in (control_tower_snapshot.get("next_actions") or [])[:3]:
             if not isinstance(item, dict):
@@ -1202,31 +1323,39 @@ class ReplayArtifactService:
                     "context_reference": lane_context_by_ticker.get(action_ticker) if action_ticker else None,
                 }
             )
+        return next_actions
 
-        artifacts = {
+    def _build_btst_control_tower_artifacts(
+        self,
+        *,
+        paths: dict[str, Path],
+        source_paths: dict[str, Any],
+        governance_source_reports: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
             key: value
             for key, value in {
-                "open_ready_delta_json": str(delta_json_path) if delta_json_path.exists() else None,
-                "open_ready_delta_markdown": str(delta_markdown_path) if delta_markdown_path.exists() else None,
-                "nightly_control_tower_json": str(nightly_json_path) if nightly_json_path.exists() else None,
-                "nightly_control_tower_markdown": str(nightly_markdown_path) if nightly_markdown_path.exists() else None,
-                "governance_synthesis_json": str(governance_synthesis_json_path) if governance_synthesis_json_path.exists() else None,
+                "open_ready_delta_json": str(paths["delta_json"]) if paths["delta_json"].exists() else None,
+                "open_ready_delta_markdown": str(paths["delta_markdown"]) if paths["delta_markdown"].exists() else None,
+                "nightly_control_tower_json": str(paths["nightly_json"]) if paths["nightly_json"].exists() else None,
+                "nightly_control_tower_markdown": str(paths["nightly_markdown"]) if paths["nightly_markdown"].exists() else None,
+                "governance_synthesis_json": str(paths["governance_synthesis_json"]) if paths["governance_synthesis_json"].exists() else None,
                 "rollout_governance_json": governance_source_reports.get("rollout_governance"),
-                "report_manifest_json": source_paths.get("report_manifest_json") or (str(manifest_json_path) if manifest_json_path.exists() else None),
-                "report_manifest_markdown": source_paths.get("report_manifest_markdown") or (str(manifest_markdown_path) if manifest_markdown_path.exists() else None),
+                "report_manifest_json": source_paths.get("report_manifest_json") or (str(paths["manifest_json"]) if paths["manifest_json"].exists() else None),
+                "report_manifest_markdown": source_paths.get("report_manifest_markdown") or (str(paths["manifest_markdown"]) if paths["manifest_markdown"].exists() else None),
                 "current_priority_board_json": source_paths.get("current_priority_board_json"),
                 "previous_priority_board_json": source_paths.get("previous_priority_board_json"),
             }.items()
             if value
         }
 
-        priority_delta = delta_payload.get("priority_delta") or {}
-        governance_delta = delta_payload.get("governance_delta") or {}
-        replay_delta = delta_payload.get("replay_delta") or {}
+    def _extract_btst_control_tower_recommendation(self, control_tower_snapshot: dict[str, Any]) -> Any:
         recommendation = control_tower_snapshot.get("recommendation")
-        if not recommendation:
-            recommendation = (control_tower_snapshot.get("synthesis") or {}).get("recommendation")
+        if recommendation:
+            return recommendation
+        return (control_tower_snapshot.get("synthesis") or {}).get("recommendation")
 
+    def _derive_btst_control_tower_closed_frontiers(self, control_tower_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         closed_frontiers: list[dict[str, Any]] = []
         for item in list(control_tower_snapshot.get("closed_frontiers") or []):
             if not isinstance(item, dict):
@@ -1242,6 +1371,43 @@ class ReplayArtifactService:
                     "best_variant_focus_released_tickers": [str(value) for value in list(item.get("best_variant_focus_released_tickers") or []) if value],
                 }
             )
+        return closed_frontiers
+
+    def _derive_btst_control_tower_overview(self, report_dir: Path, *, resolve_contexts: bool = False) -> dict[str, Any] | None:
+        paths = self._btst_control_tower_paths()
+        if not any(paths[key].exists() for key in ("delta_json", "delta_markdown", "nightly_json", "nightly_markdown")):
+            return None
+
+        delta_payload = self._read_json(paths["delta_json"]) if paths["delta_json"].exists() else {}
+        nightly_payload = self._read_json(paths["nightly_json"]) if paths["nightly_json"].exists() else {}
+        governance_synthesis_payload = self._read_json(paths["governance_synthesis_json"]) if paths["governance_synthesis_json"].exists() else {}
+        control_tower_snapshot = nightly_payload.get("control_tower_snapshot") or {}
+        validation = control_tower_snapshot.get("validation") or {}
+        source_paths = delta_payload.get("source_paths") or {}
+        governance_source_reports = dict(governance_synthesis_payload.get("source_reports") or {})
+
+        current_reference = self._normalize_btst_reference(delta_payload.get("current_reference")) or self._normalize_btst_reference(nightly_payload.get("latest_btst_run"))
+        previous_reference = self._normalize_btst_reference(delta_payload.get("previous_reference"))
+
+        preferred_report_names = self._build_btst_control_tower_preferred_report_names(report_dir, current_reference, previous_reference)
+        rollout_lane_rows = self._derive_btst_rollout_lane_rows(
+            governance_synthesis_payload,
+            resolve_contexts=resolve_contexts,
+            preferred_report_names=preferred_report_names,
+        )
+        lane_context_by_ticker = {str(row.get("ticker")): dict(row.get("context_reference") or {}) for row in rollout_lane_rows if row.get("ticker") and row.get("context_reference")}
+
+        next_actions = self._derive_btst_control_tower_next_actions(control_tower_snapshot, lane_context_by_ticker)
+        artifacts = self._build_btst_control_tower_artifacts(
+            paths=paths,
+            source_paths=source_paths,
+            governance_source_reports=governance_source_reports,
+        )
+        priority_delta = delta_payload.get("priority_delta") or {}
+        governance_delta = delta_payload.get("governance_delta") or {}
+        replay_delta = delta_payload.get("replay_delta") or {}
+        recommendation = self._extract_btst_control_tower_recommendation(control_tower_snapshot)
+        closed_frontiers = self._derive_btst_control_tower_closed_frontiers(control_tower_snapshot)
 
         return {
             "available": True,
@@ -1267,40 +1433,44 @@ class ReplayArtifactService:
             "artifacts": artifacts,
         }
 
-    def _derive_selection_artifact_overview(
+    def _build_unavailable_selection_artifact_overview(
         self,
         report_dir: Path,
         session_summary: dict[str, Any],
-        daily_events: list[dict[str, Any]],
         *,
-        resolve_btst_contexts: bool = False,
+        resolve_btst_contexts: bool,
     ) -> dict[str, Any]:
-        artifact_root = self._resolve_selection_artifact_root(report_dir, session_summary)
-        if artifact_root is None or not artifact_root.exists():
-            return {
-                "available": False,
-                "trade_date_count": 0,
-                "available_trade_dates": [],
-                "trade_date_target_index": [],
-                "write_status_counts": {},
-                "blocker_counts": [],
-                "short_trade_profile_overview": None,
-                "dual_target_overview": None,
-                "feedback_summary": None,
-                "btst_followup_overview": self._derive_btst_followup_overview(session_summary),
-                "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir, resolve_contexts=resolve_btst_contexts),
-            }
+        return {
+            "available": False,
+            "trade_date_count": 0,
+            "available_trade_dates": [],
+            "trade_date_target_index": [],
+            "write_status_counts": {},
+            "blocker_counts": [],
+            "short_trade_profile_overview": None,
+            "dual_target_overview": None,
+            "feedback_summary": None,
+            "btst_followup_overview": self._derive_btst_followup_overview(session_summary),
+            "btst_control_tower_overview": self._derive_btst_control_tower_overview(report_dir, resolve_contexts=resolve_btst_contexts),
+        }
 
+    def _count_selection_artifact_write_statuses(self, daily_events: list[dict[str, Any]]) -> Counter[str]:
         write_status_counts: Counter[str] = Counter()
         for record in daily_events:
             selection_artifacts = (record.get("current_plan") or {}).get("selection_artifacts") or record.get("selection_artifacts") or {}
             write_status = selection_artifacts.get("write_status")
             if write_status:
                 write_status_counts[str(write_status)] += 1
+        return write_status_counts
 
+    def _collect_selection_artifact_snapshots(
+        self,
+        artifact_root: Path,
+    ) -> tuple[list[str], Counter[str], list[tuple[str, dict[str, Any]]]]:
         trade_dates: list[str] = []
         blocker_counts: Counter[str] = Counter()
         snapshots_by_trade_date: list[tuple[str, dict[str, Any]]] = []
+
         for day_dir in sorted(path for path in artifact_root.iterdir() if path.is_dir()):
             snapshot_path = day_dir / "selection_snapshot.json"
             if not snapshot_path.exists():
@@ -1316,8 +1486,31 @@ class ReplayArtifactService:
                 if block_reason:
                     blocker_counts[str(block_reason)] += 1
 
+        return trade_dates, blocker_counts, snapshots_by_trade_date
+
+    def _read_selection_feedback_summary(self, artifact_root: Path) -> dict[str, Any] | None:
         feedback_summary_path = artifact_root / "research_feedback_summary.json"
-        feedback_summary = self._read_json(feedback_summary_path) if feedback_summary_path.exists() else None
+        return self._read_json(feedback_summary_path) if feedback_summary_path.exists() else None
+
+    def _derive_selection_artifact_overview(
+        self,
+        report_dir: Path,
+        session_summary: dict[str, Any],
+        daily_events: list[dict[str, Any]],
+        *,
+        resolve_btst_contexts: bool = False,
+    ) -> dict[str, Any]:
+        artifact_root = self._resolve_selection_artifact_root(report_dir, session_summary)
+        if artifact_root is None or not artifact_root.exists():
+            return self._build_unavailable_selection_artifact_overview(
+                report_dir,
+                session_summary,
+                resolve_btst_contexts=resolve_btst_contexts,
+            )
+
+        write_status_counts = self._count_selection_artifact_write_statuses(daily_events)
+        trade_dates, blocker_counts, snapshots_by_trade_date = self._collect_selection_artifact_snapshots(artifact_root)
+        feedback_summary = self._read_selection_feedback_summary(artifact_root)
 
         return {
             "available": True,
