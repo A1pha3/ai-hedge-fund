@@ -150,6 +150,54 @@ def _append_short_trade_snapshot_strength_tags(
         positive_tags.append("execution_bridge_ready")
 
 
+def _build_short_trade_snapshot_label_inputs(
+    *,
+    signal_snapshot: dict[str, Any],
+    relief_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "trend_signal": signal_snapshot["trend_signal"],
+        "event_signal": signal_snapshot["event_signal"],
+        "breakout_freshness": float(relief_snapshot["breakout_freshness"]),
+        "trend_acceleration": float(relief_snapshot["trend_acceleration"]),
+        "raw_catalyst_freshness": float(signal_snapshot["raw_catalyst_freshness"]),
+        "catalyst_freshness": float(relief_snapshot["catalyst_freshness"]),
+        "sector_resonance": float(signal_snapshot["sector_resonance"]),
+        "profitability_relief": dict(relief_snapshot["profitability_relief"]),
+        "profitability_hard_cliff_boundary_relief": dict(relief_snapshot["profitability_hard_cliff_boundary_relief"]),
+        "historical_execution_relief": dict(relief_snapshot["historical_execution_relief"]),
+        "catalyst_relief": dict(relief_snapshot["upstream_shadow_catalyst_relief"]),
+        "visibility_gap_continuation_relief": dict(relief_snapshot["visibility_gap_continuation_relief"]),
+        "merge_approved_continuation_relief": dict(relief_snapshot["merge_approved_continuation_relief"]),
+        "prepared_breakout_penalty_relief": dict(relief_snapshot["prepared_breakout_penalty_relief"]),
+        "prepared_breakout_catalyst_relief": dict(relief_snapshot["prepared_breakout_catalyst_relief"]),
+        "prepared_breakout_volume_relief": dict(relief_snapshot["prepared_breakout_volume_relief"]),
+        "prepared_breakout_continuation_relief": dict(relief_snapshot["prepared_breakout_continuation_relief"]),
+        "prepared_breakout_selected_catalyst_relief": dict(relief_snapshot["prepared_breakout_selected_catalyst_relief"]),
+        "watchlist_zero_catalyst_penalty": dict(relief_snapshot["watchlist_zero_catalyst_penalty"]),
+        "watchlist_zero_catalyst_crowded_penalty": dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"]),
+        "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
+        "t_plus_2_continuation_candidate": dict(relief_snapshot["t_plus_2_continuation_candidate"]),
+        "stale_trend_repair_penalty": float(relief_snapshot["stale_trend_repair_penalty"]),
+        "overhead_supply_penalty": float(relief_snapshot["overhead_supply_penalty"]),
+        "extension_without_room_penalty": float(relief_snapshot["extension_without_room_penalty"]),
+    }
+
+
+def _initialize_short_trade_snapshot_label_state(input_data: TargetEvaluationInput) -> tuple[list[str], list[str], list[str], dict[str, str]]:
+    return (
+        [],
+        [],
+        [],
+        {
+            "data": "pass",
+            "execution": "pass" if input_data.execution_constraints.get("included_in_buy_orders") else "proxy_only",
+            "structural": "pass",
+            "score": "fail",
+        },
+    )
+
+
 def collect_short_trade_snapshot_labels_and_gates(
     input_data: TargetEvaluationInput,
     *,
@@ -158,92 +206,62 @@ def collect_short_trade_snapshot_labels_and_gates(
     relief_snapshot: dict[str, Any],
     signal_signed_strength_fn: Callable[[Any], float],
 ) -> dict[str, Any]:
-    trend_signal = signal_snapshot["trend_signal"]
-    event_signal = signal_snapshot["event_signal"]
-    breakout_freshness = float(relief_snapshot["breakout_freshness"])
-    trend_acceleration = float(relief_snapshot["trend_acceleration"])
-    raw_catalyst_freshness = float(signal_snapshot["raw_catalyst_freshness"])
-    catalyst_freshness = float(relief_snapshot["catalyst_freshness"])
-    sector_resonance = float(signal_snapshot["sector_resonance"])
-    profitability_relief = dict(relief_snapshot["profitability_relief"])
-    profitability_hard_cliff_boundary_relief = dict(relief_snapshot["profitability_hard_cliff_boundary_relief"])
-    historical_execution_relief = dict(relief_snapshot["historical_execution_relief"])
-    catalyst_relief = dict(relief_snapshot["upstream_shadow_catalyst_relief"])
-    visibility_gap_continuation_relief = dict(relief_snapshot["visibility_gap_continuation_relief"])
-    merge_approved_continuation_relief = dict(relief_snapshot["merge_approved_continuation_relief"])
-    prepared_breakout_penalty_relief = dict(relief_snapshot["prepared_breakout_penalty_relief"])
-    prepared_breakout_catalyst_relief = dict(relief_snapshot["prepared_breakout_catalyst_relief"])
-    prepared_breakout_volume_relief = dict(relief_snapshot["prepared_breakout_volume_relief"])
-    prepared_breakout_continuation_relief = dict(relief_snapshot["prepared_breakout_continuation_relief"])
-    prepared_breakout_selected_catalyst_relief = dict(relief_snapshot["prepared_breakout_selected_catalyst_relief"])
-    watchlist_zero_catalyst_penalty = dict(relief_snapshot["watchlist_zero_catalyst_penalty"])
-    watchlist_zero_catalyst_crowded_penalty = dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"])
-    watchlist_zero_catalyst_flat_trend_penalty = dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"])
-    t_plus_2_continuation_candidate = dict(relief_snapshot["t_plus_2_continuation_candidate"])
-    stale_trend_repair_penalty = float(relief_snapshot["stale_trend_repair_penalty"])
-    overhead_supply_penalty = float(relief_snapshot["overhead_supply_penalty"])
-    extension_without_room_penalty = float(relief_snapshot["extension_without_room_penalty"])
-
-    positive_tags: list[str] = []
-    negative_tags: list[str] = []
-    blockers: list[str] = []
-    gate_status = {
-        "data": "pass",
-        "execution": "pass" if input_data.execution_constraints.get("included_in_buy_orders") else "proxy_only",
-        "structural": "pass",
-        "score": "fail",
-    }
+    inputs = _build_short_trade_snapshot_label_inputs(
+        signal_snapshot=signal_snapshot,
+        relief_snapshot=relief_snapshot,
+    )
+    positive_tags, negative_tags, blockers, gate_status = _initialize_short_trade_snapshot_label_state(input_data)
 
     _append_short_trade_snapshot_profitability_tags(
         input_data=input_data,
-        profitability_relief=profitability_relief,
-        profitability_hard_cliff_boundary_relief=profitability_hard_cliff_boundary_relief,
-        historical_execution_relief=historical_execution_relief,
+        profitability_relief=inputs["profitability_relief"],
+        profitability_hard_cliff_boundary_relief=inputs["profitability_hard_cliff_boundary_relief"],
+        historical_execution_relief=inputs["historical_execution_relief"],
         positive_tags=positive_tags,
         negative_tags=negative_tags,
     )
     _append_short_trade_snapshot_catalyst_tags(
-        raw_catalyst_freshness=raw_catalyst_freshness,
-        catalyst_relief=catalyst_relief,
+        raw_catalyst_freshness=inputs["raw_catalyst_freshness"],
+        catalyst_relief=inputs["catalyst_relief"],
         positive_tags=positive_tags,
         negative_tags=negative_tags,
     )
     _append_short_trade_snapshot_continuation_relief_tags(
-        visibility_gap_continuation_relief=visibility_gap_continuation_relief,
-        merge_approved_continuation_relief=merge_approved_continuation_relief,
-        prepared_breakout_penalty_relief=prepared_breakout_penalty_relief,
-        prepared_breakout_catalyst_relief=prepared_breakout_catalyst_relief,
-        prepared_breakout_volume_relief=prepared_breakout_volume_relief,
-        prepared_breakout_continuation_relief=prepared_breakout_continuation_relief,
-        prepared_breakout_selected_catalyst_relief=prepared_breakout_selected_catalyst_relief,
+        visibility_gap_continuation_relief=inputs["visibility_gap_continuation_relief"],
+        merge_approved_continuation_relief=inputs["merge_approved_continuation_relief"],
+        prepared_breakout_penalty_relief=inputs["prepared_breakout_penalty_relief"],
+        prepared_breakout_catalyst_relief=inputs["prepared_breakout_catalyst_relief"],
+        prepared_breakout_volume_relief=inputs["prepared_breakout_volume_relief"],
+        prepared_breakout_continuation_relief=inputs["prepared_breakout_continuation_relief"],
+        prepared_breakout_selected_catalyst_relief=inputs["prepared_breakout_selected_catalyst_relief"],
         positive_tags=positive_tags,
     )
     _append_short_trade_snapshot_penalty_tags(
-        watchlist_zero_catalyst_penalty=watchlist_zero_catalyst_penalty,
-        watchlist_zero_catalyst_crowded_penalty=watchlist_zero_catalyst_crowded_penalty,
-        watchlist_zero_catalyst_flat_trend_penalty=watchlist_zero_catalyst_flat_trend_penalty,
-        t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
+        watchlist_zero_catalyst_penalty=inputs["watchlist_zero_catalyst_penalty"],
+        watchlist_zero_catalyst_crowded_penalty=inputs["watchlist_zero_catalyst_crowded_penalty"],
+        watchlist_zero_catalyst_flat_trend_penalty=inputs["watchlist_zero_catalyst_flat_trend_penalty"],
+        t_plus_2_continuation_candidate=inputs["t_plus_2_continuation_candidate"],
         positive_tags=positive_tags,
         negative_tags=negative_tags,
     )
     _append_short_trade_snapshot_blockers(
         input_data=input_data,
         profile=profile,
-        trend_signal=trend_signal,
-        stale_trend_repair_penalty=stale_trend_repair_penalty,
-        overhead_supply_penalty=overhead_supply_penalty,
-        extension_without_room_penalty=extension_without_room_penalty,
+        trend_signal=inputs["trend_signal"],
+        stale_trend_repair_penalty=inputs["stale_trend_repair_penalty"],
+        overhead_supply_penalty=inputs["overhead_supply_penalty"],
+        extension_without_room_penalty=inputs["extension_without_room_penalty"],
         blockers=blockers,
         gate_status=gate_status,
         signal_signed_strength_fn=signal_signed_strength_fn,
     )
     _append_short_trade_snapshot_strength_tags(
         input_data=input_data,
-        breakout_freshness=breakout_freshness,
-        trend_acceleration=trend_acceleration,
-        catalyst_freshness=catalyst_freshness,
-        sector_resonance=sector_resonance,
-        event_signal=event_signal,
+        breakout_freshness=inputs["breakout_freshness"],
+        trend_acceleration=inputs["trend_acceleration"],
+        catalyst_freshness=inputs["catalyst_freshness"],
+        sector_resonance=inputs["sector_resonance"],
+        event_signal=inputs["event_signal"],
         positive_tags=positive_tags,
         negative_tags=negative_tags,
     )

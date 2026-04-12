@@ -112,6 +112,31 @@ def _resolve_tushare_cache_ttl(api_name: str, **kwargs) -> int:
     return 24 * 3600
 
 
+def _get_persisted_tushare_cached_df(cache_key: str) -> Optional[pd.DataFrame]:
+    persisted_df = _persistent_cache.get(cache_key)
+    if not isinstance(persisted_df, pd.DataFrame):
+        return None
+    _store_tushare_cached_df(cache_key, persisted_df)
+    return persisted_df.copy()
+
+
+def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> Optional[pd.DataFrame]:
+    api_func = getattr(pro, api_name, None)
+    if api_func is None:
+        return None
+    try:
+        return api_func(**kwargs)
+    except Exception as e:
+        print(f"[Tushare] API {api_name}({kwargs}) 调用失败: {e}")
+        return None
+
+
+def _persist_tushare_dataframe_result(cache_key: str, df: pd.DataFrame, *, api_name: str, ttl: Optional[int], **kwargs) -> pd.DataFrame:
+    _store_tushare_cached_df(cache_key, df)
+    _persistent_cache.set(cache_key, df, ttl=ttl if ttl is not None else _resolve_tushare_cache_ttl(api_name, **kwargs))
+    return df.copy()
+
+
 def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl: Optional[int] = None, **kwargs) -> Optional[pd.DataFrame]:
     """带进程内 + 持久化缓存的通用 Tushare DataFrame 调用。"""
     cache_key = _make_tushare_query_cache_key(api_name, **kwargs)
@@ -120,28 +145,23 @@ def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl
     if cached_df is not None:
         return cached_df
 
-    persisted_df = _persistent_cache.get(cache_key)
-    if isinstance(persisted_df, pd.DataFrame):
-        _store_tushare_cached_df(cache_key, persisted_df)
-        return persisted_df.copy()
+    persisted_df = _get_persisted_tushare_cached_df(cache_key)
+    if persisted_df is not None:
+        return persisted_df
 
-    api_func = getattr(pro, api_name, None)
-    if api_func is None:
-        return None
-
-    try:
-        df = api_func(**kwargs)
-    except Exception as e:
-        print(f"[Tushare] API {api_name}({kwargs}) 调用失败: {e}")
-        return None
+    df = _call_tushare_dataframe_api(pro, api_name, **kwargs)
 
     if dedupe and df is not None and not df.empty:
         df = _dedupe_tushare_df(df)
 
     if df is not None:
-        _store_tushare_cached_df(cache_key, df)
-        _persistent_cache.set(cache_key, df, ttl=ttl if ttl is not None else _resolve_tushare_cache_ttl(api_name, **kwargs))
-        return df.copy()
+        return _persist_tushare_dataframe_result(
+            cache_key,
+            df,
+            api_name=api_name,
+            ttl=ttl,
+            **kwargs,
+        )
 
     return None
 
@@ -240,7 +260,7 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
         start_fmt = start_date.replace("-", "")
         end_fmt = end_date.replace("-", "")
         print(f"[Tushare] 调用 daily API: ts_code={ts_code}, start_date={start_fmt}, end_date={end_fmt}")
-        df = _cached_tushare_dataframe_call(pro, "daily", ts_code=ts_code, start_date=start_fmt, end_date=end_fmt)
+        df = _fetch_tushare_ashare_prices_df(pro, ts_code, start_fmt, end_fmt)
         print(f"[Tushare] 返回数据: {df.shape if df is not None else 'None'}")
         prices = build_prices_from_tushare_daily_df(df)
         print(f"[Tushare] 成功获取 {len(prices)} 条数据")
@@ -253,6 +273,16 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
         return []
 
 
+def _fetch_tushare_ashare_prices_df(pro, ts_code: str, start_fmt: str, end_fmt: str) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(
+        pro,
+        "daily",
+        ts_code=ts_code,
+        start_date=start_fmt,
+        end_date=end_fmt,
+    )
+
+
 def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float = 3.0, include_name: bool = True) -> List[dict]:
     """
     使用 Tushare 获取指定交易日涨幅超过阈值的 A 股列表
@@ -262,7 +292,7 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
         print("[Tushare] 未初始化，检查 TUSHARE_TOKEN")
         return []
     try:
-        trade_fmt = trade_date.replace("-", "")
+        trade_fmt = _normalize_tushare_trade_date(trade_date)
         return build_daily_gainers_with_tushare_data(
             pro=pro,
             trade_fmt=trade_fmt,
@@ -280,6 +310,10 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
 
         traceback.print_exc()
         return []
+
+
+def _normalize_tushare_trade_date(trade_date: str) -> str:
+    return trade_date.replace("-", "")
 
 
 def _validate_margin(value: float | None) -> float | None:
@@ -350,6 +384,53 @@ def _get_latest_total_mv(pro, ts_code: str, anchor_date: str, lookback_days: int
     return None
 
 
+def _load_tushare_financial_metric_frames(pro, ts_code: str, *, limit: int, period: str) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
+    fetch_limit = resolve_financial_metrics_fetch_limit(limit, period)
+    financial_fetch_limit = limit * 4
+    return fetch_financial_metric_frames(
+        _cached_tushare_call,
+        _cached_tushare_dataframe_call,
+        pro,
+        ts_code,
+        fetch_limit,
+        financial_fetch_limit,
+    )
+
+
+def _build_tushare_financial_metrics(
+    *,
+    ticker: str,
+    end_date: str,
+    limit: int,
+    period: str,
+    pro,
+    ts_code: str,
+    df_fin: pd.DataFrame,
+    df_cash: pd.DataFrame | None,
+    df_bal: pd.DataFrame | None,
+    df_income: pd.DataFrame | None,
+) -> List[FinancialMetrics]:
+    fcf_values, raw_income_map, ttm_income_map = build_financial_metric_support_maps(df_fin, df_cash, df_income)
+    return build_financial_metrics_from_frames(
+        ticker=ticker,
+        end_date=end_date,
+        limit=limit,
+        period=period,
+        pro=pro,
+        ts_code=ts_code,
+        df_fin=df_fin,
+        df_cash=df_cash,
+        df_bal=df_bal,
+        df_income=df_income,
+        fcf_values=fcf_values,
+        raw_income_map=raw_income_map,
+        ttm_income_map=ttm_income_map,
+        get_latest_daily_basic=_get_latest_daily_basic,
+        validate_margin=_validate_margin,
+        validate_roe=_validate_roe,
+    )
+
+
 def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10, period: str = "ttm") -> List[FinancialMetrics]:
     """
     使用 Tushare 获取 A 股财务指标
@@ -362,20 +443,15 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
         return []
     try:
         ts_code = _to_ts_code(ticker)
-        fetch_limit = resolve_financial_metrics_fetch_limit(limit, period)
-        financial_fetch_limit = limit * 4
-        df_fin, df_cash, df_bal, df_income = fetch_financial_metric_frames(
-            _cached_tushare_call,
-            _cached_tushare_dataframe_call,
+        df_fin, df_cash, df_bal, df_income = _load_tushare_financial_metric_frames(
             pro,
             ts_code,
-            fetch_limit,
-            financial_fetch_limit,
+            limit=limit,
+            period=period,
         )
         if df_fin is None or df_fin.empty:
             return []
-        fcf_values, raw_income_map, ttm_income_map = build_financial_metric_support_maps(df_fin, df_cash, df_income)
-        return build_financial_metrics_from_frames(
+        return _build_tushare_financial_metrics(
             ticker=ticker,
             end_date=end_date,
             limit=limit,
@@ -386,12 +462,6 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
             df_cash=df_cash,
             df_bal=df_bal,
             df_income=df_income,
-            fcf_values=fcf_values,
-            raw_income_map=raw_income_map,
-            ttm_income_map=ttm_income_map,
-            get_latest_daily_basic=_get_latest_daily_basic,
-            validate_margin=_validate_margin,
-            validate_roe=_validate_roe,
         )
     except Exception as e:
         print(f"[Tushare] 获取财务指标失败: {e}")
@@ -420,6 +490,66 @@ def get_ashare_market_cap_with_tushare(ticker: str, end_date: str) -> float | No
         return None
 
 
+def _load_tushare_line_item_frames(pro, ts_code: str, *, limit: int) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
+    return fetch_line_item_statement_frames(
+        _cached_tushare_call,
+        pro,
+        ts_code,
+        limit * 4,
+    )
+
+
+def _build_tushare_line_items(
+    *,
+    ticker: str,
+    line_items: List[str],
+    period: str,
+    limit: int,
+    df_fin: pd.DataFrame,
+    df_bal: pd.DataFrame | None,
+    df_cash: pd.DataFrame | None,
+    df_income: pd.DataFrame | None,
+) -> List[LineItem]:
+    return build_line_items_from_frames(
+        ticker=ticker,
+        line_items=line_items,
+        period=period,
+        limit=limit,
+        df_fin=df_fin,
+        df_bal=df_bal,
+        df_cash=df_cash,
+        df_income=df_income,
+    )
+
+
+def _resolve_tushare_line_items(
+    *,
+    pro,
+    ticker: str,
+    line_items: List[str],
+    period: str,
+    limit: int,
+) -> List[LineItem]:
+    ts_code = _to_ts_code(ticker)
+    df_fin, df_bal, df_cash, df_income = _load_tushare_line_item_frames(
+        pro,
+        ts_code,
+        limit=limit,
+    )
+    if df_fin is None or df_fin.empty:
+        return []
+    return _build_tushare_line_items(
+        ticker=ticker,
+        line_items=line_items,
+        period=period,
+        limit=limit,
+        df_fin=df_fin,
+        df_bal=df_bal,
+        df_cash=df_cash,
+        df_income=df_income,
+    )
+
+
 def get_ashare_line_items_with_tushare(
     ticker: str,
     line_items: List[str],
@@ -437,20 +567,12 @@ def get_ashare_line_items_with_tushare(
         return []
 
     try:
-        ts_code = _to_ts_code(ticker)
-        fetch_limit = limit * 4
-        df_fin, df_bal, df_cash, df_income = fetch_line_item_statement_frames(_cached_tushare_call, pro, ts_code, fetch_limit)
-        if df_fin is None or df_fin.empty:
-            return []
-        return build_line_items_from_frames(
+        return _resolve_tushare_line_items(
+            pro=pro,
             ticker=ticker,
             line_items=line_items,
             period=period,
             limit=limit,
-            df_fin=df_fin,
-            df_bal=df_bal,
-            df_cash=df_cash,
-            df_income=df_income,
         )
     except Exception as e:
         print(f"[Tushare] 获取财务项目失败: {e}")
@@ -458,6 +580,20 @@ def get_ashare_line_items_with_tushare(
 
         traceback.print_exc()
         return []
+
+
+def _load_tushare_insider_trade_frame(pro, ts_code: str, end_date: str, start_date: str | None) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(
+        pro,
+        "stk_holdertrade",
+        **build_holdertrade_query_kwargs(ts_code, end_date, start_date),
+    )
+
+
+def _build_tushare_insider_trades(ticker: str, df: pd.DataFrame, *, limit: int) -> List[InsiderTrade]:
+    if "ann_date" in df.columns:
+        df = df.sort_values("ann_date", ascending=False)
+    return [build_insider_trade_from_row(ticker, row) for _, row in df.head(limit).iterrows()]
 
 
 def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_date: str = None, limit: int = 100) -> List[InsiderTrade]:
@@ -478,21 +614,34 @@ def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_dat
         return []
     try:
         ts_code = _to_ts_code(ticker)
-        df = _cached_tushare_dataframe_call(pro, "stk_holdertrade", **build_holdertrade_query_kwargs(ts_code, end_date, start_date))
+        df = _load_tushare_insider_trade_frame(pro, ts_code, end_date, start_date)
         if df is None or df.empty:
             return []
-
-        if "ann_date" in df.columns:
-            df = df.sort_values("ann_date", ascending=False)
-
-        trades = []
-        for _, row in df.head(limit).iterrows():
-            trades.append(build_insider_trade_from_row(ticker, row))
-
-        return trades
+        return _build_tushare_insider_trades(ticker, df, limit=limit)
     except Exception as e:
         print(f"[Tushare] 获取股东增减持数据失败: {e}")
         return []
+
+
+def _load_tushare_stock_basic_details(pro, ts_code: str) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(
+        pro,
+        "stock_basic",
+        ts_code=ts_code,
+        fields="ts_code,name,area,industry,market,list_date",
+    )
+
+
+def _load_tushare_stock_price_details(pro, ts_code: str, trade_date: Optional[str]) -> Optional[pd.DataFrame]:
+    daily_kwargs: dict[str, Any] = {
+        "ts_code": ts_code,
+        "fields": "trade_date,close,pre_close,pct_chg",
+    }
+    if trade_date is None:
+        daily_kwargs["limit"] = 1
+    else:
+        daily_kwargs["trade_date"] = trade_date
+    return _cached_tushare_dataframe_call(pro, "daily", **daily_kwargs)
 
 
 def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
@@ -521,11 +670,8 @@ def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
 
     try:
         ts_code = _to_ts_code(ticker)
-        df_basic = _cached_tushare_dataframe_call(pro, "stock_basic", ts_code=ts_code, fields="ts_code,name,area,industry,market,list_date")
-        if trade_date is None:
-            df_daily = _cached_tushare_dataframe_call(pro, "daily", ts_code=ts_code, limit=1, fields="trade_date,close,pre_close,pct_chg")
-        else:
-            df_daily = _cached_tushare_dataframe_call(pro, "daily", trade_date=trade_date, ts_code=ts_code, fields="trade_date,close,pre_close,pct_chg")
+        df_basic = _load_tushare_stock_basic_details(pro, ts_code)
+        df_daily = _load_tushare_stock_price_details(pro, ts_code, trade_date)
 
         return {
             **build_stock_basic_details(ticker, df_basic),
@@ -549,6 +695,17 @@ _sw_industry_cache: Optional[Dict[str, str]] = None
 _sw_industry_cache_lock = threading.Lock()
 
 
+def _fetch_tushare_all_stock_basic(pro) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(
+        pro,
+        "stock_basic",
+        exchange="",
+        list_status="L",
+        fields="ts_code,symbol,name,area,industry,market,list_date,list_status,is_hs",
+        ttl=7 * 86400,
+    )
+
+
 def get_all_stock_basic() -> Optional[pd.DataFrame]:
     """
     获取全 A 股基本信息（代码/名称/上市日期/行业/市场/状态）。
@@ -568,19 +725,22 @@ def get_all_stock_basic() -> Optional[pd.DataFrame]:
     try:
         return fetch_process_cached_frame(
             cached_frame=cached_stock_basic,
-            fetch_frame=lambda: _cached_tushare_dataframe_call(
-                pro,
-                "stock_basic",
-                exchange="",
-                list_status="L",
-                fields="ts_code,symbol,name,area,industry,market,list_date,list_status,is_hs",
-                ttl=7 * 86400,
-            ),
+            fetch_frame=lambda: _fetch_tushare_all_stock_basic(pro),
             cache_frame=lambda df: _cache_stock_basic_frame(df),
         )
     except Exception as e:
         print(f"[Tushare] get_all_stock_basic 失败: {e}")
         return None
+
+
+def _fetch_tushare_daily_basic_batch(pro, trade_date: str) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(
+        pro,
+        "daily_basic",
+        trade_date=trade_date,
+        fields="ts_code,trade_date,close,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm,"
+        "dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv",
+    )
 
 
 def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
@@ -605,17 +765,20 @@ def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
             cache_key=cache_key,
             get_cached_df=_get_tushare_cached_df,
             store_cached_df=_store_tushare_cached_df,
-            fetch_frame=lambda: _cached_tushare_dataframe_call(
-                pro,
-                "daily_basic",
-                trade_date=trade_date,
-                fields="ts_code,trade_date,close,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm,"
-                "dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv",
-            ),
+            fetch_frame=lambda: _fetch_tushare_daily_basic_batch(pro, trade_date),
         )
     except Exception as e:
         print(f"[Tushare] get_daily_basic_batch({trade_date}) 失败: {e}")
         return None
+
+
+def _fetch_tushare_daily_price_batch(pro, trade_date: str) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(
+        pro,
+        "daily",
+        trade_date=trade_date,
+        fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
+    )
 
 
 def get_daily_price_batch(trade_date: str) -> Optional[pd.DataFrame]:
@@ -639,12 +802,7 @@ def get_daily_price_batch(trade_date: str) -> Optional[pd.DataFrame]:
             cache_key=cache_key,
             get_cached_df=_get_tushare_cached_df,
             store_cached_df=_store_tushare_cached_df,
-            fetch_frame=lambda: _cached_tushare_dataframe_call(
-                pro,
-                "daily",
-                trade_date=trade_date,
-                fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
-            ),
+            fetch_frame=lambda: _fetch_tushare_daily_price_batch(pro, trade_date),
         )
     except Exception as e:
         print(f"[Tushare] get_daily_price_batch({trade_date}) 失败: {e}")
@@ -670,19 +828,32 @@ def get_open_trade_dates(start_date: str, end_date: str) -> list[str]:
         return []
 
     try:
-        df = _cached_tushare_dataframe_call(
-            pro,
-            "trade_cal",
-            exchange="",
-            start_date=start_date,
-            end_date=end_date,
-            is_open=1,
-            fields="cal_date,is_open",
-        )
+        df = _fetch_tushare_open_trade_dates(pro, start_date, end_date)
         return extract_open_trade_dates(df)
     except Exception as e:
         print(f"[Tushare] get_open_trade_dates({start_date}, {end_date}) 失败: {e}")
         return []
+
+
+def _fetch_tushare_open_trade_dates(pro, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(
+        pro,
+        "trade_cal",
+        exchange="",
+        start_date=start_date,
+        end_date=end_date,
+        is_open=1,
+        fields="cal_date,is_open",
+    )
+
+
+def _resolve_tushare_sw_industry_mapping(pro, cached_mapping: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+    return resolve_cached_sw_industry_mapping(
+        cached_mapping=cached_mapping,
+        load_index_df=lambda: load_sw_index_classification(_cached_tushare_dataframe_call, pro),
+        build_mapping=lambda index_df: build_sw_industry_mapping(_cached_tushare_dataframe_call, pro, index_df),
+        cache_mapping=_cache_sw_industry_mapping,
+    )
 
 
 def get_sw_industry_classification() -> Optional[Dict[str, str]]:
@@ -702,12 +873,7 @@ def get_sw_industry_classification() -> Optional[Dict[str, str]]:
         return None
 
     try:
-        result = resolve_cached_sw_industry_mapping(
-            cached_mapping=cached_mapping,
-            load_index_df=lambda: load_sw_index_classification(_cached_tushare_dataframe_call, pro),
-            build_mapping=lambda index_df: build_sw_industry_mapping(_cached_tushare_dataframe_call, pro, index_df),
-            cache_mapping=_cache_sw_industry_mapping,
-        )
+        result = _resolve_tushare_sw_industry_mapping(pro, cached_mapping)
         if result is None and cached_mapping is None:
             print("[Tushare] 无法获取申万行业分类")
         return result
@@ -720,6 +886,10 @@ def _cache_sw_industry_mapping(mapping: Dict[str, str]) -> None:
     global _sw_industry_cache
     with _sw_industry_cache_lock:
         _sw_industry_cache = mapping
+
+
+def _fetch_tushare_limit_list(pro, trade_date: str) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(pro, "limit_list_d", trade_date=trade_date)
 
 
 def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
@@ -745,7 +915,7 @@ def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
             cache_key=cache_key,
             get_cached_df=_get_tushare_cached_df,
             store_cached_df=_store_tushare_cached_df,
-            fetch_frame=lambda: _cached_tushare_dataframe_call(pro, "limit_list_d", trade_date=trade_date),
+            fetch_frame=lambda: _fetch_tushare_limit_list(pro, trade_date),
         )
     except Exception as e:
         print(f"[Tushare] get_limit_list({trade_date}) 失败: {e}")
@@ -772,11 +942,19 @@ def get_suspend_list(trade_date: str) -> Optional[pd.DataFrame]:
             cache_key=cache_key,
             get_cached_df=_get_tushare_cached_df,
             store_cached_df=_store_tushare_cached_df,
-            fetch_frame=lambda: _cached_tushare_dataframe_call(pro, "suspend_d", trade_date=trade_date),
+            fetch_frame=lambda: _fetch_tushare_suspend_list(pro, trade_date),
         )
     except Exception as e:
         print(f"[Tushare] get_suspend_list({trade_date}) 失败: {e}")
         return None
+
+
+def _fetch_tushare_suspend_list(pro, trade_date: str) -> Optional[pd.DataFrame]:
+    return _cached_tushare_dataframe_call(pro, "suspend_d", trade_date=trade_date)
+
+
+def _fetch_tushare_index_daily(pro, kwargs: dict[str, Any]) -> Optional[pd.DataFrame]:
+    return pro.index_daily(**kwargs)
 
 
 def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", limit: int = 120) -> Optional[pd.DataFrame]:
@@ -803,11 +981,15 @@ def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", l
             cache_key=cache_key,
             get_cached_df=_get_tushare_cached_df,
             store_cached_df=_store_tushare_cached_df,
-            fetch_frame=lambda: pro.index_daily(**kwargs),
+            fetch_frame=lambda: _fetch_tushare_index_daily(pro, kwargs),
         )
     except Exception as e:
         print(f"[Tushare] get_index_daily({index_code}) 失败: {e}")
         return None
+
+
+def _fetch_tushare_northbound_flow(pro, kwargs: dict[str, Any]) -> Optional[pd.DataFrame]:
+    return pro.moneyflow_hsgt(**kwargs)
 
 
 def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: str = "", limit: int = 30) -> Optional[pd.DataFrame]:
@@ -833,7 +1015,7 @@ def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: st
             cache_key=cache_key,
             get_cached_df=_get_tushare_cached_df,
             store_cached_df=_store_tushare_cached_df,
-            fetch_frame=lambda: pro.moneyflow_hsgt(**kwargs),
+            fetch_frame=lambda: _fetch_tushare_northbound_flow(pro, kwargs),
         )
     except Exception as e:
         print(f"[Tushare] get_northbound_flow 失败: {e}")

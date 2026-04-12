@@ -7,6 +7,105 @@ if TYPE_CHECKING:
     from src.screening.models import CandidateStock
 
 
+def _try_load_cached_candidate_pool_with_shadow(
+    *,
+    trade_date: str,
+    use_cache: bool,
+    snapshot_path: Path,
+    legacy_snapshot_path: Path,
+    shadow_snapshot_path: Path,
+    max_candidate_pool_size: int,
+    focus_signature: str,
+    load_candidate_pool_shadow_snapshot_fn: Callable[[Path], dict[str, Any]],
+    write_candidate_pool_snapshot_fn: Callable[[Path, list["CandidateStock"]], None],
+    load_candidate_pool_snapshot_fn: Callable[[Path], list["CandidateStock"]],
+    build_shadow_summary_from_selected_candidates_fn: Callable[..., dict[str, Any]],
+    write_candidate_pool_shadow_snapshot_fn: Callable[..., None],
+) -> tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any], list["CandidateStock"]] | None:
+    cached_selected_candidates: list[CandidateStock] = []
+    focus_label = f", focus={focus_signature}" if focus_signature else ""
+
+    if use_cache and snapshot_path.exists() and shadow_snapshot_path.exists():
+        try:
+            shadow_payload = load_candidate_pool_shadow_snapshot_fn(shadow_snapshot_path)
+            write_candidate_pool_snapshot_fn(legacy_snapshot_path, shadow_payload["selected_candidates"])
+            print(
+                f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{max_candidate_pool_size}{focus_label})"
+            )
+            return shadow_payload["selected_candidates"], shadow_payload["shadow_candidates"], shadow_payload["shadow_summary"], cached_selected_candidates
+        except Exception as e:
+            print(f"[CandidatePool] shadow 缓存读取失败，重新计算: {e}")
+            return None
+
+    if use_cache and snapshot_path.exists():
+        print(f"[CandidatePool] 发现仅主池缓存 {snapshot_path.name}，补算 shadow recall 快照{focus_label}")
+        try:
+            cached_selected_candidates = load_candidate_pool_snapshot_fn(snapshot_path)
+            if cached_selected_candidates and not focus_signature:
+                shadow_summary = build_shadow_summary_from_selected_candidates_fn(
+                    cached_selected_candidates,
+                    pool_size=max_candidate_pool_size,
+                )
+                write_candidate_pool_shadow_snapshot_fn(
+                    shadow_snapshot_path,
+                    selected_candidates=cached_selected_candidates,
+                    shadow_candidates=[],
+                    shadow_summary=shadow_summary,
+                )
+                write_candidate_pool_snapshot_fn(legacy_snapshot_path, cached_selected_candidates)
+                print(
+                    f"[CandidatePool] 使用已有主池缓存直接回填空 shadow 快照 ({trade_date}, top{max_candidate_pool_size})"
+                )
+                return cached_selected_candidates, [], shadow_summary, cached_selected_candidates
+        except Exception as e:
+            print(f"[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: {e}")
+
+    return None if not cached_selected_candidates else ([], [], {}, cached_selected_candidates)
+
+
+def _finalize_candidate_pool_with_shadow_outputs(
+    *,
+    snapshot_path: Path,
+    legacy_snapshot_path: Path,
+    shadow_snapshot_path: Path,
+    candidates: list["CandidateStock"],
+    cooldown_review_candidates: list["CandidateStock"],
+    focus_filter_diagnostics: list[dict[str, Any]],
+    selected_candidates: list["CandidateStock"],
+    shadow_candidates: list["CandidateStock"],
+    shadow_summary: dict[str, Any],
+    max_candidate_pool_size: int,
+    write_candidate_pool_snapshot_fn: Callable[[Path, list["CandidateStock"]], None],
+    write_candidate_pool_shadow_snapshot_fn: Callable[..., None],
+    finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
+) -> tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any]]:
+    shadow_summary["focus_filter_diagnostics"] = finalize_focus_filter_diagnostics_fn(
+        {item["ticker"]: item for item in focus_filter_diagnostics},
+        candidate_tickers={candidate.ticker for candidate in candidates},
+        cooldown_review_tickers={candidate.ticker for candidate in cooldown_review_candidates},
+        selected_tickers={candidate.ticker for candidate in selected_candidates},
+        shadow_tickers={candidate.ticker for candidate in shadow_candidates},
+    )
+
+    write_candidate_pool_snapshot_fn(snapshot_path, selected_candidates)
+    write_candidate_pool_snapshot_fn(legacy_snapshot_path, selected_candidates)
+    write_candidate_pool_shadow_snapshot_fn(
+        shadow_snapshot_path,
+        selected_candidates=selected_candidates,
+        shadow_candidates=shadow_candidates,
+        shadow_summary=shadow_summary,
+    )
+
+    if len(candidates) > max_candidate_pool_size:
+        print(f"[CandidatePool] 候选池截断至 Top {max_candidate_pool_size}（按20日均成交额/市值排序）")
+    if shadow_candidates:
+        print(
+            f"[CandidatePool] shadow recall 标的: {len(shadow_candidates)} 只 ({shadow_summary.get('lane_counts')})"
+        )
+    print(f"[CandidatePool] 最终候选池: {len(selected_candidates)} 只 → {snapshot_path}")
+    return selected_candidates, shadow_candidates, shadow_summary
+
+
 def build_candidate_pool_with_shadow(
     *,
     trade_date: str,
@@ -26,42 +125,26 @@ def build_candidate_pool_with_shadow(
     build_shadow_candidate_pool_payload_fn: Callable[..., tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any]]],
     finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
 ) -> tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any]]:
-    cached_selected_candidates: list[CandidateStock] = []
     focus_signature = shadow_focus_signature_fn()
-    focus_label = f", focus={focus_signature}" if focus_signature else ""
-
-    if use_cache and snapshot_path.exists() and shadow_snapshot_path.exists():
-        try:
-            shadow_payload = load_candidate_pool_shadow_snapshot_fn(shadow_snapshot_path)
-            write_candidate_pool_snapshot_fn(legacy_snapshot_path, shadow_payload["selected_candidates"])
-            print(
-                f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{max_candidate_pool_size}{focus_label})"
-            )
-            return shadow_payload["selected_candidates"], shadow_payload["shadow_candidates"], shadow_payload["shadow_summary"]
-        except Exception as e:
-            print(f"[CandidatePool] shadow 缓存读取失败，重新计算: {e}")
-    elif use_cache and snapshot_path.exists():
-        print(f"[CandidatePool] 发现仅主池缓存 {snapshot_path.name}，补算 shadow recall 快照{focus_label}")
-        try:
-            cached_selected_candidates = load_candidate_pool_snapshot_fn(snapshot_path)
-            if cached_selected_candidates and not focus_signature:
-                shadow_summary = build_shadow_summary_from_selected_candidates_fn(
-                    cached_selected_candidates,
-                    pool_size=max_candidate_pool_size,
-                )
-                write_candidate_pool_shadow_snapshot_fn(
-                    shadow_snapshot_path,
-                    selected_candidates=cached_selected_candidates,
-                    shadow_candidates=[],
-                    shadow_summary=shadow_summary,
-                )
-                write_candidate_pool_snapshot_fn(legacy_snapshot_path, cached_selected_candidates)
-                print(
-                    f"[CandidatePool] 使用已有主池缓存直接回填空 shadow 快照 ({trade_date}, top{max_candidate_pool_size})"
-                )
-                return cached_selected_candidates, [], shadow_summary
-        except Exception as e:
-            print(f"[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: {e}")
+    cached_selected_candidates: list[CandidateStock] = []
+    cached_result = _try_load_cached_candidate_pool_with_shadow(
+        trade_date=trade_date,
+        use_cache=use_cache,
+        snapshot_path=snapshot_path,
+        legacy_snapshot_path=legacy_snapshot_path,
+        shadow_snapshot_path=shadow_snapshot_path,
+        max_candidate_pool_size=max_candidate_pool_size,
+        focus_signature=focus_signature,
+        load_candidate_pool_shadow_snapshot_fn=load_candidate_pool_shadow_snapshot_fn,
+        write_candidate_pool_snapshot_fn=write_candidate_pool_snapshot_fn,
+        load_candidate_pool_snapshot_fn=load_candidate_pool_snapshot_fn,
+        build_shadow_summary_from_selected_candidates_fn=build_shadow_summary_from_selected_candidates_fn,
+        write_candidate_pool_shadow_snapshot_fn=write_candidate_pool_shadow_snapshot_fn,
+    )
+    if cached_result is not None:
+        selected_candidates, shadow_candidates, shadow_summary, cached_selected_candidates = cached_result
+        if selected_candidates or shadow_candidates or shadow_summary:
+            return selected_candidates, shadow_candidates, shadow_summary
 
     candidates, cooldown_review_candidates, focus_filter_diagnostics = compute_candidate_pool_candidates_fn(
         trade_date,
@@ -91,28 +174,18 @@ def build_candidate_pool_with_shadow(
         cooldown_review_candidates=cooldown_review_candidates,
         focus_filter_diagnostics=focus_filter_diagnostics,
     )
-    shadow_summary["focus_filter_diagnostics"] = finalize_focus_filter_diagnostics_fn(
-        {item["ticker"]: item for item in focus_filter_diagnostics},
-        candidate_tickers={candidate.ticker for candidate in candidates},
-        cooldown_review_tickers={candidate.ticker for candidate in cooldown_review_candidates},
-        selected_tickers={candidate.ticker for candidate in selected_candidates},
-        shadow_tickers={candidate.ticker for candidate in shadow_candidates},
-    )
-
-    write_candidate_pool_snapshot_fn(snapshot_path, selected_candidates)
-    write_candidate_pool_snapshot_fn(legacy_snapshot_path, selected_candidates)
-    write_candidate_pool_shadow_snapshot_fn(
-        shadow_snapshot_path,
+    return _finalize_candidate_pool_with_shadow_outputs(
+        snapshot_path=snapshot_path,
+        legacy_snapshot_path=legacy_snapshot_path,
+        shadow_snapshot_path=shadow_snapshot_path,
+        candidates=candidates,
+        cooldown_review_candidates=cooldown_review_candidates,
+        focus_filter_diagnostics=focus_filter_diagnostics,
         selected_candidates=selected_candidates,
         shadow_candidates=shadow_candidates,
         shadow_summary=shadow_summary,
+        max_candidate_pool_size=max_candidate_pool_size,
+        write_candidate_pool_snapshot_fn=write_candidate_pool_snapshot_fn,
+        write_candidate_pool_shadow_snapshot_fn=write_candidate_pool_shadow_snapshot_fn,
+        finalize_focus_filter_diagnostics_fn=finalize_focus_filter_diagnostics_fn,
     )
-
-    if len(candidates) > max_candidate_pool_size:
-        print(f"[CandidatePool] 候选池截断至 Top {max_candidate_pool_size}（按20日均成交额/市值排序）")
-    if shadow_candidates:
-        print(
-            f"[CandidatePool] shadow recall 标的: {len(shadow_candidates)} 只 ({shadow_summary.get('lane_counts')})"
-        )
-    print(f"[CandidatePool] 最终候选池: {len(selected_candidates)} 只 → {snapshot_path}")
-    return selected_candidates, shadow_candidates, shadow_summary

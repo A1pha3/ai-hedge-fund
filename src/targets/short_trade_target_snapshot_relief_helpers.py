@@ -89,6 +89,26 @@ class SnapshotReliefResolution:
     selected_score_tolerance: float
 
 
+@dataclass(frozen=True)
+class SnapshotCoreReliefs:
+    profitability_relief: dict[str, Any]
+    catalyst_relief: dict[str, Any]
+    visibility_gap_continuation_relief: dict[str, Any]
+    merge_approved_continuation_relief: dict[str, Any]
+    historical_execution_relief: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SnapshotResolutionCoreState:
+    state: SnapshotSignalState
+    prepared_breakout_reliefs: PreparedBreakoutReliefs
+    threshold_state: SnapshotThresholdState
+    watchlist_penalty_state: WatchlistPenaltyState
+    score_penalty_state: ScorePenaltyState
+    positive_score_weights: dict[str, float]
+    score_payload: dict[str, Any]
+
+
 def _build_snapshot_signal_state(
     signal_snapshot: dict[str, Any],
     *,
@@ -120,6 +140,27 @@ def _build_snapshot_signal_state(
     )
 
 
+def _build_prepared_breakout_relief_base_kwargs(
+    *,
+    input_data: Any,
+    profile: Any,
+    state: SnapshotSignalState,
+) -> dict[str, Any]:
+    return {
+        "input_data": input_data,
+        "breakout_stage": state.breakout_stage,
+        "breakout_freshness": state.breakout_freshness,
+        "trend_acceleration": state.trend_acceleration,
+        "close_strength": state.close_strength,
+        "sector_resonance": state.sector_resonance,
+        "layer_c_alignment": state.layer_c_alignment,
+        "catalyst_freshness": state.raw_catalyst_freshness,
+        "long_trend_strength": state.long_trend_strength,
+        "mean_reversion_strength": state.mean_reversion_strength,
+        "profile": profile,
+    }
+
+
 def _resolve_prepared_breakout_reliefs(
     input_data: Any,
     *,
@@ -130,72 +171,147 @@ def _resolve_prepared_breakout_reliefs(
     resolve_prepared_breakout_catalyst_relief: Callable[..., dict[str, Any]],
     resolve_prepared_breakout_volume_relief: Callable[..., dict[str, Any]],
 ) -> PreparedBreakoutReliefs:
-    continuation_relief = resolve_prepared_breakout_continuation_relief(
+    base_kwargs = _build_prepared_breakout_relief_base_kwargs(
         input_data=input_data,
-        breakout_stage=state.breakout_stage,
-        breakout_freshness=state.breakout_freshness,
-        trend_acceleration=state.trend_acceleration,
-        close_strength=state.close_strength,
-        sector_resonance=state.sector_resonance,
-        layer_c_alignment=state.layer_c_alignment,
-        catalyst_freshness=state.raw_catalyst_freshness,
-        long_trend_strength=state.long_trend_strength,
-        mean_reversion_strength=state.mean_reversion_strength,
+        profile=profile,
+        state=state,
+    )
+    continuation_relief = resolve_prepared_breakout_continuation_relief(
+        **base_kwargs,
         momentum_1m=state.momentum_1m,
         momentum_3m=state.momentum_3m,
         momentum_6m=state.momentum_6m,
         volume_momentum=state.volume_momentum,
         ema_strength=state.ema_strength,
-        profile=profile,
     )
     penalty_relief = resolve_prepared_breakout_penalty_relief(
-        input_data=input_data,
-        breakout_stage=state.breakout_stage,
-        breakout_freshness=state.breakout_freshness,
-        trend_acceleration=state.trend_acceleration,
-        close_strength=state.close_strength,
-        sector_resonance=state.sector_resonance,
-        layer_c_alignment=state.layer_c_alignment,
-        catalyst_freshness=state.raw_catalyst_freshness,
-        long_trend_strength=state.long_trend_strength,
-        mean_reversion_strength=state.mean_reversion_strength,
-        profile=profile,
+        **base_kwargs,
     )
     catalyst_relief = resolve_prepared_breakout_catalyst_relief(
-        input_data=input_data,
-        breakout_stage=state.breakout_stage,
-        breakout_freshness=state.breakout_freshness,
-        trend_acceleration=state.trend_acceleration,
-        close_strength=state.close_strength,
-        sector_resonance=state.sector_resonance,
-        layer_c_alignment=state.layer_c_alignment,
-        catalyst_freshness=state.raw_catalyst_freshness,
-        long_trend_strength=state.long_trend_strength,
-        mean_reversion_strength=state.mean_reversion_strength,
-        profile=profile,
+        **base_kwargs,
     )
     volume_relief = resolve_prepared_breakout_volume_relief(
-        input_data=input_data,
-        breakout_stage=state.breakout_stage,
-        breakout_freshness=state.breakout_freshness,
-        trend_acceleration=state.trend_acceleration,
-        close_strength=state.close_strength,
-        sector_resonance=state.sector_resonance,
-        layer_c_alignment=state.layer_c_alignment,
-        catalyst_freshness=state.raw_catalyst_freshness,
-        long_trend_strength=state.long_trend_strength,
-        mean_reversion_strength=state.mean_reversion_strength,
+        **base_kwargs,
         volatility_strength=state.volatility_strength,
         volume_expansion_quality=state.volume_expansion_quality,
         volatility_regime=float(state.volatility_metrics.get("volatility_regime", 0.0) or 0.0),
         atr_ratio=float(state.volatility_metrics.get("atr_ratio", 0.0) or 0.0),
-        profile=profile,
     )
     return PreparedBreakoutReliefs(
         continuation_relief=continuation_relief,
         penalty_relief=penalty_relief,
         catalyst_relief=catalyst_relief,
         volume_relief=volume_relief,
+    )
+
+
+def _resolve_snapshot_core_reliefs(
+    input_data: Any,
+    *,
+    profile: Any,
+    state: SnapshotSignalState,
+    resolve_profitability_relief: Callable[..., dict[str, Any]],
+    resolve_upstream_shadow_catalyst_relief: Callable[..., dict[str, Any]],
+    resolve_visibility_gap_continuation_relief: Callable[..., dict[str, Any]],
+    resolve_merge_approved_continuation_relief: Callable[..., dict[str, Any]],
+    resolve_historical_execution_relief: Callable[..., dict[str, Any]],
+) -> SnapshotCoreReliefs:
+    profitability_relief = resolve_profitability_relief(
+        input_data=input_data,
+        fundamental_signal=state.fundamental_signal,
+        breakout_freshness=state.breakout_freshness,
+        catalyst_freshness=state.raw_catalyst_freshness,
+        sector_resonance=state.sector_resonance,
+        profile=profile,
+    )
+    profitability_hard_cliff = bool(profitability_relief["hard_cliff"])
+    return SnapshotCoreReliefs(
+        profitability_relief=profitability_relief,
+        catalyst_relief=resolve_upstream_shadow_catalyst_relief(
+            input_data=input_data,
+            breakout_freshness=state.breakout_freshness,
+            trend_acceleration=state.trend_acceleration,
+            close_strength=state.close_strength,
+            catalyst_freshness=state.raw_catalyst_freshness,
+            profitability_hard_cliff=profitability_hard_cliff,
+            profile=profile,
+        ),
+        visibility_gap_continuation_relief=resolve_visibility_gap_continuation_relief(
+            input_data=input_data,
+            breakout_freshness=state.breakout_freshness,
+            trend_acceleration=state.trend_acceleration,
+            close_strength=state.close_strength,
+            catalyst_freshness=state.raw_catalyst_freshness,
+            profitability_hard_cliff=profitability_hard_cliff,
+            profile=profile,
+        ),
+        merge_approved_continuation_relief=resolve_merge_approved_continuation_relief(
+            input_data=input_data,
+            breakout_freshness=state.breakout_freshness,
+            trend_acceleration=state.trend_acceleration,
+            close_strength=state.close_strength,
+            profitability_hard_cliff=profitability_hard_cliff,
+            profile=profile,
+        ),
+        historical_execution_relief=resolve_historical_execution_relief(
+            input_data=input_data,
+            profitability_hard_cliff=profitability_hard_cliff,
+            profile=profile,
+        ),
+    )
+
+
+def _finalize_snapshot_threshold_state(
+    *,
+    state: SnapshotSignalState,
+    prepared_breakout_reliefs: PreparedBreakoutReliefs,
+    core_reliefs: SnapshotCoreReliefs,
+    prepared_breakout_selected_catalyst_relief: dict[str, Any],
+) -> SnapshotThresholdState:
+    breakout_freshness = max(
+        state.breakout_freshness,
+        float(prepared_breakout_reliefs.continuation_relief["effective_breakout_freshness"]),
+        float(prepared_breakout_selected_catalyst_relief["effective_breakout_freshness"]),
+    )
+    trend_acceleration = max(
+        state.trend_acceleration,
+        float(prepared_breakout_reliefs.continuation_relief["effective_trend_acceleration"]),
+    )
+    volume_expansion_quality = max(
+        state.volume_expansion_quality,
+        float(prepared_breakout_reliefs.volume_relief["effective_volume_expansion_quality"]),
+    )
+    catalyst_freshness = max(
+        float(core_reliefs.catalyst_relief["effective_catalyst_freshness"]),
+        float(core_reliefs.visibility_gap_continuation_relief["effective_catalyst_freshness"]),
+        float(prepared_breakout_reliefs.catalyst_relief["effective_catalyst_freshness"]),
+        float(prepared_breakout_selected_catalyst_relief["effective_catalyst_freshness"]),
+    )
+    effective_near_miss_threshold = min(
+        float(core_reliefs.catalyst_relief["effective_near_miss_threshold"]),
+        float(core_reliefs.visibility_gap_continuation_relief["effective_near_miss_threshold"]),
+        float(core_reliefs.merge_approved_continuation_relief["effective_near_miss_threshold"]),
+        float(core_reliefs.historical_execution_relief["effective_near_miss_threshold"]),
+    )
+    effective_select_threshold = min(
+        float(core_reliefs.catalyst_relief["effective_select_threshold"]),
+        float(core_reliefs.merge_approved_continuation_relief["effective_select_threshold"]),
+        float(core_reliefs.historical_execution_relief["effective_select_threshold"]),
+    )
+    return SnapshotThresholdState(
+        profitability_relief=core_reliefs.profitability_relief,
+        catalyst_relief=core_reliefs.catalyst_relief,
+        visibility_gap_continuation_relief=core_reliefs.visibility_gap_continuation_relief,
+        merge_approved_continuation_relief=core_reliefs.merge_approved_continuation_relief,
+        historical_execution_relief=core_reliefs.historical_execution_relief,
+        prepared_breakout_selected_catalyst_relief=prepared_breakout_selected_catalyst_relief,
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        volume_expansion_quality=volume_expansion_quality,
+        catalyst_freshness=catalyst_freshness,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        effective_select_threshold=effective_select_threshold,
+        layer_c_avoid_penalty=float(core_reliefs.profitability_relief["effective_avoid_penalty"]),
     )
 
 
@@ -212,56 +328,33 @@ def _resolve_snapshot_threshold_state(
     resolve_historical_execution_relief: Callable[..., dict[str, Any]],
     resolve_prepared_breakout_selected_catalyst_relief: Callable[..., dict[str, Any]],
 ) -> SnapshotThresholdState:
-    profitability_relief = resolve_profitability_relief(
-        input_data=input_data,
-        fundamental_signal=state.fundamental_signal,
-        breakout_freshness=state.breakout_freshness,
-        catalyst_freshness=state.raw_catalyst_freshness,
-        sector_resonance=state.sector_resonance,
+    core_reliefs = _resolve_snapshot_core_reliefs(
+        input_data,
         profile=profile,
+        state=state,
+        resolve_profitability_relief=resolve_profitability_relief,
+        resolve_upstream_shadow_catalyst_relief=resolve_upstream_shadow_catalyst_relief,
+        resolve_visibility_gap_continuation_relief=resolve_visibility_gap_continuation_relief,
+        resolve_merge_approved_continuation_relief=resolve_merge_approved_continuation_relief,
+        resolve_historical_execution_relief=resolve_historical_execution_relief,
     )
-    catalyst_relief = resolve_upstream_shadow_catalyst_relief(
-        input_data=input_data,
-        breakout_freshness=state.breakout_freshness,
-        trend_acceleration=state.trend_acceleration,
-        close_strength=state.close_strength,
-        catalyst_freshness=state.raw_catalyst_freshness,
-        profitability_hard_cliff=bool(profitability_relief["hard_cliff"]),
-        profile=profile,
+    breakout_freshness = max(
+        state.breakout_freshness,
+        float(prepared_breakout_reliefs.continuation_relief["effective_breakout_freshness"]),
     )
-    visibility_gap_continuation_relief = resolve_visibility_gap_continuation_relief(
-        input_data=input_data,
-        breakout_freshness=state.breakout_freshness,
-        trend_acceleration=state.trend_acceleration,
-        close_strength=state.close_strength,
-        catalyst_freshness=state.raw_catalyst_freshness,
-        profitability_hard_cliff=bool(profitability_relief["hard_cliff"]),
-        profile=profile,
+    trend_acceleration = max(
+        state.trend_acceleration,
+        float(prepared_breakout_reliefs.continuation_relief["effective_trend_acceleration"]),
     )
-    merge_approved_continuation_relief = resolve_merge_approved_continuation_relief(
-        input_data=input_data,
-        breakout_freshness=state.breakout_freshness,
-        trend_acceleration=state.trend_acceleration,
-        close_strength=state.close_strength,
-        profitability_hard_cliff=bool(profitability_relief["hard_cliff"]),
-        profile=profile,
-    )
-    historical_execution_relief = resolve_historical_execution_relief(
-        input_data=input_data,
-        profitability_hard_cliff=bool(profitability_relief["hard_cliff"]),
-        profile=profile,
-    )
-    catalyst_freshness = float(catalyst_relief["effective_catalyst_freshness"])
-    effective_near_miss_threshold = float(catalyst_relief["effective_near_miss_threshold"])
-    effective_select_threshold = float(catalyst_relief["effective_select_threshold"])
-    breakout_freshness = max(state.breakout_freshness, float(prepared_breakout_reliefs.continuation_relief["effective_breakout_freshness"]))
-    trend_acceleration = max(state.trend_acceleration, float(prepared_breakout_reliefs.continuation_relief["effective_trend_acceleration"]))
     volume_expansion_quality = max(
         state.volume_expansion_quality,
         float(prepared_breakout_reliefs.volume_relief["effective_volume_expansion_quality"]),
     )
-    catalyst_freshness = max(catalyst_freshness, float(visibility_gap_continuation_relief["effective_catalyst_freshness"]))
-    catalyst_freshness = max(catalyst_freshness, float(prepared_breakout_reliefs.catalyst_relief["effective_catalyst_freshness"]))
+    catalyst_freshness = max(
+        float(core_reliefs.catalyst_relief["effective_catalyst_freshness"]),
+        float(core_reliefs.visibility_gap_continuation_relief["effective_catalyst_freshness"]),
+        float(prepared_breakout_reliefs.catalyst_relief["effective_catalyst_freshness"]),
+    )
     prepared_breakout_selected_catalyst_relief = resolve_prepared_breakout_selected_catalyst_relief(
         input_data=input_data,
         breakout_stage=state.breakout_stage,
@@ -280,42 +373,11 @@ def _resolve_snapshot_threshold_state(
         prepared_breakout_continuation_relief=prepared_breakout_reliefs.continuation_relief,
         profile=profile,
     )
-    breakout_freshness = max(breakout_freshness, float(prepared_breakout_selected_catalyst_relief["effective_breakout_freshness"]))
-    catalyst_freshness = max(catalyst_freshness, float(prepared_breakout_selected_catalyst_relief["effective_catalyst_freshness"]))
-    effective_near_miss_threshold = min(
-        effective_near_miss_threshold,
-        float(visibility_gap_continuation_relief["effective_near_miss_threshold"]),
-    )
-    effective_near_miss_threshold = min(
-        effective_near_miss_threshold,
-        float(merge_approved_continuation_relief["effective_near_miss_threshold"]),
-    )
-    effective_near_miss_threshold = min(
-        effective_near_miss_threshold,
-        float(historical_execution_relief["effective_near_miss_threshold"]),
-    )
-    effective_select_threshold = min(
-        effective_select_threshold,
-        float(merge_approved_continuation_relief["effective_select_threshold"]),
-    )
-    effective_select_threshold = min(
-        effective_select_threshold,
-        float(historical_execution_relief["effective_select_threshold"]),
-    )
-    return SnapshotThresholdState(
-        profitability_relief=profitability_relief,
-        catalyst_relief=catalyst_relief,
-        visibility_gap_continuation_relief=visibility_gap_continuation_relief,
-        merge_approved_continuation_relief=merge_approved_continuation_relief,
-        historical_execution_relief=historical_execution_relief,
+    return _finalize_snapshot_threshold_state(
+        state=state,
+        prepared_breakout_reliefs=prepared_breakout_reliefs,
+        core_reliefs=core_reliefs,
         prepared_breakout_selected_catalyst_relief=prepared_breakout_selected_catalyst_relief,
-        breakout_freshness=breakout_freshness,
-        trend_acceleration=trend_acceleration,
-        volume_expansion_quality=volume_expansion_quality,
-        catalyst_freshness=catalyst_freshness,
-        effective_near_miss_threshold=effective_near_miss_threshold,
-        effective_select_threshold=effective_select_threshold,
-        layer_c_avoid_penalty=float(profitability_relief["effective_avoid_penalty"]),
     )
 
 
@@ -507,6 +569,59 @@ def _resolve_short_trade_snapshot_relief_resolution(
     resolve_profitability_hard_cliff_boundary_relief: Callable[..., dict[str, Any]],
     resolve_selected_score_tolerance: Callable[..., float],
 ) -> SnapshotReliefResolution:
+    core_state = _build_short_trade_snapshot_resolution_core_state(
+        input_data,
+        profile=profile,
+        signal_snapshot=signal_snapshot,
+        historical_prior=historical_prior,
+        normalize_positive_score_weights=normalize_positive_score_weights,
+        clamp_unit_interval=clamp_unit_interval,
+        resolve_profitability_relief=resolve_profitability_relief,
+        resolve_upstream_shadow_catalyst_relief=resolve_upstream_shadow_catalyst_relief,
+        resolve_visibility_gap_continuation_relief=resolve_visibility_gap_continuation_relief,
+        resolve_merge_approved_continuation_relief=resolve_merge_approved_continuation_relief,
+        resolve_historical_execution_relief=resolve_historical_execution_relief,
+        resolve_prepared_breakout_continuation_relief=resolve_prepared_breakout_continuation_relief,
+        resolve_prepared_breakout_penalty_relief=resolve_prepared_breakout_penalty_relief,
+        resolve_prepared_breakout_catalyst_relief=resolve_prepared_breakout_catalyst_relief,
+        resolve_prepared_breakout_volume_relief=resolve_prepared_breakout_volume_relief,
+        resolve_prepared_breakout_selected_catalyst_relief=resolve_prepared_breakout_selected_catalyst_relief,
+        resolve_watchlist_zero_catalyst_penalty=resolve_watchlist_zero_catalyst_penalty,
+        resolve_watchlist_zero_catalyst_crowded_penalty=resolve_watchlist_zero_catalyst_crowded_penalty,
+        resolve_watchlist_zero_catalyst_flat_trend_penalty=resolve_watchlist_zero_catalyst_flat_trend_penalty,
+        resolve_t_plus_2_continuation_candidate=resolve_t_plus_2_continuation_candidate,
+        resolve_profitability_hard_cliff_boundary_relief=resolve_profitability_hard_cliff_boundary_relief,
+    )
+    return _finalize_short_trade_snapshot_relief_resolution(
+        core_state=core_state,
+        resolve_selected_score_tolerance=resolve_selected_score_tolerance,
+    )
+
+
+def _build_short_trade_snapshot_resolution_core_state(
+    input_data: Any,
+    *,
+    profile: Any,
+    signal_snapshot: dict[str, Any],
+    historical_prior: Callable[[Any], dict[str, Any]],
+    normalize_positive_score_weights: Callable[[dict[str, Any]], dict[str, float]],
+    clamp_unit_interval: Callable[[float], float],
+    resolve_profitability_relief: Callable[..., dict[str, Any]],
+    resolve_upstream_shadow_catalyst_relief: Callable[..., dict[str, Any]],
+    resolve_visibility_gap_continuation_relief: Callable[..., dict[str, Any]],
+    resolve_merge_approved_continuation_relief: Callable[..., dict[str, Any]],
+    resolve_historical_execution_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_continuation_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_penalty_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_catalyst_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_volume_relief: Callable[..., dict[str, Any]],
+    resolve_prepared_breakout_selected_catalyst_relief: Callable[..., dict[str, Any]],
+    resolve_watchlist_zero_catalyst_penalty: Callable[..., dict[str, Any]],
+    resolve_watchlist_zero_catalyst_crowded_penalty: Callable[..., dict[str, Any]],
+    resolve_watchlist_zero_catalyst_flat_trend_penalty: Callable[..., dict[str, Any]],
+    resolve_t_plus_2_continuation_candidate: Callable[..., dict[str, Any]],
+    resolve_profitability_hard_cliff_boundary_relief: Callable[..., dict[str, Any]],
+) -> SnapshotResolutionCoreState:
     state = _build_snapshot_signal_state(signal_snapshot, historical_prior=historical_prior(input_data))
     prepared_breakout_reliefs = _resolve_prepared_breakout_reliefs(
         input_data,
@@ -558,14 +673,7 @@ def _resolve_short_trade_snapshot_relief_resolution(
         positive_score_weights=positive_score_weights,
         clamp_unit_interval=clamp_unit_interval,
     )
-    selected_score_tolerance = resolve_selected_score_tolerance(
-        score_target=score_payload["score_target"],
-        effective_select_threshold=threshold_state.effective_select_threshold,
-        upstream_shadow_catalyst_relief_applied=bool(threshold_state.catalyst_relief["applied"]),
-        upstream_shadow_catalyst_relief_reason=str(threshold_state.catalyst_relief["reason"]),
-        historical_prior=state.historical_prior,
-    )
-    return SnapshotReliefResolution(
+    return SnapshotResolutionCoreState(
         state=state,
         prepared_breakout_reliefs=prepared_breakout_reliefs,
         threshold_state=threshold_state,
@@ -573,6 +681,29 @@ def _resolve_short_trade_snapshot_relief_resolution(
         score_penalty_state=score_penalty_state,
         positive_score_weights=positive_score_weights,
         score_payload=score_payload,
+    )
+
+
+def _finalize_short_trade_snapshot_relief_resolution(
+    *,
+    core_state: SnapshotResolutionCoreState,
+    resolve_selected_score_tolerance: Callable[..., float],
+) -> SnapshotReliefResolution:
+    selected_score_tolerance = resolve_selected_score_tolerance(
+        score_target=core_state.score_payload["score_target"],
+        effective_select_threshold=core_state.threshold_state.effective_select_threshold,
+        upstream_shadow_catalyst_relief_applied=bool(core_state.threshold_state.catalyst_relief["applied"]),
+        upstream_shadow_catalyst_relief_reason=str(core_state.threshold_state.catalyst_relief["reason"]),
+        historical_prior=core_state.state.historical_prior,
+    )
+    return SnapshotReliefResolution(
+        state=core_state.state,
+        prepared_breakout_reliefs=core_state.prepared_breakout_reliefs,
+        threshold_state=core_state.threshold_state,
+        watchlist_penalty_state=core_state.watchlist_penalty_state,
+        score_penalty_state=core_state.score_penalty_state,
+        positive_score_weights=core_state.positive_score_weights,
+        score_payload=core_state.score_payload,
         selected_score_tolerance=selected_score_tolerance,
     )
 
@@ -665,5 +796,6 @@ def resolve_short_trade_snapshot_reliefs_impl(
         resolve_watchlist_zero_catalyst_flat_trend_penalty=resolve_watchlist_zero_catalyst_flat_trend_penalty,
         resolve_t_plus_2_continuation_candidate=resolve_t_plus_2_continuation_candidate,
         resolve_profitability_hard_cliff_boundary_relief=resolve_profitability_hard_cliff_boundary_relief,
+        resolve_selected_score_tolerance=resolve_selected_score_tolerance,
     )
     return _build_short_trade_snapshot_reliefs_payload(resolution)

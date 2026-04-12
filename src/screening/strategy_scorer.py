@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 import os
 from collections import defaultdict
@@ -440,56 +441,77 @@ def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
 
 
 def _build_rsi_extreme_factor(prices_df: pd.DataFrame) -> SubFactor:
-    if len(prices_df) >= 28:
-        rsi_14 = calculate_rsi(prices_df, 14)
-        rsi_28 = calculate_rsi(prices_df, 28)
-        last_rsi_14 = float(rsi_14.iloc[-1]) if pd.notna(rsi_14.iloc[-1]) else 50.0
-        last_rsi_28 = float(rsi_28.iloc[-1]) if pd.notna(rsi_28.iloc[-1]) else 50.0
-        if last_rsi_14 < 30 and last_rsi_28 < 40:
-            rsi_direction = 1
-            rsi_conf = min(100.0, (40.0 - last_rsi_14) * 3)
-        elif last_rsi_14 > 70 and last_rsi_28 > 60:
-            rsi_direction = -1
-            rsi_conf = min(100.0, (last_rsi_14 - 60.0) * 3)
-        else:
-            rsi_direction = 0
-            rsi_conf = 50.0
-        rsi_factor = _make_sub_factor(
-            "rsi_extreme",
-            rsi_direction,
-            rsi_conf,
-            MEAN_REVERSION_SUBFACTOR_WEIGHTS["rsi_extreme"],
-            metrics={"rsi_14": last_rsi_14, "rsi_28": last_rsi_28},
-        )
-        return rsi_factor
-    return _make_sub_factor("rsi_extreme", 0, 0.0, MEAN_REVERSION_SUBFACTOR_WEIGHTS["rsi_extreme"], completeness=0.0)
+    if len(prices_df) < 28:
+        return _make_sub_factor("rsi_extreme", 0, 0.0, MEAN_REVERSION_SUBFACTOR_WEIGHTS["rsi_extreme"], completeness=0.0)
+    last_rsi_14, last_rsi_28 = _build_rsi_extreme_snapshot(prices_df)
+    rsi_direction, rsi_conf = _resolve_rsi_extreme_signal(last_rsi_14, last_rsi_28)
+    return _build_rsi_extreme_sub_factor(last_rsi_14, last_rsi_28, rsi_direction, rsi_conf)
+
+
+def _build_rsi_extreme_snapshot(prices_df: pd.DataFrame) -> tuple[float, float]:
+    rsi_14 = calculate_rsi(prices_df, 14)
+    rsi_28 = calculate_rsi(prices_df, 28)
+    last_rsi_14 = float(rsi_14.iloc[-1]) if pd.notna(rsi_14.iloc[-1]) else 50.0
+    last_rsi_28 = float(rsi_28.iloc[-1]) if pd.notna(rsi_28.iloc[-1]) else 50.0
+    return last_rsi_14, last_rsi_28
+
+
+def _resolve_rsi_extreme_signal(last_rsi_14: float, last_rsi_28: float) -> tuple[int, float]:
+    if last_rsi_14 < 30 and last_rsi_28 < 40:
+        return 1, min(100.0, (40.0 - last_rsi_14) * 3)
+    if last_rsi_14 > 70 and last_rsi_28 > 60:
+        return -1, min(100.0, (last_rsi_14 - 60.0) * 3)
+    return 0, 50.0
+
+
+def _build_rsi_extreme_sub_factor(last_rsi_14: float, last_rsi_28: float, direction: int, confidence: float) -> SubFactor:
+    return _make_sub_factor(
+        "rsi_extreme",
+        direction,
+        confidence,
+        MEAN_REVERSION_SUBFACTOR_WEIGHTS["rsi_extreme"],
+        metrics={"rsi_14": last_rsi_14, "rsi_28": last_rsi_28},
+    )
 
 
 def _build_hurst_regime_factor(prices_df: pd.DataFrame) -> SubFactor:
-    hurst = calculate_hurst_exponent(prices_df["close"]) if len(prices_df) >= 80 else 0.5
-    z_score = None
-    if len(prices_df) >= 50:
-        ma_50 = prices_df["close"].rolling(window=50).mean()
-        std_50 = prices_df["close"].rolling(window=50).std()
-        z_score = float(((prices_df["close"] - ma_50) / std_50).iloc[-1]) if pd.notna(((prices_df["close"] - ma_50) / std_50).iloc[-1]) else 0.0
-    if hurst < 0.45 and z_score is not None:
-        hurst_direction = 1 if z_score < -1.0 else -1 if z_score > 1.0 else 0
-        hurst_conf = min(100.0, (0.55 - hurst) * 180)
-    elif hurst > 0.55:
-        hurst_direction = -1 if z_score is not None and z_score < 0 else 1 if z_score is not None and z_score > 0 else 0
-        hurst_conf = min(100.0, (hurst - 0.45) * 120)
-    else:
-        hurst_direction = 0
-        hurst_conf = 45.0
+    snapshot = _build_hurst_regime_snapshot(prices_df)
+    hurst_direction, hurst_conf = _resolve_hurst_regime_signal(snapshot)
 
     return _make_sub_factor(
         "hurst_regime",
         hurst_direction,
         hurst_conf,
         MEAN_REVERSION_SUBFACTOR_WEIGHTS["hurst_regime"],
-        completeness=1.0 if len(prices_df) >= 80 else 0.0,
-        metrics={"hurst_exponent": hurst, "z_score": z_score},
+        completeness=snapshot.completeness,
+        metrics={"hurst_exponent": snapshot.hurst, "z_score": snapshot.z_score},
     )
+
+
+@dataclass(frozen=True)
+class HurstRegimeSnapshot:
+    hurst: float
+    z_score: float | None
+    completeness: float
+
+
+def _build_hurst_regime_snapshot(prices_df: pd.DataFrame) -> HurstRegimeSnapshot:
+    hurst = calculate_hurst_exponent(prices_df["close"]) if len(prices_df) >= 80 else 0.5
+    z_score = None
+    if len(prices_df) >= 50:
+        ma_50 = prices_df["close"].rolling(window=50).mean()
+        std_50 = prices_df["close"].rolling(window=50).std()
+        latest_z_score = ((prices_df["close"] - ma_50) / std_50).iloc[-1]
+        z_score = float(latest_z_score) if pd.notna(latest_z_score) else 0.0
+    return HurstRegimeSnapshot(hurst=hurst, z_score=z_score, completeness=1.0 if len(prices_df) >= 80 else 0.0)
+
+
+def _resolve_hurst_regime_signal(snapshot: HurstRegimeSnapshot) -> tuple[int, float]:
+    if snapshot.hurst < 0.45 and snapshot.z_score is not None:
+        return (1 if snapshot.z_score < -1.0 else -1 if snapshot.z_score > 1.0 else 0), min(100.0, (0.55 - snapshot.hurst) * 180)
+    if snapshot.hurst > 0.55:
+        return (-1 if snapshot.z_score is not None and snapshot.z_score < 0 else 1 if snapshot.z_score is not None and snapshot.z_score > 0 else 0), min(100.0, (snapshot.hurst - 0.45) * 120)
+    return 0, 45.0
 
 
 def _build_optional_mean_reversion_factor(name: str, signal: dict | None) -> SubFactor:
@@ -504,23 +526,40 @@ def _build_optional_mean_reversion_factor(name: str, signal: dict | None) -> Sub
 
 
 def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
-    zero_pass_mode = _get_env_mode("LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE", "bearish")
-    metric_map = _build_profitability_metric_map(metrics)
-    available, positive = _count_profitability_passes(metric_map)
-    if available == 0:
+    state = _build_profitability_evaluation_state(metrics)
+    if state.available == 0:
         return _build_incomplete_profitability_factor()
 
-    metrics_payload = _build_profitability_metrics_payload(metric_map, available, positive, zero_pass_mode)
-    if positive == 0 and zero_pass_mode == "inactive":
-        return _build_inactive_profitability_factor(metrics_payload)
+    if state.positive == 0 and state.zero_pass_mode == "inactive":
+        return _build_inactive_profitability_factor(state.metrics_payload)
 
-    direction = _resolve_profitability_direction(positive, zero_pass_mode)
-    confidence = _calculate_profitability_confidence(available=available, positive=positive, direction=direction)
+    direction = _resolve_profitability_direction(state.positive, state.zero_pass_mode)
+    confidence = _calculate_profitability_confidence(available=state.available, positive=state.positive, direction=direction)
     return _build_profitability_scored_factor(
         direction=direction,
         confidence=confidence,
+        available=state.available,
+        metrics_payload=state.metrics_payload,
+    )
+
+
+@dataclass(frozen=True)
+class ProfitabilityEvaluationState:
+    available: int
+    positive: int
+    zero_pass_mode: str
+    metrics_payload: dict[str, float | int | str | None]
+
+
+def _build_profitability_evaluation_state(metrics: FinancialMetrics) -> ProfitabilityEvaluationState:
+    zero_pass_mode = _get_env_mode("LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE", "bearish")
+    metric_map = _build_profitability_metric_map(metrics)
+    available, positive = _count_profitability_passes(metric_map)
+    return ProfitabilityEvaluationState(
         available=available,
-        metrics_payload=metrics_payload,
+        positive=positive,
+        zero_pass_mode=zero_pass_mode,
+        metrics_payload=_build_profitability_metrics_payload(metric_map, available, positive, zero_pass_mode),
     )
 
 
@@ -603,9 +642,7 @@ def _score_growth(metrics_list: list[FinancialMetrics]) -> SubFactor:
     if len(metrics_list) < 4:
         return _make_sub_factor("growth", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["growth"], completeness=0.0)
     analysis = analyze_growth_trends(metrics_list)
-    score = float(analysis["score"])
-    direction = 1 if score > 0.6 else -1 if score < 0.4 else 0
-    confidence = abs(score - 0.5) * 200.0
+    direction, confidence = _resolve_growth_direction_and_confidence(float(analysis["score"]))
     return _make_sub_factor(
         "growth",
         direction,
@@ -615,11 +652,13 @@ def _score_growth(metrics_list: list[FinancialMetrics]) -> SubFactor:
     )
 
 
+def _resolve_growth_direction_and_confidence(score: float) -> tuple[int, float]:
+    return (1 if score > 0.6 else -1 if score < 0.4 else 0), abs(score - 0.5) * 200.0
+
+
 def _score_financial_health(metrics: FinancialMetrics) -> SubFactor:
     analysis = check_financial_health(metrics)
-    score = float(analysis["score"])
-    direction = 1 if score > 0.6 else -1 if score < 0.4 else 0
-    confidence = abs(score - 0.5) * 200.0
+    direction, confidence = _resolve_financial_health_direction_and_confidence(float(analysis["score"]))
     return _make_sub_factor(
         "financial_health",
         direction,
@@ -629,11 +668,13 @@ def _score_financial_health(metrics: FinancialMetrics) -> SubFactor:
     )
 
 
+def _resolve_financial_health_direction_and_confidence(score: float) -> tuple[int, float]:
+    return (1 if score > 0.6 else -1 if score < 0.4 else 0), abs(score - 0.5) * 200.0
+
+
 def _score_growth_valuation(metrics: FinancialMetrics) -> SubFactor:
     analysis = analyze_valuation(metrics)
-    score = float(analysis["score"])
-    direction = 1 if score > 0.6 else -1 if score == 0 else 0
-    confidence = abs(score - 0.5) * 200.0 if score > 0 else 65.0
+    direction, confidence = _resolve_growth_valuation_direction_and_confidence(float(analysis["score"]))
     return _make_sub_factor(
         "growth_valuation",
         direction,
@@ -641,6 +682,10 @@ def _score_growth_valuation(metrics: FinancialMetrics) -> SubFactor:
         FUNDAMENTAL_SUBFACTOR_WEIGHTS["growth_valuation"],
         metrics=analysis,
     )
+
+
+def _resolve_growth_valuation_direction_and_confidence(score: float) -> tuple[int, float]:
+    return (1 if score > 0.6 else -1 if score == 0 else 0), abs(score - 0.5) * 200.0 if score > 0 else 65.0
 
 
 def _score_industry_pe(metrics: FinancialMetrics, industry_name: str, industry_pe_medians: Optional[dict[str, float]]) -> SubFactor:
@@ -656,8 +701,17 @@ def _score_industry_pe(metrics: FinancialMetrics, industry_name: str, industry_p
         direction,
         confidence,
         FUNDAMENTAL_SUBFACTOR_WEIGHTS["industry_pe"],
-        metrics={"industry": industry_name, "current_pe": current_pe, "industry_pe_median": industry_median, "premium_ratio": premium},
+        metrics=_build_industry_pe_metrics(industry_name, current_pe, industry_median, premium),
     )
+
+
+def _build_industry_pe_metrics(industry_name: str, current_pe: float, industry_median: float, premium: float) -> dict[str, float | str]:
+    return {
+        "industry": industry_name,
+        "current_pe": current_pe,
+        "industry_pe_median": industry_median,
+        "premium_ratio": premium,
+    }
 
 
 def _resolve_industry_pe_inputs(
@@ -733,8 +787,11 @@ def score_fundamental_strategy(
         industry_name=industry_name,
         industry_pe_medians=industry_pe_medians,
     )
-    aggregated_signal = aggregate_sub_factors(sub_factors)
-    return _apply_fundamental_quality_cap(aggregated_signal)
+    return _build_fundamental_strategy_signal(sub_factors)
+
+
+def _build_fundamental_strategy_signal(sub_factors: list[SubFactor]) -> StrategySignal:
+    return _apply_fundamental_quality_cap(aggregate_sub_factors(sub_factors))
 
 
 def _load_fundamental_metrics_history(*, ticker: str, trade_date: str) -> list[FinancialMetrics]:
@@ -765,13 +822,38 @@ def _score_news_sentiment(news_items: list[CompanyNews], trade_date: str) -> Sub
     if not news_items:
         return _make_sub_factor("news_sentiment", 0, 0.0, EVENT_SUBFACTOR_WEIGHTS["news_sentiment"], completeness=0.0)
 
-    trade_dt = datetime.strptime(trade_date, "%Y%m%d")
-    article_metrics = [_score_news_article(item, trade_dt) for item in news_items[:20]]
+    article_metrics = _build_news_sentiment_article_metrics(news_items, trade_date)
     normalized_score, recent_count, informative_count = _aggregate_news_article_metrics(article_metrics)
     direction, confidence, completeness = _resolve_news_sentiment_signal(
         normalized_score=normalized_score,
         informative_count=informative_count,
     )
+    return _build_news_sentiment_sub_factor(
+        direction,
+        confidence,
+        completeness,
+        normalized_score=normalized_score,
+        recent_count=recent_count,
+        informative_count=informative_count,
+        article_metrics=article_metrics,
+    )
+
+
+def _build_news_sentiment_article_metrics(news_items: list[CompanyNews], trade_date: str) -> list[dict]:
+    trade_dt = datetime.strptime(trade_date, "%Y%m%d")
+    return [_score_news_article(item, trade_dt) for item in news_items[:20]]
+
+
+def _build_news_sentiment_sub_factor(
+    direction: int,
+    confidence: float,
+    completeness: float,
+    *,
+    normalized_score: float,
+    recent_count: int,
+    informative_count: int,
+    article_metrics: list[dict],
+) -> SubFactor:
     return _make_sub_factor(
         "news_sentiment",
         direction,
@@ -816,8 +898,19 @@ def _score_news_article(item: CompanyNews, trade_dt: datetime) -> dict:
     direction, strength = _resolve_news_direction_and_strength(pos_hits, neg_hits)
     effective_weight = decay * _event_weight_multiplier(days_old, strength)
     confidence = min(100.0, 45.0 + strength * 18.0) if strength > 0 else 0.0
+    return _build_news_article_metrics(item.title, days_old, decay, direction, confidence, effective_weight)
+
+
+def _build_news_article_metrics(
+    title: str,
+    days_old: int,
+    decay: float,
+    direction: int,
+    confidence: float,
+    effective_weight: float,
+) -> dict[str, str | int | float]:
     return {
-        "title": item.title,
+        "title": title,
         "days_old": days_old,
         "decay": decay,
         "direction": direction,
@@ -845,15 +938,25 @@ def _aggregate_news_article_metrics(article_metrics: list[dict]) -> tuple[float,
     recent_count = 0
     informative_count = 0
     for metric in article_metrics:
-        effective_weight = float(metric["effective_weight"])
-        confidence = float(metric["confidence"])
-        direction = int(metric["direction"])
-        weighted_score += direction * (confidence / 100.0) * effective_weight
+        weighted_delta, effective_weight, recent_delta, informative_delta = _resolve_news_metric_contribution(metric)
+        weighted_score += weighted_delta
         total_weight += effective_weight
-        recent_count += 1 if int(metric["days_old"]) <= 5 else 0
-        informative_count += 1 if effective_weight > 0 else 0
+        recent_count += recent_delta
+        informative_count += informative_delta
     normalized_score = weighted_score / total_weight if total_weight > 0 else 0.0
     return normalized_score, recent_count, informative_count
+
+
+def _resolve_news_metric_contribution(metric: dict) -> tuple[float, float, int, int]:
+    effective_weight = float(metric["effective_weight"])
+    confidence = float(metric["confidence"])
+    direction = int(metric["direction"])
+    return (
+        direction * (confidence / 100.0) * effective_weight,
+        effective_weight,
+        1 if int(metric["days_old"]) <= 5 else 0,
+        1 if effective_weight > 0 else 0,
+    )
 
 
 def _score_insider_conviction(trades: list[InsiderTrade]) -> SubFactor:
@@ -875,19 +978,54 @@ def _score_insider_conviction(trades: list[InsiderTrade]) -> SubFactor:
 def _score_event_freshness(news_items: list[CompanyNews], trade_date: str) -> SubFactor:
     if not news_items:
         return _make_sub_factor("event_freshness", 0, 0.0, EVENT_SUBFACTOR_WEIGHTS["event_freshness"], completeness=0.0)
-    days_old = _resolve_event_freshness_days_old(news_items[0].date, trade_date)
+    return _build_event_freshness_factor(_build_event_freshness_snapshot(news_items[0], trade_date))
+
+
+@dataclass(frozen=True)
+class EventFreshnessSnapshot:
+    days_old: int
+    decay: float
+    positive_hits: int
+    negative_hits: int
+    freshness_weight: float
+    strength: int
+
+
+def _build_event_freshness_snapshot(item: CompanyNews, trade_date: str) -> EventFreshnessSnapshot:
+    days_old = _resolve_event_freshness_days_old(item.date, trade_date)
     decay = compute_event_decay(days_old)
-    pos_hits, neg_hits = _count_event_keyword_hits(news_items[0])
-    strength = abs(pos_hits - neg_hits)
+    positive_hits, negative_hits = _count_event_keyword_hits(item)
+    strength = abs(positive_hits - negative_hits)
     freshness_weight = _event_weight_multiplier(days_old, strength)
-    direction = _resolve_event_freshness_direction(pos_hits=pos_hits, neg_hits=neg_hits, strength=strength, freshness_weight=freshness_weight)
-    confidence = decay * freshness_weight * 100.0
+    return EventFreshnessSnapshot(
+        days_old=days_old,
+        decay=decay,
+        positive_hits=positive_hits,
+        negative_hits=negative_hits,
+        freshness_weight=freshness_weight,
+        strength=strength,
+    )
+
+
+def _build_event_freshness_factor(snapshot: EventFreshnessSnapshot) -> SubFactor:
+    direction = _resolve_event_freshness_direction(
+        pos_hits=snapshot.positive_hits,
+        neg_hits=snapshot.negative_hits,
+        strength=snapshot.strength,
+        freshness_weight=snapshot.freshness_weight,
+    )
     return _make_sub_factor(
         "event_freshness",
         direction,
-        confidence,
+        snapshot.decay * snapshot.freshness_weight * 100.0,
         EVENT_SUBFACTOR_WEIGHTS["event_freshness"],
-        metrics={"days_old": days_old, "decay": decay, "positive_hits": pos_hits, "negative_hits": neg_hits, "freshness_weight": freshness_weight},
+        metrics={
+            "days_old": snapshot.days_old,
+            "decay": snapshot.decay,
+            "positive_hits": snapshot.positive_hits,
+            "negative_hits": snapshot.negative_hits,
+            "freshness_weight": snapshot.freshness_weight,
+        },
     )
 
 
@@ -945,19 +1083,16 @@ def _build_event_sentiment_sub_factors(
     ]
 
 
-def _build_industry_pe_medians(trade_date: str) -> dict[str, float]:
-    daily_df = get_daily_basic_batch(trade_date)
-    stock_basic = get_all_stock_basic()
-    sw_map = get_sw_industry_classification() or {}
-    if daily_df is None or daily_df.empty or stock_basic is None or stock_basic.empty:
-        return {}
-
-    symbol_to_industry = {}
+def _build_symbol_to_industry_map(stock_basic: pd.DataFrame, sw_map: dict[str, str]) -> dict[str, str]:
+    symbol_to_industry: dict[str, str] = {}
     for _, row in stock_basic.iterrows():
         ts_code = str(row["ts_code"])
         symbol = str(row["symbol"])
         symbol_to_industry[symbol] = sw_map.get(ts_code, str(row.get("industry", "")))
+    return symbol_to_industry
 
+
+def _group_industry_pe_values(daily_df: pd.DataFrame, symbol_to_industry: dict[str, str]) -> dict[str, list[float]]:
     grouped: dict[str, list[float]] = defaultdict(list)
     for _, row in daily_df.iterrows():
         pe_ttm = row.get("pe_ttm")
@@ -967,7 +1102,18 @@ def _build_industry_pe_medians(trade_date: str) -> dict[str, float]:
         industry = symbol_to_industry.get(symbol, "")
         if industry:
             grouped[industry].append(float(pe_ttm))
+    return grouped
 
+
+def _build_industry_pe_medians(trade_date: str) -> dict[str, float]:
+    daily_df = get_daily_basic_batch(trade_date)
+    stock_basic = get_all_stock_basic()
+    sw_map = get_sw_industry_classification() or {}
+    if daily_df is None or daily_df.empty or stock_basic is None or stock_basic.empty:
+        return {}
+
+    symbol_to_industry = _build_symbol_to_industry_map(stock_basic, sw_map)
+    grouped = _group_industry_pe_values(daily_df, symbol_to_industry)
     return {industry: median(values) for industry, values in grouped.items() if values}
 
 

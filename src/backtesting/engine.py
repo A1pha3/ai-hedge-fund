@@ -83,6 +83,40 @@ class PipelineModeDayState:
     previous_plan_timing: dict[str, float] = field(default_factory=dict)
     previous_plan_funnel_diagnostics: dict = field(default_factory=dict)
     prepared_plan: ExecutionPlan | None = None
+
+
+@dataclass(frozen=True)
+class PipelineDecisionExecutionInputs:
+    price: float
+    normalized_ticker: str
+
+
+@dataclass(frozen=True)
+class PendingPipelinePreparationState:
+    prepared_plan: ExecutionPlan
+    pre_market_seconds: float
+    previous_plan_counts: dict[str, int]
+    previous_plan_timing: dict[str, float]
+    previous_plan_funnel_diagnostics: dict
+
+
+@dataclass(frozen=True)
+class PendingPipelineIntradayState:
+    confirmed_orders: list[Any]
+    exits: list[Any]
+    crisis_response: dict
+    queue_alerts: list[str]
+    intraday_seconds: float
+
+
+@dataclass(frozen=True)
+class PipelineRuntimePayloadContext:
+    portfolio_snapshot: dict[str, Any]
+    pending_buy_queue: list[PendingOrder]
+    pending_sell_queue: list[PendingOrder]
+    exit_reentry_cooldowns: dict[str, dict]
+
+
 from .trader import TradeExecutor, TradingConstraints
 from .types import AgentOutput, BacktestMode, PerformanceMetrics, PortfolioValuePoint
 from .valuation import calculate_portfolio_value, compute_exposures
@@ -119,6 +153,46 @@ class BacktestEngine:
         pipeline_event_recorder: Callable[[dict], None] | None = None,
         selection_artifact_writer: SelectionArtifactWriter | None = None,
     ) -> None:
+        self._initialize_engine_configuration(
+            agent=agent,
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            model_name=model_name,
+            model_provider=model_provider,
+            selected_analysts=selected_analysts,
+            backtest_mode=backtest_mode,
+            pipeline=pipeline,
+            checkpoint_path=checkpoint_path,
+            pipeline_event_recorder=pipeline_event_recorder,
+            selection_artifact_writer=selection_artifact_writer,
+        )
+        self._initialize_engine_components(
+            tickers=tickers,
+            initial_capital=initial_capital,
+            initial_margin_requirement=initial_margin_requirement,
+            backtest_mode=backtest_mode,
+        )
+        self._initialize_engine_runtime_state()
+
+    def _initialize_engine_configuration(
+        self,
+        *,
+        agent,
+        tickers: list[str],
+        start_date: str,
+        end_date: str,
+        initial_capital: float,
+        model_name: str,
+        model_provider: str,
+        selected_analysts: list[str] | None,
+        backtest_mode: BacktestMode,
+        pipeline: DailyPipeline | None,
+        checkpoint_path: str | None,
+        pipeline_event_recorder: Callable[[dict], None] | None,
+        selection_artifact_writer: SelectionArtifactWriter | None,
+    ) -> None:
         self._agent = agent
         self._tickers = tickers
         self._start_date = start_date
@@ -134,6 +208,14 @@ class BacktestEngine:
         self._pipeline_event_recorder = pipeline_event_recorder
         self._selection_artifact_writer = selection_artifact_writer
 
+    def _initialize_engine_components(
+        self,
+        *,
+        tickers: list[str],
+        initial_capital: float,
+        initial_margin_requirement: float,
+        backtest_mode: BacktestMode,
+    ) -> None:
         self._portfolio = Portfolio(
             tickers=tickers,
             initial_cash=initial_capital,
@@ -147,6 +229,7 @@ class BacktestEngine:
         # Benchmark calculator
         self._benchmark = BenchmarkCalculator()
 
+    def _initialize_engine_runtime_state(self) -> None:
         self._portfolio_values: list[PortfolioValuePoint] = []
         self._table_rows: list[list] = []
         self._performance_metrics: PerformanceMetrics = {
@@ -794,14 +877,16 @@ class BacktestEngine:
         watchlist_by_ticker: dict[str, Any],
         executed_trades: Dict[str, int],
     ) -> None:
-        price = self._resolve_pipeline_decision_price(ticker=ticker, current_prices=current_prices)
-        if price is None:
+        execution_inputs = self._build_pipeline_decision_execution_inputs(
+            ticker=ticker,
+            current_prices=current_prices,
+        )
+        if execution_inputs is None:
             return
-        normalized_ticker = self._normalize_ticker(ticker)
         if self._queue_pipeline_decision_if_blocked(
             ticker=ticker,
             decision=decision,
-            normalized_ticker=normalized_ticker,
+            normalized_ticker=execution_inputs.normalized_ticker,
             trade_date_compact=trade_date_compact,
             limit_up=limit_up,
             limit_down=limit_down,
@@ -809,28 +894,36 @@ class BacktestEngine:
             executed_trades=executed_trades,
         ):
             return
-        executed_qty = self._execute_pipeline_trade_flow(
+        self._execute_and_record_pipeline_decision(
             ticker=ticker,
             decision=decision,
-            price=price,
-            normalized_ticker=normalized_ticker,
+            execution_inputs=execution_inputs,
             daily_turnovers=daily_turnovers,
             limit_up=limit_up,
             limit_down=limit_down,
-        )
-        executed_trades[ticker] = executed_qty
-        self._record_pipeline_execution_side_effects(
-            ticker=ticker,
-            decision=decision,
-            executed_qty=executed_qty,
             trade_date_compact=trade_date_compact,
             buy_order_by_ticker=buy_order_by_ticker,
             watchlist_by_ticker=watchlist_by_ticker,
+            executed_trades=executed_trades,
         )
 
     @staticmethod
     def _resolve_pipeline_decision_price(*, ticker: str, current_prices: Dict[str, float]) -> float | None:
         return current_prices.get(ticker)
+
+    def _build_pipeline_decision_execution_inputs(
+        self,
+        *,
+        ticker: str,
+        current_prices: Dict[str, float],
+    ) -> PipelineDecisionExecutionInputs | None:
+        price = self._resolve_pipeline_decision_price(ticker=ticker, current_prices=current_prices)
+        if price is None:
+            return None
+        return PipelineDecisionExecutionInputs(
+            price=price,
+            normalized_ticker=self._normalize_ticker(ticker),
+        )
 
     def _queue_pipeline_decision_if_blocked(
         self,
@@ -876,6 +969,39 @@ class BacktestEngine:
             limit_down=limit_down,
         )
 
+    def _execute_and_record_pipeline_decision(
+        self,
+        *,
+        ticker: str,
+        decision: dict,
+        execution_inputs: PipelineDecisionExecutionInputs,
+        daily_turnovers: Dict[str, float],
+        limit_up: set[str],
+        limit_down: set[str],
+        trade_date_compact: str,
+        buy_order_by_ticker: dict[str, Any],
+        watchlist_by_ticker: dict[str, Any],
+        executed_trades: Dict[str, int],
+    ) -> None:
+        executed_qty = self._execute_pipeline_trade_flow(
+            ticker=ticker,
+            decision=decision,
+            price=execution_inputs.price,
+            normalized_ticker=execution_inputs.normalized_ticker,
+            daily_turnovers=daily_turnovers,
+            limit_up=limit_up,
+            limit_down=limit_down,
+        )
+        executed_trades[ticker] = executed_qty
+        self._record_pipeline_execution_side_effects(
+            ticker=ticker,
+            decision=decision,
+            executed_qty=executed_qty,
+            trade_date_compact=trade_date_compact,
+            buy_order_by_ticker=buy_order_by_ticker,
+            watchlist_by_ticker=watchlist_by_ticker,
+        )
+
     def _queue_limit_blocked_pipeline_decision(
         self,
         *,
@@ -889,17 +1015,42 @@ class BacktestEngine:
         executed_trades: Dict[str, int],
     ) -> bool:
         return queue_limit_blocked_pipeline_decision(
-            ticker=ticker,
-            decision=decision,
-            normalized_ticker=normalized_ticker,
-            trade_date_compact=trade_date_compact,
-            limit_up=limit_up,
-            limit_down=limit_down,
-            buy_order_by_ticker=buy_order_by_ticker,
-            executed_trades=executed_trades,
-            queue_limit_up_buy_decision_fn=self._queue_limit_up_buy_decision,
-            queue_limit_down_sell_decision_fn=self._queue_limit_down_sell_decision,
+            **self._build_queue_limit_blocked_pipeline_decision_kwargs(
+                ticker=ticker,
+                decision=decision,
+                normalized_ticker=normalized_ticker,
+                trade_date_compact=trade_date_compact,
+                limit_up=limit_up,
+                limit_down=limit_down,
+                buy_order_by_ticker=buy_order_by_ticker,
+                executed_trades=executed_trades,
+            )
         )
+
+    def _build_queue_limit_blocked_pipeline_decision_kwargs(
+        self,
+        *,
+        ticker: str,
+        decision: dict,
+        normalized_ticker: str,
+        trade_date_compact: str,
+        limit_up: set[str],
+        limit_down: set[str],
+        buy_order_by_ticker: dict[str, Any],
+        executed_trades: Dict[str, int],
+    ) -> dict[str, Any]:
+        return {
+            "ticker": ticker,
+            "decision": decision,
+            "normalized_ticker": normalized_ticker,
+            "trade_date_compact": trade_date_compact,
+            "limit_up": limit_up,
+            "limit_down": limit_down,
+            "buy_order_by_ticker": buy_order_by_ticker,
+            "executed_trades": executed_trades,
+            "queue_limit_up_buy_decision_fn": self._queue_limit_up_buy_decision,
+            "queue_limit_down_sell_decision_fn": self._queue_limit_down_sell_decision,
+        }
 
     def _queue_limit_up_buy_decision(
         self,
@@ -980,9 +1131,22 @@ class BacktestEngine:
             )
             return
         if decision["action"] == "sell":
-            trigger_reason = str(decision.get("reason") or "")
-            self._portfolio.record_long_exit(ticker, trigger_reason=trigger_reason)
-            self._register_exit_reentry_cooldown(ticker, trade_date_compact, trigger_reason)
+            self._record_pipeline_sell_execution(
+                ticker=ticker,
+                decision=decision,
+                trade_date_compact=trade_date_compact,
+            )
+
+    def _record_pipeline_sell_execution(
+        self,
+        *,
+        ticker: str,
+        decision: dict,
+        trade_date_compact: str,
+    ) -> None:
+        trigger_reason = str(decision.get("reason") or "")
+        self._portfolio.record_long_exit(ticker, trigger_reason=trigger_reason)
+        self._register_exit_reentry_cooldown(ticker, trade_date_compact, trigger_reason)
 
     def _record_pipeline_buy_execution(
         self,
@@ -1014,35 +1178,87 @@ class BacktestEngine:
         decisions: Dict[str, dict],
         executed_trades: Dict[str, int],
     ) -> tuple[ExecutionPlan, float, float, dict[str, int], dict[str, float], dict]:
+        preparation = self._build_pending_pipeline_preparation_state(
+            pending_plan=pending_plan,
+            trade_date_compact=day_context.trade_date_compact,
+        )
+        intraday_state = self._build_pending_pipeline_intraday_state(
+            prepared_plan=preparation.prepared_plan,
+            day_context=day_context,
+            decisions=decisions,
+        )
+        self._apply_pending_plan_intraday_results(
+            prepared_plan=preparation.prepared_plan,
+            day_context=day_context,
+            decisions=decisions,
+            executed_trades=executed_trades,
+            confirmed_orders=intraday_state.confirmed_orders,
+            exits=intraday_state.exits,
+            crisis_response=intraday_state.crisis_response,
+            queue_alerts=intraday_state.queue_alerts,
+        )
+        return self._build_pending_pipeline_plan_result(
+            preparation=preparation,
+            intraday_state=intraday_state,
+        )
+
+    def _build_pending_pipeline_plan_result(
+        self,
+        *,
+        preparation: PendingPipelinePreparationState,
+        intraday_state: PendingPipelineIntradayState,
+    ) -> tuple[ExecutionPlan, float, float, dict[str, int], dict[str, float], dict]:
+        return (
+            preparation.prepared_plan,
+            preparation.pre_market_seconds,
+            intraday_state.intraday_seconds,
+            preparation.previous_plan_counts,
+            preparation.previous_plan_timing,
+            preparation.previous_plan_funnel_diagnostics,
+        )
+
+    def _build_pending_pipeline_preparation_state(
+        self,
+        *,
+        pending_plan: ExecutionPlan,
+        trade_date_compact: str,
+    ) -> PendingPipelinePreparationState:
         (
             prepared_plan,
             pre_market_seconds,
             previous_plan_counts,
             previous_plan_timing,
             previous_plan_funnel_diagnostics,
-        ) = self._prepare_pending_pipeline_plan(pending_plan=pending_plan, trade_date_compact=day_context.trade_date_compact)
+        ) = self._prepare_pending_pipeline_plan(
+            pending_plan=pending_plan,
+            trade_date_compact=trade_date_compact,
+        )
+        return PendingPipelinePreparationState(
+            prepared_plan=prepared_plan,
+            pre_market_seconds=pre_market_seconds,
+            previous_plan_counts=previous_plan_counts,
+            previous_plan_timing=previous_plan_timing,
+            previous_plan_funnel_diagnostics=previous_plan_funnel_diagnostics,
+        )
+
+    def _build_pending_pipeline_intraday_state(
+        self,
+        *,
+        prepared_plan: ExecutionPlan,
+        day_context: PipelineDayContext,
+        decisions: Dict[str, dict],
+    ) -> PendingPipelineIntradayState:
         confirmed_orders, exits, crisis_response, queue_alerts, intraday_seconds = self._run_pending_intraday_stage(
             prepared_plan=prepared_plan,
             day_context=day_context,
             decisions=decisions,
         )
-        self._apply_pending_plan_intraday_results(
-            prepared_plan=prepared_plan,
-            day_context=day_context,
-            decisions=decisions,
-            executed_trades=executed_trades,
+        return PendingPipelineIntradayState(
             confirmed_orders=confirmed_orders,
             exits=exits,
             crisis_response=crisis_response,
             queue_alerts=queue_alerts,
-        )
-        return (
-            prepared_plan,
-            pre_market_seconds,
-            intraday_seconds,
-            previous_plan_counts,
-            previous_plan_timing,
-            previous_plan_funnel_diagnostics,
+            intraday_seconds=intraday_seconds,
         )
 
     def _apply_pending_plan_intraday_results(
@@ -1064,16 +1280,33 @@ class BacktestEngine:
             crisis_response=crisis_response,
         )
         self._apply_pipeline_decisions(
-            prepared_plan=prepared_plan,
-            current_prices=day_context.current_prices,
-            daily_turnovers=day_context.daily_turnovers,
-            limit_up=day_context.limit_up,
-            limit_down=day_context.limit_down,
-            trade_date_compact=day_context.trade_date_compact,
-            decisions=decisions,
-            executed_trades=executed_trades,
+            **self._build_pending_plan_intraday_apply_kwargs(
+                prepared_plan=prepared_plan,
+                day_context=day_context,
+                decisions=decisions,
+                executed_trades=executed_trades,
+            )
         )
         prepared_plan.risk_alerts.extend(queue_alerts)
+
+    def _build_pending_plan_intraday_apply_kwargs(
+        self,
+        *,
+        prepared_plan: ExecutionPlan,
+        day_context: PipelineDayContext,
+        decisions: Dict[str, dict],
+        executed_trades: Dict[str, int],
+    ) -> dict[str, Any]:
+        return {
+            "prepared_plan": prepared_plan,
+            "current_prices": day_context.current_prices,
+            "daily_turnovers": day_context.daily_turnovers,
+            "limit_up": day_context.limit_up,
+            "limit_down": day_context.limit_down,
+            "trade_date_compact": day_context.trade_date_compact,
+            "decisions": decisions,
+            "executed_trades": executed_trades,
+        }
 
     def _prepare_pending_pipeline_plan(
         self,
@@ -1106,14 +1339,27 @@ class BacktestEngine:
         )
         self._pending_buy_queue = next_pending_buy
         self._pending_sell_queue = next_pending_sell
-        confirmed_orders, exits, crisis_response = self._pipeline.run_intraday(
-            prepared_plan,
-            day_context.trade_date_compact,
+        confirmed_orders, exits, crisis_response = self._run_pending_intraday_pipeline(
+            prepared_plan=prepared_plan,
+            trade_date_compact=day_context.trade_date_compact,
             confirmation_inputs=confirmation_inputs,
-            crisis_inputs={"drawdown_pct": 0.0},
         )
         intraday_seconds = perf_counter() - stage_started_at
         return confirmed_orders, exits, crisis_response, queue_alerts, intraday_seconds
+
+    def _run_pending_intraday_pipeline(
+        self,
+        *,
+        prepared_plan: ExecutionPlan,
+        trade_date_compact: str,
+        confirmation_inputs: list[dict[str, Any]],
+    ) -> tuple[list, list, dict]:
+        return self._pipeline.run_intraday(
+            prepared_plan,
+            trade_date_compact,
+            confirmation_inputs=confirmation_inputs,
+            crisis_inputs={"drawdown_pct": 0.0},
+        )
 
     def _merge_pending_intraday_decisions(self, *, decisions: Dict[str, dict], confirmed_orders: list, exits: list, crisis_response: dict) -> None:
         if crisis_response.get("pause_new_buys"):
@@ -1310,25 +1556,65 @@ class BacktestEngine:
         previous_plan_timing: dict[str, float],
         previous_plan_funnel_diagnostics: dict,
     ) -> dict:
+        runtime_context = self._build_pipeline_runtime_payload_context()
         return build_pipeline_day_timing_payload_helper(
-            trade_date_compact=trade_date_compact,
-            active_tickers=active_tickers,
-            executed_trades=executed_trades,
-            execution_plan_observations=execution_plan_observations,
-            load_market_data_seconds=load_market_data_seconds,
-            pre_market_seconds=pre_market_seconds,
-            intraday_seconds=intraday_seconds,
-            append_daily_state_seconds=append_daily_state_seconds,
-            post_market_seconds=post_market_seconds,
-            total_day_seconds=total_day_seconds,
-            pending_plan=pending_plan,
-            previous_plan_counts=previous_plan_counts,
-            previous_plan_timing=previous_plan_timing,
-            previous_plan_funnel_diagnostics=previous_plan_funnel_diagnostics,
-            pending_buy_queue=self._pending_buy_queue,
-            pending_sell_queue=self._pending_sell_queue,
-            timing_payload_builder=build_pipeline_timing_payload,
+            **self._build_pipeline_day_timing_payload_kwargs(
+                trade_date_compact=trade_date_compact,
+                active_tickers=active_tickers,
+                executed_trades=executed_trades,
+                execution_plan_observations=execution_plan_observations,
+                load_market_data_seconds=load_market_data_seconds,
+                pre_market_seconds=pre_market_seconds,
+                intraday_seconds=intraday_seconds,
+                append_daily_state_seconds=append_daily_state_seconds,
+                post_market_seconds=post_market_seconds,
+                total_day_seconds=total_day_seconds,
+                pending_plan=pending_plan,
+                previous_plan_counts=previous_plan_counts,
+                previous_plan_timing=previous_plan_timing,
+                previous_plan_funnel_diagnostics=previous_plan_funnel_diagnostics,
+                runtime_context=runtime_context,
+            )
         )
+
+    def _build_pipeline_day_timing_payload_kwargs(
+        self,
+        *,
+        trade_date_compact: str,
+        active_tickers: Sequence[str],
+        executed_trades: Dict[str, int],
+        execution_plan_observations: list[dict],
+        load_market_data_seconds: float,
+        pre_market_seconds: float,
+        intraday_seconds: float,
+        append_daily_state_seconds: float,
+        post_market_seconds: float,
+        total_day_seconds: float,
+        pending_plan: ExecutionPlan | None,
+        previous_plan_counts: dict[str, int],
+        previous_plan_timing: dict[str, float],
+        previous_plan_funnel_diagnostics: dict,
+        runtime_context: PipelineRuntimePayloadContext,
+    ) -> dict[str, Any]:
+        return {
+            "trade_date_compact": trade_date_compact,
+            "active_tickers": active_tickers,
+            "executed_trades": executed_trades,
+            "execution_plan_observations": execution_plan_observations,
+            "load_market_data_seconds": load_market_data_seconds,
+            "pre_market_seconds": pre_market_seconds,
+            "intraday_seconds": intraday_seconds,
+            "append_daily_state_seconds": append_daily_state_seconds,
+            "post_market_seconds": post_market_seconds,
+            "total_day_seconds": total_day_seconds,
+            "pending_plan": pending_plan,
+            "previous_plan_counts": previous_plan_counts,
+            "previous_plan_timing": previous_plan_timing,
+            "previous_plan_funnel_diagnostics": previous_plan_funnel_diagnostics,
+            "pending_buy_queue": runtime_context.pending_buy_queue,
+            "pending_sell_queue": runtime_context.pending_sell_queue,
+            "timing_payload_builder": build_pipeline_timing_payload,
+        }
 
     def _build_pipeline_queue_counts(self) -> dict[str, int]:
         return build_pipeline_queue_counts(
@@ -1369,6 +1655,33 @@ class BacktestEngine:
         timing_seconds: dict,
     ) -> dict:
         return build_pipeline_day_event_payload_helper(
+            **self._build_pipeline_day_event_payload_helper_kwargs(
+                trade_date_compact=trade_date_compact,
+                active_tickers=active_tickers,
+                executed_trades=executed_trades,
+                decisions=decisions,
+                current_prices=current_prices,
+                prepared_plan=prepared_plan,
+                pending_plan=pending_plan,
+                execution_plan_observations=execution_plan_observations,
+                timing_seconds=timing_seconds,
+            )
+        )
+
+    def _build_pipeline_day_event_payload_helper_kwargs(
+        self,
+        *,
+        trade_date_compact: str,
+        active_tickers: Sequence[str],
+        executed_trades: Dict[str, int],
+        decisions: Dict[str, dict],
+        current_prices: Dict[str, float],
+        prepared_plan: ExecutionPlan | None,
+        pending_plan: ExecutionPlan | None,
+        execution_plan_observations: list[dict],
+        timing_seconds: dict,
+    ) -> dict[str, Any]:
+        return self._build_pipeline_day_event_payload_kwargs(
             trade_date_compact=trade_date_compact,
             active_tickers=active_tickers,
             executed_trades=executed_trades,
@@ -1378,19 +1691,55 @@ class BacktestEngine:
             pending_plan=pending_plan,
             execution_plan_observations=execution_plan_observations,
             timing_seconds=timing_seconds,
+            runtime_context=self._build_pipeline_runtime_payload_context(),
+        )
+
+    def _build_pipeline_day_event_payload_kwargs(
+        self,
+        *,
+        trade_date_compact: str,
+        active_tickers: Sequence[str],
+        executed_trades: Dict[str, int],
+        decisions: Dict[str, dict],
+        current_prices: Dict[str, float],
+        prepared_plan: ExecutionPlan | None,
+        pending_plan: ExecutionPlan | None,
+        execution_plan_observations: list[dict],
+        timing_seconds: dict,
+        runtime_context: PipelineRuntimePayloadContext,
+    ) -> dict[str, Any]:
+        return {
+            "trade_date_compact": trade_date_compact,
+            "active_tickers": active_tickers,
+            "executed_trades": executed_trades,
+            "decisions": decisions,
+            "current_prices": current_prices,
+            "prepared_plan": prepared_plan,
+            "pending_plan": pending_plan,
+            "execution_plan_observations": execution_plan_observations,
+            "timing_seconds": timing_seconds,
+            "portfolio_snapshot": runtime_context.portfolio_snapshot,
+            "pending_buy_queue": runtime_context.pending_buy_queue,
+            "pending_sell_queue": runtime_context.pending_sell_queue,
+            "exit_reentry_cooldowns": runtime_context.exit_reentry_cooldowns,
+            "event_payload_builder": build_pipeline_event_payload,
+        }
+
+    def _build_pipeline_runtime_payload_context(self) -> PipelineRuntimePayloadContext:
+        return PipelineRuntimePayloadContext(
             portfolio_snapshot=self._portfolio.get_snapshot(),
             pending_buy_queue=self._pending_buy_queue,
             pending_sell_queue=self._pending_sell_queue,
             exit_reentry_cooldowns=self._exit_reentry_cooldowns,
-            event_payload_builder=build_pipeline_event_payload,
         )
 
     def _build_pipeline_runtime_state_payload(self) -> dict[str, object]:
+        runtime_context = self._build_pipeline_runtime_payload_context()
         return build_pipeline_runtime_state_payload(
-            portfolio_snapshot=self._portfolio.get_snapshot(),
-            pending_buy_queue=self._pending_buy_queue,
-            pending_sell_queue=self._pending_sell_queue,
-            exit_reentry_cooldowns=self._exit_reentry_cooldowns,
+            portfolio_snapshot=runtime_context.portfolio_snapshot,
+            pending_buy_queue=runtime_context.pending_buy_queue,
+            pending_sell_queue=runtime_context.pending_sell_queue,
+            exit_reentry_cooldowns=runtime_context.exit_reentry_cooldowns,
         )
 
     def _emit_pipeline_day_records(self, *, timing_payload: dict, event_payload: dict) -> None:
