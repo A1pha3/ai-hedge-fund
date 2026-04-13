@@ -2755,7 +2755,7 @@ def test_attach_historical_prior_to_entries_backfills_sparse_unknown_fields_from
                 "applied_scope": "same_ticker",
                 "execution_quality_label": "intraday_only",
                 "next_close_positive_rate": 0.0,
-                "execution_note": "artifact note",
+                "execution_note": "latest note",
             },
         }
     ]
@@ -2767,6 +2767,9 @@ def test_attach_historical_prior_to_entries_preserves_explicit_embedded_history_
             {
                 "ticker": "301292",
                 "historical_prior": {
+                    "applied_scope": "same_ticker",
+                    "sample_count": 12,
+                    "evaluable_count": 12,
                     "execution_quality_label": "close_continuation",
                     "next_close_positive_rate": 1.0,
                 },
@@ -2774,8 +2777,11 @@ def test_attach_historical_prior_to_entries_preserves_explicit_embedded_history_
         ],
         prior_by_ticker={
             "301292": {
-                "execution_quality_label": "intraday_only",
-                "next_close_positive_rate": 0.0,
+                "applied_scope": "family_source_score_catalyst",
+                "sample_count": 7,
+                "evaluable_count": 7,
+                "execution_quality_label": "balanced_confirmation",
+                "next_close_positive_rate": 0.2857,
             }
         },
     )
@@ -2784,8 +2790,62 @@ def test_attach_historical_prior_to_entries_preserves_explicit_embedded_history_
         {
             "ticker": "301292",
             "historical_prior": {
+                "applied_scope": "same_ticker",
+                "sample_count": 12,
+                "evaluable_count": 12,
                 "execution_quality_label": "close_continuation",
                 "next_close_positive_rate": 1.0,
+            },
+        }
+    ]
+
+
+def test_attach_historical_prior_to_entries_prefers_stronger_latest_prior_over_embedded_weaker_prior():
+    attached_entries = daily_pipeline_module._attach_historical_prior_to_entries(
+        [
+            {
+                "ticker": "300502",
+                "historical_prior": {
+                    "applied_scope": "family_source_score_catalyst",
+                    "sample_count": 7,
+                    "evaluable_count": 7,
+                    "execution_quality_label": "balanced_confirmation",
+                    "entry_timing_bias": "confirm_then_review",
+                    "next_high_hit_rate_at_threshold": 0.4286,
+                    "next_close_positive_rate": 0.2857,
+                    "next_open_to_close_return_mean": -0.0026,
+                    "execution_note": "历史表现相对均衡，仍应坚持盘中确认后再决定是否持有。",
+                },
+            }
+        ],
+        prior_by_ticker={
+            "300502": {
+                "applied_scope": "same_ticker",
+                "sample_count": 12,
+                "evaluable_count": 12,
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "next_high_hit_rate_at_threshold": 0.8333,
+                "next_close_positive_rate": 0.8333,
+                "next_open_to_close_return_mean": 0.0494,
+                "execution_note": "历史上更偏向次日收盘延续，确认后可保留 follow-through 预期。",
+            }
+        },
+    )
+
+    assert attached_entries == [
+        {
+            "ticker": "300502",
+            "historical_prior": {
+                "applied_scope": "same_ticker",
+                "sample_count": 12,
+                "evaluable_count": 12,
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "next_high_hit_rate_at_threshold": 0.8333,
+                "next_close_positive_rate": 0.8333,
+                "next_open_to_close_return_mean": 0.0494,
+                "execution_note": "历史上更偏向次日收盘延续，确认后可保留 follow-through 预期。",
             },
         }
     ]

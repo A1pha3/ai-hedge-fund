@@ -103,6 +103,52 @@ def historical_prior_value_is_missing(key: str, value: Any) -> bool:
     return False
 
 
+def _historical_prior_int(prior: dict[str, Any], key: str) -> int:
+    value = prior.get(key)
+    if value in (None, "", [], {}):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _historical_prior_scope_rank(prior: dict[str, Any]) -> int:
+    scope = str(prior.get("applied_scope") or "").strip()
+    return {
+        "same_ticker": 6,
+        "same_family_source_score_catalyst": 5,
+        "family_source_score_catalyst": 5,
+        "same_family_source": 4,
+        "family_source": 4,
+        "same_family": 3,
+        "same_source_score": 2,
+        "source_score": 2,
+        "candidate_source": 1,
+        "none": 0,
+    }.get(scope, 0)
+
+
+def _historical_prior_risk_rank(prior: dict[str, Any]) -> int:
+    label = str(prior.get("execution_quality_label") or "").strip()
+    return {
+        "zero_follow_through": 5,
+        "intraday_only": 4,
+        "gap_chase_risk": 3,
+        "balanced_confirmation": 2,
+        "close_continuation": 1,
+    }.get(label, 0)
+
+
+def _historical_prior_merge_rank(prior: dict[str, Any]) -> tuple[int, int, int, int]:
+    return (
+        _historical_prior_int(prior, "evaluable_count"),
+        _historical_prior_int(prior, "sample_count"),
+        _historical_prior_scope_rank(prior),
+        _historical_prior_risk_rank(prior),
+    )
+
+
 def resolve_historical_prior_for_ticker(
     *,
     ticker: str,
@@ -116,9 +162,15 @@ def resolve_historical_prior_for_ticker(
     if not latest_historical_prior:
         return embedded_historical_prior
 
-    resolved_historical_prior = dict(latest_historical_prior)
-    for key, value in embedded_historical_prior.items():
+    embedded_rank = _historical_prior_merge_rank(embedded_historical_prior)
+    latest_rank = _historical_prior_merge_rank(latest_historical_prior)
+    preferred_historical_prior = embedded_historical_prior if embedded_rank >= latest_rank else latest_historical_prior
+    fallback_historical_prior = latest_historical_prior if preferred_historical_prior is embedded_historical_prior else embedded_historical_prior
+
+    resolved_historical_prior = dict(preferred_historical_prior)
+    for key, value in fallback_historical_prior.items():
         if historical_prior_value_is_missing(str(key), value):
             continue
-        resolved_historical_prior[str(key)] = value
+        if historical_prior_value_is_missing(str(key), resolved_historical_prior.get(str(key))):
+            resolved_historical_prior[str(key)] = value
     return resolved_historical_prior

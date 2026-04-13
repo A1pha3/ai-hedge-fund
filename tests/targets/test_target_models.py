@@ -1350,6 +1350,11 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert default_profile.visibility_gap_continuation_catalyst_freshness_floor == 0.25
     assert default_profile.visibility_gap_continuation_near_miss_threshold == 0.34
     assert default_profile.visibility_gap_continuation_require_relaxed_band is True
+    assert default_profile.profitability_hard_cliff_boundary_relief_trend_acceleration_min == 0.45
+    assert default_profile.profitability_hard_cliff_boundary_relief_close_strength_min == 0.35
+    assert default_profile.profitability_hard_cliff_boundary_relief_sector_resonance_min == 0.125
+    assert default_profile.profitability_hard_cliff_boundary_relief_stale_penalty_max == 0.47
+    assert default_profile.profitability_hard_cliff_boundary_relief_near_miss_threshold == 0.28
     assert guard_relief_profile.hard_block_bearish_conflicts == frozenset()
 
 
@@ -1723,8 +1728,8 @@ def test_profitability_hard_cliff_boundary_relief_promotes_frontier_case_to_near
     assert "profitability_hard_cliff_boundary_relief_applied" in relief_result.positive_tags
     assert relief_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["applied"] is True
     assert relief_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["gate_hits"]["candidate_source"] is True
-    assert relief_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["effective_near_miss_threshold"] == 0.32
-    assert relief_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.32
+    assert relief_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["effective_near_miss_threshold"] == 0.28
+    assert relief_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.28
     assert relief_result.explainability_payload["profitability_hard_cliff_boundary_relief"]["applied"] is True
 
 
@@ -1778,13 +1783,15 @@ def test_historical_execution_relief_promotes_positive_gap_chase_boundary_to_nea
         rank_hint=1,
     )
 
-    assert baseline_result.decision in {"rejected", "near_miss"}
-    assert relieved_result.decision in {"near_miss", "selected"}
+    assert baseline_result.decision == "near_miss"
+    assert relieved_result.decision == "selected"
     assert relieved_result.preferred_entry_mode == "avoid_open_chase_confirmation"
-    assert relieved_result.metrics_payload["historical_execution_relief"]["applied"] in {True, False}
-    assert relieved_result.metrics_payload["historical_execution_relief"]["effective_near_miss_threshold"] == 0.34
-    assert relieved_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.34
-    assert relieved_result.explainability_payload["historical_execution_relief"]["applied"] in {True, False}
+    assert relieved_result.metrics_payload["historical_execution_relief"]["applied"] is True
+    assert relieved_result.metrics_payload["historical_execution_relief"]["effective_near_miss_threshold"] == 0.32
+    assert relieved_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.38
+    assert relieved_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.32
+    assert relieved_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.38
+    assert relieved_result.explainability_payload["historical_execution_relief"]["applied"] is True
 
 
 def test_historical_execution_relief_does_not_promote_gap_chase_profitability_hard_cliff_with_negative_open_to_close() -> None:
@@ -1819,18 +1826,56 @@ def test_historical_execution_relief_does_not_promote_balanced_confirmation_boun
 
 
 def test_historical_execution_relief_promotes_strong_close_continuation_boundary_to_near_miss() -> None:
-    result = evaluate_short_trade_rejected_target(
+    baseline_entry = _make_close_continuation_relief_entry()
+    relief_entry = _make_close_continuation_relief_entry()
+    baseline_entry.pop("historical_prior", None)
+
+    baseline_result = evaluate_short_trade_rejected_target(
         trade_date="20260328",
-        entry=_make_close_continuation_relief_entry(),
+        entry=baseline_entry,
+        rank_hint=1,
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=relief_entry,
         rank_hint=1,
     )
 
-    assert result.decision in {"near_miss", "selected"}
-    assert result.preferred_entry_mode == "confirm_then_hold_breakout"
-    assert result.metrics_payload["historical_execution_relief"]["applied"] in {True, False}
-    assert result.metrics_payload["historical_execution_relief"]["strong_close_continuation"] is True
-    assert result.metrics_payload["historical_execution_relief"]["effective_near_miss_threshold"] == 0.34
-    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.34
+    assert baseline_result.decision == "near_miss"
+    assert relief_result.decision == "selected"
+    assert relief_result.preferred_entry_mode == "confirm_then_hold_breakout"
+    assert relief_result.metrics_payload["historical_execution_relief"]["applied"] is True
+    assert relief_result.metrics_payload["historical_execution_relief"]["strong_close_continuation"] is True
+    assert relief_result.metrics_payload["historical_execution_relief"]["effective_near_miss_threshold"] == 0.32
+    assert relief_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.37
+    assert relief_result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.32
+    assert relief_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.37
+
+
+def test_historical_execution_relief_promotes_strong_close_continuation_boundary_without_profitability_hard_cliff() -> None:
+    baseline_entry = _make_close_continuation_relief_entry()
+    relief_entry = _make_close_continuation_relief_entry()
+    baseline_entry.pop("historical_prior", None)
+    baseline_entry["strategy_signals"]["fundamental"] = _make_signal(1, 45.0).model_dump(mode="json")
+    relief_entry["strategy_signals"]["fundamental"] = _make_signal(1, 45.0).model_dump(mode="json")
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=baseline_entry,
+        rank_hint=1,
+    )
+    relief_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=relief_entry,
+        rank_hint=1,
+    )
+
+    assert baseline_result.decision == "near_miss"
+    assert relief_result.decision == "selected"
+    assert relief_result.metrics_payload["historical_execution_relief"]["applied"] is True
+    assert relief_result.metrics_payload["historical_execution_relief"]["strong_close_continuation"] is True
+    assert relief_result.metrics_payload["historical_execution_relief"]["gate_hits"]["profitability_hard_cliff"] is True
+    assert relief_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.37
 
 
 def test_historical_execution_relief_promotes_strong_close_continuation_frontier_to_selected() -> None:
@@ -1854,14 +1899,15 @@ def test_historical_execution_relief_promotes_strong_close_continuation_frontier
     assert round(relief_result.score_target, 4) == 0.5835
     assert baseline_result.decision in {"near_miss", "selected"}
     assert baseline_result.metrics_payload["historical_execution_relief"]["strong_close_continuation"] is False
-    assert baseline_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.90
+    assert baseline_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.38
+    assert baseline_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.38
     assert relief_result.decision == "selected"
     assert relief_result.preferred_entry_mode == "confirm_then_hold_breakout"
     assert relief_result.metrics_payload["historical_execution_relief"]["applied"] is True
     assert relief_result.metrics_payload["historical_execution_relief"]["strong_close_continuation"] is True
-    assert relief_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.56
-    assert relief_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.56
-    assert relief_result.explainability_payload["historical_execution_relief"]["effective_select_threshold"] == 0.56
+    assert relief_result.metrics_payload["historical_execution_relief"]["effective_select_threshold"] == 0.37
+    assert relief_result.metrics_payload["thresholds"]["effective_select_threshold"] == 0.37
+    assert relief_result.explainability_payload["historical_execution_relief"]["effective_select_threshold"] == 0.37
 
 
 def test_upstream_shadow_catalyst_relief_promotes_strong_recalled_shadow_to_near_miss() -> None:

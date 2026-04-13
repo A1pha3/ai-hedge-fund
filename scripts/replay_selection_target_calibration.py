@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterator, cast
 
 from scripts.btst_candidate_entry_utils import build_watchlist_avoid_weak_structure_filter as _build_watchlist_avoid_weak_structure_filter
+from scripts.btst_latest_followup_utils import load_latest_btst_historical_prior_by_ticker
 from scripts.replay_selection_target_calibration_helpers import (
     build_replay_analysis_config,
     build_replay_analysis_result,
@@ -22,6 +23,7 @@ from src.targets.candidate_entry_filters import (
     apply_candidate_entry_filters as _apply_candidate_entry_filters,
     summarize_candidate_entry_filter_observability as _summarize_candidate_entry_filter_observability,
 )
+from src.execution.daily_pipeline_runtime_helpers import resolve_historical_prior_for_ticker as _resolve_historical_prior_for_ticker_impl
 
 
 REPLAY_INPUT_FILENAME = "selection_target_replay_input.json"
@@ -268,6 +270,59 @@ def _merge_replay_short_trade_entries(payload: dict[str, Any]) -> tuple[list[dic
     upstream_shadow_observation_entries = [dict(entry or {}) for entry in list(payload.get("upstream_shadow_observation_entries") or [])]
     replay_entries = supplemental_entries + upstream_shadow_observation_entries
     return replay_entries, upstream_shadow_observation_entries
+
+
+def _resolve_reports_root_from_replay_input_path(replay_input_path: Path) -> Path | None:
+    resolved_path = replay_input_path.expanduser().resolve()
+    for parent in resolved_path.parents:
+        if parent.name != "selection_artifacts":
+            continue
+        report_dir = parent.parent
+        reports_root = report_dir.parent
+        return reports_root if reports_root.exists() else None
+    return None
+
+
+def _attach_latest_historical_prior_to_entry(entry: dict[str, Any], *, prior_by_ticker: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    updated_entry = dict(entry or {})
+    ticker = str(updated_entry.get("ticker") or "").strip()
+    if not ticker:
+        return updated_entry
+    historical_prior = _resolve_historical_prior_for_ticker_impl(
+        ticker=ticker,
+        historical_prior=dict(updated_entry.get("historical_prior") or {}),
+        prior_by_ticker=prior_by_ticker,
+    )
+    if historical_prior:
+        updated_entry["historical_prior"] = historical_prior
+    return updated_entry
+
+
+def _attach_latest_historical_prior_to_payload(
+    payload: dict[str, Any],
+    *,
+    replay_input_path: Path,
+    prior_cache: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, Any]:
+    reports_root = _resolve_reports_root_from_replay_input_path(replay_input_path)
+    if reports_root is None:
+        return dict(payload)
+
+    cache_key = reports_root.as_posix()
+    prior_by_ticker = prior_cache.get(cache_key)
+    if prior_by_ticker is None:
+        prior_by_ticker = load_latest_btst_historical_prior_by_ticker(reports_root)
+        prior_cache[cache_key] = prior_by_ticker
+    if not prior_by_ticker:
+        return dict(payload)
+
+    refreshed_payload = dict(payload)
+    for key in ("watchlist", "rejected_entries", "supplemental_short_trade_entries", "upstream_shadow_observation_entries"):
+        refreshed_payload[key] = [
+            _attach_latest_historical_prior_to_entry(dict(entry or {}), prior_by_ticker=prior_by_ticker)
+            for entry in list(payload.get(key) or [])
+        ]
+    return refreshed_payload
 
 
 def _iter_replay_input_sources(input_path: str | Path) -> list[tuple[Path, dict[str, Any]]]:
@@ -695,6 +750,7 @@ def analyze_selection_target_replay_sources(
     )
     state = build_replay_analysis_state()
     default_profile = _default_short_trade_target_profile()
+    prior_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
     with _override_short_trade_thresholds(
         profile_name=config.profile_name,
@@ -718,9 +774,14 @@ def analyze_selection_target_replay_sources(
         extension_score_penalty_weight=config.effective_structural_overrides.get("extension_score_penalty_weight"),
     ):
         for replay_input_path, payload in replay_input_sources:
+            refreshed_payload = _attach_latest_historical_prior_to_payload(
+                payload,
+                replay_input_path=replay_input_path,
+                prior_cache=prior_cache,
+            )
             source_context = prepare_replay_source_context(
                 replay_input_path=replay_input_path,
-                payload=payload,
+                payload=refreshed_payload,
                 entry_filter_rules=config.entry_filter_rules,
                 candidate_entry_default_source="watchlist_filter_diagnostics",
                 supplemental_default_source="layer_b_boundary",
@@ -742,7 +803,7 @@ def analyze_selection_target_replay_sources(
             )
             source_analysis = _analyze_replay_source_decisions(
                 trade_date=source_context.trade_date,
-                payload=payload,
+                payload=refreshed_payload,
                 replay_input_path=replay_input_path,
                 replay_entry_index=source_context.replay_entry_index,
                 filtered_entry_index=source_context.filtered_entry_index,

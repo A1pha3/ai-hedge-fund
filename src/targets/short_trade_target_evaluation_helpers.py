@@ -390,6 +390,7 @@ def _build_historical_execution_relief_metrics_payload(historical_execution_reli
         "base_select_threshold": round(float(historical_execution_relief["base_select_threshold"]), 4),
         "effective_select_threshold": round(float(historical_execution_relief["effective_select_threshold"]), 4),
         "select_threshold_override": round(float(historical_execution_relief["select_threshold_override"]), 4),
+        "profitability_hard_cliff_bypassed": bool(historical_execution_relief.get("profitability_hard_cliff_bypassed", False)),
     }
 
 

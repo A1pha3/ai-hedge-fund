@@ -22,6 +22,33 @@ from src.targets import get_active_short_trade_target_profile
 from src.targets.router import build_selection_targets
 
 
+def _write_followup_report(
+    report_dir,
+    *,
+    trade_date: str,
+    selection_target: str,
+    brief_payload: dict,
+) -> None:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    brief_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    brief_path.write_text(json.dumps(brief_payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    (report_dir / "session_summary.json").write_text(
+        json.dumps(
+            {
+                "end_date": trade_date,
+                "plan_generation": {"selection_target": selection_target},
+                "btst_followup": {
+                    "trade_date": trade_date,
+                    "brief_json": str(brief_path.resolve()),
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
     return StrategySignal(
         direction=direction,
@@ -287,6 +314,71 @@ def _write_replay_input_with_upstream_shadow_observation(tmp_path):
     ]
     replay_input_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return replay_input_path
+
+
+def test_attach_latest_historical_prior_to_payload_prefers_stronger_followup_prior(tmp_path) -> None:
+    reports_root = tmp_path / "reports"
+    report_dir = reports_root / "paper_trading_20260407_window"
+    replay_input_path = report_dir / "selection_artifacts" / "2026-04-07" / "selection_target_replay_input.json"
+    replay_input_path.parent.mkdir(parents=True, exist_ok=True)
+    replay_input_path.write_text("{}\n", encoding="utf-8")
+
+    _write_followup_report(
+        reports_root / "paper_trading_20260409_followup",
+        trade_date="2026-04-09",
+        selection_target="short_trade_only",
+        brief_payload={
+            "near_miss_entries": [
+                {
+                    "ticker": "300502",
+                    "decision": "near_miss",
+                    "candidate_source": "short_trade_boundary",
+                    "historical_prior": {
+                        "applied_scope": "same_ticker",
+                        "sample_count": 12,
+                        "evaluable_count": 12,
+                        "execution_quality_label": "close_continuation",
+                        "next_close_positive_rate": 0.8333,
+                        "next_high_hit_rate_at_threshold": 0.8333,
+                        "next_open_to_close_return_mean": 0.0494,
+                    },
+                }
+            ]
+        },
+    )
+
+    payload = {
+        "watchlist": [],
+        "rejected_entries": [
+            {
+                "ticker": "300502",
+                "candidate_source": "watchlist_filter_diagnostics",
+                "historical_prior": {
+                    "applied_scope": "family_source_score_catalyst",
+                    "sample_count": 7,
+                    "evaluable_count": 7,
+                    "execution_quality_label": "balanced_confirmation",
+                    "next_close_positive_rate": 0.2857,
+                    "next_high_hit_rate_at_threshold": 0.4286,
+                    "next_open_to_close_return_mean": 0.0189,
+                },
+            }
+        ],
+        "supplemental_short_trade_entries": [],
+        "upstream_shadow_observation_entries": [],
+        "selection_targets": {},
+    }
+
+    refreshed_payload = replay_selection_target_calibration._attach_latest_historical_prior_to_payload(
+        payload,
+        replay_input_path=replay_input_path,
+        prior_cache={},
+    )
+
+    assert refreshed_payload["rejected_entries"][0]["historical_prior"]["applied_scope"] == "same_ticker"
+    assert refreshed_payload["rejected_entries"][0]["historical_prior"]["evaluable_count"] == 12
+    assert refreshed_payload["rejected_entries"][0]["historical_prior"]["execution_quality_label"] == "close_continuation"
+    assert refreshed_payload["rejected_entries"][0]["historical_prior"]["next_close_positive_rate"] == 0.8333
 
 
 def _write_replay_input_with_pipeline_snapshot(tmp_path, *, run_id: str, selected_analysts: list[str], analyst_roster_version: str):

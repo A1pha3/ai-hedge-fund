@@ -37,6 +37,7 @@ def _build_historical_execution_relief_default_result(
         "base_select_threshold": base_select_threshold,
         "effective_select_threshold": base_select_threshold,
         "select_threshold_override": base_select_threshold,
+        "profitability_hard_cliff_bypassed": False,
     }
 
 
@@ -195,7 +196,7 @@ def _resolve_historical_execution_relief_support(
 def _build_historical_execution_relief_gate_hits(
     *,
     source: str,
-    profitability_hard_cliff: bool,
+    profitability_gate: bool,
     catalyst_theme_carryover_candidate: bool,
     historical_context: dict[str, Any],
     strong_close_continuation_candidate: bool,
@@ -203,15 +204,62 @@ def _build_historical_execution_relief_gate_hits(
 ) -> dict[str, bool]:
     return {
         "candidate_source": source in {"short_trade_boundary", "upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"} or catalyst_theme_carryover_candidate,
-        "profitability_hard_cliff": profitability_hard_cliff,
+        "profitability_hard_cliff": profitability_gate,
         "evaluable_count": historical_context["evaluable_count"] >= 3 or strong_close_continuation_candidate,
         "execution_quality_support": execution_quality_support,
-        "gap_chase_open_to_close_support": (not profitability_hard_cliff)
+        "gap_chase_open_to_close_support": (not profitability_gate)
         or historical_context["execution_quality_label"] != "gap_chase_risk"
         or historical_context["next_open_to_close_return_mean"] >= 0.0,
         "next_close_positive_rate": historical_context["next_close_positive_rate"] >= 0.5,
         "next_high_hit_rate": historical_context["next_high_hit_rate"] >= 0.5,
     }
+
+
+def _resolve_historical_execution_relief_profitability_gate(
+    *,
+    source: str,
+    profitability_hard_cliff: bool,
+    strong_close_continuation_candidate: bool,
+    profile: Any,
+) -> bool:
+    if profitability_hard_cliff:
+        return True
+    return bool(getattr(profile, "historical_execution_relief_allow_strong_close_continuation_without_profitability_hard_cliff", False)) and source == "short_trade_boundary" and strong_close_continuation_candidate
+
+
+def _resolve_historical_execution_relief_threshold_overrides(
+    *,
+    source: str,
+    base_near_miss_threshold: float,
+    base_select_threshold: float,
+    strong_close_continuation: bool,
+    execution_quality_label: str,
+    profile: Any,
+) -> tuple[float, float]:
+    near_miss_threshold_override = base_near_miss_threshold
+    select_threshold_override = base_select_threshold
+
+    if source == "short_trade_boundary":
+        configured_near_miss_threshold = getattr(profile, "historical_execution_relief_near_miss_threshold", None)
+        if configured_near_miss_threshold is not None:
+            near_miss_threshold_override = min(base_near_miss_threshold, clamp_unit_interval(float(configured_near_miss_threshold)))
+
+        configured_select_threshold = getattr(
+            profile,
+            "historical_execution_relief_strong_close_continuation_select_threshold" if strong_close_continuation else "historical_execution_relief_select_threshold",
+            None,
+        )
+        if configured_select_threshold is not None:
+            select_threshold_override = min(base_select_threshold, clamp_unit_interval(float(configured_select_threshold)))
+            return near_miss_threshold_override, select_threshold_override
+
+    near_miss_threshold_override = min(
+        near_miss_threshold_override,
+        0.39 if (execution_quality_label == "gap_chase_risk") or strong_close_continuation else 0.40,
+    )
+    if strong_close_continuation:
+        select_threshold_override = min(select_threshold_override, 0.56)
+    return near_miss_threshold_override, select_threshold_override
 
 
 def _parse_upstream_shadow_catalyst_relief_config(
@@ -514,9 +562,15 @@ def resolve_historical_execution_relief(
         catalyst_theme_carryover_candidate=catalyst_theme_carryover_candidate,
         strong_carryover_history_min_evaluable_count=strong_carryover_history_min_evaluable_count,
     )
-    gate_hits = _build_historical_execution_relief_gate_hits(
+    profitability_gate = _resolve_historical_execution_relief_profitability_gate(
         source=source,
         profitability_hard_cliff=profitability_hard_cliff,
+        strong_close_continuation_candidate=strong_close_continuation_candidate,
+        profile=profile,
+    )
+    gate_hits = _build_historical_execution_relief_gate_hits(
+        source=source,
+        profitability_gate=profitability_gate,
         catalyst_theme_carryover_candidate=catalyst_theme_carryover_candidate,
         historical_context=historical_context,
         strong_close_continuation_candidate=strong_close_continuation_candidate,
@@ -527,17 +581,14 @@ def resolve_historical_execution_relief(
     near_miss_threshold_override = base_near_miss_threshold
     select_threshold_override = base_select_threshold
     if eligible:
-        near_miss_threshold_override = min(
-            base_near_miss_threshold,
-            0.39
-            if (
-                historical_context["execution_quality_label"] == "gap_chase_risk" and not catalyst_theme_carryover_candidate
-            )
-            or strong_close_continuation
-            else 0.40,
+        near_miss_threshold_override, select_threshold_override = _resolve_historical_execution_relief_threshold_overrides(
+            source=source,
+            base_near_miss_threshold=base_near_miss_threshold,
+            base_select_threshold=base_select_threshold,
+            strong_close_continuation=strong_close_continuation,
+            execution_quality_label=historical_context["execution_quality_label"],
+            profile=profile,
         )
-        if strong_close_continuation:
-            select_threshold_override = min(base_select_threshold, 0.56)
 
     return {
         "enabled": True,
@@ -561,6 +612,7 @@ def resolve_historical_execution_relief(
         "base_select_threshold": base_select_threshold,
         "effective_select_threshold": select_threshold_override,
         "select_threshold_override": select_threshold_override,
+        "profitability_hard_cliff_bypassed": (not profitability_hard_cliff) and profitability_gate,
     }
 
 
