@@ -160,8 +160,15 @@ class ShortTradeTargetProfile:
 SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
     "default": ShortTradeTargetProfile(
         name="default",
-        select_threshold=0.50,
-        near_miss_threshold=0.36,
+        select_threshold=0.48,
+        near_miss_threshold=0.34,
+        breakout_freshness_weight=0.26,
+        trend_acceleration_weight=0.18,
+        volume_expansion_quality_weight=0.16,
+        close_strength_weight=0.10,
+        sector_resonance_weight=0.10,
+        catalyst_freshness_weight=0.12,
+        layer_c_alignment_weight=0.08,
         stale_score_penalty_weight=0.09,
         overhead_score_penalty_weight=0.07,
         extension_score_penalty_weight=0.06,
@@ -221,8 +228,8 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
     ),
     "aggressive": ShortTradeTargetProfile(
         name="aggressive",
-        select_threshold=0.54,
-        near_miss_threshold=0.42,
+        select_threshold=0.44,
+        near_miss_threshold=0.30,
         selected_breakout_freshness_min=0.30,
         selected_trend_acceleration_min=0.33,
         near_miss_breakout_freshness_min=0.16,
