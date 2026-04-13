@@ -17,7 +17,17 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from scipy import stats
+
+
+def _spearmanr(x: np.ndarray, y: np.ndarray) -> float:
+    """纯numpy实现Spearman rank相关系数，无需scipy依赖。"""
+    n = len(x)
+    if n < 3:
+        return np.nan
+    rank_x = pd.Series(x).rank().values
+    rank_y = pd.Series(y).rank().values
+    d = rank_x - rank_y
+    return 1.0 - 6.0 * np.sum(d ** 2) / (n * (n ** 2 - 1))
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -33,8 +43,11 @@ pro = ts.pro_api()
 # 1. 获取股票池和数据
 # ─────────────────────────────────────────────
 
-def get_liquid_stock_pool(date: str, min_amount: float = 1e8) -> pd.DataFrame:
-    """获取某日流动性足够的股票池（剔除ST、退市、涨跌停）。"""
+def get_liquid_stock_pool(date: str, min_amount: float = 100000) -> pd.DataFrame:
+    """获取某日流动性足够的股票池（剔除ST、退市、涨跌停）。
+
+    min_amount 单位：千元（tushare amount单位）。100000千元 = 1亿元。
+    """
     # 获取当日全部行情
     df = pro.daily(trade_date=date)
     if df is None or df.empty:
@@ -48,7 +61,7 @@ def get_liquid_stock_pool(date: str, min_amount: float = 1e8) -> pd.DataFrame:
     df = df.merge(stock_basic[["ts_code", "name", "industry", "list_date"]], on="ts_code", how="left")
 
     # 过滤条件
-    df = df[df["amount"] >= min_amount]  # 成交额 > 1亿
+    df = df[df["amount"] >= min_amount]  # 成交额 > 1亿（千元单位）
     df = df[~df["name"].str.contains("ST|退", na=False)]  # 剔除ST和退市
     df = df[~df["ts_code"].str.startswith(("688", "8", "4"))]  # 剔除科创板和北交所（流动性差）
     df = df[df["pct_chg"].between(-9.5, 9.5)]  # 剔除涨跌停
@@ -246,7 +259,7 @@ def compute_daily_ic(df: pd.DataFrame, factor_name: str, return_name: str) -> pd
         valid = group[[factor_name, return_name]].dropna()
         if len(valid) < 10:
             return np.nan
-        corr, _ = stats.spearmanr(valid[factor_name], valid[return_name])
+        corr = _spearmanr(valid[factor_name].values, valid[return_name].values)
         return corr
 
     ic_series = df.groupby("trade_date").apply(_spearman)
@@ -280,7 +293,7 @@ def compute_quantile_returns(df: pd.DataFrame, factor_name: str, return_name: st
         group = group.copy()
         group["quantile"] = pd.qcut(group[factor_name], n_quantiles, labels=False, duplicates="drop") + 1
         stats_df = group.groupby("quantile")[return_name].agg(["mean", "median", "count"])
-        stats_df["win_rate"] = (group.groupby("quantile")[return_name] > 0).mean()
+        stats_df["win_rate"] = group.groupby("quantile")[return_name].apply(lambda x: (x > 0).mean())
         return stats_df
 
     daily_stats = valid.groupby("trade_date").apply(_quantile_stats)
@@ -304,7 +317,7 @@ def run_analysis(start_date: str = "20260101", end_date: str = "20260413", sampl
     print(f"分析期间: {start_date} ~ {end_date}")
     print("=" * 80)
 
-    # 获取交易日历
+    # 获取交易日历（扩展到end_date之后几天，确保能拿到最近交易日）
     trade_cal = pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date, is_open="1")
     if trade_cal is None or trade_cal.empty:
         print("无法获取交易日历")
@@ -314,8 +327,17 @@ def run_analysis(start_date: str = "20260101", end_date: str = "20260413", sampl
     print(f"总交易日数: {len(all_dates)}")
 
     # 采样一些日期来构建股票池和因子
-    # 取最近的交易日来获取股票池
-    sample_date = all_dates[-1] if all_dates else end_date.replace("-", "")
+    # 取最近的交易日来获取股票池（从后往前尝试）
+    sample_date = None
+    for d in reversed(all_dates):
+        pool_test = get_liquid_stock_pool(d)
+        if pool_test is not None and not pool_test.empty:
+            sample_date = d
+            break
+    if sample_date is None:
+        print("无法获取任何交易日的股票池")
+        return
+    end_date_clean = sample_date  # 使用实际有数据的最后一天
 
     print(f"\n获取 {sample_date} 的流动性股票池...")
     pool = get_liquid_stock_pool(sample_date)
@@ -328,7 +350,7 @@ def run_analysis(start_date: str = "20260101", end_date: str = "20260413", sampl
 
     # 需要至少60个交易日的数据来计算因子
     data_start = (pd.to_datetime(start_date) - timedelta(days=150)).strftime("%Y%m%d")
-    print(f"\n获取历史数据: {data_start} ~ {end_date.replace('-', '')}...")
+    print(f"\n获取历史数据: {data_start} ~ {end_date_clean}...")
     print(f"下载 {len(ts_codes)} 只股票数据...")
 
     # 分批下载
@@ -338,7 +360,7 @@ def run_analysis(start_date: str = "20260101", end_date: str = "20260413", sampl
         batch = ts_codes[i : i + batch_size]
         batch_str = ",".join(batch)
         try:
-            df = pro.daily(ts_code=batch_str, start_date=data_start, end_date=end_date.replace("-", ""))
+            df = pro.daily(ts_code=batch_str, start_date=data_start, end_date=end_date_clean)
             if df is not None and not df.empty:
                 all_data.append(df)
                 print(f"  批次 {i // batch_size + 1}: 获取 {len(df)} 条记录", flush=True)

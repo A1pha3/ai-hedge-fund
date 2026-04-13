@@ -40,8 +40,8 @@ from src.tools.api import (
 from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_sw_industry_classification
 
 LIGHT_STRATEGY_WEIGHTS = {
-    "trend": 0.6,
-    "mean_reversion": 0.4,
+    "trend": 0.65,
+    "mean_reversion": 0.35,
 }
 _DEFAULT_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "300"))
 TECHNICAL_SCORE_MAX_CANDIDATES = int(
@@ -67,24 +67,24 @@ HEAVY_SCORE_MIN_TREND_CONFIDENCE = float(os.getenv("SCORE_BATCH_MIN_TREND_CONFID
 TECHNICAL_STAGE_LIQUIDITY_RANK_BUCKET = float(os.getenv("CANDIDATE_POOL_BTST_LIQUIDITY_RANK_BUCKET", "2500"))
 
 TREND_SUBFACTOR_WEIGHTS = {
-    "ema_alignment": 0.30,
-    "adx_strength": 0.25,
-    "momentum": 0.25,
-    "volatility": 0.20,
+    "ema_alignment": 0.35,
+    "adx_strength": 0.18,
+    "momentum": 0.30,
+    "volatility": 0.17,
 }
 
 TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND = {
-    "ema_alignment": 0.26,
-    "adx_strength": 0.21,
-    "momentum": 0.21,
-    "volatility": 0.17,
+    "ema_alignment": 0.30,
+    "adx_strength": 0.16,
+    "momentum": 0.24,
+    "volatility": 0.15,
     "long_trend_alignment": 0.15,
 }
 
 MEAN_REVERSION_SUBFACTOR_WEIGHTS = {
-    "zscore_bbands": 0.35,
-    "rsi_extreme": 0.20,
-    "stat_arb": 0.25,
+    "zscore_bbands": 0.30,
+    "rsi_extreme": 0.28,
+    "stat_arb": 0.22,
     "hurst_regime": 0.20,
 }
 
