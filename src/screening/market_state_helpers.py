@@ -71,6 +71,27 @@ def calculate_market_state_metrics(
     )
 
 
+def recommend_short_trade_profile(
+    *,
+    breadth_ratio: float,
+    daily_return: float,
+    limit_ratio: float,
+    adx: float,
+) -> str:
+    """基于市场状态推荐BTST短线交易profile。
+
+    规则：
+    - 强势市场(breadth>0.60, return>0.005): ic_optimized (激进)
+    - 危机市场(breadth<0.35, return<-0.03): conservative (保守)
+    - 其他: default (默认)
+    """
+    if breadth_ratio >= 0.58 and daily_return > 0.003 and adx > 25:
+        return "ic_optimized"
+    if breadth_ratio <= 0.35 or daily_return <= -0.02:
+        return "conservative"
+    return "default"
+
+
 def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_weights: callable) -> MarketState:
     adjusted = DEFAULT_STRATEGY_WEIGHTS.copy()
     position_scale = 0.5 if metrics.is_low_volume else 1.0

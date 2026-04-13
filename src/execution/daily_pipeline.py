@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import signature
@@ -172,7 +173,7 @@ from src.portfolio.models import HoldingState
 from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
 from src.screening.candidate_pool import build_candidate_pool, build_candidate_pool_with_shadow
 from src.screening.models import CandidateStock
-from src.screening.market_state import detect_market_state
+from src.screening.market_state import detect_market_state, recommend_short_trade_profile
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
@@ -1403,6 +1404,20 @@ class DailyPipeline:
         counts = diagnostics_aggregation.counts
         funnel_diagnostics = diagnostics_aggregation.funnel_diagnostics
         timing_seconds = diagnostics_aggregation.timing_seconds
+        # 自适应profile切换：基于市场状态选择最优profile（需启用环境变量）
+        effective_profile_name = self.short_trade_target_profile_name
+        effective_profile_overrides = self.short_trade_target_profile_overrides
+        if os.getenv("BTST_ADAPTIVE_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}:
+            if effective_profile_name == "default" and not effective_profile_overrides:
+                from src.screening.market_state_helpers import recommend_short_trade_profile as _rec_profile
+                ms = candidate_context.market_state
+                effective_profile_name = _rec_profile(
+                    breadth_ratio=float(ms.breadth_ratio) if ms else 0.5,
+                    daily_return=0.0,
+                    limit_ratio=float(ms.limit_up_down_ratio) if ms else 1.0,
+                    adx=float(ms.adx) if ms else 20.0,
+                )
+
         selection_resolution: PostMarketSelectionResolution = resolve_post_market_selection_targets(
             trade_date=trade_date,
             watchlist_context=watchlist_context,
@@ -1410,8 +1425,8 @@ class DailyPipeline:
             counts=counts,
             funnel_diagnostics=funnel_diagnostics,
             target_mode=self.target_mode,
-            short_trade_target_profile_name=self.short_trade_target_profile_name,
-            short_trade_target_profile_overrides=self.short_trade_target_profile_overrides,
+            short_trade_target_profile_name=effective_profile_name,
+            short_trade_target_profile_overrides=effective_profile_overrides,
             use_short_trade_target_profile_fn=use_short_trade_target_profile,
             build_selection_target_inputs_fn=build_selection_target_inputs,
             attach_historical_prior_to_entries_fn=_attach_historical_prior_to_entries,

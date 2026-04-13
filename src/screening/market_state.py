@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from src.screening.models import DEFAULT_STRATEGY_WEIGHTS, MarketState
-from src.screening.market_state_helpers import build_market_state_from_metrics, calculate_market_state_metrics, prepare_market_frame
+from src.screening.market_state_helpers import build_market_state_from_metrics, calculate_market_state_metrics, prepare_market_frame, recommend_short_trade_profile
 from src.tools.tushare_api import get_daily_basic_batch, get_daily_price_batch, get_index_daily, get_limit_list, get_northbound_flow
 
 
