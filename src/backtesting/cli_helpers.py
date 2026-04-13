@@ -35,6 +35,8 @@ def build_backtest_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-months", type=int, default=1, help="Test window size in months for walk-forward")
     parser.add_argument("--step-months", type=int, default=1, help="Step size in months for walk-forward")
     parser.add_argument("--max-test-trading-days", type=int, default=None, help="Optional cap on real trading days inside each test window")
+    parser.add_argument("--window-mode", choices=["rolling", "expanding"], default="rolling", help="Walk-forward window mode: rolling (fixed-size train) or expanding (anchored train start)")
+    parser.add_argument("--walk-forward-preset", choices=["fast", "standard", "extended", "seasonal"], default=None, help="Use predefined walk-forward window parameters (overrides --train/test/step-months)")
     parser.add_argument("--baseline-pct-threshold", type=float, default=3.0, help="Baseline daily gainers threshold")
     parser.add_argument("--baseline-top-n", type=int, default=10, help="Baseline top N gainers passed to multi-agent analysis")
     parser.add_argument("--report-file", type=str, default=None, help="Optional output path for generated markdown report")

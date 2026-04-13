@@ -17,7 +17,7 @@ from src.utils.logging import get_logger
 
 from .compare import build_ab_comparison_payload, format_ab_comparison_report, run_ab_comparison_walk_forward, save_ab_comparison_payload, save_ab_comparison_report
 from .engine import BacktestEngine
-from .walk_forward import build_walk_forward_windows, run_walk_forward, summarize_walk_forward
+from .walk_forward import WALK_FORWARD_PRESETS, WindowMode, build_walk_forward_windows, run_walk_forward, summarize_walk_forward
 
 logger = get_logger(__name__)
 
@@ -57,13 +57,19 @@ def _run_ab_compare(args, tickers: list[str], selected_analysts: list[str], mode
 
 
 def _run_walk_forward_mode(args, build_engine) -> int:
+    preset_kwargs = {}
+    if args.walk_forward_preset:
+        preset_kwargs = {k: v for k, v in WALK_FORWARD_PRESETS[args.walk_forward_preset].items() if v is not None}
+
+    window_mode = WindowMode(args.window_mode)
     windows = build_walk_forward_windows(
         args.start_date,
         args.end_date,
-        train_months=args.train_months,
-        test_months=args.test_months,
-        step_months=args.step_months,
-        max_test_trading_days=args.max_test_trading_days,
+        train_months=preset_kwargs.get("train_months", args.train_months),
+        test_months=preset_kwargs.get("test_months", args.test_months),
+        step_months=preset_kwargs.get("step_months", args.step_months),
+        max_test_trading_days=preset_kwargs.get("max_test_trading_days", args.max_test_trading_days),
+        window_mode=window_mode,
     )
     results = run_walk_forward(windows, lambda window: build_engine(window.test_start, window.test_end))
     summary = summarize_walk_forward(results)

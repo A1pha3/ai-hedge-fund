@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from src.execution.models import LayerCResult
 from src.targets.models import TargetEvaluationInput
+
+_logger = logging.getLogger(__name__)
 
 
 def build_item_replay_context(
@@ -49,7 +52,7 @@ def build_target_input_from_item(
         quality_score=float(item.quality_score),
         layer_c_decision=str(item.decision or ""),
         bc_conflict=item.bc_conflict,
-        strategy_signals={name: signal for name, signal in dict(item.strategy_signals or {}).items()},
+        strategy_signals=_extract_strategy_signals(item.strategy_signals, item.ticker, source="layer_c_result"),
         agent_contribution_summary=dict(item.agent_contribution_summary or {}),
         execution_constraints={"included_in_buy_orders": bool(included_in_buy_orders)},
         replay_context=build_item_replay_context_fn(item),
@@ -76,7 +79,7 @@ def build_target_input_from_entry(
         quality_score=float(entry.get("quality_score", 0.5) or 0.5),
         layer_c_decision=str(entry.get("decision") or ""),
         bc_conflict=entry.get("bc_conflict"),
-        strategy_signals=dict(entry.get("strategy_signals") or {}),
+        strategy_signals=_extract_strategy_signals(entry.get("strategy_signals"), entry.get("ticker", "unknown"), source="entry_dict"),
         agent_contribution_summary=dict(entry.get("agent_contribution_summary") or {}),
         replay_context={
             "source": candidate_source,
@@ -91,3 +94,10 @@ def build_target_input_from_entry(
             "explicit_metric_overrides": explicit_metric_overrides,
         },
     )
+
+
+def _extract_strategy_signals(raw_signals: Any, ticker: str, *, source: str) -> dict[str, Any]:
+    signals = dict(raw_signals or {})
+    if not signals:
+        _logger.warning("strategy_signals is empty for ticker=%s source=%s — snapshot scoring will use neutral defaults", ticker, source)
+    return signals

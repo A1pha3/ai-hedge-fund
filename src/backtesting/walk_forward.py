@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Callable, Sequence
 
 from dateutil.relativedelta import relativedelta
@@ -9,6 +10,19 @@ from dateutil.relativedelta import relativedelta
 from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
 from .types import PerformanceMetrics
+
+
+class WindowMode(str, Enum):
+    ROLLING = "rolling"
+    EXPANDING = "expanding"
+
+
+WALK_FORWARD_PRESETS: dict[str, dict[str, int]] = {
+    "fast": {"train_months": 1, "test_months": 1, "step_months": 1, "max_test_trading_days": 10},
+    "standard": {"train_months": 2, "test_months": 1, "step_months": 1},
+    "extended": {"train_months": 2, "test_months": 2, "step_months": 1},
+    "seasonal": {"train_months": 3, "test_months": 3, "step_months": 3},
+}
 
 
 @dataclass(frozen=True)
@@ -33,6 +47,7 @@ def build_walk_forward_windows(
     test_months: int = 1,
     step_months: int = 1,
     max_test_trading_days: int | None = None,
+    window_mode: WindowMode = WindowMode.ROLLING,
 ) -> list[WalkForwardWindow]:
     if train_months <= 0 or test_months <= 0 or step_months <= 0:
         raise ValueError("walk-forward windows require positive month lengths")
@@ -44,9 +59,16 @@ def build_walk_forward_windows(
     windows: list[WalkForwardWindow] = []
 
     cursor = overall_start
+    iteration = 0
     while True:
-        train_start = cursor
-        train_end = train_start + relativedelta(months=train_months) - relativedelta(days=1)
+        if window_mode == WindowMode.EXPANDING:
+            train_start = overall_start
+            train_duration = train_months + iteration * step_months
+            train_end = train_start + relativedelta(months=train_duration) - relativedelta(days=1)
+        else:
+            train_start = cursor
+            train_end = train_start + relativedelta(months=train_months) - relativedelta(days=1)
+
         test_start = train_end + relativedelta(days=1)
         full_test_end = test_start + relativedelta(months=test_months) - relativedelta(days=1)
         if full_test_end > overall_end:
@@ -61,6 +83,7 @@ def build_walk_forward_windows(
             )
         )
         cursor = cursor + relativedelta(months=step_months)
+        iteration += 1
 
     return windows
 
