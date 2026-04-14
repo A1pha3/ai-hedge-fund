@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -269,15 +270,26 @@ def _apply_preliminary_candidate_filters(
 
     limit_df = get_limit_list_fn(trade_date)
     limit_up_df = limit_df[limit_df["limit"] == "U"] if limit_df is not None and not limit_df.empty else None
-    stock_df = _apply_optional_ts_code_filter(
-        stock_df=stock_df,
-        filter_df=limit_up_df,
-        code_column="ts_code",
-        label="排除涨停后",
-        focus_filter_diagnostics=focus_filter_diagnostics,
-        stage="limit_up_filter",
-        record_focus_filter_stage_fn=record_focus_filter_stage_fn,
-    )
+    # 涨停股次日胜率53%、大涨率33%，显著优于普通候选池。
+    # BTST在T+1买入，涨停股在T+1可正常交易。默认包含涨停股。
+    exclude_limit_up = os.getenv("BTST_EXCLUDE_LIMIT_UP", "").strip().lower() in {"1", "true", "yes", "on"}
+    if exclude_limit_up:
+        stock_df = _apply_optional_ts_code_filter(
+            stock_df=stock_df,
+            filter_df=limit_up_df,
+            code_column="ts_code",
+            label="排除涨停后",
+            focus_filter_diagnostics=focus_filter_diagnostics,
+            stage="limit_up_filter",
+            record_focus_filter_stage_fn=record_focus_filter_stage_fn,
+        )
+    else:
+        _record_candidate_filter_stage(
+            stock_df=stock_df,
+            focus_filter_diagnostics=focus_filter_diagnostics,
+            stage="limit_up_filter_included",
+            record_focus_filter_stage_fn=record_focus_filter_stage_fn,
+        )
 
     resolved_cooldown_tickers = resolve_cooldown_tickers_fn(
         cooldown_tickers=set(cooldown_tickers) if cooldown_tickers is not None else None,

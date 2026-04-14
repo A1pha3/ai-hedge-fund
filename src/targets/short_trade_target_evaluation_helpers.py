@@ -607,6 +607,7 @@ def _build_short_trade_threshold_core_metrics_payload(*, profile: Any, snapshot:
         "sector_resonance_weight": round(float(profile.sector_resonance_weight), 4),
         "catalyst_freshness_weight": round(float(profile.catalyst_freshness_weight), 4),
         "layer_c_alignment_weight": round(float(profile.layer_c_alignment_weight), 4),
+        "momentum_strength_weight": round(float(getattr(profile, "momentum_strength_weight", 0.0)), 4),
         "effective_positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
         "stale_penalty_block_threshold": round(float(profile.stale_penalty_block_threshold), 4),
         "overhead_penalty_block_threshold": round(float(profile.overhead_penalty_block_threshold), 4),
@@ -854,6 +855,7 @@ def _build_short_trade_core_metrics_payload(
         "catalyst_freshness": round(float(snapshot["raw_catalyst_freshness"]), 4),
         "effective_catalyst_freshness": round(float(snapshot["catalyst_freshness"]), 4),
         "layer_c_alignment": round(float(snapshot["layer_c_alignment"]), 4),
+        "momentum_strength": round(float(snapshot.get("momentum_strength", 0.0)), 4),
         "positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
         "breakout_stage": breakout_stage,
         "selected_breakout_gate_pass": selected_breakout_gate_pass,
@@ -1756,6 +1758,7 @@ def build_short_trade_target_result(
         sector_resonance=round(float(snapshot["sector_resonance"]), 4),
         catalyst_freshness=round(float(snapshot["raw_catalyst_freshness"]), 4),
         layer_c_alignment=round(float(snapshot["layer_c_alignment"]), 4),
+        momentum_strength=round(float(snapshot.get("momentum_strength", 0.0)), 4),
         weighted_positive_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_positive_contributions"]).items()},
         weighted_negative_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_negative_contributions"]).items()},
         metrics_payload=_build_short_trade_metrics_payload(

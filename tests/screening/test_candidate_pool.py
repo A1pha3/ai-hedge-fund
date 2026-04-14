@@ -286,7 +286,7 @@ class TestExcludeRules:
         assert len(result) == 0
 
     def test_exclude_limit_up(self):
-        """当日涨停的标的被过滤"""
+        """当日涨停的标的默认保留（BTST在T+1买入，涨停股次日胜率53%），设置BTST_EXCLUDE_LIMIT_UP时排除"""
         stocks = [
             {"ts_code": "000001.SZ", "symbol": "000001", "name": "正常股"},
             {"ts_code": "000002.SZ", "symbol": "000002", "name": "涨停股"},
@@ -294,10 +294,22 @@ class TestExcludeRules:
         limit_df = pd.DataFrame([
             {"ts_code": "000002.SZ", "limit": "U", "trade_date": "20260305"},
         ])
+        # 默认：涨停股保留
         result = self._run_build(stocks=stocks, limit_df=limit_df)
         tickers = {c.ticker for c in result}
         assert "000001" in tickers
-        assert "000002" not in tickers
+        assert "000002" in tickers  # 涨停股默认保留
+
+        # 设置BTST_EXCLUDE_LIMIT_UP=1时：涨停股排除
+        import os
+        os.environ["BTST_EXCLUDE_LIMIT_UP"] = "1"
+        try:
+            result = self._run_build(stocks=stocks, limit_df=limit_df)
+            tickers = {c.ticker for c in result}
+            assert "000001" in tickers
+            assert "000002" not in tickers
+        finally:
+            os.environ.pop("BTST_EXCLUDE_LIMIT_UP", None)
 
     def test_exclude_bj(self):
         """北交所标的被过滤"""

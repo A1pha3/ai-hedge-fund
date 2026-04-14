@@ -51,6 +51,7 @@ class TargetEvaluationResult(BaseModel):
     sector_resonance: float | None = None
     catalyst_freshness: float | None = None
     layer_c_alignment: float | None = None
+    momentum_strength: float | None = None
     weighted_positive_contributions: dict[str, Any] = Field(default_factory=dict)
     weighted_negative_contributions: dict[str, Any] = Field(default_factory=dict)
     metrics_payload: dict[str, Any] = Field(default_factory=dict)
