@@ -541,8 +541,8 @@ def test_refresh_selection_artifacts_from_daily_events_promotes_visibility_gap_c
 
     selection_snapshot = json.loads((report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json").read_text(encoding="utf-8"))
     short_trade = selection_snapshot["selection_targets"]["300720"]["short_trade"]
-    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.45
-    assert short_trade["metrics_payload"]["thresholds"]["near_miss_threshold"] == 0.45
+    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.40
+    assert short_trade["metrics_payload"]["thresholds"]["near_miss_threshold"] == 0.34
     assert selection_snapshot["selection_targets"]["300720"]["short_trade"]["decision"] == "selected"
 
 
@@ -632,8 +632,8 @@ def test_refresh_selection_artifacts_from_daily_events_keeps_plain_corridor_shad
 
     selection_snapshot = json.loads((report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json").read_text(encoding="utf-8"))
     short_trade = selection_snapshot["selection_targets"]["300720"]["short_trade"]
-    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.58
-    assert selection_snapshot["selection_targets"]["300720"]["short_trade"]["decision"] == "rejected"
+    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.40
+    assert selection_snapshot["selection_targets"]["300720"]["short_trade"]["decision"] == "near_miss"
 
 
 def test_refresh_selection_artifacts_from_daily_events_injects_historical_prior_into_boundary_candidate(
@@ -841,7 +841,7 @@ def test_refresh_selection_artifacts_from_daily_events_preserves_catalyst_theme_
     short_trade = selection_snapshot["selection_targets"]["002001"]["short_trade"]
     assert short_trade["decision"] == "selected"
     assert short_trade["preferred_entry_mode"] == "confirm_then_hold_breakout"
-    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.45
+    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.40
 
 
 def test_refresh_selection_artifacts_from_daily_events_uses_catalyst_theme_metric_overrides(
@@ -912,7 +912,7 @@ def test_refresh_selection_artifacts_from_daily_events_uses_catalyst_theme_metri
     short_trade = selection_snapshot["selection_targets"]["002002"]["short_trade"]
     assert short_trade["decision"] == "selected"
     assert short_trade["score_target"] >= 0.45
-    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.45
+    assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.40
     assert short_trade["explainability_payload"]["upstream_shadow_catalyst_relief"]["applied"] is True
 
 

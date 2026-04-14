@@ -17,7 +17,7 @@ def test_analyze_trade_dates_counts_triple_fail_profitability_breakdowns(monkeyp
     candidate = SimpleNamespace(ticker="300001", industry_sw="electronics", market_cap=80.0)
     fused_item = SimpleNamespace(
         ticker="300001",
-        score_b=0.30,
+        score_b=0.15,
         strategy_signals={
             "fundamental": _FakeSignal(
                 {

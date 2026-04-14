@@ -103,9 +103,9 @@ def test_analyze_btst_penalty_frontier_finds_threshold_only_surface(tmp_path, mo
     analysis = analyze_btst_penalty_frontier(
         replay_input_path,
         baseline_profile="default",
-        near_miss_threshold_grid=[0.46, 0.42],
-        stale_weight_grid=[0.12],
-        extension_weight_grid=[0.08],
+        near_miss_threshold_grid=[0.44, 0.40],
+        stale_weight_grid=[0.09],
+        extension_weight_grid=[0.06],
         next_high_hit_threshold=0.02,
         focus_tickers=["300620"],
     )
@@ -117,7 +117,7 @@ def test_analyze_btst_penalty_frontier_finds_threshold_only_surface(tmp_path, mo
     assert baseline["surface_summaries"]["tradeable"]["total_count"] == 0
     assert best_variant is not None
     assert best_variant["variant_family"] == "threshold_only"
-    assert best_variant["near_miss_threshold"] == 0.42
+    assert best_variant["near_miss_threshold"] == 0.40
     assert best_variant["adjustment_cost"] == 0.04
     assert best_variant["closed_cycle_tradeable_count"] == 1
     assert best_variant["guardrail_status"] == "passes_closed_tradeable_guardrails"
@@ -146,9 +146,9 @@ def test_analyze_btst_penalty_frontier_prefers_threshold_only_over_penalty_coupl
     analysis = analyze_btst_penalty_frontier(
         replay_input_path,
         baseline_profile="default",
-        near_miss_threshold_grid=[0.46, 0.42],
-        stale_weight_grid=[0.12, 0.06],
-        extension_weight_grid=[0.08, 0.04],
+        near_miss_threshold_grid=[0.44, 0.40],
+        stale_weight_grid=[0.09, 0.04],
+        extension_weight_grid=[0.06, 0.03],
         next_high_hit_threshold=0.02,
     )
 

@@ -1315,7 +1315,7 @@ def test_describe_branch_experiment_prototype_marks_low_gate_corridor_focus_spli
             "priority_handoff": "layer_a_liquidity_corridor",
             "tickers": ["301188"],
             "avg_amount_share_of_cutoff_mean": 0.0709,
-            "avg_amount_share_of_min_gate_mean": 2.3434,
+            "avg_amount_share_of_min_gate_mean": 2.6,
             "nearest_frontier_peer_amount_multiple_mean": 10.5,
             "nearest_frontier_peer_amount_multiple_min": 3.8,
             "pressure_peer_cluster_type": "broad_large_cap_liquidity_wall",

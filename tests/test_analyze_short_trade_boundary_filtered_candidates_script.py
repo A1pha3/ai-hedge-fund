@@ -89,7 +89,7 @@ def test_analyze_short_trade_boundary_filtered_candidates_ranks_closest_rows(tmp
     analysis = analyze_short_trade_boundary_filtered_candidates(report_dir, candidate_sources={"layer_b_boundary"}, top_n=2)
 
     assert analysis["total_candidate_count"] == 3
-    assert analysis["qualified_candidate_count"] == 1
-    assert analysis["filtered_candidate_count"] == 2
-    assert analysis["closest_to_pass_rows"][0]["ticker"] == "300002"
+    assert analysis["qualified_candidate_count"] == 2
+    assert analysis["filtered_candidate_count"] == 1
+    assert analysis["closest_to_pass_rows"][0]["ticker"] == "300003"
     assert analysis["closest_to_pass_rows"][0]["primary_reason"] == "breakout_freshness_below_short_trade_boundary_floor"

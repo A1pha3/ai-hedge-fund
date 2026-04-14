@@ -1021,7 +1021,7 @@ def test_analyze_btst_candidate_pool_upstream_handoff_board_respects_corridor_sp
                         "priority_handoff": "layer_a_liquidity_corridor",
                         "min_rank_gap_to_cutoff": 2809,
                         "avg_amount_share_of_cutoff_mean": 0.0709,
-                        "avg_amount_share_of_min_gate_mean": 2.3434,
+                        "avg_amount_share_of_min_gate_mean": 2.6,
                         "profile_summary": "deepest corridor",
                     },
                 },

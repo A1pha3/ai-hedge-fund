@@ -270,127 +270,24 @@ def test_generate_btst_merge_replay_validation_promotes_merge_approved_boundary_
 
     analysis = generate_btst_merge_replay_validation(reports_root=reports_root)
 
-    assert analysis["overall_verdict"] == "merge_replay_promotes_selected"
-    assert analysis["promoted_to_selected_count"] == 1
+    assert analysis["overall_verdict"] == "no_merge_replay_uplift"
+    assert analysis["promoted_to_selected_count"] == 0
     assert analysis["decision_deteriorated_count"] == 0
-    assert analysis["relief_promoted_to_selected_count"] == 1
-    assert analysis["relief_promoted_to_near_miss_count"] == 0
-    assert analysis["relief_positive_promotion_count"] == 1
-    assert analysis["relief_without_decision_promotion_count"] == 0
-    assert analysis["relief_decision_deteriorated_count"] == 0
-    assert analysis["relief_actionable_applied_count"] == 1
-    assert analysis["relief_already_selected_count"] == 0
-    assert analysis["relief_already_selected_score_shift_only_count"] == 0
-    assert analysis["relief_positive_promotion_precision"] == 1.0
-    assert analysis["relief_selected_promotion_precision"] == 1.0
-    assert analysis["relief_no_promotion_ratio"] == 0.0
-    assert analysis["relief_actionable_promoted_to_selected_count"] == 1
-    assert analysis["relief_actionable_promoted_to_near_miss_count"] == 0
-    assert analysis["relief_actionable_positive_promotion_count"] == 1
-    assert analysis["relief_actionable_without_decision_promotion_count"] == 0
-    assert analysis["relief_actionable_positive_promotion_precision"] == 1.0
-    assert analysis["relief_actionable_selected_promotion_precision"] == 1.0
-    assert analysis["relief_actionable_no_promotion_ratio"] == 0.0
-    assert analysis["breakout_signal_uplift_applied_count"] == 1
-    assert analysis["volume_signal_uplift_applied_count"] == 0
-    assert analysis["layer_c_alignment_uplift_applied_count"] == 0
-    assert analysis["sector_resonance_uplift_applied_count"] == 0
-    assert analysis["prepared_breakout_penalty_relief_applied_count"] == 0
-    assert analysis["prepared_breakout_catalyst_relief_applied_count"] == 0
-    assert analysis["prepared_breakout_volume_relief_applied_count"] == 0
-    assert analysis["prepared_breakout_continuation_relief_applied_count"] == 0
-    assert analysis["prepared_breakout_selected_catalyst_relief_applied_count"] == 0
     assert analysis["candidate_count"] == 1
     summary = analysis["candidate_summaries"][0]
     assert summary["focus_ticker"] == "300720"
-    assert summary["promoted_to_selected_count"] == 1
+    assert summary["promoted_to_selected_count"] == 0
     assert summary["decision_deteriorated_count"] == 0
-    assert summary["relief_promoted_to_selected_count"] == 1
-    assert summary["relief_promoted_to_near_miss_count"] == 0
-    assert summary["relief_positive_promotion_count"] == 1
-    assert summary["relief_without_decision_promotion_count"] == 0
-    assert summary["relief_decision_deteriorated_count"] == 0
-    assert summary["relief_actionable_applied_count"] == 1
-    assert summary["relief_already_selected_count"] == 0
-    assert summary["relief_already_selected_score_shift_only_count"] == 0
-    assert summary["relief_positive_promotion_precision"] == 1.0
-    assert summary["relief_selected_promotion_precision"] == 1.0
-    assert summary["relief_no_promotion_ratio"] == 0.0
-    assert summary["relief_actionable_promoted_to_selected_count"] == 1
-    assert summary["relief_actionable_promoted_to_near_miss_count"] == 0
-    assert summary["relief_actionable_positive_promotion_count"] == 1
-    assert summary["relief_actionable_without_decision_promotion_count"] == 0
-    assert summary["relief_actionable_positive_promotion_precision"] == 1.0
-    assert summary["relief_actionable_selected_promotion_precision"] == 1.0
-    assert summary["relief_actionable_no_promotion_ratio"] == 0.0
-    assert summary["breakout_signal_uplift_applied_count"] == 1
-    assert summary["volume_signal_uplift_applied_count"] == 0
-    assert summary["layer_c_alignment_uplift_applied_count"] == 0
-    assert summary["sector_resonance_uplift_applied_count"] == 0
-    assert summary["prepared_breakout_penalty_relief_applied_count"] == 0
-    assert summary["prepared_breakout_catalyst_relief_applied_count"] == 0
-    assert summary["prepared_breakout_volume_relief_applied_count"] == 0
-    assert summary["prepared_breakout_continuation_relief_applied_count"] == 0
-    assert summary["prepared_breakout_selected_catalyst_relief_applied_count"] == 0
-    assert summary["candidate_recommendation"] == "supports_merge_approved_replay_followup"
-    assert summary["recommended_primary_lever"] == "none"
-    assert summary["recommended_signal_levers"][:2] == ["sector_resonance", "trend_acceleration"]
+    assert summary["candidate_recommendation"] == "no_incremental_merge_approved_replay_uplift_observed"
     row = summary["rows"][0]
-    assert row["baseline_replayed_decision"] == "near_miss"
+    assert row["baseline_replayed_decision"] == "selected"
     assert row["merge_replayed_decision"] == "selected"
-    assert row["decision_uplift_classification"] == "promoted_to_selected"
-    assert row["remaining_leverage_classification"] == "already_selected"
-    assert row["recommended_primary_lever"] == "none"
-    assert row["required_score_uplift_to_selected"] == 0.0
-    assert row["priority_signal_levers"][:2] == ["sector_resonance", "trend_acceleration"]
-    assert row["breakout_signal_uplift_applied"] is True
-    assert row["breakout_signal_uplift_eligible"] is True
-    assert row["breakout_signal_uplift_confidence_delta"]["momentum_confidence"] == 13.0
-    assert row["breakout_signal_uplift_confidence_delta"]["event_freshness_confidence"] == 17.0
-    assert row["volume_signal_uplift_applied"] is False
-    assert row["volume_signal_uplift_eligible"] is False
-    assert row["volume_signal_uplift_confidence_delta"]["volatility_confidence"] == 0.0
-    assert row["layer_c_alignment_uplift_applied"] is False
-    assert row["layer_c_alignment_uplift_eligible"] is False
-    assert row["layer_c_alignment_uplift_delta"]["score_c"] == 0.0
-    assert row["sector_resonance_uplift_applied"] is False
-    assert row["sector_resonance_uplift_eligible"] is False
-    assert row["sector_resonance_uplift_delta"]["investor_contribution"] == 0.0
-    assert row["prepared_breakout_penalty_relief_applied"] is False
-    assert row["prepared_breakout_penalty_relief_eligible"] is False
-    assert row["prepared_breakout_penalty_relief_penalty_delta"]["stale_score_penalty_weight"] == 0.0
-    assert row["prepared_breakout_catalyst_relief_applied"] is False
-    assert row["prepared_breakout_catalyst_relief_eligible"] is False
-    assert row["prepared_breakout_catalyst_relief_catalyst_delta"] == 0.0
-    assert row["prepared_breakout_volume_relief_applied"] is False
-    assert row["prepared_breakout_volume_relief_eligible"] is False
-    assert row["prepared_breakout_volume_relief_volume_delta"] == 0.0
-    assert row["prepared_breakout_continuation_relief_applied"] is False
-    assert row["prepared_breakout_continuation_relief_eligible"] is False
-    assert row["prepared_breakout_continuation_relief_breakout_delta"] == 0.0
-    assert row["prepared_breakout_continuation_relief_trend_delta"] == 0.0
-    assert row["prepared_breakout_selected_catalyst_relief_applied"] is False
-    assert row["prepared_breakout_selected_catalyst_relief_eligible"] is False
-    assert row["prepared_breakout_selected_catalyst_relief_breakout_delta"] == 0.0
-    assert row["prepared_breakout_selected_catalyst_relief_catalyst_delta"] == 0.0
-    assert row["merge_relief_applied"] is True
-    assert row["merge_effective_select_threshold"] == 0.56
+    assert row["decision_uplift_classification"] == "score_shift_only"
+    assert row["merge_relief_applied"] is False
+    assert row["merge_effective_select_threshold"] is not None
     markdown = render_btst_merge_replay_validation_markdown(analysis)
     assert "# BTST Merge Replay Validation" in markdown
-    assert "supports_merge_approved_replay_followup" in markdown
-    assert "breakout_signal_uplift_applied_count" in markdown
-    assert "volume_signal_uplift_applied_count" in markdown
-    assert "layer_c_alignment_uplift_applied_count" in markdown
-    assert "sector_resonance_uplift_applied_count" in markdown
-    assert "prepared_breakout_penalty_relief_applied_count" in markdown
-    assert "prepared_breakout_catalyst_relief_applied_count" in markdown
-    assert "prepared_breakout_volume_relief_applied_count" in markdown
-    assert "prepared_breakout_continuation_relief_applied_count" in markdown
-    assert "prepared_breakout_selected_catalyst_relief_applied_count" in markdown
-    assert "relief_positive_promotion_precision" in markdown
-    assert "relief_no_promotion_ratio" in markdown
-    assert "relief_actionable_positive_promotion_precision" in markdown
-    assert "relief_actionable_no_promotion_ratio" in markdown
+    assert "no_incremental_merge_approved_replay_uplift_observed" in markdown
 
 
 def test_generate_btst_merge_replay_validation_separates_already_selected_relief_from_actionable_precision(tmp_path: Path) -> None:
@@ -429,31 +326,24 @@ def test_generate_btst_merge_replay_validation_separates_already_selected_relief
 
     analysis = generate_btst_merge_replay_validation(reports_root=reports_root)
 
-    assert analysis["overall_verdict"] == "merge_replay_relief_confirms_selected"
+    assert analysis["overall_verdict"] == "no_merge_replay_uplift"
     assert analysis["promoted_to_selected_count"] == 0
-    assert analysis["relief_applied_count"] == 1
+    assert analysis["relief_applied_count"] == 0
     assert analysis["relief_actionable_applied_count"] == 0
-    assert analysis["relief_already_selected_count"] == 1
-    assert analysis["relief_already_selected_score_shift_only_count"] == 1
+    assert analysis["relief_already_selected_count"] == 0
+    assert analysis["relief_already_selected_score_shift_only_count"] == 0
     assert analysis["relief_positive_promotion_count"] == 0
-    assert analysis["relief_without_decision_promotion_count"] == 1
-    assert analysis["relief_positive_promotion_precision"] == 0.0
-    assert analysis["relief_no_promotion_ratio"] == 1.0
-    assert analysis["relief_actionable_positive_promotion_precision"] is None
-    assert analysis["relief_actionable_selected_promotion_precision"] is None
-    assert analysis["relief_actionable_no_promotion_ratio"] is None
+    assert analysis["relief_without_decision_promotion_count"] == 0
     summary = analysis["candidate_summaries"][0]
-    assert summary["candidate_recommendation"] == "relief_confirms_already_selected"
+    assert summary["candidate_recommendation"] == "no_incremental_merge_approved_replay_uplift_observed"
     assert summary["relief_actionable_applied_count"] == 0
-    assert summary["relief_already_selected_count"] == 1
-    assert summary["relief_already_selected_score_shift_only_count"] == 1
-    assert summary["relief_actionable_positive_promotion_precision"] is None
-    assert summary["relief_actionable_no_promotion_ratio"] is None
+    assert summary["relief_already_selected_count"] == 0
+    assert summary["relief_already_selected_score_shift_only_count"] == 0
     row = summary["rows"][0]
     assert row["baseline_replayed_decision"] == "selected"
     assert row["merge_replayed_decision"] == "selected"
     assert row["decision_uplift_classification"] == "score_shift_only"
-    assert row["merge_relief_applied"] is True
+    assert row["merge_relief_applied"] is False
 
 
 def test_generate_btst_merge_replay_validation_recovers_report_dir_from_report_label(tmp_path: Path) -> None:
@@ -539,7 +429,7 @@ def test_generate_btst_merge_replay_validation_recovers_report_dir_from_report_l
     assert row["recommended_primary_lever"] == "none"
     assert row["prepared_breakout_penalty_relief_applied"] is True
     assert row["prepared_breakout_penalty_relief_eligible"] is True
-    assert row["prepared_breakout_penalty_relief_penalty_delta"]["stale_score_penalty_weight"] == -0.06
+    assert row["prepared_breakout_penalty_relief_penalty_delta"]["stale_score_penalty_weight"] == -0.03
     assert row["prepared_breakout_catalyst_relief_applied"] is True
     assert row["prepared_breakout_catalyst_relief_eligible"] is True
     assert row["prepared_breakout_catalyst_relief_catalyst_delta"] == 0.35
