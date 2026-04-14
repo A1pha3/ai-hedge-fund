@@ -17,11 +17,7 @@ def build_item_replay_context(
     candidate_source = str(getattr(item, "candidate_source", "") or "layer_c_watchlist")
     explicit_metric_overrides: dict[str, Any] = {}
     if candidate_source == "catalyst_theme":
-        explicit_metric_overrides = dict(
-            getattr(item, "catalyst_theme_metrics", None)
-            or getattr(item, "metrics", None)
-            or {}
-        )
+        explicit_metric_overrides = dict(getattr(item, "catalyst_theme_metrics", None) or getattr(item, "metrics", None) or {})
     return {
         "source": candidate_source,
         "reason": str(getattr(item, "reason", "") or ""),
@@ -46,6 +42,7 @@ def build_target_input_from_item(
     return TargetEvaluationInput(
         trade_date=trade_date,
         ticker=item.ticker,
+        market_state=dict(getattr(item, "market_state", {}) or {}),
         score_b=float(item.score_b),
         score_c=float(item.score_c),
         score_final=float(item.score_final),
@@ -73,6 +70,7 @@ def build_target_input_from_entry(
     return TargetEvaluationInput(
         trade_date=trade_date,
         ticker=str(entry.get("ticker") or ""),
+        market_state=dict(entry.get("market_state") or {}),
         score_b=float(entry.get("score_b", 0.0) or 0.0),
         score_c=float(entry.get("score_c", 0.0) or 0.0),
         score_final=float(entry.get("score_final", 0.0) or 0.0),

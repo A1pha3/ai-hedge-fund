@@ -627,6 +627,7 @@ def _resolve_short_trade_decision(
     selected_score_tolerance: float,
     selected_breakout_gate_pass: bool,
     near_miss_breakout_gate_pass: bool,
+    rank_decision_cap: dict[str, Any],
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
 ) -> str:
@@ -641,6 +642,7 @@ def _resolve_short_trade_decision(
         selected_score_tolerance=selected_score_tolerance,
         selected_breakout_gate_pass=selected_breakout_gate_pass,
         near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
+        rank_decision_cap=rank_decision_cap,
         carryover_evidence_deficiency=carryover_evidence_deficiency,
         selected_historical_proof_deficiency=selected_historical_proof_deficiency,
     )

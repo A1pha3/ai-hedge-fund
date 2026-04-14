@@ -28,6 +28,7 @@ def build_short_trade_target_snapshot_payload(
         "effective_near_miss_threshold": relief_snapshot["effective_near_miss_threshold"],
         "effective_select_threshold": relief_snapshot["effective_select_threshold"],
         "selected_score_tolerance": relief_snapshot["selected_score_tolerance"],
+        "market_state_threshold_adjustment": relief_snapshot["market_state_threshold_adjustment"],
         "layer_c_avoid_penalty": relief_snapshot["layer_c_avoid_penalty"],
         "t_plus_2_continuation_candidate": relief_snapshot["t_plus_2_continuation_candidate"],
         "visibility_gap_continuation_relief": relief_snapshot["visibility_gap_continuation_relief"],

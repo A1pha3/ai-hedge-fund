@@ -11,11 +11,13 @@ from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMo
 
 class LayerCResult(BaseModel):
     """单标的 Layer C 聚合结果（§5.1 Layer C 聚合规则）"""
+
     ticker: str
     score_c: float = Field(ge=-1, le=1)
     score_final: float = 0.0
     score_b: float = 0.0
     quality_score: float = Field(ge=0, le=1, default=0.5)
+    market_state: dict[str, Any] = Field(default_factory=dict)
     candidate_source: str = "layer_c_watchlist"
     candidate_reason_codes: list[str] = Field(default_factory=list)
     strategy_signals: dict[str, StrategySignal] = Field(default_factory=dict)
@@ -27,6 +29,7 @@ class LayerCResult(BaseModel):
 
 class PendingOrder(BaseModel):
     """待处理订单（涨跌停队列）"""
+
     ticker: str
     order_type: str  # "buy" or "sell"
     original_score: float = 0.0
@@ -40,6 +43,7 @@ class PendingOrder(BaseModel):
 
 class ExecutionPlan(BaseModel):
     """每日执行计划（§5.1 七步流水线输出）"""
+
     date: str
     market_state: Optional[MarketState] = None
     strategy_weights: dict[str, float] = Field(default_factory=dict)

@@ -44,6 +44,34 @@ def _parse_grid_params(raw: list[str]) -> dict[str, list[Any]]:
     return grid
 
 
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_distribution_stat(surface: dict[str, Any], distribution_key: str, stat_key: str) -> float | None:
+    distribution = dict(surface.get(distribution_key) or {})
+    return _safe_float(distribution.get(stat_key))
+
+
+def _resolve_primary_surface(
+    *,
+    selected_surface: dict[str, Any],
+    tradeable_surface: dict[str, Any],
+    min_selected_next_day_count: int = 6,
+    min_selected_closed_cycle_count: int = 3,
+) -> tuple[dict[str, Any], str]:
+    selected_next_day_count = int(selected_surface.get("next_day_available_count") or 0)
+    selected_closed_cycle_count = int(selected_surface.get("closed_cycle_count") or 0)
+    if selected_next_day_count >= min_selected_next_day_count and selected_closed_cycle_count >= min_selected_closed_cycle_count:
+        return selected_surface, "selected"
+    return tradeable_surface, "tradeable_fallback"
+
+
 def _build_replay_evaluator(
     input_paths: list[Path],
     *,
@@ -58,9 +86,33 @@ def _build_replay_evaluator(
             build_short_trade_target_profile(base_profile, overrides=params)
         except Exception as e:
             logger.warning("Invalid params %s: %s", params, e)
-            return {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None, "window_count": 0}
+            return {
+                "sharpe_ratio": None,
+                "sortino_ratio": None,
+                "max_drawdown": None,
+                "next_close_positive_rate": None,
+                "next_close_payoff_ratio": None,
+                "next_close_expectancy": None,
+                "next_high_hit_rate": None,
+                "t_plus_2_close_positive_rate": None,
+                "downside_p10": None,
+                "sample_weight": None,
+                "window_coverage": 0.0,
+                "window_count": 0,
+            }
 
-        total_metrics: dict[str, list[float]] = {"sharpe": [], "sortino": [], "max_dd": []}
+        total_metrics: dict[str, list[float]] = {
+            "sharpe": [],
+            "sortino": [],
+            "max_dd": [],
+            "next_close_positive_rate": [],
+            "next_close_payoff_ratio": [],
+            "next_close_expectancy": [],
+            "next_high_hit_rate": [],
+            "t_plus_2_close_positive_rate": [],
+            "downside_p10": [],
+            "sample_weight": [],
+        }
         window_count = 0
 
         for input_path in input_paths:
@@ -72,32 +124,109 @@ def _build_replay_evaluator(
                     next_high_hit_threshold=next_high_hit_threshold,
                     profile_overrides=params,
                 )
-                surface = dict(result.get("surface_summaries", {}).get("tradeable", {}))
-                next_close_positive_rate = float(surface.get("next_close_positive_rate", 0) or 0)
-                next_high_hit_rate = float(surface.get("next_high_hit_rate_at_threshold", 0) or 0)
-                t_plus_2_median = float(surface.get("t_plus_2_close_return_median", 0) or 0)
-                sharpe_proxy = next_close_positive_rate + next_high_hit_rate
-                sortino_proxy = t_plus_2_median
-                max_dd_proxy = -abs(float(surface.get("next_close_return_p10", 0) or 0))
+                surfaces = dict(result.get("surface_summaries", {}) or {})
+                selected_surface = dict(surfaces.get("selected") or {})
+                tradeable_surface = dict(surfaces.get("tradeable") or {})
+                primary_surface, primary_scope = _resolve_primary_surface(
+                    selected_surface=selected_surface,
+                    tradeable_surface=tradeable_surface,
+                )
+
+                next_close_positive_rate = _safe_float(primary_surface.get("next_close_positive_rate"))
+                next_high_hit_rate = _safe_float(primary_surface.get("next_high_hit_rate_at_threshold"))
+                t_plus_2_median = _resolve_distribution_stat(primary_surface, "t_plus_2_close_return_distribution", "median")
+                max_dd_proxy = _resolve_distribution_stat(primary_surface, "next_close_return_distribution", "p10")
+                next_close_payoff_ratio = _safe_float(primary_surface.get("next_close_payoff_ratio"))
+                next_close_expectancy = _safe_float(primary_surface.get("next_close_expectancy"))
+                t_plus_2_close_positive_rate = _safe_float(primary_surface.get("t_plus_2_close_positive_rate"))
+
+                if (
+                    next_close_positive_rate is None
+                    or next_high_hit_rate is None
+                    or t_plus_2_median is None
+                    or max_dd_proxy is None
+                    or next_close_payoff_ratio is None
+                    or next_close_expectancy is None
+                    or t_plus_2_close_positive_rate is None
+                ):
+                    logger.warning("Trial skipped due missing metrics for %s scope=%s", input_path, primary_scope)
+                    continue
+
+                next_day_count = int(primary_surface.get("next_day_available_count") or 0)
+                closed_cycle_count = int(primary_surface.get("closed_cycle_count") or 0)
+                next_day_weight = min(1.0, max(0.0, next_day_count / 10.0))
+                closed_cycle_weight = min(1.0, max(0.0, closed_cycle_count / 6.0))
+                sample_weight = min(next_day_weight, closed_cycle_weight)
+                sharpe_proxy = (next_close_positive_rate + next_high_hit_rate) * sample_weight
+                sortino_proxy = t_plus_2_median * sample_weight
                 total_metrics["sharpe"].append(sharpe_proxy)
                 total_metrics["sortino"].append(sortino_proxy)
                 total_metrics["max_dd"].append(max_dd_proxy)
+                total_metrics["next_close_positive_rate"].append(next_close_positive_rate)
+                total_metrics["next_close_payoff_ratio"].append(next_close_payoff_ratio)
+                total_metrics["next_close_expectancy"].append(next_close_expectancy)
+                total_metrics["next_high_hit_rate"].append(next_high_hit_rate)
+                total_metrics["t_plus_2_close_positive_rate"].append(t_plus_2_close_positive_rate)
+                total_metrics["downside_p10"].append(max_dd_proxy)
+                total_metrics["sample_weight"].append(sample_weight)
                 window_count += 1
             except Exception as e:
                 logger.warning("Trial failed for %s: %s", input_path, e)
                 continue
 
         if window_count == 0:
-            return {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None, "window_count": 0}
+            return {
+                "sharpe_ratio": None,
+                "sortino_ratio": None,
+                "max_drawdown": None,
+                "next_close_positive_rate": None,
+                "next_close_payoff_ratio": None,
+                "next_close_expectancy": None,
+                "next_high_hit_rate": None,
+                "t_plus_2_close_positive_rate": None,
+                "downside_p10": None,
+                "sample_weight": None,
+                "window_coverage": 0.0,
+                "window_count": 0,
+            }
 
         avg_sharpe = sum(total_metrics["sharpe"]) / len(total_metrics["sharpe"]) if total_metrics["sharpe"] else None
         avg_sortino = sum(total_metrics["sortino"]) / len(total_metrics["sortino"]) if total_metrics["sortino"] else None
         avg_max_dd = sum(total_metrics["max_dd"]) / len(total_metrics["max_dd"]) if total_metrics["max_dd"] else None
+        avg_next_close_positive_rate = (
+            sum(total_metrics["next_close_positive_rate"]) / len(total_metrics["next_close_positive_rate"]) if total_metrics["next_close_positive_rate"] else None
+        )
+        avg_next_close_payoff_ratio = (
+            sum(total_metrics["next_close_payoff_ratio"]) / len(total_metrics["next_close_payoff_ratio"]) if total_metrics["next_close_payoff_ratio"] else None
+        )
+        avg_next_close_expectancy = (
+            sum(total_metrics["next_close_expectancy"]) / len(total_metrics["next_close_expectancy"]) if total_metrics["next_close_expectancy"] else None
+        )
+        avg_next_high_hit_rate = sum(total_metrics["next_high_hit_rate"]) / len(total_metrics["next_high_hit_rate"]) if total_metrics["next_high_hit_rate"] else None
+        avg_t_plus_2_close_positive_rate = (
+            sum(total_metrics["t_plus_2_close_positive_rate"]) / len(total_metrics["t_plus_2_close_positive_rate"]) if total_metrics["t_plus_2_close_positive_rate"] else None
+        )
+        avg_downside_p10 = sum(total_metrics["downside_p10"]) / len(total_metrics["downside_p10"]) if total_metrics["downside_p10"] else None
+        avg_sample_weight = sum(total_metrics["sample_weight"]) / len(total_metrics["sample_weight"]) if total_metrics["sample_weight"] else None
+        window_coverage = float(window_count) / float(len(input_paths) or 1)
+        effective_sample_weight = (
+            max(0.0, min(1.0, avg_sample_weight * window_coverage))
+            if avg_sample_weight is not None
+            else None
+        )
 
         return {
             "sharpe_ratio": avg_sharpe,
             "sortino_ratio": avg_sortino,
             "max_drawdown": avg_max_dd,
+            "next_close_positive_rate": avg_next_close_positive_rate,
+            "next_close_payoff_ratio": avg_next_close_payoff_ratio,
+            "next_close_expectancy": avg_next_close_expectancy,
+            "next_high_hit_rate": avg_next_high_hit_rate,
+            "t_plus_2_close_positive_rate": avg_t_plus_2_close_positive_rate,
+            "downside_p10": avg_downside_p10,
+            "sample_weight": effective_sample_weight,
+            "window_coverage": window_coverage,
             "window_count": window_count,
         }
 
@@ -154,22 +283,25 @@ def _build_walk_forward_evaluator(
 
 
 MOMENTUM_OPTIMIZED_GRID: dict[str, list[Any]] = {
-    "select_threshold": [0.40, 0.42, 0.44, 0.46, 0.48],
-    "near_miss_threshold": [0.28, 0.30, 0.32, 0.34, 0.36],
-    "breakout_freshness_weight": [0.10, 0.14, 0.18],
-    "trend_acceleration_weight": [0.20, 0.24, 0.28],
-    "volume_expansion_quality_weight": [0.14, 0.16, 0.18, 0.20],
-    "close_strength_weight": [0.10, 0.12, 0.14, 0.16],
-    "stale_penalty_block_threshold": [0.76, 0.80, 0.82],
-    "overhead_penalty_block_threshold": [0.72, 0.76, 0.78],
-    "extension_penalty_block_threshold": [0.78, 0.80, 0.84],
+    "select_threshold": [0.46, 0.50, 0.54],
+    "near_miss_threshold": [0.30, 0.34, 0.38],
+    "breakout_freshness_weight": [0.12, 0.16],
+    "trend_acceleration_weight": [0.18, 0.22],
+    "volume_expansion_quality_weight": [0.16, 0.20],
+    "close_strength_weight": [0.12, 0.16],
+    "catalyst_freshness_weight": [0.10, 0.14],
+    "momentum_strength_weight": [0.00, 0.06],
+    "short_term_reversal_weight": [0.00, 0.04],
+    "stale_penalty_block_threshold": [0.78, 0.82],
+    "overhead_penalty_block_threshold": [0.74, 0.78],
+    "extension_penalty_block_threshold": [0.80, 0.84],
 }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Optimize short-trade target profile parameters")
     parser.add_argument("--profile", default="momentum_optimized", help="Base profile name")
-    parser.add_argument("--objective", choices=[o.value for o in SearchObjective], default="composite")
+    parser.add_argument("--objective", choices=[o.value for o in SearchObjective], default="edge")
     parser.add_argument("--input", nargs="+", help="Replay input JSON paths (replay mode)")
     parser.add_argument("--grid-params", nargs="+", help="Grid params as key=val1,val2 or path/to.json")
     parser.add_argument("--preset-grid", action="store_true", help="Use built-in momentum_optimized grid")

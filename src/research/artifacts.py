@@ -3,10 +3,24 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
 
-from src.execution.daily_pipeline import FAST_AGENT_MAX_TICKERS, FAST_AGENT_SCORE_THRESHOLD, PRECISE_AGENT_MAX_TICKERS, WATCHLIST_SCORE_THRESHOLD
-from src.research.models import DualTargetDeltaView, RejectedCandidate, ResearchTargetView, SelectedCandidate, SelectionArtifactWriteResult, SelectionSnapshot, SelectionTargetReplayInput, ShortTradeTargetView
+from src.execution.daily_pipeline import (
+    FAST_AGENT_MAX_TICKERS,
+    FAST_AGENT_SCORE_THRESHOLD,
+    PRECISE_AGENT_MAX_TICKERS,
+    WATCHLIST_SCORE_THRESHOLD,
+)
+from src.research.models import (
+    DualTargetDeltaView,
+    RejectedCandidate,
+    ResearchTargetView,
+    SelectedCandidate,
+    SelectionArtifactWriteResult,
+    SelectionSnapshot,
+    SelectionTargetReplayInput,
+    ShortTradeTargetView,
+)
 from src.research.review_renderer import render_selection_review
 
 if TYPE_CHECKING:
@@ -23,8 +37,7 @@ class SelectionArtifactWriter(Protocol):
         trade_date: str,
         pipeline: DailyPipeline | None,
         selected_analysts: list[str] | None,
-    ) -> SelectionArtifactWriteResult:
-        ...
+    ) -> SelectionArtifactWriteResult: ...
 
 
 def _format_trade_date(trade_date: str) -> str:
@@ -127,15 +140,8 @@ def _build_selected_reasoning(item: LayerCResult, included_in_buy_orders: bool, 
 def _build_execution_bridge(plan: ExecutionPlan, item: LayerCResult, nav: float, matching_order: PositionPlan | None) -> dict[str, Any]:
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     buy_order_filters = dict((funnel_diagnostics.get("filters", {}) or {}).get("buy_orders", {}) or {})
-    filtered_by_ticker = {
-        str(entry.get("ticker") or ""): dict(entry)
-        for entry in list((buy_order_filters or {}).get("tickers", []) or [])
-        if entry.get("ticker")
-    }
-    blocked_buy_tickers = {
-        str(ticker): dict(details or {})
-        for ticker, details in dict(funnel_diagnostics.get("blocked_buy_tickers", {}) or {}).items()
-    }
+    filtered_by_ticker = {str(entry.get("ticker") or ""): dict(entry) for entry in list((buy_order_filters or {}).get("tickers", []) or []) if entry.get("ticker")}
+    blocked_buy_tickers = {str(ticker): dict(details or {}) for ticker, details in dict(funnel_diagnostics.get("blocked_buy_tickers", {}) or {}).items()}
 
     included_in_buy_orders = matching_order is not None
     amount = float(getattr(matching_order, "amount", 0.0) or 0.0) if matching_order is not None else 0.0
@@ -284,10 +290,7 @@ def _build_dual_target_delta(plan: ExecutionPlan) -> DualTargetDeltaView:
             }
         )
 
-    dominant_delta_reason_list = [
-        reason
-        for reason, _ in sorted(dominant_delta_reasons.items(), key=lambda item: (-item[1], item[0]))[:3]
-    ]
+    dominant_delta_reason_list = [reason for reason, _ in sorted(dominant_delta_reasons.items(), key=lambda item: (-item[1], item[0]))[:3]]
     return DualTargetDeltaView(
         delta_counts=delta_counts,
         representative_cases=representative_cases,
@@ -386,13 +389,32 @@ def _build_pipeline_config_snapshot(plan: ExecutionPlan, pipeline: DailyPipeline
 
 
 def _serialize_strategy_signals(strategy_signals: dict[str, Any] | None) -> dict[str, Any]:
-    return {
-        str(name): signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-        for name, signal in dict(strategy_signals or {}).items()
-    }
+    return {str(name): signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(strategy_signals or {}).items()}
 
 
-def _serialize_layer_c_result_for_replay(item: LayerCResult, *, candidate_source: str) -> dict[str, Any]:
+def _serialize_market_state_payload(market_state: Any | None) -> dict[str, Any]:
+    if market_state is None:
+        return {}
+    if hasattr(market_state, "model_dump"):
+        return dict(market_state.model_dump(mode="json") or {})
+    if isinstance(market_state, dict):
+        return dict(market_state)
+    return {}
+
+
+def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_state_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if not market_state_payload:
+        return list(entries or [])
+    attached_entries: list[dict[str, Any]] = []
+    for entry in list(entries or []):
+        updated_entry = dict(entry)
+        updated_entry.setdefault("market_state", dict(market_state_payload))
+        attached_entries.append(updated_entry)
+    return attached_entries
+
+
+def _serialize_layer_c_result_for_replay(item: LayerCResult, *, candidate_source: str, market_state_payload: dict[str, Any]) -> dict[str, Any]:
+    item_market_state = _serialize_market_state_payload(getattr(item, "market_state", None))
     return {
         "ticker": item.ticker,
         "score_b": round(float(item.score_b), 4),
@@ -404,6 +426,7 @@ def _serialize_layer_c_result_for_replay(item: LayerCResult, *, candidate_source
         "candidate_source": candidate_source,
         "strategy_signals": _serialize_strategy_signals(item.strategy_signals),
         "agent_contribution_summary": dict(item.agent_contribution_summary or {}),
+        "market_state": item_market_state or dict(market_state_payload),
     }
 
 
@@ -419,22 +442,40 @@ def build_selection_target_replay_input(
     artifact_version: str = "v1",
 ) -> SelectionTargetReplayInput:
     formatted_trade_date = _format_trade_date(trade_date)
+    market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
-    rejected_entries = list(dict(filters.get("watchlist", {}) or {}).get("tickers", []) or [])
+    rejected_entries = _attach_market_state_to_entries(
+        list(dict(filters.get("watchlist", {}) or {}).get("tickers", []) or []),
+        market_state_payload=market_state_payload,
+    )
     watchlist_filter = dict(filters.get("watchlist", {}) or {})
     short_trade_candidate_filters = dict(filters.get("short_trade_candidates", {}) or {})
-    supplemental_catalyst_theme_entries = list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
+    supplemental_catalyst_theme_entries = _attach_market_state_to_entries(
+        list(dict(filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []),
+        market_state_payload=market_state_payload,
+    )
     supplemental_short_trade_entries = [
         *list(short_trade_candidate_filters.get("tickers", []) or []),
         *list(short_trade_candidate_filters.get("released_shadow_entries", []) or []),
         *list(watchlist_filter.get("released_shadow_entries", []) or []),
     ]
-    upstream_shadow_observation_entries = list(dict(filters.get("short_trade_candidates", {}) or {}).get("shadow_observation_entries", []) or [])
+    supplemental_short_trade_entries = _attach_market_state_to_entries(
+        supplemental_short_trade_entries,
+        market_state_payload=market_state_payload,
+    )
+    upstream_shadow_observation_entries = _attach_market_state_to_entries(
+        list(dict(filters.get("short_trade_candidates", {}) or {}).get("shadow_observation_entries", []) or []),
+        market_state_payload=market_state_payload,
+    )
     if str(getattr(plan, "target_mode", "research_only") or "research_only") == "short_trade_only":
         supplemental_short_trade_entries.extend(supplemental_catalyst_theme_entries)
     watchlist_entries = [
-        _serialize_layer_c_result_for_replay(item, candidate_source="layer_c_watchlist")
+        _serialize_layer_c_result_for_replay(
+            item,
+            candidate_source="layer_c_watchlist",
+            market_state_payload=market_state_payload,
+        )
         for item in sorted(plan.watchlist, key=lambda current: current.score_final, reverse=True)
     ]
     return SelectionTargetReplayInput(
@@ -443,6 +484,7 @@ def build_selection_target_replay_input(
         experiment_id=experiment_id,
         trade_date=formatted_trade_date,
         market=market,
+        market_state=market_state_payload,
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),
         pipeline_config_snapshot=_build_pipeline_config_snapshot(plan, pipeline, selected_analysts),
         source_summary={

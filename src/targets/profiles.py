@@ -11,6 +11,8 @@ class ShortTradeTargetProfile:
     name: str
     select_threshold: float = 0.58
     near_miss_threshold: float = 0.46
+    selected_rank_cap: int = 0
+    near_miss_rank_cap: int = 0
     selected_breakout_freshness_min: float = 0.35
     selected_trend_acceleration_min: float = 0.38
     near_miss_breakout_freshness_min: float = 0.0

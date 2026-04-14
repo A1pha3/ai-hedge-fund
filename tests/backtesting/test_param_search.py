@@ -39,8 +39,27 @@ def test_compute_objective_score_composite():
     assert abs(compute_objective_score(metrics, SearchObjective.COMPOSITE) - expected) < 1e-6
 
 
+def test_compute_objective_score_edge():
+    metrics = {
+        "next_close_positive_rate": 0.60,
+        "next_close_payoff_ratio": 2.0,
+        "next_close_expectancy": 0.01,
+        "next_high_hit_rate": 0.50,
+        "t_plus_2_close_positive_rate": 0.55,
+        "downside_p10": -0.02,
+        "sample_weight": 0.80,
+    }
+    score = compute_objective_score(metrics, SearchObjective.EDGE)
+    assert score == pytest.approx(0.4796, abs=1e-4)
+
+
 def test_compute_objective_score_returns_none_for_missing():
     assert compute_objective_score({}, SearchObjective.COMPOSITE) is None
+
+
+def test_compute_objective_score_edge_returns_none_for_missing():
+    metrics = {"next_close_positive_rate": 0.6}
+    assert compute_objective_score(metrics, SearchObjective.EDGE) is None
 
 
 def test_run_param_search_ranks_by_score():

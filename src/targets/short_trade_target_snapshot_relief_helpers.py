@@ -55,6 +55,7 @@ class SnapshotThresholdState:
     effective_near_miss_threshold: float
     effective_select_threshold: float
     layer_c_avoid_penalty: float
+    market_state_threshold_adjustment: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -103,12 +104,94 @@ class SnapshotCoreReliefs:
 @dataclass(frozen=True)
 class SnapshotResolutionCoreState:
     state: SnapshotSignalState
+    market_state: dict[str, Any]
     prepared_breakout_reliefs: PreparedBreakoutReliefs
     threshold_state: SnapshotThresholdState
     watchlist_penalty_state: WatchlistPenaltyState
     score_penalty_state: ScorePenaltyState
     positive_score_weights: dict[str, float]
     score_payload: dict[str, Any]
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_market_state_threshold_adjustment(
+    *,
+    enabled: bool,
+    risk_level: str,
+    breadth_ratio: float | None,
+    position_scale: float | None,
+    select_threshold_lift: float,
+    near_miss_threshold_lift: float,
+    effective_select_threshold: float,
+    effective_near_miss_threshold: float,
+) -> dict[str, Any]:
+    return {
+        "enabled": bool(enabled),
+        "risk_level": risk_level,
+        "breadth_ratio": breadth_ratio,
+        "position_scale": position_scale,
+        "select_threshold_lift": round(float(select_threshold_lift), 4),
+        "near_miss_threshold_lift": round(float(near_miss_threshold_lift), 4),
+        "effective_select_threshold": round(float(effective_select_threshold), 4),
+        "effective_near_miss_threshold": round(float(effective_near_miss_threshold), 4),
+    }
+
+
+def _resolve_market_state_threshold_adjustment(
+    *,
+    market_state: dict[str, Any],
+    effective_select_threshold: float,
+    effective_near_miss_threshold: float,
+) -> dict[str, Any]:
+    breadth_ratio = _safe_float(dict(market_state or {}).get("breadth_ratio"))
+    position_scale = _safe_float(dict(market_state or {}).get("position_scale"))
+    if breadth_ratio is None and position_scale is None:
+        return _build_market_state_threshold_adjustment(
+            enabled=False,
+            risk_level="unknown",
+            breadth_ratio=breadth_ratio,
+            position_scale=position_scale,
+            select_threshold_lift=0.0,
+            near_miss_threshold_lift=0.0,
+            effective_select_threshold=effective_select_threshold,
+            effective_near_miss_threshold=effective_near_miss_threshold,
+        )
+
+    risk_off = (breadth_ratio is not None and breadth_ratio <= 0.42) or (position_scale is not None and position_scale <= 0.75)
+    crisis = (breadth_ratio is not None and breadth_ratio <= 0.35) or (position_scale is not None and position_scale <= 0.55)
+    if crisis:
+        select_lift = 0.03
+        near_miss_lift = 0.02
+        risk_level = "crisis"
+    elif risk_off:
+        select_lift = 0.015
+        near_miss_lift = 0.01
+        risk_level = "risk_off"
+    else:
+        select_lift = 0.0
+        near_miss_lift = 0.0
+        risk_level = "normal"
+
+    adjusted_select_threshold = min(0.95, float(effective_select_threshold) + select_lift)
+    adjusted_near_miss_threshold = min(adjusted_select_threshold, float(effective_near_miss_threshold) + near_miss_lift)
+    return _build_market_state_threshold_adjustment(
+        enabled=select_lift > 0.0 or near_miss_lift > 0.0,
+        risk_level=risk_level,
+        breadth_ratio=breadth_ratio,
+        position_scale=position_scale,
+        select_threshold_lift=select_lift,
+        near_miss_threshold_lift=near_miss_lift,
+        effective_select_threshold=adjusted_select_threshold,
+        effective_near_miss_threshold=adjusted_near_miss_threshold,
+    )
 
 
 def _build_snapshot_signal_state(
@@ -316,6 +399,16 @@ def _finalize_snapshot_threshold_state(
         effective_near_miss_threshold=effective_near_miss_threshold,
         effective_select_threshold=effective_select_threshold,
         layer_c_avoid_penalty=float(core_reliefs.profitability_relief["effective_avoid_penalty"]),
+        market_state_threshold_adjustment=_build_market_state_threshold_adjustment(
+            enabled=False,
+            risk_level="unknown",
+            breadth_ratio=None,
+            position_scale=None,
+            select_threshold_lift=0.0,
+            near_miss_threshold_lift=0.0,
+            effective_select_threshold=effective_select_threshold,
+            effective_near_miss_threshold=effective_near_miss_threshold,
+        ),
     )
 
 
@@ -452,21 +545,9 @@ def _resolve_score_penalty_state(
     clamp_unit_interval: Callable[[float], float],
     resolve_profitability_hard_cliff_boundary_relief: Callable[..., dict[str, Any]],
 ) -> ScorePenaltyState:
-    stale_trend_repair_penalty = clamp_unit_interval(
-        (0.45 * state.mean_reversion_strength)
-        + (0.35 * state.long_trend_strength)
-        + (0.20 * max(0.0, state.long_trend_strength - threshold_state.breakout_freshness))
-    )
-    overhead_supply_penalty = clamp_unit_interval(
-        (0.45 if input_data.bc_conflict in profile.overhead_conflict_penalty_conflicts else 0.0)
-        + (0.35 * state.analyst_penalty)
-        + (0.20 * state.investor_penalty)
-    )
-    extension_without_room_penalty = clamp_unit_interval(
-        (0.45 * state.long_trend_strength)
-        + (0.35 * max(0.0, state.volatility_strength - threshold_state.catalyst_freshness))
-        + (0.20 * clamp_unit_interval((state.score_final_strength - 0.72) / 0.28))
-    )
+    stale_trend_repair_penalty = clamp_unit_interval((0.45 * state.mean_reversion_strength) + (0.35 * state.long_trend_strength) + (0.20 * max(0.0, state.long_trend_strength - threshold_state.breakout_freshness)))
+    overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.overhead_conflict_penalty_conflicts else 0.0) + (0.35 * state.analyst_penalty) + (0.20 * state.investor_penalty))
+    extension_without_room_penalty = clamp_unit_interval((0.45 * state.long_trend_strength) + (0.35 * max(0.0, state.volatility_strength - threshold_state.catalyst_freshness)) + (0.20 * clamp_unit_interval((state.score_final_strength - 0.72) / 0.28)))
     profitability_hard_cliff_boundary_relief = resolve_profitability_hard_cliff_boundary_relief(
         input_data=input_data,
         profitability_hard_cliff=bool(threshold_state.profitability_relief["hard_cliff"]),
@@ -683,6 +764,7 @@ def _build_short_trade_snapshot_resolution_core_state(
     )
     return SnapshotResolutionCoreState(
         state=state,
+        market_state=dict(getattr(input_data, "market_state", {}) or {}),
         prepared_breakout_reliefs=prepared_breakout_reliefs,
         threshold_state=threshold_state,
         watchlist_penalty_state=watchlist_penalty_state,
@@ -697,19 +779,49 @@ def _finalize_short_trade_snapshot_relief_resolution(
     core_state: SnapshotResolutionCoreState,
     resolve_selected_score_tolerance: Callable[..., float],
 ) -> SnapshotReliefResolution:
+    market_state_threshold_adjustment = _resolve_market_state_threshold_adjustment(
+        market_state=core_state.market_state,
+        effective_select_threshold=core_state.threshold_state.effective_select_threshold,
+        effective_near_miss_threshold=core_state.score_penalty_state.effective_near_miss_threshold,
+    )
+    adjusted_threshold_state = SnapshotThresholdState(
+        profitability_relief=core_state.threshold_state.profitability_relief,
+        catalyst_relief=core_state.threshold_state.catalyst_relief,
+        visibility_gap_continuation_relief=core_state.threshold_state.visibility_gap_continuation_relief,
+        merge_approved_continuation_relief=core_state.threshold_state.merge_approved_continuation_relief,
+        historical_execution_relief=core_state.threshold_state.historical_execution_relief,
+        prepared_breakout_selected_catalyst_relief=core_state.threshold_state.prepared_breakout_selected_catalyst_relief,
+        breakout_freshness=core_state.threshold_state.breakout_freshness,
+        trend_acceleration=core_state.threshold_state.trend_acceleration,
+        volume_expansion_quality=core_state.threshold_state.volume_expansion_quality,
+        catalyst_freshness=core_state.threshold_state.catalyst_freshness,
+        effective_near_miss_threshold=float(market_state_threshold_adjustment["effective_near_miss_threshold"]),
+        effective_select_threshold=float(market_state_threshold_adjustment["effective_select_threshold"]),
+        layer_c_avoid_penalty=core_state.threshold_state.layer_c_avoid_penalty,
+        market_state_threshold_adjustment=market_state_threshold_adjustment,
+    )
+    adjusted_score_penalty_state = ScorePenaltyState(
+        profitability_hard_cliff_boundary_relief=core_state.score_penalty_state.profitability_hard_cliff_boundary_relief,
+        stale_trend_repair_penalty=core_state.score_penalty_state.stale_trend_repair_penalty,
+        overhead_supply_penalty=core_state.score_penalty_state.overhead_supply_penalty,
+        extension_without_room_penalty=core_state.score_penalty_state.extension_without_room_penalty,
+        effective_near_miss_threshold=float(market_state_threshold_adjustment["effective_near_miss_threshold"]),
+        effective_stale_score_penalty_weight=core_state.score_penalty_state.effective_stale_score_penalty_weight,
+        effective_extension_score_penalty_weight=core_state.score_penalty_state.effective_extension_score_penalty_weight,
+    )
     selected_score_tolerance = resolve_selected_score_tolerance(
         score_target=core_state.score_payload["score_target"],
-        effective_select_threshold=core_state.threshold_state.effective_select_threshold,
-        upstream_shadow_catalyst_relief_applied=bool(core_state.threshold_state.catalyst_relief["applied"]),
-        upstream_shadow_catalyst_relief_reason=str(core_state.threshold_state.catalyst_relief["reason"]),
+        effective_select_threshold=adjusted_threshold_state.effective_select_threshold,
+        upstream_shadow_catalyst_relief_applied=bool(adjusted_threshold_state.catalyst_relief["applied"]),
+        upstream_shadow_catalyst_relief_reason=str(adjusted_threshold_state.catalyst_relief["reason"]),
         historical_prior=core_state.state.historical_prior,
     )
     return SnapshotReliefResolution(
         state=core_state.state,
         prepared_breakout_reliefs=core_state.prepared_breakout_reliefs,
-        threshold_state=core_state.threshold_state,
+        threshold_state=adjusted_threshold_state,
         watchlist_penalty_state=core_state.watchlist_penalty_state,
-        score_penalty_state=core_state.score_penalty_state,
+        score_penalty_state=adjusted_score_penalty_state,
         positive_score_weights=core_state.positive_score_weights,
         score_payload=core_state.score_payload,
         selected_score_tolerance=selected_score_tolerance,
@@ -743,6 +855,7 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "selected_score_tolerance": resolution.selected_score_tolerance,
         "effective_near_miss_threshold": resolution.score_penalty_state.effective_near_miss_threshold,
         "effective_select_threshold": resolution.threshold_state.effective_select_threshold,
+        "market_state_threshold_adjustment": resolution.threshold_state.market_state_threshold_adjustment,
         "catalyst_freshness": resolution.threshold_state.catalyst_freshness,
         "breakout_freshness": resolution.threshold_state.breakout_freshness,
         "trend_acceleration": resolution.threshold_state.trend_acceleration,

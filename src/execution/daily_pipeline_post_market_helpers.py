@@ -267,12 +267,7 @@ def build_sell_order_diagnostics(
 
     entries: list[dict[str, Any]] = []
     for order in sell_orders:
-        reason = (
-            _extract_sell_order_value(order, "trigger_reason")
-            or _extract_sell_order_value(order, "level")
-            or _extract_sell_order_value(order, "reason")
-            or "sell_signal"
-        )
+        reason = _extract_sell_order_value(order, "trigger_reason") or _extract_sell_order_value(order, "level") or _extract_sell_order_value(order, "reason") or "sell_signal"
         entries.append(
             {
                 "ticker": _extract_sell_order_value(order, "ticker", ""),
@@ -325,19 +320,19 @@ def build_selection_target_inputs(
     short_trade_candidate_diagnostics: dict[str, Any],
     catalyst_theme_candidate_diagnostics: dict[str, Any],
     target_mode: str,
+    market_state: Any | None = None,
 ) -> PostMarketSelectionTargetInputs:
+    market_state_payload = _serialize_market_state_payload(market_state)
     entry_filter_rules = build_default_btst_candidate_entry_filter_rules()
     rejected_entries = list((watchlist_filter_diagnostics or {}).get("tickers", []) or [])
     supplemental_short_trade_entries = [
         *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
         *list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
         *list((watchlist_filter_diagnostics or {}).get("released_shadow_entries", []) or []),
-        *(
-            list((catalyst_theme_candidate_diagnostics or {}).get("tickers", []) or [])
-            if target_mode == "short_trade_only"
-            else []
-        ),
+        *(list((catalyst_theme_candidate_diagnostics or {}).get("tickers", []) or []) if target_mode == "short_trade_only" else []),
     ]
+    rejected_entries = _attach_market_state_to_entries(rejected_entries, market_state_payload=market_state_payload)
+    supplemental_short_trade_entries = _attach_market_state_to_entries(supplemental_short_trade_entries, market_state_payload=market_state_payload)
     rejected_filter_observability = summarize_candidate_entry_filter_observability(
         rejected_entries,
         entry_filter_rules,
@@ -381,12 +376,31 @@ def build_selection_target_inputs(
             "filtered_rejected_entries": filtered_rejected_entries,
             "filtered_supplemental_entries": filtered_supplemental_entries,
             "filtered_reason_counts": {key: int(value) for key, value in sorted(filtered_reason_counts.items())},
-            "candidate_entry_filter_observability": {
-                rule_name: {key: int(value) for key, value in counters.items()}
-                for rule_name, counters in sorted(candidate_entry_filter_observability.items())
-            },
+            "candidate_entry_filter_observability": {rule_name: {key: int(value) for key, value in counters.items()} for rule_name, counters in sorted(candidate_entry_filter_observability.items())},
         },
     )
+
+
+def _serialize_market_state_payload(market_state: Any | None) -> dict[str, Any]:
+    if market_state is None:
+        return {}
+    if hasattr(market_state, "model_dump"):
+        payload = market_state.model_dump(mode="json")
+        return dict(payload or {})
+    if isinstance(market_state, dict):
+        return dict(market_state)
+    return {}
+
+
+def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_state_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if not market_state_payload:
+        return list(entries or [])
+    attached_entries: list[dict[str, Any]] = []
+    for entry in list(entries or []):
+        updated_entry = dict(entry)
+        updated_entry.setdefault("market_state", dict(market_state_payload))
+        attached_entries.append(updated_entry)
+    return attached_entries
 
 
 def build_plan_target_shell_inputs(
@@ -401,11 +415,7 @@ def build_plan_target_shell_inputs(
     funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
     watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
     short_trade_candidate_diagnostics = dict(funnel_filters.get("short_trade_candidates", {}) or {})
-    catalyst_theme_candidates = (
-        list(dict(funnel_filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or [])
-        if target_mode == "short_trade_only"
-        else []
-    )
+    catalyst_theme_candidates = list(dict(funnel_filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []) if target_mode == "short_trade_only" else []
     return PlanTargetShellInputs(
         rejected_entries=attach_historical_prior_to_entries_fn(
             list(watchlist_filter_diagnostics.get("tickers", []) or []),
@@ -438,11 +448,7 @@ def prepare_plan_target_shell_context(
     attach_historical_prior_to_watchlist_fn,
 ) -> tuple[dict[str, Any], Any, PlanTargetShellInputs]:
     selection_targets = dict(plan.selection_targets or {})
-    summary = (
-        plan.dual_target_summary
-        if isinstance(plan.dual_target_summary, dual_target_summary_cls)
-        else dual_target_summary_cls.model_validate(plan.dual_target_summary or {})
-    )
+    summary = plan.dual_target_summary if isinstance(plan.dual_target_summary, dual_target_summary_cls) else dual_target_summary_cls.model_validate(plan.dual_target_summary or {})
     historical_prior_by_ticker = load_latest_historical_prior_by_ticker_fn()
     shell_inputs = build_plan_target_shell_inputs(
         plan=plan,
@@ -466,9 +472,7 @@ def resolve_plan_target_shell_selection(
     build_selection_targets_fn: Callable[..., tuple[dict[str, Any], Any]],
     summarize_selection_targets_fn: Callable[..., Any],
 ) -> tuple[dict[str, Any], Any]:
-    if not selection_targets and (
-        shell_inputs.watchlist or shell_inputs.rejected_entries or shell_inputs.supplemental_short_trade_entries
-    ):
+    if not selection_targets and (shell_inputs.watchlist or shell_inputs.rejected_entries or shell_inputs.supplemental_short_trade_entries):
         with use_short_trade_target_profile_fn(
             profile_name=short_trade_target_profile_name,
             overrides=short_trade_target_profile_overrides,
@@ -535,6 +539,7 @@ def resolve_post_market_selection_targets(
     *,
     trade_date: str,
     watchlist_context: PostMarketWatchlistContext,
+    market_state: Any | None,
     buy_orders: list[Any],
     counts: dict[str, Any],
     funnel_diagnostics: dict[str, Any],
@@ -556,6 +561,7 @@ def resolve_post_market_selection_targets(
             short_trade_candidate_diagnostics=watchlist_context.short_trade_candidate_diagnostics,
             catalyst_theme_candidate_diagnostics=watchlist_context.catalyst_theme_candidate_diagnostics,
             target_mode=target_mode,
+            market_state=market_state,
         )
         resolved_counts = dict(counts)
         resolved_counts["candidate_entry_filtered_count"] = int(selection_target_inputs.candidate_entry_filter_diagnostics.get("filtered_count") or 0)

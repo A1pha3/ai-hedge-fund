@@ -113,6 +113,23 @@ class ShortTradeExplainabilityState:
     t_plus_2_continuation_candidate: dict[str, Any]
 
 
+RANK_THRESHOLD_TIGHTENING_START_RANK = 12
+RANK_THRESHOLD_TIGHTENING_STEP = 6
+RANK_THRESHOLD_TIGHTENING_SELECT_INCREMENT = 0.01
+RANK_THRESHOLD_TIGHTENING_NEAR_MISS_INCREMENT = 0.01
+RANK_THRESHOLD_TIGHTENING_MAX_INCREMENT = 0.05
+
+
+def _normalize_rank_cap(value: Any) -> int | None:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None
+    if normalized <= 0:
+        return None
+    return normalized
+
+
 def build_short_trade_evaluation_context(
     *,
     snapshot: dict[str, Any],
@@ -174,6 +191,78 @@ def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any]
     return "next_day_breakout_confirmation"
 
 
+def _resolve_rank_threshold_tightening(rank_hint: int | None) -> dict[str, Any]:
+    normalized_rank = int(rank_hint or 0)
+    if normalized_rank <= RANK_THRESHOLD_TIGHTENING_START_RANK:
+        return {
+            "enabled": False,
+            "rank_hint": rank_hint,
+            "start_rank": RANK_THRESHOLD_TIGHTENING_START_RANK,
+            "step": RANK_THRESHOLD_TIGHTENING_STEP,
+            "select_threshold_lift": 0.0,
+            "near_miss_threshold_lift": 0.0,
+        }
+    tiers = ((normalized_rank - RANK_THRESHOLD_TIGHTENING_START_RANK - 1) // RANK_THRESHOLD_TIGHTENING_STEP) + 1
+    select_lift = min(RANK_THRESHOLD_TIGHTENING_MAX_INCREMENT, tiers * RANK_THRESHOLD_TIGHTENING_SELECT_INCREMENT)
+    near_miss_lift = min(RANK_THRESHOLD_TIGHTENING_MAX_INCREMENT, tiers * RANK_THRESHOLD_TIGHTENING_NEAR_MISS_INCREMENT)
+    return {
+        "enabled": select_lift > 0.0 or near_miss_lift > 0.0,
+        "rank_hint": normalized_rank,
+        "start_rank": RANK_THRESHOLD_TIGHTENING_START_RANK,
+        "step": RANK_THRESHOLD_TIGHTENING_STEP,
+        "tiers": tiers,
+        "select_threshold_lift": round(select_lift, 4),
+        "near_miss_threshold_lift": round(near_miss_lift, 4),
+    }
+
+
+def _apply_rank_based_threshold_tightening(snapshot: dict[str, Any], *, rank_hint: int | None) -> dict[str, Any]:
+    adjusted = dict(snapshot)
+    tightening = _resolve_rank_threshold_tightening(rank_hint)
+    if not bool(tightening["enabled"]):
+        adjusted["rank_threshold_tightening"] = tightening
+        return adjusted
+
+    base_select = float(snapshot["effective_select_threshold"])
+    base_near_miss = float(snapshot["effective_near_miss_threshold"])
+    select_lift = float(tightening["select_threshold_lift"])
+    near_miss_lift = float(tightening["near_miss_threshold_lift"])
+    effective_select = min(0.95, base_select + select_lift)
+    effective_near_miss = min(effective_select, base_near_miss + near_miss_lift)
+
+    adjusted["effective_select_threshold"] = effective_select
+    adjusted["effective_near_miss_threshold"] = effective_near_miss
+    adjusted["rank_threshold_tightening"] = {
+        **tightening,
+        "base_select_threshold": round(base_select, 4),
+        "base_near_miss_threshold": round(base_near_miss, 4),
+        "effective_select_threshold": round(effective_select, 4),
+        "effective_near_miss_threshold": round(effective_near_miss, 4),
+    }
+    return adjusted
+
+
+def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | None) -> dict[str, Any]:
+    normalized_rank = int(rank_hint or 0)
+    profile = snapshot.get("profile")
+    selected_rank_cap = _normalize_rank_cap(getattr(profile, "selected_rank_cap", 0))
+    near_miss_rank_cap = _normalize_rank_cap(getattr(profile, "near_miss_rank_cap", 0))
+    return {
+        "enabled": bool(selected_rank_cap is not None or near_miss_rank_cap is not None),
+        "rank_hint": normalized_rank if normalized_rank > 0 else None,
+        "selected_rank_cap": selected_rank_cap,
+        "near_miss_rank_cap": near_miss_rank_cap,
+        "selected_cap_exceeded": bool(selected_rank_cap is not None and normalized_rank > selected_rank_cap),
+        "near_miss_cap_exceeded": bool(near_miss_rank_cap is not None and normalized_rank > near_miss_rank_cap),
+    }
+
+
+def _apply_rank_based_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | None) -> dict[str, Any]:
+    adjusted = dict(snapshot)
+    adjusted["rank_decision_cap"] = _resolve_rank_decision_cap(snapshot, rank_hint=rank_hint)
+    return adjusted
+
+
 def _resolve_short_trade_decision(
     *,
     blockers: list[str],
@@ -184,6 +273,7 @@ def _resolve_short_trade_decision(
     selected_score_tolerance: float,
     selected_breakout_gate_pass: bool,
     near_miss_breakout_gate_pass: bool,
+    rank_decision_cap: dict[str, Any],
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
 ) -> str:
@@ -202,6 +292,25 @@ def _resolve_short_trade_decision(
         gate_status["score"] = "near_miss"
     else:
         decision = "rejected"
+
+    selected_cap_exceeded = bool(rank_decision_cap.get("selected_cap_exceeded"))
+    near_miss_cap_exceeded = bool(rank_decision_cap.get("near_miss_cap_exceeded"))
+    if decision == "selected" and selected_cap_exceeded:
+        gate_status["rank"] = "selected_cap_exceeded"
+        if score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass and not near_miss_cap_exceeded:
+            decision = "near_miss"
+            gate_status["score"] = "near_miss"
+        else:
+            gate_status["score"] = "fail"
+            if "selected_rank_cap_exceeded" not in blockers:
+                blockers.append("selected_rank_cap_exceeded")
+            return "rejected"
+    if decision == "near_miss" and near_miss_cap_exceeded:
+        gate_status["rank"] = "near_miss_cap_exceeded"
+        gate_status["score"] = "fail"
+        if "near_miss_rank_cap_exceeded" not in blockers:
+            blockers.append("near_miss_rank_cap_exceeded")
+        return "rejected"
 
     if carryover_evidence_deficiency["evidence_deficient"] and decision in {"selected", "near_miss"}:
         gate_status["score"] = "fail"
@@ -334,9 +443,7 @@ def _build_short_trade_top_reasons(
             score_target=state.score_target,
         ),
     ]
-    return trim_reasons(
-        [reason for reason in reasons if reason is not None]
-    )
+    return trim_reasons([reason for reason in reasons if reason is not None])
 
 
 def _build_short_trade_rejection_reasons(
@@ -354,17 +461,17 @@ def _build_short_trade_rejection_reasons(
     rejection_reasons = trim_reasons(
         blockers
         if blockers
-        else _collect_breakout_gate_misses(
-            breakout_freshness=breakout_freshness,
-            trend_acceleration=trend_acceleration,
-            breakout_min=float(profile.near_miss_breakout_freshness_min),
-            trend_min=float(profile.near_miss_trend_acceleration_min),
-            label="near_miss",
+        else (
+            _collect_breakout_gate_misses(
+                breakout_freshness=breakout_freshness,
+                trend_acceleration=trend_acceleration,
+                breakout_min=float(profile.near_miss_breakout_freshness_min),
+                trend_min=float(profile.near_miss_trend_acceleration_min),
+                label="near_miss",
+            )
+            if decision == "rejected" and score_target >= effective_near_miss_threshold and not near_miss_breakout_gate_pass
+            else ["score_short_below_threshold"] if decision == "rejected" else []
         )
-        if decision == "rejected" and score_target >= effective_near_miss_threshold and not near_miss_breakout_gate_pass
-        else ["score_short_below_threshold"]
-        if decision == "rejected"
-        else []
     )
     if decision == "rejected" and carryover_evidence_deficiency["evidence_deficient"]:
         return trim_reasons(["evidence_deficient_broad_family_only", *rejection_reasons])
@@ -613,6 +720,9 @@ def _build_short_trade_threshold_core_metrics_payload(*, profile: Any, snapshot:
         "overhead_penalty_block_threshold": round(float(profile.overhead_penalty_block_threshold), 4),
         "extension_penalty_block_threshold": round(float(profile.extension_penalty_block_threshold), 4),
         "layer_c_avoid_penalty": round(float(profile.layer_c_avoid_penalty), 4),
+        "rank_threshold_tightening": dict(snapshot.get("rank_threshold_tightening") or {}),
+        "rank_decision_cap": dict(snapshot.get("rank_decision_cap") or {}),
+        "market_state_threshold_adjustment": dict(snapshot.get("market_state_threshold_adjustment") or {}),
     }
 
 
@@ -972,15 +1082,9 @@ def _collect_short_trade_metrics_payload_inputs(snapshot: dict[str, Any]) -> dic
 def _build_short_trade_relief_metrics_payload(metrics_inputs: dict[str, Any]) -> dict[str, Any]:
     return {
         "historical_execution_relief": _build_historical_execution_relief_metrics_payload(metrics_inputs["historical_execution_relief"]),
-        "profitability_hard_cliff_boundary_relief": _build_profitability_hard_cliff_boundary_relief_metrics_payload(
-            metrics_inputs["profitability_hard_cliff_boundary_relief"]
-        ),
-        "visibility_gap_continuation_relief": _build_visibility_gap_continuation_relief_metrics_payload(
-            metrics_inputs["visibility_gap_continuation_relief"]
-        ),
-        "merge_approved_continuation_relief": _build_merge_approved_continuation_relief_metrics_payload(
-            metrics_inputs["merge_approved_continuation_relief"]
-        ),
+        "profitability_hard_cliff_boundary_relief": _build_profitability_hard_cliff_boundary_relief_metrics_payload(metrics_inputs["profitability_hard_cliff_boundary_relief"]),
+        "visibility_gap_continuation_relief": _build_visibility_gap_continuation_relief_metrics_payload(metrics_inputs["visibility_gap_continuation_relief"]),
+        "merge_approved_continuation_relief": _build_merge_approved_continuation_relief_metrics_payload(metrics_inputs["merge_approved_continuation_relief"]),
         **_build_prepared_breakout_metrics_payload(
             prepared_breakout_penalty_relief=metrics_inputs["prepared_breakout_penalty_relief"],
             prepared_breakout_catalyst_relief=metrics_inputs["prepared_breakout_catalyst_relief"],
@@ -1413,6 +1517,7 @@ def resolve_short_trade_verdict(
         selected_score_tolerance=thresholds.selected_score_tolerance,
         selected_breakout_gate_pass=thresholds.selected_breakout_gate_pass,
         near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
+        rank_decision_cap=dict(snapshot.get("rank_decision_cap") or {}),
         carryover_evidence_deficiency=context.carryover_evidence_deficiency,
         selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
     )
@@ -1469,6 +1574,9 @@ def build_short_trade_metrics_payload(
             "effective_select_threshold": round(thresholds.effective_select_threshold, 4),
             "selected_score_tolerance": round(thresholds.selected_score_tolerance, 4),
             "near_miss_threshold": round(thresholds.effective_near_miss_threshold, 4),
+            "rank_threshold_tightening": dict(snapshot.get("rank_threshold_tightening") or {}),
+            "rank_decision_cap": dict(snapshot.get("rank_decision_cap") or {}),
+            "market_state_threshold_adjustment": dict(snapshot.get("market_state_threshold_adjustment") or {}),
         },
     }
 
@@ -1659,6 +1767,7 @@ def _build_short_trade_decision_stage(
         selected_score_tolerance=decision_snapshot.selected_score_tolerance,
         selected_breakout_gate_pass=thresholds.selected_breakout_gate_pass,
         near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
+        rank_decision_cap=dict(snapshot.get("rank_decision_cap") or {}),
         carryover_evidence_deficiency=context.carryover_evidence_deficiency,
         selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
     )
@@ -1703,6 +1812,8 @@ def evaluate_short_trade_target_impl(
     preferred_entry_mode_from_historical_prior: Any,
 ) -> TargetEvaluationResult:
     snapshot = build_short_trade_target_snapshot(input_data)
+    snapshot = _apply_rank_based_threshold_tightening(snapshot, rank_hint=rank_hint)
+    snapshot = _apply_rank_based_decision_cap(snapshot, rank_hint=rank_hint)
     context, thresholds, verdict = _build_short_trade_decision_stage(
         input_data=input_data,
         snapshot=snapshot,
@@ -1722,7 +1833,6 @@ def evaluate_short_trade_target_impl(
         rank_hint=rank_hint,
         preferred_entry_mode_from_historical_prior=preferred_entry_mode_from_historical_prior,
     )
-
 
 
 def build_short_trade_target_result(

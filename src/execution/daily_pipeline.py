@@ -1148,6 +1148,18 @@ def _ensure_plan_target_shells(
     short_trade_target_profile_name: str = "default",
     short_trade_target_profile_overrides: dict[str, object] | None = None,
 ) -> ExecutionPlan:
+    requested_profile = build_short_trade_target_profile(
+        short_trade_target_profile_name,
+        short_trade_target_profile_overrides,
+    )
+    requested_profile_config = _serialize_short_trade_target_profile(requested_profile)
+    existing_profile_name = str(getattr(plan, "short_trade_target_profile_name", "") or "")
+    existing_profile_config = dict(getattr(plan, "short_trade_target_profile_config", {}) or {})
+    profile_mismatch = existing_profile_name != requested_profile.name or existing_profile_config != requested_profile_config
+    if profile_mismatch:
+        # Frozen replay plans may contain selection_targets from another profile; clear to force recomputation.
+        plan.selection_targets = {}
+
     return ensure_plan_target_shells_impl(
         plan=plan,
         target_mode=target_mode,
@@ -1423,6 +1435,7 @@ class DailyPipeline:
         selection_resolution: PostMarketSelectionResolution = resolve_post_market_selection_targets(
             trade_date=trade_date,
             watchlist_context=watchlist_context,
+            market_state=candidate_context.market_state,
             buy_orders=order_context.buy_orders,
             counts=counts,
             funnel_diagnostics=funnel_diagnostics,

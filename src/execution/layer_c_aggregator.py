@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 import os
+from collections import defaultdict
 
 from src.execution.models import LayerCResult
 from src.screening.models import FusedScore, StrategySignal
@@ -118,17 +118,21 @@ def _build_agent_contribution_summary(agent_signals: dict[str, StrategySignal], 
     negative = [item for item in contributions if item["contribution"] < 0]
     neutral = [item for item in contributions if item["contribution"] == 0]
 
-    return {
-        "active_agent_count": len(contributions),
-        "positive_agent_count": len(positive),
-        "negative_agent_count": len(negative),
-        "neutral_agent_count": len(neutral),
-        "raw_score_c": round(raw_score_c, 4),
-        "adjusted_score_c": round(adjusted_score_c, 4),
-        "cohort_contributions": {name: round(value, 4) for name, value in cohort_contributions.items()},
-        "top_positive_agents": sorted(positive, key=lambda item: item["contribution"], reverse=True)[:3],
-        "top_negative_agents": sorted(negative, key=lambda item: item["contribution"])[:3],
-    }, raw_score_c, adjusted_score_c
+    return (
+        {
+            "active_agent_count": len(contributions),
+            "positive_agent_count": len(positive),
+            "negative_agent_count": len(negative),
+            "neutral_agent_count": len(neutral),
+            "raw_score_c": round(raw_score_c, 4),
+            "adjusted_score_c": round(adjusted_score_c, 4),
+            "cohort_contributions": {name: round(value, 4) for name, value in cohort_contributions.items()},
+            "top_positive_agents": sorted(positive, key=lambda item: item["contribution"], reverse=True)[:3],
+            "top_negative_agents": sorted(negative, key=lambda item: item["contribution"])[:3],
+        },
+        raw_score_c,
+        adjusted_score_c,
+    )
 
 
 def convert_agent_signal_to_strategy_signal(agent_payload: dict) -> StrategySignal:
@@ -239,6 +243,7 @@ def aggregate_layer_c_results(
                 score_final=score_final,
                 score_b=fused.score_b,
                 quality_score=quality_score,
+                market_state=fused.market_state.model_dump(mode="json") if fused.market_state is not None else {},
                 strategy_signals=fused.strategy_signals,
                 agent_signals=ticker_agent_signals,
                 agent_contribution_summary=agent_contribution_summary,

@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 
 from src.execution.models import ExecutionPlan, LayerCResult
-from src.screening.models import MarketState, StrategySignal
 from src.portfolio.models import ExitSignal, PositionPlan
 from src.research.artifacts import FileSelectionArtifactWriter
+from src.screening.models import MarketState, StrategySignal
 from src.targets.models import DualTargetEvaluation, DualTargetSummary
 from src.targets.router import build_selection_targets
 
@@ -90,8 +90,8 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
                                 "failed_threshold_count": 2,
                                 "total_shortfall": 0.07,
                             }
-                        ]
-                    }
+                        ],
+                    },
                 }
             },
         },
@@ -146,6 +146,85 @@ def test_file_selection_artifact_writer_writes_expected_files(tmp_path):
     assert "## Short Trade Target Summary" in review_text
     assert "## Target Delta Highlights" in review_text
     assert "selection_target_count: 1" in review_text
+
+
+def test_file_selection_artifact_writer_propagates_market_state_into_replay_input(tmp_path):
+    writer = FileSelectionArtifactWriter(artifact_root=tmp_path, run_id="session_market_state_payload")
+    market_state = MarketState(
+        breadth_ratio=0.39,
+        position_scale=0.62,
+        adjusted_weights={"trend": 0.28, "mean_reversion": 0.22, "fundamental": 0.30, "event_sentiment": 0.20},
+    )
+    plan = ExecutionPlan(
+        date="20260322",
+        market_state=market_state,
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={
+            "counts": {
+                "layer_a_count": 2,
+                "layer_b_count": 1,
+                "watchlist_count": 1,
+                "buy_order_count": 0,
+                "sell_order_count": 0,
+            },
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {
+                        "tickers": [
+                            {
+                                "ticker": "300750",
+                                "score_b": 0.33,
+                                "score_c": 0.11,
+                                "score_final": 0.25,
+                                "quality_score": 0.55,
+                                "decision": "watch",
+                                "reason": "score_final_below_watchlist_threshold",
+                            }
+                        ],
+                        "released_shadow_entries": [],
+                    },
+                    "short_trade_candidates": {
+                        "tickers": [
+                            {
+                                "ticker": "301292",
+                                "score_b": 0.34,
+                                "score_c": 0.0,
+                                "score_final": 0.34,
+                                "quality_score": 0.5,
+                                "decision": "watch",
+                                "candidate_source": "short_trade_boundary",
+                            }
+                        ],
+                        "released_shadow_entries": [],
+                        "shadow_observation_entries": [],
+                    },
+                    "catalyst_theme_candidates": {"tickers": [], "shadow_candidates": []},
+                }
+            },
+        },
+        watchlist=[
+            LayerCResult(
+                ticker="000001",
+                score_b=0.61,
+                score_c=0.36,
+                score_final=0.49,
+                quality_score=0.62,
+                decision="watch",
+            )
+        ],
+        target_mode="research_only",
+        selection_targets={},
+        dual_target_summary=DualTargetSummary(target_mode="research_only"),
+    )
+
+    writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+    replay_input_payload = json.loads((tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    expected_market_state = market_state.model_dump(mode="json")
+
+    assert replay_input_payload["market_state"] == expected_market_state
+    assert replay_input_payload["watchlist"][0]["market_state"] == expected_market_state
+    assert replay_input_payload["rejected_entries"][0]["market_state"] == expected_market_state
+    assert replay_input_payload["supplemental_short_trade_entries"][0]["market_state"] == expected_market_state
 
 
 def test_file_selection_artifact_writer_renders_target_decisions_for_selected_and_rejected(tmp_path):

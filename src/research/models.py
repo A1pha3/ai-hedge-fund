@@ -5,8 +5,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
-
+from src.targets.models import (
+    DualTargetEvaluation,
+    DualTargetSummary,
+    TargetEvaluationResult,
+)
 
 RESEARCH_FEEDBACK_LABEL_VERSION = "v1"
 RESEARCH_FEEDBACK_ALLOWED_TAGS = (
@@ -106,6 +109,7 @@ class SelectionTargetReplayInput(BaseModel):
     experiment_id: str | None = None
     trade_date: str
     market: str = "CN"
+    market_state: dict[str, Any] = Field(default_factory=dict)
     target_mode: str = "research_only"
     pipeline_config_snapshot: dict[str, Any] = Field(default_factory=dict)
     source_summary: dict[str, Any] = Field(default_factory=dict)

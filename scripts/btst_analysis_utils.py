@@ -201,6 +201,49 @@ def summarize_distribution(values: list[float]) -> dict[str, float | int | None]
     }
 
 
+def _build_return_edge_metrics(returns: list[float]) -> dict[str, float | int | None]:
+    if not returns:
+        return {
+            "positive_count": 0,
+            "negative_count": 0,
+            "average_win": None,
+            "average_loss_abs": None,
+            "payoff_ratio": None,
+            "profit_factor": None,
+            "expectancy": None,
+        }
+
+    positive_returns = [float(value) for value in returns if float(value) > 0.0]
+    negative_returns = [float(value) for value in returns if float(value) < 0.0]
+
+    average_win = None if not positive_returns else float(mean(positive_returns))
+    average_loss_abs = None if not negative_returns else abs(float(mean(negative_returns)))
+
+    payoff_ratio: float | None = None
+    if average_win is not None and average_loss_abs and average_loss_abs > 0.0:
+        payoff_ratio = average_win / average_loss_abs
+
+    positive_sum = sum(positive_returns)
+    negative_sum_abs = abs(sum(negative_returns))
+    profit_factor: float | None = None
+    if negative_sum_abs > 0.0 and positive_sum > 0.0:
+        profit_factor = positive_sum / negative_sum_abs
+
+    win_rate = len(positive_returns) / len(returns)
+    loss_rate = len(negative_returns) / len(returns)
+    expectancy = (win_rate * (average_win or 0.0)) - (loss_rate * (average_loss_abs or 0.0))
+
+    return {
+        "positive_count": len(positive_returns),
+        "negative_count": len(negative_returns),
+        "average_win": round(average_win, 4) if average_win is not None else None,
+        "average_loss_abs": round(average_loss_abs, 4) if average_loss_abs is not None else None,
+        "payoff_ratio": round(payoff_ratio, 4) if payoff_ratio is not None else None,
+        "profit_factor": round(profit_factor, 4) if profit_factor is not None else None,
+        "expectancy": round(expectancy, 4),
+    }
+
+
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
@@ -214,6 +257,8 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     next_high_hits = sum(1 for value in next_high_returns if value >= next_high_hit_threshold)
     next_close_positive = sum(1 for value in next_close_returns if value > 0)
     t_plus_2_positive = sum(1 for value in t_plus_2_close_returns if value > 0)
+    next_close_edge = _build_return_edge_metrics(next_close_returns)
+    t_plus_2_edge = _build_return_edge_metrics(t_plus_2_close_returns)
 
     return {
         "total_count": len(rows),
@@ -228,6 +273,20 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "next_high_hit_rate_at_threshold": None if not next_day_rows else round(next_high_hits / len(next_day_rows), 4),
         "next_close_positive_rate": None if not next_day_rows else round(next_close_positive / len(next_day_rows), 4),
         "t_plus_2_close_positive_rate": None if not closed_rows else round(t_plus_2_positive / len(closed_rows), 4),
+        "next_close_positive_count": int(next_close_edge["positive_count"]),
+        "next_close_negative_count": int(next_close_edge["negative_count"]),
+        "next_close_average_win": next_close_edge["average_win"],
+        "next_close_average_loss_abs": next_close_edge["average_loss_abs"],
+        "next_close_payoff_ratio": next_close_edge["payoff_ratio"],
+        "next_close_profit_factor": next_close_edge["profit_factor"],
+        "next_close_expectancy": next_close_edge["expectancy"],
+        "t_plus_2_close_positive_count": int(t_plus_2_edge["positive_count"]),
+        "t_plus_2_close_negative_count": int(t_plus_2_edge["negative_count"]),
+        "t_plus_2_close_average_win": t_plus_2_edge["average_win"],
+        "t_plus_2_close_average_loss_abs": t_plus_2_edge["average_loss_abs"],
+        "t_plus_2_close_payoff_ratio": t_plus_2_edge["payoff_ratio"],
+        "t_plus_2_close_profit_factor": t_plus_2_edge["profit_factor"],
+        "t_plus_2_close_expectancy": t_plus_2_edge["expectancy"],
     }
 
 
@@ -382,6 +441,30 @@ def compare_reports(
             "t_plus_2_close_return_p10": _delta(
                 dict(baseline_tradeable.get("t_plus_2_close_return_distribution") or {}).get("p10"),
                 dict(variant_tradeable.get("t_plus_2_close_return_distribution") or {}).get("p10"),
+            ),
+            "next_close_payoff_ratio": _delta(
+                baseline_tradeable.get("next_close_payoff_ratio"),
+                variant_tradeable.get("next_close_payoff_ratio"),
+            ),
+            "next_close_profit_factor": _delta(
+                baseline_tradeable.get("next_close_profit_factor"),
+                variant_tradeable.get("next_close_profit_factor"),
+            ),
+            "next_close_expectancy": _delta(
+                baseline_tradeable.get("next_close_expectancy"),
+                variant_tradeable.get("next_close_expectancy"),
+            ),
+            "t_plus_2_close_payoff_ratio": _delta(
+                baseline_tradeable.get("t_plus_2_close_payoff_ratio"),
+                variant_tradeable.get("t_plus_2_close_payoff_ratio"),
+            ),
+            "t_plus_2_close_profit_factor": _delta(
+                baseline_tradeable.get("t_plus_2_close_profit_factor"),
+                variant_tradeable.get("t_plus_2_close_profit_factor"),
+            ),
+            "t_plus_2_close_expectancy": _delta(
+                baseline_tradeable.get("t_plus_2_close_expectancy"),
+                variant_tradeable.get("t_plus_2_close_expectancy"),
             ),
         },
         "false_negative_proxy_delta": {

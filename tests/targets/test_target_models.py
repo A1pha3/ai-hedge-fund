@@ -2,7 +2,11 @@ from src.execution.models import ExecutionPlan, LayerCResult
 from src.screening.models import StrategySignal
 from src.targets import get_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets
-from src.targets.short_trade_target import _resolve_selected_score_tolerance, evaluate_short_trade_rejected_target, evaluate_short_trade_selected_target
+from src.targets.short_trade_target import (
+    _resolve_selected_score_tolerance,
+    evaluate_short_trade_rejected_target,
+    evaluate_short_trade_selected_target,
+)
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -1350,12 +1354,128 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert default_profile.visibility_gap_continuation_catalyst_freshness_floor == 0.25
     assert default_profile.visibility_gap_continuation_near_miss_threshold == 0.34
     assert default_profile.visibility_gap_continuation_require_relaxed_band is True
+    assert default_profile.selected_rank_cap == 0
+    assert default_profile.near_miss_rank_cap == 0
     assert default_profile.profitability_hard_cliff_boundary_relief_trend_acceleration_min == 0.45
     assert default_profile.profitability_hard_cliff_boundary_relief_close_strength_min == 0.35
     assert default_profile.profitability_hard_cliff_boundary_relief_sector_resonance_min == 0.125
     assert default_profile.profitability_hard_cliff_boundary_relief_stale_penalty_max == 0.47
     assert default_profile.profitability_hard_cliff_boundary_relief_near_miss_threshold == 0.28
     assert guard_relief_profile.hard_block_bearish_conflicts == frozenset()
+
+
+def test_short_trade_rank_threshold_tightening_raises_thresholds_for_deep_rank_entries() -> None:
+    entry = _make_prepared_breakout_entry()
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=1,
+    )
+    deep_rank_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=entry,
+        rank_hint=20,
+    )
+
+    baseline_tightening = baseline_result.metrics_payload["thresholds"]["rank_threshold_tightening"]
+    deep_rank_tightening = deep_rank_result.metrics_payload["thresholds"]["rank_threshold_tightening"]
+
+    assert baseline_tightening["enabled"] is False
+    assert deep_rank_tightening["enabled"] is True
+    assert deep_rank_tightening["tiers"] == 2
+    assert deep_rank_result.effective_select_threshold == 0.5
+    assert deep_rank_result.effective_near_miss_threshold == 0.36
+    assert deep_rank_result.effective_select_threshold > baseline_result.effective_select_threshold
+    assert deep_rank_result.effective_near_miss_threshold > baseline_result.effective_near_miss_threshold
+
+
+def test_short_trade_rank_decision_cap_rejects_deep_rank_near_miss_entries() -> None:
+    entry = _make_prepared_breakout_entry()
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "near_miss_rank_cap": 10,
+        },
+    ):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+        deep_rank_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=20,
+        )
+
+    cap_state = deep_rank_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert baseline_result.decision == "near_miss"
+    assert deep_rank_result.decision == "rejected"
+    assert cap_state["enabled"] is True
+    assert cap_state["near_miss_rank_cap"] == 10
+    assert cap_state["near_miss_cap_exceeded"] is True
+    assert "near_miss_rank_cap_exceeded" in deep_rank_result.rejection_reasons
+
+
+def test_short_trade_rank_decision_cap_downgrades_selected_to_near_miss() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "selected_rank_cap": 8,
+            "near_miss_rank_cap": 25,
+        },
+    ):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+        deep_rank_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=20,
+        )
+
+    cap_state = deep_rank_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert baseline_result.decision == "selected"
+    assert deep_rank_result.decision == "near_miss"
+    assert deep_rank_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert cap_state["enabled"] is True
+    assert cap_state["selected_rank_cap"] == 8
+    assert cap_state["selected_cap_exceeded"] is True
+    assert cap_state["near_miss_cap_exceeded"] is False
+
+
+def test_short_trade_market_state_threshold_adjustment_tightens_crisis_regime() -> None:
+    baseline_entry = _make_prepared_breakout_entry()
+    crisis_entry = _make_prepared_breakout_entry()
+    crisis_entry["market_state"] = {
+        "breadth_ratio": 0.32,
+        "position_scale": 0.50,
+    }
+
+    baseline_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=baseline_entry,
+        rank_hint=1,
+    )
+    crisis_result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry=crisis_entry,
+        rank_hint=1,
+    )
+
+    adjustment = crisis_result.metrics_payload["thresholds"]["market_state_threshold_adjustment"]
+    assert adjustment["enabled"] is True
+    assert adjustment["risk_level"] == "crisis"
+    assert crisis_result.effective_select_threshold == 0.51
+    assert crisis_result.effective_near_miss_threshold == 0.36
+    assert crisis_result.effective_select_threshold > baseline_result.effective_select_threshold
+    assert crisis_result.effective_near_miss_threshold > baseline_result.effective_near_miss_threshold
 
 
 def test_short_trade_target_reports_profile_metadata_and_override_thresholds() -> None:
@@ -2116,89 +2236,107 @@ def test_selected_score_tolerance_only_applies_to_strong_carryover_close_continu
     )
 
     assert tolerance == 0.001
-    assert _resolve_selected_score_tolerance(
-        score_target=0.44934181968680575,
-        effective_select_threshold=0.45,
-        upstream_shadow_catalyst_relief_applied=True,
-        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
-        historical_prior={
-            "execution_quality_label": "balanced_confirmation",
-            "entry_timing_bias": "confirm_then_review",
-            "evaluable_count": 3,
-            "next_high_hit_rate_at_threshold": 0.8,
-            "next_close_positive_rate": 0.8,
-            "next_open_to_close_return_mean": 0.02,
-        },
-    ) == 0.0
-    assert _resolve_selected_score_tolerance(
-        score_target=0.44934181968680575,
-        effective_select_threshold=0.45,
-        upstream_shadow_catalyst_relief_applied=False,
-        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
-        historical_prior={
-            "execution_quality_label": "close_continuation",
-            "entry_timing_bias": "confirm_then_hold",
-            "next_high_hit_rate_at_threshold": 0.8,
-            "next_close_positive_rate": 0.8,
-            "next_open_to_close_return_mean": 0.02,
-        },
-    ) == 0.0
-    assert _resolve_selected_score_tolerance(
-        score_target=0.44934181968680575,
-        effective_select_threshold=0.45,
-        upstream_shadow_catalyst_relief_applied=True,
-        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
-        historical_prior={
-            "execution_quality_label": "close_continuation",
-            "entry_timing_bias": "confirm_then_hold",
-            "evaluable_count": 2,
-            "next_high_hit_rate_at_threshold": 0.8,
-            "next_close_positive_rate": 0.8,
-            "next_open_to_close_return_mean": 0.02,
-        },
-    ) == 0.0
-    assert _resolve_selected_score_tolerance(
-        score_target=0.44934181968680575,
-        effective_select_threshold=0.45,
-        upstream_shadow_catalyst_relief_applied=True,
-        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
-        historical_prior={
-            "execution_quality_label": "close_continuation",
-            "entry_timing_bias": "confirm_then_hold",
-            "evaluable_count": 3,
-            "next_high_hit_rate_at_threshold": 0.79,
-            "next_close_positive_rate": 0.8,
-            "next_open_to_close_return_mean": 0.02,
-        },
-    ) == 0.0
-    assert _resolve_selected_score_tolerance(
-        score_target=0.44934181968680575,
-        effective_select_threshold=0.45,
-        upstream_shadow_catalyst_relief_applied=True,
-        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
-        historical_prior={
-            "execution_quality_label": "close_continuation",
-            "entry_timing_bias": "confirm_then_hold",
-            "evaluable_count": 3,
-            "next_high_hit_rate_at_threshold": 0.8,
-            "next_close_positive_rate": 0.79,
-            "next_open_to_close_return_mean": 0.02,
-        },
-    ) == 0.0
-    assert _resolve_selected_score_tolerance(
-        score_target=0.44934181968680575,
-        effective_select_threshold=0.45,
-        upstream_shadow_catalyst_relief_applied=True,
-        upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
-        historical_prior={
-            "execution_quality_label": "close_continuation",
-            "entry_timing_bias": "confirm_then_hold",
-            "evaluable_count": 3,
-            "next_high_hit_rate_at_threshold": 0.8,
-            "next_close_positive_rate": 0.8,
-            "next_open_to_close_return_mean": 0.019,
-        },
-    ) == 0.0
+    assert (
+        _resolve_selected_score_tolerance(
+            score_target=0.44934181968680575,
+            effective_select_threshold=0.45,
+            upstream_shadow_catalyst_relief_applied=True,
+            upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+            historical_prior={
+                "execution_quality_label": "balanced_confirmation",
+                "entry_timing_bias": "confirm_then_review",
+                "evaluable_count": 3,
+                "next_high_hit_rate_at_threshold": 0.8,
+                "next_close_positive_rate": 0.8,
+                "next_open_to_close_return_mean": 0.02,
+            },
+        )
+        == 0.0
+    )
+    assert (
+        _resolve_selected_score_tolerance(
+            score_target=0.44934181968680575,
+            effective_select_threshold=0.45,
+            upstream_shadow_catalyst_relief_applied=False,
+            upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+            historical_prior={
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "next_high_hit_rate_at_threshold": 0.8,
+                "next_close_positive_rate": 0.8,
+                "next_open_to_close_return_mean": 0.02,
+            },
+        )
+        == 0.0
+    )
+    assert (
+        _resolve_selected_score_tolerance(
+            score_target=0.44934181968680575,
+            effective_select_threshold=0.45,
+            upstream_shadow_catalyst_relief_applied=True,
+            upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+            historical_prior={
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 2,
+                "next_high_hit_rate_at_threshold": 0.8,
+                "next_close_positive_rate": 0.8,
+                "next_open_to_close_return_mean": 0.02,
+            },
+        )
+        == 0.0
+    )
+    assert (
+        _resolve_selected_score_tolerance(
+            score_target=0.44934181968680575,
+            effective_select_threshold=0.45,
+            upstream_shadow_catalyst_relief_applied=True,
+            upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+            historical_prior={
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 3,
+                "next_high_hit_rate_at_threshold": 0.79,
+                "next_close_positive_rate": 0.8,
+                "next_open_to_close_return_mean": 0.02,
+            },
+        )
+        == 0.0
+    )
+    assert (
+        _resolve_selected_score_tolerance(
+            score_target=0.44934181968680575,
+            effective_select_threshold=0.45,
+            upstream_shadow_catalyst_relief_applied=True,
+            upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+            historical_prior={
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 3,
+                "next_high_hit_rate_at_threshold": 0.8,
+                "next_close_positive_rate": 0.79,
+                "next_open_to_close_return_mean": 0.02,
+            },
+        )
+        == 0.0
+    )
+    assert (
+        _resolve_selected_score_tolerance(
+            score_target=0.44934181968680575,
+            effective_select_threshold=0.45,
+            upstream_shadow_catalyst_relief_applied=True,
+            upstream_shadow_catalyst_relief_reason="catalyst_theme_short_trade_carryover",
+            historical_prior={
+                "execution_quality_label": "close_continuation",
+                "entry_timing_bias": "confirm_then_hold",
+                "evaluable_count": 3,
+                "next_high_hit_rate_at_threshold": 0.8,
+                "next_close_positive_rate": 0.8,
+                "next_open_to_close_return_mean": 0.019,
+            },
+        )
+        == 0.0
+    )
 
 
 def test_catalyst_theme_short_trade_carryover_requires_candidate_reason_code() -> None:
