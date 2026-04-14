@@ -18,6 +18,7 @@ class SnapshotSignalState:
     long_trend_strength: float
     mean_reversion_strength: float
     momentum_strength: float
+    short_term_reversal: float
     momentum_1m: float
     momentum_3m: float
     momentum_6m: float
@@ -128,6 +129,7 @@ def _build_snapshot_signal_state(
         long_trend_strength=float(signal_snapshot["long_trend_strength"]),
         mean_reversion_strength=float(signal_snapshot["mean_reversion_strength"]),
         momentum_strength=float(signal_snapshot.get("momentum_strength", 0.0)),
+        short_term_reversal=float(signal_snapshot.get("short_term_reversal", 0.0)),
         momentum_1m=float(signal_snapshot["momentum_1m"]),
         momentum_3m=float(signal_snapshot["momentum_3m"]),
         momentum_6m=float(signal_snapshot["momentum_6m"]),
@@ -510,6 +512,7 @@ def _build_snapshot_score_payload(
         "catalyst_freshness": round(positive_score_weights["catalyst_freshness"] * threshold_state.catalyst_freshness, 4),
         "layer_c_alignment": round(positive_score_weights["layer_c_alignment"] * state.layer_c_alignment, 4),
         "momentum_strength": round(positive_score_weights.get("momentum_strength", 0.0) * state.momentum_strength, 4),
+        "short_term_reversal": round(positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal, 4),
     }
     weighted_negative_contributions = {
         "stale_trend_repair_penalty": round(score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty, 4),
@@ -531,6 +534,7 @@ def _build_snapshot_score_payload(
         + (positive_score_weights["catalyst_freshness"] * threshold_state.catalyst_freshness)
         + (positive_score_weights["layer_c_alignment"] * state.layer_c_alignment)
         + (positive_score_weights.get("momentum_strength", 0.0) * state.momentum_strength)
+        + (positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal)
         - (score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty)
         - (profile.overhead_score_penalty_weight * score_penalty_state.overhead_supply_penalty)
         - (score_penalty_state.effective_extension_score_penalty_weight * score_penalty_state.extension_without_room_penalty)

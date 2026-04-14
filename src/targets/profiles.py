@@ -23,6 +23,7 @@ class ShortTradeTargetProfile:
     catalyst_freshness_weight: float = 0.08
     layer_c_alignment_weight: float = 0.10
     momentum_strength_weight: float = 0.0
+    short_term_reversal_weight: float = 0.0
     stale_penalty_block_threshold: float = 0.72
     overhead_penalty_block_threshold: float = 0.68
     extension_penalty_block_threshold: float = 0.74
@@ -322,6 +323,7 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         catalyst_freshness_weight=0.18,
         layer_c_alignment_weight=0.14,
         momentum_strength_weight=0.10,
+        short_term_reversal_weight=0.08,
         stale_score_penalty_weight=0.06,
         overhead_score_penalty_weight=0.05,
         extension_score_penalty_weight=0.07,

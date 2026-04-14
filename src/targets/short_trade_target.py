@@ -522,6 +522,7 @@ def _resolve_positive_score_weights(profile: Any) -> dict[str, float]:
         "catalyst_freshness": float(profile.catalyst_freshness_weight),
         "layer_c_alignment": float(profile.layer_c_alignment_weight),
         "momentum_strength": float(getattr(profile, "momentum_strength_weight", 0.0)),
+        "short_term_reversal": float(getattr(profile, "short_term_reversal_weight", 0.0)),
     }
     return _normalize_positive_score_weights(configured_weights)
 

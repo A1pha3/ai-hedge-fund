@@ -105,6 +105,11 @@ def _resolve_snapshot_scores(
         + (0.25 * alignment_metrics["analyst_alignment"])
         + (0.20 * clamp_unit_interval_fn(1.0 if input_data.layer_c_decision != "avoid" else 0.0))
     )
+    # 短期反转因子: 超跌+均值回归=反弹机会。IC=+0.41, ICIR=+3.55
+    # momentum低(近期下跌) * mean_reversion高(超卖) = 反弹信号
+    short_term_reversal = clamp_unit_interval_fn(
+        event_metrics["mean_reversion_strength"] * (1.0 - trend_metrics["momentum_strength"])
+    )
     return {
         "breakout_freshness": breakout_freshness,
         "trend_acceleration": trend_acceleration,
@@ -113,6 +118,7 @@ def _resolve_snapshot_scores(
         "sector_resonance": sector_resonance,
         "raw_catalyst_freshness": raw_catalyst_freshness,
         "layer_c_alignment": layer_c_alignment,
+        "short_term_reversal": short_term_reversal,
     }
 
 

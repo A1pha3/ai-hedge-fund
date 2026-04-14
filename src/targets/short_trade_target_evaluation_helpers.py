@@ -856,6 +856,7 @@ def _build_short_trade_core_metrics_payload(
         "effective_catalyst_freshness": round(float(snapshot["catalyst_freshness"]), 4),
         "layer_c_alignment": round(float(snapshot["layer_c_alignment"]), 4),
         "momentum_strength": round(float(snapshot.get("momentum_strength", 0.0)), 4),
+        "short_term_reversal": round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         "positive_score_weights": {name: round(float(value), 4) for name, value in positive_score_weights.items()},
         "breakout_stage": breakout_stage,
         "selected_breakout_gate_pass": selected_breakout_gate_pass,
@@ -1759,6 +1760,7 @@ def build_short_trade_target_result(
         catalyst_freshness=round(float(snapshot["raw_catalyst_freshness"]), 4),
         layer_c_alignment=round(float(snapshot["layer_c_alignment"]), 4),
         momentum_strength=round(float(snapshot.get("momentum_strength", 0.0)), 4),
+        short_term_reversal=round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         weighted_positive_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_positive_contributions"]).items()},
         weighted_negative_contributions={name: round(float(value), 4) for name, value in dict(snapshot["weighted_negative_contributions"]).items()},
         metrics_payload=_build_short_trade_metrics_payload(

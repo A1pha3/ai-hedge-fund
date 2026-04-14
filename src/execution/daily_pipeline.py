@@ -1122,6 +1122,7 @@ def _serialize_short_trade_target_profile(profile) -> dict[str, object]:
         "overhead_score_penalty_weight": float(profile.overhead_score_penalty_weight),
         "extension_score_penalty_weight": float(profile.extension_score_penalty_weight),
         "momentum_strength_weight": float(getattr(profile, "momentum_strength_weight", 0.0)),
+        "short_term_reversal_weight": float(getattr(profile, "short_term_reversal_weight", 0.0)),
         "strong_bearish_conflicts": sorted(str(item) for item in profile.strong_bearish_conflicts),
         "hard_block_bearish_conflicts": sorted(str(item) for item in profile.hard_block_bearish_conflicts),
         "overhead_conflict_penalty_conflicts": sorted(str(item) for item in profile.overhead_conflict_penalty_conflicts),
