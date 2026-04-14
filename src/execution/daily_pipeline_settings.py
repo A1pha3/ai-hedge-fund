@@ -37,7 +37,7 @@ def _get_env_csv_list(name: str, default: str) -> list[str]:
     return [item.strip() for item in str(raw_value or "").split(",") if item.strip()]
 
 
-FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD", 0.38)
+FAST_AGENT_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_FAST_SCORE_THRESHOLD", 0.20)
 FAST_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_FAST_POOL_MAX_SIZE", 12)
 PRECISE_AGENT_MAX_TICKERS = _get_env_int("DAILY_PIPELINE_PRECISE_POOL_MAX_SIZE", 6)
 WATCHLIST_SCORE_THRESHOLD = _get_env_float("DAILY_PIPELINE_WATCHLIST_SCORE_THRESHOLD", 0.20)

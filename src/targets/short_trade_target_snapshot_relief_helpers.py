@@ -348,6 +348,33 @@ def _resolve_snapshot_core_reliefs(
     )
 
 
+def _apply_ticker_historical_prior_boost(
+    *,
+    effective_select_threshold: float,
+    effective_near_miss_threshold: float,
+    historical_execution_relief: dict[str, Any],
+) -> tuple[float, float]:
+    evaluable_count = int(historical_execution_relief.get("evaluable_count") or 0)
+    next_high_hit_rate = float(historical_execution_relief.get("next_high_hit_rate_at_threshold") or 0.0)
+    next_close_positive_rate = float(historical_execution_relief.get("next_close_positive_rate") or 0.0)
+    if evaluable_count <= 0:
+        return effective_select_threshold, effective_near_miss_threshold
+    if evaluable_count > 0 and next_high_hit_rate == 0.0 and next_close_positive_rate == 0.0:
+        effective_select_threshold = min(0.95, effective_select_threshold + 0.05)
+        effective_near_miss_threshold = min(0.95, effective_near_miss_threshold + 0.03)
+        return effective_select_threshold, effective_near_miss_threshold
+    if evaluable_count >= 10 and next_high_hit_rate >= 0.80 and next_close_positive_rate >= 0.60:
+        select_boost = 0.06
+    elif evaluable_count >= 5 and next_high_hit_rate >= 0.70 and next_close_positive_rate >= 0.50:
+        select_boost = 0.03
+    else:
+        select_boost = 0.0
+    if select_boost > 0:
+        effective_select_threshold = max(0.20, effective_select_threshold - select_boost)
+        effective_near_miss_threshold = max(0.20, effective_near_miss_threshold - select_boost)
+    return effective_select_threshold, effective_near_miss_threshold
+
+
 def _finalize_snapshot_threshold_state(
     *,
     state: SnapshotSignalState,
@@ -384,6 +411,11 @@ def _finalize_snapshot_threshold_state(
         float(core_reliefs.catalyst_relief["effective_select_threshold"]),
         float(core_reliefs.merge_approved_continuation_relief["effective_select_threshold"]),
         float(core_reliefs.historical_execution_relief["effective_select_threshold"]),
+    )
+    effective_select_threshold, effective_near_miss_threshold = _apply_ticker_historical_prior_boost(
+        effective_select_threshold=effective_select_threshold,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        historical_execution_relief=core_reliefs.historical_execution_relief,
     )
     return SnapshotThresholdState(
         profitability_relief=core_reliefs.profitability_relief,
