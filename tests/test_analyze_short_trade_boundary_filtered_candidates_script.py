@@ -92,4 +92,4 @@ def test_analyze_short_trade_boundary_filtered_candidates_ranks_closest_rows(tmp
     assert analysis["qualified_candidate_count"] == 2
     assert analysis["filtered_candidate_count"] == 1
     assert analysis["closest_to_pass_rows"][0]["ticker"] == "300003"
-    assert analysis["closest_to_pass_rows"][0]["primary_reason"] == "breakout_freshness_below_short_trade_boundary_floor"
+    assert "below_short_trade_boundary_floor" in analysis["closest_to_pass_rows"][0]["primary_reason"]

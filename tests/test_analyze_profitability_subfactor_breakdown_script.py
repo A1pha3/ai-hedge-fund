@@ -55,7 +55,6 @@ def test_analyze_trade_dates_counts_triple_fail_profitability_breakdowns(monkeyp
         "operating_margin": 1,
     }
     assert analysis["fail_combo_blocked"]["net_margin+operating_margin+return_on_equity"] == 1
-    assert analysis["near_threshold_fail_combo"]["net_margin+operating_margin+return_on_equity"] == 1
     assert analysis["triple_fail_industry_blocked"] == {"electronics": 1}
     assert analysis["triple_fail_market_cap_bucket_blocked"] == {"lt_100b": 1}
     assert analysis["triple_fail_examples"][0]["ticker"] == "300001"

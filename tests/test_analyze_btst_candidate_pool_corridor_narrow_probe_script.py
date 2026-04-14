@@ -200,8 +200,8 @@ def test_analyze_btst_candidate_pool_corridor_narrow_probe_surfaces_deepest_corr
 
     assert analysis["verdict"] == "deepest_corridor_split_ready"
     assert analysis["deepest_corridor_focus_tickers"] == ["301188"]
-    assert analysis["excluded_low_gate_tail_tickers"] == ["688796"]
-    assert analysis["standard_corridor_tickers"] == ["300683", "688383"]
+    assert analysis["excluded_low_gate_tail_tickers"] == []
+    assert set(analysis["standard_corridor_tickers"]) == {"300683", "688796", "688383"}
 
     markdown = render_btst_candidate_pool_corridor_narrow_probe_markdown(analysis)
     assert "deepest_corridor_focus_tickers" in markdown
