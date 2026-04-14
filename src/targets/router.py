@@ -4,6 +4,10 @@ from typing import Any
 
 from src.execution.models import LayerCResult
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
+from src.targets.research_target import (
+    evaluate_research_rejected_target,
+    evaluate_research_selected_target,
+)
 from src.targets.router_build_helpers import (
     add_rejected_selection_targets,
     add_short_trade_only_selection_targets,
@@ -11,8 +15,10 @@ from src.targets.router_build_helpers import (
     build_dual_target_summary,
     build_remaining_supplemental_short_trade_entries,
 )
-from src.targets.research_target import evaluate_research_rejected_target, evaluate_research_selected_target
-from src.targets.short_trade_target import evaluate_short_trade_rejected_target, evaluate_short_trade_selected_target
+from src.targets.short_trade_target import (
+    evaluate_short_trade_rejected_target,
+    evaluate_short_trade_selected_target,
+)
 
 
 def _classify_delta(evaluation: DualTargetEvaluation) -> str | None:
@@ -62,7 +68,15 @@ def summarize_selection_targets(*, selection_targets: dict[str, DualTargetEvalua
     return build_dual_target_summary(selection_targets=selection_targets, target_mode=target_mode)
 
 
-def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint: int, included_in_buy_orders: bool, target_mode: TargetMode) -> DualTargetEvaluation:
+def _build_selected_evaluation(
+    *,
+    trade_date: str,
+    item: LayerCResult,
+    rank_hint: int,
+    rank_population: int,
+    included_in_buy_orders: bool,
+    target_mode: TargetMode,
+) -> DualTargetEvaluation:
     candidate_source, candidate_reason_codes = _resolve_candidate_source(item=item, default="layer_c_watchlist")
     research_result = evaluate_research_selected_target(
         trade_date=trade_date,
@@ -75,6 +89,7 @@ def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint
             trade_date=trade_date,
             item=item,
             rank_hint=rank_hint,
+            rank_population=rank_population,
             included_in_buy_orders=included_in_buy_orders,
         )
         if target_mode != "research_only"
@@ -97,11 +112,27 @@ def _build_selected_evaluation(*, trade_date: str, item: LayerCResult, rank_hint
     return evaluation
 
 
-def _build_rejected_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int, target_mode: TargetMode) -> DualTargetEvaluation:
+def _build_rejected_evaluation(
+    *,
+    trade_date: str,
+    entry: dict[str, Any],
+    rank_hint: int,
+    rank_population: int,
+    target_mode: TargetMode,
+) -> DualTargetEvaluation:
     ticker = str(entry.get("ticker") or "")
     candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=entry, default="watchlist_filter_diagnostics")
     research_result = evaluate_research_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint)
-    short_trade_result = evaluate_short_trade_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint) if target_mode != "research_only" else None
+    short_trade_result = (
+        evaluate_short_trade_rejected_target(
+            trade_date=trade_date,
+            entry=entry,
+            rank_hint=rank_hint,
+            rank_population=rank_population,
+        )
+        if target_mode != "research_only"
+        else None
+    )
     evaluation = DualTargetEvaluation(
         ticker=ticker,
         trade_date=trade_date,
@@ -124,12 +155,18 @@ def _build_rejected_with_supplemental_short_trade_evaluation(
     rejected_entry: dict[str, Any],
     supplemental_entry: dict[str, Any],
     rank_hint: int,
+    rank_population: int,
 ) -> DualTargetEvaluation:
     ticker = str(rejected_entry.get("ticker") or supplemental_entry.get("ticker") or "")
     candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=rejected_entry, default="watchlist_filter_diagnostics")
     _, supplemental_reason_codes = _resolve_candidate_source(entry=supplemental_entry, default="short_trade_boundary")
     research_result = evaluate_research_rejected_target(trade_date=trade_date, entry=rejected_entry, rank_hint=rank_hint)
-    short_trade_result = evaluate_short_trade_rejected_target(trade_date=trade_date, entry=supplemental_entry, rank_hint=rank_hint)
+    short_trade_result = evaluate_short_trade_rejected_target(
+        trade_date=trade_date,
+        entry=supplemental_entry,
+        rank_hint=rank_hint,
+        rank_population=rank_population,
+    )
     evaluation = DualTargetEvaluation(
         ticker=ticker,
         trade_date=trade_date,
@@ -146,10 +183,15 @@ def _build_rejected_with_supplemental_short_trade_evaluation(
     return evaluation
 
 
-def _build_short_trade_only_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int) -> DualTargetEvaluation:
+def _build_short_trade_only_evaluation(*, trade_date: str, entry: dict[str, Any], rank_hint: int, rank_population: int) -> DualTargetEvaluation:
     ticker = str(entry.get("ticker") or "")
     candidate_source, candidate_reason_codes = _resolve_candidate_source(entry=entry, default="short_trade_boundary")
-    short_trade_result = evaluate_short_trade_rejected_target(trade_date=trade_date, entry=entry, rank_hint=rank_hint)
+    short_trade_result = evaluate_short_trade_rejected_target(
+        trade_date=trade_date,
+        entry=entry,
+        rank_hint=rank_hint,
+        rank_population=rank_population,
+    )
     evaluation = DualTargetEvaluation(
         ticker=ticker,
         trade_date=trade_date,

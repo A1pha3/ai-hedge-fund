@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -130,6 +131,27 @@ def _normalize_rank_cap(value: Any) -> int | None:
     return normalized
 
 
+def _normalize_rank_cap_ratio(value: Any) -> float | None:
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return None
+    if normalized <= 0.0:
+        return None
+    return normalized
+
+
+def _resolve_effective_rank_cap(*, hard_cap: int | None, cap_ratio: float | None, rank_population: int | None) -> int | None:
+    dynamic_cap: int | None = None
+    if cap_ratio is not None and rank_population is not None and rank_population > 0:
+        dynamic_cap = max(1, int(math.ceil(float(rank_population) * float(cap_ratio))))
+    if dynamic_cap is None:
+        return hard_cap
+    if hard_cap is None:
+        return dynamic_cap
+    return max(hard_cap, dynamic_cap)
+
+
 def build_short_trade_evaluation_context(
     *,
     snapshot: dict[str, Any],
@@ -242,14 +264,32 @@ def _apply_rank_based_threshold_tightening(snapshot: dict[str, Any], *, rank_hin
     return adjusted
 
 
-def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | None) -> dict[str, Any]:
+def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | None, rank_population: int | None) -> dict[str, Any]:
     normalized_rank = int(rank_hint or 0)
+    normalized_population = int(rank_population or 0) or None
     profile = snapshot.get("profile")
-    selected_rank_cap = _normalize_rank_cap(getattr(profile, "selected_rank_cap", 0))
-    near_miss_rank_cap = _normalize_rank_cap(getattr(profile, "near_miss_rank_cap", 0))
+    selected_rank_cap_hard = _normalize_rank_cap(getattr(profile, "selected_rank_cap", 0))
+    near_miss_rank_cap_hard = _normalize_rank_cap(getattr(profile, "near_miss_rank_cap", 0))
+    selected_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "selected_rank_cap_ratio", 0.0))
+    near_miss_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "near_miss_rank_cap_ratio", 0.0))
+    selected_rank_cap = _resolve_effective_rank_cap(
+        hard_cap=selected_rank_cap_hard,
+        cap_ratio=selected_rank_cap_ratio,
+        rank_population=normalized_population,
+    )
+    near_miss_rank_cap = _resolve_effective_rank_cap(
+        hard_cap=near_miss_rank_cap_hard,
+        cap_ratio=near_miss_rank_cap_ratio,
+        rank_population=normalized_population,
+    )
     return {
-        "enabled": bool(selected_rank_cap is not None or near_miss_rank_cap is not None),
+        "enabled": bool(selected_rank_cap is not None or near_miss_rank_cap is not None or selected_rank_cap_ratio is not None or near_miss_rank_cap_ratio is not None),
         "rank_hint": normalized_rank if normalized_rank > 0 else None,
+        "rank_population": normalized_population,
+        "selected_rank_cap_hard": selected_rank_cap_hard,
+        "near_miss_rank_cap_hard": near_miss_rank_cap_hard,
+        "selected_rank_cap_ratio": selected_rank_cap_ratio,
+        "near_miss_rank_cap_ratio": near_miss_rank_cap_ratio,
         "selected_rank_cap": selected_rank_cap,
         "near_miss_rank_cap": near_miss_rank_cap,
         "selected_cap_exceeded": bool(selected_rank_cap is not None and normalized_rank > selected_rank_cap),
@@ -257,9 +297,13 @@ def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | Non
     }
 
 
-def _apply_rank_based_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | None) -> dict[str, Any]:
+def _apply_rank_based_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | None, rank_population: int | None) -> dict[str, Any]:
     adjusted = dict(snapshot)
-    adjusted["rank_decision_cap"] = _resolve_rank_decision_cap(snapshot, rank_hint=rank_hint)
+    adjusted["rank_decision_cap"] = _resolve_rank_decision_cap(
+        snapshot,
+        rank_hint=rank_hint,
+        rank_population=rank_population,
+    )
     return adjusted
 
 
@@ -1801,6 +1845,7 @@ def evaluate_short_trade_target_impl(
     input_data: TargetEvaluationInput,
     *,
     rank_hint: int | None = None,
+    rank_population: int | None = None,
     build_short_trade_target_snapshot: Any,
     resolve_carryover_evidence_deficiency: Any,
     resolve_selected_historical_proof_deficiency: Any,
@@ -1813,7 +1858,7 @@ def evaluate_short_trade_target_impl(
 ) -> TargetEvaluationResult:
     snapshot = build_short_trade_target_snapshot(input_data)
     snapshot = _apply_rank_based_threshold_tightening(snapshot, rank_hint=rank_hint)
-    snapshot = _apply_rank_based_decision_cap(snapshot, rank_hint=rank_hint)
+    snapshot = _apply_rank_based_decision_cap(snapshot, rank_hint=rank_hint, rank_population=rank_population)
     context, thresholds, verdict = _build_short_trade_decision_stage(
         input_data=input_data,
         snapshot=snapshot,

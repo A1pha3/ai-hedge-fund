@@ -1356,6 +1356,8 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert default_profile.visibility_gap_continuation_require_relaxed_band is True
     assert default_profile.selected_rank_cap == 0
     assert default_profile.near_miss_rank_cap == 0
+    assert default_profile.selected_rank_cap_ratio == 0.0
+    assert default_profile.near_miss_rank_cap_ratio == 0.0
     assert default_profile.profitability_hard_cliff_boundary_relief_trend_acceleration_min == 0.45
     assert default_profile.profitability_hard_cliff_boundary_relief_close_strength_min == 0.35
     assert default_profile.profitability_hard_cliff_boundary_relief_sector_resonance_min == 0.125
@@ -1448,6 +1450,40 @@ def test_short_trade_rank_decision_cap_downgrades_selected_to_near_miss() -> Non
     assert cap_state["selected_rank_cap"] == 8
     assert cap_state["selected_cap_exceeded"] is True
     assert cap_state["near_miss_cap_exceeded"] is False
+
+
+def test_short_trade_rank_decision_cap_ratio_scales_with_rank_population() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "selected_rank_cap": 0,
+            "near_miss_rank_cap": 0,
+            "selected_rank_cap_ratio": 0.10,
+            "near_miss_rank_cap_ratio": 0.20,
+        },
+    ):
+        low_population = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+        high_population = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=15,
+            rank_population=300,
+        )
+
+    low_cap_state = low_population.metrics_payload["thresholds"]["rank_decision_cap"]
+    high_cap_state = high_population.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert low_cap_state["selected_rank_cap"] == 10
+    assert low_cap_state["near_miss_rank_cap"] == 20
+    assert low_population.decision == "near_miss"
+    assert high_cap_state["selected_rank_cap"] == 30
+    assert high_cap_state["near_miss_rank_cap"] == 60
+    assert high_population.decision == "selected"
 
 
 def test_short_trade_market_state_threshold_adjustment_tightens_crisis_regime() -> None:

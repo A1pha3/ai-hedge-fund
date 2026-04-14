@@ -6,27 +6,58 @@ from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
 from src.targets.explainability import clamp_unit_interval
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
-from src.targets.short_trade_target_relief_helpers import (
-    resolve_historical_execution_relief as _resolve_historical_execution_relief_impl,
-    resolve_merge_approved_continuation_relief as _resolve_merge_approved_continuation_relief_impl,
-    resolve_upstream_shadow_catalyst_relief as _resolve_upstream_shadow_catalyst_relief_impl,
-    resolve_visibility_gap_continuation_relief as _resolve_visibility_gap_continuation_relief_impl,
+from src.targets.profiles import (
+    get_active_short_trade_target_profile,
+    use_short_trade_target_profile,
 )
 from src.targets.short_trade_prepared_breakout_helpers import (
     resolve_prepared_breakout_catalyst_relief as _resolve_prepared_breakout_catalyst_relief,
+)
+from src.targets.short_trade_prepared_breakout_helpers import (
     resolve_prepared_breakout_continuation_relief as _resolve_prepared_breakout_continuation_relief,
+)
+from src.targets.short_trade_prepared_breakout_helpers import (
     resolve_prepared_breakout_penalty_relief as _resolve_prepared_breakout_penalty_relief,
+)
+from src.targets.short_trade_prepared_breakout_helpers import (
     resolve_prepared_breakout_selected_catalyst_relief as _resolve_prepared_breakout_selected_catalyst_relief,
+)
+from src.targets.short_trade_prepared_breakout_helpers import (
     resolve_prepared_breakout_volume_relief as _resolve_prepared_breakout_volume_relief,
 )
 from src.targets.short_trade_target_input_helpers import (
     build_item_replay_context as _build_item_replay_context_impl,
+)
+from src.targets.short_trade_target_input_helpers import (
     build_target_input_from_entry as _build_target_input_from_entry_impl,
+)
+from src.targets.short_trade_target_input_helpers import (
     build_target_input_from_item as _build_target_input_from_item_impl,
 )
 from src.targets.short_trade_target_profitability_helpers import (
     resolve_profitability_hard_cliff_boundary_relief_impl,
     resolve_profitability_relief_impl,
+)
+from src.targets.short_trade_target_relief_helpers import (
+    resolve_historical_execution_relief as _resolve_historical_execution_relief_impl,
+)
+from src.targets.short_trade_target_relief_helpers import (
+    resolve_merge_approved_continuation_relief as _resolve_merge_approved_continuation_relief_impl,
+)
+from src.targets.short_trade_target_relief_helpers import (
+    resolve_upstream_shadow_catalyst_relief as _resolve_upstream_shadow_catalyst_relief_impl,
+)
+from src.targets.short_trade_target_relief_helpers import (
+    resolve_visibility_gap_continuation_relief as _resolve_visibility_gap_continuation_relief_impl,
+)
+from src.targets.short_trade_target_signal_snapshot_helpers import (
+    build_short_trade_signal_snapshot,
+)
+from src.targets.short_trade_target_snapshot_label_helpers import (
+    collect_short_trade_snapshot_labels_and_gates as _collect_short_trade_snapshot_labels_and_gates_impl,
+)
+from src.targets.short_trade_target_snapshot_payload_helpers import (
+    build_short_trade_target_snapshot_payload,
 )
 from src.targets.short_trade_target_watchlist_helpers import (
     resolve_t_plus_2_continuation_candidate_impl,
@@ -34,12 +65,6 @@ from src.targets.short_trade_target_watchlist_helpers import (
     resolve_watchlist_zero_catalyst_flat_trend_penalty_impl,
     resolve_watchlist_zero_catalyst_penalty_impl,
 )
-from src.targets.short_trade_target_signal_snapshot_helpers import build_short_trade_signal_snapshot
-from src.targets.short_trade_target_snapshot_label_helpers import (
-    collect_short_trade_snapshot_labels_and_gates as _collect_short_trade_snapshot_labels_and_gates_impl,
-)
-from src.targets.short_trade_target_snapshot_payload_helpers import build_short_trade_target_snapshot_payload
-from src.targets.profiles import get_active_short_trade_target_profile, use_short_trade_target_profile
 
 STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE = 0.001
 STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT = 3
@@ -126,11 +151,7 @@ def _historical_prior(input_data: TargetEvaluationInput) -> dict[str, Any]:
 
 
 def _normalized_reason_codes(values: Any) -> list[str]:
-    return [
-        str(reason)
-        for reason in list(values or [])
-        if str(reason or "").strip()
-    ]
+    return [str(reason) for reason in list(values or []) if str(reason or "").strip()]
 
 
 def _is_catalyst_theme_carryover_candidate(*, source: str, candidate_reason_codes: set[str]) -> bool:
@@ -192,7 +213,9 @@ def _resolve_selected_historical_proof_deficiency(input_data: TargetEvaluationIn
 
 
 def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any] | None) -> str:
-    from src.targets.short_trade_target_evaluation_helpers import _preferred_entry_mode_from_historical_prior as _helper
+    from src.targets.short_trade_target_evaluation_helpers import (
+        _preferred_entry_mode_from_historical_prior as _helper,
+    )
 
     return _helper(historical_prior)
 
@@ -527,8 +550,6 @@ def _resolve_positive_score_weights(profile: Any) -> dict[str, float]:
     return _normalize_positive_score_weights(configured_weights)
 
 
-
-
 def _compute_short_trade_signal_snapshot(input_data: TargetEvaluationInput, *, profile: Any) -> dict[str, Any]:
     return build_short_trade_signal_snapshot(
         input_data,
@@ -551,7 +572,9 @@ def _resolve_short_trade_snapshot_reliefs(
     profile: Any,
     signal_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
-    from src.targets.short_trade_target_snapshot_relief_helpers import resolve_short_trade_snapshot_reliefs_impl
+    from src.targets.short_trade_target_snapshot_relief_helpers import (
+        resolve_short_trade_snapshot_reliefs_impl,
+    )
 
     return resolve_short_trade_snapshot_reliefs_impl(
         input_data,
@@ -631,7 +654,9 @@ def _resolve_short_trade_decision(
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
 ) -> str:
-    from src.targets.short_trade_target_evaluation_helpers import _resolve_short_trade_decision as _helper
+    from src.targets.short_trade_target_evaluation_helpers import (
+        _resolve_short_trade_decision as _helper,
+    )
 
     return _helper(
         blockers=blockers,
@@ -656,7 +681,9 @@ def _annotate_short_trade_tags(
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
 ) -> None:
-    from src.targets.short_trade_target_evaluation_helpers import _annotate_short_trade_tags as _helper
+    from src.targets.short_trade_target_evaluation_helpers import (
+        _annotate_short_trade_tags as _helper,
+    )
 
     _helper(
         positive_tags=positive_tags,
@@ -699,8 +726,10 @@ def _build_short_trade_top_reasons(
     score_target: float,
 ) -> list[str]:
     from src.targets.short_trade_target_evaluation_helpers import (
-        ShortTradeTopReasonsState,
         _build_short_trade_top_reasons as _helper,
+    )
+    from src.targets.short_trade_target_evaluation_helpers import (
+        ShortTradeTopReasonsState,
     )
 
     return _helper(
@@ -749,7 +778,9 @@ def _build_short_trade_rejection_reasons(
     profile: Any,
     carryover_evidence_deficiency: dict[str, Any],
 ) -> list[str]:
-    from src.targets.short_trade_target_evaluation_helpers import _build_short_trade_rejection_reasons as _helper
+    from src.targets.short_trade_target_evaluation_helpers import (
+        _build_short_trade_rejection_reasons as _helper,
+    )
 
     return _helper(
         decision=decision,
@@ -780,12 +811,20 @@ def build_short_trade_target_snapshot_from_entry(
     return _build_short_trade_target_snapshot(_build_target_input_from_entry(trade_date=trade_date, entry=entry))
 
 
-def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint: int | None = None) -> TargetEvaluationResult:
-    from src.targets.short_trade_target_evaluation_helpers import evaluate_short_trade_target_impl
+def _evaluate_short_trade_target(
+    input_data: TargetEvaluationInput,
+    *,
+    rank_hint: int | None = None,
+    rank_population: int | None = None,
+) -> TargetEvaluationResult:
+    from src.targets.short_trade_target_evaluation_helpers import (
+        evaluate_short_trade_target_impl,
+    )
 
     return evaluate_short_trade_target_impl(
         input_data,
         rank_hint=rank_hint,
+        rank_population=rank_population,
         build_short_trade_target_snapshot=_build_short_trade_target_snapshot,
         resolve_carryover_evidence_deficiency=_resolve_carryover_evidence_deficiency,
         resolve_selected_historical_proof_deficiency=_resolve_selected_historical_proof_deficiency,
@@ -797,11 +836,13 @@ def _evaluate_short_trade_target(input_data: TargetEvaluationInput, *, rank_hint
         preferred_entry_mode_from_historical_prior=_preferred_entry_mode_from_historical_prior,
     )
 
+
 def evaluate_short_trade_selected_target(
     *,
     trade_date: str,
     item: LayerCResult,
     rank_hint: int | None = None,
+    rank_population: int | None = None,
     included_in_buy_orders: bool = False,
     profile_name: str | None = None,
     profile_overrides: dict[str, Any] | None = None,
@@ -812,11 +853,13 @@ def evaluate_short_trade_selected_target(
                 trade_date=trade_date,
                 item=item,
                 rank_hint=rank_hint,
+                rank_population=rank_population,
                 included_in_buy_orders=included_in_buy_orders,
             )
     return _evaluate_short_trade_target(
         _build_target_input_from_item(trade_date=trade_date, item=item, included_in_buy_orders=included_in_buy_orders),
         rank_hint=rank_hint,
+        rank_population=rank_population,
     )
 
 
@@ -825,6 +868,7 @@ def evaluate_short_trade_rejected_target(
     trade_date: str,
     entry: dict[str, Any],
     rank_hint: int | None = None,
+    rank_population: int | None = None,
     profile_name: str | None = None,
     profile_overrides: dict[str, Any] | None = None,
 ) -> TargetEvaluationResult:
@@ -834,5 +878,10 @@ def evaluate_short_trade_rejected_target(
                 trade_date=trade_date,
                 entry=entry,
                 rank_hint=rank_hint,
+                rank_population=rank_population,
             )
-    return _evaluate_short_trade_target(_build_target_input_from_entry(trade_date=trade_date, entry=entry), rank_hint=rank_hint)
+    return _evaluate_short_trade_target(
+        _build_target_input_from_entry(trade_date=trade_date, entry=entry),
+        rank_hint=rank_hint,
+        rank_population=rank_population,
+    )

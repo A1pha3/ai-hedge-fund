@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from src.execution.models import LayerCResult
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult, TargetMode
+from src.targets.models import (
+    DualTargetEvaluation,
+    DualTargetSummary,
+    TargetEvaluationResult,
+    TargetMode,
+)
 
 
 def build_dual_target_summary(*, selection_targets: dict[str, DualTargetEvaluation], target_mode: TargetMode) -> DualTargetSummary:
@@ -70,11 +75,14 @@ def add_watchlist_selection_targets(
     target_mode: TargetMode,
     build_selected_evaluation: Callable[..., DualTargetEvaluation],
 ) -> None:
-    for rank_hint, item in enumerate(sorted(watchlist, key=lambda current: current.score_final, reverse=True), start=1):
+    sorted_watchlist = sorted(watchlist, key=lambda current: current.score_final, reverse=True)
+    rank_population = len(sorted_watchlist)
+    for rank_hint, item in enumerate(sorted_watchlist, start=1):
         selection_targets[item.ticker] = build_selected_evaluation(
             trade_date=trade_date,
             item=item,
             rank_hint=rank_hint,
+            rank_population=rank_population,
             included_in_buy_orders=item.ticker in buy_order_tickers,
             target_mode=target_mode,
         )
@@ -95,6 +103,7 @@ def add_rejected_selection_targets(
         key=lambda current: float(current.get("score_final", current.get("score_b", 0.0)) or 0.0),
         reverse=True,
     )
+    rank_population = len(sorted_rejected_entries)
     for rank_hint, entry in enumerate(sorted_rejected_entries, start=1):
         ticker = str(entry.get("ticker") or "")
         if not ticker or ticker in selection_targets:
@@ -106,12 +115,14 @@ def add_rejected_selection_targets(
                 rejected_entry=entry,
                 supplemental_entry=supplemental_entry,
                 rank_hint=rank_hint,
+                rank_population=rank_population,
             )
             continue
         selection_targets[ticker] = build_rejected_evaluation(
             trade_date=trade_date,
             entry=entry,
             rank_hint=rank_hint,
+            rank_population=rank_population,
             target_mode=target_mode,
         )
 
@@ -126,7 +137,9 @@ def add_short_trade_only_selection_targets(
 ) -> None:
     if target_mode == "research_only":
         return
-    for rank_hint, entry in enumerate(remaining_supplemental_short_trade_entries.values(), start=1):
+    supplemental_entries = list(remaining_supplemental_short_trade_entries.values())
+    rank_population = len(supplemental_entries)
+    for rank_hint, entry in enumerate(supplemental_entries, start=1):
         ticker = str(entry.get("ticker") or "")
         if not ticker or ticker in selection_targets:
             continue
@@ -134,4 +147,5 @@ def add_short_trade_only_selection_targets(
             trade_date=trade_date,
             entry=entry,
             rank_hint=rank_hint,
+            rank_population=rank_population,
         )

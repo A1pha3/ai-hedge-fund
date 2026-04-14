@@ -14,6 +14,7 @@ score_c在实际pipeline中贡献~40%权重，因此回测结果会低估实际�
 """
 
 import json
+import math
 import os
 from datetime import datetime
 from pathlib import Path
@@ -198,12 +199,27 @@ def _build_profiles(profile_names: tuple[str, ...] = ("default", "ic_optimized")
             "near_miss_threshold": float(profile.near_miss_threshold),
             "selected_rank_cap": int(profile.selected_rank_cap),
             "near_miss_rank_cap": int(profile.near_miss_rank_cap),
+            "selected_rank_cap_ratio": float(profile.selected_rank_cap_ratio),
+            "near_miss_rank_cap_ratio": float(profile.near_miss_rank_cap_ratio),
             "weights": {factor_name: float(getattr(profile, weight_field)) for factor_name, weight_field in PROFILE_WEIGHT_FIELDS.items()},
         }
     return profiles
 
 
 PROFILES = _build_profiles()
+
+
+def _resolve_effective_rank_cap(*, hard_cap: int, cap_ratio: float, rank_population: int) -> int | None:
+    normalized_hard_cap = int(hard_cap or 0)
+    normalized_ratio = float(cap_ratio or 0.0)
+    dynamic_cap: int | None = None
+    if normalized_ratio > 0 and rank_population > 0:
+        dynamic_cap = max(1, int(math.ceil(rank_population * normalized_ratio)))
+    if dynamic_cap is None:
+        return normalized_hard_cap if normalized_hard_cap > 0 else None
+    if normalized_hard_cap <= 0:
+        return dynamic_cap
+    return max(normalized_hard_cap, dynamic_cap)
 
 
 def _apply_rank_caps_to_scored_results(
@@ -214,16 +230,29 @@ def _apply_rank_caps_to_scored_results(
     near_miss_threshold: float,
     selected_rank_cap: int,
     near_miss_rank_cap: int,
+    selected_rank_cap_ratio: float = 0.0,
+    near_miss_rank_cap_ratio: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     ranked = results.sort_values(score_col, ascending=False).copy()
     ranked["rank_hint"] = np.arange(1, len(ranked) + 1, dtype=int)
+    rank_population = len(ranked)
+    effective_selected_rank_cap = _resolve_effective_rank_cap(
+        hard_cap=selected_rank_cap,
+        cap_ratio=selected_rank_cap_ratio,
+        rank_population=rank_population,
+    )
+    effective_near_miss_rank_cap = _resolve_effective_rank_cap(
+        hard_cap=near_miss_rank_cap,
+        cap_ratio=near_miss_rank_cap_ratio,
+        rank_population=rank_population,
+    )
 
     score_series = ranked[score_col]
     selected_score_mask = score_series >= select_threshold
     near_miss_score_mask = (score_series >= near_miss_threshold) & (score_series < select_threshold)
 
-    selected_rank_mask = pd.Series(True, index=ranked.index) if selected_rank_cap <= 0 else ranked["rank_hint"] <= int(selected_rank_cap)
-    near_miss_rank_mask = pd.Series(True, index=ranked.index) if near_miss_rank_cap <= 0 else ranked["rank_hint"] <= int(near_miss_rank_cap)
+    selected_rank_mask = pd.Series(True, index=ranked.index) if effective_selected_rank_cap is None else ranked["rank_hint"] <= int(effective_selected_rank_cap)
+    near_miss_rank_mask = pd.Series(True, index=ranked.index) if effective_near_miss_rank_cap is None else ranked["rank_hint"] <= int(effective_near_miss_rank_cap)
 
     selected_mask = selected_score_mask & selected_rank_mask
     demoted_selected_mask = selected_score_mask & ~selected_rank_mask & near_miss_rank_mask
@@ -352,6 +381,8 @@ def main():
                 near_miss_threshold=float(pconfig["near_miss_threshold"]),
                 selected_rank_cap=int(pconfig["selected_rank_cap"]),
                 near_miss_rank_cap=int(pconfig["near_miss_rank_cap"]),
+                selected_rank_cap_ratio=float(pconfig["selected_rank_cap_ratio"]),
+                near_miss_rank_cap_ratio=float(pconfig["near_miss_rank_cap_ratio"]),
             )
 
             for group_name, group_df in [("selected", sel), ("near_miss", nm)]:

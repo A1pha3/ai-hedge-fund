@@ -21,6 +21,8 @@ def test_build_profiles_uses_live_short_trade_profile_thresholds_and_weights() -
         assert config["near_miss_threshold"] == source_profile.near_miss_threshold
         assert config["selected_rank_cap"] == source_profile.selected_rank_cap
         assert config["near_miss_rank_cap"] == source_profile.near_miss_rank_cap
+        assert config["selected_rank_cap_ratio"] == source_profile.selected_rank_cap_ratio
+        assert config["near_miss_rank_cap_ratio"] == source_profile.near_miss_rank_cap_ratio
         for factor_name, weight_field in PROFILE_WEIGHT_FIELDS.items():
             assert config["weights"][factor_name] == getattr(source_profile, weight_field)
 
@@ -61,8 +63,33 @@ def test_apply_rank_caps_to_scored_results_demotes_selected_and_limits_near_miss
         near_miss_threshold=0.45,
         selected_rank_cap=2,
         near_miss_rank_cap=4,
+        selected_rank_cap_ratio=0.0,
+        near_miss_rank_cap_ratio=0.0,
     )
 
     assert selected["ts_code"].tolist() == ["A", "B"]
     assert near_miss["ts_code"].tolist() == ["C", "D"]
     assert "E" not in near_miss["ts_code"].tolist()
+
+
+def test_apply_rank_caps_to_scored_results_supports_ratio_caps() -> None:
+    results = pd.DataFrame(
+        {
+            "ts_code": [f"T{i:03d}" for i in range(1, 101)],
+            "score_profile": [1.0 - (i * 0.005) for i in range(100)],
+            "next_ret": [0.1 for _ in range(100)],
+        }
+    )
+    selected, near_miss = _apply_rank_caps_to_scored_results(
+        results,
+        score_col="score_profile",
+        select_threshold=0.60,
+        near_miss_threshold=0.45,
+        selected_rank_cap=0,
+        near_miss_rank_cap=0,
+        selected_rank_cap_ratio=0.05,
+        near_miss_rank_cap_ratio=0.12,
+    )
+
+    assert len(selected) == 5
+    assert len(near_miss) == 7
