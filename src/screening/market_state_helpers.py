@@ -80,16 +80,22 @@ def recommend_short_trade_profile(
 ) -> str:
     """基于市场状态推荐BTST短线交易profile。
 
-    规则：
-    - 强势市场(breadth>0.60, return>0.005): ic_optimized (激进)
-    - 危机市场(breadth<0.35, return<-0.03): conservative (保守)
-    - 其他: default (默认)
+    基于2026Q1 40天回测+市场状态因子IC分析的研究发现：
+    - 大跌后(bounce regime, daily_return<-1%): 次日WR=54%, 收益+0.54% → 使用btst_precision_v2（激进）
+    - 正常下跌(slight_drop, -1%~-0.3%): WR尚可 → btst_precision_v2
+    - 正常上涨(slight_rise, -0.3%~+1%): 次日收益-0.23% → 提高阈值但保持v2
+    - 大涨后(euphoria, daily_return>+1%): 次日WR=37%, 收益-0.73% → conservative（保守）
     """
-    if breadth_ratio >= 0.58 and daily_return > 0.003 and adx > 25:
-        return "ic_optimized"
-    if breadth_ratio <= 0.35 or daily_return <= -0.02:
+    if daily_return <= -0.01:
+        # Bounce regime: market dropped, expect recovery → aggressive
+        return "btst_precision_v2"
+    if daily_return >= 0.01:
+        # Euphoria regime: market rose too much, expect pullback → conservative
         return "conservative"
-    return "default"
+    # Neutral regime: slight moves in either direction
+    if breadth_ratio <= 0.35:
+        return "conservative"
+    return "btst_precision_v2"
 
 
 def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_weights: callable) -> MarketState:
@@ -105,6 +111,7 @@ def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_we
         adx=round(metrics.adx, 4),
         atr_price_ratio=round(metrics.atr_ratio, 6),
         breadth_ratio=round(metrics.breadth_ratio, 6),
+        daily_return=round(metrics.daily_return, 6),
         limit_up_count=metrics.limit_up_count,
         limit_down_count=metrics.limit_down_count,
         limit_up_down_ratio=round(metrics.limit_ratio, 6),

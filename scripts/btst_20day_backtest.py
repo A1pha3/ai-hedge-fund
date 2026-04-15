@@ -118,19 +118,62 @@ def compute_factors(hist_group, trade_date_price):
     is_bull = last_close > open_price
     layer_c_alignment = min(max(0.5 * float(is_bull) + 0.5 * min(max(daily_return / 0.03, 0), 1), 0), 1)
 
-    # --- 短期反转因子 ---
+    # --- 短期反转因子 (improved: RSI + price reversal + volume confirmation) ---
+    if n >= 14:
+        # RSI-based mean reversion (closer to real agent's mean reversion strategy)
+        deltas = np.diff(close[-15:])
+        gains = np.where(deltas > 0, deltas, 0)
+        losses = np.where(deltas < 0, -deltas, 0)
+        avg_gain = np.mean(gains)
+        avg_loss = np.mean(losses)
+        if avg_loss > 0:
+            rs = avg_gain / avg_loss
+            rsi = 100.0 - (100.0 / (1.0 + rs))
+        else:
+            rsi = 100.0
+        # RSI < 30 → strong oversold (reversal opportunity)
+        rsi_reversal = min(max((30.0 - rsi) / 30.0, 0), 1) if rsi < 50 else 0.0
+    else:
+        rsi_reversal = 0.0
+
     if n >= 6:
         ret_5d_raw = close[-1] / close[-6] - 1
-        reversal = min(max(-ret_5d_raw / 0.10, 0), 1)  # 5日跌幅越大，反转值越高
+        price_reversal = min(max(-ret_5d_raw / 0.10, 0), 1)
     else:
-        reversal = 0.0
+        price_reversal = 0.0
 
-    # --- 2日反转因子 ---
+    # Volume confirmation for reversal (declining volume on sell-off = healthy reversal setup)
+    if n >= 10:
+        vol_recent = np.mean(volume[-3:])
+        vol_prior = np.mean(volume[-10:-3])
+        vol_decline = vol_recent < vol_prior  # Volume declining = selling exhaustion
+        vol_confirm = 0.15 if vol_decline else 0.0
+    else:
+        vol_confirm = 0.0
+
+    reversal = min(max(0.40 * price_reversal + 0.45 * rsi_reversal + vol_confirm, 0), 1)
+
+    # --- 2日反转因子 (improved: Bollinger Band position + 2d reversal) ---
+    if n >= 20:
+        # Bollinger Band position (closer to real agent's stat analysis)
+        sma_20 = np.mean(close[-20:])
+        std_20 = np.std(close[-20:])
+        if std_20 > 0:
+            bb_position = (last_close - sma_20) / (2.0 * std_20)  # -1 to +1 range
+        else:
+            bb_position = 0.0
+        # Low BB position (below lower band) = oversold
+        bb_oversold = min(max((-bb_position - 1.0) / 1.0, 0), 1) if bb_position < 0 else 0.0
+    else:
+        bb_oversold = 0.0
+
     if n >= 3:
         ret_2d_raw = close[-1] / close[-3] - 1
-        reversal_2d = min(max(-ret_2d_raw / 0.06, 0), 1)
+        price_2d_reversal = min(max(-ret_2d_raw / 0.06, 0), 1)
     else:
-        reversal_2d = 0.0
+        price_2d_reversal = 0.0
+
+    reversal_2d = min(max(0.45 * price_2d_reversal + 0.40 * bb_oversold + 0.15 * rsi_reversal, 0), 1)
 
     # --- 日内尾盘强度 ---
     if open_price > 0:
@@ -229,7 +272,7 @@ PROFILE_WEIGHT_FIELDS = {
     "reversal_2d": "reversal_2d_weight",
 }
 
-DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "btst_precision_v1", "btst_precision_v2", "ic_v3")
+DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "btst_precision_v1", "btst_precision_v2", "btst_precision_v3", "ic_v3", "ic_v4", "ic_v5")
 
 
 def _parse_profile_names(raw: str | None) -> tuple[str, ...]:

@@ -1429,7 +1429,7 @@ class DailyPipeline:
                 ms = candidate_context.market_state
                 effective_profile_name = _rec_profile(
                     breadth_ratio=float(ms.breadth_ratio) if ms else 0.5,
-                    daily_return=0.0,
+                    daily_return=float(ms.daily_return) if ms else 0.0,
                     limit_ratio=float(ms.limit_up_down_ratio) if ms else 1.0,
                     adx=float(ms.adx) if ms else 20.0,
                 )

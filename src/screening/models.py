@@ -56,6 +56,7 @@ class MarketState(BaseModel):
     adx: float = 0.0
     atr_price_ratio: float = 0.0
     breadth_ratio: float = 0.5
+    daily_return: float = 0.0
     limit_up_count: int = 0
     limit_down_count: int = 0
     limit_up_down_ratio: float = 0.0

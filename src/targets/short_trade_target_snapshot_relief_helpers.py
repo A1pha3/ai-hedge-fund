@@ -644,6 +644,16 @@ def _build_snapshot_score_payload(
     }
     total_positive_contribution = round(sum(weighted_positive_contributions.values()), 4)
     total_negative_contribution = round(sum(weighted_negative_contributions.values()), 4)
+    # Overbought momentum penalty: penalize extreme momentum (overbought) stocks
+    # Research shows high trend_acceleration/breakout_freshness identify LOSERS (t=-13.4/-15.9)
+    overbought_threshold = float(getattr(profile, "overbought_momentum_threshold", 1.0))
+    overbought_weight = float(getattr(profile, "overbought_momentum_penalty_weight", 0.0))
+    overbought_momentum_penalty = 0.0
+    if overbought_weight > 0 and overbought_threshold < 1.0:
+        # Penalty proportional to how far above threshold
+        excess_trend = max(0.0, state.trend_acceleration - overbought_threshold)
+        excess_breakout = max(0.0, threshold_state.breakout_freshness - overbought_threshold)
+        overbought_momentum_penalty = overbought_weight * max(excess_trend, excess_breakout)
     score_target = clamp_unit_interval(
         (positive_score_weights["breakout_freshness"] * threshold_state.breakout_freshness)
         + (positive_score_weights["trend_acceleration"] * threshold_state.trend_acceleration)
@@ -663,12 +673,14 @@ def _build_snapshot_score_payload(
         - watchlist_penalty_state.effective_watchlist_zero_catalyst_penalty
         - watchlist_penalty_state.effective_watchlist_zero_catalyst_crowded_penalty
         - watchlist_penalty_state.effective_watchlist_zero_catalyst_flat_trend_penalty
+        - overbought_momentum_penalty
     )
     return {
         "weighted_positive_contributions": weighted_positive_contributions,
         "weighted_negative_contributions": weighted_negative_contributions,
         "total_positive_contribution": total_positive_contribution,
         "total_negative_contribution": total_negative_contribution,
+        "overbought_momentum_penalty": round(overbought_momentum_penalty, 4),
         "score_target": score_target,
     }
 
