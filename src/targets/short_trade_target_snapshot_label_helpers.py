@@ -79,6 +79,7 @@ def _append_short_trade_snapshot_penalty_tags(
     watchlist_zero_catalyst_penalty: dict[str, Any],
     watchlist_zero_catalyst_crowded_penalty: dict[str, Any],
     watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any],
+    breakout_trap_guard: dict[str, Any],
     t_plus_2_continuation_candidate: dict[str, Any],
     positive_tags: list[str],
     negative_tags: list[str],
@@ -89,8 +90,31 @@ def _append_short_trade_snapshot_penalty_tags(
         negative_tags.append("watchlist_zero_catalyst_crowded_penalty_applied")
     if watchlist_zero_catalyst_flat_trend_penalty["applied"]:
         negative_tags.append("watchlist_zero_catalyst_flat_trend_penalty_applied")
+    if breakout_trap_guard["applied"]:
+        negative_tags.append("breakout_trap_penalty_applied")
+    if breakout_trap_guard["execution_blocked"]:
+        negative_tags.append("breakout_trap_execution_hard_gate")
     if t_plus_2_continuation_candidate["applied"]:
         positive_tags.append("t_plus_2_continuation_candidate")
+
+
+def _append_short_trade_snapshot_market_state_tags(
+    *,
+    market_state_threshold_adjustment: dict[str, Any],
+    negative_tags: list[str],
+) -> None:
+    risk_level = str(market_state_threshold_adjustment.get("risk_level") or "unknown").strip().lower()
+    regime_gate_level = str(market_state_threshold_adjustment.get("regime_gate_level") or risk_level or "unknown").strip().lower()
+    if risk_level == "risk_off":
+        negative_tags.append("market_state_risk_off")
+    elif risk_level == "crisis":
+        negative_tags.append("market_state_crisis")
+    if regime_gate_level == "risk_off":
+        negative_tags.append("regime_gate_risk_off")
+    elif regime_gate_level == "crisis":
+        negative_tags.append("regime_gate_crisis")
+    if market_state_threshold_adjustment.get("execution_hard_gate"):
+        negative_tags.append("market_state_execution_hard_gate")
 
 
 def _append_short_trade_snapshot_blockers(
@@ -101,6 +125,7 @@ def _append_short_trade_snapshot_blockers(
     stale_trend_repair_penalty: float,
     overhead_supply_penalty: float,
     extension_without_room_penalty: float,
+    breakout_trap_guard: dict[str, Any],
     blockers: list[str],
     gate_status: dict[str, Any],
     signal_signed_strength_fn: Callable[[Any], float],
@@ -128,6 +153,12 @@ def _append_short_trade_snapshot_blockers(
     if extension_without_room_penalty >= profile.extension_penalty_block_threshold:
         blockers.append("extension_without_room_penalty")
         gate_status["structural"] = "fail"
+    if breakout_trap_guard["blocked"]:
+        blockers.append("breakout_trap_risk")
+        gate_status["execution"] = "fail"
+    elif breakout_trap_guard["execution_blocked"]:
+        blockers.append("breakout_trap_execution_hard_gate")
+        gate_status["execution"] = "fail"
 
 
 def _append_short_trade_snapshot_strength_tags(
@@ -182,10 +213,12 @@ def _build_short_trade_snapshot_label_inputs(
         "watchlist_zero_catalyst_penalty": dict(relief_snapshot["watchlist_zero_catalyst_penalty"]),
         "watchlist_zero_catalyst_crowded_penalty": dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"]),
         "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
+        "breakout_trap_guard": dict(relief_snapshot["breakout_trap_guard"]),
         "t_plus_2_continuation_candidate": dict(relief_snapshot["t_plus_2_continuation_candidate"]),
         "stale_trend_repair_penalty": float(relief_snapshot["stale_trend_repair_penalty"]),
         "overhead_supply_penalty": float(relief_snapshot["overhead_supply_penalty"]),
         "extension_without_room_penalty": float(relief_snapshot["extension_without_room_penalty"]),
+        "market_state_threshold_adjustment": dict(relief_snapshot["market_state_threshold_adjustment"]),
     }
 
 
@@ -245,8 +278,13 @@ def collect_short_trade_snapshot_labels_and_gates(
         watchlist_zero_catalyst_penalty=inputs["watchlist_zero_catalyst_penalty"],
         watchlist_zero_catalyst_crowded_penalty=inputs["watchlist_zero_catalyst_crowded_penalty"],
         watchlist_zero_catalyst_flat_trend_penalty=inputs["watchlist_zero_catalyst_flat_trend_penalty"],
+        breakout_trap_guard=inputs["breakout_trap_guard"],
         t_plus_2_continuation_candidate=inputs["t_plus_2_continuation_candidate"],
         positive_tags=positive_tags,
+        negative_tags=negative_tags,
+    )
+    _append_short_trade_snapshot_market_state_tags(
+        market_state_threshold_adjustment=inputs["market_state_threshold_adjustment"],
         negative_tags=negative_tags,
     )
     _append_short_trade_snapshot_blockers(
@@ -256,6 +294,7 @@ def collect_short_trade_snapshot_labels_and_gates(
         stale_trend_repair_penalty=inputs["stale_trend_repair_penalty"],
         overhead_supply_penalty=inputs["overhead_supply_penalty"],
         extension_without_room_penalty=inputs["extension_without_room_penalty"],
+        breakout_trap_guard=inputs["breakout_trap_guard"],
         blockers=blockers,
         gate_status=gate_status,
         signal_signed_strength_fn=signal_signed_strength_fn,

@@ -63,6 +63,10 @@ class MarketState(BaseModel):
     total_volume: float = 0.0
     northbound_flow_days: int = 0
     is_low_volume: bool = False
+    style_dispersion: float = 0.0
+    regime_flip_risk: float = 0.0
+    regime_gate_level: str = "normal"
+    regime_gate_reasons: list[str] = Field(default_factory=list)
     position_scale: float = Field(ge=0, le=1, default=1.0)
     adjusted_weights: dict[str, float] = Field(default_factory=lambda: {
         "trend": 0.30,

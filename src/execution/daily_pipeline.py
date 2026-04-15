@@ -1432,6 +1432,9 @@ class DailyPipeline:
                     daily_return=float(ms.daily_return) if ms else 0.0,
                     limit_ratio=float(ms.limit_up_down_ratio) if ms else 1.0,
                     adx=float(ms.adx) if ms else 20.0,
+                    style_dispersion=float(ms.style_dispersion) if ms else 0.0,
+                    regime_flip_risk=float(ms.regime_flip_risk) if ms else 0.0,
+                    regime_gate_level=str(ms.regime_gate_level) if ms else "normal",
                 )
 
         selection_resolution: PostMarketSelectionResolution = resolve_post_market_selection_targets(

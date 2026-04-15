@@ -22,6 +22,62 @@ class MarketStateMetrics:
     is_low_volume: bool
     breadth_is_weak: bool
     breadth_is_strong: bool
+    style_dispersion: float
+    regime_flip_risk: float
+
+
+def _clamp_unit_interval(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _compute_style_dispersion(*, breadth_ratio: float, daily_return: float, limit_ratio: float) -> float:
+    weak_breadth_gap = _clamp_unit_interval((0.50 - breadth_ratio) / 0.18)
+    narrow_leadership = weak_breadth_gap * _clamp_unit_interval((limit_ratio - 1.50) / 2.50)
+    index_resilience_divergence = weak_breadth_gap * _clamp_unit_interval((daily_return + 0.0020) / 0.0100)
+    return round(_clamp_unit_interval((0.55 * narrow_leadership) + (0.45 * index_resilience_divergence)), 6)
+
+
+def _compute_regime_flip_risk(*, breadth_ratio: float, daily_return: float, northbound_flow_days: int, style_dispersion: float) -> float:
+    breadth_deterioration = _clamp_unit_interval((0.46 - breadth_ratio) / 0.14)
+    dispersion_pressure = _clamp_unit_interval((style_dispersion - 0.35) / 0.45)
+    index_mismatch = _clamp_unit_interval((daily_return + 0.0015) / 0.0080) if breadth_ratio <= 0.42 else 0.0
+    if northbound_flow_days <= -3:
+        flow_headwind = 1.0
+    elif northbound_flow_days <= -1:
+        flow_headwind = 0.5
+    else:
+        flow_headwind = 0.0
+    return round(
+        _clamp_unit_interval(
+            (0.40 * breadth_deterioration)
+            + (0.25 * dispersion_pressure)
+            + (0.20 * index_mismatch)
+            + (0.15 * flow_headwind)
+        ),
+        6,
+    )
+
+
+def _resolve_regime_gate(*, metrics: MarketStateMetrics, position_scale: float) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    if metrics.breadth_ratio <= 0.42:
+        reasons.append("breadth_weak")
+    if metrics.style_dispersion >= 0.45:
+        reasons.append("style_dispersion")
+    if metrics.regime_flip_risk >= 0.58:
+        reasons.append("regime_flip_risk")
+    if position_scale <= 0.75:
+        reasons.append("position_scale_reduced")
+    if metrics.is_low_volume:
+        reasons.append("low_volume")
+
+    crisis = metrics.breadth_ratio <= 0.35 or position_scale <= 0.55 or (metrics.regime_flip_risk >= 0.82 and metrics.style_dispersion >= 0.55)
+    risk_off = crisis or metrics.breadth_ratio <= 0.42 or position_scale <= 0.75 or metrics.regime_flip_risk >= 0.58
+    if crisis:
+        return "crisis", reasons
+    if risk_off:
+        return "risk_off", reasons
+    return "normal", reasons
 
 
 def prepare_market_frame(index_df: pd.DataFrame) -> pd.DataFrame:
@@ -55,6 +111,17 @@ def calculate_market_state_metrics(
     breadth_ratio = market_breadth_ratio(price_batch)
     total_volume = _compute_total_volume(daily_basic)
     northbound_flow_days = northbound_streak(northbound_df)
+    style_dispersion = _compute_style_dispersion(
+        breadth_ratio=breadth_ratio,
+        daily_return=daily_return,
+        limit_ratio=limit_ratio,
+    )
+    regime_flip_risk = _compute_regime_flip_risk(
+        breadth_ratio=breadth_ratio,
+        daily_return=daily_return,
+        northbound_flow_days=northbound_flow_days,
+        style_dispersion=style_dispersion,
+    )
     return MarketStateMetrics(
         adx=adx,
         atr_ratio=atr_ratio,
@@ -68,6 +135,8 @@ def calculate_market_state_metrics(
         is_low_volume=total_volume < 5000.0 if total_volume > 0 else False,
         breadth_is_weak=breadth_ratio <= 0.42,
         breadth_is_strong=breadth_ratio >= 0.58,
+        style_dispersion=style_dispersion,
+        regime_flip_risk=regime_flip_risk,
     )
 
 
@@ -77,6 +146,9 @@ def recommend_short_trade_profile(
     daily_return: float,
     limit_ratio: float,
     adx: float,
+    style_dispersion: float | None = None,
+    regime_flip_risk: float | None = None,
+    regime_gate_level: str | None = None,
 ) -> str:
     """基于市场状态推荐BTST短线交易profile。
 
@@ -86,6 +158,11 @@ def recommend_short_trade_profile(
     - 正常上涨(slight_rise, -0.3%~+1%): 次日收益-0.23% → 提高阈值但保持v2
     - 大涨后(euphoria, daily_return>+1%): 次日WR=37%, 收益-0.73% → conservative（保守）
     """
+    normalized_regime_gate_level = str(regime_gate_level or "").strip().lower()
+    if normalized_regime_gate_level in {"risk_off", "crisis"}:
+        return "conservative"
+    if (regime_flip_risk or 0.0) >= 0.58 or (style_dispersion or 0.0) >= 0.55:
+        return "conservative"
     if daily_return <= -0.01:
         # Bounce regime: market dropped, expect recovery → aggressive
         return "btst_precision_v2"
@@ -106,6 +183,7 @@ def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_we
     position_scale = _apply_breadth_adjustments(metrics=metrics, adjusted=adjusted, position_scale=position_scale)
     _apply_northbound_adjustments(metrics=metrics, adjusted=adjusted)
     position_scale = max(0.2, min(1.0, position_scale))
+    regime_gate_level, regime_gate_reasons = _resolve_regime_gate(metrics=metrics, position_scale=position_scale)
     return MarketState(
         state_type=state_type,
         adx=round(metrics.adx, 4),
@@ -118,6 +196,10 @@ def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_we
         total_volume=round(metrics.total_volume, 4),
         northbound_flow_days=metrics.northbound_flow_days,
         is_low_volume=metrics.is_low_volume,
+        style_dispersion=round(metrics.style_dispersion, 6),
+        regime_flip_risk=round(metrics.regime_flip_risk, 6),
+        regime_gate_level=regime_gate_level,
+        regime_gate_reasons=regime_gate_reasons,
         position_scale=position_scale,
         adjusted_weights=normalize_weights(adjusted),
     )

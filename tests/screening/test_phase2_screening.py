@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from src.screening.candidate_pool import load_cooldown_registry, save_cooldown_registry
 from src.screening.market_state import detect_market_state
+from src.screening.market_state_helpers import recommend_short_trade_profile
 from src.screening.models import MarketState, MarketStateType, StrategySignal, SubFactor
 from src.screening.signal_fusion import _normalize_for_available_signals, compute_score_b, fuse_signals_for_ticker, maybe_release_cooldown_early
 from src.screening.strategy_scorer import aggregate_sub_factors, compute_event_decay, score_trend_strategy
@@ -312,6 +313,20 @@ def test_risk_off_demotion_blocks_weak_breadth_bullish_consensus_bonus():
     assert fused.strategy_signals["trend"].confidence == 68
     assert fused.strategy_signals["event_sentiment"].confidence == 56
     assert fused.decision != "strong_buy"
+
+
+def test_recommend_short_trade_profile_becomes_conservative_under_regime_flip_risk():
+    profile_name = recommend_short_trade_profile(
+        breadth_ratio=0.58,
+        daily_return=0.004,
+        limit_ratio=0.015,
+        adx=28.0,
+        style_dispersion=0.71,
+        regime_flip_risk=0.79,
+        regime_gate_level="risk_off",
+    )
+
+    assert profile_name == "conservative"
 
 
 def test_quality_first_guard_blocks_low_quality_candidates_despite_positive_momentum():

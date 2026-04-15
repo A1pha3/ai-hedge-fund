@@ -87,6 +87,65 @@ def build_reentry_filter_payload(
     return None
 
 
+def _resolve_short_trade_target_result(selection_target: Any) -> Any:
+    if selection_target is None:
+        return None
+    short_trade_result = getattr(selection_target, "short_trade", None)
+    if short_trade_result is not None:
+        return short_trade_result
+    if isinstance(selection_target, dict):
+        return selection_target.get("short_trade") or selection_target
+    return selection_target
+
+
+def build_short_trade_execution_gate_filter_payload(
+    *,
+    item: Any,
+    selection_target: Any,
+) -> dict[str, Any] | None:
+    short_trade_result = _resolve_short_trade_target_result(selection_target)
+    if short_trade_result is None:
+        return None
+
+    metrics_payload = dict(getattr(short_trade_result, "metrics_payload", {}) or {})
+    explainability_payload = dict(getattr(short_trade_result, "explainability_payload", {}) or {})
+    thresholds = dict(metrics_payload.get("thresholds") or {})
+    breakout_trap_guard = dict(metrics_payload.get("breakout_trap_guard") or explainability_payload.get("breakout_trap_guard") or {})
+    market_state_threshold_adjustment = dict(thresholds.get("market_state_threshold_adjustment") or explainability_payload.get("market_state_threshold_adjustment") or {})
+    decision = str(getattr(short_trade_result, "decision", None) or "").strip().lower()
+    gate_status = dict(getattr(short_trade_result, "gate_status", {}) or {})
+    blockers = [str(blocker) for blocker in list(getattr(short_trade_result, "blockers", []) or []) if str(blocker or "").strip()]
+    breakout_trap_risk = float(breakout_trap_guard.get("risk", 0.0) or 0.0)
+    breakout_trap_penalty = float(breakout_trap_guard.get("penalty", 0.0) or 0.0)
+    risk_level = str(market_state_threshold_adjustment.get("risk_level") or "unknown").strip().lower()
+    regime_gate_level = str(market_state_threshold_adjustment.get("regime_gate_level") or risk_level or "unknown").strip().lower()
+
+    if bool(breakout_trap_guard.get("blocked")) or bool(breakout_trap_guard.get("execution_blocked")) or "breakout_trap_risk" in blockers or "breakout_trap_execution_hard_gate" in blockers:
+        reason = "blocked_by_breakout_trap_risk"
+    elif bool(market_state_threshold_adjustment.get("execution_hard_gate")):
+        reason = "blocked_by_market_regime_gate"
+    elif decision == "blocked" or gate_status.get("execution") == "fail":
+        reason = "blocked_by_short_trade_target"
+    else:
+        return None
+
+    return {
+        "ticker": item.ticker,
+        "reason": reason,
+        "score_final": round(float(item.score_final), 4),
+        "quality_score": round(float(item.quality_score), 4),
+        "short_trade_decision": decision,
+        "risk_level": risk_level,
+        "regime_gate_level": regime_gate_level,
+        "breakout_trap_risk": round(breakout_trap_risk, 4),
+        "breakout_trap_penalty": round(breakout_trap_penalty, 4),
+        "execution_gate_status": str(gate_status.get("execution") or "pass"),
+        "blockers": blockers,
+        "candidate_source": str(getattr(short_trade_result, "candidate_source", None) or ""),
+        "top_reasons": [str(reason) for reason in list(getattr(short_trade_result, "top_reasons", []) or [])[:5]],
+    }
+
+
 def process_buy_order_watchlist_item(
     *,
     item,
@@ -103,16 +162,24 @@ def process_buy_order_watchlist_item(
     resolve_continuation_execution_overrides_fn: Callable[..., dict[str, Any]],
     calculate_position_fn: Callable[..., Any],
 ) -> dict[str, Any]:
+    selection_target = selection_targets.get(item.ticker)
     cooldown_payload = blocked_buy_tickers.get(item.ticker)
     if cooldown_payload is not None:
         reentry_filter_entry = build_reentry_filter_entry_fn(
             item,
             cooldown_payload,
             trade_date,
-            selection_target=selection_targets.get(item.ticker),
+            selection_target=selection_target,
         )
         if reentry_filter_entry is not None:
             return {"buy_plan": None, "filtered_entry": reentry_filter_entry}
+
+    short_trade_execution_filter_entry = build_short_trade_execution_gate_filter_payload(
+        item=item,
+        selection_target=selection_target,
+    )
+    if short_trade_execution_filter_entry is not None:
+        return {"buy_plan": None, "filtered_entry": short_trade_execution_filter_entry}
 
     current_price = float(price_map.get(item.ticker, 10.0))
     candidate = candidate_by_ticker.get(item.ticker)
@@ -123,7 +190,7 @@ def process_buy_order_watchlist_item(
     existing_position_ratio = ((existing_long_shares * current_price) / nav) if nav > 0 else 0.0
     continuation_overrides = resolve_continuation_execution_overrides_fn(
         item=item,
-        selection_target=selection_targets.get(item.ticker),
+        selection_target=selection_target,
     )
     plan = calculate_position_fn(
         ticker=item.ticker,

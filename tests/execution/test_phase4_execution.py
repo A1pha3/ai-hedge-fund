@@ -3672,6 +3672,66 @@ def test_build_buy_orders_allows_reentry_once_weak_confirmation_score_is_strong_
     assert diagnostics["reason_counts"] == {}
 
 
+def test_build_buy_orders_blocks_market_regime_execution_gate_from_short_trade_target():
+    pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
+    watchlist = [
+        LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, quality_score=0.68, decision="watch")
+    ]
+    selection_targets = {
+        "300724": DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                gate_status={"execution": "pass"},
+                blockers=[],
+                top_reasons=["market_risk_risk_off", "score_short=0.31"],
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": True,
+                            "risk_level": "risk_off",
+                            "regime_gate_level": "risk_off",
+                            "execution_hard_gate": True,
+                        }
+                    },
+                    "breakout_trap_guard": {
+                        "enabled": True,
+                        "eligible": False,
+                        "applied": False,
+                        "blocked": False,
+                        "execution_blocked": False,
+                        "risk": 0.0,
+                        "penalty": 0.0,
+                    },
+                },
+                explainability_payload={
+                    "market_state_threshold_adjustment": {
+                        "enabled": True,
+                        "risk_level": "risk_off",
+                        "regime_gate_level": "risk_off",
+                        "execution_hard_gate": True,
+                    }
+                },
+            ),
+        )
+    }
+
+    buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
+        watchlist,
+        {"cash": 200_000, "positions": {}},
+        trade_date="20260313",
+        selection_targets=selection_targets,
+        price_map={"300724": 142.71},
+    )
+
+    assert buy_orders == []
+    assert diagnostics["reason_counts"] == {"blocked_by_market_regime_gate": 1}
+    assert diagnostics["tickers"][0]["regime_gate_level"] == "risk_off"
+    assert diagnostics["tickers"][0]["short_trade_decision"] == "selected"
+
+
 def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkeypatch: pytest.MonkeyPatch):
     def fake_agent_runner(tickers: list[str], trade_date: str, model: str):
         return {

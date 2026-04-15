@@ -1777,6 +1777,95 @@ def test_short_trade_market_state_threshold_adjustment_tightens_crisis_regime() 
     assert crisis_result.effective_near_miss_threshold > baseline_result.effective_near_miss_threshold
 
 
+def test_short_trade_breakout_trap_guard_blocks_risk_off_breakout_chase() -> None:
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260328",
+        entry={
+            "ticker": "301188",
+            "score_b": 0.36,
+            "score_c": -0.45,
+            "score_final": 0.33,
+            "quality_score": 0.55,
+            "decision": "avoid",
+            "reason": "watchlist_selected",
+            "reasons": ["watchlist_selected"],
+            "market_state": {
+                "breadth_ratio": 0.41,
+                "position_scale": 0.72,
+                "style_dispersion": 0.68,
+                "regime_flip_risk": 0.78,
+                "regime_gate_level": "risk_off",
+                "regime_gate_reasons": ["style_dispersion", "limit_up_ratio_drop"],
+            },
+            "strategy_signals": {
+                "trend": _make_signal(
+                    1,
+                    90.0,
+                    sub_factors={
+                        "momentum": {
+                            "direction": 1,
+                            "confidence": 95.0,
+                            "completeness": 1.0,
+                            "metrics": {
+                                "momentum_1m": 0.18,
+                                "momentum_3m": 0.62,
+                                "momentum_6m": 0.78,
+                                "volume_momentum": 0.74,
+                            },
+                        },
+                        "adx_strength": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 8.0, "completeness": 1.0},
+                        "volatility": {
+                            "direction": 1,
+                            "confidence": 100.0,
+                            "completeness": 1.0,
+                            "metrics": {
+                                "volatility_regime": 1.55,
+                                "atr_ratio": 0.12,
+                            },
+                        },
+                        "long_trend_alignment": {"direction": 1, "confidence": 65.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "event_sentiment": _make_signal(
+                    1,
+                    10.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    },
+                ).model_dump(mode="json"),
+                "mean_reversion": _make_signal(-1, 12.0).model_dump(mode="json"),
+            },
+            "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.80, "investor": -0.10}},
+            "replay_context": {
+                "source": "watchlist_filter_diagnostics",
+                "historical_prior": {
+                    "execution_quality_label": "gap_chase_risk",
+                    "entry_timing_bias": "avoid_open_chase_confirmation",
+                    "evaluable_count": 4,
+                },
+            },
+        },
+        rank_hint=1,
+    )
+
+    breakout_trap_guard = result.metrics_payload["breakout_trap_guard"]
+    market_state_adjustment = result.metrics_payload["thresholds"]["market_state_threshold_adjustment"]
+
+    assert result.decision == "blocked"
+    assert result.gate_status["execution"] == "fail"
+    assert "breakout_trap_execution_hard_gate" in result.negative_tags
+    assert any(blocker in {"breakout_trap_risk", "breakout_trap_execution_hard_gate"} for blocker in result.blockers)
+    assert breakout_trap_guard["applied"] is True
+    assert breakout_trap_guard["execution_blocked"] is True
+    assert breakout_trap_guard["risk"] >= 0.60
+    assert market_state_adjustment["regime_gate_level"] == "risk_off"
+    assert market_state_adjustment["execution_hard_gate"] is True
+    assert result.explainability_payload["breakout_trap_guard"]["execution_blocked"] is True
+    assert result.explainability_payload["market_state_threshold_adjustment"]["regime_gate_level"] == "risk_off"
+
+
 def test_short_trade_target_reports_profile_metadata_and_override_thresholds() -> None:
     result = evaluate_short_trade_rejected_target(
         trade_date="20260328",

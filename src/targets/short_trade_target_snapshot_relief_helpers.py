@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 
+BREAKOUT_TRAP_PENALTY_WEIGHT = 0.10
+BREAKOUT_TRAP_EXECUTION_BLOCK_THRESHOLD = 0.60
+BREAKOUT_TRAP_BLOCK_THRESHOLD = 0.72
+
+
 @dataclass(frozen=True)
 class SnapshotSignalState:
     fundamental_signal: dict[str, Any]
@@ -77,6 +82,9 @@ class ScorePenaltyState:
     stale_trend_repair_penalty: float
     overhead_supply_penalty: float
     extension_without_room_penalty: float
+    breakout_trap_guard: dict[str, Any]
+    breakout_trap_risk: float
+    breakout_trap_penalty: float
     effective_near_miss_threshold: float
     effective_stale_score_penalty_weight: float
     effective_extension_score_penalty_weight: float
@@ -124,12 +132,36 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _safe_reason_codes(values: Any) -> list[str]:
+    return [str(reason).strip() for reason in list(values or []) if str(reason or "").strip()]
+
+
+def _resolve_market_state_regime_context(market_state: dict[str, Any]) -> tuple[str, float, float, list[str]]:
+    payload = dict(market_state or {})
+    breadth_ratio = _safe_float(payload.get("breadth_ratio"))
+    position_scale = _safe_float(payload.get("position_scale"))
+    regime_flip_risk = _safe_float(payload.get("regime_flip_risk")) or 0.0
+    style_dispersion = _safe_float(payload.get("style_dispersion")) or 0.0
+    regime_gate_level = str(payload.get("regime_gate_level") or "").strip().lower()
+    regime_gate_reasons = _safe_reason_codes(payload.get("regime_gate_reasons"))
+    if regime_gate_level not in {"normal", "risk_off", "crisis"}:
+        crisis = (breadth_ratio is not None and breadth_ratio <= 0.35) or (position_scale is not None and position_scale <= 0.55)
+        risk_off = crisis or (breadth_ratio is not None and breadth_ratio <= 0.42) or (position_scale is not None and position_scale <= 0.75) or regime_flip_risk >= 0.58
+        regime_gate_level = "crisis" if crisis else "risk_off" if risk_off else "normal"
+    return regime_gate_level, style_dispersion, regime_flip_risk, regime_gate_reasons
+
+
 def _build_market_state_threshold_adjustment(
     *,
     enabled: bool,
     risk_level: str,
     breadth_ratio: float | None,
     position_scale: float | None,
+    regime_gate_level: str,
+    regime_gate_reasons: list[str],
+    style_dispersion: float,
+    regime_flip_risk: float,
+    execution_hard_gate: bool,
     select_threshold_lift: float,
     near_miss_threshold_lift: float,
     effective_select_threshold: float,
@@ -140,6 +172,11 @@ def _build_market_state_threshold_adjustment(
         "risk_level": risk_level,
         "breadth_ratio": breadth_ratio,
         "position_scale": position_scale,
+        "regime_gate_level": regime_gate_level,
+        "regime_gate_reasons": regime_gate_reasons,
+        "style_dispersion": round(float(style_dispersion), 4),
+        "regime_flip_risk": round(float(regime_flip_risk), 4),
+        "execution_hard_gate": bool(execution_hard_gate),
         "select_threshold_lift": round(float(select_threshold_lift), 4),
         "near_miss_threshold_lift": round(float(near_miss_threshold_lift), 4),
         "effective_select_threshold": round(float(effective_select_threshold), 4),
@@ -153,29 +190,38 @@ def _resolve_market_state_threshold_adjustment(
     effective_select_threshold: float,
     effective_near_miss_threshold: float,
 ) -> dict[str, Any]:
-    breadth_ratio = _safe_float(dict(market_state or {}).get("breadth_ratio"))
-    position_scale = _safe_float(dict(market_state or {}).get("position_scale"))
-    if breadth_ratio is None and position_scale is None:
+    market_state_payload = dict(market_state or {})
+    breadth_ratio = _safe_float(market_state_payload.get("breadth_ratio"))
+    position_scale = _safe_float(market_state_payload.get("position_scale"))
+    regime_gate_level, style_dispersion, regime_flip_risk, regime_gate_reasons = _resolve_market_state_regime_context(market_state_payload)
+    if breadth_ratio is None and position_scale is None and regime_flip_risk <= 0.0 and style_dispersion <= 0.0:
         return _build_market_state_threshold_adjustment(
             enabled=False,
             risk_level="unknown",
             breadth_ratio=breadth_ratio,
             position_scale=position_scale,
+            regime_gate_level="unknown",
+            regime_gate_reasons=[],
+            style_dispersion=0.0,
+            regime_flip_risk=0.0,
+            execution_hard_gate=False,
             select_threshold_lift=0.0,
             near_miss_threshold_lift=0.0,
             effective_select_threshold=effective_select_threshold,
             effective_near_miss_threshold=effective_near_miss_threshold,
         )
 
-    risk_off = (breadth_ratio is not None and breadth_ratio <= 0.42) or (position_scale is not None and position_scale <= 0.75)
-    crisis = (breadth_ratio is not None and breadth_ratio <= 0.35) or (position_scale is not None and position_scale <= 0.55)
-    if crisis:
+    if regime_gate_level == "crisis":
         select_lift = 0.03
         near_miss_lift = 0.02
         risk_level = "crisis"
-    elif risk_off:
-        select_lift = 0.015
-        near_miss_lift = 0.01
+    elif regime_gate_level == "risk_off":
+        if regime_flip_risk >= 0.75 or style_dispersion >= 0.65:
+            select_lift = 0.025
+            near_miss_lift = 0.015
+        else:
+            select_lift = 0.015
+            near_miss_lift = 0.01
         risk_level = "risk_off"
     else:
         select_lift = 0.0
@@ -184,16 +230,93 @@ def _resolve_market_state_threshold_adjustment(
 
     adjusted_select_threshold = min(0.95, float(effective_select_threshold) + select_lift)
     adjusted_near_miss_threshold = min(adjusted_select_threshold, float(effective_near_miss_threshold) + near_miss_lift)
+    execution_hard_gate = risk_level in {"risk_off", "crisis"}
     return _build_market_state_threshold_adjustment(
         enabled=select_lift > 0.0 or near_miss_lift > 0.0,
         risk_level=risk_level,
         breadth_ratio=breadth_ratio,
         position_scale=position_scale,
+        regime_gate_level=regime_gate_level,
+        regime_gate_reasons=regime_gate_reasons,
+        style_dispersion=style_dispersion,
+        regime_flip_risk=regime_flip_risk,
+        execution_hard_gate=execution_hard_gate,
         select_threshold_lift=select_lift,
         near_miss_threshold_lift=near_miss_lift,
         effective_select_threshold=adjusted_select_threshold,
         effective_near_miss_threshold=adjusted_near_miss_threshold,
     )
+
+
+def _resolve_breakout_trap_guard(
+    input_data: Any,
+    *,
+    state: SnapshotSignalState,
+    threshold_state: SnapshotThresholdState,
+    clamp_unit_interval: Callable[[float], float],
+) -> dict[str, Any]:
+    market_state = dict(getattr(input_data, "market_state", {}) or {})
+    regime_gate_level, style_dispersion, regime_flip_risk, regime_gate_reasons = _resolve_market_state_regime_context(market_state)
+    breakout_pressure = clamp_unit_interval(max(threshold_state.breakout_freshness, threshold_state.trend_acceleration, threshold_state.volume_expansion_quality))
+    close_retention_score = clamp_unit_interval((0.70 * state.close_strength) + (0.20 * state.layer_c_alignment) + (0.10 * (1.0 - state.analyst_penalty)))
+    close_failure_gap = clamp_unit_interval(max(0.0, breakout_pressure - close_retention_score))
+    stale_catalyst_pressure = clamp_unit_interval(max(0.0, 0.20 - threshold_state.catalyst_freshness) / 0.20)
+    volatility_regime = float(state.volatility_metrics.get("volatility_regime", 0.0) or 0.0)
+    atr_ratio = float(state.volatility_metrics.get("atr_ratio", 0.0) or 0.0)
+    hostile_volatility = clamp_unit_interval(max((volatility_regime - 1.05) / 0.45, (atr_ratio - 0.065) / 0.045, state.volatility_strength - 0.65, 0.0))
+    execution_quality_label = str(state.historical_prior.get("execution_quality_label") or "").strip()
+    if execution_quality_label == "gap_chase_risk":
+        historical_gap_chase_risk = 1.0
+    elif execution_quality_label == "intraday_only":
+        historical_gap_chase_risk = 0.6
+    else:
+        historical_gap_chase_risk = 0.0
+    regime_pressure = clamp_unit_interval(max(regime_flip_risk, style_dispersion, 1.0 if regime_gate_level == "crisis" else 0.65 if regime_gate_level == "risk_off" else 0.0))
+    enabled = breakout_pressure >= 0.35
+    eligible = enabled and (close_failure_gap >= 0.15 or regime_pressure >= 0.58)
+    breakout_trap_risk = (
+        clamp_unit_interval(
+            (0.30 * close_failure_gap)
+            + (0.25 * regime_pressure)
+            + (0.20 * stale_catalyst_pressure)
+            + (0.15 * hostile_volatility)
+            + (0.10 * historical_gap_chase_risk)
+        )
+        if eligible
+        else 0.0
+    )
+    blocked = breakout_trap_risk >= BREAKOUT_TRAP_BLOCK_THRESHOLD
+    execution_blocked = breakout_trap_risk >= BREAKOUT_TRAP_EXECUTION_BLOCK_THRESHOLD
+    return {
+        "enabled": enabled,
+        "eligible": eligible,
+        "applied": eligible and breakout_trap_risk > 0.0,
+        "blocked": blocked,
+        "execution_blocked": execution_blocked,
+        "candidate_source": str(getattr(input_data, "replay_context", {}).get("source") or ""),
+        "regime_gate_level": regime_gate_level,
+        "regime_gate_reasons": regime_gate_reasons,
+        "style_dispersion": round(float(style_dispersion), 4),
+        "regime_flip_risk": round(float(regime_flip_risk), 4),
+        "breakout_pressure": round(float(breakout_pressure), 4),
+        "close_retention_score": round(float(close_retention_score), 4),
+        "close_failure_gap": round(float(close_failure_gap), 4),
+        "stale_catalyst_pressure": round(float(stale_catalyst_pressure), 4),
+        "hostile_volatility": round(float(hostile_volatility), 4),
+        "historical_gap_chase_risk": round(float(historical_gap_chase_risk), 4),
+        "risk": round(float(breakout_trap_risk), 4),
+        "penalty": round(float(BREAKOUT_TRAP_PENALTY_WEIGHT * breakout_trap_risk), 4),
+        "block_threshold": round(float(BREAKOUT_TRAP_BLOCK_THRESHOLD), 4),
+        "execution_block_threshold": round(float(BREAKOUT_TRAP_EXECUTION_BLOCK_THRESHOLD), 4),
+        "gate_hits": {
+            "breakout_pressure": breakout_pressure >= 0.35,
+            "weak_close_retention": close_failure_gap >= 0.15,
+            "stale_catalyst": stale_catalyst_pressure >= 0.35,
+            "risk_off_regime": regime_pressure >= 0.58,
+            "hostile_volatility": hostile_volatility >= 0.35,
+            "historical_gap_chase": historical_gap_chase_risk >= 0.6,
+        },
+    }
 
 
 def _build_snapshot_signal_state(
@@ -440,6 +563,11 @@ def _finalize_snapshot_threshold_state(
             risk_level="unknown",
             breadth_ratio=None,
             position_scale=None,
+            regime_gate_level="unknown",
+            regime_gate_reasons=[],
+            style_dispersion=0.0,
+            regime_flip_risk=0.0,
+            execution_hard_gate=False,
             select_threshold_lift=0.0,
             near_miss_threshold_lift=0.0,
             effective_select_threshold=effective_select_threshold,
@@ -584,6 +712,12 @@ def _resolve_score_penalty_state(
     stale_trend_repair_penalty = clamp_unit_interval((0.45 * state.mean_reversion_strength) + (0.35 * state.long_trend_strength) + (0.20 * max(0.0, state.long_trend_strength - threshold_state.breakout_freshness)))
     overhead_supply_penalty = clamp_unit_interval((0.45 if input_data.bc_conflict in profile.overhead_conflict_penalty_conflicts else 0.0) + (0.35 * state.analyst_penalty) + (0.20 * state.investor_penalty))
     extension_without_room_penalty = clamp_unit_interval((0.45 * state.long_trend_strength) + (0.35 * max(0.0, state.volatility_strength - threshold_state.catalyst_freshness)) + (0.20 * clamp_unit_interval((state.score_final_strength - 0.72) / 0.28)))
+    breakout_trap_guard = _resolve_breakout_trap_guard(
+        input_data,
+        state=state,
+        threshold_state=threshold_state,
+        clamp_unit_interval=clamp_unit_interval,
+    )
     profitability_hard_cliff_boundary_relief = resolve_profitability_hard_cliff_boundary_relief(
         input_data=input_data,
         profitability_hard_cliff=bool(threshold_state.profitability_relief["hard_cliff"]),
@@ -601,6 +735,9 @@ def _resolve_score_penalty_state(
         stale_trend_repair_penalty=stale_trend_repair_penalty,
         overhead_supply_penalty=overhead_supply_penalty,
         extension_without_room_penalty=extension_without_room_penalty,
+        breakout_trap_guard=breakout_trap_guard,
+        breakout_trap_risk=float(breakout_trap_guard["risk"]),
+        breakout_trap_penalty=float(breakout_trap_guard["penalty"]),
         effective_near_miss_threshold=min(
             threshold_state.effective_near_miss_threshold,
             float(profitability_hard_cliff_boundary_relief["effective_near_miss_threshold"]),
@@ -637,6 +774,7 @@ def _build_snapshot_score_payload(
         "stale_trend_repair_penalty": round(score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty, 4),
         "overhead_supply_penalty": round(profile.overhead_score_penalty_weight * score_penalty_state.overhead_supply_penalty, 4),
         "extension_without_room_penalty": round(score_penalty_state.effective_extension_score_penalty_weight * score_penalty_state.extension_without_room_penalty, 4),
+        "breakout_trap_penalty": round(score_penalty_state.breakout_trap_penalty, 4),
         "layer_c_avoid_penalty": round(threshold_state.layer_c_avoid_penalty, 4),
         "watchlist_zero_catalyst_penalty": round(watchlist_penalty_state.effective_watchlist_zero_catalyst_penalty, 4),
         "watchlist_zero_catalyst_crowded_penalty": round(watchlist_penalty_state.effective_watchlist_zero_catalyst_crowded_penalty, 4),
@@ -669,6 +807,7 @@ def _build_snapshot_score_payload(
         - (score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty)
         - (profile.overhead_score_penalty_weight * score_penalty_state.overhead_supply_penalty)
         - (score_penalty_state.effective_extension_score_penalty_weight * score_penalty_state.extension_without_room_penalty)
+        - score_penalty_state.breakout_trap_penalty
         - threshold_state.layer_c_avoid_penalty
         - watchlist_penalty_state.effective_watchlist_zero_catalyst_penalty
         - watchlist_penalty_state.effective_watchlist_zero_catalyst_crowded_penalty
@@ -857,6 +996,9 @@ def _finalize_short_trade_snapshot_relief_resolution(
         stale_trend_repair_penalty=core_state.score_penalty_state.stale_trend_repair_penalty,
         overhead_supply_penalty=core_state.score_penalty_state.overhead_supply_penalty,
         extension_without_room_penalty=core_state.score_penalty_state.extension_without_room_penalty,
+        breakout_trap_guard=core_state.score_penalty_state.breakout_trap_guard,
+        breakout_trap_risk=core_state.score_penalty_state.breakout_trap_risk,
+        breakout_trap_penalty=core_state.score_penalty_state.breakout_trap_penalty,
         effective_near_miss_threshold=float(market_state_threshold_adjustment["effective_near_miss_threshold"]),
         effective_stale_score_penalty_weight=core_state.score_penalty_state.effective_stale_score_penalty_weight,
         effective_extension_score_penalty_weight=core_state.score_penalty_state.effective_extension_score_penalty_weight,
@@ -898,6 +1040,9 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "watchlist_zero_catalyst_crowded_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_crowded_penalty,
         "watchlist_zero_catalyst_flat_trend_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_flat_trend_penalty,
         "t_plus_2_continuation_candidate": resolution.watchlist_penalty_state.t_plus_2_continuation_candidate,
+        "breakout_trap_guard": resolution.score_penalty_state.breakout_trap_guard,
+        "breakout_trap_risk": resolution.score_penalty_state.breakout_trap_risk,
+        "breakout_trap_penalty": resolution.score_penalty_state.breakout_trap_penalty,
         "positive_score_weights": resolution.positive_score_weights,
         "weighted_positive_contributions": resolution.score_payload["weighted_positive_contributions"],
         "weighted_negative_contributions": resolution.score_payload["weighted_negative_contributions"],
