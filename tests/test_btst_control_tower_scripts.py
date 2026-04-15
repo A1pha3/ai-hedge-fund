@@ -2989,7 +2989,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
     assert all(task.get("source") != "carryover_contract" for task in next_actions)
     assert payload["control_tower_snapshot"]["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
     assert "historical_shadow_probe_tickers" in payload["control_tower_snapshot"]["candidate_pool_upstream_handoff_board_summary"]
-    assert payload["control_tower_snapshot"]["candidate_pool_corridor_uplift_runbook_status"] in {"ready_for_upstream_uplift_probe", "skipped_no_corridor_probe"}
+    assert payload["control_tower_snapshot"]["candidate_pool_corridor_uplift_runbook_status"] in {"ready_for_upstream_uplift_probe", "ready_for_corridor_promotion_candidate", "accumulate_more_corridor_evidence", "skipped_no_corridor_probe"}
     assert any(item["entry_id"] == "latest_btst_catalyst_theme_frontier_markdown" for item in payload["recommended_reading_order"])
     assert any(item["entry_id"] == "btst_score_fail_frontier_latest" for item in payload["recommended_reading_order"])
     assert delta_payload["comparison_basis"] == "previous_btst_report"

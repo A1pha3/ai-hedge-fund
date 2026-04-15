@@ -373,6 +373,7 @@ def refresh_candidate_entry_shadow_prerequisites(
 
     state.candidate_pool_corridor_uplift_runbook.analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
         paths.candidate_pool_recall_dossier.json,
+        corridor_validation_pack_path=paths.candidate_pool_corridor_validation_pack.json,
         corridor_shadow_pack_path=paths.candidate_pool_corridor_shadow_pack.json,
         lane_pair_board_path=paths.candidate_pool_lane_pair_board.json,
     )
@@ -705,6 +706,8 @@ def _build_upstream_handoff_board_summary(analysis: dict[str, Any]) -> dict[str,
 def _build_corridor_uplift_runbook_summary(analysis: dict[str, Any]) -> dict[str, Any]:
     return {
         "runbook_status": analysis.get("runbook_status"),
+        "corridor_validation_pack_status": analysis.get("corridor_validation_pack_status"),
+        "promotion_readiness_status": analysis.get("promotion_readiness_status"),
         "primary_shadow_replay": analysis.get("primary_shadow_replay"),
         "parallel_watch_tickers": list(analysis.get("parallel_watch_tickers") or [])[:3],
         "excluded_low_gate_tail_tickers": list(analysis.get("excluded_low_gate_tail_tickers") or [])[:3],

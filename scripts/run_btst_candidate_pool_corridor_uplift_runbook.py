@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_candidate_pool_corridor_narrow_probe import analyze_btst_candidate_pool_corridor_narrow_probe
+from scripts.run_btst_candidate_pool_corridor_validation_pack import analyze_btst_candidate_pool_corridor_validation_pack
 from scripts.run_btst_candidate_pool_corridor_shadow_pack import analyze_btst_candidate_pool_corridor_shadow_pack
 from scripts.run_btst_candidate_pool_lane_pair_board import analyze_btst_candidate_pool_lane_pair_board
 
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json"
+DEFAULT_CORRIDOR_VALIDATION_PACK_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_validation_pack_latest.json"
 DEFAULT_CORRIDOR_SHADOW_PACK_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_latest.json"
 DEFAULT_LANE_PAIR_BOARD_PATH = REPORTS_DIR / "btst_candidate_pool_lane_pair_board_latest.json"
 DEFAULT_CORRIDOR_NARROW_PROBE_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_narrow_probe_latest.json"
@@ -91,14 +93,74 @@ def _filter_parallel_watch_lanes(
     return filtered, sorted(excluded_tickers)
 
 
+def _resolve_runbook_status(
+    *,
+    corridor_experiment: dict[str, Any],
+    primary_shadow: dict[str, Any],
+    corridor_validation_pack: dict[str, Any],
+) -> str:
+    if not corridor_experiment or not primary_shadow:
+        return "skipped_no_corridor_probe"
+
+    promotion_readiness_status = str(corridor_validation_pack.get("promotion_readiness_status") or "").strip()
+    if promotion_readiness_status == "corridor_promotion_candidate_ready":
+        return "ready_for_corridor_promotion_candidate"
+
+    validation_pack_status = str(corridor_validation_pack.get("pack_status") or "").strip()
+    if validation_pack_status == "accumulate_more_corridor_evidence":
+        return "accumulate_more_corridor_evidence"
+
+    return "ready_for_upstream_uplift_probe"
+
+
+def _build_runbook_recommendation(
+    *,
+    runbook_status: str,
+    primary_shadow: dict[str, Any],
+    board_leader: dict[str, Any],
+    corridor_validation_pack: dict[str, Any],
+) -> str:
+    primary_ticker = primary_shadow.get("ticker") or "N/A"
+    board_leader_ticker = board_leader.get("ticker") or "N/A"
+    validation_pack_recommendation = str(corridor_validation_pack.get("recommendation") or "").strip()
+
+    if runbook_status == "ready_for_corridor_promotion_candidate":
+        recommendation = (
+            f"corridor uplift runbook 当前围绕 {primary_ticker} 进入 promotion-candidate review，"
+            f"同时保持 {board_leader_ticker} 的 lane pair leader 语义不变。"
+        )
+    elif runbook_status == "accumulate_more_corridor_evidence":
+        recommendation = (
+            f"corridor uplift runbook 当前仍以 {primary_ticker} 为 primary shadow replay，"
+            "但还不足以升级为 promotion-candidate，应继续积累 closed-cycle 证据。"
+        )
+    else:
+        recommendation = (
+            f"corridor uplift runbook 当前应围绕 {primary_ticker} 展开，"
+            f"并保持 {board_leader_ticker} 的 lane pair leader 语义不变。"
+        )
+
+    if validation_pack_recommendation:
+        recommendation += f" {validation_pack_recommendation}"
+    return recommendation
+
+
 def analyze_btst_candidate_pool_corridor_uplift_runbook(
     candidate_pool_recall_dossier_path: str | Path,
     *,
+    corridor_validation_pack_path: str | Path | None = None,
     corridor_shadow_pack_path: str | Path | None = None,
     lane_pair_board_path: str | Path | None = None,
     corridor_narrow_probe_path: str | Path | None = None,
 ) -> dict[str, Any]:
     recall_dossier = _maybe_load_json(candidate_pool_recall_dossier_path)
+    corridor_validation_pack: dict[str, Any] = {}
+    if corridor_validation_pack_path:
+        corridor_validation_pack = _maybe_load_json(corridor_validation_pack_path)
+    if corridor_validation_pack_path and not corridor_validation_pack:
+        corridor_validation_pack = analyze_btst_candidate_pool_corridor_validation_pack(
+            candidate_pool_recall_dossier_path,
+        )
     corridor_shadow_pack = _maybe_load_json(corridor_shadow_pack_path)
     if not corridor_shadow_pack:
         corridor_shadow_pack = analyze_btst_candidate_pool_corridor_shadow_pack(REPORTS_DIR / "btst_candidate_pool_corridor_validation_pack_latest.json")
@@ -123,25 +185,39 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
     )
     board_leader = dict(lane_pair_board.get("board_leader") or {})
 
-    runbook_status = "ready_for_upstream_uplift_probe" if corridor_experiment and primary_shadow else "skipped_no_corridor_probe"
+    runbook_status = _resolve_runbook_status(
+        corridor_experiment=corridor_experiment,
+        primary_shadow=primary_shadow,
+        corridor_validation_pack=corridor_validation_pack,
+    )
     execution_steps = [
         f"保持 {primary_shadow.get('ticker') or 'primary corridor ticker'} 为唯一 primary shadow replay 槽位。",
         f"把 {[row.get('ticker') for row in parallel_watch if row.get('ticker')]} 仅作为 confirmatory parallel watch，不允许替换 primary。",
         "仅验证 upstream base-liquidity uplift 是否压缩 nearest frontier multiple，不讨论 cutoff 微调。",
         f"若 pair board leader 仍是 {board_leader.get('ticker') or 'corridor primary'}，则继续保持 corridor-first。",
     ]
+    if runbook_status == "ready_for_corridor_promotion_candidate":
+        execution_steps.insert(1, f"对 {primary_shadow.get('ticker') or 'primary corridor ticker'} 启动 promotion-candidate review，但默认 Layer A liquidity gate 与 top300 cutoff 仍保持不变。")
+    elif runbook_status == "accumulate_more_corridor_evidence":
+        execution_steps.insert(1, "当前只允许继续做 shadow probe 和 closed-cycle accumulation，不允许把 corridor 误升级成 live promotion lane。")
     if excluded_low_gate_tail_tickers:
         execution_steps.append(f"把 {excluded_low_gate_tail_tickers} 作为 excluded low-gate tail 留在上游流动性诊断，不进入 retained deepest corridor shadow pack。")
     success_criteria = list(corridor_shadow_pack.get("success_criteria") or [])
     if corridor_experiment.get("success_signal"):
         success_criteria.append(str(corridor_experiment.get("success_signal")))
+    if runbook_status == "ready_for_corridor_promotion_candidate":
+        success_criteria.append("promotion-candidate review 期间仍需保持 default liquidity gate/cutoff 口径不变，且 primary ticker 的 follow-through 不劣化。")
     guardrails = list(corridor_shadow_pack.get("guardrails") or [])
     if corridor_experiment.get("guardrail_summary"):
         guardrails.append(str(corridor_experiment.get("guardrail_summary")))
+    if runbook_status == "ready_for_corridor_promotion_candidate":
+        guardrails.append("promotion-candidate review 只允许受控提升，不允许把 corridor 解释成 top300 micro-boundary 调参。")
 
-    recommendation = (
-        f"corridor uplift runbook 当前应围绕 {primary_shadow.get('ticker') or 'N/A'} 展开，"
-        f"并保持 {board_leader.get('ticker') or 'N/A'} 的 lane pair leader 语义不变。"
+    recommendation = _build_runbook_recommendation(
+        runbook_status=runbook_status,
+        primary_shadow=primary_shadow,
+        board_leader=board_leader,
+        corridor_validation_pack=corridor_validation_pack,
     )
     execution_commands = _build_corridor_uplift_commands(
         candidate_pool_recall_dossier_path=candidate_pool_recall_dossier_path,
@@ -153,6 +229,9 @@ def analyze_btst_candidate_pool_corridor_uplift_runbook(
 
     return {
         "candidate_pool_recall_dossier_path": str(Path(candidate_pool_recall_dossier_path).expanduser().resolve()),
+        "corridor_validation_pack_path": str(Path(corridor_validation_pack_path).expanduser().resolve()) if corridor_validation_pack_path else None,
+        "corridor_validation_pack_status": corridor_validation_pack.get("pack_status"),
+        "promotion_readiness_status": corridor_validation_pack.get("promotion_readiness_status"),
         "corridor_shadow_pack_path": str(Path(corridor_shadow_pack_path).expanduser().resolve()) if corridor_shadow_pack_path else None,
         "lane_pair_board_path": str(Path(lane_pair_board_path).expanduser().resolve()) if lane_pair_board_path else None,
         "corridor_narrow_probe_path": str(Path(corridor_narrow_probe_path).expanduser().resolve()) if corridor_narrow_probe_path else None,
@@ -228,6 +307,7 @@ def render_btst_candidate_pool_corridor_uplift_runbook_markdown(analysis: dict[s
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build a runnable corridor uplift probe runbook for candidate-pool recall governance.")
     parser.add_argument("--candidate-pool-recall-dossier-path", default=str(DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH))
+    parser.add_argument("--corridor-validation-pack-path", default=str(DEFAULT_CORRIDOR_VALIDATION_PACK_PATH))
     parser.add_argument("--corridor-shadow-pack-path", default=str(DEFAULT_CORRIDOR_SHADOW_PACK_PATH))
     parser.add_argument("--lane-pair-board-path", default=str(DEFAULT_LANE_PAIR_BOARD_PATH))
     parser.add_argument("--corridor-narrow-probe-path", default=str(DEFAULT_CORRIDOR_NARROW_PROBE_PATH))
@@ -237,6 +317,7 @@ if __name__ == "__main__":
 
     analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
         args.candidate_pool_recall_dossier_path,
+        corridor_validation_pack_path=args.corridor_validation_pack_path,
         corridor_shadow_pack_path=args.corridor_shadow_pack_path,
         lane_pair_board_path=args.lane_pair_board_path,
         corridor_narrow_probe_path=args.corridor_narrow_probe_path,

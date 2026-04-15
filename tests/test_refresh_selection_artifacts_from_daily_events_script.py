@@ -344,6 +344,40 @@ def _make_low_sample_catalyst_theme_carryover_entry() -> dict:
     return entry
 
 
+def _make_short_trade_boundary_entry(*, ticker: str, strategy_signals: dict | None = None) -> dict:
+    return {
+        "ticker": ticker,
+        "score_b": 0.2,
+        "score_c": -0.4,
+        "score_final": 0.05,
+        "quality_score": 0.58,
+        "decision": "watch",
+        "reason": "short_trade_candidate_score_ranked",
+        "reasons": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+        "candidate_source": "short_trade_boundary",
+        "candidate_reason_codes": ["short_trade_candidate_score_ranked", "short_trade_prequalified"],
+        "strategy_signals": dict(strategy_signals or {}),
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}},
+    }
+
+
+def _make_watchlist_item(*, ticker: str, strategy_signals: dict | None = None) -> dict:
+    return {
+        "ticker": ticker,
+        "score_c": 0.31,
+        "score_final": 0.42,
+        "score_b": 0.42,
+        "quality_score": 0.62,
+        "market_state": {},
+        "candidate_source": "layer_c_watchlist",
+        "candidate_reason_codes": ["watchlist_ranked"],
+        "strategy_signals": dict(strategy_signals or {}),
+        "agent_signals": {},
+        "agent_contribution_summary": {},
+        "decision": "watch",
+    }
+
+
 def test_refresh_selection_artifacts_from_daily_events_promotes_post_gate_shadow_entry(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260331_20260331_refresh_target"
     (report_dir / "selection_artifacts").mkdir(parents=True)
@@ -1056,3 +1090,134 @@ def test_refresh_selection_artifacts_from_daily_events_passthroughs_carryover_ev
         selection_snapshot["selection_targets"]["688498"]["short_trade"]["metrics_payload"]["carryover_evidence_deficiency"]["evidence_deficient"]
         is True
     )
+
+
+def test_refresh_selection_artifacts_from_daily_events_rehydrates_strategy_signals_for_supplemental_entries_from_existing_replay_input(
+    tmp_path,
+):
+    report_dir = tmp_path / "paper_trading_20260410_20260410_refresh_rehydrate_entry_signals"
+    selection_dir = report_dir / "selection_artifacts" / "2026-04-10"
+    selection_dir.mkdir(parents=True)
+    trade_date = "20260410"
+
+    empty_entry = _make_short_trade_boundary_entry(ticker="300757", strategy_signals={})
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {
+                        "tickers": [empty_entry],
+                        "released_shadow_entries": [],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (selection_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "supplemental_short_trade_entries": [
+                    _make_short_trade_boundary_entry(
+                        ticker="300757",
+                        strategy_signals={
+                            "trend": _make_signal(1, 95.0).model_dump(mode="json"),
+                            "fundamental": _make_signal(1, 45.0).model_dump(mode="json"),
+                        },
+                    )
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-10")
+
+    replay_input = json.loads((selection_dir / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    supplemental_entry = next(entry for entry in replay_input["supplemental_short_trade_entries"] if entry["ticker"] == "300757")
+    assert supplemental_entry["strategy_signals"]["trend"]["confidence"] == 95.0
+    assert set(supplemental_entry["strategy_signals"].keys()) == {"trend", "fundamental"}
+
+    selection_snapshot = json.loads((selection_dir / "selection_snapshot.json").read_text(encoding="utf-8"))
+    assert selection_snapshot["selection_targets"]["300757"]["short_trade"]["explainability_payload"]["available_strategy_signals"] == ["fundamental", "trend"]
+
+
+def test_refresh_selection_artifacts_from_daily_events_rehydrates_strategy_signals_for_watchlist_from_existing_replay_input(
+    tmp_path,
+):
+    report_dir = tmp_path / "paper_trading_20260410_20260410_refresh_rehydrate_watchlist_signals"
+    selection_dir = report_dir / "selection_artifacts" / "2026-04-10"
+    selection_dir.mkdir(parents=True)
+    trade_date = "20260410"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        watchlist=[_make_watchlist_item(ticker="300999", strategy_signals={})],
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": []},
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (selection_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "watchlist": [
+                    _make_watchlist_item(
+                        ticker="300999",
+                        strategy_signals={
+                            "trend": _make_signal(1, 91.0).model_dump(mode="json"),
+                            "event_sentiment": _make_signal(1, 35.0).model_dump(mode="json"),
+                        },
+                    )
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    refresh_selection_artifacts_for_report(report_dir, trade_date="2026-04-10")
+
+    replay_input = json.loads((selection_dir / "selection_target_replay_input.json").read_text(encoding="utf-8"))
+    watchlist_entry = next(entry for entry in replay_input["watchlist"] if entry["ticker"] == "300999")
+    assert watchlist_entry["strategy_signals"]["trend"]["confidence"] == 91.0
+    assert set(watchlist_entry["strategy_signals"].keys()) == {"trend", "event_sentiment"}
+
+    selection_snapshot = json.loads((selection_dir / "selection_snapshot.json").read_text(encoding="utf-8"))
+    assert selection_snapshot["selection_targets"]["300999"]["short_trade"]["explainability_payload"]["available_strategy_signals"] == ["event_sentiment", "trend"]

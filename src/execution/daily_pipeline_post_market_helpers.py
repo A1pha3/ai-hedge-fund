@@ -131,6 +131,7 @@ def build_post_market_counts(
         "candidate_pool_shadow_candidate_count": len(candidate_context.shadow_candidates),
         "upstream_shadow_observation_count": int((watchlist_context.short_trade_candidate_diagnostics or {}).get("shadow_observation_count") or 0),
         "upstream_shadow_released_count": int((watchlist_context.short_trade_candidate_diagnostics or {}).get("released_shadow_count") or 0),
+        "upstream_shadow_promoted_count": int((watchlist_context.short_trade_candidate_diagnostics or {}).get("promoted_to_watchlist_count") or 0),
         "watchlist_shadow_released_count": int((watchlist_context.watchlist_filter_diagnostics or {}).get("released_shadow_count") or 0),
         "fast_agent_ticker_count": len(candidate_context.high_pool),
         "precise_agent_ticker_count": len(candidate_context.top_precise_pool),
@@ -324,10 +325,13 @@ def build_selection_target_inputs(
 ) -> PostMarketSelectionTargetInputs:
     market_state_payload = _serialize_market_state_payload(market_state)
     entry_filter_rules = build_default_btst_candidate_entry_filter_rules()
+    released_shadow_entries = _filter_promoted_upstream_shadow_entries(
+        list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or [])
+    )
     rejected_entries = list((watchlist_filter_diagnostics or {}).get("tickers", []) or [])
     supplemental_short_trade_entries = [
         *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
-        *list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
+        *released_shadow_entries,
         *list((watchlist_filter_diagnostics or {}).get("released_shadow_entries", []) or []),
         *(list((catalyst_theme_candidate_diagnostics or {}).get("tickers", []) or []) if target_mode == "short_trade_only" else []),
     ]
@@ -392,6 +396,10 @@ def _serialize_market_state_payload(market_state: Any | None) -> dict[str, Any]:
     return {}
 
 
+def _filter_promoted_upstream_shadow_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [dict(entry) for entry in list(entries or []) if not bool(dict(entry).get("promoted_to_watchlist"))]
+
+
 def _attach_market_state_to_entries(entries: list[dict[str, Any]], *, market_state_payload: dict[str, Any]) -> list[dict[str, Any]]:
     if not market_state_payload:
         return list(entries or [])
@@ -415,6 +423,9 @@ def build_plan_target_shell_inputs(
     funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
     watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
     short_trade_candidate_diagnostics = dict(funnel_filters.get("short_trade_candidates", {}) or {})
+    released_shadow_entries = _filter_promoted_upstream_shadow_entries(
+        list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or [])
+    )
     catalyst_theme_candidates = list(dict(funnel_filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []) if target_mode == "short_trade_only" else []
     return PlanTargetShellInputs(
         rejected_entries=attach_historical_prior_to_entries_fn(
@@ -428,7 +439,7 @@ def build_plan_target_shell_inputs(
         supplemental_short_trade_entries=attach_historical_prior_to_entries_fn(
             [
                 *list(short_trade_candidate_diagnostics.get("tickers", []) or []),
-                *list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []),
+                *released_shadow_entries,
                 *list(watchlist_filter_diagnostics.get("released_shadow_entries", []) or []),
                 *catalyst_theme_candidates,
             ],

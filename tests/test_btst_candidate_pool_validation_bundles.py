@@ -1215,3 +1215,131 @@ def test_corridor_uplift_runbook_keeps_corridor_first_and_parallel_confirmatory(
     assert "--candidate-pool-shadow-focus-tickers 300720,003036" in paper_trading_commands[0]
     assert "--candidate-pool-shadow-corridor-focus-tickers 300720,003036" in paper_trading_commands[0]
     assert any("excluded low-gate tail" in step for step in analysis["execution_steps"])
+
+
+def test_corridor_uplift_runbook_upgrades_to_promotion_candidate_when_validation_pack_is_ready(tmp_path: Path) -> None:
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 4.103,
+                    "uplift_to_cutoff_multiple_min": 2.4211,
+                    "target_cutoff_avg_amount_20d_mean": 166904.4837,
+                    "prototype_summary": "run uplift probe",
+                    "evaluation_summary": "measure uplift before cutoff tuning",
+                    "guardrail_summary": "do not rewrite as cutoff tuning",
+                    "why_now": "closed-cycle evidence improved",
+                    "success_signal": "compress nearest frontier multiple",
+                }
+            ]
+        },
+    )
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "promotion_readiness_status": "corridor_promotion_candidate_ready",
+            "recommendation": "300720 已进入 promotion-candidate 强证据区间。",
+        },
+    )
+    _write_json(
+        corridor_shadow_pack_path,
+        {
+            "primary_shadow_replay": {"ticker": "300720"},
+            "parallel_watch_lanes": [{"ticker": "003036"}],
+            "success_criteria": ["keep primary above tradeable surface"],
+            "guardrails": ["no default cutoff tuning"],
+        },
+    )
+    _write_json(
+        lane_pair_board_path,
+        {
+            "board_leader": {"ticker": "300720", "lane_family": "corridor"},
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_validation_pack_path=corridor_validation_pack_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+    )
+
+    assert analysis["runbook_status"] == "ready_for_corridor_promotion_candidate"
+    assert analysis["promotion_readiness_status"] == "corridor_promotion_candidate_ready"
+    assert any("promotion-candidate review" in step for step in analysis["execution_steps"])
+    assert any("promotion-candidate review" in criterion for criterion in analysis["success_criteria"])
+    assert any("promotion-candidate review" in guardrail for guardrail in analysis["guardrails"])
+
+
+def test_corridor_uplift_runbook_keeps_evidence_only_when_validation_pack_is_not_ready(tmp_path: Path) -> None:
+    recall_dossier_path = tmp_path / "btst_candidate_pool_recall_dossier_latest.json"
+    corridor_validation_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    corridor_shadow_pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+
+    _write_json(
+        recall_dossier_path,
+        {
+            "priority_handoff_branch_experiment_queue": [
+                {
+                    "task_id": "layer_a_liquidity_corridor_upstream_base_liquidity_uplift_probe",
+                    "priority_handoff": "layer_a_liquidity_corridor",
+                    "prototype_readiness": "shadow_ready_large_gap",
+                    "prototype_type": "upstream_base_liquidity_uplift_probe",
+                    "uplift_to_cutoff_multiple_mean": 8.603,
+                    "uplift_to_cutoff_multiple_min": 3.4211,
+                    "target_cutoff_avg_amount_20d_mean": 166904.4837,
+                    "prototype_summary": "run uplift probe",
+                    "evaluation_summary": "measure uplift before cutoff tuning",
+                    "guardrail_summary": "do not rewrite as cutoff tuning",
+                    "why_now": "large liquidity wall remains",
+                    "success_signal": "compress nearest frontier multiple",
+                }
+            ]
+        },
+    )
+    _write_json(
+        corridor_validation_pack_path,
+        {
+            "pack_status": "accumulate_more_corridor_evidence",
+            "promotion_readiness_status": "corridor_shadow_probe_ready",
+            "recommendation": "corridor lane 仍需更多 closed-cycle 支持。",
+        },
+    )
+    _write_json(
+        corridor_shadow_pack_path,
+        {
+            "primary_shadow_replay": {"ticker": "300720"},
+            "parallel_watch_lanes": [{"ticker": "003036"}],
+            "success_criteria": ["keep primary above tradeable surface"],
+            "guardrails": ["no default cutoff tuning"],
+        },
+    )
+    _write_json(
+        lane_pair_board_path,
+        {
+            "board_leader": {"ticker": "300720", "lane_family": "corridor"},
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_uplift_runbook(
+        recall_dossier_path,
+        corridor_validation_pack_path=corridor_validation_pack_path,
+        corridor_shadow_pack_path=corridor_shadow_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+    )
+
+    assert analysis["runbook_status"] == "accumulate_more_corridor_evidence"
+    assert analysis["promotion_readiness_status"] == "corridor_shadow_probe_ready"
+    assert any("closed-cycle accumulation" in step for step in analysis["execution_steps"])

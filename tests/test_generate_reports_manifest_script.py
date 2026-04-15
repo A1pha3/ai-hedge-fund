@@ -1789,8 +1789,10 @@ def test_generate_reports_manifest_refreshes_candidate_entry_shadow_lane_artifac
     assert refresh["candidate_pool_upstream_handoff_board_status"] in {"ready_for_upstream_handoff_execution", "skipped_no_focus_tickers"}
     assert refresh["candidate_pool_upstream_handoff_board_summary"]["board_status"] == refresh["candidate_pool_upstream_handoff_board_status"]
     assert "historical_shadow_probe_tickers" in refresh["candidate_pool_upstream_handoff_board_summary"]
-    assert refresh["candidate_pool_corridor_uplift_runbook_status"] in {"ready_for_upstream_uplift_probe", "skipped_no_corridor_probe"}
+    assert refresh["candidate_pool_corridor_uplift_runbook_status"] in {"ready_for_upstream_uplift_probe", "ready_for_corridor_promotion_candidate", "accumulate_more_corridor_evidence", "skipped_no_corridor_probe"}
     assert refresh["candidate_pool_corridor_uplift_runbook_summary"]["runbook_status"] == refresh["candidate_pool_corridor_uplift_runbook_status"]
+    assert "corridor_validation_pack_status" in refresh["candidate_pool_corridor_uplift_runbook_summary"]
+    assert "promotion_readiness_status" in refresh["candidate_pool_corridor_uplift_runbook_summary"]
     assert "prototype_type" in refresh["candidate_pool_corridor_uplift_runbook_summary"]
     assert "execution_step_head" in refresh["candidate_pool_corridor_uplift_runbook_summary"]
     assert "guardrail_head" in refresh["candidate_pool_corridor_uplift_runbook_summary"]

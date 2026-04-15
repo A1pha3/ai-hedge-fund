@@ -15,6 +15,7 @@ from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.research.artifacts import FileSelectionArtifactWriter
+from src.screening.models import StrategySignal
 from src.targets.models import DualTargetEvaluation
 from src.targets.router import build_selection_targets, summarize_selection_targets
 from src.targets.short_trade_target import evaluate_short_trade_selected_target
@@ -86,6 +87,158 @@ def _build_candidate_pool_shadow_lookup(raw_current_plan: dict[str, Any]) -> dic
         if ticker:
             lookup[ticker] = entry
     return lookup
+
+
+def _normalize_strategy_signals_payload(raw_signals: Any) -> dict[str, dict[str, Any]]:
+    normalized: dict[str, dict[str, Any]] = {}
+    for name, payload in dict(raw_signals or {}).items():
+        signal_name = str(name or "").strip()
+        if not signal_name:
+            continue
+        if hasattr(payload, "model_dump"):
+            signal_payload = dict(payload.model_dump(mode="json") or {})
+        elif isinstance(payload, dict):
+            signal_payload = dict(payload or {})
+        else:
+            continue
+        if signal_payload:
+            normalized[signal_name] = signal_payload
+    return normalized
+
+
+def _merge_strategy_signals_lookup(
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]],
+    *,
+    ticker: Any,
+    raw_signals: Any,
+) -> None:
+    normalized_ticker = str(ticker or "").strip()
+    if not normalized_ticker:
+        return
+    normalized_signals = _normalize_strategy_signals_payload(raw_signals)
+    if not normalized_signals:
+        return
+    strategy_signals_by_ticker.setdefault(normalized_ticker, normalized_signals)
+
+
+def _load_existing_replay_input_strategy_signals(report_dir: Path, trade_date_compact: str) -> dict[str, dict[str, dict[str, Any]]]:
+    trade_date = normalize_trade_date(trade_date_compact) or trade_date_compact
+    replay_input_path = report_dir / "selection_artifacts" / str(trade_date) / "selection_target_replay_input.json"
+    replay_input = safe_load_json(replay_input_path)
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]] = {}
+    for entry_key in (
+        "watchlist",
+        "rejected_entries",
+        "supplemental_short_trade_entries",
+        "supplemental_catalyst_theme_entries",
+        "upstream_shadow_observation_entries",
+    ):
+        for raw_entry in list(replay_input.get(entry_key) or []):
+            entry = dict(raw_entry or {})
+            _merge_strategy_signals_lookup(
+                strategy_signals_by_ticker,
+                ticker=entry.get("ticker"),
+                raw_signals=entry.get("strategy_signals"),
+            )
+    return strategy_signals_by_ticker
+
+
+def _build_strategy_signals_lookup(
+    plan: ExecutionPlan,
+    *,
+    report_dir: Path,
+    trade_date_compact: str,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]] = {}
+    for item in list(plan.watchlist or []):
+        _merge_strategy_signals_lookup(
+            strategy_signals_by_ticker,
+            ticker=getattr(item, "ticker", None),
+            raw_signals=getattr(item, "strategy_signals", None),
+        )
+
+    filters = dict(dict((plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("filters") or {})
+    for filter_key in ("watchlist", "short_trade_candidates", "catalyst_theme_candidates"):
+        filter_payload = dict(filters.get(filter_key) or {})
+        for entry_key in ("tickers", "released_shadow_entries", "shadow_observation_entries"):
+            for raw_entry in list(filter_payload.get(entry_key) or []):
+                entry = dict(raw_entry or {})
+                _merge_strategy_signals_lookup(
+                    strategy_signals_by_ticker,
+                    ticker=entry.get("ticker"),
+                    raw_signals=entry.get("strategy_signals"),
+                )
+
+    for ticker, signals in _load_existing_replay_input_strategy_signals(report_dir, trade_date_compact).items():
+        strategy_signals_by_ticker.setdefault(ticker, signals)
+    return strategy_signals_by_ticker
+
+
+def _attach_strategy_signals_to_entry(
+    entry: dict[str, Any],
+    *,
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, Any]:
+    updated_entry = dict(entry or {})
+    existing_signals = _normalize_strategy_signals_payload(updated_entry.get("strategy_signals"))
+    if existing_signals:
+        updated_entry["strategy_signals"] = existing_signals
+        return updated_entry
+
+    ticker = str(updated_entry.get("ticker") or "").strip()
+    fallback_signals = dict(strategy_signals_by_ticker.get(ticker) or {})
+    if fallback_signals:
+        updated_entry["strategy_signals"] = fallback_signals
+    return updated_entry
+
+
+def _attach_strategy_signals_to_entries(
+    entries: list[dict[str, Any]],
+    *,
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    return [
+        _attach_strategy_signals_to_entry(entry, strategy_signals_by_ticker=strategy_signals_by_ticker)
+        for entry in list(entries or [])
+    ]
+
+
+def _coerce_strategy_signal_models(raw_signals: dict[str, dict[str, Any]]) -> dict[str, StrategySignal]:
+    coerced: dict[str, StrategySignal] = {}
+    for name, payload in dict(raw_signals or {}).items():
+        try:
+            coerced[str(name)] = StrategySignal.model_validate(payload)
+        except Exception:
+            continue
+    return coerced
+
+
+def _rehydrate_watchlist_strategy_signals(
+    watchlist: list[Any],
+    *,
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]],
+) -> list[Any]:
+    rehydrated_watchlist: list[Any] = []
+    for item in list(watchlist or []):
+        existing_signals = _normalize_strategy_signals_payload(getattr(item, "strategy_signals", None))
+        if existing_signals:
+            rehydrated_watchlist.append(item)
+            continue
+
+        ticker = str(getattr(item, "ticker", "") or "").strip()
+        fallback_signals = dict(strategy_signals_by_ticker.get(ticker) or {})
+        if not fallback_signals or not hasattr(item, "model_copy"):
+            rehydrated_watchlist.append(item)
+            continue
+
+        rehydrated_watchlist.append(
+            item.model_copy(
+                update={
+                    "strategy_signals": _coerce_strategy_signal_models(fallback_signals),
+                }
+            )
+        )
+    return rehydrated_watchlist
 
 
 def _merge_shadow_metadata(entry: dict[str, Any], shadow_lookup: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -364,11 +517,13 @@ def rebuild_selection_targets_for_plan(
     shadow_lookup: dict[str, dict[str, Any]] | None = None,
     *,
     historical_prior_by_ticker: dict[str, dict[str, Any]] | None = None,
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> ExecutionPlan:
     risk_metrics = dict(plan.risk_metrics or {})
     funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics") or {})
     filters = dict(funnel_diagnostics.get("filters") or {})
     shadow_lookup = dict(shadow_lookup or {})
+    strategy_signals_by_ticker = dict(strategy_signals_by_ticker or {})
     historical_prior_by_ticker = {
         **_extract_historical_prior_from_plan_selection_targets(plan),
         **dict(historical_prior_by_ticker or {}),
@@ -390,21 +545,45 @@ def rebuild_selection_targets_for_plan(
         list(watchlist_filter.get("tickers") or []),
         prior_by_ticker=historical_prior_by_ticker,
     )
+    refreshed_rejected_entries = _attach_strategy_signals_to_entries(
+        refreshed_rejected_entries,
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
+    )
     refreshed_short_trade_tickers = _attach_historical_prior_to_entries(
         list(short_trade_candidate_filters.get("tickers") or []),
         prior_by_ticker=historical_prior_by_ticker,
+    )
+    refreshed_short_trade_tickers = _attach_strategy_signals_to_entries(
+        refreshed_short_trade_tickers,
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
     )
     refreshed_short_trade_released_shadow_entries = _attach_historical_prior_to_entries(
         list(short_trade_candidate_filters.get("released_shadow_entries") or []),
         prior_by_ticker=historical_prior_by_ticker,
     )
+    refreshed_short_trade_released_shadow_entries = _attach_strategy_signals_to_entries(
+        refreshed_short_trade_released_shadow_entries,
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
+    )
     refreshed_watchlist_released_shadow_entries = _attach_historical_prior_to_entries(
         list(watchlist_filter.get("released_shadow_entries") or []),
         prior_by_ticker=historical_prior_by_ticker,
     )
+    refreshed_watchlist_released_shadow_entries = _attach_strategy_signals_to_entries(
+        refreshed_watchlist_released_shadow_entries,
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
+    )
     refreshed_catalyst_theme_tickers = _attach_historical_prior_to_entries(
         list(catalyst_theme_filter.get("tickers") or []),
         prior_by_ticker=historical_prior_by_ticker,
+    )
+    refreshed_catalyst_theme_tickers = _attach_strategy_signals_to_entries(
+        refreshed_catalyst_theme_tickers,
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
+    )
+    plan.watchlist = _rehydrate_watchlist_strategy_signals(
+        list(plan.watchlist or []),
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
     )
     selection_targets, dual_target_summary = build_selection_targets(
         trade_date=trade_date_compact,
@@ -456,11 +635,17 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
     for trade_date_compact in target_trade_dates:
         plan = ExecutionPlan.model_validate(plans_by_date[trade_date_compact].model_dump(mode="json"))
         shadow_lookup = _build_candidate_pool_shadow_lookup(raw_plans_by_date.get(trade_date_compact) or {})
+        strategy_signals_by_ticker = _build_strategy_signals_lookup(
+            plan,
+            report_dir=resolved_report_dir,
+            trade_date_compact=trade_date_compact,
+        )
         refreshed_plan = rebuild_selection_targets_for_plan(
             plan,
             trade_date_compact,
             shadow_lookup,
             historical_prior_by_ticker=_load_latest_historical_prior_by_ticker(resolved_report_dir),
+            strategy_signals_by_ticker=strategy_signals_by_ticker,
         )
         metadata, selected_analysts, pipeline_stub = _load_artifact_metadata(resolved_report_dir, trade_date_compact)
         writer = FileSelectionArtifactWriter(

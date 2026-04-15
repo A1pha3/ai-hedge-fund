@@ -147,6 +147,8 @@ from src.execution.daily_pipeline_settings import (
     UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
     UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_CLOSE_MIN,
     UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_TREND_MIN,
+    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES,
+    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS,
     WATCHLIST_DIAGNOSTICS_CONFIG,
     WATCHLIST_SCORE_THRESHOLD,
 )
@@ -172,7 +174,7 @@ from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
 from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
 from src.screening.candidate_pool import build_candidate_pool, build_candidate_pool_with_shadow
-from src.screening.models import CandidateStock
+from src.screening.models import CandidateStock, StrategySignal
 from src.screening.market_state import detect_market_state, recommend_short_trade_profile
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
@@ -654,6 +656,150 @@ def _select_upstream_shadow_release_entries(
         resolve_lane_limit_fn=_resolve_upstream_shadow_release_max_tickers,
         max_tickers=UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
         rank_scored_entries_fn=rank_scored_entries,
+    )
+
+
+def _coerce_upstream_shadow_strategy_signal(payload: Any) -> StrategySignal | None:
+    if isinstance(payload, StrategySignal):
+        return payload
+    if isinstance(payload, dict):
+        try:
+            return StrategySignal.model_validate(dict(payload))
+        except Exception:
+            return None
+    return None
+
+
+def _build_upstream_shadow_watchlist_reason_codes(entry: dict[str, Any]) -> list[str]:
+    reason_codes = [
+        str(code)
+        for code in list(entry.get("candidate_reason_codes") or entry.get("reasons") or [])
+        if str(code or "").strip()
+    ]
+    if "upstream_shadow_watchlist_promotion" not in reason_codes:
+        reason_codes.append("upstream_shadow_watchlist_promotion")
+    return reason_codes
+
+
+def _upstream_shadow_watchlist_promotion_sort_key(entry: dict[str, Any]) -> tuple[float, float, float, float, float, str]:
+    historical_support = dict(entry.get("shadow_release_historical_support") or {})
+    catalyst_relief = dict(entry.get("short_trade_catalyst_relief") or {})
+    release_reason = str(entry.get("shadow_release_reason") or "")
+    return (
+        1.0 if release_reason == "upstream_shadow_release_supported_by_historical_prior" else 0.0,
+        float(historical_support.get("support_score", 0.0) or 0.0),
+        1.0 if catalyst_relief.get("selected_threshold") is not None else 0.0,
+        float(entry.get("shadow_release_candidate_score", 0.0) or 0.0),
+        float(entry.get("score_final", 0.0) or 0.0),
+        str(entry.get("ticker") or ""),
+    )
+
+
+def _should_promote_upstream_shadow_release_to_watchlist(
+    entry: dict[str, Any],
+    *,
+    existing_tickers: set[str],
+) -> bool:
+    ticker = str(entry.get("ticker") or "")
+    if not ticker or ticker in existing_tickers:
+        return False
+
+    candidate_pool_lane = str(entry.get("candidate_pool_lane") or "")
+    if candidate_pool_lane not in UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES:
+        return False
+
+    if str(entry.get("shadow_release_reason") or "") == "upstream_shadow_release_supported_by_historical_prior":
+        return True
+
+    catalyst_relief = dict(entry.get("short_trade_catalyst_relief") or {})
+    return catalyst_relief.get("selected_threshold") is not None
+
+
+def _build_upstream_shadow_watchlist_entry(entry: dict[str, Any]) -> LayerCResult:
+    strategy_signals = {
+        name: signal
+        for name, payload in dict(entry.get("strategy_signals") or {}).items()
+        if (signal := _coerce_upstream_shadow_strategy_signal(payload)) is not None
+    }
+    reason_codes = _build_upstream_shadow_watchlist_reason_codes(entry)
+    return LayerCResult(
+        ticker=str(entry.get("ticker") or ""),
+        score_c=float(entry.get("score_c", 0.0) or 0.0),
+        score_final=float(entry.get("score_final", entry.get("score_b", 0.0)) or 0.0),
+        score_b=float(entry.get("score_b", 0.0) or 0.0),
+        quality_score=float(entry.get("quality_score", 0.5) or 0.5),
+        market_state=dict(entry.get("market_state") or {}),
+        candidate_source=str(entry.get("candidate_source") or "upstream_shadow_release_watchlist"),
+        candidate_reason_codes=reason_codes,
+        strategy_signals=strategy_signals,
+        agent_signals={},
+        agent_contribution_summary=dict(entry.get("agent_contribution_summary") or {}),
+        bc_conflict=str(entry.get("bc_conflict") or "") or None,
+        decision=str(entry.get("decision") or "watch"),
+    )
+
+
+def _select_upstream_shadow_watchlist_entries(
+    released_shadow_entries: list[dict[str, Any]],
+    *,
+    existing_tickers: set[str],
+) -> list[LayerCResult]:
+    ranked_entries = [
+        dict(entry)
+        for entry in list(released_shadow_entries or [])
+        if _should_promote_upstream_shadow_release_to_watchlist(dict(entry), existing_tickers=existing_tickers)
+    ]
+    ranked_entries.sort(key=_upstream_shadow_watchlist_promotion_sort_key, reverse=True)
+
+    promoted_entries: list[LayerCResult] = []
+    seen_tickers = set(existing_tickers)
+    for entry in ranked_entries:
+        ticker = str(entry.get("ticker") or "")
+        if not ticker or ticker in seen_tickers:
+            continue
+        promoted_entries.append(_build_upstream_shadow_watchlist_entry(entry))
+        seen_tickers.add(ticker)
+        if len(promoted_entries) >= UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS:
+            break
+    return promoted_entries
+
+
+def _mark_upstream_shadow_watchlist_promotions(
+    short_trade_candidate_diagnostics: dict[str, Any],
+    *,
+    promoted_tickers: set[str],
+) -> dict[str, Any]:
+    if not promoted_tickers:
+        return short_trade_candidate_diagnostics
+
+    updated_diagnostics = dict(short_trade_candidate_diagnostics or {})
+    updated_released_entries: list[dict[str, Any]] = []
+    for entry in list(updated_diagnostics.get("released_shadow_entries", []) or []):
+        updated_entry = dict(entry)
+        ticker = str(updated_entry.get("ticker") or "")
+        if ticker in promoted_tickers:
+            updated_entry["promoted_to_watchlist"] = True
+            updated_entry["promotion_target"] = "watchlist"
+            updated_entry["promotion_reason"] = "upstream_shadow_watchlist_promotion"
+        updated_released_entries.append(updated_entry)
+
+    updated_diagnostics["released_shadow_entries"] = updated_released_entries
+    updated_diagnostics["promoted_to_watchlist_count"] = len(promoted_tickers)
+    updated_diagnostics["promoted_to_watchlist_tickers"] = sorted(promoted_tickers)
+    return updated_diagnostics
+
+
+def _merge_watchlist_with_upstream_shadow_promotions(
+    watchlist: list[LayerCResult],
+    promoted_entries: list[LayerCResult],
+) -> list[LayerCResult]:
+    merged_by_ticker = {item.ticker: item for item in list(watchlist or [])}
+    for item in list(promoted_entries or []):
+        merged_by_ticker.setdefault(item.ticker, item)
+    return sorted(
+        merged_by_ticker.values(),
+        key=lambda item: (float(item.score_final), float(item.score_b), str(item.ticker)),
+        reverse=True,
     )
 
 
@@ -1592,6 +1738,20 @@ class DailyPipeline:
             shadow_candidate_by_ticker={candidate.ticker: candidate for candidate in candidate_context.shadow_candidates},
             historical_prior_by_ticker=historical_prior_by_ticker,
         )
+        promoted_shadow_watchlist_entries = _select_upstream_shadow_watchlist_entries(
+            list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []),
+            existing_tickers={item.ticker for item in watchlist},
+        )
+        if promoted_shadow_watchlist_entries:
+            promoted_tickers = {item.ticker for item in promoted_shadow_watchlist_entries}
+            short_trade_candidate_diagnostics = _mark_upstream_shadow_watchlist_promotions(
+                short_trade_candidate_diagnostics,
+                promoted_tickers=promoted_tickers,
+            )
+            watchlist = _merge_watchlist_with_upstream_shadow_promotions(
+                watchlist,
+                promoted_shadow_watchlist_entries,
+            )
         watchlist = _attach_historical_prior_to_watchlist(
             watchlist,
             prior_by_ticker=historical_prior_by_ticker,
@@ -1609,7 +1769,7 @@ class DailyPipeline:
             historical_prior_by_ticker=historical_prior_by_ticker,
             short_trade_candidate_diagnostics=short_trade_candidate_diagnostics,
             catalyst_theme_candidate_diagnostics=catalyst_theme_candidate_diagnostics,
-            candidate_by_ticker={candidate.ticker: candidate for candidate in candidate_context.candidates},
+            candidate_by_ticker={candidate.ticker: candidate for candidate in [*candidate_context.candidates, *candidate_context.shadow_candidates]},
             price_map=build_watchlist_price_map(trade_date, [item.ticker for item in watchlist]),
         )
 
