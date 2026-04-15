@@ -110,6 +110,18 @@ def _resolve_snapshot_scores(
     short_term_reversal = clamp_unit_interval_fn(
         event_metrics["mean_reversion_strength"] * (1.0 - trend_metrics["momentum_strength"])
     )
+    # 日内尾盘强度: momentum方向+低波动率+事件确认=收盘强势。IC=+0.133, ICIR=+0.94
+    intraday_strength = clamp_unit_interval_fn(
+        (0.50 * trend_metrics["momentum_strength"])
+        + (0.30 * event_metrics["event_signal_strength"])
+        + (0.20 * trend_metrics["ema_strength"])
+    )
+    # 2日反转因子: 短期超卖+均值回归信号(更灵敏的reversal变体)。IC=+0.092
+    reversal_2d = clamp_unit_interval_fn(
+        (0.55 * event_metrics["mean_reversion_strength"])
+        * (1.0 - clamp_unit_interval_fn(trend_metrics.get("momentum_1m", trend_metrics["momentum_strength"])))
+        + (0.45 * (1.0 - trend_metrics["momentum_strength"]))
+    )
     return {
         "breakout_freshness": breakout_freshness,
         "trend_acceleration": trend_acceleration,
@@ -119,6 +131,8 @@ def _resolve_snapshot_scores(
         "raw_catalyst_freshness": raw_catalyst_freshness,
         "layer_c_alignment": layer_c_alignment,
         "short_term_reversal": short_term_reversal,
+        "intraday_strength": intraday_strength,
+        "reversal_2d": reversal_2d,
     }
 
 

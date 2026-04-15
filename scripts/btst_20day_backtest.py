@@ -17,7 +17,7 @@ import argparse
 import json
 import math
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -125,6 +125,20 @@ def compute_factors(hist_group, trade_date_price):
     else:
         reversal = 0.0
 
+    # --- 2日反转因子 ---
+    if n >= 3:
+        ret_2d_raw = close[-1] / close[-3] - 1
+        reversal_2d = min(max(-ret_2d_raw / 0.06, 0), 1)
+    else:
+        reversal_2d = 0.0
+
+    # --- 日内尾盘强度 ---
+    if open_price > 0:
+        intraday_change = (last_close - open_price) / open_price
+        intraday_strength = min(max(intraday_change / 0.03, 0), 1)
+    else:
+        intraday_strength = 0.0
+
     return {
         "momentum_strength": momentum_strength,
         "volume_expansion_quality": volume_expansion,
@@ -135,6 +149,8 @@ def compute_factors(hist_group, trade_date_price):
         "catalyst_freshness": catalyst_freshness,
         "layer_c_alignment": layer_c_alignment,
         "reversal": reversal,
+        "reversal_2d": reversal_2d,
+        "intraday_strength": intraday_strength,
         "daily_return": daily_return,
         "vol_ratio": vol_ratio,
     }
@@ -209,9 +225,11 @@ PROFILE_WEIGHT_FIELDS = {
     "layer_c_alignment": "layer_c_alignment_weight",
     "momentum_strength": "momentum_strength_weight",
     "reversal": "short_term_reversal_weight",
+    "intraday_strength": "intraday_strength_weight",
+    "reversal_2d": "reversal_2d_weight",
 }
 
-DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "btst_precision_v1", "btst_precision_v2")
+DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "btst_precision_v1", "btst_precision_v2", "ic_v3")
 
 
 def _parse_profile_names(raw: str | None) -> tuple[str, ...]:
@@ -463,14 +481,17 @@ def main():
     pro = ts.pro_api()
 
     # 获取交易日历
-    cal = pro.trade_cal(exchange="SSE", start_date="20260220", end_date="20260414", is_open="1")
+    cal_end = datetime.now().strftime("%Y%m%d")
+    cal_start = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+    cal = pro.trade_cal(exchange="SSE", start_date=cal_start, end_date=cal_end, is_open="1")
     all_dates = sorted(cal["cal_date"].tolist())
     # 构建 next_date 映射
     next_map = {d: all_dates[i + 1] for i, d in enumerate(all_dates) if i + 1 < len(all_dates)}
     next2_map = {d: all_dates[i + 2] for i, d in enumerate(all_dates) if i + 2 < len(all_dates)}
     next3_map = {d: all_dates[i + 3] for i, d in enumerate(all_dates) if i + 3 < len(all_dates)}
 
-    test_dates = [d for d in all_dates if d <= "20260410"][-20:]
+    test_end = cal_end
+    test_dates = [d for d in all_dates if d <= test_end][-20:]
 
     print(f"回测日期: {test_dates[0]} ~ {test_dates[-1]} ({len(test_dates)}天)")
     print("=" * 90)

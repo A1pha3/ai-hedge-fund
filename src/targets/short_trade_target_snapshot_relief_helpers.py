@@ -19,6 +19,8 @@ class SnapshotSignalState:
     mean_reversion_strength: float
     momentum_strength: float
     short_term_reversal: float
+    intraday_strength: float
+    reversal_2d: float
     momentum_1m: float
     momentum_3m: float
     momentum_6m: float
@@ -213,6 +215,8 @@ def _build_snapshot_signal_state(
         mean_reversion_strength=float(signal_snapshot["mean_reversion_strength"]),
         momentum_strength=float(signal_snapshot.get("momentum_strength", 0.0)),
         short_term_reversal=float(signal_snapshot.get("short_term_reversal", 0.0)),
+        intraday_strength=float(signal_snapshot.get("intraday_strength", 0.0)),
+        reversal_2d=float(signal_snapshot.get("reversal_2d", 0.0)),
         momentum_1m=float(signal_snapshot["momentum_1m"]),
         momentum_3m=float(signal_snapshot["momentum_3m"]),
         momentum_6m=float(signal_snapshot["momentum_6m"]),
@@ -626,6 +630,8 @@ def _build_snapshot_score_payload(
         "layer_c_alignment": round(positive_score_weights["layer_c_alignment"] * state.layer_c_alignment, 4),
         "momentum_strength": round(positive_score_weights.get("momentum_strength", 0.0) * state.momentum_strength, 4),
         "short_term_reversal": round(positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal, 4),
+        "intraday_strength": round(positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength, 4),
+        "reversal_2d": round(positive_score_weights.get("reversal_2d", 0.0) * state.reversal_2d, 4),
     }
     weighted_negative_contributions = {
         "stale_trend_repair_penalty": round(score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty, 4),
@@ -648,6 +654,8 @@ def _build_snapshot_score_payload(
         + (positive_score_weights["layer_c_alignment"] * state.layer_c_alignment)
         + (positive_score_weights.get("momentum_strength", 0.0) * state.momentum_strength)
         + (positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal)
+        + (positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength)
+        + (positive_score_weights.get("reversal_2d", 0.0) * state.reversal_2d)
         - (score_penalty_state.effective_stale_score_penalty_weight * score_penalty_state.stale_trend_repair_penalty)
         - (profile.overhead_score_penalty_weight * score_penalty_state.overhead_supply_penalty)
         - (score_penalty_state.effective_extension_score_penalty_weight * score_penalty_state.extension_without_room_penalty)
