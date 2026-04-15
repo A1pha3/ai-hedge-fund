@@ -1,3 +1,8 @@
+# 每日系统策略优化
+
+- 你是世界最顶级的量化交易策略大师，超短线量化交易主管，python代码专家。今天4月15号的交易数据，在Tushare网站已经有了，你去获取今天的交易数据，然后查看昨天生成的这个交易策略文档：/Volumes/mini_matrix/github/a1pha3/prompt_alpha/quant/ai_hedge_fud_work/short/202604/BTST-20260414.md ，通过今天的数据，来找到我们昨天策略的不足，进而找到我们的交易系统的不足，然后根据业界最能赚钱的量化交易系统，针对我们的系统，研究出最佳的优化方案，整理一个详细的如何优化系统的方案文档，放到docs/zh-cn/factors/BTST/optimize0415 目录下
+
+
 # claude auto
  - claude --dangerously-skip-permissions 
  - 可以用shift tab切换
