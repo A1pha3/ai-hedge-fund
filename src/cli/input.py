@@ -11,8 +11,6 @@ from dateutil.relativedelta import relativedelta
 from src.llm.defaults import get_default_model_config
 from src.llm.models import (
     find_model_by_name,
-    get_model_info,
-    LLM_ORDER,
     ModelProvider,
     OLLAMA_LLM_ORDER,
 )

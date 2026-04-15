@@ -19,9 +19,9 @@ from src.agents.mohnish_pabrai_helpers import (
 )
 from src.graph.state import AgentState, show_agent_reasoning
 from src.agents.prompt_rules import with_fact_grounding_rules
-from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from src.tools.api import get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context, get_currency_symbol
@@ -47,9 +47,6 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
     # Pabrai focuses on: downside protection, simple business, moat via unit economics, FCF yield vs alternatives,
     # and potential for doubling in 2-3 years at low risk.
     for ticker in tickers:
-        progress.update_status(agent_id, ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=8, api_key=api_key)
-
         progress.update_status(agent_id, ticker, "Gathering financial line items")
         line_items = search_line_items(
             ticker,

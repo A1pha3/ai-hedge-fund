@@ -12,7 +12,7 @@
 """
 
 import math
-from typing import Any, List, Optional
+from typing import List, Optional
 
 
 def _compute_cagr(latest: float, oldest: float, n_years: int) -> Optional[float]:

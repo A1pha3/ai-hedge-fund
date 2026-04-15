@@ -163,9 +163,8 @@ def is_news_relevant_to_stock(title: str, content: str, ticker: str, stock_name:
     if content:
         content_sample = content[:300]
         digit_count = sum(1 for char in content_sample if char.isdigit() or char in ". -")
-        if len(content_sample) > 0 and digit_count / len(content_sample) > 0.5:
-            if stock_name and stock_name not in content_sample[:100]:
-                return False
+        if len(content_sample) > 0 and digit_count / len(content_sample) > 0.5 and stock_name and stock_name not in content_sample[:100]:
+            return False
 
     return True
 

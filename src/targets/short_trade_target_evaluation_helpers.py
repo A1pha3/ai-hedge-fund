@@ -414,6 +414,67 @@ def _apply_rank_based_decision_cap(snapshot: dict[str, Any], *, rank_hint: int |
     return adjusted
 
 
+def _determine_initial_decision(
+    *,
+    blockers: list[str],
+    gate_status: dict[str, Any],
+    score_target: float,
+    effective_near_miss_threshold: float,
+    effective_select_threshold: float,
+    selected_score_tolerance: float,
+    selected_breakout_gate_pass: bool,
+    near_miss_breakout_gate_pass: bool,
+) -> str:
+    selected_score_pass = score_target >= (effective_select_threshold - selected_score_tolerance)
+    hard_block = gate_status["data"] == "fail" or gate_status.get("execution") == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers
+
+    if blockers:
+        return "blocked" if hard_block else "rejected"
+    if selected_score_pass and selected_breakout_gate_pass:
+        gate_status["score"] = "pass"
+        return "selected"
+    if selected_score_pass and near_miss_breakout_gate_pass:
+        gate_status["score"] = "near_miss"
+        return "near_miss"
+    if score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass:
+        gate_status["score"] = "near_miss"
+        return "near_miss"
+    return "rejected"
+
+
+def _enforce_rank_cap(
+    *,
+    decision: str,
+    blockers: list[str],
+    gate_status: dict[str, Any],
+    score_target: float,
+    effective_near_miss_threshold: float,
+    near_miss_breakout_gate_pass: bool,
+    rank_decision_cap: dict[str, Any],
+) -> str | None:
+    selected_cap_exceeded = bool(rank_decision_cap.get("selected_cap_exceeded_effective", rank_decision_cap.get("selected_cap_exceeded")))
+    near_miss_cap_exceeded = bool(rank_decision_cap.get("near_miss_cap_exceeded"))
+
+    if decision == "selected" and rank_decision_cap.get("selected_cap_soft_relief_applied"):
+        gate_status["rank"] = "selected_cap_soft_relief"
+    if decision == "selected" and selected_cap_exceeded:
+        gate_status["rank"] = "selected_cap_exceeded"
+        if score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass and not near_miss_cap_exceeded:
+            gate_status["score"] = "near_miss"
+            return "near_miss"
+        gate_status["score"] = "fail"
+        if "selected_rank_cap_exceeded" not in blockers:
+            blockers.append("selected_rank_cap_exceeded")
+        return "rejected"
+    if decision == "near_miss" and near_miss_cap_exceeded:
+        gate_status["rank"] = "near_miss_cap_exceeded"
+        gate_status["score"] = "fail"
+        if "near_miss_rank_cap_exceeded" not in blockers:
+            blockers.append("near_miss_rank_cap_exceeded")
+        return "rejected"
+    return None
+
+
 def _resolve_short_trade_decision(
     *,
     blockers: list[str],
@@ -428,47 +489,28 @@ def _resolve_short_trade_decision(
     carryover_evidence_deficiency: dict[str, Any],
     selected_historical_proof_deficiency: dict[str, Any],
 ) -> str:
-    selected_score_pass = score_target >= (effective_select_threshold - selected_score_tolerance)
+    decision = _determine_initial_decision(
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=score_target,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        effective_select_threshold=effective_select_threshold,
+        selected_score_tolerance=selected_score_tolerance,
+        selected_breakout_gate_pass=selected_breakout_gate_pass,
+        near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
+    )
 
-    if blockers:
-        decision = (
-            "blocked"
-            if gate_status["data"] == "fail" or gate_status.get("execution") == "fail" or "layer_c_bearish_conflict" in blockers or "trend_not_constructive" in blockers
-            else "rejected"
-        )
-    elif selected_score_pass and selected_breakout_gate_pass:
-        decision = "selected"
-        gate_status["score"] = "pass"
-    elif selected_score_pass and near_miss_breakout_gate_pass:
-        decision = "near_miss"
-        gate_status["score"] = "near_miss"
-    elif score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass:
-        decision = "near_miss"
-        gate_status["score"] = "near_miss"
-    else:
-        decision = "rejected"
-
-    selected_cap_exceeded = bool(rank_decision_cap.get("selected_cap_exceeded_effective", rank_decision_cap.get("selected_cap_exceeded")))
-    near_miss_cap_exceeded = bool(rank_decision_cap.get("near_miss_cap_exceeded"))
-    selected_cap_soft_relief_applied = bool(rank_decision_cap.get("selected_cap_soft_relief_applied"))
-    if decision == "selected" and selected_cap_soft_relief_applied:
-        gate_status["rank"] = "selected_cap_soft_relief"
-    if decision == "selected" and selected_cap_exceeded:
-        gate_status["rank"] = "selected_cap_exceeded"
-        if score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass and not near_miss_cap_exceeded:
-            decision = "near_miss"
-            gate_status["score"] = "near_miss"
-        else:
-            gate_status["score"] = "fail"
-            if "selected_rank_cap_exceeded" not in blockers:
-                blockers.append("selected_rank_cap_exceeded")
-            return "rejected"
-    if decision == "near_miss" and near_miss_cap_exceeded:
-        gate_status["rank"] = "near_miss_cap_exceeded"
-        gate_status["score"] = "fail"
-        if "near_miss_rank_cap_exceeded" not in blockers:
-            blockers.append("near_miss_rank_cap_exceeded")
-        return "rejected"
+    cap_override = _enforce_rank_cap(
+        decision=decision,
+        blockers=blockers,
+        gate_status=gate_status,
+        score_target=score_target,
+        effective_near_miss_threshold=effective_near_miss_threshold,
+        near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
+        rank_decision_cap=rank_decision_cap,
+    )
+    if cap_override is not None:
+        return cap_override
 
     if carryover_evidence_deficiency["evidence_deficient"] and decision in {"selected", "near_miss"}:
         gate_status["score"] = "fail"
@@ -1413,7 +1455,7 @@ def _build_short_trade_core_explainability_payload(
         "layer_c_decision": input_data.layer_c_decision,
         "bc_conflict": input_data.bc_conflict,
         "candidate_source": str(input_data.replay_context.get("source") or ""),
-        "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {}).keys()),
+        "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {})),
         "profitability_relief": _build_profitability_explainability_payload(snapshot),
         "upstream_shadow_catalyst_relief": _build_upstream_shadow_explainability_payload(snapshot),
     }
@@ -1834,7 +1876,7 @@ def build_short_trade_explainability_payload(
         "layer_c_decision": input_data.layer_c_decision,
         "bc_conflict": input_data.bc_conflict,
         "candidate_source": str(input_data.replay_context.get("source") or ""),
-        "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {}).keys()),
+        "available_strategy_signals": sorted(str(name) for name in dict(input_data.strategy_signals or {})),
         "historical_prior": dict(snapshot["historical_prior"]),
         "carryover_evidence_deficiency": dict(context.carryover_evidence_deficiency),
         "selected_historical_proof_deficiency": dict(context.selected_historical_proof_deficiency),

@@ -26,8 +26,6 @@ from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import (
     calculate_cagr_from_line_items,
     calculate_pe_from_line_items,
-    calculate_revenue_growth_cagr,
-    calculate_simple_revenue_growth,
 )
 from src.utils.llm import call_llm
 from src.utils.progress import progress

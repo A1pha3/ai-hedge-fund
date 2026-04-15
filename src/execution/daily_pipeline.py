@@ -175,7 +175,7 @@ from src.portfolio.models import HoldingState
 from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
 from src.screening.candidate_pool import build_candidate_pool, build_candidate_pool_with_shadow
 from src.screening.models import CandidateStock, StrategySignal
-from src.screening.market_state import detect_market_state, recommend_short_trade_profile
+from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
@@ -845,9 +845,7 @@ def _passes_upstream_shadow_catalyst_relief_gates(
         return False
     if float(metric_snapshot["trend_acceleration"]) < threshold_config["trend_acceleration_min"]:
         return False
-    if float(metric_snapshot["close_strength"]) < threshold_config["close_strength_min"]:
-        return False
-    return True
+    return not float(metric_snapshot["close_strength"]) < threshold_config["close_strength_min"]
 
 
 def _build_upstream_shadow_catalyst_relief_threshold_inputs(
@@ -1569,8 +1567,7 @@ class DailyPipeline:
         # 自适应profile切换：基于市场状态选择最优profile（需启用环境变量）
         effective_profile_name = self.short_trade_target_profile_name
         effective_profile_overrides = self.short_trade_target_profile_overrides
-        if os.getenv("BTST_ADAPTIVE_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}:
-            if effective_profile_name == "default" and not effective_profile_overrides:
+        if os.getenv("BTST_ADAPTIVE_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"} and effective_profile_name == "default" and not effective_profile_overrides:
                 from src.screening.market_state_helpers import recommend_short_trade_profile as _rec_profile
                 ms = candidate_context.market_state
                 effective_profile_name = _rec_profile(

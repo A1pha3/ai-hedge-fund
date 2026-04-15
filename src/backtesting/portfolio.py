@@ -305,10 +305,7 @@ class Portfolio:
         cover_cost = quantity * price
         avg_short_price = position["short_cost_basis"] if position["short"] > 0 else 0.0
         realized_gain = (avg_short_price - price) * quantity
-        if position["short"] > 0:
-            portion = quantity / position["short"]
-        else:
-            portion = 1.0
+        portion = quantity / position["short"] if position["short"] > 0 else 1.0
         margin_to_release = portion * position["short_margin_used"]
         position["short"] -= quantity
         position["short_margin_used"] -= margin_to_release

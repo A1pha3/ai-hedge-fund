@@ -34,7 +34,7 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context

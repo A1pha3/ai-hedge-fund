@@ -63,7 +63,7 @@ def run_hedge_fund(
     end_date: str,
     portfolio: dict,
     show_reasoning: bool = False,
-    selected_analysts: list[str] = [],
+    selected_analysts: list[str] | None = None,
     model_name: str | None = None,
     model_provider: str | None = None,
     llm_observability: dict | None = None,

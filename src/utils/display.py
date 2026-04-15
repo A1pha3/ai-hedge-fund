@@ -1,4 +1,3 @@
-import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -204,13 +203,13 @@ def format_backtest_row(
     short_shares: float = 0,
     position_value: float = 0,
     is_summary: bool = False,
-    total_value: float = None,
-    return_pct: float = None,
-    cash_balance: float = None,
-    total_position_value: float = None,
-    sharpe_ratio: float = None,
-    sortino_ratio: float = None,
-    max_drawdown: float = None,
+    total_value: float | None = None,
+    return_pct: float | None = None,
+    cash_balance: float | None = None,
+    total_position_value: float | None = None,
+    sharpe_ratio: float | None = None,
+    sortino_ratio: float | None = None,
+    max_drawdown: float | None = None,
     benchmark_return_pct: float | None = None,
 ) -> list[any]:
     """Format a row for the backtest results table"""

@@ -472,7 +472,7 @@ def _build_ollama_or_gigachat_model(model_name: str, model_provider: ModelProvid
     return None
 
 
-def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = None) -> ChatOpenAI | ChatGroq | ChatOllama | GigaChat | None:
+def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict | None = None) -> ChatOpenAI | ChatGroq | ChatOllama | GigaChat | None:
     provider_value = model_provider.value if hasattr(model_provider, "value") else str(model_provider)
     for builder in (_build_native_provider_model, _build_openai_family_model, _build_ollama_or_gigachat_model):
         model = builder(model_name, model_provider, api_keys)

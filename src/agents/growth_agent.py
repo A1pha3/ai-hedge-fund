@@ -281,10 +281,7 @@ def analyze_insider_conviction(trades: list) -> dict:
     buys = sum(t.transaction_value for t in trades if t.transaction_value and t.transaction_shares > 0)
     sells = sum(abs(t.transaction_value) for t in trades if t.transaction_value and t.transaction_shares < 0)
 
-    if (buys + sells) == 0:
-        net_flow_ratio = 0
-    else:
-        net_flow_ratio = (buys - sells) / (buys + sells)
+    net_flow_ratio = 0 if buys + sells == 0 else (buys - sells) / (buys + sells)
 
     score = 0
     if net_flow_ratio > 0.5:

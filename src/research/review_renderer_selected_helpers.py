@@ -46,14 +46,8 @@ def _render_layer_b_summary(candidate: SelectedCandidate, format_layer_b_factor)
     top_factors = list((candidate.layer_b_summary or {}).get("top_factors", []) or [])
     if not top_factors:
         return []
-    lines = ["- Layer B 因子摘要:"]
-    for factor in top_factors[:3]:
-        lines.append(f"  - {format_layer_b_factor(factor)}")
-    return lines
+    return ["- Layer B 因子摘要:"] + [f"  - {format_layer_b_factor(factor)}" for factor in top_factors[:3]]
 
 
 def _render_prompt_section(*, candidate: SelectedCandidate, label: str, key: str, limit: int) -> list[str]:
-    lines = [f"- {label}:"]
-    for reason in list(candidate.research_prompts.get(key, []))[:limit]:
-        lines.append(f"  - {reason}")
-    return lines
+    return [f"- {label}:"] + [f"  - {reason}" for reason in list(candidate.research_prompts.get(key, []))[:limit]]

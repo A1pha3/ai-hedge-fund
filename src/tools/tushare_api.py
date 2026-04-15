@@ -596,7 +596,7 @@ def _build_tushare_insider_trades(ticker: str, df: pd.DataFrame, *, limit: int) 
     return [build_insider_trade_from_row(ticker, row) for _, row in df.head(limit).iterrows()]
 
 
-def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_date: str = None, limit: int = 100) -> List[InsiderTrade]:
+def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_date: str | None = None, limit: int = 100) -> List[InsiderTrade]:
     """
     使用 Tushare stk_holdertrade 获取 A 股股东增减持数据
 

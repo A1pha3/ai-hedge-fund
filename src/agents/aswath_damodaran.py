@@ -216,7 +216,7 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
     return {"score": score, "max_score": max_score, "details": "; ".join(details), "metrics": latest.model_dump()}
 
 
-def analyze_risk_profile(metrics: list, line_items: list, ticker: str = None) -> dict[str, any]:
+def analyze_risk_profile(metrics: list, line_items: list, ticker: str | None = None) -> dict[str, any]:
     """
     Risk score (0-3):
       +1  Beta < 1.3
@@ -383,7 +383,7 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
     }
 
 
-def estimate_cost_of_equity(beta: float | None, ticker: str = None, debt_to_equity: float | None = None, is_loss_making: bool = False) -> float:
+def estimate_cost_of_equity(beta: float | None, ticker: str | None = None, debt_to_equity: float | None = None, is_loss_making: bool = False) -> float:
     """CAPM with leverage adjustment: r_e = r_f + β_L × ERP + CRP + distress.
     β_L = β_U × (1 + (1-t) × D/E) — Hamada equation for leveraged beta.
     For A-share stocks, adds China country risk premium."""

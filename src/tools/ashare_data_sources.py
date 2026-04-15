@@ -3,9 +3,8 @@ A股多数据源模块
 支持多种数据源：Tushare、BaoStock、新浪财经、AKShare、模拟数据
 """
 
-import datetime
 import os
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from src.data.models import FinancialMetrics, Price
 
@@ -122,9 +121,10 @@ class BaoStockDataSource(BaseDataSource):
     def _init_baostock(cls):
         """初始化 BaoStock"""
         try:
-            import baostock as bs
+            import importlib.util
 
-            cls.available = True
+            if importlib.util.find_spec("baostock") is not None:
+                cls.available = True
             return True
         except ImportError:
             print("Warning: baostock 模块未安装")

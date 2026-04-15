@@ -213,9 +213,8 @@ def install_ollama() -> bool:
 
 def download_model(model_name: str) -> bool:
     """Download an Ollama model."""
-    if not is_ollama_server_running():
-        if not start_ollama_server():
-            return False
+    if not is_ollama_server_running() and not start_ollama_server():
+        return False
 
     print(f"{Fore.YELLOW}Downloading model {model_name}...{Style.RESET_ALL}")
     print(f"{Fore.CYAN}This may take a while depending on your internet speed and the model size.{Style.RESET_ALL}")
@@ -313,9 +312,8 @@ def delete_model(model_name: str) -> bool:
         return docker.delete_model(model_name, ollama_url)
 
     # Non-Docker environment
-    if not is_ollama_server_running():
-        if not start_ollama_server():
-            return False
+    if not is_ollama_server_running() and not start_ollama_server():
+        return False
 
     print(f"{Fore.YELLOW}Deleting model {model_name}...{Style.RESET_ALL}")
 

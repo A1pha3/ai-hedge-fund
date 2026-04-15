@@ -234,10 +234,7 @@ def _apply_base_state_adjustments(*, metrics: MarketStateMetrics, adjusted: dict
 
 
 def _apply_limit_ratio_adjustments(*, metrics: MarketStateMetrics, adjusted: dict[str, float]) -> None:
-    if metrics.limit_down_count > 0 and metrics.limit_ratio >= 3.0:
-        adjusted["event_sentiment"] *= 0.5
-        adjusted["fundamental"] *= 1.3
-    elif metrics.limit_up_count > 0 and metrics.limit_ratio <= (1 / 3):
+    if metrics.limit_down_count > 0 and metrics.limit_ratio >= 3.0 or metrics.limit_up_count > 0 and metrics.limit_ratio <= (1 / 3):
         adjusted["event_sentiment"] *= 0.5
         adjusted["fundamental"] *= 1.3
 

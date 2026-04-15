@@ -112,12 +112,6 @@ def rakesh_jhunjhunwala_agent(state: AgentState, agent_id: str = "rakesh_jhunjhu
             else:
                 signal = "neutral"
 
-        # Confidence based on margin of safety and quality
-        if margin_of_safety is not None:
-            confidence = min(max(abs(margin_of_safety) * 150, 20), 95)  # 20-95% range
-        else:
-            confidence = min(max((total_score / max_score) * 100, 10), 80)  # Based on score
-
         # Create comprehensive analysis summary
         intrinsic_value_analysis = analyze_rakesh_jhunjhunwala_style(financial_line_items, intrinsic_value=intrinsic_value, current_price=market_cap)
 
@@ -325,9 +319,9 @@ def calculate_intrinsic_value(financial_line_items: list, market_cap: float) -> 
 
 def analyze_rakesh_jhunjhunwala_style(
     financial_line_items: list,
-    owner_earnings: float = None,
-    intrinsic_value: float = None,
-    current_price: float = None,
+    owner_earnings: float | None = None,
+    intrinsic_value: float | None = None,
+    current_price: float | None = None,
 ) -> dict[str, any]:
     """
     Comprehensive analysis in Rakesh Jhunjhunwala's investment style.

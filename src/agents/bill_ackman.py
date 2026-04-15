@@ -17,7 +17,7 @@ from src.graph.state import AgentState, show_agent_reasoning
 from src.agents.prompt_rules import with_fact_grounding_rules
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context

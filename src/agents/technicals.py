@@ -505,10 +505,7 @@ def weighted_signal_combination(signals, weights):
         total_weight += weight
 
     # Normalize the weighted sum
-    if total_confidence > 0:
-        final_score = weighted_sum / total_confidence
-    else:
-        final_score = 0
+    final_score = weighted_sum / total_confidence if total_confidence > 0 else 0
 
     # Convert back to signal
     if final_score > 0.2:
@@ -522,10 +519,7 @@ def weighted_signal_combination(signals, weights):
     if signal == "neutral":
         # For neutral signals, confidence = weighted average of sub-strategy confidences
         # This reflects "how confident are we that the signal is neutral"
-        if total_weight > 0:
-            confidence = total_confidence / total_weight
-        else:
-            confidence = 0
+        confidence = total_confidence / total_weight if total_weight > 0 else 0
     else:
         confidence = abs(final_score)
 

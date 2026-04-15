@@ -77,10 +77,7 @@ def _score_munger_cash_conversion(financial_line_items: list) -> tuple[int, str,
     if not (fcf_values and net_income_values and len(fcf_values) == len(net_income_values)):
         return 0, "Missing FCF or Net Income data", None
 
-    fcf_to_ni_ratios = []
-    for i in range(len(fcf_values)):
-        if net_income_values[i] and net_income_values[i] > 0:
-            fcf_to_ni_ratios.append(fcf_values[i] / net_income_values[i])
+    fcf_to_ni_ratios = [fcf_values[i] / net_income_values[i] for i in range(len(fcf_values)) if net_income_values[i] and net_income_values[i] > 0]
 
     if not fcf_to_ni_ratios:
         return 0, "Could not calculate FCF to Net Income ratios", None
@@ -170,9 +167,7 @@ def _score_munger_revenue_predictability(financial_line_items: list, calculate_c
 
     cagr_growth = calculate_cagr_from_line_items_fn(financial_line_items, field="revenue")
     growth_rates = []
-    for i in range(len(revenues) - 1):
-        if revenues[i + 1] != 0:
-            growth_rates.append(revenues[i] / revenues[i + 1] - 1)
+    growth_rates = [revenues[i] / revenues[i + 1] - 1 for i in range(len(revenues) - 1) if revenues[i + 1] != 0]
 
     if not growth_rates:
         return 0, "Cannot calculate revenue growth: zero revenue values found"

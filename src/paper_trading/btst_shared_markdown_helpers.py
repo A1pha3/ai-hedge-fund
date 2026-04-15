@@ -135,8 +135,7 @@ def append_upstream_shadow_section(
 
 def append_guardrail_section(lines: list[str], title: str, guardrails: list[str]) -> None:
     lines.append(title)
-    for item in guardrails:
-        lines.append(f"- {item}")
+    lines.extend(f"- {item}" for item in guardrails)
     lines.append("")
 
 

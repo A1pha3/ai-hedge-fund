@@ -24,7 +24,7 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
-from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_pe_from_line_items, calculate_revenue_growth_cagr
+from src.utils.financial_calcs import calculate_cagr_from_line_items, calculate_pe_from_line_items
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context
@@ -289,7 +289,6 @@ def analyze_fisher_valuation(financial_line_items: list, market_cap: float | Non
     raw_score = 0
 
     # Gather needed data
-    net_incomes = [getattr(fi, "net_income", None) for fi in financial_line_items if getattr(fi, "net_income", None) is not None]
     fcf_values = [getattr(fi, "free_cash_flow", None) for fi in financial_line_items if getattr(fi, "free_cash_flow", None) is not None]
 
     # 1) P/E (使用年化净利润，处理A股YTD累计数据)

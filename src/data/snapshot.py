@@ -85,10 +85,8 @@ class DataSnapshotExporter:
                     existing_dates = sorted([p["time"] for p in existing_data if p.get("time")])
                     new_dates = sorted([p.time for p in prices if p.time])
 
-                    if existing_dates and new_dates:
-                        # 检查日期范围是否一致
-                        if existing_dates[0] == new_dates[0] and existing_dates[-1] == new_dates[-1]:
-                            need_update = False
+                    if existing_dates and new_dates and existing_dates[0] == new_dates[0] and existing_dates[-1] == new_dates[-1]:
+                        need_update = False
 
             if need_update:
                 self._write_json(prices_file, [p.model_dump() for p in prices])
@@ -117,10 +115,8 @@ class DataSnapshotExporter:
                     existing_periods = sorted([m["report_period"] for m in existing_metrics if m.get("report_period")])
                     new_periods = sorted([m.report_period for m in metrics if m.report_period])
 
-                    if existing_periods and new_periods:
-                        # 检查报告期是否一致
-                        if existing_periods == new_periods:
-                            need_update = False
+                    if existing_periods and new_periods and existing_periods == new_periods:
+                        need_update = False
 
             if need_update:
                 with self._financials_lock:
@@ -152,10 +148,8 @@ class DataSnapshotExporter:
                     existing_periods = sorted([item["report_period"] for item in existing_items if item.get("report_period")])
                     new_periods = sorted([item.report_period for item in line_items if item.report_period])
 
-                    if existing_periods and new_periods:
-                        # 检查报告期是否一致
-                        if existing_periods == new_periods:
-                            need_update = False
+                    if existing_periods and new_periods and existing_periods == new_periods:
+                        need_update = False
 
             if need_update:
                 with self._financials_lock:
@@ -258,8 +252,7 @@ class DataSnapshotExporter:
             display = prices[-30:] if len(prices) > 30 else prices
             parts.append("| 日期 | 开盘价 | 最高价 | 最低价 | 收盘价 | 成交量 |")
             parts.append("|------|--------|--------|--------|--------|--------|")
-            for p in display:
-                parts.append(f"| {p.get('time', '-')} | {_fmt_price(p.get('open'))} | {_fmt_price(p.get('high'))} | {_fmt_price(p.get('low'))} | {_fmt_price(p.get('close'))} | {_fmt_volume(p.get('volume'))} |")
+            parts.extend(f"| {p.get('time', '-')} | {_fmt_price(p.get('open'))} | {_fmt_price(p.get('high'))} | {_fmt_price(p.get('low'))} | {_fmt_price(p.get('close'))} | {_fmt_volume(p.get('volume'))} |" for p in display)
             if len(prices) > 30:
                 parts.append(f"\n> 仅展示最近 30 个交易日，完整数据共 {len(prices)} 条，详见 prices.json")
             parts.append("")

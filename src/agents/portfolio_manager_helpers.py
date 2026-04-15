@@ -25,11 +25,7 @@ def _resolve_max_short(price: float, max_qty: int, margin_requirement: float, ma
 
 
 def _prune_zero_actions(actions: dict[str, int]) -> dict[str, int]:
-    pruned = {"hold": 0}
-    for action, quantity in actions.items():
-        if action != "hold" and quantity > 0:
-            pruned[action] = quantity
-    return pruned
+    return {"hold": 0, **{a: q for a, q in actions.items() if a != "hold" and q > 0}}
 
 
 def _confidence_int(value: float) -> int:

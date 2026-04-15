@@ -5,14 +5,13 @@
 """
 
 import asyncio
-from typing import List, Optional
+from typing import List
 
 import pandas as pd
 
 from src.data import (
     CompanyNews,
     DataCleaner,
-    DataRouter,
     DataValidator,
     FinancialMetrics,
     get_router,

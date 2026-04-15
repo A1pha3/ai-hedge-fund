@@ -7,7 +7,7 @@ Tushare 数据提供商
 import asyncio
 import os
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import pandas as pd
 
@@ -15,7 +15,6 @@ from src.data.base_provider import (
     APIError,
     BaseDataProvider,
     DataResponse,
-    RateLimitError,
 )
 from src.data.models import FinancialMetrics, Price
 
@@ -32,7 +31,7 @@ class TushareProvider(BaseDataProvider):
         _token: API Token
     """
 
-    def __init__(self, token: str = None, priority: int = 5):
+    def __init__(self, token: str | None = None, priority: int = 5):
         """
         初始化 Tushare 提供商
 
@@ -180,7 +179,7 @@ class TushareProvider(BaseDataProvider):
             end_fmt = end_date.replace("-", "")
 
             # 获取日线行情数据（包含市值等指标）
-            df_daily = await self._run_sync(self._pro.daily_basic, ts_code=ts_code, trade_date=end_fmt)
+            await self._run_sync(self._pro.daily_basic, ts_code=ts_code, trade_date=end_fmt)
 
             # 获取财务指标数据
             df_fin = await self._run_sync(self._pro.fina_indicator, ts_code=ts_code, end_date=end_fmt, limit=10)

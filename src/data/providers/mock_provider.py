@@ -6,7 +6,7 @@
 
 import random
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from src.data.base_provider import BaseDataProvider, DataResponse
 from src.data.models import CompanyNews, FinancialMetrics, Price

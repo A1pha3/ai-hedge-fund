@@ -10,16 +10,14 @@ def load_model_records_from_json(json_path: str) -> list[dict[str, Any]]:
 
 
 def build_llm_models(model_records: list[dict[str, Any]], model_cls, provider_enum_cls) -> list[Any]:
-    models = []
-    for model_data in model_records:
-        models.append(
-            model_cls(
-                display_name=model_data["display_name"],
-                model_name=model_data["model_name"],
-                provider=provider_enum_cls(model_data["provider"]),
-            )
+    return [
+        model_cls(
+            display_name=model_data["display_name"],
+            model_name=model_data["model_name"],
+            provider=provider_enum_cls(model_data["provider"]),
         )
-    return models
+        for model_data in model_records
+    ]
 
 
 def find_model_in_catalog(all_models: list[Any], model_name: str, provider: Any | None = None) -> Any | None:

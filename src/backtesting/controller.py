@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Sequence
 
 from .portfolio import Portfolio
-from .types import Action, ActionLiteral, AgentDecisions, AgentOutput, PortfolioSnapshot
+from .types import Action, AgentDecisions, AgentOutput, PortfolioSnapshot
 
 
 class AgentController:

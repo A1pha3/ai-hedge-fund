@@ -459,10 +459,7 @@ def analyze_pricing_power(financial_line_items: list, metrics: list) -> dict[str
 
     score = 0
     reasoning = []
-    gross_margins = []
-    for item in financial_line_items:
-        if hasattr(item, "gross_margin") and item.gross_margin is not None:
-            gross_margins.append(item.gross_margin)
+    gross_margins = [item.gross_margin for item in financial_line_items if hasattr(item, "gross_margin") and item.gross_margin is not None]
 
     trend_score, trend_detail = _score_buffett_gross_margin_trend(gross_margins)
     score += trend_score

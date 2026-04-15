@@ -2258,9 +2258,9 @@ def test_generate_btst_next_day_trade_brief_prunes_mixed_boundary_opportunity_po
 
 
 def test_infer_next_trade_date_uses_earliest_open_calendar_date(monkeypatch):
-    monkeypatch.setattr("src.paper_trading.btst_reporting._get_pro", lambda: object())
+    monkeypatch.setattr("src.paper_trading.btst_reporting_utils._get_pro", lambda: object())
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._cached_tushare_dataframe_call",
+        "src.paper_trading.btst_reporting_utils._cached_tushare_dataframe_call",
         lambda *args, **kwargs: pd.DataFrame(
             [
                 {"cal_date": "20260409", "is_open": 1},

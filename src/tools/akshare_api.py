@@ -431,10 +431,7 @@ def is_ashare(ticker: str) -> bool:
         return len(code) == 6 and code.isdigit()
 
     # 纯数字代码，6位
-    if len(ticker) == 6 and ticker.isdigit():
-        return True
-
-    return False
+    return bool(len(ticker) == 6 and ticker.isdigit())
 
 
 def get_mock_prices(ticker: str, start_date: str, end_date: str) -> List[Price]:
@@ -531,7 +528,7 @@ def _is_news_relevant_to_stock(title: str, content: str, ticker: str, stock_name
     return _is_news_relevant_to_stock_impl(title, content, ticker, stock_name)
 
 
-def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, limit: int = 100) -> list:
+def get_ashare_company_news(ticker: str, end_date: str, start_date: str | None = None, limit: int = 100) -> list:
     """
     使用 AKShare 获取 A 股个股新闻
 
@@ -585,7 +582,7 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str = None, 
 # ============================================================================
 
 
-def get_realtime_quotes(tickers: List[str] = None) -> Optional[pd.DataFrame]:
+def get_realtime_quotes(tickers: List[str] | None = None) -> Optional[pd.DataFrame]:
     """
     获取 A 股盘中实时行情（全部或指定标的）。
 

@@ -324,18 +324,18 @@ def format_ab_comparison_report(results: Sequence[ABWindowMetrics], summary: dic
         "| Window | Baseline Sharpe | MVP Sharpe | Baseline Sortino | MVP Sortino | Baseline MDD | MVP MDD |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
-    for item in results:
-        lines.append(
-            "| {window} | {b_sharpe:.2f} | {m_sharpe:.2f} | {b_sortino:.2f} | {m_sortino:.2f} | {b_mdd:.2f} | {m_mdd:.2f} |".format(
-                window=f"{item.window.test_start}..{item.window.test_end}",
-                b_sharpe=float(item.baseline.get("sharpe_ratio", 0.0) or 0.0),
-                m_sharpe=float(item.mvp.get("sharpe_ratio", 0.0) or 0.0),
-                b_sortino=float(item.baseline.get("sortino_ratio", 0.0) or 0.0),
-                m_sortino=float(item.mvp.get("sortino_ratio", 0.0) or 0.0),
-                b_mdd=float(item.baseline.get("max_drawdown", 0.0) or 0.0),
-                m_mdd=float(item.mvp.get("max_drawdown", 0.0) or 0.0),
-            )
+    lines.extend(
+        "| {window} | {b_sharpe:.2f} | {m_sharpe:.2f} | {b_sortino:.2f} | {m_sortino:.2f} | {b_mdd:.2f} | {m_mdd:.2f} |".format(
+            window=f"{item.window.test_start}..{item.window.test_end}",
+            b_sharpe=float(item.baseline.get("sharpe_ratio", 0.0) or 0.0),
+            m_sharpe=float(item.mvp.get("sharpe_ratio", 0.0) or 0.0),
+            b_sortino=float(item.baseline.get("sortino_ratio", 0.0) or 0.0),
+            m_sortino=float(item.mvp.get("sortino_ratio", 0.0) or 0.0),
+            b_mdd=float(item.baseline.get("max_drawdown", 0.0) or 0.0),
+            m_mdd=float(item.mvp.get("max_drawdown", 0.0) or 0.0),
         )
+        for item in results
+    )
 
     lines.extend(
         [

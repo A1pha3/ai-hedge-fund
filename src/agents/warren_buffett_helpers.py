@@ -286,11 +286,7 @@ def _score_buffett_gross_margin_level(gross_margins: list[float]) -> tuple[int, 
 
 
 def _collect_buffett_capex_ratio_inputs(financial_line_items: list) -> list[float]:
-    capex_ratios = []
-    for item in financial_line_items[:5]:
-        if hasattr(item, "capital_expenditure") and hasattr(item, "revenue"):
-            if item.capital_expenditure and item.revenue and item.revenue > 0:
-                capex_ratios.append(abs(item.capital_expenditure) / item.revenue)
+    return [abs(item.capital_expenditure) / item.revenue for item in financial_line_items[:5] if hasattr(item, "capital_expenditure") and hasattr(item, "revenue") and item.capital_expenditure and item.revenue and item.revenue > 0]
     return capex_ratios
 
 

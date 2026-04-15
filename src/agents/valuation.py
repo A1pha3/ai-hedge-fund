@@ -377,7 +377,7 @@ def calculate_fcf_volatility(fcf_history: list[float]) -> float:
         mean_fcf = statistics.mean(positive_fcf)
         std_fcf = statistics.stdev(positive_fcf)
         return min(std_fcf / mean_fcf, 1.0) if mean_fcf > 0 else 0.8
-    except:
+    except Exception:
         return 0.5
 
 

@@ -71,7 +71,7 @@ def _get_snapshot():
     return get_snapshot_exporter()
 
 
-def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3) -> requests.Response:
+def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict | None = None, max_retries: int = 3) -> requests.Response:
     """
     Make an API request with rate limiting handling and moderate backoff.
 
@@ -105,7 +105,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         return response
 
 
-def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
+def get_prices(ticker: str, start_date: str, end_date: str, api_key: str | None = None) -> list[Price]:
     """
     Fetch price data from cache or API.
     Supports both US stocks and A-shares (Chinese stocks).
@@ -143,7 +143,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
     try:
         price_response = PriceResponse(**response.json())
         prices = price_response.prices
-    except:
+    except Exception:
         return []
 
     if not prices:
@@ -160,7 +160,7 @@ def get_financial_metrics(
     end_date: str,
     period: str = "ttm",
     limit: int = 10,
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> list[FinancialMetrics]:
     """
     Fetch financial metrics from cache or API.
@@ -199,7 +199,7 @@ def get_financial_metrics(
     try:
         metrics_response = FinancialMetricsResponse(**response.json())
         financial_metrics = _dedupe_by_report_period(metrics_response.financial_metrics)
-    except:
+    except Exception:
         return []
 
     if not financial_metrics:
@@ -217,7 +217,7 @@ def search_line_items(
     end_date: str,
     period: str = "ttm",
     limit: int = 10,
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> list[LineItem]:
     """Fetch line items from API."""
     # Check if it's an A-share (Chinese stock)
@@ -257,7 +257,7 @@ def search_line_items(
         data = response.json()
         response_model = LineItemResponse(**data)
         search_results = response_model.search_results
-    except:
+    except Exception:
         return []
     if not search_results:
         return []
@@ -273,7 +273,7 @@ def get_insider_trades(
     end_date: str,
     start_date: str | None = None,
     limit: int = 1000,
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> list[InsiderTrade]:
     """Fetch insider trades from cache or API."""
     cache_key = build_insider_trade_cache_key(ticker, start_date, end_date, limit)
@@ -309,7 +309,7 @@ def get_company_news(
     end_date: str,
     start_date: str | None = None,
     limit: int = 1000,
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> list[CompanyNews]:
     """Fetch company news from cache or API."""
     if is_ashare(ticker):
@@ -343,7 +343,7 @@ def get_company_news(
 def get_market_cap(
     ticker: str,
     end_date: str,
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> float | None:
     """Fetch market cap from the API."""
     if is_ashare(ticker):
@@ -392,6 +392,6 @@ def prices_to_df(prices: list[Price]) -> pd.DataFrame:
 
 
 # Update the get_price_data function to use the new functions
-def get_price_data(ticker: str, start_date: str, end_date: str, api_key: str = None) -> pd.DataFrame:
+def get_price_data(ticker: str, start_date: str, end_date: str, api_key: str | None = None) -> pd.DataFrame:
     prices = get_prices(ticker, start_date, end_date, api_key=api_key)
     return prices_to_df(prices)

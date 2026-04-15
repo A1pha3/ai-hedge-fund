@@ -5,9 +5,8 @@ AKShare 数据提供商
 """
 
 import asyncio
-import os
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import pandas as pd
 
@@ -15,7 +14,6 @@ from src.data.base_provider import (
     APIError,
     BaseDataProvider,
     DataResponse,
-    RateLimitError,
 )
 from src.data.models import CompanyNews, FinancialMetrics, Price
 
@@ -263,7 +261,7 @@ class AKShareProvider(BaseDataProvider):
                 return False
 
             # 尝试获取上证指数数据
-            df = await self._run_sync(self._ak.stock_zh_a_hist, symbol="000001", period="daily", start_date="20240101", end_date="20240102", adjust="qfq")
+            await self._run_sync(self._ak.stock_zh_a_hist, symbol="000001", period="daily", start_date="20240101", end_date="20240102", adjust="qfq")
 
             self.health_status = "healthy"
             return True

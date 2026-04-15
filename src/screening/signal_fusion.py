@@ -219,9 +219,7 @@ def _get_neutral_mean_reversion_partial_weight(weights: dict[str, float], signal
 def _is_active_for_normalization(name: str, signal: StrategySignal) -> bool:
     if signal.completeness <= 0:
         return False
-    if name == "mean_reversion" and signal.direction == 0 and _get_neutral_mean_reversion_mode() == "full_exclude":
-        return False
-    return True
+    return not (name == "mean_reversion" and signal.direction == 0 and _get_neutral_mean_reversion_mode() == "full_exclude")
 
 
 def _normalize_for_available_signals(weights: dict[str, float], signals: dict[str, StrategySignal]) -> dict[str, float]:
@@ -302,9 +300,7 @@ def _should_apply_consensus_bonus(
         and fundamental_signal.direction > 0
         and fundamental_signal.confidence >= 65
     )
-    if (breadth_ratio <= 0.42 or position_scale <= 0.75) and not strong_fundamental_support:
-        return False
-    return True
+    return not ((breadth_ratio <= 0.42 or position_scale <= 0.75) and not strong_fundamental_support)
 
 
 def maybe_release_cooldown_early(ticker: str, trade_date: str, fundamental_signal: StrategySignal, min_hold_days: int = 5) -> bool:

@@ -4,14 +4,11 @@
 实现多层缓存策略：内存 LRU + Redis 持久化
 """
 
-import hashlib
-import json
 import logging
 import os
 import pickle
 import sqlite3
 from datetime import datetime, timedelta
-from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 try:
