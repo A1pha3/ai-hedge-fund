@@ -518,6 +518,7 @@ def build_selection_snapshot(
     artifact_version: str = "v1",
 ) -> SelectionSnapshot:
     formatted_trade_date = _format_trade_date(trade_date)
+    market_state_payload = _serialize_market_state_payload(getattr(plan, "market_state", None))
     counts = dict((plan.risk_metrics or {}).get("counts", {}) or {})
     funnel_diagnostics = dict((plan.risk_metrics or {}).get("funnel_diagnostics", {}) or {})
     filters = dict(funnel_diagnostics.get("filters", {}) or {})
@@ -529,6 +530,7 @@ def build_selection_snapshot(
         experiment_id=experiment_id,
         trade_date=formatted_trade_date,
         market=market,
+        market_state=market_state_payload,
         decision_timestamp=f"{formatted_trade_date}T15:05:00+08:00",
         data_available_until=f"{formatted_trade_date}T15:00:00+08:00",
         target_mode=str(getattr(plan, "target_mode", "research_only") or "research_only"),

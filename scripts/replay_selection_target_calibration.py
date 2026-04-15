@@ -176,6 +176,10 @@ def _default_short_trade_target_profile():
     return get_short_trade_target_profile("default")
 
 
+def _resolve_short_trade_target_profile(profile_name: str | None):
+    return get_short_trade_target_profile(str(profile_name or "default"))
+
+
 def _active_short_trade_target_profile():
     return get_active_short_trade_target_profile()
 
@@ -235,30 +239,78 @@ def _parse_ticker_grid(raw: str | None) -> list[str]:
     return [token.strip() for token in str(raw).split(",") if token.strip()]
 
 
+def _attach_market_state(entries: list[dict[str, Any]], *, market_state_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if not market_state_payload:
+        return [dict(entry or {}) for entry in list(entries or [])]
+    attached_entries: list[dict[str, Any]] = []
+    for entry in list(entries or []):
+        updated_entry = dict(entry or {})
+        entry_market_state = dict(updated_entry.get("market_state") or {})
+        if not entry_market_state:
+            updated_entry["market_state"] = dict(market_state_payload)
+        attached_entries.append(updated_entry)
+    return attached_entries
+
+
 def _build_replay_input_from_selection_snapshot(snapshot_payload: dict[str, Any]) -> dict[str, Any]:
     funnel_filters = dict(dict(snapshot_payload.get("funnel_diagnostics") or {}).get("filters") or {})
     watchlist_filter = dict(funnel_filters.get("watchlist") or {})
     short_trade_candidates_filter = dict(funnel_filters.get("short_trade_candidates") or {})
+    catalyst_theme_filter = dict(funnel_filters.get("catalyst_theme_candidates") or {})
     watchlist_entries = [dict(entry or {}) for entry in list(watchlist_filter.get("selected_entries") or [])]
     rejected_entries = [dict(entry or {}) for entry in list(watchlist_filter.get("tickers") or [])]
     supplemental_short_trade_entries = [dict(entry or {}) for entry in list(short_trade_candidates_filter.get("tickers") or [])]
+    upstream_shadow_observation_entries = [dict(entry or {}) for entry in list(short_trade_candidates_filter.get("shadow_observation_entries") or [])]
+    supplemental_catalyst_theme_entries = [dict(entry or {}) for entry in list(catalyst_theme_filter.get("tickers") or [])]
+    market_state_payload = dict(snapshot_payload.get("market_state") or {})
+    if not market_state_payload:
+        for entries in (
+            watchlist_entries,
+            rejected_entries,
+            supplemental_short_trade_entries,
+            upstream_shadow_observation_entries,
+            supplemental_catalyst_theme_entries,
+        ):
+            for entry in entries:
+                entry_market_state = dict(entry.get("market_state") or {})
+                if entry_market_state:
+                    market_state_payload = entry_market_state
+                    break
+            if market_state_payload:
+                break
+    watchlist_entries = _attach_market_state(watchlist_entries, market_state_payload=market_state_payload)
+    rejected_entries = _attach_market_state(rejected_entries, market_state_payload=market_state_payload)
+    supplemental_short_trade_entries = _attach_market_state(supplemental_short_trade_entries, market_state_payload=market_state_payload)
+    upstream_shadow_observation_entries = _attach_market_state(
+        upstream_shadow_observation_entries,
+        market_state_payload=market_state_payload,
+    )
+    supplemental_catalyst_theme_entries = _attach_market_state(
+        supplemental_catalyst_theme_entries,
+        market_state_payload=market_state_payload,
+    )
     buy_orders = [dict(entry or {}) for entry in list(snapshot_payload.get("buy_orders") or [])]
     return {
         "artifact_version": snapshot_payload.get("artifact_version") or "v1",
         "run_id": snapshot_payload.get("run_id") or "selection_snapshot_replay",
         "trade_date": snapshot_payload.get("trade_date"),
         "market": snapshot_payload.get("market"),
+        "market_state": market_state_payload,
         "target_mode": snapshot_payload.get("target_mode") or "research_only",
         "pipeline_config_snapshot": dict(snapshot_payload.get("pipeline_config_snapshot") or {}),
         "source_summary": {
             "watchlist_count": len(watchlist_entries),
             "rejected_entry_count": len(rejected_entries),
             "supplemental_short_trade_entry_count": len(supplemental_short_trade_entries),
+            "upstream_shadow_observation_entry_count": len(upstream_shadow_observation_entries),
+            "supplemental_catalyst_theme_entry_count": len(supplemental_catalyst_theme_entries),
             "buy_order_ticker_count": len(buy_orders),
         },
         "watchlist": watchlist_entries,
         "rejected_entries": rejected_entries,
         "supplemental_short_trade_entries": supplemental_short_trade_entries,
+        "upstream_shadow_observation_entries": upstream_shadow_observation_entries,
+        "supplemental_catalyst_theme_entries": supplemental_catalyst_theme_entries,
         "buy_order_tickers": [str(entry.get("ticker") or "") for entry in buy_orders if str(entry.get("ticker") or "").strip()],
         "selection_targets": dict(snapshot_payload.get("selection_targets") or {}),
         "target_summary": dict(snapshot_payload.get("target_summary") or {}),
@@ -749,7 +801,7 @@ def analyze_selection_target_replay_sources(
         resolve_structural_profile_overrides=_resolve_structural_profile_overrides,
     )
     state = build_replay_analysis_state()
-    default_profile = _default_short_trade_target_profile()
+    default_profile = _resolve_short_trade_target_profile(config.profile_name)
     prior_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
     with _override_short_trade_thresholds(
@@ -1107,8 +1159,9 @@ def analyze_selection_target_threshold_grid(
     select_thresholds: list[float],
     near_miss_thresholds: list[float],
 ) -> dict[str, Any]:
-    select_values = select_thresholds or [float(_default_short_trade_target_profile().select_threshold)]
-    near_miss_values = near_miss_thresholds or [float(_default_short_trade_target_profile().near_miss_threshold)]
+    profile_defaults = _resolve_short_trade_target_profile(profile_name)
+    select_values = select_thresholds or [float(profile_defaults.select_threshold)]
+    near_miss_values = near_miss_thresholds or [float(profile_defaults.near_miss_threshold)]
     rows: list[dict[str, Any]] = []
 
     for select_threshold in select_values:
@@ -1172,10 +1225,11 @@ def analyze_selection_target_structural_variants(
         rows.append(row)
 
     first_unblocked_row = next((row for row in rows if row["released_from_blocked"]), None)
+    profile_defaults = _resolve_short_trade_target_profile(profile_name)
     return {
         "profile_name": str(profile_name or "default"),
-        "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
-        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
+        "select_threshold": float(select_threshold) if select_threshold is not None else float(profile_defaults.select_threshold),
+        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(profile_defaults.near_miss_threshold),
         "structural_variants": variant_names,
         "variant_row_count": len(rows),
         "rows": rows,
@@ -1192,8 +1246,9 @@ def analyze_selection_target_combination_grid(
     near_miss_thresholds: list[float],
 ) -> dict[str, Any]:
     variant_names = structural_variants or ["baseline"]
-    select_values = select_thresholds or [float(_default_short_trade_target_profile().select_threshold)]
-    near_miss_values = near_miss_thresholds or [float(_default_short_trade_target_profile().near_miss_threshold)]
+    profile_defaults = _resolve_short_trade_target_profile(profile_name)
+    select_values = select_thresholds or [float(profile_defaults.select_threshold)]
+    near_miss_values = near_miss_thresholds or [float(profile_defaults.near_miss_threshold)]
     rows: list[dict[str, Any]] = []
 
     for variant_name in variant_names:
@@ -1260,6 +1315,7 @@ def analyze_selection_target_candidate_entry_metric_grid(
     close_values = list(close_strength_max_values or []) or [None]
     catalyst_values = [None] if catalyst_freshness_max_values == [] else list(catalyst_freshness_max_values or [0.05])
     variant_names = base_structural_variants or ["baseline"]
+    profile_defaults = _resolve_short_trade_target_profile(profile_name)
     rows: list[dict[str, Any]] = []
     focus_ticker_set = [ticker for ticker in (focus_tickers or []) if str(ticker).strip()]
     preserve_ticker_set = [ticker for ticker in (preserve_tickers or []) if str(ticker).strip()]
@@ -1369,8 +1425,8 @@ def analyze_selection_target_candidate_entry_metric_grid(
         "volume_expansion_quality_max_grid": [round(float(value), 4) for value in volume_values if value is not None],
         "close_strength_max_grid": [round(float(value), 4) for value in close_values if value is not None],
         "catalyst_freshness_max_grid": [round(float(value), 4) for value in catalyst_values if value is not None],
-        "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
-        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
+        "select_threshold": float(select_threshold) if select_threshold is not None else float(profile_defaults.select_threshold),
+        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(profile_defaults.near_miss_threshold),
         "focus_tickers": focus_ticker_set,
         "preserve_tickers": preserve_ticker_set,
         "grid_row_count": len(rows),
@@ -1395,9 +1451,10 @@ def analyze_selection_target_penalty_grid(
     focus_tickers: list[str] | None = None,
 ) -> dict[str, Any]:
     variant_names = base_structural_variants or ["baseline"]
-    avoid_values = avoid_penalty_values or [float(_default_short_trade_target_profile().layer_c_avoid_penalty)]
-    stale_values = stale_score_penalty_weight_values or [float(_default_short_trade_target_profile().stale_score_penalty_weight)]
-    extension_values = extension_score_penalty_weight_values or [float(_default_short_trade_target_profile().extension_score_penalty_weight)]
+    profile_defaults = _resolve_short_trade_target_profile(profile_name)
+    avoid_values = avoid_penalty_values or [float(profile_defaults.layer_c_avoid_penalty)]
+    stale_values = stale_score_penalty_weight_values or [float(profile_defaults.stale_score_penalty_weight)]
+    extension_values = extension_score_penalty_weight_values or [float(profile_defaults.extension_score_penalty_weight)]
     rows: list[dict[str, Any]] = []
     focus_ticker_set = [ticker for ticker in (focus_tickers or []) if str(ticker).strip()]
 
@@ -1469,9 +1526,9 @@ def analyze_selection_target_penalty_grid(
                 first_focus_near_miss_rows[ticker] = min(
                     qualifying_rows,
                     key=lambda row: (
-                        float(_default_short_trade_target_profile().layer_c_avoid_penalty) - float(row["layer_c_avoid_penalty"])
-                        + float(_default_short_trade_target_profile().stale_score_penalty_weight) - float(row["stale_score_penalty_weight"])
-                        + float(_default_short_trade_target_profile().extension_score_penalty_weight) - float(row["extension_score_penalty_weight"]),
+                        float(profile_defaults.layer_c_avoid_penalty) - float(row["layer_c_avoid_penalty"])
+                        + float(profile_defaults.stale_score_penalty_weight) - float(row["stale_score_penalty_weight"])
+                        + float(profile_defaults.extension_score_penalty_weight) - float(row["extension_score_penalty_weight"]),
                         float("inf") if row["focus_gaps_to_near_miss"].get(ticker) is None else abs(float(row["focus_gaps_to_near_miss"][ticker])),
                     ),
                 )
@@ -1482,8 +1539,8 @@ def analyze_selection_target_penalty_grid(
         "layer_c_avoid_penalty_grid": [round(float(value), 4) for value in avoid_values],
         "stale_score_penalty_weight_grid": [round(float(value), 4) for value in stale_values],
         "extension_score_penalty_weight_grid": [round(float(value), 4) for value in extension_values],
-        "select_threshold": float(select_threshold) if select_threshold is not None else float(_default_short_trade_target_profile().select_threshold),
-        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(_default_short_trade_target_profile().near_miss_threshold),
+        "select_threshold": float(select_threshold) if select_threshold is not None else float(profile_defaults.select_threshold),
+        "near_miss_threshold": float(near_miss_threshold) if near_miss_threshold is not None else float(profile_defaults.near_miss_threshold),
         "focus_tickers": focus_ticker_set,
         "grid_row_count": len(rows),
         "rows": rows,
@@ -1494,13 +1551,14 @@ def analyze_selection_target_penalty_grid(
 
 def _resolve_penalty_threshold_grid_defaults(
     *,
+    profile_name: str,
     avoid_penalty_values: list[float],
     stale_score_penalty_weight_values: list[float],
     extension_score_penalty_weight_values: list[float],
     select_thresholds: list[float],
     near_miss_thresholds: list[float],
 ) -> dict[str, list[float] | float]:
-    default_profile = _default_short_trade_target_profile()
+    default_profile = _resolve_short_trade_target_profile(profile_name)
     return {
         "avoid_values": avoid_penalty_values or [float(default_profile.layer_c_avoid_penalty)],
         "stale_values": stale_score_penalty_weight_values or [float(default_profile.stale_score_penalty_weight)],
@@ -1611,6 +1669,7 @@ def analyze_selection_target_penalty_threshold_grid(
 ) -> dict[str, Any]:
     variant_names = base_structural_variants or ["baseline"]
     defaults = _resolve_penalty_threshold_grid_defaults(
+        profile_name=profile_name,
         avoid_penalty_values=avoid_penalty_values,
         stale_score_penalty_weight_values=stale_score_penalty_weight_values,
         extension_score_penalty_weight_values=extension_score_penalty_weight_values,

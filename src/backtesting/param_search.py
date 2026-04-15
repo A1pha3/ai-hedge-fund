@@ -21,6 +21,7 @@ class SearchObjective(str, Enum):
     SORTINO = "sortino"
     COMPOSITE = "composite"
     EDGE = "edge"
+    BTST = "btst"
 
 
 def _clip(value: float, lower: float, upper: float) -> float:
@@ -108,6 +109,43 @@ def compute_objective_score(
             - (0.18 * downside_penalty)
         )
         return edge_score * (0.40 + (0.60 * effective_sample_weight))
+    if objective == SearchObjective.BTST:
+        win_rate = metrics.get("next_close_positive_rate")
+        payoff_ratio = metrics.get("next_close_payoff_ratio")
+        expectancy = metrics.get("next_close_expectancy")
+        next_high_hit_rate = metrics.get("next_high_hit_rate")
+        t_plus_2_positive_rate = metrics.get("t_plus_2_close_positive_rate")
+        downside_p10 = metrics.get("downside_p10")
+        sample_weight = metrics.get("sample_weight")
+        if (
+            win_rate is None
+            or payoff_ratio is None
+            or expectancy is None
+            or next_high_hit_rate is None
+            or t_plus_2_positive_rate is None
+            or downside_p10 is None
+        ):
+            return None
+
+        normalized_payoff = _clip(float(payoff_ratio) / 3.0, 0.0, 1.0)
+        normalized_expectancy = _clip((float(expectancy) + 0.03) / 0.06, 0.0, 1.0)
+        downside_penalty = _clip(abs(float(downside_p10)) / 0.06, 0.0, 1.0)
+        effective_sample_weight = _clip(float(sample_weight or 0.0), 0.0, 1.0)
+
+        base_score = (
+            (0.34 * float(win_rate))
+            + (0.18 * normalized_payoff)
+            + (0.18 * normalized_expectancy)
+            + (0.16 * float(next_high_hit_rate))
+            + (0.14 * float(t_plus_2_positive_rate))
+            - (0.14 * downside_penalty)
+        )
+        floor_penalty = (
+            (0.55 * max(0.0, 0.54 - float(win_rate)))
+            + (0.30 * max(0.0, 0.56 - float(next_high_hit_rate)))
+            + (0.25 * max(0.0, 0.52 - float(t_plus_2_positive_rate)))
+        )
+        return (base_score - floor_penalty) * (0.35 + (0.65 * effective_sample_weight))
     return None
 
 

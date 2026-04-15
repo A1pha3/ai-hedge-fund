@@ -282,6 +282,86 @@ def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | Non
         cap_ratio=near_miss_rank_cap_ratio,
         rank_population=normalized_population,
     )
+    selected_cap_exceeded_raw = bool(selected_rank_cap is not None and normalized_rank > selected_rank_cap)
+    near_miss_cap_exceeded = bool(near_miss_rank_cap is not None and normalized_rank > near_miss_rank_cap)
+
+    selected_rank_cap_relief_score_margin_min = max(0.0, float(getattr(profile, "selected_rank_cap_relief_score_margin_min", 0.0) or 0.0))
+    selected_rank_cap_relief_rank_buffer_hard = _normalize_rank_cap(getattr(profile, "selected_rank_cap_relief_rank_buffer", 0))
+    selected_rank_cap_relief_rank_buffer_ratio = _normalize_rank_cap_ratio(getattr(profile, "selected_rank_cap_relief_rank_buffer_ratio", 0.0))
+    selected_rank_cap_relief_rank_buffer = _resolve_effective_rank_cap(
+        hard_cap=selected_rank_cap_relief_rank_buffer_hard,
+        cap_ratio=selected_rank_cap_relief_rank_buffer_ratio,
+        rank_population=normalized_population,
+    )
+    selected_rank_cap_relief_sector_resonance_min = max(0.0, float(getattr(profile, "selected_rank_cap_relief_sector_resonance_min", 0.0) or 0.0))
+    selected_rank_cap_relief_close_strength_max = min(
+        1.0,
+        max(0.0, float(getattr(profile, "selected_rank_cap_relief_close_strength_max", 1.0) or 1.0)),
+    )
+    selected_rank_cap_relief_require_confirmed_breakout = bool(getattr(profile, "selected_rank_cap_relief_require_confirmed_breakout", False))
+    selected_rank_cap_relief_require_t_plus_2_candidate = bool(getattr(profile, "selected_rank_cap_relief_require_t_plus_2_candidate", False))
+    selected_rank_cap_relief_allow_risk_off = bool(getattr(profile, "selected_rank_cap_relief_allow_risk_off", True))
+    selected_rank_cap_relief_allow_crisis = bool(getattr(profile, "selected_rank_cap_relief_allow_crisis", True))
+
+    selected_rank_cap_relief_cap: int | None = None
+    if selected_rank_cap is not None and selected_rank_cap_relief_rank_buffer is not None:
+        selected_rank_cap_relief_cap = int(selected_rank_cap + selected_rank_cap_relief_rank_buffer)
+
+    score_target = float(snapshot.get("score_target") or 0.0)
+    effective_select_threshold = float(snapshot.get("effective_select_threshold") or 0.0)
+    selected_rank_cap_relief_score_margin = round(score_target - effective_select_threshold, 4)
+    selected_rank_cap_relief_score_pass = selected_rank_cap_relief_score_margin >= selected_rank_cap_relief_score_margin_min
+
+    breakout_freshness = float(snapshot.get("breakout_freshness") or 0.0)
+    trend_acceleration = float(snapshot.get("trend_acceleration") or 0.0)
+    selected_breakout_gate_pass = breakout_freshness >= float(getattr(profile, "selected_breakout_freshness_min", 0.0)) and trend_acceleration >= float(getattr(profile, "selected_trend_acceleration_min", 0.0))
+    selected_rank_cap_relief_breakout_pass = (not selected_rank_cap_relief_require_confirmed_breakout) or selected_breakout_gate_pass
+
+    sector_resonance = float(snapshot.get("sector_resonance") or 0.0)
+    selected_rank_cap_relief_sector_resonance_pass = sector_resonance >= selected_rank_cap_relief_sector_resonance_min
+
+    close_strength = float(snapshot.get("close_strength") or 0.0)
+    selected_rank_cap_relief_close_strength_pass = close_strength <= selected_rank_cap_relief_close_strength_max
+
+    t_plus_2_continuation_candidate = dict(snapshot.get("t_plus_2_continuation_candidate") or {})
+    selected_rank_cap_relief_t_plus_2_pass = (not selected_rank_cap_relief_require_t_plus_2_candidate) or bool(t_plus_2_continuation_candidate.get("applied"))
+
+    market_state_threshold_adjustment = dict(snapshot.get("market_state_threshold_adjustment") or {})
+    selected_rank_cap_relief_market_risk_source = "market_state_threshold_adjustment"
+    selected_rank_cap_relief_market_risk_level = str(market_state_threshold_adjustment.get("risk_level") or "unknown").strip().lower()
+    volatility_regime = float(snapshot.get("volatility_regime") or 0.0)
+    atr_ratio = float(snapshot.get("atr_ratio") or 0.0)
+    if selected_rank_cap_relief_market_risk_level not in {"normal", "risk_off", "crisis"}:
+        selected_rank_cap_relief_market_risk_source = "volatility_fallback"
+        if volatility_regime >= 1.35 or atr_ratio >= 0.11:
+            selected_rank_cap_relief_market_risk_level = "crisis"
+        elif volatility_regime >= 1.15 or atr_ratio >= 0.085:
+            selected_rank_cap_relief_market_risk_level = "risk_off"
+        elif volatility_regime > 0.0 or atr_ratio > 0.0:
+            selected_rank_cap_relief_market_risk_level = "normal"
+        else:
+            selected_rank_cap_relief_market_risk_level = "unknown"
+            selected_rank_cap_relief_market_risk_source = "unknown"
+    selected_rank_cap_relief_market_risk_pass = not (
+        (selected_rank_cap_relief_market_risk_level == "risk_off" and not selected_rank_cap_relief_allow_risk_off)
+        or (selected_rank_cap_relief_market_risk_level == "crisis" and not selected_rank_cap_relief_allow_crisis)
+    )
+
+    selected_rank_cap_relief_within_buffer = bool(
+        selected_rank_cap_relief_cap is not None and normalized_rank > 0 and normalized_rank <= selected_rank_cap_relief_cap
+    )
+    selected_cap_soft_relief_applied = bool(
+        selected_cap_exceeded_raw
+        and selected_rank_cap_relief_within_buffer
+        and selected_rank_cap_relief_score_pass
+        and selected_rank_cap_relief_breakout_pass
+        and selected_rank_cap_relief_sector_resonance_pass
+        and selected_rank_cap_relief_close_strength_pass
+        and selected_rank_cap_relief_t_plus_2_pass
+        and selected_rank_cap_relief_market_risk_pass
+    )
+    selected_cap_exceeded_effective = bool(selected_cap_exceeded_raw and not selected_cap_soft_relief_applied)
+
     return {
         "enabled": bool(selected_rank_cap is not None or near_miss_rank_cap is not None or selected_rank_cap_ratio is not None or near_miss_rank_cap_ratio is not None),
         "rank_hint": normalized_rank if normalized_rank > 0 else None,
@@ -292,8 +372,31 @@ def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | Non
         "near_miss_rank_cap_ratio": near_miss_rank_cap_ratio,
         "selected_rank_cap": selected_rank_cap,
         "near_miss_rank_cap": near_miss_rank_cap,
-        "selected_cap_exceeded": bool(selected_rank_cap is not None and normalized_rank > selected_rank_cap),
-        "near_miss_cap_exceeded": bool(near_miss_rank_cap is not None and normalized_rank > near_miss_rank_cap),
+        "selected_cap_exceeded": selected_cap_exceeded_raw,
+        "selected_cap_exceeded_effective": selected_cap_exceeded_effective,
+        "near_miss_cap_exceeded": near_miss_cap_exceeded,
+        "selected_cap_soft_relief_applied": selected_cap_soft_relief_applied,
+        "selected_rank_cap_relief_score_margin_min": round(selected_rank_cap_relief_score_margin_min, 4),
+        "selected_rank_cap_relief_score_margin": selected_rank_cap_relief_score_margin,
+        "selected_rank_cap_relief_rank_buffer_hard": selected_rank_cap_relief_rank_buffer_hard,
+        "selected_rank_cap_relief_rank_buffer_ratio": selected_rank_cap_relief_rank_buffer_ratio,
+        "selected_rank_cap_relief_rank_buffer": selected_rank_cap_relief_rank_buffer,
+        "selected_rank_cap_relief_sector_resonance_min": round(selected_rank_cap_relief_sector_resonance_min, 4),
+        "selected_rank_cap_relief_close_strength_max": round(selected_rank_cap_relief_close_strength_max, 4),
+        "selected_rank_cap_relief_cap": selected_rank_cap_relief_cap,
+        "selected_rank_cap_relief_within_buffer": selected_rank_cap_relief_within_buffer,
+        "selected_rank_cap_relief_score_pass": selected_rank_cap_relief_score_pass,
+        "selected_rank_cap_relief_require_confirmed_breakout": selected_rank_cap_relief_require_confirmed_breakout,
+        "selected_rank_cap_relief_breakout_pass": selected_rank_cap_relief_breakout_pass,
+        "selected_rank_cap_relief_sector_resonance_pass": selected_rank_cap_relief_sector_resonance_pass,
+        "selected_rank_cap_relief_close_strength_pass": selected_rank_cap_relief_close_strength_pass,
+        "selected_rank_cap_relief_require_t_plus_2_candidate": selected_rank_cap_relief_require_t_plus_2_candidate,
+        "selected_rank_cap_relief_t_plus_2_pass": selected_rank_cap_relief_t_plus_2_pass,
+        "selected_rank_cap_relief_allow_risk_off": selected_rank_cap_relief_allow_risk_off,
+        "selected_rank_cap_relief_allow_crisis": selected_rank_cap_relief_allow_crisis,
+        "selected_rank_cap_relief_market_risk_source": selected_rank_cap_relief_market_risk_source,
+        "selected_rank_cap_relief_market_risk_level": selected_rank_cap_relief_market_risk_level,
+        "selected_rank_cap_relief_market_risk_pass": selected_rank_cap_relief_market_risk_pass,
     }
 
 
@@ -337,8 +440,11 @@ def _resolve_short_trade_decision(
     else:
         decision = "rejected"
 
-    selected_cap_exceeded = bool(rank_decision_cap.get("selected_cap_exceeded"))
+    selected_cap_exceeded = bool(rank_decision_cap.get("selected_cap_exceeded_effective", rank_decision_cap.get("selected_cap_exceeded")))
     near_miss_cap_exceeded = bool(rank_decision_cap.get("near_miss_cap_exceeded"))
+    selected_cap_soft_relief_applied = bool(rank_decision_cap.get("selected_cap_soft_relief_applied"))
+    if decision == "selected" and selected_cap_soft_relief_applied:
+        gate_status["rank"] = "selected_cap_soft_relief"
     if decision == "selected" and selected_cap_exceeded:
         gate_status["rank"] = "selected_cap_exceeded"
         if score_target >= effective_near_miss_threshold and near_miss_breakout_gate_pass and not near_miss_cap_exceeded:
@@ -766,6 +872,14 @@ def _build_short_trade_threshold_core_metrics_payload(*, profile: Any, snapshot:
         "layer_c_avoid_penalty": round(float(profile.layer_c_avoid_penalty), 4),
         "rank_threshold_tightening": dict(snapshot.get("rank_threshold_tightening") or {}),
         "rank_decision_cap": dict(snapshot.get("rank_decision_cap") or {}),
+        "selected_rank_cap_relief_score_margin_min": round(float(getattr(profile, "selected_rank_cap_relief_score_margin_min", 0.0)), 4),
+        "selected_rank_cap_relief_rank_buffer": int(getattr(profile, "selected_rank_cap_relief_rank_buffer", 0) or 0),
+        "selected_rank_cap_relief_rank_buffer_ratio": round(float(getattr(profile, "selected_rank_cap_relief_rank_buffer_ratio", 0.0) or 0.0), 4),
+        "selected_rank_cap_relief_sector_resonance_min": round(float(getattr(profile, "selected_rank_cap_relief_sector_resonance_min", 0.0) or 0.0), 4),
+        "selected_rank_cap_relief_require_confirmed_breakout": bool(getattr(profile, "selected_rank_cap_relief_require_confirmed_breakout", False)),
+        "selected_rank_cap_relief_require_t_plus_2_candidate": bool(getattr(profile, "selected_rank_cap_relief_require_t_plus_2_candidate", False)),
+        "selected_rank_cap_relief_allow_risk_off": bool(getattr(profile, "selected_rank_cap_relief_allow_risk_off", True)),
+        "selected_rank_cap_relief_allow_crisis": bool(getattr(profile, "selected_rank_cap_relief_allow_crisis", True)),
         "market_state_threshold_adjustment": dict(snapshot.get("market_state_threshold_adjustment") or {}),
     }
 

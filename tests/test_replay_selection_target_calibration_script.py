@@ -18,7 +18,7 @@ from scripts.replay_selection_target_calibration import (
 )
 from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
-from src.targets import get_active_short_trade_target_profile
+from src.targets import get_active_short_trade_target_profile, get_short_trade_target_profile
 from src.targets.router import build_selection_targets
 
 
@@ -439,6 +439,34 @@ def test_replay_selection_target_calibration_accepts_selection_snapshot_input(tm
     assert analysis["available_strategy_signal_counts"] == {"trend": 1, "event_sentiment": 1, "mean_reversion": 1}
 
 
+def test_build_replay_input_from_selection_snapshot_propagates_market_state_and_shadow_entries(tmp_path):
+    snapshot_path = _write_selection_snapshot(tmp_path)
+    snapshot_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    snapshot_payload["market_state"] = {
+        "state_type": "crisis",
+        "breadth_ratio": 0.31,
+        "position_scale": 0.5,
+    }
+    snapshot_payload["funnel_diagnostics"]["filters"]["short_trade_candidates"]["shadow_observation_entries"] = [
+        {
+            "ticker": "300720",
+            "score_b": 0.58,
+            "score_c": 0.0,
+            "score_final": 0.58,
+            "quality_score": 0.56,
+            "decision": "watch",
+            "candidate_source": "post_gate_liquidity_competition_shadow",
+        }
+    ]
+
+    replay_payload = replay_selection_target_calibration._build_replay_input_from_selection_snapshot(snapshot_payload)
+
+    assert replay_payload["market_state"] == snapshot_payload["market_state"]
+    assert replay_payload["watchlist"][0]["market_state"] == snapshot_payload["market_state"]
+    assert replay_payload["upstream_shadow_observation_entries"][0]["market_state"] == snapshot_payload["market_state"]
+    assert replay_payload["source_summary"]["upstream_shadow_observation_entry_count"] == 1
+
+
 def test_replay_selection_target_calibration_detects_threshold_drift(tmp_path):
     replay_input_path = _write_replay_input(tmp_path)
 
@@ -609,6 +637,21 @@ def test_replay_selection_target_threshold_grid_finds_first_promotions(tmp_path)
     first_near_miss = grid["first_row_with_near_miss"]
     assert first_near_miss is not None
     assert first_near_miss["demoted_from_selected"] == ["000001"]
+
+
+def test_replay_selection_target_threshold_grid_uses_profile_defaults_when_grid_omitted(tmp_path):
+    replay_input_path = _write_replay_input(tmp_path)
+    profile = get_short_trade_target_profile("staged_breakout")
+
+    grid = analyze_selection_target_threshold_grid(
+        replay_input_path,
+        profile_name="staged_breakout",
+        select_thresholds=[],
+        near_miss_thresholds=[],
+    )
+
+    assert grid["select_threshold_grid"] == [round(float(profile.select_threshold), 4)]
+    assert grid["near_miss_threshold_grid"] == [round(float(profile.near_miss_threshold), 4)]
 
 
 def test_replay_selection_target_structural_variant_releases_bearish_conflict_block(tmp_path):
@@ -1764,6 +1807,29 @@ def test_replay_selection_target_penalty_threshold_grid_finds_minimal_rescue_row
     first_selected_row = analysis["first_focus_selected_rows"]["300394"]
     assert first_selected_row["focus_decisions"]["300394"] == "selected"
     assert first_selected_row["select_threshold"] == 0.3
+
+
+def test_replay_selection_target_penalty_threshold_grid_defaults_to_profile_baseline(tmp_path):
+    replay_input_path = _write_replay_input(tmp_path)
+    profile = get_short_trade_target_profile("btst_precision_v2")
+
+    analysis = analyze_selection_target_penalty_threshold_grid(
+        replay_input_path,
+        profile_name="btst_precision_v2",
+        avoid_penalty_values=[],
+        stale_score_penalty_weight_values=[],
+        extension_score_penalty_weight_values=[],
+        select_thresholds=[],
+        near_miss_thresholds=[],
+        base_structural_variants=["baseline"],
+    )
+
+    assert analysis["layer_c_avoid_penalty_grid"] == [round(float(profile.layer_c_avoid_penalty), 4)]
+    assert analysis["stale_score_penalty_weight_grid"] == [round(float(profile.stale_score_penalty_weight), 4)]
+    assert analysis["extension_score_penalty_weight_grid"] == [round(float(profile.extension_score_penalty_weight), 4)]
+    assert analysis["select_threshold_grid"] == [round(float(profile.select_threshold), 4)]
+    assert analysis["near_miss_threshold_grid"] == [round(float(profile.near_miss_threshold), 4)]
+    assert analysis["rows"][0]["adjustment_cost"] == 0.0
 
 
 def test_replay_selection_target_combination_grid_surfaces_blocked_to_selected_release(tmp_path):

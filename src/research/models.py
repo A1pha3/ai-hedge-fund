@@ -83,6 +83,7 @@ class SelectionSnapshot(BaseModel):
     experiment_id: str | None = None
     trade_date: str
     market: str = "CN"
+    market_state: dict[str, Any] = Field(default_factory=dict)
     decision_timestamp: str
     data_available_until: str
     target_mode: str = "research_only"

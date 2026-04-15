@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-BTST 20天真实回测：对比 default vs ic_optimized profile 的实际选股表现。
+BTST 20天真实回测：比较多个 short-trade profile 的实际选股表现。
 
 核心逻辑：
 1. 对每个交易日，构建候选池（模拟pipeline的过滤逻辑）
 2. 用历史价格数据计算7+1个因子的近似值
-3. 分别用default和ic_optimized的在线profile权重计算score_target
+3. 分别用各profile的在线权重计算score_target
 4. 选出score_target超过阈值的股票
-5. 对比次日实际收益
+5. 对比次日以及T+2/T+3实际收益
 
 注意：这是因子层面的近似回测，不包含LLM agent评分（score_c）。
 score_c在实际pipeline中贡献~40%权重，因此回测结果会低估实际区分度。
 """
 
+import argparse
 import json
 import math
 import os
@@ -177,6 +178,27 @@ def summarize_return_stats(returns: pd.Series, *, big_win_threshold: float = 3.0
     }
 
 
+def summarize_horizon_return_stats(returns: pd.Series, *, big_win_threshold: float = 3.0) -> dict[str, float | int | None]:
+    values = pd.Series(returns, dtype=float).dropna()
+    if values.empty:
+        return {
+            "available_count": 0,
+            "win_rate": 0.0,
+            "avg_ret": 0.0,
+            "big_win_rate": 0.0,
+            "avg_win_ret": 0.0,
+            "avg_loss_ret": 0.0,
+            "payoff_ratio": None,
+            "expectancy": 0.0,
+            "downside_p10": 0.0,
+        }
+    stats = summarize_return_stats(values, big_win_threshold=big_win_threshold)
+    return {
+        "available_count": int(len(values)),
+        **stats,
+    }
+
+
 PROFILE_WEIGHT_FIELDS = {
     "breakout_freshness": "breakout_freshness_weight",
     "trend_acceleration": "trend_acceleration_weight",
@@ -189,8 +211,24 @@ PROFILE_WEIGHT_FIELDS = {
     "reversal": "short_term_reversal_weight",
 }
 
+DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "btst_precision_v1", "btst_precision_v2")
 
-def _build_profiles(profile_names: tuple[str, ...] = ("default", "ic_optimized")) -> dict[str, dict[str, object]]:
+
+def _parse_profile_names(raw: str | None) -> tuple[str, ...]:
+    if raw is None or not str(raw).strip():
+        return DEFAULT_PROFILE_NAMES
+    names: list[str] = []
+    for token in str(raw).split(","):
+        profile_name = str(token).strip()
+        if not profile_name:
+            continue
+        get_short_trade_target_profile(profile_name)
+        if profile_name not in names:
+            names.append(profile_name)
+    return tuple(names) if names else DEFAULT_PROFILE_NAMES
+
+
+def _build_profiles(profile_names: tuple[str, ...] = DEFAULT_PROFILE_NAMES) -> dict[str, dict[str, object]]:
     profiles: dict[str, dict[str, object]] = {}
     for profile_name in profile_names:
         profile = get_short_trade_target_profile(profile_name)
@@ -201,12 +239,70 @@ def _build_profiles(profile_names: tuple[str, ...] = ("default", "ic_optimized")
             "near_miss_rank_cap": int(profile.near_miss_rank_cap),
             "selected_rank_cap_ratio": float(profile.selected_rank_cap_ratio),
             "near_miss_rank_cap_ratio": float(profile.near_miss_rank_cap_ratio),
+            "selected_rank_cap_relief_score_margin_min": float(getattr(profile, "selected_rank_cap_relief_score_margin_min", 0.0)),
+            "selected_rank_cap_relief_rank_buffer": int(getattr(profile, "selected_rank_cap_relief_rank_buffer", 0)),
+            "selected_rank_cap_relief_rank_buffer_ratio": float(getattr(profile, "selected_rank_cap_relief_rank_buffer_ratio", 0.0)),
+            "selected_rank_cap_relief_sector_resonance_min": float(getattr(profile, "selected_rank_cap_relief_sector_resonance_min", 0.0)),
+            "selected_rank_cap_relief_close_strength_max": float(getattr(profile, "selected_rank_cap_relief_close_strength_max", 1.0)),
+            "selected_rank_cap_relief_require_confirmed_breakout": bool(getattr(profile, "selected_rank_cap_relief_require_confirmed_breakout", False)),
+            "selected_rank_cap_relief_allow_risk_off": bool(getattr(profile, "selected_rank_cap_relief_allow_risk_off", True)),
+            "selected_rank_cap_relief_allow_crisis": bool(getattr(profile, "selected_rank_cap_relief_allow_crisis", True)),
+            "selected_breakout_freshness_min": float(profile.selected_breakout_freshness_min),
+            "selected_trend_acceleration_min": float(profile.selected_trend_acceleration_min),
             "weights": {factor_name: float(getattr(profile, weight_field)) for factor_name, weight_field in PROFILE_WEIGHT_FIELDS.items()},
         }
     return profiles
 
 
-PROFILES = _build_profiles()
+def _summarize_group_entries(entries: list[dict[str, object]]) -> dict[str, float | int | None]:
+    total_n = int(sum(int(e["n"]) for e in entries))
+    avg_wr = float(np.mean([float(e["win_rate"]) for e in entries])) if entries else 0.0
+    avg_ret = float(np.mean([float(e["avg_ret"]) for e in entries])) if entries else 0.0
+    avg_big = float(np.mean([float(e["big_win_rate"]) for e in entries])) if entries else 0.0
+    avg_expectancy = float(np.mean([float(e.get("expectancy", 0.0)) for e in entries])) if entries else 0.0
+    avg_downside_p10 = float(np.mean([float(e.get("downside_p10", 0.0)) for e in entries])) if entries else 0.0
+    payoff_values = [float(e["payoff_ratio"]) for e in entries if e.get("payoff_ratio") is not None]
+    avg_payoff = float(np.mean(payoff_values)) if payoff_values else None
+    n_days_positive = int(sum(1 for e in entries if float(e["avg_ret"]) > 0))
+    return {
+        "total_n": total_n,
+        "avg_wr": avg_wr,
+        "avg_ret": avg_ret,
+        "avg_big": avg_big,
+        "avg_expectancy": avg_expectancy,
+        "avg_downside_p10": avg_downside_p10,
+        "avg_payoff": avg_payoff,
+        "n_days_positive": n_days_positive,
+    }
+
+
+def _build_profile_leaderboard(all_daily: dict[str, dict[str, list[dict[str, object]]]], *, group_name: str = "selected") -> list[dict[str, float | int | None | str]]:
+    leaderboard: list[dict[str, float | int | None | str]] = []
+    for profile_name, groups in all_daily.items():
+        entries = list(groups.get(group_name) or [])
+        if not entries:
+            continue
+        summary = _summarize_group_entries(entries)
+        leaderboard.append(
+            {
+                "profile": profile_name,
+                "days": len(entries),
+                **summary,
+            }
+        )
+    leaderboard.sort(
+        key=lambda row: (
+            float(row.get("avg_ret") or -999.0),
+            float(row.get("avg_wr") or -999.0),
+            float(row.get("avg_payoff") or -999.0),
+            float(row.get("avg_downside_p10") or -999.0),
+        ),
+        reverse=True,
+    )
+    return leaderboard
+
+
+PROFILES = _build_profiles(DEFAULT_PROFILE_NAMES)
 
 
 def _resolve_effective_rank_cap(*, hard_cap: int, cap_ratio: float, rank_population: int) -> int | None:
@@ -232,6 +328,16 @@ def _apply_rank_caps_to_scored_results(
     near_miss_rank_cap: int,
     selected_rank_cap_ratio: float = 0.0,
     near_miss_rank_cap_ratio: float = 0.0,
+    selected_rank_cap_relief_score_margin_min: float = 0.0,
+    selected_rank_cap_relief_rank_buffer: int = 0,
+    selected_rank_cap_relief_rank_buffer_ratio: float = 0.0,
+    selected_rank_cap_relief_sector_resonance_min: float = 0.0,
+    selected_rank_cap_relief_close_strength_max: float = 1.0,
+    selected_rank_cap_relief_require_confirmed_breakout: bool = False,
+    selected_rank_cap_relief_allow_risk_off: bool = True,
+    selected_rank_cap_relief_allow_crisis: bool = True,
+    selected_breakout_freshness_min: float = 0.0,
+    selected_trend_acceleration_min: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     ranked = results.sort_values(score_col, ascending=False).copy()
     ranked["rank_hint"] = np.arange(1, len(ranked) + 1, dtype=int)
@@ -246,6 +352,14 @@ def _apply_rank_caps_to_scored_results(
         cap_ratio=near_miss_rank_cap_ratio,
         rank_population=rank_population,
     )
+    effective_selected_rank_cap_relief_buffer = _resolve_effective_rank_cap(
+        hard_cap=selected_rank_cap_relief_rank_buffer,
+        cap_ratio=selected_rank_cap_relief_rank_buffer_ratio,
+        rank_population=rank_population,
+    )
+    effective_selected_rank_relief_cap: int | None = None
+    if effective_selected_rank_cap is not None and effective_selected_rank_cap_relief_buffer is not None:
+        effective_selected_rank_relief_cap = int(effective_selected_rank_cap + effective_selected_rank_cap_relief_buffer)
 
     score_series = ranked[score_col]
     selected_score_mask = score_series >= select_threshold
@@ -253,9 +367,66 @@ def _apply_rank_caps_to_scored_results(
 
     selected_rank_mask = pd.Series(True, index=ranked.index) if effective_selected_rank_cap is None else ranked["rank_hint"] <= int(effective_selected_rank_cap)
     near_miss_rank_mask = pd.Series(True, index=ranked.index) if effective_near_miss_rank_cap is None else ranked["rank_hint"] <= int(effective_near_miss_rank_cap)
+    selected_over_cap_mask = selected_score_mask & ~selected_rank_mask
 
-    selected_mask = selected_score_mask & selected_rank_mask
-    demoted_selected_mask = selected_score_mask & ~selected_rank_mask & near_miss_rank_mask
+    selected_relief_rank_mask = (
+        pd.Series(False, index=ranked.index)
+        if effective_selected_rank_relief_cap is None
+        else ranked["rank_hint"] <= int(effective_selected_rank_relief_cap)
+    )
+    selected_relief_score_mask = (score_series - float(select_threshold)) >= float(selected_rank_cap_relief_score_margin_min)
+    if selected_rank_cap_relief_require_confirmed_breakout:
+        breakout_series = pd.to_numeric(ranked.get("breakout_freshness"), errors="coerce").fillna(0.0)
+        trend_series = pd.to_numeric(ranked.get("trend_acceleration"), errors="coerce").fillna(0.0)
+        selected_relief_breakout_mask = (breakout_series >= float(selected_breakout_freshness_min)) & (trend_series >= float(selected_trend_acceleration_min))
+    else:
+        selected_relief_breakout_mask = pd.Series(True, index=ranked.index)
+    if "sector_resonance" in ranked:
+        sector_resonance_series = pd.to_numeric(ranked["sector_resonance"], errors="coerce").fillna(0.0)
+    else:
+        sector_resonance_series = pd.Series(0.0, index=ranked.index)
+    selected_relief_sector_mask = sector_resonance_series >= float(selected_rank_cap_relief_sector_resonance_min)
+    if "close_strength" in ranked:
+        close_strength_series = pd.to_numeric(ranked["close_strength"], errors="coerce").fillna(0.0)
+    else:
+        close_strength_series = pd.Series(0.0, index=ranked.index)
+    selected_relief_close_strength_mask = close_strength_series <= float(selected_rank_cap_relief_close_strength_max)
+
+    if "market_risk_level" in ranked:
+        market_risk_series = ranked["market_risk_level"].fillna("").astype(str).str.lower().str.strip()
+    elif "market_state_risk_level" in ranked:
+        market_risk_series = ranked["market_state_risk_level"].fillna("").astype(str).str.lower().str.strip()
+    else:
+        if "volatility_regime" in ranked:
+            volatility_regime_series = pd.to_numeric(ranked["volatility_regime"], errors="coerce").fillna(0.0)
+        else:
+            volatility_regime_series = pd.Series(0.0, index=ranked.index)
+        if "atr_ratio" in ranked:
+            atr_ratio_series = pd.to_numeric(ranked["atr_ratio"], errors="coerce").fillna(0.0)
+        else:
+            atr_ratio_series = pd.Series(0.0, index=ranked.index)
+        market_risk_series = pd.Series("normal", index=ranked.index)
+        market_risk_series[(volatility_regime_series >= 1.35) | (atr_ratio_series >= 0.11)] = "crisis"
+        market_risk_series[(market_risk_series != "crisis") & ((volatility_regime_series >= 1.15) | (atr_ratio_series >= 0.085))] = "risk_off"
+
+    selected_relief_risk_mask = pd.Series(True, index=ranked.index)
+    if not bool(selected_rank_cap_relief_allow_risk_off):
+        selected_relief_risk_mask &= market_risk_series != "risk_off"
+    if not bool(selected_rank_cap_relief_allow_crisis):
+        selected_relief_risk_mask &= market_risk_series != "crisis"
+
+    selected_relief_mask = (
+        selected_over_cap_mask
+        & selected_relief_rank_mask
+        & selected_relief_score_mask
+        & selected_relief_breakout_mask
+        & selected_relief_sector_mask
+        & selected_relief_close_strength_mask
+        & selected_relief_risk_mask
+    )
+
+    selected_mask = selected_score_mask & (selected_rank_mask | selected_relief_mask)
+    demoted_selected_mask = selected_score_mask & ~selected_mask & near_miss_rank_mask
     near_miss_mask = (near_miss_score_mask & near_miss_rank_mask) | demoted_selected_mask
 
     return ranked[selected_mask], ranked[near_miss_mask]
@@ -274,8 +445,19 @@ def compute_score(factors, weights):
     return min(max(score, 0), 1)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="BTST 20天近似回测，比较多个 short-trade profile 的选股表现。")
+    parser.add_argument("--profiles", default=",".join(DEFAULT_PROFILE_NAMES), help="逗号分隔的profile列表，例如 default,ic_optimized,momentum_optimized")
+    parser.add_argument("--output-json", default=None, help="结果输出JSON路径（默认 data/reports/btst_20day_backtest.json）")
+    return parser.parse_args()
+
+
 def main():
     import tushare as ts
+
+    args = parse_args()
+    active_profile_names = _parse_profile_names(args.profiles)
+    profiles = _build_profiles(active_profile_names)
 
     ts.set_token(os.getenv("TUSHARE_TOKEN"))
     pro = ts.pro_api()
@@ -285,6 +467,8 @@ def main():
     all_dates = sorted(cal["cal_date"].tolist())
     # 构建 next_date 映射
     next_map = {d: all_dates[i + 1] for i, d in enumerate(all_dates) if i + 1 < len(all_dates)}
+    next2_map = {d: all_dates[i + 2] for i, d in enumerate(all_dates) if i + 2 < len(all_dates)}
+    next3_map = {d: all_dates[i + 3] for i, d in enumerate(all_dates) if i + 3 < len(all_dates)}
 
     test_dates = [d for d in all_dates if d <= "20260410"][-20:]
 
@@ -293,10 +477,12 @@ def main():
 
     sb = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name,industry")
 
-    all_daily = {p: {"selected": [], "near_miss": [], "all_scores": []} for p in PROFILES}
+    all_daily = {p: {"selected": [], "near_miss": [], "all_scores": []} for p in profiles}
 
     for di, test_date in enumerate(test_dates):
         next_date = next_map.get(test_date)
+        next2_date = next2_map.get(test_date)
+        next3_date = next3_map.get(test_date)
         if not next_date:
             continue
 
@@ -321,6 +507,22 @@ def main():
         except:
             continue
         df = df.merge(dfn, on="ts_code")
+        if next2_date:
+            try:
+                dft2 = pro.daily(trade_date=next2_date)[["ts_code", "pct_chg"]].rename(columns={"pct_chg": "tplus2_ret"})
+                df = df.merge(dft2, on="ts_code", how="left")
+            except:
+                df["tplus2_ret"] = np.nan
+        else:
+            df["tplus2_ret"] = np.nan
+        if next3_date:
+            try:
+                dft3 = pro.daily(trade_date=next3_date)[["ts_code", "pct_chg"]].rename(columns={"pct_chg": "tplus3_ret"})
+                df = df.merge(dft3, on="ts_code", how="left")
+            except:
+                df["tplus3_ret"] = np.nan
+        else:
+            df["tplus3_ret"] = np.nan
         if len(df) < 100:
             continue
 
@@ -358,8 +560,12 @@ def main():
         results = df[df["ts_code"].isin(stock_factors.keys())].copy()
         if len(results) < 50:
             continue
+        results["breakout_freshness"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("breakout_freshness", 0.0)))
+        results["trend_acceleration"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("trend_acceleration", 0.0)))
+        results["sector_resonance"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("sector_resonance", 0.0)))
+        results["close_strength"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("close_strength", 0.0)))
 
-        for pname, pconfig in PROFILES.items():
+        for pname, pconfig in profiles.items():
             scores = []
             for _, row in results.iterrows():
                 f = stock_factors.get(row["ts_code"])
@@ -372,7 +578,7 @@ def main():
 
         # 统计各profile表现
         date_summary = {"date": test_date, "next_date": next_date, "n_pool": len(results)}
-        for pname, pconfig in PROFILES.items():
+        for pname, pconfig in profiles.items():
             col = f"score_{pname}"
             sel, nm = _apply_rank_caps_to_scored_results(
                 results,
@@ -383,12 +589,24 @@ def main():
                 near_miss_rank_cap=int(pconfig["near_miss_rank_cap"]),
                 selected_rank_cap_ratio=float(pconfig["selected_rank_cap_ratio"]),
                 near_miss_rank_cap_ratio=float(pconfig["near_miss_rank_cap_ratio"]),
+                selected_rank_cap_relief_score_margin_min=float(pconfig["selected_rank_cap_relief_score_margin_min"]),
+                selected_rank_cap_relief_rank_buffer=int(pconfig["selected_rank_cap_relief_rank_buffer"]),
+                selected_rank_cap_relief_rank_buffer_ratio=float(pconfig["selected_rank_cap_relief_rank_buffer_ratio"]),
+                selected_rank_cap_relief_sector_resonance_min=float(pconfig["selected_rank_cap_relief_sector_resonance_min"]),
+                selected_rank_cap_relief_close_strength_max=float(pconfig["selected_rank_cap_relief_close_strength_max"]),
+                selected_rank_cap_relief_require_confirmed_breakout=bool(pconfig["selected_rank_cap_relief_require_confirmed_breakout"]),
+                selected_rank_cap_relief_allow_risk_off=bool(pconfig["selected_rank_cap_relief_allow_risk_off"]),
+                selected_rank_cap_relief_allow_crisis=bool(pconfig["selected_rank_cap_relief_allow_crisis"]),
+                selected_breakout_freshness_min=float(pconfig["selected_breakout_freshness_min"]),
+                selected_trend_acceleration_min=float(pconfig["selected_trend_acceleration_min"]),
             )
 
             for group_name, group_df in [("selected", sel), ("near_miss", nm)]:
                 if len(group_df) < 1:
                     continue
                 return_stats = summarize_return_stats(group_df["next_ret"])
+                tplus2_stats = summarize_horizon_return_stats(group_df["tplus2_ret"])
+                tplus3_stats = summarize_horizon_return_stats(group_df["tplus3_ret"])
                 all_daily[pname][group_name].append(
                     {
                         "date": test_date,
@@ -402,6 +620,18 @@ def main():
                         "payoff_ratio": return_stats["payoff_ratio"],
                         "expectancy": return_stats["expectancy"],
                         "downside_p10": return_stats["downside_p10"],
+                        "tplus2_available_count": tplus2_stats["available_count"],
+                        "tplus2_win_rate": tplus2_stats["win_rate"],
+                        "tplus2_avg_ret": tplus2_stats["avg_ret"],
+                        "tplus2_payoff_ratio": tplus2_stats["payoff_ratio"],
+                        "tplus2_expectancy": tplus2_stats["expectancy"],
+                        "tplus2_downside_p10": tplus2_stats["downside_p10"],
+                        "tplus3_available_count": tplus3_stats["available_count"],
+                        "tplus3_win_rate": tplus3_stats["win_rate"],
+                        "tplus3_avg_ret": tplus3_stats["avg_ret"],
+                        "tplus3_payoff_ratio": tplus3_stats["payoff_ratio"],
+                        "tplus3_expectancy": tplus3_stats["expectancy"],
+                        "tplus3_downside_p10": tplus3_stats["downside_p10"],
                         "tickers": group_df["ts_code"].tolist()[:10],
                     }
                 )
@@ -413,7 +643,7 @@ def main():
             date_summary[f"{pname}_near_miss"] = len(nm)
 
         print(f"[{di + 1}/{len(test_dates)}] {test_date}→{next_date}: pool={len(results)}", end="")
-        for pname in PROFILES:
+        for pname in profiles:
             s = date_summary.get(f"{pname}_selected", 0)
             ic = date_summary.get(f"{pname}_ic", 0)
             print(f"  {pname}: sel={s} IC={ic:+.3f}", end="")
@@ -424,33 +654,63 @@ def main():
     print("回测汇总")
     print(f"{'=' * 90}")
 
-    for pname in PROFILES:
+    for pname in profiles:
         print(f"\n--- {pname} profile ---")
         for group in ["selected", "near_miss"]:
             entries = all_daily[pname][group]
             if not entries:
                 print(f"  {group}: 无数据")
                 continue
-            total_n = sum(e["n"] for e in entries)
-            avg_wr = np.mean([e["win_rate"] for e in entries])
-            avg_ret = np.mean([e["avg_ret"] for e in entries])
-            avg_big = np.mean([e["big_win_rate"] for e in entries])
-            avg_expectancy = np.mean([e.get("expectancy", 0.0) for e in entries])
-            avg_downside_p10 = np.mean([e.get("downside_p10", 0.0) for e in entries])
-            payoff_values = [float(e["payoff_ratio"]) for e in entries if e.get("payoff_ratio") is not None]
-            avg_payoff = float(np.mean(payoff_values)) if payoff_values else np.nan
-            n_days_positive = sum(1 for e in entries if e["avg_ret"] > 0)
+            summary = _summarize_group_entries(entries)
+            total_n = int(summary["total_n"])
+            avg_wr = float(summary["avg_wr"])
+            avg_ret = float(summary["avg_ret"])
+            avg_big = float(summary["avg_big"])
+            avg_expectancy = float(summary["avg_expectancy"])
+            avg_downside_p10 = float(summary["avg_downside_p10"])
+            avg_payoff = summary["avg_payoff"]
+            n_days_positive = int(summary["n_days_positive"])
             print(f"  {group}: {len(entries)}天有数据, 总计{total_n}只")
-            payoff_text = f"{avg_payoff:.2f}" if np.isfinite(avg_payoff) else "N/A"
+            payoff_text = f"{float(avg_payoff):.2f}" if avg_payoff is not None and np.isfinite(float(avg_payoff)) else "N/A"
             print(f"    日均胜率={avg_wr:.0%} 日均收益={avg_ret:+.2f}% 大涨率={avg_big:.0%} " f"赔率={payoff_text} 期望={avg_expectancy:+.2f}% 下行P10={avg_downside_p10:+.2f}% " f"正收益天数={n_days_positive}/{len(entries)}")
+            tplus2_entries = [e for e in entries if int(e.get("tplus2_available_count", 0)) > 0]
+            if tplus2_entries:
+                tplus2_avg_ret = float(np.mean([float(e.get("tplus2_avg_ret", 0.0)) for e in tplus2_entries]))
+                tplus2_avg_wr = float(np.mean([float(e.get("tplus2_win_rate", 0.0)) for e in tplus2_entries]))
+                tplus2_payoff_values = [float(e["tplus2_payoff_ratio"]) for e in tplus2_entries if e.get("tplus2_payoff_ratio") is not None]
+                tplus2_avg_payoff = float(np.mean(tplus2_payoff_values)) if tplus2_payoff_values else np.nan
+                tplus2_pos_days = int(sum(1 for e in tplus2_entries if float(e.get("tplus2_avg_ret", 0.0)) > 0))
+                tplus2_payoff_text = f"{tplus2_avg_payoff:.2f}" if np.isfinite(tplus2_avg_payoff) else "N/A"
+                print(f"    T+2日均胜率={tplus2_avg_wr:.0%} 日均收益={tplus2_avg_ret:+.2f}% 赔率={tplus2_payoff_text} 正收益天数={tplus2_pos_days}/{len(tplus2_entries)}")
+            tplus3_entries = [e for e in entries if int(e.get("tplus3_available_count", 0)) > 0]
+            if tplus3_entries:
+                tplus3_avg_ret = float(np.mean([float(e.get("tplus3_avg_ret", 0.0)) for e in tplus3_entries]))
+                tplus3_avg_wr = float(np.mean([float(e.get("tplus3_win_rate", 0.0)) for e in tplus3_entries]))
+                tplus3_payoff_values = [float(e["tplus3_payoff_ratio"]) for e in tplus3_entries if e.get("tplus3_payoff_ratio") is not None]
+                tplus3_avg_payoff = float(np.mean(tplus3_payoff_values)) if tplus3_payoff_values else np.nan
+                tplus3_pos_days = int(sum(1 for e in tplus3_entries if float(e.get("tplus3_avg_ret", 0.0)) > 0))
+                tplus3_payoff_text = f"{tplus3_avg_payoff:.2f}" if np.isfinite(tplus3_avg_payoff) else "N/A"
+                print(f"    T+3日均胜率={tplus3_avg_wr:.0%} 日均收益={tplus3_avg_ret:+.2f}% 赔率={tplus3_payoff_text} 正收益天数={tplus3_pos_days}/{len(tplus3_entries)}")
             # 逐日明细
             for e in entries:
                 day_payoff = "N/A" if e.get("payoff_ratio") is None else f"{float(e['payoff_ratio']):.2f}"
                 print(f"    {e['date']}: {e['n']}只 胜率={e['win_rate']:.0%} 收益={e['avg_ret']:+.2f}% " f"赔率={day_payoff} 期望={e.get('expectancy', 0.0):+.2f}% 下行P10={e.get('downside_p10', 0.0):+.2f}% " f"{e['tickers'][:5]}")
 
+    selected_leaderboard = _build_profile_leaderboard(all_daily, group_name="selected")
+    if selected_leaderboard:
+        print("\n--- selected profile leaderboard (按日均收益排序) ---")
+        for idx, row in enumerate(selected_leaderboard, start=1):
+            payoff_text = "N/A" if row["avg_payoff"] is None else f"{float(row['avg_payoff']):.2f}"
+            print(
+                f"  {idx}. {row['profile']}: 日均收益={float(row['avg_ret']):+.2f}% "
+                f"胜率={float(row['avg_wr']):.0%} 赔率={payoff_text} "
+                f"下行P10={float(row['avg_downside_p10']):+.2f}% "
+                f"正收益天数={int(row['n_days_positive'])}/{int(row['days'])} 样本={int(row['total_n'])}"
+            )
+
     # 保存结果
     out = {}
-    for pname in PROFILES:
+    for pname in profiles:
         out[pname] = {}
         for group in ["selected", "near_miss"]:
             out[pname][group] = [
@@ -466,12 +726,24 @@ def main():
                     "payoff_ratio": (round(float(e["payoff_ratio"]), 4) if e.get("payoff_ratio") is not None else None),
                     "expectancy": round(float(e.get("expectancy", 0.0)), 4),
                     "downside_p10": round(float(e.get("downside_p10", 0.0)), 4),
+                    "tplus2_available_count": int(e.get("tplus2_available_count", 0)),
+                    "tplus2_win_rate": round(float(e.get("tplus2_win_rate", 0.0)), 4),
+                    "tplus2_avg_ret": round(float(e.get("tplus2_avg_ret", 0.0)), 4),
+                    "tplus2_payoff_ratio": (round(float(e["tplus2_payoff_ratio"]), 4) if e.get("tplus2_payoff_ratio") is not None else None),
+                    "tplus2_expectancy": round(float(e.get("tplus2_expectancy", 0.0)), 4),
+                    "tplus2_downside_p10": round(float(e.get("tplus2_downside_p10", 0.0)), 4),
+                    "tplus3_available_count": int(e.get("tplus3_available_count", 0)),
+                    "tplus3_win_rate": round(float(e.get("tplus3_win_rate", 0.0)), 4),
+                    "tplus3_avg_ret": round(float(e.get("tplus3_avg_ret", 0.0)), 4),
+                    "tplus3_payoff_ratio": (round(float(e["tplus3_payoff_ratio"]), 4) if e.get("tplus3_payoff_ratio") is not None else None),
+                    "tplus3_expectancy": round(float(e.get("tplus3_expectancy", 0.0)), 4),
+                    "tplus3_downside_p10": round(float(e.get("tplus3_downside_p10", 0.0)), 4),
                     "tickers": e["tickers"],
                 }
                 for e in all_daily[pname][group]
             ]
 
-    out_path = Path(__file__).resolve().parent.parent / "data" / "reports" / "btst_20day_backtest.json"
+    out_path = Path(args.output_json).expanduser().resolve() if args.output_json else Path(__file__).resolve().parent.parent / "data" / "reports" / "btst_20day_backtest.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)

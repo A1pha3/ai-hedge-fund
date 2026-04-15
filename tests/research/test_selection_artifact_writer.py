@@ -218,9 +218,11 @@ def test_file_selection_artifact_writer_propagates_market_state_into_replay_inpu
     )
 
     writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
+    snapshot_payload = json.loads((tmp_path / "2026-03-22" / "selection_snapshot.json").read_text(encoding="utf-8"))
     replay_input_payload = json.loads((tmp_path / "2026-03-22" / "selection_target_replay_input.json").read_text(encoding="utf-8"))
     expected_market_state = market_state.model_dump(mode="json")
 
+    assert snapshot_payload["market_state"] == expected_market_state
     assert replay_input_payload["market_state"] == expected_market_state
     assert replay_input_payload["watchlist"][0]["market_state"] == expected_market_state
     assert replay_input_payload["rejected_entries"][0]["market_state"] == expected_market_state

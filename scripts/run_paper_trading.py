@@ -76,6 +76,10 @@ def refresh_btst_nightly_control_tower(report_dir: Path) -> dict[str, str] | Non
     }
 
 
+
+DEFAULT_SHORT_TRADE_TARGET_PROFILE = "btst_precision_v2"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a paper-trading session using the existing pipeline mode engine.")
     parser.add_argument("--start-date", required=True, help="Start date in YYYY-MM-DD format")
@@ -97,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-benchmark-clear-first", action="store_true", help="Clear the local cache before running the post-session benchmark; use with caution")
     parser.add_argument("--analysts", default=None, help="Optional comma-separated analyst keys for a lower-cost replay subset")
     parser.add_argument("--fast-analysts", default=None, help="Optional comma-separated analyst keys used only for the fast agent tier")
-    parser.add_argument("--short-trade-target-profile", default="default", help="Short-trade target profile for replay selection logic")
+    parser.add_argument("--short-trade-target-profile", default=DEFAULT_SHORT_TRADE_TARGET_PROFILE, help="Short-trade target profile for replay selection logic")
     parser.add_argument("--short-trade-target-overrides", default=None, help="JSON object with short-trade target profile overrides")
     parser.add_argument("--analysts-all", action="store_true", help="Use all analysts explicitly")
     parser.add_argument("--analyst-concurrency-limit", type=int, default=None, help="Optional ANALYST_CONCURRENCY_LIMIT override for replay throughput control")
@@ -503,7 +507,7 @@ def _resolve_paper_trading_runtime_inputs(args: argparse.Namespace) -> dict[str,
         "tickers": _parse_csv_tokens(args.tickers),
         "selected_analysts": _resolve_selected_analysts(args.analysts, args.analysts_all),
         "fast_selected_analysts": _resolve_selected_analysts(args.fast_analysts, False),
-        "short_trade_target_profile": str(args.short_trade_target_profile or "default").strip() or "default",
+        "short_trade_target_profile": str(args.short_trade_target_profile or DEFAULT_SHORT_TRADE_TARGET_PROFILE).strip() or DEFAULT_SHORT_TRADE_TARGET_PROFILE,
         "short_trade_target_overrides": _resolve_short_trade_target_overrides(args.short_trade_target_overrides),
         "output_dir": output_dir,
         "auto_shadow_focus": _derive_shadow_focus_tickers_from_reports(_resolve_reports_root_from_output_dir(output_dir)),

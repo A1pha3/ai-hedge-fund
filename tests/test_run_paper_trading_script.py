@@ -33,6 +33,38 @@ def test_resolve_short_trade_target_overrides_decodes_json_object() -> None:
     }
 
 
+def test_resolve_runtime_inputs_uses_btst_precision_v2_default_profile(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        run_paper_trading_script,
+        "_derive_shadow_focus_tickers_from_reports",
+        lambda _reports_root: {
+            "all": [],
+            "layer_a_liquidity_corridor": [],
+            "post_gate_liquidity_competition": [],
+            "release_priority_layer_a_liquidity_corridor": [],
+            "release_priority_post_gate_liquidity_competition": [],
+            "visibility_gap_all": [],
+            "visibility_gap_layer_a_liquidity_corridor": [],
+            "visibility_gap_post_gate_liquidity_competition": [],
+        },
+    )
+    args = SimpleNamespace(
+        start_date="2026-03-23",
+        end_date="2026-03-26",
+        tickers="",
+        analysts=None,
+        analysts_all=False,
+        fast_analysts=None,
+        short_trade_target_profile=None,
+        short_trade_target_overrides=None,
+        output_dir=str(tmp_path / "paper"),
+    )
+
+    runtime_inputs = run_paper_trading_script._resolve_paper_trading_runtime_inputs(args)
+
+    assert runtime_inputs["short_trade_target_profile"] == run_paper_trading_script.DEFAULT_SHORT_TRADE_TARGET_PROFILE
+
+
 def test_derive_shadow_focus_tickers_from_reports_picks_continuation_followup(tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()

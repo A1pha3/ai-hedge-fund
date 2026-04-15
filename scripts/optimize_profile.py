@@ -6,6 +6,7 @@ Supports checkpointing for long-running searches.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -25,6 +26,26 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 REPORTS_DIR = Path("data/reports")
+PARTIAL_HORIZON_WEIGHT_PENALTY = 0.85
+
+
+def _build_default_checkpoint_path(
+    *,
+    profile: str,
+    objective: str,
+    replay_input_paths: list[Path] | None = None,
+    walk_forward_descriptor: str | None = None,
+) -> str:
+    descriptor_parts = [f"profile={profile}", f"objective={objective}"]
+    if replay_input_paths:
+        resolved_paths = sorted(str(path.expanduser().resolve()) for path in replay_input_paths)
+        descriptor_parts.append("mode=replay")
+        descriptor_parts.extend(resolved_paths)
+    else:
+        descriptor_parts.append("mode=walk_forward")
+        descriptor_parts.append(walk_forward_descriptor or "")
+    digest = hashlib.sha1("||".join(descriptor_parts).encode("utf-8")).hexdigest()[:12]
+    return str(REPORTS_DIR / f"param_search_{profile}_{digest}_checkpoint.json")
 
 
 def _parse_grid_params(raw: list[str]) -> dict[str, list[Any]]:
@@ -139,13 +160,18 @@ def _build_replay_evaluator(
                 next_close_payoff_ratio = _safe_float(primary_surface.get("next_close_payoff_ratio"))
                 next_close_expectancy = _safe_float(primary_surface.get("next_close_expectancy"))
                 t_plus_2_close_positive_rate = _safe_float(primary_surface.get("t_plus_2_close_positive_rate"))
+                has_t_plus_2_horizon = t_plus_2_median is not None and t_plus_2_close_positive_rate is not None
+
+                if t_plus_2_median is None:
+                    t_plus_2_median = _resolve_distribution_stat(primary_surface, "next_close_return_distribution", "median")
+                if t_plus_2_close_positive_rate is None:
+                    t_plus_2_close_positive_rate = next_close_positive_rate
 
                 if (
                     next_close_positive_rate is None
                     or next_high_hit_rate is None
                     or t_plus_2_median is None
                     or max_dd_proxy is None
-                    or next_close_payoff_ratio is None
                     or next_close_expectancy is None
                     or t_plus_2_close_positive_rate is None
                 ):
@@ -157,13 +183,16 @@ def _build_replay_evaluator(
                 next_day_weight = min(1.0, max(0.0, next_day_count / 10.0))
                 closed_cycle_weight = min(1.0, max(0.0, closed_cycle_count / 6.0))
                 sample_weight = min(next_day_weight, closed_cycle_weight)
+                if not has_t_plus_2_horizon:
+                    sample_weight *= PARTIAL_HORIZON_WEIGHT_PENALTY
                 sharpe_proxy = (next_close_positive_rate + next_high_hit_rate) * sample_weight
                 sortino_proxy = t_plus_2_median * sample_weight
                 total_metrics["sharpe"].append(sharpe_proxy)
                 total_metrics["sortino"].append(sortino_proxy)
                 total_metrics["max_dd"].append(max_dd_proxy)
                 total_metrics["next_close_positive_rate"].append(next_close_positive_rate)
-                total_metrics["next_close_payoff_ratio"].append(next_close_payoff_ratio)
+                if next_close_payoff_ratio is not None:
+                    total_metrics["next_close_payoff_ratio"].append(next_close_payoff_ratio)
                 total_metrics["next_close_expectancy"].append(next_close_expectancy)
                 total_metrics["next_high_hit_rate"].append(next_high_hit_rate)
                 total_metrics["t_plus_2_close_positive_rate"].append(t_plus_2_close_positive_rate)
@@ -335,14 +364,30 @@ def main() -> int:
 
     objective = SearchObjective(args.objective)
 
+    replay_input_paths: list[Path] | None = None
+    walk_forward_descriptor: str | None = None
     if args.input:
         input_paths = [Path(p) for p in args.input]
+        replay_input_paths = input_paths
         evaluator = _build_replay_evaluator(
             input_paths,
             base_profile=args.profile,
             next_high_hit_threshold=args.next_high_hit_threshold,
         )
     elif args.tickers and args.start_date and args.end_date:
+        walk_forward_descriptor = "|".join(
+            [
+                str(args.tickers),
+                str(args.start_date),
+                str(args.end_date),
+                str(args.initial_capital),
+                str(args.model_name),
+                str(args.model_provider),
+                str(args.train_months),
+                str(args.test_months),
+                str(args.step_months),
+            ]
+        )
         evaluator = _build_walk_forward_evaluator(
             tickers=args.tickers.split(","),
             start_date=args.start_date,
@@ -359,7 +404,12 @@ def main() -> int:
     else:
         parser.error("Specify --input for replay mode, or --tickers --start-date --end-date for walk-forward mode")
 
-    checkpoint = args.checkpoint or str(REPORTS_DIR / f"param_search_{args.profile}_checkpoint.json")
+    checkpoint = args.checkpoint or _build_default_checkpoint_path(
+        profile=args.profile,
+        objective=args.objective,
+        replay_input_paths=replay_input_paths,
+        walk_forward_descriptor=walk_forward_descriptor,
+    )
     report = run_param_search(
         space=space,
         objective=objective,
