@@ -732,16 +732,16 @@ def test_score_mean_reversion_strategy_marks_rsi_oversold_and_reversion_regime()
     prices_df = pd.DataFrame({"close": [100.0] * 100})
 
     with (
-        patch("src.screening.strategy_scorer.calculate_mean_reversion_signals", return_value={"signal": "bullish", "confidence": 0.7, "metrics": {"z": -2.1}}),
-        patch("src.screening.strategy_scorer.calculate_stat_arb_signals", return_value={"signal": "neutral", "confidence": 0.2, "metrics": {}}),
+        patch("src.screening.strategy_scorer_mean_reversion.calculate_mean_reversion_signals", return_value={"signal": "bullish", "confidence": 0.7, "metrics": {"z": -2.1}}),
+        patch("src.screening.strategy_scorer_mean_reversion.calculate_stat_arb_signals", return_value={"signal": "neutral", "confidence": 0.2, "metrics": {}}),
         patch(
-            "src.screening.strategy_scorer.calculate_rsi",
+            "src.screening.strategy_scorer_mean_reversion.calculate_rsi",
             side_effect=[
                 pd.Series([25.0] * len(prices_df)),
                 pd.Series([35.0] * len(prices_df)),
             ],
         ),
-        patch("src.screening.strategy_scorer.calculate_hurst_exponent", return_value=0.4),
+        patch("src.screening.strategy_scorer_mean_reversion.calculate_hurst_exponent", return_value=0.4),
     ):
         signal = score_mean_reversion_strategy(prices_df)
 
@@ -755,8 +755,8 @@ def test_score_mean_reversion_strategy_marks_insufficient_rsi_history_incomplete
     prices_df = pd.DataFrame({"close": [100.0] * 20})
 
     with (
-        patch("src.screening.strategy_scorer.calculate_mean_reversion_signals", return_value=None),
-        patch("src.screening.strategy_scorer.calculate_stat_arb_signals", return_value=None),
+        patch("src.screening.strategy_scorer_mean_reversion.calculate_mean_reversion_signals", return_value=None),
+        patch("src.screening.strategy_scorer_mean_reversion.calculate_stat_arb_signals", return_value=None),
     ):
         signal = score_mean_reversion_strategy(prices_df)
 
