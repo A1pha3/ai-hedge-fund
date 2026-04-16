@@ -77,25 +77,21 @@ class DataResponse:
 class DataProviderError(Exception):
     """数据提供商错误基类"""
 
-    pass
 
 
 class RateLimitError(DataProviderError):
     """速率限制错误"""
 
-    pass
 
 
 class APIError(DataProviderError):
     """API 调用错误"""
 
-    pass
 
 
 class ValidationError(DataProviderError):
     """数据验证错误"""
 
-    pass
 
 
 class BaseDataProvider(ABC):
@@ -171,7 +167,6 @@ class BaseDataProvider(ABC):
             DataProviderError: 数据获取失败
             RateLimitError: 超过速率限制
         """
-        pass
 
     @abstractmethod
     async def get_financial_metrics(self, ticker: str, end_date: str) -> DataResponse:
@@ -185,7 +180,6 @@ class BaseDataProvider(ABC):
         Returns:
             DataResponse 包含财务指标字典
         """
-        pass
 
     @abstractmethod
     async def get_company_news(self, ticker: str, start_date: str, end_date: str) -> DataResponse:
@@ -200,7 +194,6 @@ class BaseDataProvider(ABC):
         Returns:
             DataResponse 包含新闻列表
         """
-        pass
 
     @abstractmethod
     async def health_check(self) -> bool:
@@ -212,7 +205,6 @@ class BaseDataProvider(ABC):
         Returns:
             True 表示健康，False 表示不健康
         """
-        pass
 
     @abstractmethod
     def rate_limit_info(self) -> dict[str, Any]:
@@ -226,7 +218,6 @@ class BaseDataProvider(ABC):
             - backoff_strategy: 退避策略（exponential/fixed/none）
             - current_remaining: 当前剩余请求数
         """
-        pass
 
     async def execute_with_retry(self, operation, max_retries: int = 3, backoff_strategy: str = "exponential") -> Any:
         """

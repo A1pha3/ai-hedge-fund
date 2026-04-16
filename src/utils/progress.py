@@ -82,10 +82,9 @@ class AgentProgress:
             agent_name = item[0]
             if "risk_management" in agent_name:
                 return (2, agent_name)
-            elif "portfolio_management" in agent_name:
+            if "portfolio_management" in agent_name:
                 return (3, agent_name)
-            else:
-                return (1, agent_name)
+            return (1, agent_name)
 
         for agent_name, info in sorted(self.agent_status.items(), key=sort_key):
             status = info["status"]

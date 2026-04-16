@@ -103,6 +103,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
 
         # Return the response (whether success, other errors, or final 429)
         return response
+    return None
 
 
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str | None = None) -> list[Price]:
@@ -226,8 +227,7 @@ def search_line_items(
         sorted_items = "_".join(sorted(line_items))
         cache_key = f"{ticker}_{sorted_items}_{period}_{end_date}_{limit}"
         if cached_data := _cache.get_line_items(cache_key):
-            results = [LineItem(**item) for item in cached_data]
-            return results
+            return [LineItem(**item) for item in cached_data]
         results = _dedupe_by_report_period(get_ashare_line_items_with_tushare(ticker, line_items, end_date, period, limit))
         if results:
             _cache.set_line_items(cache_key, [r.model_dump() for r in results])

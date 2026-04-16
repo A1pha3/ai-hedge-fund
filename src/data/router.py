@@ -354,12 +354,11 @@ class DataRouter:
         """
         if request.data_type == DataType.PRICE:
             return await self.get_prices(request.ticker, request.start_date, request.end_date)
-        elif request.data_type == DataType.FUNDAMENTAL:
+        if request.data_type == DataType.FUNDAMENTAL:
             return await self.get_financial_metrics(request.ticker, request.end_date, request.kwargs.get("limit", 10))
-        elif request.data_type == DataType.NEWS:
+        if request.data_type == DataType.NEWS:
             return await self.get_company_news(request.ticker, request.start_date, request.end_date)
-        else:
-            return DataResponse(data=None, source="router", error=f"Unsupported data type: {request.data_type}")
+        return DataResponse(data=None, source="router", error=f"Unsupported data type: {request.data_type}")
 
     async def close(self):
         """关闭所有提供商连接"""

@@ -84,7 +84,6 @@ except ImportError:
 class AShareDataError(Exception):
     """A股数据获取错误"""
 
-    pass
 
 
 def _normalize_akshare_cache_value(value: Any) -> Any:

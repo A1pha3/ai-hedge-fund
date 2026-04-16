@@ -229,7 +229,7 @@ def analyze_balance_sheet(financial_line_items: list) -> dict[str, any]:
     current_ratio_score, current_ratio_reason = _score_rakesh_current_ratio(latest)
     return {
         "score": debt_score + current_ratio_score,
-        "details": "; ".join([debt_reason, current_ratio_reason]),
+        "details": f"{debt_reason}; {current_ratio_reason}",
     }
 
 
@@ -246,7 +246,7 @@ def analyze_cash_flow(financial_line_items: list) -> dict[str, any]:
     dividend_score, dividend_reason = _score_rakesh_dividends(latest)
     return {
         "score": free_cash_flow_score + dividend_score,
-        "details": "; ".join([free_cash_flow_reason, dividend_reason]),
+        "details": f"{free_cash_flow_reason}; {dividend_reason}",
     }
 
 

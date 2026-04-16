@@ -225,12 +225,11 @@ def get_revenue_growth_for_analysis(revenues: list[float], analysis_type: str = 
     """
     if analysis_type == "cagr":
         return calculate_revenue_growth_cagr(revenues)
-    elif analysis_type == "simple":
+    if analysis_type == "simple":
         return calculate_simple_revenue_growth(revenues)
-    elif analysis_type == "yoy":
+    if analysis_type == "yoy":
         return calculate_yoy_revenue_growth(revenues)
-    else:
-        return calculate_revenue_growth_cagr(revenues)
+    return calculate_revenue_growth_cagr(revenues)
 
 
 def annualize_ytd_value(value: float, report_period: str) -> float | None:

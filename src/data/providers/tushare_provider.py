@@ -84,17 +84,17 @@ class TushareProvider(BaseDataProvider):
 
         if ticker.startswith("sh"):
             return f"{ticker[2:]}.SH"
-        elif ticker.startswith("sz"):
+        if ticker.startswith("sz"):
             return f"{ticker[2:]}.SZ"
-        elif ticker.startswith("bj"):
+        if ticker.startswith("bj"):
             return f"{ticker[2:]}.BJ"
 
         # 根据代码规则判断交易所
         if ticker.startswith(("6", "68", "51", "56", "58", "60")):
             return f"{ticker}.SH"
-        elif ticker.startswith(("0", "3", "15", "16", "18", "20")):
+        if ticker.startswith(("0", "3", "15", "16", "18", "20")):
             return f"{ticker}.SZ"
-        elif ticker.startswith(("4", "8", "43", "83", "87")):
+        if ticker.startswith(("4", "8", "43", "83", "87")):
             return f"{ticker}.BJ"
 
         return f"{ticker}.SZ"  # 默认深交所

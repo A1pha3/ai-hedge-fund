@@ -97,14 +97,13 @@ class FusedScore(BaseModel):
     def classify_decision(score: float) -> str:
         if score > 0.50:
             return "strong_buy"
-        elif score >= 0.35:
+        if score >= 0.35:
             return "watch"
-        elif score >= -0.20:
+        if score >= -0.20:
             return "neutral"
-        elif score >= -0.50:
+        if score >= -0.50:
             return "sell"
-        else:
-            return "strong_sell"
+        return "strong_sell"
 
 
 class ArbitrationAction(StrEnum):

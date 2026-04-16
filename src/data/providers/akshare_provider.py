@@ -94,9 +94,9 @@ class AKShareProvider(BaseDataProvider):
         # 根据代码规则判断
         if ticker.startswith(("6", "68", "51", "56", "58", "60")):
             return "sh"
-        elif ticker.startswith(("0", "3", "15", "16", "18", "20")):
+        if ticker.startswith(("0", "3", "15", "16", "18", "20")):
             return "sz"
-        elif ticker.startswith(("4", "8", "43", "83", "87")):
+        if ticker.startswith(("4", "8", "43", "83", "87")):
             return "bj"
 
         return "sz"  # 默认深交所

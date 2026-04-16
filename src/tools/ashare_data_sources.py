@@ -11,7 +11,6 @@ from src.data.models import FinancialMetrics, Price
 class DataSourceError(Exception):
     """数据源错误"""
 
-    pass
 
 
 class BaseDataSource:
@@ -53,9 +52,8 @@ class TushareDataSource(BaseDataSource):
                 cls._pro = ts.pro_api()
                 cls.available = True
                 return True
-            else:
-                print("Warning: TUSHARE_TOKEN 环境变量未设置，Tushare 不可用")
-                return False
+            print("Warning: TUSHARE_TOKEN 环境变量未设置，Tushare 不可用")
+            return False
         except ImportError:
             print("Warning: tushare 模块未安装")
             return False

@@ -245,17 +245,16 @@ def format_backtest_row(
             f"{Fore.RED}{max_drawdown:.2f}%{Style.RESET_ALL}" if max_drawdown is not None else "",  # Max Drawdown (signed)
             benchmark_str,  # Benchmark (S&P 500)
         ]
-    else:
-        return [
-            date,
-            f"{Fore.CYAN}{ticker}{Style.RESET_ALL}",
-            f"{action_color}{action.upper()}{Style.RESET_ALL}",
-            f"{action_color}{quantity:,.0f}{Style.RESET_ALL}",
-            f"{Fore.WHITE}{price:,.2f}{Style.RESET_ALL}",
-            f"{Fore.GREEN}{long_shares:,.0f}{Style.RESET_ALL}",  # Long Shares
-            f"{Fore.RED}{short_shares:,.0f}{Style.RESET_ALL}",  # Short Shares
-            f"{Fore.YELLOW}{position_value:,.2f}{Style.RESET_ALL}",
-        ]
+    return [
+        date,
+        f"{Fore.CYAN}{ticker}{Style.RESET_ALL}",
+        f"{action_color}{action.upper()}{Style.RESET_ALL}",
+        f"{action_color}{quantity:,.0f}{Style.RESET_ALL}",
+        f"{Fore.WHITE}{price:,.2f}{Style.RESET_ALL}",
+        f"{Fore.GREEN}{long_shares:,.0f}{Style.RESET_ALL}",  # Long Shares
+        f"{Fore.RED}{short_shares:,.0f}{Style.RESET_ALL}",  # Short Shares
+        f"{Fore.YELLOW}{position_value:,.2f}{Style.RESET_ALL}",
+    ]
 
 
 def _format_reasoning_to_markdown(reasoning: dict | str) -> str:

@@ -151,7 +151,7 @@ class EnhancedDataValidator:
         """获取字段值，支持对象属性和字典"""
         if hasattr(metric, field_name):
             return getattr(metric, field_name)
-        elif isinstance(metric, dict):
+        if isinstance(metric, dict):
             return metric.get(field_name)
         return None
 

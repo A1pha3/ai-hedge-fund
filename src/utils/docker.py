@@ -116,11 +116,10 @@ def delete_model(model_name: str, ollama_url: str) -> bool:
         if response.status_code == 200:
             print(f"{Fore.GREEN}Model {model_name} deleted successfully.{Style.RESET_ALL}")
             return True
-        else:
-            print(f"{Fore.RED}Failed to delete model. Status code: {response.status_code}{Style.RESET_ALL}")
-            if response.text:
-                print(f"{Fore.RED}Error: {response.text}{Style.RESET_ALL}")
-            return False
+        print(f"{Fore.RED}Failed to delete model. Status code: {response.status_code}{Style.RESET_ALL}")
+        if response.text:
+            print(f"{Fore.RED}Error: {response.text}{Style.RESET_ALL}")
+        return False
     except requests.RequestException as e:
         print(f"{Fore.RED}Error deleting model: {e}{Style.RESET_ALL}")
         return False

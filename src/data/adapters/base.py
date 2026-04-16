@@ -19,7 +19,6 @@ class DataSourceAdapter(ABC):
         Returns:
             标准化后的数据字典，字段名与 FinancialMetrics 模型一致
         """
-        pass
 
     @abstractmethod
     def get_unit_conversion_rules(self) -> dict[str, float]:
@@ -29,7 +28,6 @@ class DataSourceAdapter(ABC):
             {field: multiplier} 字段到乘数的映射
             例如: {"return_on_equity": 0.01} 表示值需要乘以 0.01
         """
-        pass
 
     def apply_unit_conversion(self, value: float | None, multiplier: float) -> float | None:
         """应用单位转换

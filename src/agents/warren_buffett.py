@@ -198,7 +198,7 @@ def analyze_fundamentals(metrics: list) -> dict[str, any]:
 
     return {
         "score": roe_score + debt_score + margin_score + liquidity_score,
-        "details": "; ".join([roe_reason, debt_reason, margin_reason, liquidity_reason]),
+        "details": f"{roe_reason}; {debt_reason}; {margin_reason}; {liquidity_reason}",
         "metrics": latest_metrics.model_dump(),
     }
 
@@ -437,16 +437,14 @@ def _calculate_book_value_cagr(book_values: list) -> tuple[int, str]:
         cagr = ((latest_bv / oldest_bv) ** (1 / years)) - 1
         if cagr > 0.15:
             return 2, f"Excellent book value CAGR: {cagr:.1%}"
-        elif cagr > 0.1:
+        if cagr > 0.1:
             return 1, f"Good book value CAGR: {cagr:.1%}"
-        else:
-            return 0, f"Book value CAGR: {cagr:.1%}"
-    elif oldest_bv < 0 < latest_bv:
+        return 0, f"Book value CAGR: {cagr:.1%}"
+    if oldest_bv < 0 < latest_bv:
         return 3, "Excellent: Company improved from negative to positive book value"
-    elif oldest_bv > 0 > latest_bv:
+    if oldest_bv > 0 > latest_bv:
         return 0, "Warning: Company declined from positive to negative book value"
-    else:
-        return 0, "Unable to calculate meaningful book value CAGR due to negative values"
+    return 0, "Unable to calculate meaningful book value CAGR due to negative values"
 
 
 def analyze_pricing_power(financial_line_items: list, metrics: list) -> dict[str, any]:

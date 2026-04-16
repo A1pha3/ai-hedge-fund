@@ -232,9 +232,8 @@ def download_model(model_name: str) -> bool:
         if return_code == 0:
             print(f"{Fore.GREEN}Model {model_name} downloaded successfully!{Style.RESET_ALL}")
             return True
-        else:
-            print(f"{Fore.RED}Failed to download model {model_name}. Check your internet connection and try again.{Style.RESET_ALL}")
-            return False
+        print(f"{Fore.RED}Failed to download model {model_name}. Check your internet connection and try again.{Style.RESET_ALL}")
+        return False
     except Exception as e:
         print(f"\n{Fore.RED}Error downloading model {model_name}: {e}{Style.RESET_ALL}")
         return False
@@ -242,7 +241,7 @@ def download_model(model_name: str) -> bool:
 
 def _should_use_remote_ollama_workflow(ollama_url: str) -> bool:
     env_override = os.environ.get("OLLAMA_BASE_URL")
-    return bool(env_override or ollama_url.startswith("http://ollama:") or ollama_url.startswith("http://host.docker.internal:"))
+    return bool(env_override or ollama_url.startswith(("http://ollama:", "http://host.docker.internal:")))
 
 
 def _ensure_local_ollama_installed() -> bool:
@@ -323,9 +322,8 @@ def delete_model(model_name: str) -> bool:
         if process.returncode == 0:
             print(f"{Fore.GREEN}Model {model_name} deleted successfully.{Style.RESET_ALL}")
             return True
-        else:
-            print(f"{Fore.RED}Failed to delete model {model_name}. Error: {process.stderr}{Style.RESET_ALL}")
-            return False
+        print(f"{Fore.RED}Failed to delete model {model_name}. Error: {process.stderr}{Style.RESET_ALL}")
+        return False
     except Exception as e:
         print(f"{Fore.RED}Error deleting model {model_name}: {e}{Style.RESET_ALL}")
         return False

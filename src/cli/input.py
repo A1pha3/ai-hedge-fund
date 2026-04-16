@@ -123,9 +123,8 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
             logger.info(f"Using specified model: {model.provider.value} - {model.model_name}")
             print(f"\nUsing specified model: {Fore.CYAN}{model.provider.value}{Style.RESET_ALL} - {Fore.GREEN + Style.BRIGHT}{model.model_name}{Style.RESET_ALL}\n")
             return model.model_name, model.provider.value
-        else:
-            logger.warning(f"Model '{model_flag}' not found. Please select a model.")
-            print(f"{Fore.RED}Model '{model_flag}' not found. Please select a model.{Style.RESET_ALL}")
+        logger.warning(f"Model '{model_flag}' not found. Please select a model.")
+        print(f"{Fore.RED}Model '{model_flag}' not found. Please select a model.{Style.RESET_ALL}")
 
     if not use_ollama:
         default_model_name, default_model_provider = get_default_model_config()

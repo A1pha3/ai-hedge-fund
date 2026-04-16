@@ -181,8 +181,7 @@ def _calculate_trend(data: list[float | None]) -> float:
         sum_x2 = sum(i**2 for i in x)
         n = len(y)
 
-        slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x**2)
-        return slope
+        return (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x**2)
     except ZeroDivisionError:
         return 0.0
 

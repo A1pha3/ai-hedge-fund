@@ -350,8 +350,7 @@ def _dedupe_tushare_df(df: pd.DataFrame, date_col: str = "end_date") -> pd.DataF
     df = df.drop_duplicates(subset=[date_col], keep="first")
     df = df.drop(columns=["_non_null_cnt"])
     # 恢复原始排序（按 end_date 降序）
-    df = df.sort_values(date_col, ascending=False).reset_index(drop=True)
-    return df
+    return df.sort_values(date_col, ascending=False).reset_index(drop=True)
 
 
 def _get_latest_daily_basic(pro, ts_code: str, anchor_date: str, lookback_days: int = 30) -> dict | None:

@@ -65,7 +65,7 @@ def extract_json_payload_from_content(
     try_json_loads: Callable[[str], dict | None],
     extract_common_signal_payload: Callable[[str], dict | None],
 ) -> dict | None:
-    if content.startswith("{") or content.startswith("["):
+    if content.startswith(("{", "[")):
         parsed = try_json_loads(content)
         if parsed is not None:
             return parsed
@@ -89,7 +89,7 @@ def _extract_markdown_json_blocks(content: str) -> list[str]:
     if tagged_block is not None:
         blocks.append(tagged_block)
     untagged_block = _extract_code_block(content, "```", 3)
-    if untagged_block is not None and (untagged_block.startswith("{") or untagged_block.startswith("[")):
+    if untagged_block is not None and (untagged_block.startswith(("{", "["))):
         blocks.append(untagged_block)
     return blocks
 

@@ -530,11 +530,11 @@ def normalize_pandas(obj):
     """Convert pandas Series/DataFrames to primitive Python types"""
     if isinstance(obj, pd.Series):
         return obj.tolist()
-    elif isinstance(obj, pd.DataFrame):
+    if isinstance(obj, pd.DataFrame):
         return obj.to_dict("records")
-    elif isinstance(obj, dict):
+    if isinstance(obj, dict):
         return {k: normalize_pandas(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
+    if isinstance(obj, (list, tuple)):
         return [normalize_pandas(item) for item in obj]
     return obj
 
@@ -546,8 +546,7 @@ def calculate_rsi(prices_df: pd.DataFrame, period: int = 14) -> pd.Series:
     avg_gain = gain.rolling(window=period).mean()
     avg_loss = loss.rolling(window=period).mean()
     rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    return 100 - (100 / (1 + rs))
 
 
 def calculate_bollinger_bands(prices_df: pd.DataFrame, window: int = 20) -> tuple[pd.Series, pd.Series]:
