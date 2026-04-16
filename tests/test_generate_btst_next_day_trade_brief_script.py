@@ -6,6 +6,7 @@ import pandas as pd
 
 from scripts.generate_btst_next_day_trade_brief import analyze_btst_next_day_trade_brief, render_btst_next_day_trade_brief_markdown
 import src.paper_trading.btst_reporting as btst_reporting
+import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
 from src.paper_trading.btst_reporting import infer_next_trade_date
 
 
@@ -159,12 +160,12 @@ def test_partition_opportunity_pool_entries_routes_entries_into_expected_buckets
     def fake_bucket_entry(updated_entry, historical_prior, **kwargs):
         return {**updated_entry, "reporting_bucket": kwargs["bucket"], "reason_value": kwargs["reason_value"]}
 
-    monkeypatch.setattr(btst_reporting, "_build_reporting_bucket_entry", fake_bucket_entry)
-    monkeypatch.setattr(btst_reporting, "_should_prune_weak_opportunity_pool_entry", lambda historical_prior: historical_prior.get("marker") == "prune")
-    monkeypatch.setattr(btst_reporting, "_should_prune_low_score_no_history_opportunity_pool_entry", lambda updated_entry, historical_prior: False)
-    monkeypatch.setattr(btst_reporting, "_should_prune_mixed_boundary_opportunity_pool_entry", lambda updated_entry, historical_prior: False)
-    monkeypatch.setattr(btst_reporting, "_should_prune_weak_catalyst_no_history_opportunity_pool_entry", lambda updated_entry, historical_prior: False)
-    monkeypatch.setattr(btst_reporting, "_should_rebucket_no_history_opportunity_pool_entry", lambda historical_prior: historical_prior.get("marker") == "rebucket")
+    monkeypatch.setattr(pool_classifiers, "_build_reporting_bucket_entry", fake_bucket_entry)
+    monkeypatch.setattr(pool_classifiers, "_should_prune_weak_opportunity_pool_entry", lambda historical_prior: historical_prior.get("marker") == "prune")
+    monkeypatch.setattr(pool_classifiers, "_should_prune_low_score_no_history_opportunity_pool_entry", lambda updated_entry, historical_prior: False)
+    monkeypatch.setattr(pool_classifiers, "_should_prune_mixed_boundary_opportunity_pool_entry", lambda updated_entry, historical_prior: False)
+    monkeypatch.setattr(pool_classifiers, "_should_prune_weak_catalyst_no_history_opportunity_pool_entry", lambda updated_entry, historical_prior: False)
+    monkeypatch.setattr(pool_classifiers, "_should_rebucket_no_history_opportunity_pool_entry", lambda historical_prior: historical_prior.get("marker") == "rebucket")
 
     retained, no_history, risky, pruned = btst_reporting._partition_opportunity_pool_entries(
         [
