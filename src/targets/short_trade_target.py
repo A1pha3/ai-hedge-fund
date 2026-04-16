@@ -135,7 +135,7 @@ def _normalize_positive_score_weights(configured_weights: dict[str, float]) -> d
     total_weight = sum(max(0.0, value) for value in configured_weights.values())
     if total_weight <= 0:
         unit_weight = round(1.0 / len(configured_weights), 4)
-        return {name: unit_weight for name in configured_weights}
+        return dict.fromkeys(configured_weights, unit_weight)
     return {name: max(0.0, value) / total_weight for name, value in configured_weights.items()}
 
 

@@ -55,8 +55,8 @@ def _estimate_size(value: Any) -> int:
         return 0
     if isinstance(value, str):
         return len(value)
-    if hasattr(value, "content") and isinstance(getattr(value, "content"), str):
-        return len(getattr(value, "content"))
+    if hasattr(value, "content") and isinstance(value.content, str):
+        return len(value.content)
 
     try:
         return len(json.dumps(value, ensure_ascii=False, default=str))

@@ -176,6 +176,6 @@ def load_prices_with_fallback(
             f"AKShare 错误: {error}\n"
             f"腾讯接口错误: {error}\n"
             "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
-        )
+        ) from error
 
     return []

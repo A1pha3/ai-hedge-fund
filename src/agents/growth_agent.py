@@ -177,7 +177,7 @@ def _calculate_trend(data: list[float | None]) -> float:
         # Simple linear regression
         sum_x = sum(x)
         sum_y = sum(y)
-        sum_xy = sum(i * j for i, j in zip(x, y))
+        sum_xy = sum(i * j for i, j in zip(x, y, strict=False))
         sum_x2 = sum(i**2 for i in x)
         n = len(y)
 

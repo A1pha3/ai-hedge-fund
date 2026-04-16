@@ -161,7 +161,7 @@ def create_workflow(selected_analysts=None, concurrency_limit: int | None = None
         for analyst_key in analyst_batches[0]:
             workflow.add_edge("start_node", analyst_nodes[analyst_key][0])
 
-        for previous_batch, current_batch in zip(analyst_batches, analyst_batches[1:]):
+        for previous_batch, current_batch in zip(analyst_batches, analyst_batches[1:], strict=False):
             for previous_key in previous_batch:
                 previous_node_name = analyst_nodes[previous_key][0]
                 for current_key in current_batch:

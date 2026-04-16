@@ -107,7 +107,7 @@ class TushareDataSource(BaseDataSource):
             return prices
 
         except Exception as e:
-            raise DataSourceError(f"Tushare 获取数据失败: {e}")
+            raise DataSourceError(f"Tushare 获取数据失败: {e}") from e
 
 
 class BaoStockDataSource(BaseDataSource):
@@ -181,7 +181,7 @@ class BaoStockDataSource(BaseDataSource):
         except DataSourceError:
             raise
         except Exception as e:
-            raise DataSourceError(f"BaoStock 获取数据失败: {e}")
+            raise DataSourceError(f"BaoStock 获取数据失败: {e}") from e
 
 
 class SinaDataSource(BaseDataSource):
@@ -209,7 +209,7 @@ class SinaDataSource(BaseDataSource):
 
             return get_sina_historical_data(ticker, start_date, end_date, period)
         except Exception as e:
-            raise DataSourceError(f"新浪财经获取数据失败: {e}")
+            raise DataSourceError(f"新浪财经获取数据失败: {e}") from e
 
 
 class MockDataSource(BaseDataSource):

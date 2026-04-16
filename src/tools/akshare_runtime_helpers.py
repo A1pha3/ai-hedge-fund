@@ -207,7 +207,7 @@ def execute_wrapped_ashare_request(
         message = f"{message_prefix}: {error}"
         if message_suffix:
             message = f"{message}\n{message_suffix}"
-        raise error_factory(message)
+        raise error_factory(message) from error
 
 
 def _call_with_timeout(*, func, timeout_seconds: float, timeout_label: str, **kwargs):

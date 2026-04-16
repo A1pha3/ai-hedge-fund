@@ -177,13 +177,13 @@ def resolve_dates(start_date: str | None, end_date: str | None, *, default_month
     if start_date:
         try:
             datetime.strptime(start_date, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError("Start date must be in YYYY-MM-DD format")
+        except ValueError as e:
+            raise ValueError("Start date must be in YYYY-MM-DD format") from e
     if end_date:
         try:
             datetime.strptime(end_date, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError("End date must be in YYYY-MM-DD format")
+        except ValueError as e:
+            raise ValueError("End date must be in YYYY-MM-DD format") from e
 
     final_end = end_date or datetime.now().strftime("%Y-%m-%d")
     if start_date:

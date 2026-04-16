@@ -93,7 +93,7 @@ class MockProvider(BaseDataProvider):
             end = datetime.strptime(end_date, "%Y-%m-%d")
 
             metrics = []
-            for i in range(10):
+            for _i in range(10):
                 quarter = (end.month - 1) // 3
                 year = end.year
 

@@ -45,7 +45,7 @@ class ParamSpace:
     def combinations(self) -> list[dict[str, Any]]:
         keys = sorted(self.grid.keys())
         values = [self.grid[k] for k in keys]
-        return [dict(zip(keys, combo)) for combo in itertools.product(*values)]
+        return [dict(zip(keys, combo, strict=False)) for combo in itertools.product(*values)]
 
     def size(self) -> int:
         result = 1

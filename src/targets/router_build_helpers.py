@@ -56,7 +56,7 @@ def build_remaining_supplemental_short_trade_entries(
         return {}
     remaining_entries: dict[str, dict[str, Any]] = {}
     sorted_entries = sorted(
-        list(supplemental_short_trade_entries or []),
+        supplemental_short_trade_entries or [],
         key=lambda current: float(current.get("score_final", current.get("score_b", 0.0)) or 0.0),
         reverse=True,
     )
@@ -100,7 +100,7 @@ def add_rejected_selection_targets(
     build_rejected_evaluation: Callable[..., DualTargetEvaluation],
 ) -> None:
     sorted_rejected_entries = sorted(
-        list(rejected_entries or []),
+        rejected_entries or [],
         key=lambda current: float(current.get("score_final", current.get("score_b", 0.0)) or 0.0),
         reverse=True,
     )

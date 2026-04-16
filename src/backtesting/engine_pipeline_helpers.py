@@ -62,7 +62,7 @@ def build_pipeline_day_context(
 
 
 def initialize_pipeline_day_state(active_tickers: Sequence[str]) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
-    return {}, {ticker: 0 for ticker in active_tickers}
+    return {}, dict.fromkeys(active_tickers, 0)
 
 
 def extract_plan_risk_metrics(plan: ExecutionPlan | None) -> tuple[dict[str, int], dict[str, float], dict[str, Any]]:

@@ -32,7 +32,7 @@ ANALYST_AGENT_IDS = [
     "valuation_analyst_agent",
 ]
 
-DEFAULT_AGENT_WEIGHTS = {agent_id: 0.06 for agent_id in INVESTOR_AGENT_IDS}
+DEFAULT_AGENT_WEIGHTS = dict.fromkeys(INVESTOR_AGENT_IDS, 0.06)
 DEFAULT_AGENT_WEIGHTS.update({agent_id: (0.28 / len(ANALYST_AGENT_IDS)) for agent_id in ANALYST_AGENT_IDS})
 
 QUALITY_SUBFACTOR_WEIGHTS = {
