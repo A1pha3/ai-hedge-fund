@@ -8,10 +8,12 @@ import pytest
 
 from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade
 from src.screening.models import CandidateStock, StrategySignal, SubFactor
-from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_event_freshness, _score_news_sentiment, _score_profitability, aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
+from src.screening.strategy_scorer import _score_event_freshness, _score_news_sentiment, aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
 from src.screening.strategy_scorer_trend import _score_adx_strength, _score_ema_alignment, _score_long_trend_alignment
+from src.screening.strategy_scorer_fundamental import _apply_fundamental_quality_cap, _score_profitability
 import src.screening.strategy_scorer as strategy_scorer_module
 import src.screening.strategy_scorer_trend as trend_module
+import src.screening.strategy_scorer_fundamental as fundamental_module
 
 
 def _signal(direction: int, confidence: float, completeness: float = 1.0) -> StrategySignal:
