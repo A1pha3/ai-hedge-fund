@@ -13,6 +13,8 @@ This skill packages the full end-to-end BTST plan workflow for this repository:
 4. Read the generated artifacts
 5. Write five final markdown documents into the selected output directory
 
+Important: strategy runs may be automated, but the final five markdown documents should be written by the agent from the current artifacts, not by a fixed renderer script.
+
 ## Trigger Rules
 
 Use this skill when the user asks for either of the following intents, even if they only mention one of them:
@@ -124,6 +126,8 @@ Always write these five markdown files into the chosen output directory. Filenam
 
 Create the output directory if it does not exist.
 
+Do not rely on a canned text generator for these five files. Read the current run artifacts and write the documents case by case.
+
 ## Document Requirements
 
 ### 1. BTST-YYYYMMDD.md
@@ -186,6 +190,9 @@ Writing rules:
 - Use plain Chinese
 - Avoid unnecessary English jargon
 - Do not use hype, certainty claims, or inciting language
+- Do not recycle a fixed paragraph template day after day
+- The explanation should reflect the actual overlap, tension, and differences in the current run
+- If today's result is narrower, weaker, more concentrated, or more divergent than recent runs, say that directly in natural language
 
 ### 4. YYYYMMDD-两套交易计划论坛短版.md
 
@@ -198,6 +205,7 @@ Writing rules:
 - Keep it compact and directly postable
 - Preserve the same factual tone
 - Emphasize the single takeaway and the execution attitude
+- Rewrite it from the current run, not by mechanically compressing yesterday's wording
 
 ### 5. BTST-YYYYMMDD-EXEC-CHECKLIST.md
 
@@ -229,6 +237,8 @@ Apply these rules across all five files:
 - Do not invent stock names, reasons, or execution rules that are not supported by artifacts.
 - If a field is missing, omit the claim instead of guessing.
 - Keep the documents actionable and readable.
+- Prefer fresh phrasing over repeated stock wording when writing the two explanation-style documents.
+- Reuse structure only when helpful; do not make the通俗说明and论坛短版sound like fixed templates.
 
 ## Minimum Verification
 
