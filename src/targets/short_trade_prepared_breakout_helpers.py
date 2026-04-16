@@ -28,6 +28,7 @@ def resolve_prepared_breakout_penalty_relief(
         "sector_resonance": float(profile.sector_resonance_weight),
         "catalyst_freshness": float(profile.catalyst_freshness_weight),
         "layer_c_alignment": float(profile.layer_c_alignment_weight),
+        "historical_continuation_score": float(getattr(profile, "historical_continuation_score_weight", 0.0)),
     }
     source = str(input_data.replay_context.get("source") or "").strip()
     base_stale_score_penalty_weight = float(profile.stale_score_penalty_weight)
@@ -74,6 +75,7 @@ def resolve_prepared_breakout_penalty_relief(
             "sector_resonance": float(profile.prepared_breakout_penalty_relief_sector_resonance_weight),
             "catalyst_freshness": float(profile.prepared_breakout_penalty_relief_catalyst_freshness_weight),
             "layer_c_alignment": float(profile.prepared_breakout_penalty_relief_layer_c_alignment_weight),
+            "historical_continuation_score": float(getattr(profile, "historical_continuation_score_weight", 0.0)),
         }
         effective_stale_score_penalty_weight = min(
             base_stale_score_penalty_weight,

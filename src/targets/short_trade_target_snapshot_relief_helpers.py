@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
+from src.targets.short_trade_target_prior_helpers import (
+    score_short_trade_historical_continuation_prior,
+)
 
 BREAKOUT_TRAP_PENALTY_WEIGHT = 0.10
 BREAKOUT_TRAP_EXECUTION_BLOCK_THRESHOLD = 0.60
@@ -64,6 +67,7 @@ class SnapshotThresholdState:
     effective_select_threshold: float
     layer_c_avoid_penalty: float
     market_state_threshold_adjustment: dict[str, Any]
+    selected_close_retention_adjustment: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,7 @@ class SnapshotCoreReliefs:
 
 @dataclass(frozen=True)
 class SnapshotResolutionCoreState:
+    profile: Any
     state: SnapshotSignalState
     market_state: dict[str, Any]
     prepared_breakout_reliefs: PreparedBreakoutReliefs
@@ -185,6 +190,52 @@ def _build_market_state_threshold_adjustment(
     }
 
 
+def _build_selected_close_retention_adjustment(
+    *,
+    enabled: bool,
+    close_retention_score: float,
+    breakout_close_gap: float,
+    close_retention_floor: float,
+    breakout_close_gap_max: float,
+    select_threshold_lift: float,
+    effective_select_threshold: float,
+    effective_near_miss_threshold: float,
+) -> dict[str, Any]:
+    return {
+        "enabled": bool(enabled),
+        "close_retention_score": round(float(close_retention_score), 4),
+        "breakout_close_gap": round(float(breakout_close_gap), 4),
+        "close_retention_floor": round(float(close_retention_floor), 4),
+        "breakout_close_gap_max": round(float(breakout_close_gap_max), 4),
+        "close_retention_weak": bool(enabled and close_retention_score < close_retention_floor),
+        "breakout_close_gap_excessive": bool(enabled and breakout_close_gap > breakout_close_gap_max),
+        "select_threshold_lift": round(float(select_threshold_lift), 4),
+        "effective_select_threshold": round(float(effective_select_threshold), 4),
+        "effective_near_miss_threshold": round(float(effective_near_miss_threshold), 4),
+    }
+
+
+def _build_selected_close_retention_penalty(
+    *,
+    enabled: bool,
+    applied: bool,
+    weight: float,
+    close_shortfall: float,
+    breakout_close_gap_excess: float,
+    severity: float,
+    penalty: float,
+) -> dict[str, Any]:
+    return {
+        "enabled": bool(enabled),
+        "applied": bool(applied),
+        "weight": round(float(weight), 4),
+        "close_shortfall": round(float(close_shortfall), 4),
+        "breakout_close_gap_excess": round(float(breakout_close_gap_excess), 4),
+        "severity": round(float(severity), 4),
+        "penalty": round(float(penalty), 4),
+    }
+
+
 def _resolve_market_state_threshold_adjustment(
     *,
     market_state: dict[str, Any],
@@ -249,6 +300,73 @@ def _resolve_market_state_threshold_adjustment(
     )
 
 
+def _resolve_selected_close_retention_adjustment(
+    *,
+    profile: Any,
+    state: SnapshotSignalState,
+    breakout_trap_guard: dict[str, Any],
+    effective_select_threshold: float,
+    effective_near_miss_threshold: float,
+    clamp_unit_interval: Callable[[float], float],
+) -> dict[str, Any]:
+    close_retention_floor = max(0.0, float(getattr(profile, "selected_close_retention_min", 0.0) or 0.0))
+    breakout_close_gap_max = min(1.0, max(0.0, float(getattr(profile, "selected_breakout_close_gap_max", 1.0) or 1.0)))
+    close_retention_lift = max(0.0, float(getattr(profile, "selected_close_retention_threshold_lift", 0.0) or 0.0))
+    breakout_close_gap_lift = max(0.0, float(getattr(profile, "selected_breakout_close_gap_threshold_lift", 0.0) or 0.0))
+    enabled = close_retention_lift > 0.0 or breakout_close_gap_lift > 0.0
+    calibrated_next_close_positive_rate = clamp_unit_interval(float(state.historical_prior.get("calibrated_next_close_positive_rate", state.historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
+    trap_close_retention_score = clamp_unit_interval(float(breakout_trap_guard.get("close_retention_score", 0.0) or 0.0))
+    close_retention_score = clamp_unit_interval((0.85 * trap_close_retention_score) + (0.15 * calibrated_next_close_positive_rate))
+    breakout_close_gap = clamp_unit_interval(
+        max(
+            0.0,
+            float(breakout_trap_guard.get("close_failure_gap", 0.0) or 0.0),
+            float(breakout_trap_guard.get("breakout_pressure", 0.0) or 0.0) - close_retention_score,
+        )
+    )
+    select_threshold_lift = 0.0
+    if enabled and close_retention_score < close_retention_floor:
+        select_threshold_lift += close_retention_lift
+    if enabled and breakout_close_gap > breakout_close_gap_max:
+        select_threshold_lift += breakout_close_gap_lift
+
+    adjusted_select_threshold = min(0.95, float(effective_select_threshold) + float(select_threshold_lift))
+    adjusted_near_miss_threshold = min(adjusted_select_threshold, float(effective_near_miss_threshold))
+    return _build_selected_close_retention_adjustment(
+        enabled=enabled,
+        close_retention_score=close_retention_score,
+        breakout_close_gap=breakout_close_gap,
+        close_retention_floor=close_retention_floor,
+        breakout_close_gap_max=breakout_close_gap_max,
+        select_threshold_lift=select_threshold_lift,
+        effective_select_threshold=adjusted_select_threshold,
+        effective_near_miss_threshold=adjusted_near_miss_threshold,
+    )
+
+
+def _resolve_selected_close_retention_penalty(*, profile: Any, selected_close_retention_adjustment: dict[str, Any]) -> dict[str, Any]:
+    weight = max(0.0, float(getattr(profile, "selected_close_retention_penalty_weight", 0.0) or 0.0))
+    close_shortfall = max(
+        0.0,
+        float(selected_close_retention_adjustment.get("close_retention_floor", 0.0) or 0.0) - float(selected_close_retention_adjustment.get("close_retention_score", 0.0) or 0.0),
+    )
+    breakout_close_gap_excess = max(
+        0.0,
+        float(selected_close_retention_adjustment.get("breakout_close_gap", 0.0) or 0.0) - float(selected_close_retention_adjustment.get("breakout_close_gap_max", 1.0) or 1.0),
+    )
+    severity = min(1.0, (close_shortfall / 0.12) + (breakout_close_gap_excess / 0.10))
+    penalty = min(weight, weight * severity)
+    return _build_selected_close_retention_penalty(
+        enabled=weight > 0.0,
+        applied=penalty > 0.0,
+        weight=weight,
+        close_shortfall=close_shortfall,
+        breakout_close_gap_excess=breakout_close_gap_excess,
+        severity=severity,
+        penalty=penalty,
+    )
+
+
 def _resolve_breakout_trap_guard(
     input_data: Any,
     *,
@@ -275,17 +393,7 @@ def _resolve_breakout_trap_guard(
     regime_pressure = clamp_unit_interval(max(regime_flip_risk, style_dispersion, 1.0 if regime_gate_level == "crisis" else 0.65 if regime_gate_level == "risk_off" else 0.0))
     enabled = breakout_pressure >= 0.35
     eligible = enabled and (close_failure_gap >= 0.15 or regime_pressure >= 0.58)
-    breakout_trap_risk = (
-        clamp_unit_interval(
-            (0.30 * close_failure_gap)
-            + (0.25 * regime_pressure)
-            + (0.20 * stale_catalyst_pressure)
-            + (0.15 * hostile_volatility)
-            + (0.10 * historical_gap_chase_risk)
-        )
-        if eligible
-        else 0.0
-    )
+    breakout_trap_risk = clamp_unit_interval((0.30 * close_failure_gap) + (0.25 * regime_pressure) + (0.20 * stale_catalyst_pressure) + (0.15 * hostile_volatility) + (0.10 * historical_gap_chase_risk)) if eligible else 0.0
     blocked = breakout_trap_risk >= BREAKOUT_TRAP_BLOCK_THRESHOLD
     execution_blocked = breakout_trap_risk >= BREAKOUT_TRAP_EXECUTION_BLOCK_THRESHOLD
     return {
@@ -574,6 +682,16 @@ def _finalize_snapshot_threshold_state(
             effective_select_threshold=effective_select_threshold,
             effective_near_miss_threshold=effective_near_miss_threshold,
         ),
+        selected_close_retention_adjustment=_build_selected_close_retention_adjustment(
+            enabled=False,
+            close_retention_score=0.0,
+            breakout_close_gap=0.0,
+            close_retention_floor=0.0,
+            breakout_close_gap_max=1.0,
+            select_threshold_lift=0.0,
+            effective_select_threshold=effective_select_threshold,
+            effective_near_miss_threshold=effective_near_miss_threshold,
+        ),
     )
 
 
@@ -758,6 +876,9 @@ def _build_snapshot_score_payload(
     positive_score_weights: dict[str, float],
     clamp_unit_interval: Callable[[float], float],
 ) -> dict[str, Any]:
+    historical_continuation_prior_score = score_short_trade_historical_continuation_prior(
+        state.historical_prior
+    )
     weighted_positive_contributions = {
         "breakout_freshness": round(positive_score_weights["breakout_freshness"] * threshold_state.breakout_freshness, 4),
         "trend_acceleration": round(positive_score_weights["trend_acceleration"] * threshold_state.trend_acceleration, 4),
@@ -766,6 +887,11 @@ def _build_snapshot_score_payload(
         "sector_resonance": round(positive_score_weights["sector_resonance"] * state.sector_resonance, 4),
         "catalyst_freshness": round(positive_score_weights["catalyst_freshness"] * threshold_state.catalyst_freshness, 4),
         "layer_c_alignment": round(positive_score_weights["layer_c_alignment"] * state.layer_c_alignment, 4),
+        "historical_continuation_score": round(
+            positive_score_weights.get("historical_continuation_score", 0.0)
+            * float(historical_continuation_prior_score["score"]),
+            4,
+        ),
         "momentum_strength": round(positive_score_weights.get("momentum_strength", 0.0) * state.momentum_strength, 4),
         "short_term_reversal": round(positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal, 4),
         "intraday_strength": round(positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength, 4),
@@ -801,6 +927,10 @@ def _build_snapshot_score_payload(
         + (positive_score_weights["sector_resonance"] * state.sector_resonance)
         + (positive_score_weights["catalyst_freshness"] * threshold_state.catalyst_freshness)
         + (positive_score_weights["layer_c_alignment"] * state.layer_c_alignment)
+        + (
+            positive_score_weights.get("historical_continuation_score", 0.0)
+            * float(historical_continuation_prior_score["score"])
+        )
         + (positive_score_weights.get("momentum_strength", 0.0) * state.momentum_strength)
         + (positive_score_weights.get("short_term_reversal", 0.0) * state.short_term_reversal)
         + (positive_score_weights.get("intraday_strength", 0.0) * state.intraday_strength)
@@ -822,6 +952,7 @@ def _build_snapshot_score_payload(
         "total_negative_contribution": total_negative_contribution,
         "overbought_momentum_penalty": round(overbought_momentum_penalty, 4),
         "score_target": score_target,
+        "historical_continuation_prior_score": historical_continuation_prior_score,
     }
 
 
@@ -955,6 +1086,7 @@ def _build_short_trade_snapshot_resolution_core_state(
         clamp_unit_interval=clamp_unit_interval,
     )
     return SnapshotResolutionCoreState(
+        profile=profile,
         state=state,
         market_state=dict(getattr(input_data, "market_state", {}) or {}),
         prepared_breakout_reliefs=prepared_breakout_reliefs,
@@ -976,6 +1108,18 @@ def _finalize_short_trade_snapshot_relief_resolution(
         effective_select_threshold=core_state.threshold_state.effective_select_threshold,
         effective_near_miss_threshold=core_state.score_penalty_state.effective_near_miss_threshold,
     )
+    selected_close_retention_adjustment = _resolve_selected_close_retention_adjustment(
+        profile=core_state.profile,
+        state=core_state.state,
+        breakout_trap_guard=core_state.score_penalty_state.breakout_trap_guard,
+        effective_select_threshold=float(market_state_threshold_adjustment["effective_select_threshold"]),
+        effective_near_miss_threshold=float(market_state_threshold_adjustment["effective_near_miss_threshold"]),
+        clamp_unit_interval=lambda value: max(0.0, min(1.0, float(value))),
+    )
+    selected_close_retention_penalty = _resolve_selected_close_retention_penalty(
+        profile=core_state.profile,
+        selected_close_retention_adjustment=selected_close_retention_adjustment,
+    )
     adjusted_threshold_state = SnapshotThresholdState(
         profitability_relief=core_state.threshold_state.profitability_relief,
         catalyst_relief=core_state.threshold_state.catalyst_relief,
@@ -987,10 +1131,11 @@ def _finalize_short_trade_snapshot_relief_resolution(
         trend_acceleration=core_state.threshold_state.trend_acceleration,
         volume_expansion_quality=core_state.threshold_state.volume_expansion_quality,
         catalyst_freshness=core_state.threshold_state.catalyst_freshness,
-        effective_near_miss_threshold=float(market_state_threshold_adjustment["effective_near_miss_threshold"]),
-        effective_select_threshold=float(market_state_threshold_adjustment["effective_select_threshold"]),
+        effective_near_miss_threshold=float(selected_close_retention_adjustment["effective_near_miss_threshold"]),
+        effective_select_threshold=float(selected_close_retention_adjustment["effective_select_threshold"]),
         layer_c_avoid_penalty=core_state.threshold_state.layer_c_avoid_penalty,
         market_state_threshold_adjustment=market_state_threshold_adjustment,
+        selected_close_retention_adjustment=selected_close_retention_adjustment,
     )
     adjusted_score_penalty_state = ScorePenaltyState(
         profitability_hard_cliff_boundary_relief=core_state.score_penalty_state.profitability_hard_cliff_boundary_relief,
@@ -1000,12 +1145,25 @@ def _finalize_short_trade_snapshot_relief_resolution(
         breakout_trap_guard=core_state.score_penalty_state.breakout_trap_guard,
         breakout_trap_risk=core_state.score_penalty_state.breakout_trap_risk,
         breakout_trap_penalty=core_state.score_penalty_state.breakout_trap_penalty,
-        effective_near_miss_threshold=float(market_state_threshold_adjustment["effective_near_miss_threshold"]),
+        effective_near_miss_threshold=float(selected_close_retention_adjustment["effective_near_miss_threshold"]),
         effective_stale_score_penalty_weight=core_state.score_penalty_state.effective_stale_score_penalty_weight,
         effective_extension_score_penalty_weight=core_state.score_penalty_state.effective_extension_score_penalty_weight,
     )
+    adjusted_score_payload = dict(core_state.score_payload)
+    adjusted_weighted_negative_contributions = dict(adjusted_score_payload["weighted_negative_contributions"])
+    adjusted_weighted_negative_contributions["selected_close_retention_penalty"] = round(float(selected_close_retention_penalty["penalty"]), 4)
+    adjusted_score_payload["weighted_negative_contributions"] = adjusted_weighted_negative_contributions
+    adjusted_score_payload["total_negative_contribution"] = round(
+        float(core_state.score_payload["total_negative_contribution"]) + float(selected_close_retention_penalty["penalty"]),
+        4,
+    )
+    adjusted_score_payload["score_target"] = max(
+        0.0,
+        float(core_state.score_payload["score_target"]) - float(selected_close_retention_penalty["penalty"]),
+    )
+    adjusted_score_payload["selected_close_retention_penalty"] = selected_close_retention_penalty
     selected_score_tolerance = resolve_selected_score_tolerance(
-        score_target=core_state.score_payload["score_target"],
+        score_target=adjusted_score_payload["score_target"],
         effective_select_threshold=adjusted_threshold_state.effective_select_threshold,
         upstream_shadow_catalyst_relief_applied=bool(adjusted_threshold_state.catalyst_relief["applied"]),
         upstream_shadow_catalyst_relief_reason=str(adjusted_threshold_state.catalyst_relief["reason"]),
@@ -1018,7 +1176,7 @@ def _finalize_short_trade_snapshot_relief_resolution(
         watchlist_penalty_state=core_state.watchlist_penalty_state,
         score_penalty_state=adjusted_score_penalty_state,
         positive_score_weights=core_state.positive_score_weights,
-        score_payload=core_state.score_payload,
+        score_payload=adjusted_score_payload,
         selected_score_tolerance=selected_score_tolerance,
     )
 
@@ -1049,11 +1207,16 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "weighted_negative_contributions": resolution.score_payload["weighted_negative_contributions"],
         "total_positive_contribution": resolution.score_payload["total_positive_contribution"],
         "total_negative_contribution": resolution.score_payload["total_negative_contribution"],
+        "historical_continuation_prior_score": resolution.score_payload["historical_continuation_prior_score"],
         "score_target": resolution.score_payload["score_target"],
         "selected_score_tolerance": resolution.selected_score_tolerance,
         "effective_near_miss_threshold": resolution.score_penalty_state.effective_near_miss_threshold,
         "effective_select_threshold": resolution.threshold_state.effective_select_threshold,
         "market_state_threshold_adjustment": resolution.threshold_state.market_state_threshold_adjustment,
+        "selected_close_retention_adjustment": resolution.threshold_state.selected_close_retention_adjustment,
+        "selected_close_retention_penalty": resolution.score_payload["selected_close_retention_penalty"],
+        "close_retention_score": resolution.threshold_state.selected_close_retention_adjustment["close_retention_score"],
+        "breakout_close_gap": resolution.threshold_state.selected_close_retention_adjustment["breakout_close_gap"],
         "catalyst_freshness": resolution.threshold_state.catalyst_freshness,
         "breakout_freshness": resolution.threshold_state.breakout_freshness,
         "trend_acceleration": resolution.threshold_state.trend_acceleration,

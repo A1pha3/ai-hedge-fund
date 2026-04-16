@@ -9,6 +9,10 @@ from src.targets.short_trade_target import (
     evaluate_short_trade_rejected_target,
     evaluate_short_trade_selected_target,
 )
+from src.targets.short_trade_target_prior_helpers import (
+    calibrate_short_trade_historical_prior,
+    score_short_trade_historical_continuation_prior,
+)
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -1387,11 +1391,18 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert btst_precision_v2_profile.near_miss_threshold == 0.26
     assert btst_precision_v2_profile.selected_rank_cap_ratio == 0.16
     assert btst_precision_v2_profile.near_miss_rank_cap_ratio == 0.32
+    assert btst_precision_v2_profile.selected_rank_cap_relief_score_margin_min == 0.02
     assert btst_precision_v2_profile.selected_rank_cap_relief_rank_buffer_ratio == 0.003
     assert btst_precision_v2_profile.selected_rank_cap_relief_close_strength_max == 1.0
     assert btst_precision_v2_profile.selected_rank_cap_relief_require_confirmed_breakout is True
     assert btst_precision_v2_profile.selected_rank_cap_relief_allow_risk_off is True
     assert btst_precision_v2_profile.selected_rank_cap_relief_allow_crisis is False
+    assert btst_precision_v2_profile.selected_close_retention_min == 0.46
+    assert btst_precision_v2_profile.selected_close_retention_threshold_lift == 0.05
+    assert btst_precision_v2_profile.selected_breakout_close_gap_max == 0.16
+    assert btst_precision_v2_profile.selected_breakout_close_gap_threshold_lift == 0.035
+    assert btst_precision_v2_profile.historical_continuation_score_weight == 0.08
+    assert btst_precision_v2_profile.short_term_reversal_weight == 0.50
     assert btst_precision_v2_profile.short_term_reversal_weight > btst_precision_profile.short_term_reversal_weight
 
 
@@ -1864,6 +1875,49 @@ def test_short_trade_breakout_trap_guard_blocks_risk_off_breakout_chase() -> Non
     assert market_state_adjustment["execution_hard_gate"] is True
     assert result.explainability_payload["breakout_trap_guard"]["execution_blocked"] is True
     assert result.explainability_payload["market_state_threshold_adjustment"]["regime_gate_level"] == "risk_off"
+
+
+def test_btst_precision_v2_selected_close_retention_lift_downgrades_weak_selected_candidate() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["catalyst_theme_metrics"] = {
+        "breakout_freshness": 0.52,
+        "trend_acceleration": 0.44,
+        "close_strength": 0.24,
+        "sector_resonance": 0.26,
+        "catalyst_freshness": 0.20,
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2",
+        overrides={
+            "selected_close_retention_threshold_lift": 0.0,
+            "selected_breakout_close_gap_threshold_lift": 0.0,
+        },
+    ):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    with use_short_trade_target_profile(profile_name="btst_precision_v2"):
+        tightened_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    adjustment = tightened_result.metrics_payload["thresholds"]["selected_close_retention_adjustment"]
+    assert baseline_result.decision == "selected"
+    assert tightened_result.decision == "near_miss"
+    assert baseline_result.effective_select_threshold == pytest.approx(0.34, abs=1e-4)
+    assert tightened_result.effective_select_threshold == pytest.approx(0.425, abs=1e-4)
+    assert tightened_result.metrics_payload["close_retention_score"] == pytest.approx(0.3927, abs=1e-4)
+    assert tightened_result.metrics_payload["breakout_close_gap"] == pytest.approx(0.179, abs=1e-4)
+    assert adjustment["enabled"] is True
+    assert adjustment["close_retention_weak"] is True
+    assert adjustment["breakout_close_gap_excessive"] is True
+    assert adjustment["select_threshold_lift"] == pytest.approx(0.085, abs=1e-4)
 
 
 def test_short_trade_target_reports_profile_metadata_and_override_thresholds() -> None:
@@ -2418,6 +2472,34 @@ def test_historical_execution_relief_promotes_strong_close_continuation_frontier
     assert relief_result.explainability_payload["historical_execution_relief"]["effective_select_threshold"] == 0.37
 
 
+def test_historical_continuation_score_weight_boosts_strong_same_ticker_continuation_score() -> None:
+    entry = _make_strong_close_continuation_selected_frontier_entry()
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2",
+        overrides={"historical_continuation_score_weight": 0.0},
+    ):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2",
+        overrides={"historical_continuation_score_weight": 0.08},
+    ):
+        boosted_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    assert boosted_result.score_target > baseline_result.score_target
+    assert boosted_result.metrics_payload["historical_continuation_prior_score"]["enabled"] is True
+    assert boosted_result.metrics_payload["thresholds"]["historical_continuation_score_weight"] == 0.08
+
+
 def test_upstream_shadow_catalyst_relief_promotes_strong_recalled_shadow_to_near_miss() -> None:
     baseline_entry = _make_upstream_shadow_catalyst_relief_entry()
     relief_entry = _make_upstream_shadow_catalyst_relief_entry()
@@ -2725,6 +2807,55 @@ def test_selected_score_tolerance_only_applies_to_strong_carryover_close_continu
         )
         == 0.0
     )
+
+
+def test_calibrate_short_trade_historical_prior_shrinks_small_sample_same_ticker_extremes() -> None:
+    calibrated = calibrate_short_trade_historical_prior(
+        {
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 1,
+            "same_ticker_sample_count": 1,
+            "next_high_hit_rate_at_threshold": 1.0,
+            "next_close_positive_rate": 1.0,
+            "next_open_to_close_return_mean": 0.04,
+        }
+    )
+
+    assert calibrated["historical_prior_calibrated"] is True
+    assert calibrated["calibrated_next_close_positive_rate"] < calibrated["raw_next_close_positive_rate"]
+    assert calibrated["calibrated_next_high_hit_rate_at_threshold"] < calibrated["raw_next_high_hit_rate_at_threshold"]
+    assert calibrated["prior_evidence_weight"] < 0.5
+
+
+def test_score_short_trade_historical_continuation_prior_rewards_close_continuation_and_penalizes_gap_chase() -> None:
+    strong_close_continuation = score_short_trade_historical_continuation_prior(
+        {
+            "execution_quality_label": "close_continuation",
+            "entry_timing_bias": "confirm_then_hold",
+            "evaluable_count": 8,
+            "same_ticker_sample_count": 8,
+            "next_high_hit_rate_at_threshold": 0.875,
+            "next_close_positive_rate": 0.75,
+            "next_open_to_close_return_mean": 0.022,
+        }
+    )
+    weak_gap_chase = score_short_trade_historical_continuation_prior(
+        {
+            "execution_quality_label": "gap_chase_risk",
+            "entry_timing_bias": "avoid_open_chase",
+            "evaluable_count": 8,
+            "same_ticker_sample_count": 8,
+            "next_high_hit_rate_at_threshold": 0.50,
+            "next_close_positive_rate": 0.375,
+            "next_open_to_close_return_mean": -0.004,
+        }
+    )
+
+    assert strong_close_continuation["enabled"] is True
+    assert strong_close_continuation["score"] > weak_gap_chase["score"]
+    assert strong_close_continuation["score"] > 0.70
+    assert weak_gap_chase["score"] < 0.45
 
 
 def test_catalyst_theme_short_trade_carryover_requires_candidate_reason_code() -> None:

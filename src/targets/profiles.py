@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from typing import Any
-from collections.abc import Iterator, Mapping
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,11 @@ class ShortTradeTargetProfile:
     selected_rank_cap_relief_allow_crisis: bool = True
     selected_breakout_freshness_min: float = 0.35
     selected_trend_acceleration_min: float = 0.38
+    selected_close_retention_min: float = 0.0
+    selected_close_retention_threshold_lift: float = 0.0
+    selected_breakout_close_gap_max: float = 1.0
+    selected_breakout_close_gap_threshold_lift: float = 0.0
+    selected_close_retention_penalty_weight: float = 0.0
     near_miss_breakout_freshness_min: float = 0.0
     near_miss_trend_acceleration_min: float = 0.0
     breakout_freshness_weight: float = 0.22
@@ -36,6 +41,7 @@ class ShortTradeTargetProfile:
     sector_resonance_weight: float = 0.12
     catalyst_freshness_weight: float = 0.08
     layer_c_alignment_weight: float = 0.10
+    historical_continuation_score_weight: float = 0.0
     momentum_strength_weight: float = 0.0
     short_term_reversal_weight: float = 0.0
     intraday_strength_weight: float = 0.0
@@ -558,6 +564,7 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         near_miss_threshold=0.26,
         selected_rank_cap_ratio=0.16,
         near_miss_rank_cap_ratio=0.32,
+        selected_rank_cap_relief_score_margin_min=0.02,
         selected_rank_cap_relief_rank_buffer_ratio=0.003,
         selected_rank_cap_relief_require_confirmed_breakout=True,
         selected_rank_cap_relief_allow_risk_off=True,
@@ -569,8 +576,9 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         sector_resonance_weight=0.040,
         catalyst_freshness_weight=0.044,
         layer_c_alignment_weight=0.007,
+        historical_continuation_score_weight=0.08,
         momentum_strength_weight=0.027,
-        short_term_reversal_weight=0.350,
+        short_term_reversal_weight=0.500,
         stale_score_penalty_weight=0.06,
         overhead_score_penalty_weight=0.05,
         extension_score_penalty_weight=0.04,
@@ -582,6 +590,11 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         extension_penalty_block_threshold=0.84,
         selected_breakout_freshness_min=0.10,
         selected_trend_acceleration_min=0.16,
+        selected_close_retention_min=0.46,
+        selected_close_retention_threshold_lift=0.05,
+        selected_breakout_close_gap_max=0.16,
+        selected_breakout_close_gap_threshold_lift=0.035,
+        selected_close_retention_penalty_weight=0.0,
         near_miss_breakout_freshness_min=0.0,
         near_miss_trend_acceleration_min=0.0,
         profitability_relief_enabled=True,
@@ -654,6 +667,10 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
         extension_penalty_block_threshold=0.84,
         selected_breakout_freshness_min=0.10,
         selected_trend_acceleration_min=0.16,
+        selected_close_retention_min=0.46,
+        selected_close_retention_threshold_lift=0.03,
+        selected_breakout_close_gap_max=0.16,
+        selected_breakout_close_gap_threshold_lift=0.02,
         near_miss_breakout_freshness_min=0.0,
         near_miss_trend_acceleration_min=0.0,
         profitability_relief_enabled=True,

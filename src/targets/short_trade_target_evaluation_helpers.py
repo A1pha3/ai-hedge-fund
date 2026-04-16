@@ -4,8 +4,15 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from src.targets.explainability import derive_confidence, trim_reasons
+from src.targets.explainability import (
+    clamp_unit_interval,
+    derive_confidence,
+    trim_reasons,
+)
 from src.targets.models import TargetEvaluationInput, TargetEvaluationResult
+from src.targets.short_trade_target_prior_helpers import (
+    calibrate_short_trade_historical_prior,
+)
 
 
 @dataclass(frozen=True)
@@ -205,12 +212,34 @@ def _collect_breakout_gate_misses(*, breakout_freshness: float, trend_accelerati
 
 
 def _preferred_entry_mode_from_historical_prior(historical_prior: dict[str, Any] | None) -> str:
-    execution_quality_label = str((historical_prior or {}).get("execution_quality_label") or "unknown")
+    prior = dict(historical_prior or {})
+    has_calibrated_prior = any(
+        key in prior
+        for key in (
+            "calibrated_next_close_positive_rate",
+            "prior_evidence_weight",
+        )
+    )
+    evaluable_count = int(prior.get("evaluable_count") or 0)
+    prior_strength = float(prior.get("prior_shrinkage_strength", 3.0) or 3.0)
+    execution_quality_label = str(prior.get("execution_quality_label") or "unknown")
+    calibrated_next_close_positive_rate = clamp_unit_interval(float(prior.get("calibrated_next_close_positive_rate", prior.get("next_close_positive_rate", 0.0)) or 0.0))
+    evidence_weight = clamp_unit_interval(
+        float(
+            prior.get(
+                "prior_evidence_weight",
+                (float(evaluable_count) / (float(evaluable_count) + prior_strength)) if (float(evaluable_count) + prior_strength) > 0 else 0.0,
+            )
+            or 0.0
+        )
+    )
     if execution_quality_label == "intraday_only":
         return "intraday_confirmation_only"
     if execution_quality_label == "gap_chase_risk":
         return "avoid_open_chase_confirmation"
     if execution_quality_label == "close_continuation":
+        if has_calibrated_prior and (evidence_weight < 0.4 or calibrated_next_close_positive_rate < 0.60):
+            return "next_day_breakout_confirmation"
         return "confirm_then_hold_breakout"
     if execution_quality_label == "zero_follow_through":
         return "strong_reconfirmation_only"
@@ -346,24 +375,10 @@ def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | Non
         else:
             selected_rank_cap_relief_market_risk_level = "unknown"
             selected_rank_cap_relief_market_risk_source = "unknown"
-    selected_rank_cap_relief_market_risk_pass = not (
-        (selected_rank_cap_relief_market_risk_level == "risk_off" and not selected_rank_cap_relief_allow_risk_off)
-        or (selected_rank_cap_relief_market_risk_level == "crisis" and not selected_rank_cap_relief_allow_crisis)
-    )
+    selected_rank_cap_relief_market_risk_pass = not ((selected_rank_cap_relief_market_risk_level == "risk_off" and not selected_rank_cap_relief_allow_risk_off) or (selected_rank_cap_relief_market_risk_level == "crisis" and not selected_rank_cap_relief_allow_crisis))
 
-    selected_rank_cap_relief_within_buffer = bool(
-        selected_rank_cap_relief_cap is not None and normalized_rank > 0 and normalized_rank <= selected_rank_cap_relief_cap
-    )
-    selected_cap_soft_relief_applied = bool(
-        selected_cap_exceeded_raw
-        and selected_rank_cap_relief_within_buffer
-        and selected_rank_cap_relief_score_pass
-        and selected_rank_cap_relief_breakout_pass
-        and selected_rank_cap_relief_sector_resonance_pass
-        and selected_rank_cap_relief_close_strength_pass
-        and selected_rank_cap_relief_t_plus_2_pass
-        and selected_rank_cap_relief_market_risk_pass
-    )
+    selected_rank_cap_relief_within_buffer = bool(selected_rank_cap_relief_cap is not None and normalized_rank > 0 and normalized_rank <= selected_rank_cap_relief_cap)
+    selected_cap_soft_relief_applied = bool(selected_cap_exceeded_raw and selected_rank_cap_relief_within_buffer and selected_rank_cap_relief_score_pass and selected_rank_cap_relief_breakout_pass and selected_rank_cap_relief_sector_resonance_pass and selected_rank_cap_relief_close_strength_pass and selected_rank_cap_relief_t_plus_2_pass and selected_rank_cap_relief_market_risk_pass)
     selected_cap_exceeded_effective = bool(selected_cap_exceeded_raw and not selected_cap_soft_relief_applied)
 
     return {
@@ -970,6 +985,7 @@ def _build_short_trade_threshold_core_metrics_payload(*, profile: Any, snapshot:
         "sector_resonance_weight": round(float(profile.sector_resonance_weight), 4),
         "catalyst_freshness_weight": round(float(profile.catalyst_freshness_weight), 4),
         "layer_c_alignment_weight": round(float(profile.layer_c_alignment_weight), 4),
+        "historical_continuation_score_weight": round(float(getattr(profile, "historical_continuation_score_weight", 0.0) or 0.0), 4),
         "momentum_strength_weight": round(float(getattr(profile, "momentum_strength_weight", 0.0)), 4),
         "short_term_reversal_weight": round(float(getattr(profile, "short_term_reversal_weight", 0.0)), 4),
         "intraday_strength_weight": round(float(getattr(profile, "intraday_strength_weight", 0.0)), 4),
@@ -990,6 +1006,12 @@ def _build_short_trade_threshold_core_metrics_payload(*, profile: Any, snapshot:
         "selected_rank_cap_relief_allow_risk_off": bool(getattr(profile, "selected_rank_cap_relief_allow_risk_off", True)),
         "selected_rank_cap_relief_allow_crisis": bool(getattr(profile, "selected_rank_cap_relief_allow_crisis", True)),
         "market_state_threshold_adjustment": dict(snapshot.get("market_state_threshold_adjustment") or {}),
+        "selected_close_retention_min": round(float(getattr(profile, "selected_close_retention_min", 0.0) or 0.0), 4),
+        "selected_close_retention_threshold_lift": round(float(getattr(profile, "selected_close_retention_threshold_lift", 0.0) or 0.0), 4),
+        "selected_breakout_close_gap_max": round(float(getattr(profile, "selected_breakout_close_gap_max", 1.0) or 1.0), 4),
+        "selected_breakout_close_gap_threshold_lift": round(float(getattr(profile, "selected_breakout_close_gap_threshold_lift", 0.0) or 0.0), 4),
+        "selected_close_retention_penalty_weight": round(float(getattr(profile, "selected_close_retention_penalty_weight", 0.0) or 0.0), 4),
+        "selected_close_retention_adjustment": dict(snapshot.get("selected_close_retention_adjustment") or {}),
     }
 
 
@@ -1228,10 +1250,13 @@ def _build_short_trade_core_metrics_payload(
         "trend_acceleration": round(float(trend_acceleration), 4),
         "volume_expansion_quality": round(float(snapshot["volume_expansion_quality"]), 4),
         "close_strength": round(float(snapshot["close_strength"]), 4),
+        "close_retention_score": round(float(snapshot.get("close_retention_score", 0.0)), 4),
+        "breakout_close_gap": round(float(snapshot.get("breakout_close_gap", 0.0)), 4),
         "sector_resonance": round(float(snapshot["sector_resonance"]), 4),
         "catalyst_freshness": round(float(snapshot["raw_catalyst_freshness"]), 4),
         "effective_catalyst_freshness": round(float(snapshot["catalyst_freshness"]), 4),
         "layer_c_alignment": round(float(snapshot["layer_c_alignment"]), 4),
+        "historical_continuation_prior_score": dict(snapshot.get("historical_continuation_prior_score") or {}),
         "short_term_reversal": round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         "intraday_strength": round(float(snapshot.get("intraday_strength", 0.0)), 4),
         "reversal_2d": round(float(snapshot.get("reversal_2d", 0.0)), 4),
@@ -1320,6 +1345,7 @@ def _build_short_trade_penalty_metrics_payload(
         "stale_trend_repair_penalty": round(float(snapshot["stale_trend_repair_penalty"]), 4),
         "overhead_supply_penalty": round(float(snapshot["overhead_supply_penalty"]), 4),
         "extension_without_room_penalty": round(float(snapshot["extension_without_room_penalty"]), 4),
+        "selected_close_retention_penalty": dict(snapshot.get("selected_close_retention_penalty") or {}),
         "breakout_trap_guard": _build_breakout_trap_guard_metrics_payload(breakout_trap_guard),
         "weighted_positive_contributions": weighted_positive_contributions,
         "weighted_negative_contributions": weighted_negative_contributions,
@@ -1999,13 +2025,14 @@ def _build_short_trade_verdict(
     top_reasons: list[str],
     rejection_reasons: list[str],
 ) -> ShortTradeVerdict:
-    confidence = derive_confidence(
-        decision_snapshot.score_target,
-        decision_snapshot.breakout_freshness,
-        decision_snapshot.trend_acceleration,
-        decision_snapshot.catalyst_freshness,
-        float(input_data.quality_score or 0.0),
-    )
+    historical_prior = calibrate_short_trade_historical_prior(dict(input_data.replay_context.get("historical_prior") or {}))
+    calibrated_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_close_positive_rate", historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
+    calibrated_next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_high_hit_rate_at_threshold", historical_prior.get("next_high_hit_rate_at_threshold", 0.0)) or 0.0))
+    evidence_weight = clamp_unit_interval(float(historical_prior.get("prior_evidence_weight", 0.0) or 0.0))
+    structural_confidence = (0.30 * clamp_unit_interval(decision_snapshot.score_target)) + (0.20 * clamp_unit_interval(decision_snapshot.breakout_freshness)) + (0.18 * clamp_unit_interval(decision_snapshot.trend_acceleration)) + (0.12 * clamp_unit_interval(decision_snapshot.catalyst_freshness)) + (0.20 * clamp_unit_interval(float(input_data.quality_score or 0.0)))
+    historical_confidence = (0.60 * calibrated_next_close_positive_rate) + (0.40 * calibrated_next_high_hit_rate)
+    confidence = clamp_unit_interval((structural_confidence * (1.0 - (0.35 * evidence_weight))) + (historical_confidence * (0.35 * evidence_weight)))
+    confidence = derive_confidence(confidence)
     return ShortTradeVerdict(
         decision=decision,
         confidence=confidence,

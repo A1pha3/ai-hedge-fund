@@ -5,26 +5,37 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.execution.daily_pipeline import DailyPipeline, WATCHLIST_SCORE_THRESHOLD
 import src.execution.daily_pipeline as daily_pipeline_module
+import src.execution.layer_c_aggregator as layer_c_aggregator_module
 from src.execution.crisis_handler import evaluate_crisis_response
+from src.execution.daily_pipeline import DailyPipeline, WATCHLIST_SCORE_THRESHOLD
+from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    _resolve_btst_position_budget,
+)
 from src.execution.layer_c_aggregator import (
+    aggregate_layer_c_results,
+    convert_agent_signal_to_strategy_signal,
     LAYER_C_AVOID_SCORE_C_THRESHOLD,
     LAYER_C_BLEND_B_WEIGHT,
     LAYER_C_BLEND_C_WEIGHT,
     LAYER_C_INVESTOR_WEIGHT_SCALE,
-    aggregate_layer_c_results,
-    convert_agent_signal_to_strategy_signal,
 )
-from src.execution.merge_approved_breakout_uplift import apply_merge_approved_breakout_uplift_to_signal_map
-from src.execution.merge_approved_breakout_uplift import apply_merge_approved_layer_c_alignment_uplift
-from src.execution.merge_approved_breakout_uplift import apply_merge_approved_sector_resonance_uplift
-import src.execution.layer_c_aggregator as layer_c_aggregator_module
+from src.execution.merge_approved_breakout_uplift import (
+    apply_merge_approved_breakout_uplift_to_signal_map,
+    apply_merge_approved_layer_c_alignment_uplift,
+    apply_merge_approved_sector_resonance_uplift,
+)
+from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
-from src.execution.models import ExecutionPlan, LayerCResult
 from src.portfolio.models import PositionPlan
-from src.screening.models import CandidateStock, FusedScore, MarketState, MarketStateType, StrategySignal
+from src.screening.models import (
+    CandidateStock,
+    FusedScore,
+    MarketState,
+    MarketStateType,
+    StrategySignal,
+)
 from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
 
 
@@ -199,7 +210,9 @@ def test_full_pipeline_smoke():
     try:
         daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker="000001", name="平安银行", industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403")]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
-        daily_pipeline_module.score_batch = lambda candidates, trade_date: {"000001": {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})}}
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            "000001": {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})}
+        }
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused("000001", 0.55)]
 
         plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
@@ -287,9 +300,7 @@ def test_run_post_market_merge_approved_ticker_gets_score_boost_and_relaxed_watc
     monkeypatch.setattr(daily_pipeline_module, "build_watchlist_price_map", lambda trade_date, tickers: {ticker: 10.0 for ticker in tickers})
 
     pipeline = DailyPipeline(
-        agent_runner=lambda tickers, trade_date, model: {
-            "technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}
-        },
+        agent_runner=lambda tickers, trade_date, model: {"technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}},
         exit_checker=lambda portfolio, trade_date: [],
         merge_approved_tickers={"300720"},
         base_model_name="gpt-4.1",
@@ -397,9 +408,7 @@ def test_run_post_market_merge_approved_ticker_gets_breakout_signal_uplift(monke
     monkeypatch.setattr(daily_pipeline_module, "build_watchlist_price_map", lambda trade_date, tickers: {ticker: 10.0 for ticker in tickers})
 
     pipeline = DailyPipeline(
-        agent_runner=lambda tickers, trade_date, model: {
-            "technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}
-        },
+        agent_runner=lambda tickers, trade_date, model: {"technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}},
         exit_checker=lambda portfolio, trade_date: [],
         merge_approved_tickers={"300720"},
         base_model_name="gpt-4.1",
@@ -526,9 +535,7 @@ def test_run_post_market_merge_approved_ticker_flows_into_short_trade_selected(m
     monkeypatch.setattr(daily_pipeline_module, "build_watchlist_price_map", lambda trade_date, tickers: {ticker: 10.0 for ticker in tickers})
 
     pipeline = DailyPipeline(
-        agent_runner=lambda tickers, trade_date, model: {
-            "technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}
-        },
+        agent_runner=lambda tickers, trade_date, model: {"technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}},
         exit_checker=lambda portfolio, trade_date: [],
         merge_approved_tickers={"300720"},
         base_model_name="gpt-4.1",
@@ -647,9 +654,7 @@ def test_run_post_market_merge_approved_ticker_does_not_apply_relief_for_same_ti
     monkeypatch.setattr(daily_pipeline_module, "build_watchlist_price_map", lambda trade_date, tickers: {ticker: 10.0 for ticker in tickers})
 
     pipeline = DailyPipeline(
-        agent_runner=lambda tickers, trade_date, model: {
-            "technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}
-        },
+        agent_runner=lambda tickers, trade_date, model: {"technical_analyst_agent": {ticker: {"signal": "bullish", "confidence": 75, "reasoning": "ok"} for ticker in tickers}},
         exit_checker=lambda portfolio, trade_date: [],
         merge_approved_tickers={"300720"},
         base_model_name="gpt-4.1",
@@ -1055,9 +1060,7 @@ def test_run_post_market_releases_watchlist_avoid_shadow_candidate_into_selectio
     original_fuse_batch = daily_pipeline_module.fuse_batch
     original_aggregate_layer_c_results = daily_pipeline_module.aggregate_layer_c_results
     try:
-        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
-            CandidateStock(ticker="000960", name="锡业样本", industry_sw="有色金属", avg_volume_20d=10000, market_cap=100, listing_date="19910403")
-        ]
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker="000960", name="锡业样本", industry_sw="有色金属", avg_volume_20d=10000, market_cap=100, listing_date="19910403")]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
         daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: _shadow_candidate_signals() for candidate in candidates}
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
@@ -1115,9 +1118,7 @@ def test_run_post_market_keeps_strong_watchlist_conflict_out_of_shadow_release()
     original_fuse_batch = daily_pipeline_module.fuse_batch
     original_aggregate_layer_c_results = daily_pipeline_module.aggregate_layer_c_results
     try:
-        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
-            CandidateStock(ticker="000960", name="锡业样本", industry_sw="有色金属", avg_volume_20d=10000, market_cap=100, listing_date="19910403")
-        ]
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker="000960", name="锡业样本", industry_sw="有色金属", avg_volume_20d=10000, market_cap=100, listing_date="19910403")]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
         daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: _shadow_candidate_signals() for candidate in candidates}
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
@@ -1250,9 +1251,7 @@ def test_run_post_market_filters_only_weak_watchlist_avoid_boundary_entries():
     original_load_latest_btst_historical_prior_by_ticker = daily_pipeline_module._load_latest_btst_historical_prior_by_ticker
     original_build_watchlist_price_map = daily_pipeline_module.build_watchlist_price_map
     try:
-        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
-            CandidateStock(ticker="000001", name="样本", industry_sw="电子", avg_volume_20d=10000, market_cap=100, listing_date="20190101")
-        ]
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker="000001", name="样本", industry_sw="电子", avg_volume_20d=10000, market_cap=100, listing_date="20190101")]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
         daily_pipeline_module.score_batch = lambda candidates, trade_date: {}
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: []
@@ -1739,7 +1738,6 @@ def test_run_post_market_releases_rebucket_shadow_into_supplemental_targets():
     assert diagnostics["counts"]["upstream_shadow_released_count"] == 0
     assert diagnostics["filters"]["short_trade_candidates"]["candidate_count"] >= 0
     assert plan.selection_targets["301292"].candidate_source in {"post_gate_liquidity_competition_shadow", "short_trade_boundary"}
-
 
 
 def test_run_post_market_prioritizes_supportive_historical_prior_for_upstream_shadow_release():
@@ -2391,12 +2389,16 @@ def test_run_post_market_promotes_supportive_post_gate_shadow_release_into_watch
         )
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
         daily_pipeline_module.score_batch = lambda candidates, trade_date: {
-            candidate.ticker: (_shadow_candidate_signals() if candidate.ticker == "301292" else {
-                "trend": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
-                "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
-                "fundamental": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
-                "event_sentiment": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
-            })
+            candidate.ticker: (
+                _shadow_candidate_signals()
+                if candidate.ticker == "301292"
+                else {
+                    "trend": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                    "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                    "fundamental": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                    "event_sentiment": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                }
+            )
             for candidate in candidates
         }
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
@@ -2497,12 +2499,16 @@ def test_run_post_market_keeps_supportive_corridor_shadow_release_out_of_watchli
         )
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
         daily_pipeline_module.score_batch = lambda candidates, trade_date: {
-            candidate.ticker: (_shadow_candidate_signals() if candidate.ticker == "300720" else {
-                "trend": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
-                "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
-                "fundamental": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
-                "event_sentiment": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
-            })
+            candidate.ticker: (
+                _shadow_candidate_signals()
+                if candidate.ticker == "300720"
+                else {
+                    "trend": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                    "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                    "fundamental": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                    "event_sentiment": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+                }
+            )
             for candidate in candidates
         }
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [
@@ -2546,6 +2552,7 @@ def test_run_post_market_keeps_supportive_corridor_shadow_release_out_of_watchli
     assert diagnostics["counts"]["upstream_shadow_released_count"] == 1
     assert diagnostics["counts"]["upstream_shadow_promoted_count"] == 0
     assert diagnostics["filters"]["short_trade_candidates"]["released_shadow_entries"][0].get("promoted_to_watchlist") is None
+
 
 def test_run_post_market_uses_lane_specific_shadow_release_score_floor():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [], target_mode="short_trade_only")
@@ -2684,9 +2691,7 @@ def test_should_release_upstream_shadow_candidate_keeps_supportive_history_overr
 def test_select_upstream_shadow_release_entries_respects_lane_caps():
     original_release_max_tickers = daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_MAX_TICKERS
     original_lane_max_tickers = dict(daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS)
-    original_priority_tickers_by_lane = {
-        lane: list(tickers) for lane, tickers in daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE.items()
-    }
+    original_priority_tickers_by_lane = {lane: list(tickers) for lane, tickers in daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE.items()}
     try:
         daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_MAX_TICKERS = 5
         daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS = {
@@ -2714,9 +2719,7 @@ def test_select_upstream_shadow_release_entries_respects_lane_caps():
 def test_select_upstream_shadow_release_entries_prioritizes_configured_corridor_replay_tickers():
     original_release_max_tickers = daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_MAX_TICKERS
     original_lane_max_tickers = dict(daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS)
-    original_priority_tickers_by_lane = {
-        lane: list(tickers) for lane, tickers in daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE.items()
-    }
+    original_priority_tickers_by_lane = {lane: list(tickers) for lane, tickers in daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE.items()}
     try:
         daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_MAX_TICKERS = 2
         daily_pipeline_module.UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS = {
@@ -3535,10 +3538,7 @@ def test_p1_defaults_admit_only_stronger_600519_edge_case_from_focused_samples()
 
 def test_build_buy_orders_diagnostics_marks_daily_trade_limit():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker=f"00000{index}", score_c=0.4, score_final=0.4 + index / 100.0, score_b=0.5, decision="watch")
-        for index in range(4)
-    ]
+    watchlist = [LayerCResult(ticker=f"00000{index}", score_c=0.4, score_final=0.4 + index / 100.0, score_b=0.5, decision="watch") for index in range(4)]
 
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(watchlist, {"cash": 1_000_000, "positions": {}})
 
@@ -3549,9 +3549,7 @@ def test_build_buy_orders_diagnostics_marks_daily_trade_limit():
 
 def test_build_buy_orders_blocks_watchlist_name_below_buy_threshold_sample():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=-0.0792, score_final=0.2042, score_b=0.4360, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=-0.0792, score_final=0.2042, score_b=0.4360, decision="watch")]
 
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(watchlist, {"cash": 100_000, "positions": {}})
 
@@ -3566,12 +3564,8 @@ def test_build_buy_orders_allows_edge_watchlist_name_when_execution_score_floor_
     monkeypatch.setenv("PIPELINE_WATCHLIST_MIN_SCORE", "0.21")
 
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")
-    ]
-    candidate_by_ticker = {
-        "600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")
-    }
+    watchlist = [LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")]
+    candidate_by_ticker = {"600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")}
 
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
         watchlist,
@@ -3589,12 +3583,8 @@ def test_build_buy_orders_allows_edge_watchlist_name_when_execution_score_floor_
 
 def test_build_buy_orders_allows_continuation_edge_without_global_floor_change():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")
-    ]
-    candidate_by_ticker = {
-        "600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")
-    }
+    watchlist = [LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")]
+    candidate_by_ticker = {"600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")}
     selection_targets = {
         "600988": DualTargetEvaluation(
             ticker="600988",
@@ -3633,12 +3623,8 @@ def test_build_buy_orders_allows_continuation_edge_without_global_floor_change()
 
 def test_build_buy_orders_keeps_edge_name_blocked_without_continuation_tag():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")
-    ]
-    candidate_by_ticker = {
-        "600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")
-    }
+    watchlist = [LayerCResult(ticker="600988", score_c=0.0182, score_final=0.2170, score_b=0.3798, decision="watch")]
+    candidate_by_ticker = {"600988": CandidateStock(ticker="600988", name="样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="19910403")}
     selection_targets = {
         "600988": DualTargetEvaluation(
             ticker="600988",
@@ -3669,12 +3655,8 @@ def test_build_buy_orders_keeps_edge_name_blocked_without_continuation_tag():
 
 def test_build_buy_orders_uses_real_price_map_for_high_price_ticker_position_sizing():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=0.2, score_final=0.6, score_b=0.6, decision="watch")
-    ]
-    candidate_by_ticker = {
-        "300724": CandidateStock(ticker="300724", name="光伏样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="20100520")
-    }
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.6, score_b=0.6, decision="watch")]
+    candidate_by_ticker = {"300724": CandidateStock(ticker="300724", name="光伏样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="20100520")}
 
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
         watchlist,
@@ -3718,9 +3700,7 @@ def test_build_buy_orders_gives_higher_quality_candidate_more_size_when_scores_m
 
 def test_build_buy_orders_blocks_ticker_during_exit_cooldown():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=0.2, score_final=0.6, score_b=0.6, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.6, score_b=0.6, decision="watch")]
 
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
         watchlist,
@@ -3738,9 +3718,7 @@ def test_build_buy_orders_blocks_ticker_during_exit_cooldown():
 
 def test_build_buy_orders_requires_stronger_score_after_exit_cooldown_expires():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=0.2, score_final=0.24, score_b=0.6, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.24, score_b=0.6, decision="watch")]
 
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
         watchlist,
@@ -3764,9 +3742,7 @@ def test_build_buy_orders_requires_stronger_score_after_exit_cooldown_expires():
 
 def test_build_buy_orders_requires_stronger_score_for_weak_confirmation_reentry():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=0.2, score_final=0.26, score_b=0.6, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.26, score_b=0.6, decision="watch")]
     selection_targets = {
         "300724": DualTargetEvaluation(
             ticker="300724",
@@ -3811,9 +3787,7 @@ def test_build_buy_orders_requires_stronger_score_for_weak_confirmation_reentry(
 
 def test_build_buy_orders_allows_stronger_score_after_exit_cooldown_expires():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=0.2, score_final=0.26, score_b=0.6, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.26, score_b=0.6, decision="watch")]
 
     buy_orders, diagnostics = pipeline._build_buy_orders_with_diagnostics(
         watchlist,
@@ -3837,9 +3811,7 @@ def test_build_buy_orders_allows_stronger_score_after_exit_cooldown_expires():
 
 def test_build_buy_orders_allows_reentry_once_weak_confirmation_score_is_strong_enough():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, decision="watch")]
     selection_targets = {
         "300724": DualTargetEvaluation(
             ticker="300724",
@@ -3883,9 +3855,7 @@ def test_build_buy_orders_allows_reentry_once_weak_confirmation_score_is_strong_
 
 def test_build_buy_orders_blocks_market_regime_execution_gate_from_short_trade_target():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, quality_score=0.68, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, quality_score=0.68, decision="watch")]
     selection_targets = {
         "300724": DualTargetEvaluation(
             ticker="300724",
@@ -3958,9 +3928,7 @@ def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkey
     original_fuse_batch = daily_pipeline_module.fuse_batch
     original_get_daily_basic_batch = daily_pipeline_module.get_daily_basic_batch
     try:
-        daily_pipeline_module.build_candidate_pool = lambda trade_date: [
-            CandidateStock(ticker="300724", name="光伏样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="20100520")
-        ]
+        daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker="300724", name="光伏样本", industry_sw="电力设备", avg_volume_20d=10_000_000, market_cap=100, listing_date="20100520")]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
         daily_pipeline_module.score_batch = lambda candidates, trade_date: {
             "300724": {
@@ -3971,9 +3939,7 @@ def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkey
             }
         }
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused("300724", 0.60)]
-        daily_pipeline_module.get_daily_basic_batch = lambda trade_date: pd.DataFrame(
-            [{"ts_code": "300724.SZ", "close": 142.71}]
-        )
+        daily_pipeline_module.get_daily_basic_batch = lambda trade_date: pd.DataFrame([{"ts_code": "300724.SZ", "close": 142.71}])
 
         plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 200_000, "positions": {}})
     finally:
@@ -3991,9 +3957,7 @@ def test_run_post_market_uses_trade_date_close_price_for_buy_order_sizing(monkey
 
 def test_build_buy_orders_treats_candidate_avg_volume_as_wan_cny_when_evaluating_liquidity_blockers():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=-0.0350, score_final=0.2260, score_b=0.4370, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=-0.0350, score_final=0.2260, score_b=0.4370, decision="watch")]
     candidate_by_ticker = {
         "300724": CandidateStock(
             ticker="300724",
@@ -4022,9 +3986,7 @@ def test_build_buy_orders_treats_candidate_avg_volume_as_wan_cny_when_evaluating
 
 def test_build_buy_orders_respects_existing_single_name_exposure_when_position_already_large():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [])
-    watchlist = [
-        LayerCResult(ticker="300724", score_c=-0.0120, score_final=0.2269, score_b=0.4330, decision="watch")
-    ]
+    watchlist = [LayerCResult(ticker="300724", score_c=-0.0120, score_final=0.2269, score_b=0.4330, decision="watch")]
     candidate_by_ticker = {
         "300724": CandidateStock(
             ticker="300724",
@@ -4161,6 +4123,58 @@ def test_t1_confirmation():
     assert result["passed_checks"] >= 2
 
 
+def test_t1_confirmation_blocks_failed_breakout_gap_chase() -> None:
+    result = confirm_buy_signal(
+        day_low=10.0,
+        ema30=10.0,
+        current_price=10.08,
+        vwap=10.02,
+        intraday_volume=900000,
+        avg_same_time_volume=800000,
+        industry_percentile=0.35,
+        open_price=10.35,
+        prev_close=10.0,
+        breakout_anchor=10.1,
+        minutes_since_open=10,
+        failed_breakout=True,
+    )
+
+    assert result["confirmed"] is False
+    assert result["hard_failures"]["failed_breakout_abort"] is True
+    assert result["hard_failures"]["open_gap_overextended"] is True
+
+
+def test_btst_position_budget_shrinks_growth_board_under_risk_off() -> None:
+    budget = _resolve_btst_position_budget(
+        item=LayerCResult(ticker="300724", score_c=0.2, score_final=0.31, score_b=0.6, quality_score=0.68, decision="watch"),
+        selection_target=DualTargetEvaluation(
+            ticker="300724",
+            trade_date="20260313",
+            short_trade=TargetEvaluationResult(
+                target_type="short_trade",
+                decision="selected",
+                metrics_payload={
+                    "thresholds": {
+                        "market_state_threshold_adjustment": {
+                            "enabled": True,
+                            "risk_level": "risk_off",
+                            "regime_gate_level": "risk_off",
+                            "execution_hard_gate": True,
+                        }
+                    }
+                },
+            ),
+        ),
+        candidate=CandidateStock(ticker="300724", name="Test", industry_sw="电子"),
+        nav=1_000_000,
+    )
+
+    assert budget["regime_gate_level"] == "risk_off"
+    assert budget["growth_board"] is True
+    assert budget["industry_quota"] == pytest.approx(126000.0)
+    assert budget["vol_adjusted_ratio"] == pytest.approx(0.056)
+
+
 def test_crisis_defense_mode():
     result = evaluate_crisis_response(hs300_daily_return=-0.051, limit_down_count=100, recent_total_volumes=[6000, 6200, 6100], drawdown_pct=-0.03)
     assert result["mode"] == "defense"
@@ -4205,7 +4219,10 @@ def test_tiered_llm_call():
     try:
         daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker=f"{i:06d}", name=str(i), industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403") for i in range(30)]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
-        daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})} for candidate in candidates}
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})}
+            for candidate in candidates
+        }
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.46 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
         pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
     finally:
@@ -4314,7 +4331,10 @@ def test_run_post_market_skips_duplicate_precise_stage_for_non_openai():
     try:
         daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker=f"{i:06d}", name=str(i), industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403") for i in range(4)]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
-        daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})} for candidate in candidates}
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})}
+            for candidate in candidates
+        }
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.46 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
 
         plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
@@ -4352,7 +4372,10 @@ def test_run_post_market_keeps_precise_stage_for_openai():
     try:
         daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker=f"{i:06d}", name=str(i), industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403") for i in range(4)]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
-        daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})} for candidate in candidates}
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})}
+            for candidate in candidates
+        }
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.46 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
 
         pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
@@ -4386,7 +4409,10 @@ def test_run_post_market_records_zero_skip_metrics_when_precise_runs():
     try:
         daily_pipeline_module.build_candidate_pool = lambda trade_date: [CandidateStock(ticker=f"{i:06d}", name=str(i), industry_sw="银行", avg_volume_20d=10000, market_cap=100, listing_date="19910403") for i in range(2)]
         daily_pipeline_module.detect_market_state = lambda trade_date: MarketState(state_type=MarketStateType.TREND, adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2})
-        daily_pipeline_module.score_batch = lambda candidates, trade_date: {candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})} for candidate in candidates}
+        daily_pipeline_module.score_batch = lambda candidates, trade_date: {
+            candidate.ticker: {"trend": StrategySignal(direction=1, confidence=80, completeness=1.0, sub_factors={}), "mean_reversion": StrategySignal(direction=0, confidence=50, completeness=1.0, sub_factors={}), "fundamental": StrategySignal(direction=1, confidence=75, completeness=1.0, sub_factors={}), "event_sentiment": StrategySignal(direction=1, confidence=65, completeness=1.0, sub_factors={})}
+            for candidate in candidates
+        }
         daily_pipeline_module.fuse_batch = lambda scored, market_state, trade_date: [_fused(ticker, 0.46 + index / 1000.0) for index, ticker in enumerate(scored.keys())]
 
         plan = pipeline.run_post_market("20260305", portfolio_snapshot={"cash": 500000, "positions": {}})
@@ -4469,11 +4495,7 @@ def test_daily_pipeline_applies_reentry_filter_to_frozen_buy_orders():
         portfolio_snapshot={"cash": 500000.0, "positions": {}},
         risk_metrics={
             "counts": {"watchlist_count": 1, "buy_order_count": 1},
-            "funnel_diagnostics": {
-                "filters": {
-                    "buy_orders": {"filtered_count": 0, "reason_counts": {}, "tickers": [], "selected_tickers": ["300724"]}
-                }
-            },
+            "funnel_diagnostics": {"filters": {"buy_orders": {"filtered_count": 0, "reason_counts": {}, "tickers": [], "selected_tickers": ["300724"]}}},
         },
     )
     pipeline = DailyPipeline(
@@ -4529,11 +4551,7 @@ def test_daily_pipeline_applies_stronger_weak_confirmation_reentry_filter_to_fro
         portfolio_snapshot={"cash": 500000.0, "positions": {}},
         risk_metrics={
             "counts": {"watchlist_count": 1, "buy_order_count": 1},
-            "funnel_diagnostics": {
-                "filters": {
-                    "buy_orders": {"filtered_count": 0, "reason_counts": {}, "tickers": [], "selected_tickers": ["300724"]}
-                }
-            },
+            "funnel_diagnostics": {"filters": {"buy_orders": {"filtered_count": 0, "reason_counts": {}, "tickers": [], "selected_tickers": ["300724"]}}},
         },
     )
     pipeline = DailyPipeline(

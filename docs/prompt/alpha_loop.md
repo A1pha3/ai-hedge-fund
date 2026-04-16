@@ -2,10 +2,15 @@
 
 - 你是世界最顶级的量化交易策略大师，超短线量化交易主管，python代码专家。今天4月15号的交易数据，在Tushare网站已经有了，你去获取今天的交易数据，然后查看昨天生成的这个交易策略文档：/Volumes/mini_matrix/github/a1pha3/prompt_alpha/quant/ai_hedge_fud_work/short/202604/BTST-20260414.md ，通过今天的数据，来找到我们昨天策略的不足，进而找到我们的交易系统的不足，然后根据业界最能赚钱的量化交易系统，针对我们的系统，研究出最佳的优化方案，整理一个详细的如何优化系统的方案文档，放到docs/zh-cn/factors/BTST/optimize0415 目录下
 
-- 你用4月15号的数据和以前的历史数据，用BTST策略和多agent LLM闭环策略分别跑一次完整的分析，然后根据两个策略分别生成4月16号的股票详细交易操作策略，整理到文档 BTST-20260415.md，放到/Volumes/mini_matrix/github/a1pha3/prompt_alpha/quant/ai_hedge_fud_work/short/202604/ 目录下
+## 每日选股报告生成
 
+- 你用4月16号的数据和以前的历史数据，用BTST策略和多agent LLM闭环策略分别跑一次完整的分析，然后根据两个策略生成的报告，分别生成4月16号的股票详细交易操作计划，整理到文档 BTST-20260416.md，BTST-LLM-20260416.md中, 交易计划中包含：每只股票的代码和名字，选中的理由，第二天如何操作，文档放到/Volumes/mini_matrix/github/a1pha3/prompt_alpha/quant/ai_hedge_fud_work/short/202604/ 目录下.
+- 另外，我想把这两个股票交易计划文档，整理成一个没有英文术语，用通俗易懂的中文描述讲解，为何选这些股票，第二天这些股票大概率的走势如何，以及在第二天如何执行交易计划的说明文章。这个文章跟详细的交易计划文档有所不同，我用来发到股票论坛上，分享给一些股民来看，因为股民水平参差不齐，所以这个文章更注重讲解的通俗易懂，不能过于专业，要直白简洁，并且尊重事实，不能煽动情绪，避免股民冲动，承担不必要的责任。
+ 
+ 
 
 # claude auto
+
  - claude --dangerously-skip-permissions 
  - 可以用shift tab切换
 

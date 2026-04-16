@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 
 def prepare_buy_order_execution_context(
@@ -14,10 +14,7 @@ def prepare_buy_order_execution_context(
     selection_targets: dict[str, Any] | None,
 ) -> dict[str, Any]:
     cash = float(portfolio_snapshot.get("cash", 0.0))
-    nav = cash + sum(
-        float(position.get("long", 0)) * float(position.get("long_cost_basis", 0.0))
-        for position in portfolio_snapshot.get("positions", {}).values()
-    )
+    nav = cash + sum(float(position.get("long", 0)) * float(position.get("long_cost_basis", 0.0)) for position in portfolio_snapshot.get("positions", {}).values())
     nav = nav if nav > 0 else cash
     return {
         "cash": cash,
@@ -147,6 +144,46 @@ def build_short_trade_execution_gate_filter_payload(
     }
 
 
+def _resolve_btst_position_budget(
+    *,
+    item: Any,
+    selection_target: Any,
+    candidate: Any,
+    nav: float,
+) -> dict[str, Any]:
+    short_trade_result = _resolve_short_trade_target_result(selection_target)
+    metrics_payload = dict(getattr(short_trade_result, "metrics_payload", {}) or {}) if short_trade_result is not None else {}
+    explainability_payload = dict(getattr(short_trade_result, "explainability_payload", {}) or {}) if short_trade_result is not None else {}
+    thresholds = dict(metrics_payload.get("thresholds") or {})
+    market_state_threshold_adjustment = dict(thresholds.get("market_state_threshold_adjustment") or explainability_payload.get("market_state_threshold_adjustment") or {})
+    regime_gate_level = str(market_state_threshold_adjustment.get("regime_gate_level") or market_state_threshold_adjustment.get("risk_level") or "normal").strip().lower()
+    ticker = str(getattr(item, "ticker", "") or "")
+    growth_board = ticker.startswith(("300", "301", "688"))
+
+    if regime_gate_level == "crisis":
+        industry_quota_ratio = 0.12
+        vol_adjusted_ratio = 0.05
+    elif regime_gate_level == "risk_off":
+        industry_quota_ratio = 0.18
+        vol_adjusted_ratio = 0.07
+    else:
+        industry_quota_ratio = 0.25
+        vol_adjusted_ratio = 0.10
+
+    if growth_board and regime_gate_level in {"risk_off", "crisis"}:
+        industry_quota_ratio *= 0.7
+        vol_adjusted_ratio *= 0.8
+
+    return {
+        "regime_gate_level": regime_gate_level,
+        "growth_board": growth_board,
+        "industry_quota": nav * industry_quota_ratio,
+        "vol_adjusted_ratio": vol_adjusted_ratio,
+        "industry_quota_ratio": industry_quota_ratio,
+        "industry_sw": str(getattr(candidate, "industry_sw", "") or ""),
+    }
+
+
 def process_buy_order_watchlist_item(
     *,
     item,
@@ -185,7 +222,13 @@ def process_buy_order_watchlist_item(
     current_price = float(price_map.get(item.ticker, 10.0))
     candidate = candidate_by_ticker.get(item.ticker)
     avg_volume_20d = float(candidate.avg_volume_20d) if candidate and candidate.avg_volume_20d > 0 else 10_000_000.0
-    industry_quota = nav * 0.25
+    budget = _resolve_btst_position_budget(
+        item=item,
+        selection_target=selection_target,
+        candidate=candidate,
+        nav=nav,
+    )
+    industry_quota = float(budget["industry_quota"])
     existing_position = portfolio_snapshot.get("positions", {}).get(item.ticker, {})
     existing_long_shares = float(existing_position.get("long", 0.0))
     existing_position_ratio = ((existing_long_shares * current_price) / nav) if nav > 0 else 0.0
@@ -202,6 +245,7 @@ def process_buy_order_watchlist_item(
         avg_volume_20d=avg_volume_20d,
         industry_remaining_quota=industry_quota,
         quality_score=item.quality_score,
+        vol_adjusted_ratio=float(budget["vol_adjusted_ratio"]),
         existing_position_ratio=existing_position_ratio,
         watchlist_min_score_override=continuation_overrides.get("watchlist_min_score_override"),
         watchlist_edge_execution_ratio_override=continuation_overrides.get("watchlist_edge_execution_ratio_override"),
@@ -220,6 +264,9 @@ def process_buy_order_watchlist_item(
             "execution_ratio": plan.execution_ratio,
             "quality_score": round(plan.quality_score, 4),
             "continuation_execution_override": bool(continuation_overrides.get("applied")),
+            "regime_gate_level": str(budget["regime_gate_level"]),
+            "growth_board": bool(budget["growth_board"]),
+            "industry_quota_ratio": round(float(budget["industry_quota_ratio"]), 4),
         },
     }
 

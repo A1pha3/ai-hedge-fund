@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import signature
 from time import perf_counter
 from typing import Any
-from collections.abc import Callable
 
-from scripts.btst_latest_followup_utils import load_latest_btst_historical_prior_by_ticker
+from scripts.btst_latest_followup_utils import (
+    load_latest_btst_historical_prior_by_ticker,
+)
+from src.execution.crisis_handler import evaluate_crisis_response
+from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    build_buy_orders_with_diagnostics as build_buy_orders_with_diagnostics_impl,
+)
+from src.execution.daily_pipeline_buy_diagnostics_helpers import (
+    build_reentry_filter_payload,
+)
 from src.execution.daily_pipeline_candidate_helpers import (
     qualify_catalyst_theme_candidate_from_snapshot,
     qualify_short_trade_boundary_candidate_from_snapshot,
@@ -19,67 +28,100 @@ from src.execution.daily_pipeline_candidate_helpers import (
 )
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_catalyst_theme_candidate_diagnostics as build_catalyst_theme_candidate_diagnostics_impl,
-    build_catalyst_theme_shadow_entry as build_catalyst_theme_shadow_entry_impl,
+)
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_catalyst_theme_candidate_diagnostics_payload,
-    build_catalyst_theme_short_trade_carryover_relief_config as build_catalyst_theme_short_trade_carryover_relief_config_impl,
-    compute_catalyst_theme_threshold_shortfalls as compute_catalyst_theme_threshold_shortfalls_impl,
-    finalize_catalyst_theme_candidate_diagnostics,
     build_catalyst_theme_prefilter_thresholds,
     build_catalyst_theme_ranked_outputs,
+)
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
+    build_catalyst_theme_shadow_entry as build_catalyst_theme_shadow_entry_impl,
+)
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
+    build_catalyst_theme_short_trade_carryover_relief_config as build_catalyst_theme_short_trade_carryover_relief_config_impl,
+)
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_upstream_catalyst_theme_candidates,
     collect_catalyst_theme_diagnostic_rankings,
+)
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
+    compute_catalyst_theme_threshold_shortfalls as compute_catalyst_theme_threshold_shortfalls_impl,
+)
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
+    finalize_catalyst_theme_candidate_diagnostics,
+)
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     resolve_catalyst_theme_close_momentum_relief as resolve_catalyst_theme_close_momentum_relief_impl,
 )
-from src.execution.daily_pipeline_buy_diagnostics_helpers import (
-    build_buy_orders_with_diagnostics as build_buy_orders_with_diagnostics_impl,
-    build_reentry_filter_payload,
+from src.execution.daily_pipeline_hotspot_helpers import (
+    apply_merge_approved_breakout_signal_uplift_batch,
 )
 from src.execution.daily_pipeline_hotspot_helpers import (
     apply_merge_approved_fused_boost as apply_merge_approved_fused_boost_impl,
-    apply_merge_approved_breakout_signal_uplift_batch,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     apply_merge_approved_layer_c_alignment_uplift_batch,
     apply_merge_approved_sector_resonance_uplift_batch,
-    summarize_upstream_shadow_release_historical_support as summarize_upstream_shadow_release_historical_support_impl,
-    build_upstream_shadow_release_entry as build_upstream_shadow_release_entry_impl,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     build_upstream_shadow_catalyst_relief_config as build_upstream_shadow_catalyst_relief_config_impl,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
+    build_upstream_shadow_release_entry as build_upstream_shadow_release_entry_impl,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     resolve_selected_threshold,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     select_upstream_shadow_release_entries as select_upstream_shadow_release_entries_impl,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
     summarize_shadow_release_historical_support,
+)
+from src.execution.daily_pipeline_hotspot_helpers import (
+    summarize_upstream_shadow_release_historical_support as summarize_upstream_shadow_release_historical_support_impl,
 )
 from src.execution.daily_pipeline_phase4_entry_helpers import (
     _build_short_trade_boundary_entry,
     _build_upstream_shadow_observation_entry,
 )
-from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
-    build_short_trade_candidate_diagnostics as build_short_trade_candidate_diagnostics_impl,
-    build_short_trade_candidate_diagnostics_payload,
-    finalize_short_trade_candidate_diagnostics,
-    build_short_trade_prefilter_thresholds,
-    build_short_trade_ranked_outputs,
-    collect_short_trade_diagnostic_rankings,
-    prepare_short_trade_candidate_diagnostics_state,
+from src.execution.daily_pipeline_post_market_helpers import (
+    aggregate_post_market_diagnostics,
+    build_high_pool,
+    build_post_market_execution_plan,
+    build_selection_target_inputs,
 )
 from src.execution.daily_pipeline_post_market_helpers import (
+    build_sell_order_diagnostics as build_sell_order_diagnostics_impl,
+)
+from src.execution.daily_pipeline_post_market_helpers import (
+    build_watchlist_price_map as build_watchlist_price_map_impl,
+)
+from src.execution.daily_pipeline_post_market_helpers import (
+    ensure_plan_target_shells as ensure_plan_target_shells_impl,
+)
+from src.execution.daily_pipeline_post_market_helpers import (
+    merge_agent_results,
     PostMarketCandidateContext,
     PostMarketDiagnosticsAggregation,
     PostMarketOrderContext,
     PostMarketSelectionResolution,
     PostMarketWatchlistContext,
-    aggregate_post_market_diagnostics,
-    build_post_market_execution_plan,
-    build_sell_order_diagnostics as build_sell_order_diagnostics_impl,
-    build_watchlist_price_map as build_watchlist_price_map_impl,
-    build_high_pool,
-    ensure_plan_target_shells as ensure_plan_target_shells_impl,
-    build_selection_target_inputs,
-    merge_agent_results,
     resolve_post_market_selection_targets,
 )
 from src.execution.daily_pipeline_runtime_helpers import (
     build_filter_summary as _build_filter_summary_impl,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
     default_exit_checker as _default_exit_checker_impl,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
     load_candidate_pool_bundle as _load_candidate_pool_bundle_impl,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
     load_latest_historical_prior_by_ticker as _load_latest_historical_prior_by_ticker_impl,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
     resolve_historical_prior_for_ticker as _resolve_historical_prior_for_ticker_impl,
 )
 from src.execution.daily_pipeline_settings import (
@@ -141,9 +183,9 @@ from src.execution.daily_pipeline_settings import (
     UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN,
     UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS,
     UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
-    UPSTREAM_SHADOW_RELEASE_LANES,
     UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
     UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
+    UPSTREAM_SHADOW_RELEASE_LANES,
     UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
     UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
     UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_CLOSE_MIN,
@@ -153,39 +195,57 @@ from src.execution.daily_pipeline_settings import (
     WATCHLIST_DIAGNOSTICS_CONFIG,
     WATCHLIST_SCORE_THRESHOLD,
 )
+from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
+    build_short_trade_candidate_diagnostics as build_short_trade_candidate_diagnostics_impl,
+)
+from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
+    build_short_trade_candidate_diagnostics_payload,
+    build_short_trade_prefilter_thresholds,
+    build_short_trade_ranked_outputs,
+    collect_short_trade_diagnostic_rankings,
+    finalize_short_trade_candidate_diagnostics,
+    prepare_short_trade_candidate_diagnostics_state,
+)
 from src.execution.daily_pipeline_watchlist_helpers import (
     build_merge_approved_watchlist,
     build_watchlist_filter_diagnostics,
     tag_merge_approved_layer_c_results,
 )
-from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
-from src.execution.merge_approved_loader import load_merge_approved_tickers
 from src.execution.merge_approved_breakout_uplift import (
     apply_merge_approved_breakout_uplift_to_signal_map,
     apply_merge_approved_layer_c_alignment_uplift,
     apply_merge_approved_sector_resonance_uplift,
     summarize_merge_approved_breakout_uplift_config,
 )
+from src.execution.merge_approved_loader import load_merge_approved_tickers
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.plan_generator import generate_execution_plan
 from src.execution.signal_decay import apply_signal_decay
 from src.execution.t1_confirmation import confirm_buy_signal
+from src.llm.defaults import get_default_model_config
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
-from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
-from src.screening.candidate_pool import build_candidate_pool, build_candidate_pool_with_shadow
-from src.screening.models import CandidateStock, StrategySignal
+from src.portfolio.position_calculator import (
+    calculate_position,
+    enforce_daily_trade_limit,
+)
+from src.screening.candidate_pool import (
+    build_candidate_pool,
+    build_candidate_pool_with_shadow,
+)
 from src.screening.market_state import detect_market_state
+from src.screening.models import CandidateStock, StrategySignal
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
-from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
+from src.targets.profiles import (
+    build_short_trade_target_profile,
+    use_short_trade_target_profile,
+)
 from src.targets.router import build_selection_targets, summarize_selection_targets
 from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
-from src.llm.defaults import get_default_model_config
 from src.tools.tushare_api import get_daily_basic_batch
-
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
 ExitChecker = Callable[..., list]
@@ -590,11 +650,7 @@ def _tag_merge_approved_layer_c_results(layer_c_results: list[LayerCResult], mer
 
 def _compute_short_trade_boundary_candidate_score(snapshot: dict) -> float:
     return round(
-        (0.30 * float(snapshot.get("breakout_freshness", 0.0) or 0.0))
-        + (0.25 * float(snapshot.get("trend_acceleration", 0.0) or 0.0))
-        + (0.20 * float(snapshot.get("volume_expansion_quality", 0.0) or 0.0))
-        + (0.15 * float(snapshot.get("catalyst_freshness", 0.0) or 0.0))
-        + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0)),
+        (0.30 * float(snapshot.get("breakout_freshness", 0.0) or 0.0)) + (0.25 * float(snapshot.get("trend_acceleration", 0.0) or 0.0)) + (0.20 * float(snapshot.get("volume_expansion_quality", 0.0) or 0.0)) + (0.15 * float(snapshot.get("catalyst_freshness", 0.0) or 0.0)) + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0)),
         4,
     )
 
@@ -630,10 +686,7 @@ def _should_release_upstream_shadow_candidate(
 def _passes_upstream_shadow_release_quality_floor(metrics_payload: dict[str, Any]) -> bool:
     trend_acceleration = float(metrics_payload.get("trend_acceleration", 0.0) or 0.0)
     close_strength = float(metrics_payload.get("close_strength", 0.0) or 0.0)
-    return (
-        trend_acceleration >= float(UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_TREND_MIN)
-        and close_strength >= float(UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_CLOSE_MIN)
-    )
+    return trend_acceleration >= float(UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_TREND_MIN) and close_strength >= float(UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_CLOSE_MIN)
 
 
 def _resolve_upstream_shadow_release_max_tickers(candidate_pool_lane: str) -> int:
@@ -672,11 +725,7 @@ def _coerce_upstream_shadow_strategy_signal(payload: Any) -> StrategySignal | No
 
 
 def _build_upstream_shadow_watchlist_reason_codes(entry: dict[str, Any]) -> list[str]:
-    reason_codes = [
-        str(code)
-        for code in list(entry.get("candidate_reason_codes") or entry.get("reasons") or [])
-        if str(code or "").strip()
-    ]
+    reason_codes = [str(code) for code in list(entry.get("candidate_reason_codes") or entry.get("reasons") or []) if str(code or "").strip()]
     if "upstream_shadow_watchlist_promotion" not in reason_codes:
         reason_codes.append("upstream_shadow_watchlist_promotion")
     return reason_codes
@@ -717,11 +766,7 @@ def _should_promote_upstream_shadow_release_to_watchlist(
 
 
 def _build_upstream_shadow_watchlist_entry(entry: dict[str, Any]) -> LayerCResult:
-    strategy_signals = {
-        name: signal
-        for name, payload in dict(entry.get("strategy_signals") or {}).items()
-        if (signal := _coerce_upstream_shadow_strategy_signal(payload)) is not None
-    }
+    strategy_signals = {name: signal for name, payload in dict(entry.get("strategy_signals") or {}).items() if (signal := _coerce_upstream_shadow_strategy_signal(payload)) is not None}
     reason_codes = _build_upstream_shadow_watchlist_reason_codes(entry)
     return LayerCResult(
         ticker=str(entry.get("ticker") or ""),
@@ -745,11 +790,7 @@ def _select_upstream_shadow_watchlist_entries(
     *,
     existing_tickers: set[str],
 ) -> list[LayerCResult]:
-    ranked_entries = [
-        dict(entry)
-        for entry in list(released_shadow_entries or [])
-        if _should_promote_upstream_shadow_release_to_watchlist(dict(entry), existing_tickers=existing_tickers)
-    ]
+    ranked_entries = [dict(entry) for entry in list(released_shadow_entries or []) if _should_promote_upstream_shadow_release_to_watchlist(dict(entry), existing_tickers=existing_tickers)]
     ranked_entries.sort(key=_upstream_shadow_watchlist_promotion_sort_key, reverse=True)
 
     promoted_entries: list[LayerCResult] = []
@@ -1046,10 +1087,7 @@ def _build_catalyst_theme_entry(*, item, reason: str, rank: int) -> dict:
         "candidate_source": "catalyst_theme",
         "upstream_candidate_source": "layer_b_fused_universe",
         "candidate_reason_codes": [reason, "catalyst_theme_research_candidate"],
-        "strategy_signals": {
-            name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-            for name, signal in dict(item.strategy_signals or {}).items()
-        },
+        "strategy_signals": {name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(item.strategy_signals or {}).items()},
         "agent_contribution_summary": {},
         "rank": rank,
     }
@@ -1057,11 +1095,7 @@ def _build_catalyst_theme_entry(*, item, reason: str, rank: int) -> dict:
 
 def _compute_catalyst_theme_candidate_score(snapshot: dict[str, Any]) -> float:
     return round(
-        (0.40 * float(snapshot.get("catalyst_freshness", 0.0) or 0.0))
-        + (0.25 * float(snapshot.get("sector_resonance", 0.0) or 0.0))
-        + (0.15 * float(snapshot.get("breakout_freshness", 0.0) or 0.0))
-        + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0))
-        + (0.10 * float(snapshot.get("trend_acceleration", 0.0) or 0.0)),
+        (0.40 * float(snapshot.get("catalyst_freshness", 0.0) or 0.0)) + (0.25 * float(snapshot.get("sector_resonance", 0.0) or 0.0)) + (0.15 * float(snapshot.get("breakout_freshness", 0.0) or 0.0)) + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0)) + (0.10 * float(snapshot.get("trend_acceleration", 0.0) or 0.0)),
         4,
     )
 
@@ -1466,9 +1500,7 @@ class DailyPipeline:
             }
             if selected_analysts is not None:
                 execution_observation["selected_analysts"] = list(selected_analysts)
-            self.execution_plan_provenance_log.append(
-                execution_observation
-            )
+            self.execution_plan_provenance_log.append(execution_observation)
         return result.get("analyst_signals", {})
 
     def _apply_frozen_buy_order_filters(self, frozen_plan: ExecutionPlan, trade_date: str, blocked_buy_tickers: dict[str, dict]) -> ExecutionPlan:
@@ -1569,17 +1601,20 @@ class DailyPipeline:
         effective_profile_name = self.short_trade_target_profile_name
         effective_profile_overrides = self.short_trade_target_profile_overrides
         if os.getenv("BTST_ADAPTIVE_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"} and effective_profile_name == "default" and not effective_profile_overrides:
-                from src.screening.market_state_helpers import recommend_short_trade_profile as _rec_profile
-                ms = candidate_context.market_state
-                effective_profile_name = _rec_profile(
-                    breadth_ratio=float(ms.breadth_ratio) if ms else 0.5,
-                    daily_return=float(ms.daily_return) if ms else 0.0,
-                    limit_ratio=float(ms.limit_up_down_ratio) if ms else 1.0,
-                    adx=float(ms.adx) if ms else 20.0,
-                    style_dispersion=float(ms.style_dispersion) if ms else 0.0,
-                    regime_flip_risk=float(ms.regime_flip_risk) if ms else 0.0,
-                    regime_gate_level=str(ms.regime_gate_level) if ms else "normal",
-                )
+            from src.screening.market_state_helpers import (
+                recommend_short_trade_profile as _rec_profile,
+            )
+
+            ms = candidate_context.market_state
+            effective_profile_name = _rec_profile(
+                breadth_ratio=float(ms.breadth_ratio) if ms else 0.5,
+                daily_return=float(ms.daily_return) if ms else 0.0,
+                limit_ratio=float(ms.limit_up_down_ratio) if ms else 1.0,
+                adx=float(ms.adx) if ms else 20.0,
+                style_dispersion=float(ms.style_dispersion) if ms else 0.0,
+                regime_flip_risk=float(ms.regime_flip_risk) if ms else 0.0,
+                regime_gate_level=str(ms.regime_gate_level) if ms else "normal",
+            )
 
         selection_resolution: PostMarketSelectionResolution = resolve_post_market_selection_targets(
             trade_date=trade_date,
@@ -1858,6 +1893,12 @@ class DailyPipeline:
                 industry_percentile=float(data.get("industry_percentile", 1.0)),
                 stock_pct_change=float(data.get("stock_pct_change", 0.0)),
                 industry_pct_change=float(data.get("industry_pct_change", 0.0)),
+                open_price=float(data.get("open_price", 0.0)),
+                prev_close=float(data.get("prev_close", 0.0)),
+                breakout_anchor=float(data.get("breakout_anchor", 0.0)),
+                open_gap_pct=data.get("open_gap_pct"),
+                minutes_since_open=data.get("minutes_since_open"),
+                failed_breakout=bool(data.get("failed_breakout", False)),
             )
             if result["confirmed"]:
                 confirmed_orders.append(order)

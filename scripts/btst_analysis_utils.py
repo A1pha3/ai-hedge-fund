@@ -142,10 +142,16 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
 
     t_plus_2_close = None
     t_plus_2_trade_date = None
+    t_plus_3_close = None
+    t_plus_3_trade_date = None
     if not later_rows.empty:
         second_row = later_rows.iloc[0]
         t_plus_2_close = safe_float(second_row.get("close"))
         t_plus_2_trade_date = later_rows.index[0].strftime("%Y-%m-%d")
+    if len(later_rows) >= 2:
+        third_row = later_rows.iloc[1]
+        t_plus_3_close = safe_float(third_row.get("close"))
+        t_plus_3_trade_date = later_rows.index[1].strftime("%Y-%m-%d")
 
     data_status = "ok" if t_plus_2_close is not None else "missing_t_plus_2_bar"
     cycle_status = "closed_cycle" if t_plus_2_close is not None else "t1_only"
@@ -167,6 +173,9 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         "t_plus_2_trade_date": t_plus_2_trade_date,
         "t_plus_2_close": round_or_none(t_plus_2_close),
         "t_plus_2_close_return": None if t_plus_2_close is None else round((t_plus_2_close / trade_close) - 1.0, 4),
+        "t_plus_3_trade_date": t_plus_3_trade_date,
+        "t_plus_3_close": round_or_none(t_plus_3_close),
+        "t_plus_3_close_return": None if t_plus_3_close is None else round((t_plus_3_close / trade_close) - 1.0, 4),
     }
 
 
@@ -247,18 +256,22 @@ def _build_return_edge_metrics(returns: list[float]) -> dict[str, float | int | 
 def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> dict[str, Any]:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
+    t_plus_3_rows = [row for row in rows if row.get("t_plus_3_close_return") is not None]
 
     next_open_returns = [float(row["next_open_return"]) for row in next_day_rows if row.get("next_open_return") is not None]
     next_high_returns = [float(row["next_high_return"]) for row in next_day_rows if row.get("next_high_return") is not None]
     next_close_returns = [float(row["next_close_return"]) for row in next_day_rows if row.get("next_close_return") is not None]
     next_open_to_close_returns = [float(row["next_open_to_close_return"]) for row in next_day_rows if row.get("next_open_to_close_return") is not None]
     t_plus_2_close_returns = [float(row["t_plus_2_close_return"]) for row in closed_rows if row.get("t_plus_2_close_return") is not None]
+    t_plus_3_close_returns = [float(row["t_plus_3_close_return"]) for row in t_plus_3_rows if row.get("t_plus_3_close_return") is not None]
 
     next_high_hits = sum(1 for value in next_high_returns if value >= next_high_hit_threshold)
     next_close_positive = sum(1 for value in next_close_returns if value > 0)
     t_plus_2_positive = sum(1 for value in t_plus_2_close_returns if value > 0)
+    t_plus_3_positive = sum(1 for value in t_plus_3_close_returns if value > 0)
     next_close_edge = _build_return_edge_metrics(next_close_returns)
     t_plus_2_edge = _build_return_edge_metrics(t_plus_2_close_returns)
+    t_plus_3_edge = _build_return_edge_metrics(t_plus_3_close_returns)
 
     return {
         "total_count": len(rows),
@@ -269,10 +282,12 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "next_close_return_distribution": summarize_distribution(next_close_returns),
         "next_open_to_close_return_distribution": summarize_distribution(next_open_to_close_returns),
         "t_plus_2_close_return_distribution": summarize_distribution(t_plus_2_close_returns),
+        "t_plus_3_close_return_distribution": summarize_distribution(t_plus_3_close_returns),
         "next_high_hit_threshold": round(next_high_hit_threshold, 4),
         "next_high_hit_rate_at_threshold": None if not next_day_rows else round(next_high_hits / len(next_day_rows), 4),
         "next_close_positive_rate": None if not next_day_rows else round(next_close_positive / len(next_day_rows), 4),
         "t_plus_2_close_positive_rate": None if not closed_rows else round(t_plus_2_positive / len(closed_rows), 4),
+        "t_plus_3_close_positive_rate": None if not t_plus_3_rows else round(t_plus_3_positive / len(t_plus_3_rows), 4),
         "next_close_positive_count": int(next_close_edge["positive_count"]),
         "next_close_negative_count": int(next_close_edge["negative_count"]),
         "next_close_average_win": next_close_edge["average_win"],
@@ -287,6 +302,13 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
         "t_plus_2_close_payoff_ratio": t_plus_2_edge["payoff_ratio"],
         "t_plus_2_close_profit_factor": t_plus_2_edge["profit_factor"],
         "t_plus_2_close_expectancy": t_plus_2_edge["expectancy"],
+        "t_plus_3_close_positive_count": int(t_plus_3_edge["positive_count"]),
+        "t_plus_3_close_negative_count": int(t_plus_3_edge["negative_count"]),
+        "t_plus_3_close_average_win": t_plus_3_edge["average_win"],
+        "t_plus_3_close_average_loss_abs": t_plus_3_edge["average_loss_abs"],
+        "t_plus_3_close_payoff_ratio": t_plus_3_edge["payoff_ratio"],
+        "t_plus_3_close_profit_factor": t_plus_3_edge["profit_factor"],
+        "t_plus_3_close_expectancy": t_plus_3_edge["expectancy"],
     }
 
 

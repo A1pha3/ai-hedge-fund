@@ -60,11 +60,13 @@ def test_compute_objective_score_btst():
         "next_close_expectancy": 0.01,
         "next_high_hit_rate": 0.50,
         "t_plus_2_close_positive_rate": 0.55,
+        "t_plus_3_close_positive_rate": 0.53,
+        "t_plus_3_close_expectancy": 0.012,
         "downside_p10": -0.02,
         "sample_weight": 0.80,
     }
     score = compute_objective_score(metrics, SearchObjective.BTST)
-    assert score == pytest.approx(0.46661, abs=1e-5)
+    assert score == pytest.approx(0.475049, abs=1e-6)
 
 
 def test_compute_objective_score_returns_none_for_missing():

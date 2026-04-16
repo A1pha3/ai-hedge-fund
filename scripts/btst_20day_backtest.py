@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-from src.targets import get_short_trade_target_profile
+from src.targets import build_short_trade_target_profile, get_short_trade_target_profile
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -46,6 +46,8 @@ def compute_factors(hist_group, trade_date_price):
     """从历史价格数据计算各因子近似值。"""
     g = hist_group.sort_values("trade_date")
     close = g["close"].values
+    high = g["high"].values
+    open_arr = g["open"].values
     vol_col = "vol" if "vol" in g.columns else "volume"
     volume = g[vol_col].values
     n = len(close)
@@ -55,7 +57,7 @@ def compute_factors(hist_group, trade_date_price):
     # --- 基础指标 ---
     last_close = close[-1]
     prev_close = close[-2] if n >= 2 else close[-1]
-    open_price = g["open"].values[-1]
+    open_price = open_arr[-1]
 
     # --- momentum_strength (trend agent momentum subfactor) ---
     mom_1m = (close[-1] / close[-22] - 1) if n >= 23 else 0
@@ -117,6 +119,55 @@ def compute_factors(hist_group, trade_date_price):
     # 用阳线+涨跌幅组合
     is_bull = last_close > open_price
     layer_c_alignment = min(max(0.5 * float(is_bull) + 0.5 * min(max(daily_return / 0.03, 0), 1), 0), 1)
+
+    # --- historical_continuation_score (same-ticker continuation proxy) ---
+    continuation_hits_close = 0
+    continuation_hits_high = 0
+    continuation_return_sum = 0.0
+    continuation_evaluable = 0
+    for idx in range(20, n - 1):
+        base_close = close[idx]
+        prev_day_close = close[idx - 1]
+        if prev_day_close <= 0 or base_close <= 0:
+            continue
+        base_return = (base_close / prev_day_close) - 1.0
+        window = close[max(0, idx - 19) : idx + 1]
+        window_high = np.max(window)
+        window_low = np.min(window)
+        window_range = window_high - window_low if window_high > window_low else 1.0
+        close_position = (base_close - window_low) / window_range
+        if base_return < 0.015 or close_position < 0.55:
+            continue
+        continuation_evaluable += 1
+        next_close = close[idx + 1]
+        next_high = high[idx + 1]
+        next_open = open_arr[idx + 1]
+        if next_close > base_close:
+            continuation_hits_close += 1
+        if next_high >= (base_close * 1.02):
+            continuation_hits_high += 1
+        if next_open > 0:
+            continuation_return_sum += (next_close - next_open) / next_open
+    if continuation_evaluable > 0:
+        next_close_positive_rate = continuation_hits_close / continuation_evaluable
+        next_high_hit_rate = continuation_hits_high / continuation_evaluable
+        next_open_to_close_return_mean = continuation_return_sum / continuation_evaluable
+    else:
+        next_close_positive_rate = 0.50
+        next_high_hit_rate = 0.60
+        next_open_to_close_return_mean = 0.01
+    continuation_evidence_weight = continuation_evaluable / (continuation_evaluable + 3.0) if continuation_evaluable > 0 else 0.0
+    normalized_open_to_close_return = min(max((next_open_to_close_return_mean + 0.01) / 0.04, 0), 1)
+    historical_continuation_score = min(
+        max(
+            (0.50 * next_close_positive_rate)
+            + (0.25 * next_high_hit_rate)
+            + (0.15 * normalized_open_to_close_return)
+            + (0.10 * continuation_evidence_weight),
+            0,
+        ),
+        1,
+    )
 
     # --- 短期反转因子 (improved: RSI + price reversal + volume confirmation) ---
     if n >= 14:
@@ -191,6 +242,7 @@ def compute_factors(hist_group, trade_date_price):
         "sector_resonance": sector_resonance,
         "catalyst_freshness": catalyst_freshness,
         "layer_c_alignment": layer_c_alignment,
+        "historical_continuation_score": historical_continuation_score,
         "reversal": reversal,
         "reversal_2d": reversal_2d,
         "intraday_strength": intraday_strength,
@@ -266,6 +318,7 @@ PROFILE_WEIGHT_FIELDS = {
     "sector_resonance": "sector_resonance_weight",
     "catalyst_freshness": "catalyst_freshness_weight",
     "layer_c_alignment": "layer_c_alignment_weight",
+    "historical_continuation_score": "historical_continuation_score_weight",
     "momentum_strength": "momentum_strength_weight",
     "reversal": "short_term_reversal_weight",
     "intraday_strength": "intraday_strength_weight",
@@ -289,10 +342,10 @@ def _parse_profile_names(raw: str | None) -> tuple[str, ...]:
     return tuple(names) if names else DEFAULT_PROFILE_NAMES
 
 
-def _build_profiles(profile_names: tuple[str, ...] = DEFAULT_PROFILE_NAMES) -> dict[str, dict[str, object]]:
+def _build_profiles(profile_names: tuple[str, ...] = DEFAULT_PROFILE_NAMES, profile_overrides: dict[str, object] | None = None) -> dict[str, dict[str, object]]:
     profiles: dict[str, dict[str, object]] = {}
     for profile_name in profile_names:
-        profile = get_short_trade_target_profile(profile_name)
+        profile = build_short_trade_target_profile(profile_name, overrides=profile_overrides)
         profiles[profile_name] = {
             "select_threshold": float(profile.select_threshold),
             "near_miss_threshold": float(profile.near_miss_threshold),
@@ -310,6 +363,11 @@ def _build_profiles(profile_names: tuple[str, ...] = DEFAULT_PROFILE_NAMES) -> d
             "selected_rank_cap_relief_allow_crisis": bool(getattr(profile, "selected_rank_cap_relief_allow_crisis", True)),
             "selected_breakout_freshness_min": float(profile.selected_breakout_freshness_min),
             "selected_trend_acceleration_min": float(profile.selected_trend_acceleration_min),
+            "selected_close_retention_min": float(getattr(profile, "selected_close_retention_min", 0.0) or 0.0),
+            "selected_close_retention_threshold_lift": float(getattr(profile, "selected_close_retention_threshold_lift", 0.0) or 0.0),
+            "selected_breakout_close_gap_max": float(getattr(profile, "selected_breakout_close_gap_max", 1.0) or 1.0),
+            "selected_breakout_close_gap_threshold_lift": float(getattr(profile, "selected_breakout_close_gap_threshold_lift", 0.0) or 0.0),
+            "selected_close_retention_penalty_weight": float(getattr(profile, "selected_close_retention_penalty_weight", 0.0) or 0.0),
             "weights": {factor_name: float(getattr(profile, weight_field)) for factor_name, weight_field in PROFILE_WEIGHT_FIELDS.items()},
         }
     return profiles
@@ -379,6 +437,38 @@ def _resolve_effective_rank_cap(*, hard_cap: int, cap_ratio: float, rank_populat
     return max(normalized_hard_cap, dynamic_cap)
 
 
+def _resolve_selected_close_retention_adjustment_series(
+    results: pd.DataFrame,
+    *,
+    select_threshold: float,
+    selected_close_retention_min: float = 0.0,
+    selected_close_retention_threshold_lift: float = 0.0,
+    selected_breakout_close_gap_max: float = 1.0,
+    selected_breakout_close_gap_threshold_lift: float = 0.0,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    close_strength_series = pd.to_numeric(results["close_strength"], errors="coerce").fillna(0.0) if "close_strength" in results else pd.Series(0.0, index=results.index, dtype=float)
+    layer_c_alignment_series = pd.to_numeric(results["layer_c_alignment"], errors="coerce").fillna(0.0) if "layer_c_alignment" in results else pd.Series(0.0, index=results.index, dtype=float)
+    breakout_freshness_series = pd.to_numeric(results["breakout_freshness"], errors="coerce").fillna(0.0) if "breakout_freshness" in results else pd.Series(0.0, index=results.index, dtype=float)
+    trend_acceleration_series = pd.to_numeric(results["trend_acceleration"], errors="coerce").fillna(0.0) if "trend_acceleration" in results else pd.Series(0.0, index=results.index, dtype=float)
+    volume_expansion_quality_series = pd.to_numeric(results["volume_expansion_quality"], errors="coerce").fillna(0.0) if "volume_expansion_quality" in results else pd.Series(0.0, index=results.index, dtype=float)
+
+    close_retention_score = ((0.75 * close_strength_series) + (0.25 * layer_c_alignment_series)).clip(lower=0.0, upper=1.0)
+    breakout_pressure = pd.concat(
+        [breakout_freshness_series, trend_acceleration_series, volume_expansion_quality_series],
+        axis=1,
+    ).max(axis=1)
+    breakout_close_gap = (breakout_pressure - close_retention_score).clip(lower=0.0, upper=1.0)
+
+    threshold_lift = pd.Series(0.0, index=results.index, dtype=float)
+    if float(selected_close_retention_threshold_lift) > 0.0:
+        threshold_lift += np.where(close_retention_score < float(selected_close_retention_min), float(selected_close_retention_threshold_lift), 0.0)
+    if float(selected_breakout_close_gap_threshold_lift) > 0.0:
+        threshold_lift += np.where(breakout_close_gap > float(selected_breakout_close_gap_max), float(selected_breakout_close_gap_threshold_lift), 0.0)
+
+    adjusted_select_threshold = (float(select_threshold) + threshold_lift).clip(lower=0.0, upper=0.95)
+    return adjusted_select_threshold, close_retention_score, breakout_close_gap
+
+
 def _apply_rank_caps_to_scored_results(
     results: pd.DataFrame,
     *,
@@ -399,6 +489,10 @@ def _apply_rank_caps_to_scored_results(
     selected_rank_cap_relief_allow_crisis: bool = True,
     selected_breakout_freshness_min: float = 0.0,
     selected_trend_acceleration_min: float = 0.0,
+    selected_close_retention_min: float = 0.0,
+    selected_close_retention_threshold_lift: float = 0.0,
+    selected_breakout_close_gap_max: float = 1.0,
+    selected_breakout_close_gap_threshold_lift: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     ranked = results.sort_values(score_col, ascending=False).copy()
     ranked["rank_hint"] = np.arange(1, len(ranked) + 1, dtype=int)
@@ -423,19 +517,23 @@ def _apply_rank_caps_to_scored_results(
         effective_selected_rank_relief_cap = int(effective_selected_rank_cap + effective_selected_rank_cap_relief_buffer)
 
     score_series = ranked[score_col]
-    selected_score_mask = score_series >= select_threshold
-    near_miss_score_mask = (score_series >= near_miss_threshold) & (score_series < select_threshold)
+    adjusted_select_threshold_series, _, _ = _resolve_selected_close_retention_adjustment_series(
+        ranked,
+        select_threshold=select_threshold,
+        selected_close_retention_min=selected_close_retention_min,
+        selected_close_retention_threshold_lift=selected_close_retention_threshold_lift,
+        selected_breakout_close_gap_max=selected_breakout_close_gap_max,
+        selected_breakout_close_gap_threshold_lift=selected_breakout_close_gap_threshold_lift,
+    )
+    selected_score_mask = score_series >= adjusted_select_threshold_series
+    near_miss_score_mask = (score_series >= near_miss_threshold) & (score_series < adjusted_select_threshold_series)
 
     selected_rank_mask = pd.Series(True, index=ranked.index) if effective_selected_rank_cap is None else ranked["rank_hint"] <= int(effective_selected_rank_cap)
     near_miss_rank_mask = pd.Series(True, index=ranked.index) if effective_near_miss_rank_cap is None else ranked["rank_hint"] <= int(effective_near_miss_rank_cap)
     selected_over_cap_mask = selected_score_mask & ~selected_rank_mask
 
-    selected_relief_rank_mask = (
-        pd.Series(False, index=ranked.index)
-        if effective_selected_rank_relief_cap is None
-        else ranked["rank_hint"] <= int(effective_selected_rank_relief_cap)
-    )
-    selected_relief_score_mask = (score_series - float(select_threshold)) >= float(selected_rank_cap_relief_score_margin_min)
+    selected_relief_rank_mask = pd.Series(False, index=ranked.index) if effective_selected_rank_relief_cap is None else ranked["rank_hint"] <= int(effective_selected_rank_relief_cap)
+    selected_relief_score_mask = (score_series - adjusted_select_threshold_series) >= float(selected_rank_cap_relief_score_margin_min)
     if selected_rank_cap_relief_require_confirmed_breakout:
         breakout_series = pd.to_numeric(ranked.get("breakout_freshness"), errors="coerce").fillna(0.0)
         trend_series = pd.to_numeric(ranked.get("trend_acceleration"), errors="coerce").fillna(0.0)
@@ -476,15 +574,7 @@ def _apply_rank_caps_to_scored_results(
     if not bool(selected_rank_cap_relief_allow_crisis):
         selected_relief_risk_mask &= market_risk_series != "crisis"
 
-    selected_relief_mask = (
-        selected_over_cap_mask
-        & selected_relief_rank_mask
-        & selected_relief_score_mask
-        & selected_relief_breakout_mask
-        & selected_relief_sector_mask
-        & selected_relief_close_strength_mask
-        & selected_relief_risk_mask
-    )
+    selected_relief_mask = selected_over_cap_mask & selected_relief_rank_mask & selected_relief_score_mask & selected_relief_breakout_mask & selected_relief_sector_mask & selected_relief_close_strength_mask & selected_relief_risk_mask
 
     selected_mask = selected_score_mask & (selected_rank_mask | selected_relief_mask)
     demoted_selected_mask = selected_score_mask & ~selected_mask & near_miss_rank_mask
@@ -500,9 +590,45 @@ def normalize_weights(weights):
     return {k: max(0.0, v) / total for k, v in weights.items()}
 
 
-def compute_score(factors, weights):
+def _resolve_selected_close_retention_penalty_from_factors(
+    factors,
+    *,
+    selected_close_retention_min: float = 0.0,
+    selected_breakout_close_gap_max: float = 1.0,
+    selected_close_retention_penalty_weight: float = 0.0,
+):
+    weight = max(0.0, float(selected_close_retention_penalty_weight or 0.0))
+    if weight <= 0.0:
+        return 0.0
+    close_retention_score = min(max((0.75 * float(factors.get("close_strength", 0.0) or 0.0)) + (0.25 * float(factors.get("layer_c_alignment", 0.0) or 0.0)), 0.0), 1.0)
+    breakout_pressure = max(
+        float(factors.get("breakout_freshness", 0.0) or 0.0),
+        float(factors.get("trend_acceleration", 0.0) or 0.0),
+        float(factors.get("volume_expansion_quality", 0.0) or 0.0),
+    )
+    breakout_close_gap = min(max(breakout_pressure - close_retention_score, 0.0), 1.0)
+    close_shortfall = max(0.0, float(selected_close_retention_min or 0.0) - close_retention_score)
+    breakout_close_gap_excess = max(0.0, breakout_close_gap - float(selected_breakout_close_gap_max or 1.0))
+    severity = min(1.0, (close_shortfall / 0.12) + (breakout_close_gap_excess / 0.10))
+    return min(weight, weight * severity)
+
+
+def compute_score(
+    factors,
+    weights,
+    *,
+    selected_close_retention_min: float = 0.0,
+    selected_breakout_close_gap_max: float = 1.0,
+    selected_close_retention_penalty_weight: float = 0.0,
+):
     nw = normalize_weights(weights)
     score = sum(nw.get(k, 0) * factors.get(k, 0) for k in nw)
+    score -= _resolve_selected_close_retention_penalty_from_factors(
+        factors,
+        selected_close_retention_min=selected_close_retention_min,
+        selected_breakout_close_gap_max=selected_breakout_close_gap_max,
+        selected_close_retention_penalty_weight=selected_close_retention_penalty_weight,
+    )
     return min(max(score, 0), 1)
 
 
@@ -510,6 +636,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BTST 20天近似回测，比较多个 short-trade profile 的选股表现。")
     parser.add_argument("--profiles", default=",".join(DEFAULT_PROFILE_NAMES), help="逗号分隔的profile列表，例如 default,ic_optimized,momentum_optimized")
     parser.add_argument("--output-json", default=None, help="结果输出JSON路径（默认 data/reports/btst_20day_backtest.json）")
+    parser.add_argument("--profile-overrides-json", default=None, help="JSON对象，覆盖所有选中profile的字段，例如 '{\"short_term_reversal_weight\":0.5}'")
     return parser.parse_args()
 
 
@@ -518,7 +645,10 @@ def main():
 
     args = parse_args()
     active_profile_names = _parse_profile_names(args.profiles)
-    profiles = _build_profiles(active_profile_names)
+    profile_overrides = json.loads(str(args.profile_overrides_json or "{}"))
+    if not isinstance(profile_overrides, dict):
+        raise ValueError("--profile-overrides-json must be a JSON object")
+    profiles = _build_profiles(active_profile_names, profile_overrides=profile_overrides)
 
     ts.set_token(os.getenv("TUSHARE_TOKEN"))
     pro = ts.pro_api()
@@ -626,8 +756,10 @@ def main():
             continue
         results["breakout_freshness"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("breakout_freshness", 0.0)))
         results["trend_acceleration"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("trend_acceleration", 0.0)))
+        results["volume_expansion_quality"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("volume_expansion_quality", 0.0)))
         results["sector_resonance"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("sector_resonance", 0.0)))
         results["close_strength"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("close_strength", 0.0)))
+        results["layer_c_alignment"] = results["ts_code"].map(lambda code: float((stock_factors.get(code) or {}).get("layer_c_alignment", 0.0)))
 
         for pname, pconfig in profiles.items():
             scores = []
@@ -636,7 +768,13 @@ def main():
                 if f is None:
                     scores.append(0)
                     continue
-                s = compute_score(f, pconfig["weights"])
+                s = compute_score(
+                    f,
+                    pconfig["weights"],
+                    selected_close_retention_min=float(pconfig["selected_close_retention_min"]),
+                    selected_breakout_close_gap_max=float(pconfig["selected_breakout_close_gap_max"]),
+                    selected_close_retention_penalty_weight=float(pconfig["selected_close_retention_penalty_weight"]),
+                )
                 scores.append(s)
             results[f"score_{pname}"] = scores
 
@@ -663,6 +801,10 @@ def main():
                 selected_rank_cap_relief_allow_crisis=bool(pconfig["selected_rank_cap_relief_allow_crisis"]),
                 selected_breakout_freshness_min=float(pconfig["selected_breakout_freshness_min"]),
                 selected_trend_acceleration_min=float(pconfig["selected_trend_acceleration_min"]),
+                selected_close_retention_min=float(pconfig["selected_close_retention_min"]),
+                selected_close_retention_threshold_lift=float(pconfig["selected_close_retention_threshold_lift"]),
+                selected_breakout_close_gap_max=float(pconfig["selected_breakout_close_gap_max"]),
+                selected_breakout_close_gap_threshold_lift=float(pconfig["selected_breakout_close_gap_threshold_lift"]),
             )
 
             for group_name, group_df in [("selected", sel), ("near_miss", nm)]:
@@ -765,12 +907,7 @@ def main():
         print("\n--- selected profile leaderboard (按日均收益排序) ---")
         for idx, row in enumerate(selected_leaderboard, start=1):
             payoff_text = "N/A" if row["avg_payoff"] is None else f"{float(row['avg_payoff']):.2f}"
-            print(
-                f"  {idx}. {row['profile']}: 日均收益={float(row['avg_ret']):+.2f}% "
-                f"胜率={float(row['avg_wr']):.0%} 赔率={payoff_text} "
-                f"下行P10={float(row['avg_downside_p10']):+.2f}% "
-                f"正收益天数={int(row['n_days_positive'])}/{int(row['days'])} 样本={int(row['total_n'])}"
-            )
+            print(f"  {idx}. {row['profile']}: 日均收益={float(row['avg_ret']):+.2f}% " f"胜率={float(row['avg_wr']):.0%} 赔率={payoff_text} " f"下行P10={float(row['avg_downside_p10']):+.2f}% " f"正收益天数={int(row['n_days_positive'])}/{int(row['days'])} 样本={int(row['total_n'])}")
 
     # 保存结果
     out = {}

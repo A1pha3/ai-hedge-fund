@@ -34,6 +34,9 @@ from src.targets.short_trade_target_input_helpers import (
 from src.targets.short_trade_target_input_helpers import (
     build_target_input_from_item as _build_target_input_from_item_impl,
 )
+from src.targets.short_trade_target_prior_helpers import (
+    calibrate_short_trade_historical_prior,
+)
 from src.targets.short_trade_target_profitability_helpers import (
     resolve_profitability_hard_cliff_boundary_relief_impl,
     resolve_profitability_relief_impl,
@@ -69,9 +72,10 @@ from src.targets.short_trade_target_watchlist_helpers import (
 STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE = 0.001
 STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT = 3
 STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT = STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT
-STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_CLOSE_POSITIVE_RATE = 0.8
-STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_HIGH_HIT_RATE = 0.8
-STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_OPEN_TO_CLOSE_RETURN_MEAN = 0.02
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_CLOSE_POSITIVE_RATE = 0.68
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_HIGH_HIT_RATE = 0.72
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_OPEN_TO_CLOSE_RETURN_MEAN = 0.017
+STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVIDENCE_WEIGHT = 0.5
 SELECTED_HISTORICAL_PROOF_REQUIRED_SOURCES = frozenset(
     {
         "upstream_liquidity_corridor_shadow",
@@ -147,7 +151,7 @@ def _profitability_snapshot(signal: StrategySignal | None) -> dict[str, Any]:
 
 
 def _historical_prior(input_data: TargetEvaluationInput) -> dict[str, Any]:
-    return dict(input_data.replay_context.get("historical_prior") or {})
+    return calibrate_short_trade_historical_prior(dict(input_data.replay_context.get("historical_prior") or {}))
 
 
 def _normalized_reason_codes(values: Any) -> list[str]:
@@ -229,9 +233,28 @@ def _resolve_selected_score_tolerance(
     historical_prior: dict[str, Any],
 ) -> float:
     evaluable_count = int(historical_prior.get("evaluable_count") or 0)
-    next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
-    next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("next_high_hit_rate_at_threshold", 0.0) or 0.0))
-    next_open_to_close_return_mean = float(historical_prior.get("next_open_to_close_return_mean", 0.0) or 0.0)
+    has_calibrated_prior = any(
+        key in historical_prior
+        for key in (
+            "calibrated_next_close_positive_rate",
+            "calibrated_next_high_hit_rate_at_threshold",
+            "calibrated_next_open_to_close_return_mean",
+            "prior_evidence_weight",
+        )
+    )
+    prior_strength = float(historical_prior.get("prior_shrinkage_strength", 3.0) or 3.0)
+    evidence_weight = clamp_unit_interval(
+        float(
+            historical_prior.get(
+                "prior_evidence_weight",
+                (float(evaluable_count) / (float(evaluable_count) + prior_strength)) if (float(evaluable_count) + prior_strength) > 0 else 0.0,
+            )
+            or 0.0
+        )
+    )
+    next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_close_positive_rate", historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
+    next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_high_hit_rate_at_threshold", historical_prior.get("next_high_hit_rate_at_threshold", 0.0)) or 0.0))
+    next_open_to_close_return_mean = float(historical_prior.get("calibrated_next_open_to_close_return_mean", historical_prior.get("next_open_to_close_return_mean", 0.0)) or 0.0)
     gap_to_selected = float(effective_select_threshold) - float(score_target)
     if gap_to_selected <= 0.0:
         return 0.0
@@ -245,12 +268,22 @@ def _resolve_selected_score_tolerance(
         return 0.0
     if evaluable_count < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT:
         return 0.0
-    if next_close_positive_rate < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_CLOSE_POSITIVE_RATE:
-        return 0.0
-    if next_high_hit_rate < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_HIGH_HIT_RATE:
-        return 0.0
-    if next_open_to_close_return_mean < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_NEXT_OPEN_TO_CLOSE_RETURN_MEAN:
-        return 0.0
+    if has_calibrated_prior:
+        if evidence_weight < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVIDENCE_WEIGHT:
+            return 0.0
+        if next_close_positive_rate < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_CLOSE_POSITIVE_RATE:
+            return 0.0
+        if next_high_hit_rate < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_HIGH_HIT_RATE:
+            return 0.0
+        if next_open_to_close_return_mean < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_OPEN_TO_CLOSE_RETURN_MEAN:
+            return 0.0
+    else:
+        if next_close_positive_rate < 0.8:
+            return 0.0
+        if next_high_hit_rate < 0.8:
+            return 0.0
+        if next_open_to_close_return_mean < 0.02:
+            return 0.0
     return STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE if gap_to_selected <= STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE else 0.0
 
 
@@ -544,6 +577,7 @@ def _resolve_positive_score_weights(profile: Any) -> dict[str, float]:
         "sector_resonance": float(profile.sector_resonance_weight),
         "catalyst_freshness": float(profile.catalyst_freshness_weight),
         "layer_c_alignment": float(profile.layer_c_alignment_weight),
+        "historical_continuation_score": float(getattr(profile, "historical_continuation_score_weight", 0.0)),
         "momentum_strength": float(getattr(profile, "momentum_strength_weight", 0.0)),
         "short_term_reversal": float(getattr(profile, "short_term_reversal_weight", 0.0)),
         "intraday_strength": float(getattr(profile, "intraday_strength_weight", 0.0)),

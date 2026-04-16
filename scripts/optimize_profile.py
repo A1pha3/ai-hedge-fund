@@ -27,6 +27,7 @@ logger = get_logger(__name__)
 
 REPORTS_DIR = Path("data/reports")
 PARTIAL_HORIZON_WEIGHT_PENALTY = 0.85
+PARTIAL_T3_HORIZON_WEIGHT_PENALTY = 0.92
 
 
 def _build_default_checkpoint_path(
@@ -116,6 +117,8 @@ def _build_replay_evaluator(
                 "next_close_expectancy": None,
                 "next_high_hit_rate": None,
                 "t_plus_2_close_positive_rate": None,
+                "t_plus_3_close_positive_rate": None,
+                "t_plus_3_close_expectancy": None,
                 "downside_p10": None,
                 "sample_weight": None,
                 "window_coverage": 0.0,
@@ -131,6 +134,8 @@ def _build_replay_evaluator(
             "next_close_expectancy": [],
             "next_high_hit_rate": [],
             "t_plus_2_close_positive_rate": [],
+            "t_plus_3_close_positive_rate": [],
+            "t_plus_3_close_expectancy": [],
             "downside_p10": [],
             "sample_weight": [],
         }
@@ -156,24 +161,39 @@ def _build_replay_evaluator(
                 next_close_positive_rate = _safe_float(primary_surface.get("next_close_positive_rate"))
                 next_high_hit_rate = _safe_float(primary_surface.get("next_high_hit_rate_at_threshold"))
                 t_plus_2_median = _resolve_distribution_stat(primary_surface, "t_plus_2_close_return_distribution", "median")
+                t_plus_3_median = _resolve_distribution_stat(primary_surface, "t_plus_3_close_return_distribution", "median")
                 max_dd_proxy = _resolve_distribution_stat(primary_surface, "next_close_return_distribution", "p10")
                 next_close_payoff_ratio = _safe_float(primary_surface.get("next_close_payoff_ratio"))
                 next_close_expectancy = _safe_float(primary_surface.get("next_close_expectancy"))
                 t_plus_2_close_positive_rate = _safe_float(primary_surface.get("t_plus_2_close_positive_rate"))
+                t_plus_3_close_positive_rate = _safe_float(primary_surface.get("t_plus_3_close_positive_rate"))
+                t_plus_3_close_expectancy = _safe_float(primary_surface.get("t_plus_3_close_expectancy"))
                 has_t_plus_2_horizon = t_plus_2_median is not None and t_plus_2_close_positive_rate is not None
+                has_t_plus_3_horizon = t_plus_3_median is not None and t_plus_3_close_positive_rate is not None and t_plus_3_close_expectancy is not None
 
                 if t_plus_2_median is None:
                     t_plus_2_median = _resolve_distribution_stat(primary_surface, "next_close_return_distribution", "median")
                 if t_plus_2_close_positive_rate is None:
                     t_plus_2_close_positive_rate = next_close_positive_rate
+                if t_plus_3_median is None:
+                    t_plus_3_median = t_plus_2_median
+                if t_plus_3_close_positive_rate is None:
+                    t_plus_3_close_positive_rate = t_plus_2_close_positive_rate
+                if t_plus_3_close_expectancy is None:
+                    t_plus_3_close_expectancy = _safe_float(primary_surface.get("t_plus_2_close_expectancy"))
+                if t_plus_3_close_expectancy is None:
+                    t_plus_3_close_expectancy = next_close_expectancy
 
                 if (
                     next_close_positive_rate is None
                     or next_high_hit_rate is None
                     or t_plus_2_median is None
+                    or t_plus_3_median is None
                     or max_dd_proxy is None
                     or next_close_expectancy is None
                     or t_plus_2_close_positive_rate is None
+                    or t_plus_3_close_positive_rate is None
+                    or t_plus_3_close_expectancy is None
                 ):
                     logger.warning("Trial skipped due missing metrics for %s scope=%s", input_path, primary_scope)
                     continue
@@ -185,6 +205,8 @@ def _build_replay_evaluator(
                 sample_weight = min(next_day_weight, closed_cycle_weight)
                 if not has_t_plus_2_horizon:
                     sample_weight *= PARTIAL_HORIZON_WEIGHT_PENALTY
+                elif not has_t_plus_3_horizon:
+                    sample_weight *= PARTIAL_T3_HORIZON_WEIGHT_PENALTY
                 sharpe_proxy = (next_close_positive_rate + next_high_hit_rate) * sample_weight
                 sortino_proxy = t_plus_2_median * sample_weight
                 total_metrics["sharpe"].append(sharpe_proxy)
@@ -196,6 +218,8 @@ def _build_replay_evaluator(
                 total_metrics["next_close_expectancy"].append(next_close_expectancy)
                 total_metrics["next_high_hit_rate"].append(next_high_hit_rate)
                 total_metrics["t_plus_2_close_positive_rate"].append(t_plus_2_close_positive_rate)
+                total_metrics["t_plus_3_close_positive_rate"].append(t_plus_3_close_positive_rate)
+                total_metrics["t_plus_3_close_expectancy"].append(t_plus_3_close_expectancy)
                 total_metrics["downside_p10"].append(max_dd_proxy)
                 total_metrics["sample_weight"].append(sample_weight)
                 window_count += 1
@@ -213,6 +237,8 @@ def _build_replay_evaluator(
                 "next_close_expectancy": None,
                 "next_high_hit_rate": None,
                 "t_plus_2_close_positive_rate": None,
+                "t_plus_3_close_positive_rate": None,
+                "t_plus_3_close_expectancy": None,
                 "downside_p10": None,
                 "sample_weight": None,
                 "window_coverage": 0.0,
@@ -235,6 +261,12 @@ def _build_replay_evaluator(
         avg_t_plus_2_close_positive_rate = (
             sum(total_metrics["t_plus_2_close_positive_rate"]) / len(total_metrics["t_plus_2_close_positive_rate"]) if total_metrics["t_plus_2_close_positive_rate"] else None
         )
+        avg_t_plus_3_close_positive_rate = (
+            sum(total_metrics["t_plus_3_close_positive_rate"]) / len(total_metrics["t_plus_3_close_positive_rate"]) if total_metrics["t_plus_3_close_positive_rate"] else None
+        )
+        avg_t_plus_3_close_expectancy = (
+            sum(total_metrics["t_plus_3_close_expectancy"]) / len(total_metrics["t_plus_3_close_expectancy"]) if total_metrics["t_plus_3_close_expectancy"] else None
+        )
         avg_downside_p10 = sum(total_metrics["downside_p10"]) / len(total_metrics["downside_p10"]) if total_metrics["downside_p10"] else None
         avg_sample_weight = sum(total_metrics["sample_weight"]) / len(total_metrics["sample_weight"]) if total_metrics["sample_weight"] else None
         window_coverage = float(window_count) / float(len(input_paths) or 1)
@@ -253,6 +285,8 @@ def _build_replay_evaluator(
             "next_close_expectancy": avg_next_close_expectancy,
             "next_high_hit_rate": avg_next_high_hit_rate,
             "t_plus_2_close_positive_rate": avg_t_plus_2_close_positive_rate,
+            "t_plus_3_close_positive_rate": avg_t_plus_3_close_positive_rate,
+            "t_plus_3_close_expectancy": avg_t_plus_3_close_expectancy,
             "downside_p10": avg_downside_p10,
             "sample_weight": effective_sample_weight,
             "window_coverage": window_coverage,

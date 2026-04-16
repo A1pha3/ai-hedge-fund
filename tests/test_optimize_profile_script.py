@@ -75,6 +75,9 @@ def test_replay_evaluator_scales_sample_weight_by_window_coverage(monkeypatch: p
             "t_plus_2_close_positive_rate": 0.55,
             "next_close_return_distribution": {"p10": -0.02},
             "t_plus_2_close_return_distribution": {"median": 0.005},
+            "t_plus_3_close_positive_rate": 0.52,
+            "t_plus_3_close_expectancy": 0.011,
+            "t_plus_3_close_return_distribution": {"median": 0.007},
         }
         return {"surface_summaries": {"selected": selected_surface, "tradeable": selected_surface}}
 
@@ -111,6 +114,9 @@ def test_replay_evaluator_keeps_partial_horizon_windows_with_penalty(monkeypatch
                 {
                     "t_plus_2_close_positive_rate": None,
                     "t_plus_2_close_return_distribution": {},
+                    "t_plus_3_close_positive_rate": None,
+                    "t_plus_3_close_expectancy": None,
+                    "t_plus_3_close_return_distribution": {},
                 }
             )
         else:
@@ -118,6 +124,9 @@ def test_replay_evaluator_keeps_partial_horizon_windows_with_penalty(monkeypatch
                 {
                     "t_plus_2_close_positive_rate": 0.55,
                     "t_plus_2_close_return_distribution": {"median": 0.005},
+                    "t_plus_3_close_positive_rate": 0.53,
+                    "t_plus_3_close_expectancy": 0.012,
+                    "t_plus_3_close_return_distribution": {"median": 0.007},
                 }
             )
         return {"surface_summaries": {"selected": selected_surface, "tradeable": selected_surface}}
@@ -138,6 +147,8 @@ def test_replay_evaluator_keeps_partial_horizon_windows_with_penalty(monkeypatch
     assert metrics["sample_weight"] == pytest.approx((0.5 + (0.5 * 0.85)) / 2.0)
     # Partial horizon falls back to next_close_positive_rate for t+2 positive rate.
     assert metrics["t_plus_2_close_positive_rate"] == pytest.approx((0.55 + 0.60) / 2.0)
+    assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 + 0.60) / 2.0)
+    assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 + 0.01) / 2.0)
 
 
 def test_replay_evaluator_keeps_windows_with_missing_payoff_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,6 +164,9 @@ def test_replay_evaluator_keeps_windows_with_missing_payoff_ratio(monkeypatch: p
             "t_plus_2_close_positive_rate": 0.55,
             "next_close_return_distribution": {"p10": -0.02},
             "t_plus_2_close_return_distribution": {"median": 0.005},
+            "t_plus_3_close_positive_rate": 0.53,
+            "t_plus_3_close_expectancy": 0.012,
+            "t_plus_3_close_return_distribution": {"median": 0.007},
         }
         if "missing_payoff" in str(input_path):
             selected_surface["next_close_payoff_ratio"] = None
@@ -174,3 +188,53 @@ def test_replay_evaluator_keeps_windows_with_missing_payoff_ratio(monkeypatch: p
     assert metrics["window_coverage"] == pytest.approx(1.0)
     # Missing payoff window is kept, and payoff average uses available windows only.
     assert metrics["next_close_payoff_ratio"] == pytest.approx(1.40)
+
+
+def test_replay_evaluator_applies_lighter_penalty_for_missing_t_plus_3_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = types.ModuleType("scripts.btst_profile_replay_utils")
+
+    def fake_analyze_btst_profile_replay_window(input_path: Path, **_: object) -> dict[str, object]:
+        selected_surface = {
+            "next_day_available_count": 6,
+            "closed_cycle_count": 3,
+            "next_close_positive_rate": 0.60,
+            "next_high_hit_rate_at_threshold": 0.50,
+            "next_close_payoff_ratio": 1.40,
+            "next_close_expectancy": 0.01,
+            "t_plus_2_close_positive_rate": 0.55,
+            "t_plus_2_close_expectancy": 0.008,
+            "next_close_return_distribution": {"p10": -0.02, "median": 0.004},
+            "t_plus_2_close_return_distribution": {"median": 0.005},
+        }
+        if "partial_t3" in str(input_path):
+            selected_surface.update(
+                {
+                    "t_plus_3_close_positive_rate": None,
+                    "t_plus_3_close_expectancy": None,
+                    "t_plus_3_close_return_distribution": {},
+                }
+            )
+        else:
+            selected_surface.update(
+                {
+                    "t_plus_3_close_positive_rate": 0.53,
+                    "t_plus_3_close_expectancy": 0.012,
+                    "t_plus_3_close_return_distribution": {"median": 0.007},
+                }
+            )
+        return {"surface_summaries": {"selected": selected_surface, "tradeable": selected_surface}}
+
+    fake_module.analyze_btst_profile_replay_window = fake_analyze_btst_profile_replay_window
+    monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
+
+    evaluator = _build_replay_evaluator(
+        [Path("window_full.json"), Path("window_partial_t3.json")],
+        base_profile="default",
+    )
+
+    metrics = evaluator({})
+
+    assert metrics["window_count"] == 2
+    assert metrics["sample_weight"] == pytest.approx((0.5 + (0.5 * 0.92)) / 2.0)
+    assert metrics["t_plus_3_close_positive_rate"] == pytest.approx((0.53 + 0.55) / 2.0)
+    assert metrics["t_plus_3_close_expectancy"] == pytest.approx((0.012 + 0.008) / 2.0)
