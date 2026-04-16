@@ -9,7 +9,7 @@ import itertools
 import json
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from collections.abc import Callable
@@ -17,7 +17,7 @@ from collections.abc import Callable
 _logger = logging.getLogger(__name__)
 
 
-class SearchObjective(str, Enum):
+class SearchObjective(StrEnum):
     SHARPE = "sharpe"
     SORTINO = "sortino"
     COMPOSITE = "composite"

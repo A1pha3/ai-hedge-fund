@@ -82,7 +82,7 @@ def build_llm_error_digest(llm_route_provenance: dict, llm_observability_summary
     }
 
 
-def build_execution_plan_provenance_summary(pipeline: "DailyPipeline | None") -> dict:
+def build_execution_plan_provenance_summary(pipeline: DailyPipeline | None) -> dict:
     observations = list(getattr(pipeline, "execution_plan_provenance_log", []) or [])
     return {
         "observation_count": len(observations),

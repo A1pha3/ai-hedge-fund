@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from collections.abc import Callable
@@ -33,7 +33,7 @@ from src.llm.provider_route_helpers import (
 from src.llm.zhipu_model_helpers import resolve_zhipu_route_inputs, should_route_zhipu_to_coding_plan
 
 
-class ModelProvider(str, Enum):
+class ModelProvider(StrEnum):
     """Enum for supported LLM providers"""
 
     ALIBABA = "Alibaba"

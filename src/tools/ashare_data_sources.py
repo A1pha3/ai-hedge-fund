@@ -4,7 +4,6 @@ A股多数据源模块
 """
 
 import os
-from typing import Optional
 
 from src.data.models import FinancialMetrics, Price
 
@@ -247,7 +246,7 @@ DATA_SOURCES = [
 ]
 
 
-def get_prices_multi_source(ticker: str, start_date: str, end_date: str, period: str = "daily", source_preference: Optional[list[str]] = None) -> list[Price]:
+def get_prices_multi_source(ticker: str, start_date: str, end_date: str, period: str = "daily", source_preference: list[str] | None = None) -> list[Price]:
     """
     多数据源获取价格数据（自动容错）
 

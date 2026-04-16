@@ -1,7 +1,6 @@
 """筛选层数据模型 — Layer A 候选池 + Layer B 策略信号 + 市场状态"""
 
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -24,7 +23,7 @@ class CandidateStock(BaseModel):
     shadow_visibility_gap_relaxed_band: bool = False
 
 
-class MarketStateType(str, Enum):
+class MarketStateType(StrEnum):
     """市场状态类型（§3.2 + §6.1）"""
     TREND = "trend"
     RANGE = "range"
@@ -90,7 +89,7 @@ class FusedScore(BaseModel):
     score_b: float = Field(ge=-1, le=1)
     strategy_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     arbitration_applied: list[str] = Field(default_factory=list)
-    market_state: Optional[MarketState] = None
+    market_state: MarketState | None = None
     weights_used: dict[str, float] = Field(default_factory=dict)
     decision: str = "neutral"
 
@@ -108,7 +107,7 @@ class FusedScore(BaseModel):
             return "strong_sell"
 
 
-class ArbitrationAction(str, Enum):
+class ArbitrationAction(StrEnum):
     """冲突仲裁动作"""
     AVOID = "avoid"
     SHORT_HOLD = "short_hold"

@@ -18,11 +18,11 @@ def _try_load_cached_candidate_pool_with_shadow(
     max_candidate_pool_size: int,
     focus_signature: str,
     load_candidate_pool_shadow_snapshot_fn: Callable[[Path], dict[str, Any]],
-    write_candidate_pool_snapshot_fn: Callable[[Path, list["CandidateStock"]], None],
-    load_candidate_pool_snapshot_fn: Callable[[Path], list["CandidateStock"]],
+    write_candidate_pool_snapshot_fn: Callable[[Path, list[CandidateStock]], None],
+    load_candidate_pool_snapshot_fn: Callable[[Path], list[CandidateStock]],
     build_shadow_summary_from_selected_candidates_fn: Callable[..., dict[str, Any]],
     write_candidate_pool_shadow_snapshot_fn: Callable[..., None],
-) -> tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any], list["CandidateStock"]] | None:
+) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any], list[CandidateStock]] | None:
     cached_selected_candidates: list[CandidateStock] = []
     focus_label = f", focus={focus_signature}" if focus_signature else ""
 
@@ -69,17 +69,17 @@ def _finalize_candidate_pool_with_shadow_outputs(
     snapshot_path: Path,
     legacy_snapshot_path: Path,
     shadow_snapshot_path: Path,
-    candidates: list["CandidateStock"],
-    cooldown_review_candidates: list["CandidateStock"],
+    candidates: list[CandidateStock],
+    cooldown_review_candidates: list[CandidateStock],
     focus_filter_diagnostics: list[dict[str, Any]],
-    selected_candidates: list["CandidateStock"],
-    shadow_candidates: list["CandidateStock"],
+    selected_candidates: list[CandidateStock],
+    shadow_candidates: list[CandidateStock],
     shadow_summary: dict[str, Any],
     max_candidate_pool_size: int,
-    write_candidate_pool_snapshot_fn: Callable[[Path, list["CandidateStock"]], None],
+    write_candidate_pool_snapshot_fn: Callable[[Path, list[CandidateStock]], None],
     write_candidate_pool_shadow_snapshot_fn: Callable[..., None],
     finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
-) -> tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any]]:
+) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
     shadow_summary["focus_filter_diagnostics"] = finalize_focus_filter_diagnostics_fn(
         {item["ticker"]: item for item in focus_filter_diagnostics},
         candidate_tickers={candidate.ticker for candidate in candidates},
@@ -118,14 +118,14 @@ def build_candidate_pool_with_shadow(
     max_candidate_pool_size: int,
     shadow_focus_signature_fn: Callable[[], str],
     load_candidate_pool_shadow_snapshot_fn: Callable[[Path], dict[str, Any]],
-    write_candidate_pool_snapshot_fn: Callable[[Path, list["CandidateStock"]], None],
-    load_candidate_pool_snapshot_fn: Callable[[Path], list["CandidateStock"]],
+    write_candidate_pool_snapshot_fn: Callable[[Path, list[CandidateStock]], None],
+    load_candidate_pool_snapshot_fn: Callable[[Path], list[CandidateStock]],
     build_shadow_summary_from_selected_candidates_fn: Callable[..., dict[str, Any]],
     write_candidate_pool_shadow_snapshot_fn: Callable[..., None],
-    compute_candidate_pool_candidates_fn: Callable[..., tuple[list["CandidateStock"], list["CandidateStock"], list[dict[str, Any]]]],
-    build_shadow_candidate_pool_payload_fn: Callable[..., tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any]]],
+    compute_candidate_pool_candidates_fn: Callable[..., tuple[list[CandidateStock], list[CandidateStock], list[dict[str, Any]]]],
+    build_shadow_candidate_pool_payload_fn: Callable[..., tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]],
     finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
-) -> tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any]]:
+) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
     focus_signature = shadow_focus_signature_fn()
     cached_selected_candidates: list[CandidateStock] = []
     cached_result = _try_load_cached_candidate_pool_with_shadow(

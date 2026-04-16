@@ -151,7 +151,7 @@ def _build_analyst_detail_lines(ticker: str, result: dict, format_reasoning_to_m
         lines.append(f"#### {agent_name}\n")
         lines.append(f"- **信号**: {signal_type}")
         lines.append(f"- **置信度**: {confidence}%")
-        lines.append(f"- **推理过程**:\n")
+        lines.append("- **推理过程**:\n")
         lines.append(f"{formatted_reasoning}\n")
 
         reasoning_cn = signal.get("reasoning_cn")

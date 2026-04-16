@@ -64,7 +64,7 @@ class CandidatePoolComputeInputs:
     normalize_sw_map_fn: Callable[[Any], dict[str, str]]
     get_sw_industry_classification_fn: Callable[[], Any]
     is_disclosure_window_fn: Callable[[str], bool]
-    build_candidate_stocks_fn: Callable[..., list["CandidateStock"]]
+    build_candidate_stocks_fn: Callable[..., list[CandidateStock]]
     finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]]
 
 
@@ -483,9 +483,9 @@ def _build_candidate_pool_outputs(
     normalize_sw_map_fn: Callable[[Any], dict[str, str]],
     get_sw_industry_classification_fn: Callable[[], Any],
     is_disclosure_window_fn: Callable[[str], bool],
-    build_candidate_stocks_fn: Callable[..., list["CandidateStock"]],
+    build_candidate_stocks_fn: Callable[..., list[CandidateStock]],
     finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
-) -> tuple[list["CandidateStock"], list["CandidateStock"], list[dict[str, Any]]]:
+) -> tuple[list[CandidateStock], list[CandidateStock], list[dict[str, Any]]]:
     sw_map = normalize_sw_map_fn(get_sw_industry_classification_fn())
     is_disclosure = is_disclosure_window_fn(trade_date)
     candidates = build_candidate_stocks_fn(
@@ -545,9 +545,9 @@ def compute_candidate_pool_candidates(
     normalize_sw_map_fn: Callable[[Any], dict[str, str]],
     get_sw_industry_classification_fn: Callable[[], Any],
     is_disclosure_window_fn: Callable[[str], bool],
-    build_candidate_stocks_fn: Callable[..., list["CandidateStock"]],
+    build_candidate_stocks_fn: Callable[..., list[CandidateStock]],
     finalize_focus_filter_diagnostics_fn: Callable[..., list[dict[str, Any]]],
-) -> tuple[list["CandidateStock"], list["CandidateStock"], list[dict[str, Any]]]:
+) -> tuple[list[CandidateStock], list[CandidateStock], list[dict[str, Any]]]:
     return _compute_candidate_pool_candidates_impl(
         inputs=CandidatePoolComputeInputs(
             trade_date=trade_date,
@@ -589,7 +589,7 @@ def compute_candidate_pool_candidates(
 def _compute_candidate_pool_candidates_impl(
     *,
     inputs: CandidatePoolComputeInputs,
-) -> tuple[list["CandidateStock"], list["CandidateStock"], list[dict[str, Any]]]:
+) -> tuple[list[CandidateStock], list[CandidateStock], list[dict[str, Any]]]:
     context = _build_candidate_pool_computation_context(
         get_pro_fn=inputs.get_pro_fn,
         get_all_stock_basic_fn=inputs.get_all_stock_basic_fn,

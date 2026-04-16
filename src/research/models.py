@@ -142,7 +142,7 @@ class ResearchFeedbackRecord(BaseModel):
     created_at: str
 
     @model_validator(mode="after")
-    def _normalize_tags(self) -> "ResearchFeedbackRecord":
+    def _normalize_tags(self) -> ResearchFeedbackRecord:
         normalized_tags = []
         seen_tags: set[str] = set()
         for tag in [self.primary_tag, *self.tags]:
@@ -175,7 +175,7 @@ class ResearchFeedbackSummary(BaseModel):
     latest_created_at: str | None = None
 
     @classmethod
-    def from_records(cls, records: list[ResearchFeedbackRecord]) -> "ResearchFeedbackSummary":
+    def from_records(cls, records: list[ResearchFeedbackRecord]) -> ResearchFeedbackSummary:
         primary_tag_counts = Counter(record.primary_tag for record in records)
         tag_counts = Counter(tag for record in records for tag in record.tags)
         review_status_counts = Counter(record.review_status for record in records)

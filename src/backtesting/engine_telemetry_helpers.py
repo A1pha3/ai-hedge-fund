@@ -134,8 +134,8 @@ def build_pipeline_day_event_payload(
 
 def build_pipeline_day_record_payloads(
     *,
-    day_context: "PipelineDayContext",
-    day_state: "PipelineModeDayState",
+    day_context: PipelineDayContext,
+    day_state: PipelineModeDayState,
     pending_plan: ExecutionPlan | None,
     current_prices: dict[str, float],
     day_started_at: float,

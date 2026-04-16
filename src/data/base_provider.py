@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
 
@@ -44,10 +44,10 @@ class DataRequest:
 
     ticker: str
     data_type: DataType
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    fields: Optional[list[str]] = None
-    kwargs: Optional[dict[str, Any]] = field(default_factory=dict)
+    start_date: str | None = None
+    end_date: str | None = None
+    fields: list[str] | None = None
+    kwargs: dict[str, Any] | None = field(default_factory=dict)
 
 
 @dataclass
@@ -70,8 +70,8 @@ class DataResponse:
     source: str
     timestamp: datetime = field(default_factory=datetime.now)
     cached: bool = False
-    error: Optional[str] = None
-    latency_ms: Optional[float] = None
+    error: str | None = None
+    latency_ms: float | None = None
 
 
 class DataProviderError(Exception):
@@ -123,9 +123,9 @@ class BaseDataProvider(ABC):
         self.name = name
         self.priority = priority
         self.health_status = "unknown"  # unknown/healthy/unhealthy
-        self._session: Optional[aiohttp.ClientSession] = None
-        self._rate_limit_remaining: Optional[int] = None
-        self._rate_limit_reset: Optional[datetime] = None
+        self._session: aiohttp.ClientSession | None = None
+        self._rate_limit_remaining: int | None = None
+        self._rate_limit_reset: datetime | None = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """

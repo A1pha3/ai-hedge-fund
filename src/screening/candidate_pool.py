@@ -20,7 +20,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Optional
+from typing import Any
 
 import time
 
@@ -117,7 +117,7 @@ SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS = {
 BEIJING_EXCHANGE_SYMBOL_PREFIXES: tuple[str, ...] = ("4", "8", "92")
 
 
-def _candidate_pool_snapshot_path(trade_date: str, pool_size: Optional[int] = None) -> Path:
+def _candidate_pool_snapshot_path(trade_date: str, pool_size: int | None = None) -> Path:
     resolved_pool_size = MAX_CANDIDATE_POOL_SIZE if pool_size is None else int(pool_size)
     return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}_top{resolved_pool_size}.json"
 
@@ -126,7 +126,7 @@ def _candidate_pool_legacy_snapshot_path(trade_date: str) -> Path:
     return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}.json"
 
 
-def _candidate_pool_shadow_snapshot_path(trade_date: str, pool_size: Optional[int] = None) -> Path:
+def _candidate_pool_shadow_snapshot_path(trade_date: str, pool_size: int | None = None) -> Path:
     resolved_pool_size = MAX_CANDIDATE_POOL_SIZE if pool_size is None else int(pool_size)
     focus_signature = _shadow_focus_signature()
     focus_suffix = f"_focus_{focus_signature}" if focus_signature else ""
@@ -295,8 +295,8 @@ def _build_shadow_candidate_pool_payload(
     candidates: list[CandidateStock],
     *,
     pool_size: int,
-    cooldown_review_candidates: Optional[list[CandidateStock]] = None,
-    focus_filter_diagnostics: Optional[list[dict[str, Any]]] = None,
+    cooldown_review_candidates: list[CandidateStock] | None = None,
+    focus_filter_diagnostics: list[dict[str, Any]] | None = None,
 ) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
     return build_shadow_candidate_pool_payload_helper(
         candidates,
@@ -311,8 +311,8 @@ def _build_shadow_candidate_pool_payload(
 def _build_shadow_candidate_pool_payload_kwargs(
     *,
     pool_size: int,
-    cooldown_review_candidates: Optional[list[CandidateStock]],
-    focus_filter_diagnostics: Optional[list[dict[str, Any]]],
+    cooldown_review_candidates: list[CandidateStock] | None,
+    focus_filter_diagnostics: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
     return {
         "pool_size": pool_size,
@@ -371,7 +371,7 @@ def _resolve_selected_cutoff_avg_volume(selected_candidates: list[CandidateStock
 
 def _compute_candidate_pool_candidates(
     trade_date: str,
-    cooldown_tickers: Optional[set[str]] = None,
+    cooldown_tickers: set[str] | None = None,
 ) -> tuple[list[CandidateStock], list[CandidateStock], list[dict[str, Any]]]:
     """计算未截断的候选池，供主池与 shadow recall 共同消费。"""
     return compute_candidate_pool_candidates_helper(**_build_compute_candidate_pool_candidate_kwargs(trade_date, cooldown_tickers))
@@ -379,7 +379,7 @@ def _compute_candidate_pool_candidates(
 
 def _build_compute_candidate_pool_candidate_kwargs(
     trade_date: str,
-    cooldown_tickers: Optional[set[str]],
+    cooldown_tickers: set[str] | None,
 ) -> dict[str, Any]:
     return {
         "trade_date": trade_date,
@@ -420,7 +420,7 @@ def _build_compute_candidate_pool_candidate_kwargs(
 def build_candidate_pool_with_shadow(
     trade_date: str,
     use_cache: bool = True,
-    cooldown_tickers: Optional[set[str]] = None,
+    cooldown_tickers: set[str] | None = None,
 ) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
     return build_candidate_pool_with_shadow_helper(
         **_build_candidate_pool_with_shadow_kwargs(
@@ -435,7 +435,7 @@ def _build_candidate_pool_with_shadow_kwargs(
     *,
     trade_date: str,
     use_cache: bool,
-    cooldown_tickers: Optional[set[str]],
+    cooldown_tickers: set[str] | None,
 ) -> dict[str, Any]:
     return {
         "trade_date": trade_date,
@@ -688,7 +688,7 @@ def _resolve_tushare_daily_sleep_seconds(*, batch_started_at: float, processed_c
 def build_candidate_pool(
     trade_date: str,
     use_cache: bool = True,
-    cooldown_tickers: Optional[set[str]] = None,
+    cooldown_tickers: set[str] | None = None,
 ) -> list[CandidateStock]:
     """
     构建 Layer A 候选池。

@@ -5,7 +5,7 @@ from typing import Any
 
 
 def load_model_records_from_json(json_path: str) -> list[dict[str, Any]]:
-    with open(json_path, "r") as file_obj:
+    with open(json_path) as file_obj:
         return json.load(file_obj)
 
 

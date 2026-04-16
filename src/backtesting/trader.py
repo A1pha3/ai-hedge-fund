@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from .portfolio import Portfolio
 from .trader_helpers import coerce_trade_action, execute_buy_trade, execute_cover_trade, execute_sell_trade, execute_short_trade
-from .portfolio import Portfolio
 from .types import Action, ActionLiteral
 
 

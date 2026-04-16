@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 def finalize_runtime_run(
     *,
-    context: "SessionRuntimeContext",
-    metrics: "PerformanceMetrics",
+    context: SessionRuntimeContext,
+    metrics: PerformanceMetrics,
     start_date: str,
     end_date: str,
     tickers: list[str] | None,
@@ -28,8 +28,8 @@ def finalize_runtime_run(
     cache_benchmark_clear_first: bool,
     build_runtime_finalization_inputs_fn: Callable[..., dict],
     finalize_paper_trading_session_fn: Callable[..., tuple[dict, Path]],
-    build_runtime_artifacts_fn: Callable[["SessionRuntimeContext", Path], "PaperTradingArtifacts"],
-) -> "PaperTradingArtifacts":
+    build_runtime_artifacts_fn: Callable[[SessionRuntimeContext, Path], PaperTradingArtifacts],
+) -> PaperTradingArtifacts:
     _, feedback_summary_path = finalize_paper_trading_session_fn(
         **build_runtime_finalization_inputs_fn(
             context=context,
@@ -66,16 +66,16 @@ def run_paper_trading_session(
     short_trade_target_profile_overrides: dict[str, object] | None,
     initial_margin_requirement: float,
     agent: Callable,
-    pipeline: "DailyPipeline | None",
+    pipeline: DailyPipeline | None,
     frozen_plan_source: str | Path | None,
     selection_target: str,
     cache_benchmark: bool,
     cache_benchmark_ticker: str | None,
     cache_benchmark_clear_first: bool,
-    prepare_session_runtime_context_fn: Callable[..., "SessionRuntimeContext"],
-    run_runtime_backtest_fn: Callable[["SessionRuntimeContext"], "PerformanceMetrics"],
-    finalize_runtime_run_fn: Callable[..., "PaperTradingArtifacts"],
-) -> "PaperTradingArtifacts":
+    prepare_session_runtime_context_fn: Callable[..., SessionRuntimeContext],
+    run_runtime_backtest_fn: Callable[[SessionRuntimeContext], PerformanceMetrics],
+    finalize_runtime_run_fn: Callable[..., PaperTradingArtifacts],
+) -> PaperTradingArtifacts:
     context = prepare_session_runtime_context_fn(
         output_dir=output_dir,
         frozen_plan_source=frozen_plan_source,

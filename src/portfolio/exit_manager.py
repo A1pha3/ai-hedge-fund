@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from src.portfolio.models import ExitSignal, HoldingState
 
@@ -60,8 +59,8 @@ def check_exit_signal(
     current_price: float,
     trade_date: str,
     atr_14: float = 0.0,
-    logic_score: Optional[float] = None,
-) -> Optional[ExitSignal]:
+    logic_score: float | None = None,
+) -> ExitSignal | None:
     pnl_pct = _holding_pnl_pct(holding, current_price)
     holding_days = max(0, int(holding.holding_days))
     max_pnl = max(holding.max_unrealized_pnl_pct, pnl_pct)

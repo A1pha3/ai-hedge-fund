@@ -5,7 +5,7 @@
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable
 
 from src.data.models import CompanyNews, FinancialMetrics, Price
@@ -313,7 +313,7 @@ class DataPipeline:
     组合验证和清洗步骤
     """
 
-    def __init__(self, validators: Optional[list[Callable]] = None, cleaners: Optional[list[Callable]] = None):
+    def __init__(self, validators: list[Callable] | None = None, cleaners: list[Callable] | None = None):
         """
         初始化数据管道
 

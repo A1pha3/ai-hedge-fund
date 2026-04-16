@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import signature
 from time import perf_counter
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable
 
 from scripts.btst_latest_followup_utils import load_latest_btst_historical_prior_by_ticker
@@ -1528,7 +1528,7 @@ class DailyPipeline:
         plan.risk_metrics = risk_metrics
         return plan
 
-    def run_post_market(self, trade_date: str, portfolio_snapshot: Optional[dict] = None, blocked_buy_tickers: dict[str, dict] | None = None) -> ExecutionPlan:
+    def run_post_market(self, trade_date: str, portfolio_snapshot: dict | None = None, blocked_buy_tickers: dict[str, dict] | None = None) -> ExecutionPlan:
         blocked_buy_tickers = _normalize_blocked_buy_tickers(blocked_buy_tickers)
         if self.frozen_post_market_plans is not None:
             frozen_plan = self.frozen_post_market_plans.get(trade_date)

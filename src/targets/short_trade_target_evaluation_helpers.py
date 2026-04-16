@@ -1232,7 +1232,6 @@ def _build_short_trade_core_metrics_payload(
         "catalyst_freshness": round(float(snapshot["raw_catalyst_freshness"]), 4),
         "effective_catalyst_freshness": round(float(snapshot["catalyst_freshness"]), 4),
         "layer_c_alignment": round(float(snapshot["layer_c_alignment"]), 4),
-        "momentum_strength": round(float(snapshot.get("momentum_strength", 0.0)), 4),
         "short_term_reversal": round(float(snapshot.get("short_term_reversal", 0.0)), 4),
         "intraday_strength": round(float(snapshot.get("intraday_strength", 0.0)), 4),
         "reversal_2d": round(float(snapshot.get("reversal_2d", 0.0)), 4),

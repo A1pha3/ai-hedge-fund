@@ -16,7 +16,7 @@ def prepare_session_runtime_context(
     frozen_plan_source: str | Path | None,
     model_name: str | None,
     model_provider: str | None,
-    pipeline: "DailyPipeline | None",
+    pipeline: DailyPipeline | None,
     selected_analysts: list[str] | None,
     fast_selected_analysts: list[str] | None,
     short_trade_target_profile_name: str,
@@ -29,11 +29,11 @@ def prepare_session_runtime_context(
     initial_capital: float,
     initial_margin_requirement: float,
     resolve_runtime_model_config_fn: Callable[..., tuple[str, str]],
-    resolve_runtime_session_dependencies_fn: Callable[..., tuple[Any, "DailyPipeline"]],
+    resolve_runtime_session_dependencies_fn: Callable[..., tuple[Any, DailyPipeline]],
     build_runtime_engine_inputs_fn: Callable[..., dict[str, Any]],
-    build_runtime_recorder_and_engine_fn: Callable[..., tuple["JsonlPaperTradingRecorder", "BacktestEngine"]],
-    build_session_runtime_context_fn: Callable[..., "SessionRuntimeContext"],
-) -> "SessionRuntimeContext":
+    build_runtime_recorder_and_engine_fn: Callable[..., tuple[JsonlPaperTradingRecorder, BacktestEngine]],
+    build_session_runtime_context_fn: Callable[..., SessionRuntimeContext],
+) -> SessionRuntimeContext:
     resolved_model_name, resolved_model_provider = resolve_runtime_model_config_fn(
         model_name=model_name,
         model_provider=model_provider,
@@ -86,7 +86,7 @@ def build_runtime_engine_inputs(
     resolved_model_provider: str,
     selected_analysts: list[str] | None,
     initial_margin_requirement: float,
-    pipeline: "DailyPipeline",
+    pipeline: DailyPipeline,
     session_paths: Any,
 ) -> dict[str, Any]:
     return {
@@ -130,7 +130,7 @@ def resolve_runtime_session_dependencies(
     *,
     output_dir: str | Path,
     frozen_plan_source: str | Path | None,
-    pipeline: "DailyPipeline | None",
+    pipeline: DailyPipeline | None,
     resolved_model_name: str,
     resolved_model_provider: str,
     selected_analysts: list[str] | None,
@@ -140,8 +140,8 @@ def resolve_runtime_session_dependencies(
     selection_target: str,
     resolve_session_paths_fn: Callable[..., Any],
     reset_runtime_outputs_fn: Callable[[Any], None],
-    resolve_runtime_pipeline_fn: Callable[..., "DailyPipeline"],
-) -> tuple[Any, "DailyPipeline"]:
+    resolve_runtime_pipeline_fn: Callable[..., DailyPipeline],
+) -> tuple[Any, DailyPipeline]:
     session_paths = resolve_session_paths_fn(output_dir=output_dir, frozen_plan_source=frozen_plan_source)
     reset_runtime_outputs_fn(session_paths)
     resolved_pipeline = resolve_runtime_pipeline_fn(
@@ -163,12 +163,12 @@ def build_session_runtime_context(
     resolved_model_name: str,
     resolved_model_provider: str,
     session_paths: Any,
-    pipeline: "DailyPipeline",
-    recorder: "JsonlPaperTradingRecorder",
-    engine: "BacktestEngine",
+    pipeline: DailyPipeline,
+    recorder: JsonlPaperTradingRecorder,
+    engine: BacktestEngine,
     snapshot_cache_stats_fn: Callable[[], dict],
-    session_runtime_context_cls: type["SessionRuntimeContext"],
-) -> "SessionRuntimeContext":
+    session_runtime_context_cls: type[SessionRuntimeContext],
+) -> SessionRuntimeContext:
     return session_runtime_context_cls(
         resolved_model_name=resolved_model_name,
         resolved_model_provider=resolved_model_provider,
@@ -191,11 +191,11 @@ def build_runtime_recorder_and_engine(
     resolved_model_provider: str,
     selected_analysts: list[str] | None,
     initial_margin_requirement: float,
-    pipeline: "DailyPipeline",
+    pipeline: DailyPipeline,
     session_paths: Any,
-    build_runtime_recorder_fn: Callable[[Any], "JsonlPaperTradingRecorder"],
-    build_paper_trading_engine_fn: Callable[..., "BacktestEngine"],
-) -> tuple["JsonlPaperTradingRecorder", "BacktestEngine"]:
+    build_runtime_recorder_fn: Callable[[Any], JsonlPaperTradingRecorder],
+    build_paper_trading_engine_fn: Callable[..., BacktestEngine],
+) -> tuple[JsonlPaperTradingRecorder, BacktestEngine]:
     recorder = build_runtime_recorder_fn(session_paths)
     engine = build_paper_trading_engine_fn(
         agent=agent,
@@ -214,7 +214,7 @@ def build_runtime_recorder_and_engine(
     return recorder, engine
 
 
-def build_runtime_recorder(*, session_paths: Any, recorder_cls: type["JsonlPaperTradingRecorder"]) -> "JsonlPaperTradingRecorder":
+def build_runtime_recorder(*, session_paths: Any, recorder_cls: type[JsonlPaperTradingRecorder]) -> JsonlPaperTradingRecorder:
     return recorder_cls(session_paths.daily_events_path)
 
 
@@ -229,12 +229,12 @@ def build_paper_trading_engine(
     resolved_model_provider: str,
     selected_analysts: list[str] | None,
     initial_margin_requirement: float,
-    pipeline: "DailyPipeline",
+    pipeline: DailyPipeline,
     session_paths: Any,
-    recorder: "JsonlPaperTradingRecorder",
+    recorder: JsonlPaperTradingRecorder,
     build_selection_artifact_writer_fn: Callable[[Any], Any],
     backtest_engine_cls,
-) -> "BacktestEngine":
+) -> BacktestEngine:
     selection_artifact_writer = build_selection_artifact_writer_fn(session_paths)
     return backtest_engine_cls(
         agent=agent,

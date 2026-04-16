@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 def resolve_runtime_pipeline(
     *,
-    pipeline: "DailyPipeline | None",
+    pipeline: DailyPipeline | None,
     resolved_model_name: str,
     resolved_model_provider: str,
     selected_analysts: list[str] | None,
@@ -20,10 +20,10 @@ def resolve_runtime_pipeline(
     short_trade_target_profile_overrides: dict[str, object] | None,
     selection_target: str,
     frozen_plan_source_path: Path | None,
-    resolve_pipeline_fn: Callable[..., "DailyPipeline"],
+    resolve_pipeline_fn: Callable[..., DailyPipeline],
     pipeline_cls: type,
     load_frozen_post_market_plans_fn: Callable[..., object],
-) -> "DailyPipeline":
+) -> DailyPipeline:
     return resolve_pipeline_fn(
         pipeline=pipeline,
         frozen_plan_source_path=frozen_plan_source_path,
@@ -40,12 +40,12 @@ def resolve_runtime_pipeline(
 
 
 def build_runtime_monitoring_summary(
-    context: "SessionRuntimeContext",
+    context: SessionRuntimeContext,
     *,
     build_llm_route_provenance_fn: Callable[[], tuple[dict, dict]],
     build_llm_observability_summary_fn: Callable[[Path], dict],
     build_llm_error_digest_fn: Callable[[dict, dict], dict],
-    build_execution_plan_provenance_summary_fn: Callable[["DailyPipeline | None"], dict],
+    build_execution_plan_provenance_summary_fn: Callable[[DailyPipeline | None], dict],
     build_dual_target_session_summary_fn: Callable[[Path], dict],
 ) -> dict:
     llm_route_provenance, llm_metrics_artifacts = build_llm_route_provenance_fn()
@@ -61,7 +61,7 @@ def build_runtime_monitoring_summary(
 
 
 def build_runtime_data_cache_summary(
-    context: "SessionRuntimeContext",
+    context: SessionRuntimeContext,
     *,
     get_cache_runtime_info_fn: Callable[[], dict],
     diff_cache_stats_fn: Callable[[dict, dict], dict],
@@ -73,7 +73,7 @@ def build_runtime_data_cache_summary(
 
 def run_runtime_cache_benchmark(
     *,
-    context: "SessionRuntimeContext",
+    context: SessionRuntimeContext,
     cache_benchmark: bool,
     cache_benchmark_ticker: str | None,
     tickers: list[str] | None,

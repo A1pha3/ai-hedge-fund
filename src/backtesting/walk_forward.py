@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from collections.abc import Callable, Sequence
 
 from dateutil.relativedelta import relativedelta
@@ -12,7 +12,7 @@ from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 from .types import PerformanceMetrics
 
 
-class WindowMode(str, Enum):
+class WindowMode(StrEnum):
     ROLLING = "rolling"
     EXPANDING = "expanding"
 

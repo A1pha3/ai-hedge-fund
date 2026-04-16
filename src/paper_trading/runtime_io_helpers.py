@@ -46,7 +46,7 @@ def write_runtime_summary(summary_path: Path, summary: dict) -> None:
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def promote_runtime_timing_log(context: "SessionRuntimeContext") -> None:
+def promote_runtime_timing_log(context: SessionRuntimeContext) -> None:
     engine_timing_log_path = context.engine._timing_log_path
     session_timing_log_path = context.session_paths.timing_log_path
     if engine_timing_log_path is None:

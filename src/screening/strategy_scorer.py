@@ -8,7 +8,6 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from statistics import median
-from typing import Optional
 from collections.abc import Iterable
 
 import pandas as pd
@@ -143,7 +142,7 @@ def _get_trend_subfactor_weights() -> dict[str, float]:
     return TREND_SUBFACTOR_WEIGHTS
 
 
-def _safe_date(date_str: str) -> Optional[datetime]:
+def _safe_date(date_str: str) -> datetime | None:
     if not date_str:
         return None
     for fmt in ("%Y%m%d", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
@@ -264,7 +263,7 @@ def _make_sub_factor(
     confidence: float,
     weight: float,
     completeness: float = 1.0,
-    metrics: Optional[dict] = None,
+    metrics: dict | None = None,
 ) -> SubFactor:
     return SubFactor(
         name=name,
@@ -739,7 +738,7 @@ def _resolve_growth_valuation_direction_and_confidence(score: float) -> tuple[in
     return (1 if score > 0.6 else -1 if score == 0 else 0), abs(score - 0.5) * 200.0 if score > 0 else 65.0
 
 
-def _score_industry_pe(metrics: FinancialMetrics, industry_name: str, industry_pe_medians: Optional[dict[str, float]]) -> SubFactor:
+def _score_industry_pe(metrics: FinancialMetrics, industry_name: str, industry_pe_medians: dict[str, float] | None) -> SubFactor:
     premium_inputs = _resolve_industry_pe_inputs(metrics, industry_name, industry_pe_medians)
     if premium_inputs is None:
         return _make_sub_factor("industry_pe", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["industry_pe"], completeness=0.0)
@@ -768,7 +767,7 @@ def _build_industry_pe_metrics(industry_name: str, current_pe: float, industry_m
 def _resolve_industry_pe_inputs(
     metrics: FinancialMetrics,
     industry_name: str,
-    industry_pe_medians: Optional[dict[str, float]],
+    industry_pe_medians: dict[str, float] | None,
 ) -> tuple[float, float] | None:
     if not industry_name or not industry_pe_medians or metrics.price_to_earnings_ratio is None:
         return None
@@ -827,7 +826,7 @@ def score_fundamental_strategy(
     ticker: str,
     trade_date: str,
     industry_name: str = "",
-    industry_pe_medians: Optional[dict[str, float]] = None,
+    industry_pe_medians: dict[str, float] | None = None,
 ) -> StrategySignal:
     metrics_list = _load_fundamental_metrics_history(ticker=ticker, trade_date=trade_date)
     if not metrics_list:
@@ -857,7 +856,7 @@ def _build_fundamental_sub_factors(
     *,
     metrics_list: list[FinancialMetrics],
     industry_name: str,
-    industry_pe_medians: Optional[dict[str, float]],
+    industry_pe_medians: dict[str, float] | None,
 ) -> list[SubFactor]:
     latest = metrics_list[0]
     return [
@@ -1211,8 +1210,8 @@ def _build_industry_pe_medians(trade_date: str) -> dict[str, float]:
 def score_candidate(
     candidate: CandidateStock,
     trade_date: str,
-    industry_pe_medians: Optional[dict[str, float]] = None,
-    prices_df: Optional[pd.DataFrame] = None,
+    industry_pe_medians: dict[str, float] | None = None,
+    prices_df: pd.DataFrame | None = None,
 ) -> dict[str, StrategySignal]:
     prices_df = prices_df if prices_df is not None else _load_price_frame(candidate.ticker, trade_date)
     industry_pe_medians = industry_pe_medians if industry_pe_medians is not None else {}

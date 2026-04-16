@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 
 def load_candidate_pool_snapshot(snapshot_path: Path, *, candidate_stock_cls: type) -> list[Any]:
-    with open(snapshot_path, "r", encoding="utf-8") as f:
+    with open(snapshot_path, encoding="utf-8") as f:
         data = json.load(f)
     return [candidate_stock_cls(**item) for item in data]
 
@@ -41,7 +41,7 @@ def load_candidate_pool_shadow_snapshot(
     candidate_stock_cls: type,
     normalize_shadow_summary_fn: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
-    with open(snapshot_path, "r", encoding="utf-8") as f:
+    with open(snapshot_path, encoding="utf-8") as f:
         payload = json.load(f)
     shadow_candidates = [candidate_stock_cls(**item) for item in list(payload.get("shadow_candidates") or [])]
     return {
@@ -79,9 +79,9 @@ def write_candidate_pool_shadow_snapshot(
 def load_cooldown_registry(cooldown_file: Path) -> dict[str, str]:
     if cooldown_file.exists():
         try:
-            with open(cooldown_file, "r", encoding="utf-8") as f:
+            with open(cooldown_file, encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             return {}
     return {}
 

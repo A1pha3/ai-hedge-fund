@@ -45,13 +45,13 @@ def is_ollama_installed() -> bool:
 
     if system == "darwin" or system == "linux":  # macOS or Linux
         try:
-            result = subprocess.run(["which", "ollama"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run(["which", "ollama"], capture_output=True, text=True)
             return result.returncode == 0
         except Exception:
             return False
     elif system == "windows":  # Windows
         try:
-            result = subprocess.run(["where", "ollama"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+            result = subprocess.run(["where", "ollama"], capture_output=True, text=True, shell=True)
             return result.returncode == 0
         except Exception:
             return False
@@ -141,7 +141,7 @@ def _verify_installed_and_running(restart_message: str) -> bool:
 
 def _run_install_script(success_message: str, failure_message: str) -> bool:
     try:
-        install_process = subprocess.run(["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        install_process = subprocess.run(["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"], capture_output=True, text=True)
         if install_process.returncode == 0:
             print(f"{Fore.GREEN}{success_message}{Style.RESET_ALL}")
             return True
@@ -198,7 +198,7 @@ def install_ollama() -> bool:
     system = platform.system().lower()
     if system not in OLLAMA_DOWNLOAD_URL:
         print(f"{Fore.RED}Unsupported operating system for automatic installation: {system}{Style.RESET_ALL}")
-        print(f"Please visit https://ollama.com/download to install Ollama manually.")
+        print("Please visit https://ollama.com/download to install Ollama manually.")
         return False
 
     if system == "darwin":
@@ -318,7 +318,7 @@ def delete_model(model_name: str) -> bool:
 
     try:
         # Use the Ollama CLI to delete the model
-        process = subprocess.run(["ollama", "rm", model_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.run(["ollama", "rm", model_name], capture_output=True, text=True)
 
         if process.returncode == 0:
             print(f"{Fore.GREEN}Model {model_name} deleted successfully.{Style.RESET_ALL}")

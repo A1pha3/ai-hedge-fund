@@ -9,7 +9,7 @@ import os
 import pickle
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 try:
     import redis
@@ -39,7 +39,7 @@ class LRUCache:
         self._cache: dict[str, Any] = {}
         self._access_time: dict[str, datetime] = {}
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """
         获取缓存值
 
@@ -106,7 +106,7 @@ class RedisCache:
     使用 Redis 进行持久化存储，支持跨进程共享
     """
 
-    def __init__(self, host: str = "localhost", port: int = 6379, db: int = 0, password: Optional[str] = None, default_ttl: int = 3600):
+    def __init__(self, host: str = "localhost", port: int = 6379, db: int = 0, password: str | None = None, default_ttl: int = 3600):
         """
         初始化 Redis 缓存
 
@@ -154,7 +154,7 @@ class RedisCache:
         """
         return f"ai-hedge-fund:{key}"
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """
         获取缓存值
 
@@ -175,7 +175,7 @@ class RedisCache:
             logger.warning(f"Redis get error: {e}")
             return None
 
-    def set(self, key: str, value: Any, ttl: Optional[int] = None):
+    def set(self, key: str, value: Any, ttl: int | None = None):
         """
         设置缓存值
 
@@ -230,7 +230,7 @@ class DiskCache:
     使用 SQLite 进行持久化存储（线程安全）
     """
 
-    def __init__(self, path: Optional[str] = None, default_ttl: int = 3600):
+    def __init__(self, path: str | None = None, default_ttl: int = 3600):
         """
         初始化磁盘缓存
 
@@ -278,7 +278,7 @@ class DiskCache:
         """
         return int(datetime.now().timestamp())
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """
         获取缓存值
 
@@ -308,7 +308,7 @@ class DiskCache:
             logger.warning(f"Disk cache get error: {e}")
             return None
 
-    def set(self, key: str, value: Any, ttl: Optional[int] = None):
+    def set(self, key: str, value: Any, ttl: int | None = None):
         """
         设置缓存值
 
@@ -410,7 +410,7 @@ class EnhancedCache:
     3. 写入时同时更新两级缓存
     """
 
-    def __init__(self, lru_size: int = 128, redis_host: str = "localhost", redis_port: int = 6379, redis_ttl: int = 3600, disk_path: Optional[str] = None):
+    def __init__(self, lru_size: int = 128, redis_host: str = "localhost", redis_port: int = 6379, redis_ttl: int = 3600, disk_path: str | None = None):
         """
         初始化增强缓存
 
@@ -428,7 +428,7 @@ class EnhancedCache:
         # 统计信息
         self._stats = {"lru_hits": 0, "redis_hits": 0, "disk_hits": 0, "misses": 0, "sets": 0}
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """
         获取缓存值
 
@@ -463,7 +463,7 @@ class EnhancedCache:
         self._stats["misses"] += 1
         return None
 
-    def set(self, key: str, value: Any, ttl: Optional[int] = None):
+    def set(self, key: str, value: Any, ttl: int | None = None):
         """
         设置缓存值
 
@@ -519,7 +519,7 @@ class CacheAdapter:
     提供与原有 Cache 接口兼容的方法
     """
 
-    def __init__(self, enhanced_cache: Optional[EnhancedCache] = None):
+    def __init__(self, enhanced_cache: EnhancedCache | None = None):
         """
         初始化缓存适配器
 
@@ -532,7 +532,7 @@ class CacheAdapter:
         """生成缓存键"""
         return f"{prefix}:{identifier}"
 
-    def get_prices(self, ticker: str) -> Optional[list[dict]]:
+    def get_prices(self, ticker: str) -> list[dict] | None:
         """获取价格数据"""
         key = self._make_key("prices", ticker)
         return self._cache.get(key)
@@ -542,7 +542,7 @@ class CacheAdapter:
         key = self._make_key("prices", ticker)
         self._cache.set(key, data, ttl=86400)
 
-    def get_financial_metrics(self, ticker: str) -> Optional[list[dict]]:
+    def get_financial_metrics(self, ticker: str) -> list[dict] | None:
         """获取财务指标"""
         key = self._make_key("metrics", ticker)
         return self._cache.get(key)
@@ -552,7 +552,7 @@ class CacheAdapter:
         key = self._make_key("metrics", ticker)
         self._cache.set(key, data, ttl=604800)
 
-    def get_line_items(self, ticker: str) -> Optional[list[dict]]:
+    def get_line_items(self, ticker: str) -> list[dict] | None:
         """获取行项目数据"""
         key = self._make_key("line_items", ticker)
         return self._cache.get(key)
@@ -562,7 +562,7 @@ class CacheAdapter:
         key = self._make_key("line_items", ticker)
         self._cache.set(key, data, ttl=604800)
 
-    def get_insider_trades(self, ticker: str) -> Optional[list[dict]]:
+    def get_insider_trades(self, ticker: str) -> list[dict] | None:
         """获取内部交易数据"""
         key = self._make_key("insider", ticker)
         return self._cache.get(key)
@@ -572,7 +572,7 @@ class CacheAdapter:
         key = self._make_key("insider", ticker)
         self._cache.set(key, data, ttl=86400)
 
-    def get_company_news(self, ticker: str) -> Optional[list[dict]]:
+    def get_company_news(self, ticker: str) -> list[dict] | None:
         """获取公司新闻"""
         key = self._make_key("news", ticker)
         return self._cache.get(key)
@@ -583,8 +583,8 @@ class CacheAdapter:
         self._cache.set(key, data, ttl=10800)
 
 
-_enhanced_cache: Optional[EnhancedCache] = None
-_cache_adapter: Optional[CacheAdapter] = None
+_enhanced_cache: EnhancedCache | None = None
+_cache_adapter: CacheAdapter | None = None
 
 
 def get_enhanced_cache() -> EnhancedCache:

@@ -138,7 +138,7 @@ class PerformanceMetricsCalculator:
         return float((total_trade_value / avg_nav) * (annual_trading_days / trading_days))
 
     @staticmethod
-    def compute_beta(portfolio_returns: Sequence[float], benchmark_returns: Sequence[float]) -> Optional[float]:
+    def compute_beta(portfolio_returns: Sequence[float], benchmark_returns: Sequence[float]) -> float | None:
         """
         计算组合 Beta（对基准指数的回归系数）。
 

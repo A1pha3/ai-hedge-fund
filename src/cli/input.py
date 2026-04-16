@@ -2,7 +2,6 @@ import argparse
 import sys
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 import questionary
 from colorama import Fore, Style
@@ -208,7 +207,7 @@ class CLIInputs:
     margin_requirement: float
     show_reasoning: bool = False
     show_agent_graph: bool = False
-    raw_args: Optional[argparse.Namespace] = None
+    raw_args: argparse.Namespace | None = None
 
 
 def parse_cli_inputs(

@@ -12,10 +12,9 @@
 """
 
 import math
-from typing import Optional
 
 
-def _compute_cagr(latest: float, oldest: float, n_years: int) -> Optional[float]:
+def _compute_cagr(latest: float, oldest: float, n_years: int) -> float | None:
     """内部辅助函数：计算 CAGR 值"""
     if oldest <= 0 or n_years <= 0:
         return None
@@ -28,7 +27,7 @@ def _compute_cagr(latest: float, oldest: float, n_years: int) -> Optional[float]
     return None
 
 
-def calculate_cagr_from_line_items(line_items: list, field: str = "revenue", years: Optional[int] = None) -> Optional[float]:
+def calculate_cagr_from_line_items(line_items: list, field: str = "revenue", years: int | None = None) -> float | None:
     """
     从 LineItem 列表中正确计算 CAGR，处理A股季度 YTD 累计数据。
 
@@ -73,7 +72,7 @@ def calculate_cagr_from_line_items(line_items: list, field: str = "revenue", yea
     return None
 
 
-def calculate_revenue_growth_cagr(revenues: list[float], years: Optional[int] = None) -> Optional[float]:
+def calculate_revenue_growth_cagr(revenues: list[float], years: int | None = None) -> float | None:
     """
     计算收入增长的复合年增长率 (CAGR)
 
@@ -102,7 +101,7 @@ def calculate_revenue_growth_cagr(revenues: list[float], years: Optional[int] = 
     return _compute_cagr(latest, oldest, n_years)
 
 
-def calculate_simple_revenue_growth(revenues: list[float]) -> Optional[float]:
+def calculate_simple_revenue_growth(revenues: list[float]) -> float | None:
     """
     计算简单的收入增长率（最新一期相比最旧一期）
 
@@ -135,7 +134,7 @@ def calculate_simple_revenue_growth(revenues: list[float]) -> Optional[float]:
     return None
 
 
-def calculate_yoy_revenue_growth(revenues: list[float], periods_per_year: int = 4) -> Optional[float]:
+def calculate_yoy_revenue_growth(revenues: list[float], periods_per_year: int = 4) -> float | None:
     """
     计算同比收入增长率（最新一期相比去年同期）
 
@@ -166,7 +165,7 @@ def calculate_yoy_revenue_growth(revenues: list[float], periods_per_year: int = 
     return None
 
 
-def calculate_fcf_growth(fcfs: list[float], years: Optional[int] = None) -> Optional[float]:
+def calculate_fcf_growth(fcfs: list[float], years: int | None = None) -> float | None:
     """
     计算自由现金流的复合年增长率 (CAGR)
 
@@ -210,7 +209,7 @@ def calculate_fcf_growth(fcfs: list[float], years: Optional[int] = None) -> Opti
     return None
 
 
-def get_revenue_growth_for_analysis(revenues: list[float], analysis_type: str = "cagr") -> Optional[float]:
+def get_revenue_growth_for_analysis(revenues: list[float], analysis_type: str = "cagr") -> float | None:
     """
     统一接口：根据分析类型获取收入增长率
 
@@ -234,7 +233,7 @@ def get_revenue_growth_for_analysis(revenues: list[float], analysis_type: str = 
         return calculate_revenue_growth_cagr(revenues)
 
 
-def annualize_ytd_value(value: float, report_period: str) -> Optional[float]:
+def annualize_ytd_value(value: float, report_period: str) -> float | None:
     """
     将 YTD（年初至今）累计值年化。
 
@@ -273,7 +272,7 @@ def annualize_ytd_value(value: float, report_period: str) -> Optional[float]:
     return value * 12 / months
 
 
-def calculate_pe_from_line_items(market_cap: float, line_items: list) -> Optional[float]:
+def calculate_pe_from_line_items(market_cap: float, line_items: list) -> float | None:
     """
     从 LineItem 列表中正确计算 P/E 比率。
 
@@ -314,7 +313,7 @@ def calculate_pe_from_line_items(market_cap: float, line_items: list) -> Optiona
     return None
 
 
-def format_growth_for_display(growth: Optional[float], metric_name: str = "增长率") -> str:
+def format_growth_for_display(growth: float | None, metric_name: str = "增长率") -> str:
     """
     格式化增长率用于显示
 

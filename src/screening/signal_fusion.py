@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import os
-from typing import Optional
 
 from src.screening.candidate_pool import add_cooldown, get_cooled_tickers, load_cooldown_registry, save_cooldown_registry
 from src.screening.models import ArbitrationAction, DEFAULT_STRATEGY_WEIGHTS, FusedScore, MarketState, StrategySignal
@@ -327,8 +326,8 @@ def apply_arbitration_rules(
     ticker: str,
     signals: dict[str, StrategySignal],
     market_state: MarketState,
-    trade_date: Optional[str] = None,
-) -> tuple[dict[str, StrategySignal], list[str], Optional[str], bool]:
+    trade_date: str | None = None,
+) -> tuple[dict[str, StrategySignal], list[str], str | None, bool]:
     state = initialize_arbitration_state(market_state)
     if maybe_apply_forced_avoid(
         ticker=ticker,
@@ -364,7 +363,7 @@ def fuse_signals_for_ticker(
     ticker: str,
     signals: dict[str, StrategySignal],
     market_state: MarketState,
-    trade_date: Optional[str] = None,
+    trade_date: str | None = None,
 ) -> FusedScore:
     adjusted_signals, arbitration_applied, _, forced_avoid = apply_arbitration_rules(ticker, signals, market_state, trade_date)
     weights_used = _normalize_for_available_signals(market_state.adjusted_weights or DEFAULT_STRATEGY_WEIGHTS, adjusted_signals)
@@ -390,7 +389,7 @@ def fuse_signals_for_ticker(
 def fuse_batch(
     scored_signals: dict[str, dict[str, StrategySignal]],
     market_state: MarketState,
-    trade_date: Optional[str] = None,
+    trade_date: str | None = None,
 ) -> list[FusedScore]:
     results = []
     current_cooldown = get_cooled_tickers(trade_date) if trade_date else set()

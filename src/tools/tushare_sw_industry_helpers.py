@@ -1,5 +1,4 @@
 import time
-from typing import Optional
 
 import pandas as pd
 
@@ -16,7 +15,7 @@ def resolve_cached_sw_industry_mapping(
     load_index_df,
     build_mapping,
     cache_mapping,
-) -> Optional[dict[str, str]]:
+) -> dict[str, str] | None:
     if cached_mapping is not None:
         return cached_mapping.copy()
 
@@ -31,7 +30,7 @@ def resolve_cached_sw_industry_mapping(
     return None
 
 
-def load_sw_index_classification(fetch_dataframe, pro) -> Optional[pd.DataFrame]:
+def load_sw_index_classification(fetch_dataframe, pro) -> pd.DataFrame | None:
     index_df = fetch_dataframe(pro, "index_classify", level="L1", src="SW2021", ttl=7 * 86400)
     if index_df is None or index_df.empty:
         index_df = fetch_dataframe(pro, "index_classify", level="L1", src="SW2014", ttl=7 * 86400)

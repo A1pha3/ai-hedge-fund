@@ -1,9 +1,9 @@
-from __future__ import annotations
-
 """Growth Agent
 
 Implements a growth-focused valuation methodology.
 """
+
+from __future__ import annotations
 
 import json
 

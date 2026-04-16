@@ -1,6 +1,6 @@
 """执行层数据模型 — Layer C 聚合结果 + 执行计划"""
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -23,7 +23,7 @@ class LayerCResult(BaseModel):
     strategy_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     agent_signals: dict[str, StrategySignal] = Field(default_factory=dict)
     agent_contribution_summary: dict = Field(default_factory=dict)
-    bc_conflict: Optional[str] = None
+    bc_conflict: str | None = None
     decision: str = "neutral"
 
 
@@ -45,7 +45,7 @@ class ExecutionPlan(BaseModel):
     """每日执行计划（§5.1 七步流水线输出）"""
 
     date: str
-    market_state: Optional[MarketState] = None
+    market_state: MarketState | None = None
     strategy_weights: dict[str, float] = Field(default_factory=dict)
     logic_scores: dict[str, float] = Field(default_factory=dict)
     buy_orders: list[PositionPlan] = Field(default_factory=list)

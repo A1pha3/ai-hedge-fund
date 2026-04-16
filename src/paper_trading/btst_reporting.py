@@ -121,29 +121,15 @@ from src.project_env import load_project_dotenv
 from src.tools.akshare_api import get_prices_robust
 from src.tools.api import get_price_data, prices_to_df
 from src.paper_trading._btst_reporting.extractors import (
-    _resolve_upstream_shadow_candidate_source,
     _resolve_upstream_shadow_candidate_reason_codes,
     _build_upstream_shadow_promotion_trigger,
     _extract_short_trade_core_metrics,
     _extract_upstream_shadow_replay_only_entry,
-    _extract_catalyst_theme_frontier_summary,
-    _extract_next_day_outcome,
-    _extract_short_trade_entry,
-    _extract_short_trade_opportunity_entry,
-    _extract_short_trade_catalyst_relief_reason,
-    _extract_research_upside_radar_entry,
-    _extract_catalyst_theme_entry,
-    _extract_catalyst_theme_shadow_entry,
-    _extract_excluded_research_entry,
-    _is_short_trade_opportunity_candidate,
-    _count_short_trade_strong_signals,
     RESEARCH_UPSIDE_RADAR_MAX_ENTRIES,
 )
 from src.paper_trading._btst_reporting.classifiers import (
     _classify_historical_prior,
     _classify_execution_quality_prior,
-    _demote_weak_near_miss_entries,
-    _should_prune_weak_opportunity_pool_entry,
 )
 
 

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
-from typing import Any, Literal, Optional, TypedDict
+from enum import StrEnum
+from typing import Any, Literal, TypedDict
 
 import pandas as pd
 
 
-class Action(str, Enum):
+class Action(StrEnum):
     BUY = "buy"
     SELL = "sell"
     SHORT = "short"
@@ -110,18 +110,18 @@ class PerformanceMetrics(TypedDict, total=False):
     Values are optional to support progressive calculation over time.
     """
 
-    sharpe_ratio: Optional[float]
-    sortino_ratio: Optional[float]
-    max_drawdown: Optional[float]
-    max_drawdown_date: Optional[str]
-    long_short_ratio: Optional[float]
-    gross_exposure: Optional[float]
-    net_exposure: Optional[float]
+    sharpe_ratio: float | None
+    sortino_ratio: float | None
+    max_drawdown: float | None
+    max_drawdown_date: str | None
+    long_short_ratio: float | None
+    gross_exposure: float | None
+    net_exposure: float | None
     # Phase 0.3 新增指标
-    calmar_ratio: Optional[float]
-    profit_loss_ratio: Optional[float]
-    annual_turnover: Optional[float]
-    cvar_95: Optional[float]
-    portfolio_beta: Optional[float]
-    win_rate: Optional[float]
-    total_trades: Optional[int]
+    calmar_ratio: float | None
+    profit_loss_ratio: float | None
+    annual_turnover: float | None
+    cvar_95: float | None
+    portfolio_beta: float | None
+    win_rate: float | None
+    total_trades: int | None

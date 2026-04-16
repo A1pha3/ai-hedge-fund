@@ -10,7 +10,7 @@ A股数据接口模块 - 使用 AKShare 获取中国股票数据
 """
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 from pydantic import BaseModel
@@ -99,7 +99,7 @@ def _resolve_akshare_cache_ttl(api_name: str, **kwargs) -> int:
     return _resolve_akshare_cache_ttl_impl(api_name, **kwargs)
 
 
-def _cached_akshare_dataframe_call(api_name: str, func, ttl: Optional[int] = None, **kwargs) -> Optional[pd.DataFrame]:
+def _cached_akshare_dataframe_call(api_name: str, func, ttl: int | None = None, **kwargs) -> pd.DataFrame | None:
     return _cached_akshare_dataframe_call_impl(
         api_name,
         func,
@@ -550,7 +550,8 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str | None =
         try:
             from src.tools.tushare_api import get_stock_name
         except Exception:
-            get_stock_name = lambda _ticker: ""
+            def get_stock_name(_ticker):
+                return ""
 
         results, filtered_count, stock_name = load_company_news_results(
             ticker=ticker,
@@ -582,7 +583,7 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str | None =
 # ============================================================================
 
 
-def get_realtime_quotes(tickers: list[str] | None = None) -> Optional[pd.DataFrame]:
+def get_realtime_quotes(tickers: list[str] | None = None) -> pd.DataFrame | None:
     """
     获取 A 股盘中实时行情（全部或指定标的）。
 
@@ -601,7 +602,7 @@ def get_realtime_quotes(tickers: list[str] | None = None) -> Optional[pd.DataFra
     )
 
 
-def get_industry_realtime() -> Optional[pd.DataFrame]:
+def get_industry_realtime() -> pd.DataFrame | None:
     """
     获取行业板块实时行情。
 
@@ -616,7 +617,7 @@ def get_industry_realtime() -> Optional[pd.DataFrame]:
     )
 
 
-def get_money_flow(ticker: str) -> Optional[pd.DataFrame]:
+def get_money_flow(ticker: str) -> pd.DataFrame | None:
     """
     获取个股主力资金流向。
 

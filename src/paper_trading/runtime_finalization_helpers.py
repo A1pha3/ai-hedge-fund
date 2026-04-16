@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 def build_runtime_session_summary_metadata(
     *,
-    context: "SessionRuntimeContext",
+    context: SessionRuntimeContext,
     start_date: str,
     end_date: str,
     tickers: list[str] | None,
@@ -48,7 +48,7 @@ def build_runtime_session_monitoring_inputs(monitoring_summary: dict) -> dict:
     }
 
 
-def build_runtime_session_recorder_inputs(context: "SessionRuntimeContext") -> dict:
+def build_runtime_session_recorder_inputs(context: SessionRuntimeContext) -> dict:
     return {
         "recorder_day_count": context.recorder.day_count,
         "recorder_executed_trade_days": context.recorder.executed_trade_days,
@@ -58,7 +58,7 @@ def build_runtime_session_recorder_inputs(context: "SessionRuntimeContext") -> d
 
 def build_runtime_session_artifact_inputs(
     *,
-    context: "SessionRuntimeContext",
+    context: SessionRuntimeContext,
     feedback_summary_path: Path,
     cache_benchmark_artifacts: dict,
     llm_metrics_artifacts: dict,
@@ -76,8 +76,8 @@ def build_runtime_session_artifact_inputs(
 
 def build_runtime_session_summary_inputs(
     *,
-    context: "SessionRuntimeContext",
-    metrics: "PerformanceMetrics",
+    context: SessionRuntimeContext,
+    metrics: PerformanceMetrics,
     start_date: str,
     end_date: str,
     tickers: list[str] | None,
@@ -129,8 +129,8 @@ def build_runtime_session_summary_inputs(
 
 def build_runtime_finalization_inputs(
     *,
-    context: "SessionRuntimeContext",
-    metrics: "PerformanceMetrics",
+    context: SessionRuntimeContext,
+    metrics: PerformanceMetrics,
     start_date: str,
     end_date: str,
     tickers: list[str] | None,
@@ -164,10 +164,10 @@ def build_runtime_finalization_inputs(
 
 def build_runtime_artifacts(
     *,
-    context: "SessionRuntimeContext",
+    context: SessionRuntimeContext,
     feedback_summary_path: Path,
-    paper_trading_artifacts_cls: type["PaperTradingArtifacts"],
-) -> "PaperTradingArtifacts":
+    paper_trading_artifacts_cls: type[PaperTradingArtifacts],
+) -> PaperTradingArtifacts:
     return paper_trading_artifacts_cls(
         output_dir=context.session_paths.output_dir_path,
         daily_events_path=context.session_paths.daily_events_path,

@@ -9,20 +9,20 @@ if TYPE_CHECKING:
 
 def _prepare_shadow_selection_context(
     *,
-    candidates: list["CandidateStock"],
+    candidates: list[CandidateStock],
     pool_size: int,
-    cooldown_review_candidates: list["CandidateStock"] | None,
-    candidate_liquidity_sort_key_fn: Callable[["CandidateStock"], tuple[int, float, float, str]],
-    build_cooldown_review_shadow_payload_fn: Callable[..., tuple[list["CandidateStock"], list[dict[str, Any]]]],
+    cooldown_review_candidates: list[CandidateStock] | None,
+    candidate_liquidity_sort_key_fn: Callable[[CandidateStock], tuple[int, float, float, str]],
+    build_cooldown_review_shadow_payload_fn: Callable[..., tuple[list[CandidateStock], list[dict[str, Any]]]],
     resolve_cooldown_shadow_review_tickers_fn: Callable[[], set[str]],
     shadow_visibility_gap_tickers: set[str],
     min_avg_amount_20d: float,
 ) -> tuple[
-    list["CandidateStock"],
-    list["CandidateStock"],
+    list[CandidateStock],
+    list[CandidateStock],
     float,
     float,
-    list["CandidateStock"],
+    list[CandidateStock],
     list[dict[str, Any]],
 ]:
     ranked_candidates = sorted(candidates, key=candidate_liquidity_sort_key_fn, reverse=True)
@@ -59,12 +59,12 @@ def _prepare_shadow_selection_context(
 
 def _classify_shadow_overflow_candidates(
     *,
-    ranked_candidates: list["CandidateStock"],
+    ranked_candidates: list[CandidateStock],
     pool_size: int,
     min_avg_amount_20d: float,
     resolve_shadow_focus_tickers_fn: Callable[..., set[str]],
     resolve_shadow_visibility_gap_tickers_fn: Callable[..., set[str]],
-    classify_overflow_candidate_fn: Callable[..., tuple[str, tuple[float, int, "CandidateStock", bool, bool]] | None],
+    classify_overflow_candidate_fn: Callable[..., tuple[str, tuple[float, int, CandidateStock, bool, bool]] | None],
     shadow_liquidity_corridor_min_gate_share: float,
     shadow_liquidity_corridor_max_cutoff_share: float,
     shadow_liquidity_corridor_focus_min_gate_share: float,
@@ -77,10 +77,10 @@ def _classify_shadow_overflow_candidates(
     shadow_rebucket_focus_min_cutoff_share: float,
     shadow_rebucket_visibility_gap_min_cutoff_share: float,
 ) -> tuple[
-    list["CandidateStock"],
+    list[CandidateStock],
     float,
-    list[tuple[float, int, "CandidateStock", bool, bool]],
-    list[tuple[float, int, "CandidateStock", bool, bool]],
+    list[tuple[float, int, CandidateStock, bool, bool]],
+    list[tuple[float, int, CandidateStock, bool, bool]],
 ]:
     cutoff_avg_volume = max(float(ranked_candidates[pool_size - 1].avg_volume_20d), 1.0)
     overflow_candidates = ranked_candidates[pool_size:]
@@ -128,18 +128,18 @@ def _classify_shadow_overflow_candidates(
 
 def _build_shadow_lane_payloads(
     *,
-    corridor_candidates: list[tuple[float, int, "CandidateStock", bool, bool]],
-    rebucket_candidates: list[tuple[float, int, "CandidateStock", bool, bool]],
+    corridor_candidates: list[tuple[float, int, CandidateStock, bool, bool]],
+    rebucket_candidates: list[tuple[float, int, CandidateStock, bool, bool]],
     cutoff_avg_volume: float,
     min_avg_amount_20d: float,
-    candidate_liquidity_sort_key_fn: Callable[["CandidateStock"], tuple[int, float, float, str]],
+    candidate_liquidity_sort_key_fn: Callable[[CandidateStock], tuple[int, float, float, str]],
     resolve_shadow_focus_tickers_fn: Callable[..., set[str]],
     resolve_shadow_visibility_gap_tickers_fn: Callable[..., set[str]],
-    select_shadow_rows_fn: Callable[..., list[tuple[float, int, "CandidateStock", bool, bool]]],
-    build_shadow_lane_payload_fn: Callable[..., tuple[list["CandidateStock"], list[dict[str, Any]]]],
+    select_shadow_rows_fn: Callable[..., list[tuple[float, int, CandidateStock, bool, bool]]],
+    build_shadow_lane_payload_fn: Callable[..., tuple[list[CandidateStock], list[dict[str, Any]]]],
     shadow_liquidity_corridor_max_tickers: int,
     shadow_rebucket_max_tickers: int,
-) -> tuple[list["CandidateStock"], list[dict[str, Any]]]:
+) -> tuple[list[CandidateStock], list[dict[str, Any]]]:
     shadow_candidates: list[CandidateStock] = []
     shadow_entries: list[dict[str, Any]] = []
     for rows, max_tickers, lane, reason, rank_key in [
@@ -185,10 +185,10 @@ def _build_shadow_lane_payloads(
 def _build_shadow_candidate_pool_summary(
     *,
     pool_size: int,
-    selected_candidates: list["CandidateStock"],
+    selected_candidates: list[CandidateStock],
     overflow_count: int,
     selected_cutoff_avg_volume_20d: float,
-    shadow_candidates: list["CandidateStock"],
+    shadow_candidates: list[CandidateStock],
     shadow_entries: list[dict[str, Any]],
     shadow_focus_signature_fn: Callable[[], str],
     focus_filter_diagnostics: list[dict[str, Any]] | None,
@@ -208,15 +208,15 @@ def _build_shadow_candidate_pool_summary(
 
 def _resolve_shadow_overflow_payload(
     *,
-    ranked_candidates: list["CandidateStock"],
+    ranked_candidates: list[CandidateStock],
     pool_size: int,
     min_avg_amount_20d: float,
-    candidate_liquidity_sort_key_fn: Callable[["CandidateStock"], tuple[int, float, float, str]],
+    candidate_liquidity_sort_key_fn: Callable[[CandidateStock], tuple[int, float, float, str]],
     resolve_shadow_focus_tickers_fn: Callable[..., set[str]],
     resolve_shadow_visibility_gap_tickers_fn: Callable[..., set[str]],
-    classify_overflow_candidate_fn: Callable[..., tuple[str, tuple[float, int, "CandidateStock", bool, bool]] | None],
-    select_shadow_rows_fn: Callable[..., list[tuple[float, int, "CandidateStock", bool, bool]]],
-    build_shadow_lane_payload_fn: Callable[..., tuple[list["CandidateStock"], list[dict[str, Any]]]],
+    classify_overflow_candidate_fn: Callable[..., tuple[str, tuple[float, int, CandidateStock, bool, bool]] | None],
+    select_shadow_rows_fn: Callable[..., list[tuple[float, int, CandidateStock, bool, bool]]],
+    build_shadow_lane_payload_fn: Callable[..., tuple[list[CandidateStock], list[dict[str, Any]]]],
     shadow_liquidity_corridor_min_gate_share: float,
     shadow_liquidity_corridor_max_cutoff_share: float,
     shadow_liquidity_corridor_focus_min_gate_share: float,
@@ -230,7 +230,7 @@ def _resolve_shadow_overflow_payload(
     shadow_rebucket_visibility_gap_min_cutoff_share: float,
     shadow_liquidity_corridor_max_tickers: int,
     shadow_rebucket_max_tickers: int,
-) -> tuple[list["CandidateStock"], list[dict[str, Any]], int, float]:
+) -> tuple[list[CandidateStock], list[dict[str, Any]], int, float]:
     overflow_candidates, cutoff_avg_volume, corridor_candidates, rebucket_candidates = _classify_shadow_overflow_candidates(
         ranked_candidates=ranked_candidates,
         pool_size=pool_size,
@@ -267,21 +267,21 @@ def _resolve_shadow_overflow_payload(
 
 
 def _build_shadow_candidate_pool_payload_impl(
-    candidates: list["CandidateStock"],
+    candidates: list[CandidateStock],
     *,
     pool_size: int,
-    cooldown_review_candidates: list["CandidateStock"] | None,
+    cooldown_review_candidates: list[CandidateStock] | None,
     focus_filter_diagnostics: list[dict[str, Any]] | None,
-    candidate_liquidity_sort_key_fn: Callable[["CandidateStock"], tuple[int, float, float, str]],
-    build_cooldown_review_shadow_payload_fn: Callable[..., tuple[list["CandidateStock"], list[dict[str, Any]]]],
+    candidate_liquidity_sort_key_fn: Callable[[CandidateStock], tuple[int, float, float, str]],
+    build_cooldown_review_shadow_payload_fn: Callable[..., tuple[list[CandidateStock], list[dict[str, Any]]]],
     build_shadow_summary_payload_fn: Callable[..., dict[str, Any]],
     shadow_focus_signature_fn: Callable[[], str],
     resolve_cooldown_shadow_review_tickers_fn: Callable[[], set[str]],
     resolve_shadow_focus_tickers_fn: Callable[..., set[str]],
     resolve_shadow_visibility_gap_tickers_fn: Callable[..., set[str]],
-    classify_overflow_candidate_fn: Callable[..., tuple[str, tuple[float, int, "CandidateStock", bool, bool]] | None],
-    select_shadow_rows_fn: Callable[..., list[tuple[float, int, "CandidateStock", bool, bool]]],
-    build_shadow_lane_payload_fn: Callable[..., tuple[list["CandidateStock"], list[dict[str, Any]]]],
+    classify_overflow_candidate_fn: Callable[..., tuple[str, tuple[float, int, CandidateStock, bool, bool]] | None],
+    select_shadow_rows_fn: Callable[..., list[tuple[float, int, CandidateStock, bool, bool]]],
+    build_shadow_lane_payload_fn: Callable[..., tuple[list[CandidateStock], list[dict[str, Any]]]],
     min_avg_amount_20d: float,
     shadow_visibility_gap_tickers: set[str],
     shadow_liquidity_corridor_min_gate_share: float,
@@ -297,7 +297,7 @@ def _build_shadow_candidate_pool_payload_impl(
     shadow_rebucket_visibility_gap_min_cutoff_share: float,
     shadow_liquidity_corridor_max_tickers: int,
     shadow_rebucket_max_tickers: int,
-) -> tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any]]:
+) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
     (
         ranked_candidates,
         selected_candidates,
@@ -370,21 +370,21 @@ def _build_shadow_candidate_pool_payload_impl(
 
 
 def build_shadow_candidate_pool_payload(
-    candidates: list["CandidateStock"],
+    candidates: list[CandidateStock],
     *,
     pool_size: int,
-    cooldown_review_candidates: list["CandidateStock"] | None = None,
+    cooldown_review_candidates: list[CandidateStock] | None = None,
     focus_filter_diagnostics: list[dict[str, Any]] | None = None,
-    candidate_liquidity_sort_key_fn: Callable[["CandidateStock"], tuple[int, float, float, str]],
-    build_cooldown_review_shadow_payload_fn: Callable[..., tuple[list["CandidateStock"], list[dict[str, Any]]]],
+    candidate_liquidity_sort_key_fn: Callable[[CandidateStock], tuple[int, float, float, str]],
+    build_cooldown_review_shadow_payload_fn: Callable[..., tuple[list[CandidateStock], list[dict[str, Any]]]],
     build_shadow_summary_payload_fn: Callable[..., dict[str, Any]],
     shadow_focus_signature_fn: Callable[[], str],
     resolve_cooldown_shadow_review_tickers_fn: Callable[[], set[str]],
     resolve_shadow_focus_tickers_fn: Callable[..., set[str]],
     resolve_shadow_visibility_gap_tickers_fn: Callable[..., set[str]],
-    classify_overflow_candidate_fn: Callable[..., tuple[str, tuple[float, int, "CandidateStock", bool, bool]] | None],
-    select_shadow_rows_fn: Callable[..., list[tuple[float, int, "CandidateStock", bool, bool]]],
-    build_shadow_lane_payload_fn: Callable[..., tuple[list["CandidateStock"], list[dict[str, Any]]]],
+    classify_overflow_candidate_fn: Callable[..., tuple[str, tuple[float, int, CandidateStock, bool, bool]] | None],
+    select_shadow_rows_fn: Callable[..., list[tuple[float, int, CandidateStock, bool, bool]]],
+    build_shadow_lane_payload_fn: Callable[..., tuple[list[CandidateStock], list[dict[str, Any]]]],
     min_avg_amount_20d: float,
     shadow_visibility_gap_tickers: set[str],
     shadow_liquidity_corridor_min_gate_share: float,
@@ -400,7 +400,7 @@ def build_shadow_candidate_pool_payload(
     shadow_rebucket_visibility_gap_min_cutoff_share: float,
     shadow_liquidity_corridor_max_tickers: int,
     shadow_rebucket_max_tickers: int,
-) -> tuple[list["CandidateStock"], list["CandidateStock"], dict[str, Any]]:
+) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
     return _build_shadow_candidate_pool_payload_impl(
         candidates=candidates,
         pool_size=pool_size,

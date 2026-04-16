@@ -6,7 +6,7 @@
 
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from src.data.base_provider import (
     BaseDataProvider,
@@ -39,7 +39,7 @@ class DataRouter:
         _last_health_check: 上次健康检查时间
     """
 
-    def __init__(self, providers: Optional[list[BaseDataProvider]] = None, health_check_interval: int = 300):
+    def __init__(self, providers: list[BaseDataProvider] | None = None, health_check_interval: int = 300):
         """
         初始化数据路由器
 
@@ -50,7 +50,7 @@ class DataRouter:
         self.providers = providers or []
         self.cache = get_cache()
         self.health_check_interval = health_check_interval
-        self._last_health_check: Optional[datetime] = None
+        self._last_health_check: datetime | None = None
         self._health_cache: dict[str, bool] = {}
 
         # 按优先级排序
@@ -102,7 +102,7 @@ class DataRouter:
 
         return "_".join(key_parts)
 
-    def _get_from_cache(self, cache_key: str, data_type: DataType) -> Optional[DataResponse]:
+    def _get_from_cache(self, cache_key: str, data_type: DataType) -> DataResponse | None:
         """
         从缓存获取数据
 
@@ -379,7 +379,7 @@ class DataRouter:
 
 
 # 全局路由器实例
-_router: Optional[DataRouter] = None
+_router: DataRouter | None = None
 
 
 def get_router() -> DataRouter:

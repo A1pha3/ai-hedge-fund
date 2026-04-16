@@ -3,7 +3,7 @@ import json
 import os
 import threading
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -59,7 +59,7 @@ def _resolve_tushare_df_cache_max_entries() -> int:
 _TUSHARE_DF_CACHE_MAX_ENTRIES = _resolve_tushare_df_cache_max_entries()
 
 
-def _get_tushare_cached_df(cache_key: str) -> Optional[pd.DataFrame]:
+def _get_tushare_cached_df(cache_key: str) -> pd.DataFrame | None:
     with _tushare_df_cache_lock:
         cached_df = _tushare_df_cache.pop(cache_key, None)
         if cached_df is None:
@@ -112,7 +112,7 @@ def _resolve_tushare_cache_ttl(api_name: str, **kwargs) -> int:
     return 24 * 3600
 
 
-def _get_persisted_tushare_cached_df(cache_key: str) -> Optional[pd.DataFrame]:
+def _get_persisted_tushare_cached_df(cache_key: str) -> pd.DataFrame | None:
     persisted_df = _persistent_cache.get(cache_key)
     if not isinstance(persisted_df, pd.DataFrame):
         return None
@@ -120,7 +120,7 @@ def _get_persisted_tushare_cached_df(cache_key: str) -> Optional[pd.DataFrame]:
     return persisted_df.copy()
 
 
-def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> Optional[pd.DataFrame]:
+def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> pd.DataFrame | None:
     api_func = getattr(pro, api_name, None)
     if api_func is None:
         return None
@@ -131,13 +131,13 @@ def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> Optional[pd.Dat
         return None
 
 
-def _persist_tushare_dataframe_result(cache_key: str, df: pd.DataFrame, *, api_name: str, ttl: Optional[int], **kwargs) -> pd.DataFrame:
+def _persist_tushare_dataframe_result(cache_key: str, df: pd.DataFrame, *, api_name: str, ttl: int | None, **kwargs) -> pd.DataFrame:
     _store_tushare_cached_df(cache_key, df)
     _persistent_cache.set(cache_key, df, ttl=ttl if ttl is not None else _resolve_tushare_cache_ttl(api_name, **kwargs))
     return df.copy()
 
 
-def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl: Optional[int] = None, **kwargs) -> Optional[pd.DataFrame]:
+def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl: int | None = None, **kwargs) -> pd.DataFrame | None:
     """带进程内 + 持久化缓存的通用 Tushare DataFrame 调用。"""
     cache_key = _make_tushare_query_cache_key(api_name, **kwargs)
 
@@ -166,7 +166,7 @@ def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl
     return None
 
 
-def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: bool = False) -> Optional[pd.DataFrame]:
+def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: bool = False) -> pd.DataFrame | None:
     """
     带内存缓存的 Tushare API 调用。
 
@@ -273,7 +273,7 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
         return []
 
 
-def _fetch_tushare_ashare_prices_df(pro, ts_code: str, start_fmt: str, end_fmt: str) -> Optional[pd.DataFrame]:
+def _fetch_tushare_ashare_prices_df(pro, ts_code: str, start_fmt: str, end_fmt: str) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,
         "daily",
@@ -582,7 +582,7 @@ def get_ashare_line_items_with_tushare(
         return []
 
 
-def _load_tushare_insider_trade_frame(pro, ts_code: str, end_date: str, start_date: str | None) -> Optional[pd.DataFrame]:
+def _load_tushare_insider_trade_frame(pro, ts_code: str, end_date: str, start_date: str | None) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,
         "stk_holdertrade",
@@ -623,7 +623,7 @@ def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_dat
         return []
 
 
-def _load_tushare_stock_basic_details(pro, ts_code: str) -> Optional[pd.DataFrame]:
+def _load_tushare_stock_basic_details(pro, ts_code: str) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,
         "stock_basic",
@@ -632,7 +632,7 @@ def _load_tushare_stock_basic_details(pro, ts_code: str) -> Optional[pd.DataFram
     )
 
 
-def _load_tushare_stock_price_details(pro, ts_code: str, trade_date: Optional[str]) -> Optional[pd.DataFrame]:
+def _load_tushare_stock_price_details(pro, ts_code: str, trade_date: str | None) -> pd.DataFrame | None:
     daily_kwargs: dict[str, Any] = {
         "ts_code": ts_code,
         "fields": "trade_date,close,pre_close,pct_chg",
@@ -644,7 +644,7 @@ def _load_tushare_stock_price_details(pro, ts_code: str, trade_date: Optional[st
     return _cached_tushare_dataframe_call(pro, "daily", **daily_kwargs)
 
 
-def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
+def get_stock_details(ticker: str, trade_date: str | None = None) -> dict:
     """
     获取股票详细信息，包括基本信息和最新价格数据
 
@@ -687,15 +687,15 @@ def get_stock_details(ticker: str, trade_date: Optional[str] = None) -> dict:
 # ============================================================================
 
 # 全量 stock_basic 缓存
-_stock_basic_cache: Optional[pd.DataFrame] = None
+_stock_basic_cache: pd.DataFrame | None = None
 _stock_basic_cache_lock = threading.Lock()
 
 # 申万行业分类缓存
-_sw_industry_cache: Optional[dict[str, str]] = None
+_sw_industry_cache: dict[str, str] | None = None
 _sw_industry_cache_lock = threading.Lock()
 
 
-def _fetch_tushare_all_stock_basic(pro) -> Optional[pd.DataFrame]:
+def _fetch_tushare_all_stock_basic(pro) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,
         "stock_basic",
@@ -706,7 +706,7 @@ def _fetch_tushare_all_stock_basic(pro) -> Optional[pd.DataFrame]:
     )
 
 
-def get_all_stock_basic() -> Optional[pd.DataFrame]:
+def get_all_stock_basic() -> pd.DataFrame | None:
     """
     获取全 A 股基本信息（代码/名称/上市日期/行业/市场/状态）。
 
@@ -733,7 +733,7 @@ def get_all_stock_basic() -> Optional[pd.DataFrame]:
         return None
 
 
-def _fetch_tushare_daily_basic_batch(pro, trade_date: str) -> Optional[pd.DataFrame]:
+def _fetch_tushare_daily_basic_batch(pro, trade_date: str) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,
         "daily_basic",
@@ -743,7 +743,7 @@ def _fetch_tushare_daily_basic_batch(pro, trade_date: str) -> Optional[pd.DataFr
     )
 
 
-def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
+def get_daily_basic_batch(trade_date: str) -> pd.DataFrame | None:
     """
     获取全市场当日基础面指标（PE/PB/换手率/成交额/总市值/流通市值）。
 
@@ -772,7 +772,7 @@ def get_daily_basic_batch(trade_date: str) -> Optional[pd.DataFrame]:
         return None
 
 
-def _fetch_tushare_daily_price_batch(pro, trade_date: str) -> Optional[pd.DataFrame]:
+def _fetch_tushare_daily_price_batch(pro, trade_date: str) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,
         "daily",
@@ -781,7 +781,7 @@ def _fetch_tushare_daily_price_batch(pro, trade_date: str) -> Optional[pd.DataFr
     )
 
 
-def get_daily_price_batch(trade_date: str) -> Optional[pd.DataFrame]:
+def get_daily_price_batch(trade_date: str) -> pd.DataFrame | None:
     """
     获取全市场当日日线行情。
 
@@ -835,7 +835,7 @@ def get_open_trade_dates(start_date: str, end_date: str) -> list[str]:
         return []
 
 
-def _fetch_tushare_open_trade_dates(pro, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+def _fetch_tushare_open_trade_dates(pro, start_date: str, end_date: str) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,
         "trade_cal",
@@ -847,7 +847,7 @@ def _fetch_tushare_open_trade_dates(pro, start_date: str, end_date: str) -> Opti
     )
 
 
-def _resolve_tushare_sw_industry_mapping(pro, cached_mapping: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
+def _resolve_tushare_sw_industry_mapping(pro, cached_mapping: dict[str, str] | None) -> dict[str, str] | None:
     return resolve_cached_sw_industry_mapping(
         cached_mapping=cached_mapping,
         load_index_df=lambda: load_sw_index_classification(_cached_tushare_dataframe_call, pro),
@@ -856,7 +856,7 @@ def _resolve_tushare_sw_industry_mapping(pro, cached_mapping: Optional[dict[str,
     )
 
 
-def get_sw_industry_classification() -> Optional[dict[str, str]]:
+def get_sw_industry_classification() -> dict[str, str] | None:
     """
     获取申万一级行业分类映射：{ts_code -> 行业名称}。
 
@@ -888,11 +888,11 @@ def _cache_sw_industry_mapping(mapping: dict[str, str]) -> None:
         _sw_industry_cache = mapping
 
 
-def _fetch_tushare_limit_list(pro, trade_date: str) -> Optional[pd.DataFrame]:
+def _fetch_tushare_limit_list(pro, trade_date: str) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(pro, "limit_list_d", trade_date=trade_date)
 
 
-def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
+def get_limit_list(trade_date: str) -> pd.DataFrame | None:
     """
     获取当日涨跌停列表。
 
@@ -922,7 +922,7 @@ def get_limit_list(trade_date: str) -> Optional[pd.DataFrame]:
         return None
 
 
-def get_suspend_list(trade_date: str) -> Optional[pd.DataFrame]:
+def get_suspend_list(trade_date: str) -> pd.DataFrame | None:
     """
     获取当日停牌列表。
 
@@ -949,15 +949,15 @@ def get_suspend_list(trade_date: str) -> Optional[pd.DataFrame]:
         return None
 
 
-def _fetch_tushare_suspend_list(pro, trade_date: str) -> Optional[pd.DataFrame]:
+def _fetch_tushare_suspend_list(pro, trade_date: str) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(pro, "suspend_d", trade_date=trade_date)
 
 
-def _fetch_tushare_index_daily(pro, kwargs: dict[str, Any]) -> Optional[pd.DataFrame]:
+def _fetch_tushare_index_daily(pro, kwargs: dict[str, Any]) -> pd.DataFrame | None:
     return pro.index_daily(**kwargs)
 
 
-def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", limit: int = 120) -> Optional[pd.DataFrame]:
+def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", limit: int = 120) -> pd.DataFrame | None:
     """
     获取指数日线行情（沪深300/上证50/中证500等）。
 
@@ -988,11 +988,11 @@ def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", l
         return None
 
 
-def _fetch_tushare_northbound_flow(pro, kwargs: dict[str, Any]) -> Optional[pd.DataFrame]:
+def _fetch_tushare_northbound_flow(pro, kwargs: dict[str, Any]) -> pd.DataFrame | None:
     return pro.moneyflow_hsgt(**kwargs)
 
 
-def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: str = "", limit: int = 30) -> Optional[pd.DataFrame]:
+def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: str = "", limit: int = 30) -> pd.DataFrame | None:
     """
     获取北向资金（沪股通+深股通）每日流向。
 

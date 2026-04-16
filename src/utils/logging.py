@@ -3,10 +3,9 @@
 import logging
 import logging.config
 from pathlib import Path
-from typing import Optional
 
 
-def setup_logging(log_dir: Path = Path("logs"), level: str = "INFO", format: Optional[str] = None):
+def setup_logging(log_dir: Path = Path("logs"), level: str = "INFO", format: str | None = None):
     """配置日志系统
 
     配置三个日志处理器：
@@ -39,7 +38,7 @@ def setup_logging(log_dir: Path = Path("logs"), level: str = "INFO", format: Opt
     )
 
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: str | None = None) -> logging.Logger:
     """获取日志记录器
 
     Args:
