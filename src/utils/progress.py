@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional
+from typing import Optional
+from collections.abc import Callable
 
 from rich.console import Console
 from rich.live import Live
@@ -14,11 +15,11 @@ class AgentProgress:
     """Manages progress tracking for multiple agents."""
 
     def __init__(self):
-        self.agent_status: Dict[str, Dict[str, str]] = {}
+        self.agent_status: dict[str, dict[str, str]] = {}
         self.table = Table(show_header=False, box=None, padding=(0, 1))
         self.live = Live(self.table, console=console, refresh_per_second=4)
         self.started = False
-        self.update_handlers: List[Callable[[str, Optional[str], str], None]] = []
+        self.update_handlers: list[Callable[[str, Optional[str], str], None]] = []
 
     def register_handler(self, handler: Callable[[str, Optional[str], str], None]):
         """Register a handler to be called when agent status updates."""

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import pandas as pd
 
@@ -44,12 +45,6 @@ from src.paper_trading.btst_reporting_utils import (
     _sync_text_artifact_alias,
     _write_json,
     infer_next_trade_date,
-    _build_execution_quality_balanced_confirmation_result,
-    _build_execution_quality_close_continuation_result,
-    _build_execution_quality_gap_chase_risk_result,
-    _build_execution_quality_intraday_only_result,
-    _build_execution_quality_unknown_result,
-    _build_execution_quality_zero_follow_through_result,
     _entry_mode_action_guidance,
     _execution_priority_rank,
     _historical_execution_entry_sort_key,

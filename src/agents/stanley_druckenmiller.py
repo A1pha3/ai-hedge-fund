@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing_extensions import Literal
+from typing import Literal
 
 from src.agents.stanley_druckenmiller_helpers import (
     _collect_druckenmiller_valuation_inputs,

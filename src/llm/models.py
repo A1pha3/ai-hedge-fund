@@ -2,7 +2,8 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, List, Tuple
+from typing import Any
+from collections.abc import Callable
 
 from langchain_anthropic import ChatAnthropic
 from langchain_deepseek import ChatDeepSeek
@@ -60,7 +61,7 @@ class LLMModel(BaseModel):
     model_name: str
     provider: ModelProvider
 
-    def to_choice_tuple(self) -> Tuple[str, str, str]:
+    def to_choice_tuple(self) -> tuple[str, str, str]:
         """Convert to format needed for questionary choices"""
         return (self.display_name, self.model_name, self.provider.value)
 
@@ -103,7 +104,7 @@ class LLMModel(BaseModel):
 
 
 # Load models from JSON file
-def load_models_from_json(json_path: str) -> List[LLMModel]:
+def load_models_from_json(json_path: str) -> list[LLMModel]:
     """Load models from a JSON file"""
     return build_llm_models(load_model_records_from_json(json_path), LLMModel, ModelProvider)
 

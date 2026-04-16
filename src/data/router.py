@@ -6,7 +6,7 @@
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from src.data.base_provider import (
     BaseDataProvider,
@@ -39,7 +39,7 @@ class DataRouter:
         _last_health_check: 上次健康检查时间
     """
 
-    def __init__(self, providers: Optional[List[BaseDataProvider]] = None, health_check_interval: int = 300):
+    def __init__(self, providers: Optional[list[BaseDataProvider]] = None, health_check_interval: int = 300):
         """
         初始化数据路由器
 
@@ -51,7 +51,7 @@ class DataRouter:
         self.cache = get_cache()
         self.health_check_interval = health_check_interval
         self._last_health_check: Optional[datetime] = None
-        self._health_cache: Dict[str, bool] = {}
+        self._health_cache: dict[str, bool] = {}
 
         # 按优先级排序
         self._sort_providers()
@@ -180,7 +180,7 @@ class DataRouter:
                 self._health_cache[provider.name] = False
                 logger.warning(f"Health check failed for {provider.name}: {e}")
 
-    def _get_healthy_providers(self) -> List[BaseDataProvider]:
+    def _get_healthy_providers(self) -> list[BaseDataProvider]:
         """
         获取健康的提供商列表
 

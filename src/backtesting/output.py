@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from src.utils.display import format_backtest_row, print_backtest_results
 
@@ -30,8 +30,8 @@ class OutputBuilder:
         performance_metrics: Mapping[str, float | None],
         total_value: float,
         benchmark_return_pct: float | None = None,
-    ) -> List[list]:
-        date_rows: List[list] = []
+    ) -> list[list]:
+        date_rows: list[list] = []
 
         decisions = agent_output.get("decisions", {})
 
@@ -92,5 +92,5 @@ class OutputBuilder:
 
         return date_rows
 
-    def print_rows(self, rows: List[list]) -> None:
+    def print_rows(self, rows: list[list]) -> None:
         print_backtest_results(rows)

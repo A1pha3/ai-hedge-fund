@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import Dict, Mapping
+from collections.abc import Mapping
 
 from .types import PortfolioSnapshot, PositionState, TickerRealizedGains
 
@@ -47,7 +47,7 @@ class Portfolio:
         }
 
     def get_snapshot(self) -> PortfolioSnapshot:
-        positions_copy: Dict[str, PositionState] = {
+        positions_copy: dict[str, PositionState] = {
             t: {
                 "long": p["long"],
                 "short": p["short"],
@@ -66,7 +66,7 @@ class Portfolio:
             }
             for t, p in self._portfolio["positions"].items()
         }
-        gains_copy: Dict[str, TickerRealizedGains] = {t: {"long": g["long"], "short": g["short"]} for t, g in self._portfolio["realized_gains"].items()}
+        gains_copy: dict[str, TickerRealizedGains] = {t: {"long": g["long"], "short": g["short"]} for t, g in self._portfolio["realized_gains"].items()}
         return {
             "cash": float(self._portfolio["cash"]),
             "margin_used": float(self._portfolio["margin_used"]),

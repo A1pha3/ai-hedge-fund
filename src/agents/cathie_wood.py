@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing_extensions import Literal
+from typing import Literal
 
 from src.agents.cathie_wood_helpers import (
     _calculate_yoy_growth_rates,

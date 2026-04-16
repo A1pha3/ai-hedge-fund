@@ -8,7 +8,8 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from statistics import median
-from typing import Iterable, Optional
+from typing import Optional
+from collections.abc import Iterable
 
 import pandas as pd
 

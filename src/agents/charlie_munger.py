@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing_extensions import Literal
+from typing import Literal
 
 from src.agents.charlie_munger_helpers import (
     _calculate_munger_intrinsic_value_range,

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from typing import List
 
 import pandas as pd
 
 from src.data.models import FinancialMetrics
 
 
-def hydrate_cached_financial_metrics(cached_data: list[dict]) -> List[FinancialMetrics]:
+def hydrate_cached_financial_metrics(cached_data: list[dict]) -> list[FinancialMetrics]:
     return [FinancialMetrics(**metric) for metric in cached_data]
 
 
-def dump_financial_metrics_for_cache(metrics: List[FinancialMetrics]) -> list[dict]:
+def dump_financial_metrics_for_cache(metrics: list[FinancialMetrics]) -> list[dict]:
     return [metric.model_dump() for metric in metrics]
 
 
@@ -29,7 +28,7 @@ def execute_financial_metrics_request(
     load_financial_metrics_fn,
     dump_metrics_fn,
     error_factory,
-) -> List[FinancialMetrics]:
+) -> list[FinancialMetrics]:
     if cached_data := cache.get_financial_metrics(cache_key):
         return hydrate_cached_fn(cached_data)
 
@@ -53,7 +52,7 @@ def load_financial_metrics_with_fallback(
     cached_dataframe_call_fn,
     ticker_parser,
     error_factory,
-) -> List[FinancialMetrics]:
+) -> list[FinancialMetrics]:
     ashare = ticker_parser.from_symbol(ticker)
 
     df = cached_dataframe_call_fn(
@@ -79,7 +78,7 @@ def load_financial_metrics_with_fallback(
     return build_metrics_from_sina_profit_df(ticker=ticker, df_profit=df_profit, limit=limit)
 
 
-def build_metrics_from_sina_profit_df(*, ticker: str, df_profit: pd.DataFrame, limit: int) -> List[FinancialMetrics]:
+def build_metrics_from_sina_profit_df(*, ticker: str, df_profit: pd.DataFrame, limit: int) -> list[FinancialMetrics]:
     metrics: list[FinancialMetrics] = []
     for _, row in df_profit.head(limit).iterrows():
         metrics.append(
@@ -132,7 +131,7 @@ def build_metrics_from_sina_profit_df(*, ticker: str, df_profit: pd.DataFrame, l
     return metrics
 
 
-def build_metrics_from_analysis_indicator_df(*, ticker: str, df: pd.DataFrame, limit: int) -> List[FinancialMetrics]:
+def build_metrics_from_analysis_indicator_df(*, ticker: str, df: pd.DataFrame, limit: int) -> list[FinancialMetrics]:
     metrics: list[FinancialMetrics] = []
     for _, row in df.head(limit).iterrows():
         metrics.append(

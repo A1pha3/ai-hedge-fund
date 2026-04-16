@@ -1,22 +1,22 @@
-from typing import Callable, List
+from collections.abc import Callable
 
 import pandas as pd
 
 from src.data.models import Price
 
 
-def hydrate_cached_prices(cached_data: list[dict]) -> List[Price]:
+def hydrate_cached_prices(cached_data: list[dict]) -> list[Price]:
     return [Price(**price) for price in cached_data]
 
 
-def build_prices_from_dataframe(df: pd.DataFrame) -> List[Price]:
+def build_prices_from_dataframe(df: pd.DataFrame) -> list[Price]:
     prices: list[Price] = []
     for _, row in df.iterrows():
         prices.append(Price(time=row["日期"], open=float(row["开盘"]), high=float(row["最高"]), low=float(row["最低"]), close=float(row["收盘"]), volume=int(row["成交量"])))
     return prices
 
 
-def dump_prices_for_cache(prices: List[Price]) -> list[dict]:
+def dump_prices_for_cache(prices: list[Price]) -> list[dict]:
     return [price.model_dump() for price in prices]
 
 
@@ -30,7 +30,7 @@ def build_tencent_price_request(full_code: str, start_date: str, end_date: str) 
     )
 
 
-def build_prices_from_tencent_payload(data: dict, full_code: str, error_factory) -> List[Price]:
+def build_prices_from_tencent_payload(data: dict, full_code: str, error_factory) -> list[Price]:
     if data.get("code") != 0:
         raise error_factory(f"腾讯接口返回错误: {data.get('msg', '未知错误')}")
 
@@ -60,7 +60,7 @@ def execute_tencent_price_request(
     resolve_ticker_fn,
     create_session_fn,
     error_factory,
-) -> List[Price]:
+) -> list[Price]:
     ashare = resolve_ticker_fn(ticker)
     url, params, headers = build_tencent_price_request(ashare.full_code, start_date, end_date)
     session = create_session_fn()
@@ -83,7 +83,7 @@ def execute_price_request(
     get_akshare_fn,
     load_prices_fn,
     error_factory,
-) -> List[Price]:
+) -> list[Price]:
     if cached_prices := cache.get_prices(cache_key):
         return hydrate_cached_fn(cached_prices)
 
@@ -115,7 +115,7 @@ def execute_robust_price_request(
     get_prices_multi_source_fn,
     get_mock_prices_fn,
     error_factory,
-) -> List[Price]:
+) -> list[Price]:
     errors: list[str] = []
 
     try:
@@ -153,12 +153,12 @@ def load_prices_with_fallback(
     end_date: str,
     period: str,
     ak_module,
-    fetch_prices_from_akshare_fn: Callable[..., List[Price] | None],
-    fetch_prices_from_tencent_fn: Callable[..., List[Price]],
-    cache_prices_fn: Callable[[str, List[Price]], List[Price]],
+    fetch_prices_from_akshare_fn: Callable[..., list[Price] | None],
+    fetch_prices_from_tencent_fn: Callable[..., list[Price]],
+    cache_prices_fn: Callable[[str, list[Price]], list[Price]],
     cache_key: str,
     error_factory: Callable[[str], Exception],
-) -> List[Price]:
+) -> list[Price]:
     try:
         akshare_prices = fetch_prices_from_akshare_fn(ak_module, ticker, start_date, end_date, period)
         if akshare_prices:

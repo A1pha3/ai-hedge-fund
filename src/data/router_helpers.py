@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from typing import Any
+from collections.abc import Awaitable, Callable
 
 from src.data.base_provider import DataResponse
 

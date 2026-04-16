@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import aiohttp
 
@@ -46,8 +46,8 @@ class DataRequest:
     data_type: DataType
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    fields: Optional[List[str]] = None
-    kwargs: Optional[Dict[str, Any]] = field(default_factory=dict)
+    fields: Optional[list[str]] = None
+    kwargs: Optional[dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -215,7 +215,7 @@ class BaseDataProvider(ABC):
         pass
 
     @abstractmethod
-    def rate_limit_info(self) -> Dict[str, Any]:
+    def rate_limit_info(self) -> dict[str, Any]:
         """
         速率限制信息
 
@@ -269,7 +269,7 @@ class BaseDataProvider(ABC):
 
         raise last_error or DataProviderError("Operation failed after retries")
 
-    def _update_rate_limit(self, headers: Dict[str, str]):
+    def _update_rate_limit(self, headers: dict[str, str]):
         """
         从响应头更新速率限制信息
 

@@ -7,7 +7,7 @@ Tushare 数据提供商
 import asyncio
 import os
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -254,7 +254,7 @@ class TushareProvider(BaseDataProvider):
             self.health_status = "unhealthy"
             return False
 
-    def rate_limit_info(self) -> Dict[str, Any]:
+    def rate_limit_info(self) -> dict[str, Any]:
         """
         速率限制信息
 

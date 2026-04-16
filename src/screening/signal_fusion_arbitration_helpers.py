@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from collections.abc import Callable
 
 from src.screening.models import ArbitrationAction, DEFAULT_STRATEGY_WEIGHTS, MarketState, StrategySignal
 

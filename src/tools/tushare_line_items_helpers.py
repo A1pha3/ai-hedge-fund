@@ -1,4 +1,3 @@
-from typing import List
 
 import pandas as pd
 
@@ -58,7 +57,7 @@ def build_period_item_data(
     period: str,
     end_date_str: str,
     row,
-    line_items: List[str],
+    line_items: list[str],
     df_bal: pd.DataFrame | None,
     df_cash: pd.DataFrame | None,
     df_income: pd.DataFrame | None,
@@ -233,7 +232,7 @@ def _backfill_roic(field_mapping: dict) -> None:
                 pass
 
 
-def _append_requested_fields(item_data: dict, field_mapping: dict, line_items: List[str]) -> None:
+def _append_requested_fields(item_data: dict, field_mapping: dict, line_items: list[str]) -> None:
     for field in line_items:
         if field not in field_mapping or field_mapping[field] is None:
             continue
@@ -249,14 +248,14 @@ def _append_requested_fields(item_data: dict, field_mapping: dict, line_items: L
 def build_line_items_from_frames(
     *,
     ticker: str,
-    line_items: List[str],
+    line_items: list[str],
     period: str,
     limit: int,
     df_fin: pd.DataFrame,
     df_bal: pd.DataFrame | None,
     df_cash: pd.DataFrame | None,
     df_income: pd.DataFrame | None,
-) -> List[LineItem]:
+) -> list[LineItem]:
     results: list[LineItem] = []
     all_period_data: dict = {}
     for _, row in df_fin.iterrows():
@@ -284,7 +283,7 @@ def build_line_items_from_frames(
     return results
 
 
-def _build_ttm_results(ticker: str, line_items: List[str], limit: int, all_period_data: dict) -> list[LineItem]:
+def _build_ttm_results(ticker: str, line_items: list[str], limit: int, all_period_data: dict) -> list[LineItem]:
     results: list[LineItem] = []
     sorted_periods = sorted(all_period_data.keys(), reverse=True)
     latest_period = sorted_periods[0] if sorted_periods else None
@@ -304,7 +303,7 @@ def _build_annual_ttm_item(all_period_data: dict, latest_period: str) -> LineIte
     return LineItem(**latest_item_data)
 
 
-def _build_non_annual_ttm_item(ticker: str, latest_period: str, line_items: List[str], all_period_data: dict) -> LineItem:
+def _build_non_annual_ttm_item(ticker: str, latest_period: str, line_items: list[str], all_period_data: dict) -> LineItem:
     latest_item_data, latest_fm = all_period_data[latest_period]
     prior_year = str(int(latest_period[:4]) - 1)
     prior_annual_data = all_period_data.get(f"{prior_year}1231")

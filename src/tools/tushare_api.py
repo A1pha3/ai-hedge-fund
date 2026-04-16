@@ -3,7 +3,7 @@ import json
 import os
 import threading
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -40,11 +40,11 @@ from src.tools.tushare_sw_industry_helpers import (
 )
 
 _pro = None
-_stock_name_cache: Dict[str, str] = {}
+_stock_name_cache: dict[str, str] = {}
 _persistent_cache = get_enhanced_cache()
 
 # Tushare 原始 DataFrame 内存缓存 — 同一次运行内复用，避免多 Agent 并行重复请求
-_tushare_df_cache: Dict[str, pd.DataFrame] = {}
+_tushare_df_cache: dict[str, pd.DataFrame] = {}
 _tushare_df_cache_lock = threading.Lock()
 
 
@@ -247,7 +247,7 @@ def get_stock_name(ticker: str) -> str:
     return ticker
 
 
-def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) -> List[Price]:
+def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) -> list[Price]:
     """
     使用 Tushare 获取 A 股价格数据
     """
@@ -283,7 +283,7 @@ def _fetch_tushare_ashare_prices_df(pro, ts_code: str, start_fmt: str, end_fmt: 
     )
 
 
-def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float = 3.0, include_name: bool = True) -> List[dict]:
+def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float = 3.0, include_name: bool = True) -> list[dict]:
     """
     使用 Tushare 获取指定交易日涨幅超过阈值的 A 股列表
     """
@@ -409,7 +409,7 @@ def _build_tushare_financial_metrics(
     df_cash: pd.DataFrame | None,
     df_bal: pd.DataFrame | None,
     df_income: pd.DataFrame | None,
-) -> List[FinancialMetrics]:
+) -> list[FinancialMetrics]:
     fcf_values, raw_income_map, ttm_income_map = build_financial_metric_support_maps(df_fin, df_cash, df_income)
     return build_financial_metrics_from_frames(
         ticker=ticker,
@@ -431,7 +431,7 @@ def _build_tushare_financial_metrics(
     )
 
 
-def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10, period: str = "ttm") -> List[FinancialMetrics]:
+def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit: int = 10, period: str = "ttm") -> list[FinancialMetrics]:
     """
     使用 Tushare 获取 A 股财务指标
 
@@ -502,14 +502,14 @@ def _load_tushare_line_item_frames(pro, ts_code: str, *, limit: int) -> tuple[pd
 def _build_tushare_line_items(
     *,
     ticker: str,
-    line_items: List[str],
+    line_items: list[str],
     period: str,
     limit: int,
     df_fin: pd.DataFrame,
     df_bal: pd.DataFrame | None,
     df_cash: pd.DataFrame | None,
     df_income: pd.DataFrame | None,
-) -> List[LineItem]:
+) -> list[LineItem]:
     return build_line_items_from_frames(
         ticker=ticker,
         line_items=line_items,
@@ -526,10 +526,10 @@ def _resolve_tushare_line_items(
     *,
     pro,
     ticker: str,
-    line_items: List[str],
+    line_items: list[str],
     period: str,
     limit: int,
-) -> List[LineItem]:
+) -> list[LineItem]:
     ts_code = _to_ts_code(ticker)
     df_fin, df_bal, df_cash, df_income = _load_tushare_line_item_frames(
         pro,
@@ -552,11 +552,11 @@ def _resolve_tushare_line_items(
 
 def get_ashare_line_items_with_tushare(
     ticker: str,
-    line_items: List[str],
+    line_items: list[str],
     end_date: str,
     period: str = "ttm",
     limit: int = 10,
-) -> List[LineItem]:
+) -> list[LineItem]:
     """
     使用 Tushare 获取 A 股财务项目数据
 
@@ -590,13 +590,13 @@ def _load_tushare_insider_trade_frame(pro, ts_code: str, end_date: str, start_da
     )
 
 
-def _build_tushare_insider_trades(ticker: str, df: pd.DataFrame, *, limit: int) -> List[InsiderTrade]:
+def _build_tushare_insider_trades(ticker: str, df: pd.DataFrame, *, limit: int) -> list[InsiderTrade]:
     if "ann_date" in df.columns:
         df = df.sort_values("ann_date", ascending=False)
     return [build_insider_trade_from_row(ticker, row) for _, row in df.head(limit).iterrows()]
 
 
-def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_date: str | None = None, limit: int = 100) -> List[InsiderTrade]:
+def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_date: str | None = None, limit: int = 100) -> list[InsiderTrade]:
     """
     使用 Tushare stk_holdertrade 获取 A 股股东增减持数据
 
@@ -691,7 +691,7 @@ _stock_basic_cache: Optional[pd.DataFrame] = None
 _stock_basic_cache_lock = threading.Lock()
 
 # 申万行业分类缓存
-_sw_industry_cache: Optional[Dict[str, str]] = None
+_sw_industry_cache: Optional[dict[str, str]] = None
 _sw_industry_cache_lock = threading.Lock()
 
 
@@ -847,7 +847,7 @@ def _fetch_tushare_open_trade_dates(pro, start_date: str, end_date: str) -> Opti
     )
 
 
-def _resolve_tushare_sw_industry_mapping(pro, cached_mapping: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+def _resolve_tushare_sw_industry_mapping(pro, cached_mapping: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
     return resolve_cached_sw_industry_mapping(
         cached_mapping=cached_mapping,
         load_index_df=lambda: load_sw_index_classification(_cached_tushare_dataframe_call, pro),
@@ -856,7 +856,7 @@ def _resolve_tushare_sw_industry_mapping(pro, cached_mapping: Optional[Dict[str,
     )
 
 
-def get_sw_industry_classification() -> Optional[Dict[str, str]]:
+def get_sw_industry_classification() -> Optional[dict[str, str]]:
     """
     获取申万一级行业分类映射：{ts_code -> 行业名称}。
 
@@ -882,7 +882,7 @@ def get_sw_industry_classification() -> Optional[Dict[str, str]]:
         return None
 
 
-def _cache_sw_industry_mapping(mapping: Dict[str, str]) -> None:
+def _cache_sw_industry_mapping(mapping: dict[str, str]) -> None:
     global _sw_industry_cache
     with _sw_industry_cache_lock:
         _sw_industry_cache = mapping

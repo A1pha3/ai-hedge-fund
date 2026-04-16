@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 
 def resolve_api_key(api_keys: dict[str, Any] | None, key_name: str) -> Any:

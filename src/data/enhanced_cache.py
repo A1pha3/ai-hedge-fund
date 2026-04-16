@@ -9,7 +9,7 @@ import os
 import pickle
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 try:
     import redis
@@ -36,8 +36,8 @@ class LRUCache:
             maxsize: 最大缓存条目数
         """
         self.maxsize = maxsize
-        self._cache: Dict[str, Any] = {}
-        self._access_time: Dict[str, datetime] = {}
+        self._cache: dict[str, Any] = {}
+        self._access_time: dict[str, datetime] = {}
 
     def get(self, key: str) -> Optional[Any]:
         """
@@ -94,7 +94,7 @@ class LRUCache:
         lru_key = min(self._access_time, key=self._access_time.get)
         self.delete(lru_key)
 
-    def keys(self) -> List[str]:
+    def keys(self) -> list[str]:
         """获取所有缓存键"""
         return list(self._cache.keys())
 
@@ -498,7 +498,7 @@ class EnhancedCache:
         self.redis.clear()
         self.disk.clear()
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """
         获取缓存统计信息
 
@@ -532,52 +532,52 @@ class CacheAdapter:
         """生成缓存键"""
         return f"{prefix}:{identifier}"
 
-    def get_prices(self, ticker: str) -> Optional[List[Dict]]:
+    def get_prices(self, ticker: str) -> Optional[list[dict]]:
         """获取价格数据"""
         key = self._make_key("prices", ticker)
         return self._cache.get(key)
 
-    def set_prices(self, ticker: str, data: List[Dict]):
+    def set_prices(self, ticker: str, data: list[dict]):
         """设置价格数据"""
         key = self._make_key("prices", ticker)
         self._cache.set(key, data, ttl=86400)
 
-    def get_financial_metrics(self, ticker: str) -> Optional[List[Dict]]:
+    def get_financial_metrics(self, ticker: str) -> Optional[list[dict]]:
         """获取财务指标"""
         key = self._make_key("metrics", ticker)
         return self._cache.get(key)
 
-    def set_financial_metrics(self, ticker: str, data: List[Dict]):
+    def set_financial_metrics(self, ticker: str, data: list[dict]):
         """设置财务指标"""
         key = self._make_key("metrics", ticker)
         self._cache.set(key, data, ttl=604800)
 
-    def get_line_items(self, ticker: str) -> Optional[List[Dict]]:
+    def get_line_items(self, ticker: str) -> Optional[list[dict]]:
         """获取行项目数据"""
         key = self._make_key("line_items", ticker)
         return self._cache.get(key)
 
-    def set_line_items(self, ticker: str, data: List[Dict]):
+    def set_line_items(self, ticker: str, data: list[dict]):
         """设置行项目数据"""
         key = self._make_key("line_items", ticker)
         self._cache.set(key, data, ttl=604800)
 
-    def get_insider_trades(self, ticker: str) -> Optional[List[Dict]]:
+    def get_insider_trades(self, ticker: str) -> Optional[list[dict]]:
         """获取内部交易数据"""
         key = self._make_key("insider", ticker)
         return self._cache.get(key)
 
-    def set_insider_trades(self, ticker: str, data: List[Dict]):
+    def set_insider_trades(self, ticker: str, data: list[dict]):
         """设置内部交易数据"""
         key = self._make_key("insider", ticker)
         self._cache.set(key, data, ttl=86400)
 
-    def get_company_news(self, ticker: str) -> Optional[List[Dict]]:
+    def get_company_news(self, ticker: str) -> Optional[list[dict]]:
         """获取公司新闻"""
         key = self._make_key("news", ticker)
         return self._cache.get(key)
 
-    def set_company_news(self, ticker: str, data: List[Dict]):
+    def set_company_news(self, ticker: str, data: list[dict]):
         """设置公司新闻"""
         key = self._make_key("news", ticker)
         self._cache.set(key, data, ttl=10800)
@@ -609,7 +609,7 @@ def clear_cache():
     cache.clear()
 
 
-def get_cache_stats() -> Dict[str, int]:
+def get_cache_stats() -> dict[str, int]:
     """
     获取缓存统计信息
 
@@ -620,12 +620,12 @@ def get_cache_stats() -> Dict[str, int]:
     return cache.get_stats()
 
 
-def snapshot_cache_stats() -> Dict[str, int]:
+def snapshot_cache_stats() -> dict[str, int]:
     """获取当前缓存统计快照，用于计算单次运行的增量。"""
     return dict(get_cache_stats())
 
 
-def diff_cache_stats(before: Dict[str, int], after: Dict[str, int]) -> Dict[str, int | float]:
+def diff_cache_stats(before: dict[str, int], after: dict[str, int]) -> dict[str, int | float]:
     """计算缓存统计的增量值。"""
     numeric_keys = ["lru_hits", "redis_hits", "disk_hits", "misses", "sets", "total_hits", "total_requests"]
     delta = {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in numeric_keys}
@@ -634,7 +634,7 @@ def diff_cache_stats(before: Dict[str, int], after: Dict[str, int]) -> Dict[str,
     return delta
 
 
-def get_cache_runtime_info() -> Dict[str, Any]:
+def get_cache_runtime_info() -> dict[str, Any]:
     """获取缓存运行时信息，便于排查命中率和落盘位置。"""
     cache = get_enhanced_cache()
     return {

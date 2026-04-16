@@ -4,7 +4,6 @@ import os
 import platform
 import subprocess
 import time
-from typing import List
 
 import questionary
 import requests
@@ -70,7 +69,7 @@ def is_ollama_server_running() -> bool:
         return False
 
 
-def get_locally_available_models() -> List[str]:
+def get_locally_available_models() -> list[str]:
     """Get a list of models that are already downloaded locally."""
     if not is_ollama_server_running():
         return []

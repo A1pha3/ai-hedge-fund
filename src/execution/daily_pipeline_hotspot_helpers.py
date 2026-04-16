@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 
 def _execution_quality_support_delta(execution_quality_label: str) -> float:

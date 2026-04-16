@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import Any, Callable, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 from src.backtesting.engine import BacktestEngine
 from src.backtesting.types import PerformanceMetrics

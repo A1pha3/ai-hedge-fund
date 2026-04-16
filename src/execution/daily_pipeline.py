@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import signature
 from time import perf_counter
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+from collections.abc import Callable
 
 from scripts.btst_latest_followup_utils import load_latest_btst_historical_prior_by_ticker
 from src.execution.daily_pipeline_candidate_helpers import (

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Iterator
 
 if TYPE_CHECKING:
     from src.execution.daily_pipeline import DailyPipeline

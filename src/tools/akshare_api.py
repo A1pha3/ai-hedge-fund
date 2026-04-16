@@ -10,7 +10,7 @@ A股数据接口模块 - 使用 AKShare 获取中国股票数据
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import pandas as pd
 from pydantic import BaseModel
@@ -170,7 +170,7 @@ def _disable_proxy_temporarily():
     return _disable_proxy_temporarily_impl(_disable_system_proxies, _restore_proxies)
 
 
-def get_realtime_quote_sina(ticker: str) -> Dict[str, Any]:
+def get_realtime_quote_sina(ticker: str) -> dict[str, Any]:
     """
     通过新浪财经 API 获取A股实时行情
 
@@ -205,7 +205,7 @@ def _restore_proxies(saved: dict):
     _restore_proxies_impl(saved)
 
 
-def _get_prices_from_tencent(ticker: str, start_date: str, end_date: str) -> List[Price]:
+def _get_prices_from_tencent(ticker: str, start_date: str, end_date: str) -> list[Price]:
     """
     通过腾讯财经接口获取A股历史价格数据
 
@@ -227,14 +227,14 @@ def _get_prices_from_tencent(ticker: str, start_date: str, end_date: str) -> Lis
     )
 
 
-def _get_cached_prices(cache_key: str) -> List[Price] | None:
+def _get_cached_prices(cache_key: str) -> list[Price] | None:
     cached_data = _cache.get_prices(cache_key)
     if not cached_data:
         return None
     return hydrate_cached_prices(cached_data)
 
 
-def _fetch_prices_from_akshare(ak_module, ticker: str, start_date: str, end_date: str, period: str) -> List[Price] | None:
+def _fetch_prices_from_akshare(ak_module, ticker: str, start_date: str, end_date: str, period: str) -> list[Price] | None:
     ashare = AShareTicker.from_symbol(ticker)
     df = _cached_akshare_dataframe_call(
         "stock_zh_a_hist",
@@ -250,7 +250,7 @@ def _fetch_prices_from_akshare(ak_module, ticker: str, start_date: str, end_date
     return build_prices_from_dataframe(df)
 
 
-def _load_stock_info(ak_module, ticker: str) -> Dict[str, Any]:
+def _load_stock_info(ak_module, ticker: str) -> dict[str, Any]:
     ashare = AShareTicker.from_symbol(ticker)
     df = ak_module.stock_individual_info_em(symbol=ashare.symbol)
     if df.empty:
@@ -258,12 +258,12 @@ def _load_stock_info(ak_module, ticker: str) -> Dict[str, Any]:
     return build_stock_info_dict(df)
 
 
-def _cache_prices(cache_key: str, prices: List[Price]) -> List[Price]:
+def _cache_prices(cache_key: str, prices: list[Price]) -> list[Price]:
     _cache.set_prices(cache_key, dump_prices_for_cache(prices))
     return prices
 
 
-def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily", use_mock: bool = False) -> List[Price]:
+def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily", use_mock: bool = False) -> list[Price]:
     """
     获取A股股票价格数据
 
@@ -317,7 +317,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
 
 
 @_disable_proxy_temporarily()
-def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_mock: bool = False) -> List[FinancialMetrics]:
+def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_mock: bool = False) -> list[FinancialMetrics]:
     """
     获取A股财务指标数据
 
@@ -363,7 +363,7 @@ def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_mock:
 
 
 @_disable_proxy_temporarily()
-def get_stock_info(ticker: str) -> Dict[str, Any]:
+def get_stock_info(ticker: str) -> dict[str, Any]:
     """
     获取A股股票基本信息
 
@@ -389,7 +389,7 @@ def get_stock_info(ticker: str) -> Dict[str, Any]:
 
 
 @_disable_proxy_temporarily()
-def search_stocks(keyword: str) -> List[Dict[str, Any]]:
+def search_stocks(keyword: str) -> list[dict[str, Any]]:
     """
     搜索A股股票
 
@@ -434,7 +434,7 @@ def is_ashare(ticker: str) -> bool:
     return bool(len(ticker) == 6 and ticker.isdigit())
 
 
-def get_mock_prices(ticker: str, start_date: str, end_date: str) -> List[Price]:
+def get_mock_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     """
     获取模拟价格数据（用于测试或网络不可用的情况）
 
@@ -450,7 +450,7 @@ def get_mock_prices(ticker: str, start_date: str, end_date: str) -> List[Price]:
     return build_mock_prices(start_date, end_date, random)
 
 
-def get_mock_financial_metrics(ticker: str, end_date: str, limit: int = 10) -> List[FinancialMetrics]:
+def get_mock_financial_metrics(ticker: str, end_date: str, limit: int = 10) -> list[FinancialMetrics]:
     """
     获取模拟财务指标数据（用于测试或网络不可用的情况）
     """
@@ -458,7 +458,7 @@ def get_mock_financial_metrics(ticker: str, end_date: str, limit: int = 10) -> L
     return build_mock_financial_metrics(ticker, end_date, limit, random)
 
 
-def _load_sina_historical_prices(ticker: str, start_date: str, end_date: str) -> List[Price]:
+def _load_sina_historical_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     import random
 
     AShareTicker.from_symbol(ticker)
@@ -466,7 +466,7 @@ def _load_sina_historical_prices(ticker: str, start_date: str, end_date: str) ->
     return build_mock_prices(start_date, end_date, random)
 
 
-def get_sina_historical_data(ticker: str, start_date: str, end_date: str, period: str = "daily") -> List[Price]:
+def get_sina_historical_data(ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
     """
     通过新浪财经获取历史数据（增强版）
 
@@ -486,7 +486,7 @@ def get_sina_historical_data(ticker: str, start_date: str, end_date: str, period
     )
 
 
-def get_prices_robust(ticker: str, start_date: str, end_date: str, period: str = "daily", use_mock_on_fail: bool = True) -> List[Price]:
+def get_prices_robust(ticker: str, start_date: str, end_date: str, period: str = "daily", use_mock_on_fail: bool = True) -> list[Price]:
     """
     稳健的价格数据获取（自动尝试多种数据源）
 
@@ -582,7 +582,7 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str | None =
 # ============================================================================
 
 
-def get_realtime_quotes(tickers: List[str] | None = None) -> Optional[pd.DataFrame]:
+def get_realtime_quotes(tickers: list[str] | None = None) -> Optional[pd.DataFrame]:
     """
     获取 A 股盘中实时行情（全部或指定标的）。
 

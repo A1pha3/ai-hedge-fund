@@ -5,7 +5,6 @@
 """
 
 import asyncio
-from typing import List
 
 import pandas as pd
 
@@ -19,7 +18,7 @@ from src.data import (
 )
 
 
-async def get_prices(ticker: str, start_date: str, end_date: str, use_cache: bool = True, validate: bool = True) -> List[Price]:
+async def get_prices(ticker: str, start_date: str, end_date: str, use_cache: bool = True, validate: bool = True) -> list[Price]:
     """
     获取价格数据（新架构）
 
@@ -54,7 +53,7 @@ async def get_prices(ticker: str, start_date: str, end_date: str, use_cache: boo
     return prices
 
 
-async def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_cache: bool = True, validate: bool = True) -> List[FinancialMetrics]:
+async def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use_cache: bool = True, validate: bool = True) -> list[FinancialMetrics]:
     """
     获取财务指标（新架构）
 
@@ -89,7 +88,7 @@ async def get_financial_metrics(ticker: str, end_date: str, limit: int = 10, use
     return metrics
 
 
-async def get_company_news(ticker: str, start_date: str, end_date: str, use_cache: bool = True, validate: bool = True) -> List[CompanyNews]:
+async def get_company_news(ticker: str, start_date: str, end_date: str, use_cache: bool = True, validate: bool = True) -> list[CompanyNews]:
     """
     获取公司新闻（新架构）
 
@@ -120,7 +119,7 @@ async def get_company_news(ticker: str, start_date: str, end_date: str, use_cach
     return news
 
 
-def prices_to_df(prices: List[Price]) -> pd.DataFrame:
+def prices_to_df(prices: list[Price]) -> pd.DataFrame:
     """
     将 Price 列表转换为 DataFrame
 
@@ -173,7 +172,7 @@ async def get_price_data(ticker: str, start_date: str, end_date: str) -> pd.Data
 
 
 # 同步包装函数（方便在同步代码中使用）
-def get_prices_sync(ticker: str, start_date: str, end_date: str, **kwargs) -> List[Price]:
+def get_prices_sync(ticker: str, start_date: str, end_date: str, **kwargs) -> list[Price]:
     """
     同步获取价格数据
 
@@ -189,7 +188,7 @@ def get_prices_sync(ticker: str, start_date: str, end_date: str, **kwargs) -> Li
     return asyncio.run(get_prices(ticker, start_date, end_date, **kwargs))
 
 
-def get_financial_metrics_sync(ticker: str, end_date: str, **kwargs) -> List[FinancialMetrics]:
+def get_financial_metrics_sync(ticker: str, end_date: str, **kwargs) -> list[FinancialMetrics]:
     """
     同步获取财务指标
 

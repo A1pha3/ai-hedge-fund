@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     from src.paper_trading.runtime import SessionRuntimeContext

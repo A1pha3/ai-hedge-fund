@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 
 def _build_openrouter_model_kwargs() -> dict[str, Any]:

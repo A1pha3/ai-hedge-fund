@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict
-from typing import Mapping
-from typing import Mapping as _MappingAny
+from collections.abc import Mapping
+from collections.abc import Mapping as _MappingAny
 
 from .portfolio import Portfolio
 
@@ -23,7 +22,7 @@ def calculate_portfolio_value(portfolio: Portfolio, current_prices: Mapping[str,
     return total_value
 
 
-def compute_exposures(portfolio: Portfolio, current_prices: Mapping[str, float]) -> Dict[str, float]:
+def compute_exposures(portfolio: Portfolio, current_prices: Mapping[str, float]) -> dict[str, float]:
     """Compute long/short/gross/net exposures and long/short ratio.
 
     Mirrors the calculations performed in src/backtester.py run loop.
@@ -58,7 +57,7 @@ def compute_portfolio_summary(
     total_value: float,
     initial_value: float | None,
     performance_metrics: _MappingAny[str, float | None],
-) -> Dict[str, float | None]:
+) -> dict[str, float | None]:
     """Compute portfolio summary fields in a pure, testable function.
 
     Returns a dict with keys matching the arguments used by format_backtest_row

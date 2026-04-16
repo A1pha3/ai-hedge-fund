@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
-from typing_extensions import Literal
+from typing import Literal
 
 from src.agents.portfolio_manager_helpers import (
     _accumulate_signal_weights,

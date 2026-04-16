@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Sequence
 
 from src.execution.models import ExecutionPlan, PendingOrder
 

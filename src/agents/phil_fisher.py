@@ -2,7 +2,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing_extensions import Literal
+from typing import Literal
 
 from src.agents.phil_fisher_helpers import (
     _score_fisher_debt_to_equity,

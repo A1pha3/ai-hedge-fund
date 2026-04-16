@@ -3,7 +3,9 @@ import operator
 
 from langchain_core.messages import BaseMessage
 from typing import Any
-from typing_extensions import Annotated, Sequence, TypedDict
+from typing_extensions import TypedDict
+from typing import Annotated
+from collections.abc import Sequence
 
 
 def merge_dicts(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:

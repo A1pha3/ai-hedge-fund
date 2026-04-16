@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 from src.execution.models import ExecutionPlan, PendingOrder
 from src.portfolio.limit_handler import process_pending_buy, process_pending_sell, queue_pending_buy, queue_pending_sell
@@ -34,7 +35,7 @@ def apply_pending_buy_result(
     *,
     order: PendingOrder,
     result: dict,
-    decisions: Dict[str, dict],
+    decisions: dict[str, dict],
     next_pending_buy: list[PendingOrder],
     alerts: list[str],
 ) -> None:
@@ -58,7 +59,7 @@ def apply_pending_sell_result(
     *,
     order: PendingOrder,
     result: dict,
-    decisions: Dict[str, dict],
+    decisions: dict[str, dict],
     next_pending_sell: list[PendingOrder],
     alerts: list[str],
 ) -> None:
@@ -88,10 +89,10 @@ def process_pending_queues(
     pending_buy_queue: Sequence[PendingOrder],
     pending_sell_queue: Sequence[PendingOrder],
     prepared_plan: ExecutionPlan,
-    current_prices: Dict[str, float],
+    current_prices: dict[str, float],
     limit_up: set[str],
     limit_down: set[str],
-    decisions: Dict[str, dict],
+    decisions: dict[str, dict],
     process_single_pending_buy: Callable[..., None],
     process_single_pending_sell: Callable[..., None],
     dedupe_pending_orders_fn: Callable[[Sequence[PendingOrder]], list[PendingOrder]],
@@ -126,7 +127,7 @@ def queue_limit_up_buy_decision(
     decision: dict,
     trade_date_compact: str,
     buy_order_by_ticker: dict[str, Any],
-    executed_trades: Dict[str, int],
+    executed_trades: dict[str, int],
 ) -> bool:
     matching_order = buy_order_by_ticker.get(ticker)
     pending_buy_queue.append(
@@ -149,7 +150,7 @@ def queue_limit_down_sell_decision(
     ticker: str,
     decision: dict,
     trade_date_compact: str,
-    executed_trades: Dict[str, int],
+    executed_trades: dict[str, int],
 ) -> bool:
     long_shares = positions.get(ticker, {}).get("long", 0)
     sell_ratio = (int(decision["quantity"]) / long_shares) if long_shares else 1.0
@@ -176,7 +177,7 @@ def queue_limit_blocked_pipeline_decision(
     limit_up: set[str],
     limit_down: set[str],
     buy_order_by_ticker: dict[str, Any],
-    executed_trades: Dict[str, int],
+    executed_trades: dict[str, int],
     queue_limit_up_buy_decision_fn: Callable[..., bool],
     queue_limit_down_sell_decision_fn: Callable[..., bool],
 ) -> bool:

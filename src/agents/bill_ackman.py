@@ -3,7 +3,7 @@ import json
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing_extensions import Literal
+from typing import Literal
 
 from src.agents.bill_ackman_helpers import (
     _score_ackman_buybacks,

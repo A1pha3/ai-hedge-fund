@@ -4,7 +4,7 @@ import math
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
-from typing_extensions import Literal
+from typing import Literal
 
 from src.agents.warren_buffett_helpers import (
     _analyze_buffett_earnings_consistency,

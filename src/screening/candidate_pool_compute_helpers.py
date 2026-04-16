@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Callable
+from collections.abc import Callable
 
 import pandas as pd
 

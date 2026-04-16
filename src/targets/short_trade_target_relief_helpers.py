@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from src.targets.explainability import clamp_unit_interval
 from src.targets.models import TargetEvaluationInput

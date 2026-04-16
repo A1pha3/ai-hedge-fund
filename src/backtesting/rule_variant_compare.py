@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
-from typing import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 
 from src.backtesting.rule_variant_compare_helpers import (
     average_numeric_path,

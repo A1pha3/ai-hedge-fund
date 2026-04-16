@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 from .portfolio import Portfolio
 from .types import Action, AgentDecisions, AgentOutput, PortfolioSnapshot
@@ -38,8 +39,8 @@ class AgentController:
         )
 
         # Normalize outputs to avoid None/missing keys
-        decisions_in: Dict[str, Any] = dict(output.get("decisions", {})) if isinstance(output, dict) else {}
-        analyst_signals_in: Dict[str, Any] = dict(output.get("analyst_signals", {})) if isinstance(output, dict) else {}
+        decisions_in: dict[str, Any] = dict(output.get("decisions", {})) if isinstance(output, dict) else {}
+        analyst_signals_in: dict[str, Any] = dict(output.get("analyst_signals", {})) if isinstance(output, dict) else {}
 
         normalized_decisions: AgentDecisions = {}
         for ticker in tickers:

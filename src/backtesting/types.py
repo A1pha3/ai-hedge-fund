@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Literal, Optional, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 
 import pandas as pd
 
@@ -61,8 +61,8 @@ class PortfolioSnapshot(TypedDict):
     cash: float
     margin_used: float
     margin_requirement: float
-    positions: Dict[str, PositionState]
-    realized_gains: Dict[str, TickerRealizedGains]
+    positions: dict[str, PositionState]
+    realized_gains: dict[str, TickerRealizedGains]
 
 
 # DataFrame alias for clarity in interfaces
@@ -74,12 +74,12 @@ class AgentDecision(TypedDict):
     quantity: float
 
 
-AgentDecisions = Dict[str, AgentDecision]
+AgentDecisions = dict[str, AgentDecision]
 
 
 # Analyst signal payloads can vary by agent; keep as loose dicts
-AnalystSignal = Dict[str, Any]
-AgentSignals = Dict[str, Dict[str, AnalystSignal]]
+AnalystSignal = dict[str, Any]
+AgentSignals = dict[str, dict[str, AnalystSignal]]
 
 
 class AgentOutput(TypedDict):

@@ -12,7 +12,7 @@
 """
 
 import math
-from typing import List, Optional
+from typing import Optional
 
 
 def _compute_cagr(latest: float, oldest: float, n_years: int) -> Optional[float]:
@@ -73,7 +73,7 @@ def calculate_cagr_from_line_items(line_items: list, field: str = "revenue", yea
     return None
 
 
-def calculate_revenue_growth_cagr(revenues: List[float], years: Optional[int] = None) -> Optional[float]:
+def calculate_revenue_growth_cagr(revenues: list[float], years: Optional[int] = None) -> Optional[float]:
     """
     计算收入增长的复合年增长率 (CAGR)
 
@@ -102,7 +102,7 @@ def calculate_revenue_growth_cagr(revenues: List[float], years: Optional[int] = 
     return _compute_cagr(latest, oldest, n_years)
 
 
-def calculate_simple_revenue_growth(revenues: List[float]) -> Optional[float]:
+def calculate_simple_revenue_growth(revenues: list[float]) -> Optional[float]:
     """
     计算简单的收入增长率（最新一期相比最旧一期）
 
@@ -135,7 +135,7 @@ def calculate_simple_revenue_growth(revenues: List[float]) -> Optional[float]:
     return None
 
 
-def calculate_yoy_revenue_growth(revenues: List[float], periods_per_year: int = 4) -> Optional[float]:
+def calculate_yoy_revenue_growth(revenues: list[float], periods_per_year: int = 4) -> Optional[float]:
     """
     计算同比收入增长率（最新一期相比去年同期）
 
@@ -166,7 +166,7 @@ def calculate_yoy_revenue_growth(revenues: List[float], periods_per_year: int = 
     return None
 
 
-def calculate_fcf_growth(fcfs: List[float], years: Optional[int] = None) -> Optional[float]:
+def calculate_fcf_growth(fcfs: list[float], years: Optional[int] = None) -> Optional[float]:
     """
     计算自由现金流的复合年增长率 (CAGR)
 
@@ -210,7 +210,7 @@ def calculate_fcf_growth(fcfs: List[float], years: Optional[int] = None) -> Opti
     return None
 
 
-def get_revenue_growth_for_analysis(revenues: List[float], analysis_type: str = "cagr") -> Optional[float]:
+def get_revenue_growth_for_analysis(revenues: list[float], analysis_type: str = "cagr") -> Optional[float]:
     """
     统一接口：根据分析类型获取收入增长率
 

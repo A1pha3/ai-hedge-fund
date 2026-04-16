@@ -6,7 +6,7 @@
 
 import random
 from datetime import datetime, timedelta
-from typing import Any, Dict
+from typing import Any
 
 from src.data.base_provider import BaseDataProvider, DataResponse
 from src.data.models import CompanyNews, FinancialMetrics, Price
@@ -225,7 +225,7 @@ class MockProvider(BaseDataProvider):
         """
         return True
 
-    def rate_limit_info(self) -> Dict[str, Any]:
+    def rate_limit_info(self) -> dict[str, Any]:
         """
         速率限制信息
 

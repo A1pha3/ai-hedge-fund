@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 
 def serialize_portfolio_values(portfolio_values: Sequence[dict]) -> list[dict]:

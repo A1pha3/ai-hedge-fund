@@ -7,7 +7,7 @@ from pathlib import Path
 from statistics import mean, stdev
 import json
 from time import perf_counter
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 from src.execution.daily_pipeline import DailyPipeline
 from src.execution.layer_c_aggregator import aggregate_layer_c_results

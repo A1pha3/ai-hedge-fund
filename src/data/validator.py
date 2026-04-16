@@ -5,7 +5,8 @@
 """
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Optional
+from collections.abc import Callable
 
 from src.data.models import CompanyNews, FinancialMetrics, Price
 from src.data.validator_metric_helpers import collect_metric_warning_messages, validate_metric_required_fields
@@ -39,7 +40,7 @@ class DataValidator:
         return getattr(obj, attr, default)
 
     @staticmethod
-    def validate_prices(prices: List[Union[Price, Dict]]) -> List[Union[Price, Dict]]:
+    def validate_prices(prices: list[Price | dict]) -> list[Price | dict]:
         """
         验证价格数据
 
@@ -82,7 +83,7 @@ class DataValidator:
         return valid_prices
 
     @staticmethod
-    def validate_financial_metrics(metrics: List[Union[FinancialMetrics, Dict]]) -> List[Union[FinancialMetrics, Dict]]:
+    def validate_financial_metrics(metrics: list[FinancialMetrics | dict]) -> list[FinancialMetrics | dict]:
         """
         验证财务指标数据
 
@@ -124,7 +125,7 @@ class DataValidator:
         return valid_metrics
 
     @staticmethod
-    def validate_news(news_list: List[Union[CompanyNews, Dict]]) -> List[Union[CompanyNews, Dict]]:
+    def validate_news(news_list: list[CompanyNews | dict]) -> list[CompanyNews | dict]:
         """
         验证新闻数据
 
@@ -199,7 +200,7 @@ class DataCleaner:
         return getattr(obj, key, default)
 
     @staticmethod
-    def clean_prices(prices: List[Union[Price, Dict]]) -> List[Union[Price, Dict]]:
+    def clean_prices(prices: list[Price | dict]) -> list[Price | dict]:
         """
         清洗价格数据
 
@@ -235,7 +236,7 @@ class DataCleaner:
         return unique_prices
 
     @staticmethod
-    def clean_financial_metrics(metrics: List[Union[FinancialMetrics, Dict]]) -> List[Union[FinancialMetrics, Dict]]:
+    def clean_financial_metrics(metrics: list[FinancialMetrics | dict]) -> list[FinancialMetrics | dict]:
         """
         清洗财务指标数据
 
@@ -270,7 +271,7 @@ class DataCleaner:
         return unique_metrics
 
     @staticmethod
-    def clean_news(news_list: List[Union[CompanyNews, Dict]]) -> List[Union[CompanyNews, Dict]]:
+    def clean_news(news_list: list[CompanyNews | dict]) -> list[CompanyNews | dict]:
         """
         清洗新闻数据
 
@@ -312,7 +313,7 @@ class DataPipeline:
     组合验证和清洗步骤
     """
 
-    def __init__(self, validators: Optional[List[Callable]] = None, cleaners: Optional[List[Callable]] = None):
+    def __init__(self, validators: Optional[list[Callable]] = None, cleaners: Optional[list[Callable]] = None):
         """
         初始化数据管道
 

@@ -2,7 +2,7 @@ import json
 
 from langchain_core.messages import HumanMessage
 from pydantic import AliasChoices, BaseModel, Field
-from typing_extensions import Literal
+from typing import Literal
 
 from src.agents.news_sentiment_helpers import (
     _aggregate_news_signals,

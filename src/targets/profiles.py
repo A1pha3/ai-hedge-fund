@@ -3,7 +3,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import Any, Iterator, Mapping
+from typing import Any
+from collections.abc import Iterator, Mapping
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Optional
+from typing import Optional
 
 import pandas as pd
 
@@ -12,11 +12,11 @@ def extract_open_trade_dates(df: pd.DataFrame | None) -> list[str]:
 
 def resolve_cached_sw_industry_mapping(
     *,
-    cached_mapping: Dict[str, str] | None,
+    cached_mapping: dict[str, str] | None,
     load_index_df,
     build_mapping,
     cache_mapping,
-) -> Optional[Dict[str, str]]:
+) -> Optional[dict[str, str]]:
     if cached_mapping is not None:
         return cached_mapping.copy()
 
@@ -38,8 +38,8 @@ def load_sw_index_classification(fetch_dataframe, pro) -> Optional[pd.DataFrame]
     return index_df
 
 
-def build_sw_industry_mapping(fetch_dataframe, pro, index_df: pd.DataFrame) -> Dict[str, str]:
-    result: Dict[str, str] = {}
+def build_sw_industry_mapping(fetch_dataframe, pro, index_df: pd.DataFrame) -> dict[str, str]:
+    result: dict[str, str] = {}
     for _, row in index_df.iterrows():
         index_code = str(row["index_code"])
         industry_name = str(row["industry_name"])

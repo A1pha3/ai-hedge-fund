@@ -20,7 +20,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Optional
 
 import time
 
@@ -133,7 +133,7 @@ def _candidate_pool_shadow_snapshot_path(trade_date: str, pool_size: Optional[in
     return _SNAPSHOT_DIR / f"candidate_pool_{trade_date}_top{resolved_pool_size}_shadow{focus_suffix}.json"
 
 
-def _load_candidate_pool_snapshot(snapshot_path: Path) -> List[CandidateStock]:
+def _load_candidate_pool_snapshot(snapshot_path: Path) -> list[CandidateStock]:
     return load_candidate_pool_snapshot_helper(snapshot_path, candidate_stock_cls=CandidateStock)
 
 
@@ -141,7 +141,7 @@ def _normalize_shadow_summary(shadow_summary: dict[str, Any], *, shadow_candidat
     return normalize_shadow_summary_helper(shadow_summary, shadow_candidates=shadow_candidates)
 
 
-def _write_candidate_pool_snapshot(snapshot_path: Path, candidates: List[CandidateStock]) -> None:
+def _write_candidate_pool_snapshot(snapshot_path: Path, candidates: list[CandidateStock]) -> None:
     return write_candidate_pool_snapshot_helper(snapshot_path, candidates, snapshot_dir=_SNAPSHOT_DIR)
 
 
@@ -153,7 +153,7 @@ def _load_candidate_pool_shadow_snapshot(snapshot_path: Path) -> dict[str, Any]:
     )
 
 
-def _write_candidate_pool_shadow_snapshot(snapshot_path: Path, *, selected_candidates: List[CandidateStock], shadow_candidates: List[CandidateStock], shadow_summary: dict[str, Any]) -> None:
+def _write_candidate_pool_shadow_snapshot(snapshot_path: Path, *, selected_candidates: list[CandidateStock], shadow_candidates: list[CandidateStock], shadow_summary: dict[str, Any]) -> None:
     return write_candidate_pool_shadow_snapshot_helper(
         snapshot_path,
         selected_candidates=selected_candidates,
@@ -292,12 +292,12 @@ def _resolve_focus_filter_final_visibility(
 
 
 def _build_shadow_candidate_pool_payload(
-    candidates: List[CandidateStock],
+    candidates: list[CandidateStock],
     *,
     pool_size: int,
-    cooldown_review_candidates: Optional[List[CandidateStock]] = None,
+    cooldown_review_candidates: Optional[list[CandidateStock]] = None,
     focus_filter_diagnostics: Optional[list[dict[str, Any]]] = None,
-) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
+) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
     return build_shadow_candidate_pool_payload_helper(
         candidates,
         **_build_shadow_candidate_pool_payload_kwargs(
@@ -311,7 +311,7 @@ def _build_shadow_candidate_pool_payload(
 def _build_shadow_candidate_pool_payload_kwargs(
     *,
     pool_size: int,
-    cooldown_review_candidates: Optional[List[CandidateStock]],
+    cooldown_review_candidates: Optional[list[CandidateStock]],
     focus_filter_diagnostics: Optional[list[dict[str, Any]]],
 ) -> dict[str, Any]:
     return {
@@ -346,7 +346,7 @@ def _build_shadow_candidate_pool_payload_kwargs(
     }
 
 
-def _build_shadow_summary_from_selected_candidates(selected_candidates: List[CandidateStock], *, pool_size: int) -> dict[str, Any]:
+def _build_shadow_summary_from_selected_candidates(selected_candidates: list[CandidateStock], *, pool_size: int) -> dict[str, Any]:
     cutoff_avg_volume = _resolve_selected_cutoff_avg_volume(selected_candidates)
     return {
         "pool_size": pool_size,
@@ -365,21 +365,21 @@ def _build_shadow_summary_from_selected_candidates(selected_candidates: List[Can
     }
 
 
-def _resolve_selected_cutoff_avg_volume(selected_candidates: List[CandidateStock]) -> float:
+def _resolve_selected_cutoff_avg_volume(selected_candidates: list[CandidateStock]) -> float:
     return round(float(selected_candidates[-1].avg_volume_20d), 4) if selected_candidates else 0.0
 
 
 def _compute_candidate_pool_candidates(
     trade_date: str,
-    cooldown_tickers: Optional[Set[str]] = None,
-) -> tuple[List[CandidateStock], List[CandidateStock], list[dict[str, Any]]]:
+    cooldown_tickers: Optional[set[str]] = None,
+) -> tuple[list[CandidateStock], list[CandidateStock], list[dict[str, Any]]]:
     """计算未截断的候选池，供主池与 shadow recall 共同消费。"""
     return compute_candidate_pool_candidates_helper(**_build_compute_candidate_pool_candidate_kwargs(trade_date, cooldown_tickers))
 
 
 def _build_compute_candidate_pool_candidate_kwargs(
     trade_date: str,
-    cooldown_tickers: Optional[Set[str]],
+    cooldown_tickers: Optional[set[str]],
 ) -> dict[str, Any]:
     return {
         "trade_date": trade_date,
@@ -420,8 +420,8 @@ def _build_compute_candidate_pool_candidate_kwargs(
 def build_candidate_pool_with_shadow(
     trade_date: str,
     use_cache: bool = True,
-    cooldown_tickers: Optional[Set[str]] = None,
-) -> tuple[List[CandidateStock], List[CandidateStock], dict[str, Any]]:
+    cooldown_tickers: Optional[set[str]] = None,
+) -> tuple[list[CandidateStock], list[CandidateStock], dict[str, Any]]:
     return build_candidate_pool_with_shadow_helper(
         **_build_candidate_pool_with_shadow_kwargs(
             trade_date=trade_date,
@@ -435,7 +435,7 @@ def _build_candidate_pool_with_shadow_kwargs(
     *,
     trade_date: str,
     use_cache: bool,
-    cooldown_tickers: Optional[Set[str]],
+    cooldown_tickers: Optional[set[str]],
 ) -> dict[str, Any]:
     return {
         "trade_date": trade_date,
@@ -461,12 +461,12 @@ def _build_candidate_pool_with_shadow_kwargs(
 # 冷却期注册表（持久化 JSON）
 # ============================================================================
 
-def load_cooldown_registry() -> Dict[str, str]:
+def load_cooldown_registry() -> dict[str, str]:
     """加载冷却期注册表：{ticker: expire_date_YYYYMMDD}"""
     return load_cooldown_registry_helper(_COOLDOWN_FILE)
 
 
-def save_cooldown_registry(registry: Dict[str, str]) -> None:
+def save_cooldown_registry(registry: dict[str, str]) -> None:
     """保存冷却期注册表"""
     return save_cooldown_registry_helper(registry, cooldown_file=_COOLDOWN_FILE, snapshot_dir=_SNAPSHOT_DIR)
 
@@ -482,7 +482,7 @@ def add_cooldown(ticker: str, trade_date: str, days: int = COOLDOWN_TRADING_DAYS
     )
 
 
-def get_cooled_tickers(trade_date: str) -> Set[str]:
+def get_cooled_tickers(trade_date: str) -> set[str]:
     """获取当前处于冷却期的标的集合"""
     return get_cooled_tickers_helper(
         trade_date,
@@ -614,7 +614,7 @@ def _extract_recent_open_dates(df_cal: pd.DataFrame, lookback_sessions: int) -> 
     return [str(value) for value in df_cal["cal_date"].tail(lookback_sessions).tolist()]
 
 
-def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_sessions: int = 20) -> Dict[str, float]:
+def _get_avg_amount_20d_map(pro, ts_codes: list[str], trade_date: str, lookback_sessions: int = 20) -> dict[str, float]:
     """按交易日批量获取全市场成交额并在本地聚合，避免逐票调用 `daily`。"""
     recent_open_dates = _get_recent_open_dates(pro, trade_date, lookback_sessions=lookback_sessions)
     if not recent_open_dates or not ts_codes:
@@ -645,7 +645,7 @@ def _accumulate_daily_amount_rows(filtered: pd.DataFrame, amount_buckets: dict[s
             amount_buckets[str(row["ts_code"])].append(float(amount) / 10.0)
 
 
-def _build_avg_amount_map(amount_buckets: dict[str, list[float]]) -> Dict[str, float]:
+def _build_avg_amount_map(amount_buckets: dict[str, list[float]]) -> dict[str, float]:
     return {
         ts_code: float(sum(amounts) / len(amounts))
         for ts_code, amounts in amount_buckets.items()
@@ -688,8 +688,8 @@ def _resolve_tushare_daily_sleep_seconds(*, batch_started_at: float, processed_c
 def build_candidate_pool(
     trade_date: str,
     use_cache: bool = True,
-    cooldown_tickers: Optional[Set[str]] = None,
-) -> List[CandidateStock]:
+    cooldown_tickers: Optional[set[str]] = None,
+) -> list[CandidateStock]:
     """
     构建 Layer A 候选池。
 
