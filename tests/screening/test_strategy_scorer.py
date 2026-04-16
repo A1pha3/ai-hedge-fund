@@ -8,8 +8,10 @@ import pytest
 
 from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade
 from src.screening.models import CandidateStock, StrategySignal, SubFactor
-from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_adx_strength, _score_ema_alignment, _score_event_freshness, _score_long_trend_alignment, _score_news_sentiment, _score_profitability, aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
+from src.screening.strategy_scorer import _apply_fundamental_quality_cap, _score_event_freshness, _score_news_sentiment, _score_profitability, aggregate_sub_factors, score_batch, score_event_sentiment_strategy, score_fundamental_strategy, score_mean_reversion_strategy, score_trend_strategy
+from src.screening.strategy_scorer_trend import _score_adx_strength, _score_ema_alignment, _score_long_trend_alignment
 import src.screening.strategy_scorer as strategy_scorer_module
+import src.screening.strategy_scorer_trend as trend_module
 
 
 def _signal(direction: int, confidence: float, completeness: float = 1.0) -> StrategySignal:
@@ -480,7 +482,7 @@ def test_score_ema_alignment_returns_bullish_for_stacked_emas():
     prices_df = pd.DataFrame({"close": [10.0] * 59 + [12.0]})
 
     with patch.object(
-        strategy_scorer_module,
+        trend_module,
         "calculate_ema",
         side_effect=[
             pd.Series([0.0] * 59 + [12.0]),
@@ -507,7 +509,7 @@ def test_score_long_trend_alignment_returns_bullish_for_ema_above_200():
     prices_df = pd.DataFrame({"close": [10.0] * 199 + [20.0]})
 
     with patch.object(
-        strategy_scorer_module,
+        trend_module,
         "calculate_ema",
         side_effect=[
             pd.Series([0.0] * 199 + [18.0]),
@@ -533,7 +535,7 @@ def test_score_adx_strength_returns_bullish_when_plus_di_leads():
     prices_df = pd.DataFrame({"close": [10.0] * 30})
 
     with patch.object(
-        strategy_scorer_module,
+        trend_module,
         "calculate_adx",
         return_value=pd.DataFrame({"adx": [28.0], "+di": [35.0], "-di": [12.0]}),
     ):
@@ -548,7 +550,7 @@ def test_score_adx_strength_returns_neutral_below_threshold():
     prices_df = pd.DataFrame({"close": [10.0] * 30})
 
     with patch.object(
-        strategy_scorer_module,
+        trend_module,
         "calculate_adx",
         return_value=pd.DataFrame({"adx": [18.0], "+di": [35.0], "-di": [12.0]}),
     ):
@@ -567,7 +569,7 @@ def test_score_trend_strategy_builds_optional_sub_factors(monkeypatch):
         return StrategySignal(direction=1, confidence=66.0, completeness=1.0, sub_factors={})
 
     monkeypatch.setattr(
-        strategy_scorer_module,
+        trend_module,
         "_get_trend_subfactor_weights",
         lambda: {
             "ema_alignment": 0.3,
@@ -577,12 +579,12 @@ def test_score_trend_strategy_builds_optional_sub_factors(monkeypatch):
             "long_trend_alignment": 0.1,
         },
     )
-    monkeypatch.setattr(strategy_scorer_module, "calculate_momentum_signals", lambda df: {"signal": "bullish", "confidence": 0.7, "metrics": {"mom": 1}})
-    monkeypatch.setattr(strategy_scorer_module, "calculate_volatility_signals", lambda df: {"signal": "bearish", "confidence": 0.4, "metrics": {"vol": 2}})
-    monkeypatch.setattr(strategy_scorer_module, "_score_ema_alignment", lambda df, weight: SubFactor(name="ema_alignment", direction=1, confidence=80.0, completeness=1.0, weight=weight, metrics={}))
-    monkeypatch.setattr(strategy_scorer_module, "_score_adx_strength", lambda df, weight: SubFactor(name="adx_strength", direction=1, confidence=25.0, completeness=1.0, weight=weight, metrics={}))
-    monkeypatch.setattr(strategy_scorer_module, "_score_long_trend_alignment", lambda df, weight: SubFactor(name="long_trend_alignment", direction=1, confidence=30.0, completeness=1.0, weight=weight, metrics={}))
-    monkeypatch.setattr(strategy_scorer_module, "aggregate_sub_factors", fake_aggregate)
+    monkeypatch.setattr(trend_module, "calculate_momentum_signals", lambda df: {"signal": "bullish", "confidence": 0.7, "metrics": {"mom": 1}})
+    monkeypatch.setattr(trend_module, "calculate_volatility_signals", lambda df: {"signal": "bearish", "confidence": 0.4, "metrics": {"vol": 2}})
+    monkeypatch.setattr(trend_module, "_score_ema_alignment", lambda df, weight: SubFactor(name="ema_alignment", direction=1, confidence=80.0, completeness=1.0, weight=weight, metrics={}))
+    monkeypatch.setattr(trend_module, "_score_adx_strength", lambda df, weight: SubFactor(name="adx_strength", direction=1, confidence=25.0, completeness=1.0, weight=weight, metrics={}))
+    monkeypatch.setattr(trend_module, "_score_long_trend_alignment", lambda df, weight: SubFactor(name="long_trend_alignment", direction=1, confidence=30.0, completeness=1.0, weight=weight, metrics={}))
+    monkeypatch.setattr(trend_module, "aggregate_sub_factors", fake_aggregate)
 
     score_trend_strategy(prices_df)
 

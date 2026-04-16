@@ -8,7 +8,6 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from statistics import median
-from collections.abc import Iterable
 
 import pandas as pd
 
@@ -19,14 +18,25 @@ from src.agents.growth_agent import (
     check_financial_health,
 )
 from src.agents.technicals import (
-    calculate_adx,
-    calculate_ema,
     calculate_hurst_exponent,
     calculate_mean_reversion_signals,
-    calculate_momentum_signals,
     calculate_rsi,
     calculate_stat_arb_signals,
-    calculate_volatility_signals,
+)
+from src.screening.strategy_scorer_utils import (
+    MEAN_REVERSION_SUBFACTOR_WEIGHTS,
+    FUNDAMENTAL_SUBFACTOR_WEIGHTS,
+    EVENT_SUBFACTOR_WEIGHTS,
+    POSITIVE_NEWS_KEYWORDS,
+    NEGATIVE_NEWS_KEYWORDS,
+    aggregate_sub_factors,
+    derive_completeness,
+    _get_env_mode,
+    _make_sub_factor,
+    _signal_to_direction,
+)
+from src.screening.strategy_scorer_trend import (
+    score_trend_strategy,
 )
 from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade
 from src.screening.models import CandidateStock, StrategySignal, SubFactor
@@ -38,6 +48,13 @@ from src.tools.api import (
     prices_to_df,
 )
 from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_sw_industry_classification
+
+# Re-export for backward compatibility
+__all__ = [
+    "aggregate_sub_factors",
+    "derive_completeness",
+    "score_trend_strategy",
+]
 
 LIGHT_STRATEGY_WEIGHTS = {
     "trend": 0.65,
@@ -65,81 +82,6 @@ EVENT_SENTIMENT_MAX_CANDIDATES = int(
 HEAVY_SCORE_MIN_PROVISIONAL_SCORE = float(os.getenv("SCORE_BATCH_MIN_PROVISIONAL_SCORE", "0.05"))
 HEAVY_SCORE_MIN_TREND_CONFIDENCE = float(os.getenv("SCORE_BATCH_MIN_TREND_CONFIDENCE", "35"))
 TECHNICAL_STAGE_LIQUIDITY_RANK_BUCKET = float(os.getenv("CANDIDATE_POOL_BTST_LIQUIDITY_RANK_BUCKET", "2500"))
-
-TREND_SUBFACTOR_WEIGHTS = {
-    "ema_alignment": 0.35,
-    "adx_strength": 0.18,
-    "momentum": 0.30,
-    "volatility": 0.17,
-}
-
-TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND = {
-    "ema_alignment": 0.30,
-    "adx_strength": 0.16,
-    "momentum": 0.24,
-    "volatility": 0.15,
-    "long_trend_alignment": 0.15,
-}
-
-MEAN_REVERSION_SUBFACTOR_WEIGHTS = {
-    "zscore_bbands": 0.30,
-    "rsi_extreme": 0.28,
-    "stat_arb": 0.22,
-    "hurst_regime": 0.20,
-}
-
-FUNDAMENTAL_SUBFACTOR_WEIGHTS = {
-    "profitability": 0.25,
-    "growth": 0.25,
-    "financial_health": 0.20,
-    "growth_valuation": 0.15,
-    "industry_pe": 0.15,
-}
-
-EVENT_SUBFACTOR_WEIGHTS = {
-    "news_sentiment": 0.55,
-    "insider_conviction": 0.25,
-    "event_freshness": 0.20,
-}
-
-POSITIVE_NEWS_KEYWORDS = {
-    "beat", "upgrade", "contract", "growth", "record", "profit", "buyback", "dividend",
-    "approval", "rebound", "breakthrough", "订单", "中标", "回购", "分红", "增长", "盈利", "超预期",
-}
-NEGATIVE_NEWS_KEYWORDS = {
-    "miss", "downgrade", "lawsuit", "fraud", "loss", "probe", "warning", "default",
-    "layoff", "recall", "risk", "亏损", "减持", "调查", "诉讼", "暴雷", "违约", "风险",
-}
-
-
-def _clip(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
-
-
-def _signal_to_direction(signal: str) -> int:
-    mapping = {"bullish": 1, "neutral": 0, "bearish": -1}
-    return mapping.get(str(signal).lower(), 0)
-
-
-def _get_env_flag(name: str, default: bool = False) -> bool:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _get_env_mode(name: str, default: str) -> str:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    value = raw_value.strip().lower()
-    return value or default
-
-
-def _get_trend_subfactor_weights() -> dict[str, float]:
-    if _get_env_flag("LAYER_B_ANALYSIS_ENABLE_LONG_TREND_ALIGNMENT", default=True):
-        return TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND
-    return TREND_SUBFACTOR_WEIGHTS
 
 
 def _safe_date(date_str: str) -> datetime | None:
@@ -175,106 +117,6 @@ def _event_weight_multiplier(days_old: int, strength: int) -> float:
     return multiplier
 
 
-def derive_completeness(sub_factors: Iterable[SubFactor]) -> float:
-    available = [factor for factor in sub_factors if factor.completeness > 0]
-    if not available:
-        return 0.0
-
-    total_weight = sum(factor.weight for factor in available)
-    if total_weight <= 0:
-        return 0.0
-
-    return _clip(
-        sum((factor.weight / total_weight) * factor.completeness for factor in available),
-        0.0,
-        1.0,
-    )
-
-
-def aggregate_sub_factors(sub_factors: list[SubFactor]) -> StrategySignal:
-    """按 Phase 2.2 的规则聚合子因子。"""
-    available = _filter_available_sub_factors(sub_factors)
-    sub_factor_map = _build_sub_factor_map(sub_factors)
-    if not available:
-        return StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors=sub_factor_map)
-
-    normalized = _normalize_sub_factor_weights(available)
-    score = _calculate_weighted_sub_factor_score(normalized)
-    direction = 1 if score > 0 else -1 if score < 0 else 0
-    consistency = _calculate_sub_factor_consistency(normalized, direction)
-    confidence = _calculate_weighted_sub_factor_confidence(normalized, consistency)
-    completeness = derive_completeness(sub_factors)
-    return _build_aggregated_strategy_signal(
-        direction=direction,
-        confidence=confidence,
-        completeness=completeness,
-        sub_factor_map=sub_factor_map,
-    )
-
-def _build_aggregated_strategy_signal(
-    *,
-    direction: int,
-    confidence: float,
-    completeness: float,
-    sub_factor_map: dict[str, dict],
-) -> StrategySignal:
-    return StrategySignal(
-        direction=direction,
-        confidence=_clip(confidence, 0.0, 100.0),
-        completeness=completeness,
-        sub_factors=sub_factor_map,
-    )
-
-
-def _filter_available_sub_factors(sub_factors: list[SubFactor]) -> list[SubFactor]:
-    return [factor for factor in sub_factors if factor.completeness > 0]
-
-
-def _build_sub_factor_map(sub_factors: list[SubFactor]) -> dict[str, dict]:
-    return {factor.name: factor.model_dump() for factor in sub_factors}
-
-
-def _normalize_sub_factor_weights(available: list[SubFactor]) -> list[tuple[SubFactor, float]]:
-    total_weight = sum(factor.weight for factor in available)
-    if total_weight <= 0:
-        return []
-    return [(factor, factor.weight / total_weight) for factor in available]
-
-
-def _calculate_weighted_sub_factor_score(normalized: list[tuple[SubFactor, float]]) -> float:
-    return sum(weight * factor.direction * (factor.confidence / 100.0) for factor, weight in normalized)
-
-
-def _calculate_sub_factor_consistency(normalized: list[tuple[SubFactor, float]], direction: int) -> float:
-    if not normalized:
-        return 0.0
-    majority_direction = 0 if direction == 0 else direction
-    majority_count = sum(1 for factor, _ in normalized if factor.direction == majority_direction)
-    return majority_count / len(normalized)
-
-
-def _calculate_weighted_sub_factor_confidence(normalized: list[tuple[SubFactor, float]], consistency: float) -> float:
-    return sum(weight * factor.confidence for factor, weight in normalized) * consistency
-
-
-def _make_sub_factor(
-    name: str,
-    direction: int,
-    confidence: float,
-    weight: float,
-    completeness: float = 1.0,
-    metrics: dict | None = None,
-) -> SubFactor:
-    return SubFactor(
-        name=name,
-        direction=direction,
-        confidence=_clip(confidence, 0.0, 100.0),
-        completeness=_clip(completeness, 0.0, 1.0),
-        weight=weight,
-        metrics=metrics or {},
-    )
-
-
 def _empty_signal() -> StrategySignal:
     return StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={})
 
@@ -286,185 +128,6 @@ def _load_price_frame(ticker: str, trade_date: str, lookback_days: int = 400) ->
     if not prices:
         return pd.DataFrame()
     return prices_to_df(prices)
-
-
-def _score_ema_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
-    if prices_df.empty or len(prices_df) < 60:
-        return _make_sub_factor("ema_alignment", 0, 0.0, weight, completeness=0.0)
-
-    ema_values, close = _build_ema_alignment_inputs(prices_df)
-    direction = _resolve_ema_alignment_direction(ema_values)
-    confidence = _calculate_ema_alignment_confidence(ema_values, close)
-
-    return _make_sub_factor(
-        "ema_alignment",
-        direction,
-        confidence,
-        weight,
-        metrics=ema_values,
-    )
-
-
-def _build_ema_alignment_inputs(prices_df: pd.DataFrame) -> tuple[dict[str, float], float]:
-    ema_10 = calculate_ema(prices_df, 10)
-    ema_30 = calculate_ema(prices_df, 30)
-    ema_60 = calculate_ema(prices_df, 60)
-    close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
-    return _extract_latest_ema_values(ema_10, ema_30, ema_60), close
-
-
-def _extract_latest_ema_values(ema_10: pd.Series, ema_30: pd.Series, ema_60: pd.Series) -> dict[str, float]:
-    return {
-        "ema_10": float(ema_10.iloc[-1]),
-        "ema_30": float(ema_30.iloc[-1]),
-        "ema_60": float(ema_60.iloc[-1]),
-    }
-
-
-def _resolve_ema_alignment_direction(ema_values: dict[str, float]) -> int:
-    if ema_values["ema_10"] > ema_values["ema_30"] > ema_values["ema_60"]:
-        return 1
-    if ema_values["ema_10"] < ema_values["ema_30"] < ema_values["ema_60"]:
-        return -1
-    return 0
-
-
-def _calculate_ema_alignment_confidence(ema_values: dict[str, float], close: float) -> float:
-    if close <= 0:
-        return 0.0
-    spread = abs((ema_values["ema_10"] - ema_values["ema_30"]) / close) + abs((ema_values["ema_30"] - ema_values["ema_60"]) / close)
-    return _clip(spread * 2500, 0.0, 100.0)
-
-
-def _score_long_trend_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
-    if prices_df.empty or len(prices_df) < 200:
-        return _make_sub_factor("long_trend_alignment", 0, 0.0, weight, completeness=0.0)
-
-    ema_values, close = _build_long_trend_alignment_inputs(prices_df)
-    direction = _resolve_long_trend_alignment_direction(ema_values)
-    confidence = _calculate_long_trend_alignment_confidence(ema_values, close)
-
-    return _make_sub_factor(
-        "long_trend_alignment",
-        direction,
-        confidence,
-        weight,
-        metrics=ema_values,
-    )
-
-
-def _build_long_trend_alignment_inputs(prices_df: pd.DataFrame) -> tuple[dict[str, float], float]:
-    ema_10 = calculate_ema(prices_df, 10)
-    ema_200 = calculate_ema(prices_df, 200)
-    close = float(prices_df["close"].iloc[-1]) if pd.notna(prices_df["close"].iloc[-1]) else 0.0
-    return _extract_latest_long_trend_ema_values(ema_10, ema_200), close
-
-
-def _extract_latest_long_trend_ema_values(ema_10: pd.Series, ema_200: pd.Series) -> dict[str, float]:
-    return {
-        "ema_10": float(ema_10.iloc[-1]),
-        "ema_200": float(ema_200.iloc[-1]),
-    }
-
-
-def _resolve_long_trend_alignment_direction(ema_values: dict[str, float]) -> int:
-    if ema_values["ema_10"] > ema_values["ema_200"]:
-        return 1
-    if ema_values["ema_10"] < ema_values["ema_200"]:
-        return -1
-    return 0
-
-
-def _calculate_long_trend_alignment_confidence(ema_values: dict[str, float], close: float) -> float:
-    if close <= 0:
-        return 0.0
-    spread = abs((ema_values["ema_10"] - ema_values["ema_200"]) / close)
-    return _clip(spread * 400, 0.0, 100.0)
-
-
-def _score_adx_strength(prices_df: pd.DataFrame, weight: float) -> SubFactor:
-    if prices_df.empty or len(prices_df) < 30:
-        return _make_sub_factor("adx_strength", 0, 0.0, weight, completeness=0.0)
-
-    adx_metrics = _build_adx_strength_metrics(prices_df)
-    direction = _resolve_adx_strength_direction(adx_metrics)
-
-    return _make_sub_factor(
-        "adx_strength",
-        direction,
-        adx_metrics["adx"],
-        weight,
-        metrics=adx_metrics,
-    )
-
-
-def _build_adx_strength_metrics(prices_df: pd.DataFrame) -> dict[str, float]:
-    return _extract_adx_strength_metrics(calculate_adx(prices_df.copy(), 20))
-
-
-def _extract_adx_strength_metrics(adx_df: pd.DataFrame) -> dict[str, float]:
-    return {
-        "adx": float(adx_df["adx"].iloc[-1]) if pd.notna(adx_df["adx"].iloc[-1]) else 0.0,
-        "+di": float(adx_df["+di"].iloc[-1]) if pd.notna(adx_df["+di"].iloc[-1]) else 0.0,
-        "-di": float(adx_df["-di"].iloc[-1]) if pd.notna(adx_df["-di"].iloc[-1]) else 0.0,
-    }
-
-
-def _resolve_adx_strength_direction(adx_metrics: dict[str, float]) -> int:
-    if adx_metrics["adx"] < 20:
-        return 0
-    if adx_metrics["+di"] > adx_metrics["-di"]:
-        return 1
-    if adx_metrics["-di"] > adx_metrics["+di"]:
-        return -1
-    return 0
-
-
-def score_trend_strategy(prices_df: pd.DataFrame) -> StrategySignal:
-    trend_weights = _get_trend_subfactor_weights()
-    momentum_signal = calculate_momentum_signals(prices_df) if len(prices_df) >= 126 else None
-    volatility_signal = calculate_volatility_signals(prices_df) if len(prices_df) >= 126 else None
-    return aggregate_sub_factors(
-        _build_trend_sub_factors(
-            prices_df=prices_df,
-            trend_weights=trend_weights,
-            momentum_signal=momentum_signal,
-            volatility_signal=volatility_signal,
-        )
-    )
-
-
-def _build_trend_sub_factors(
-    *,
-    prices_df: pd.DataFrame,
-    trend_weights: dict[str, float],
-    momentum_signal: dict | None,
-    volatility_signal: dict | None,
-) -> list[SubFactor]:
-    sub_factors = [
-        _score_ema_alignment(prices_df, trend_weights["ema_alignment"]),
-        _score_adx_strength(prices_df, trend_weights["adx_strength"]),
-        _build_optional_trend_factor("momentum", momentum_signal, trend_weights["momentum"]),
-        _build_optional_trend_factor("volatility", volatility_signal, trend_weights["volatility"]),
-    ]
-    if "long_trend_alignment" in trend_weights:
-        _append_long_trend_factor(sub_factors, prices_df, trend_weights["long_trend_alignment"])
-    return sub_factors
-
-
-def _build_optional_trend_factor(name: str, signal: dict | None, weight: float) -> SubFactor:
-    direction, confidence, completeness, metrics = _resolve_optional_trend_factor_inputs(signal)
-    return _make_sub_factor(name, direction, confidence, weight, completeness=completeness, metrics=metrics)
-
-
-def _resolve_optional_trend_factor_inputs(signal: dict | None) -> tuple[int, float, float, dict]:
-    if signal is None:
-        return 0, 0.0, 0.0, {}
-    return _signal_to_direction(signal["signal"]), signal["confidence"] * 100.0, 1.0, signal["metrics"]
-
-
-def _append_long_trend_factor(sub_factors: list[SubFactor], prices_df: pd.DataFrame, weight: float) -> None:
-    sub_factors.append(_score_long_trend_alignment(prices_df, weight))
 
 
 def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
