@@ -22,6 +22,7 @@ from src.screening.strategy_scorer_utils import (
     _get_env_mode,
     _make_sub_factor,
 )
+from src.tools.api import get_financial_metrics
 
 
 @dataclass(frozen=True)
@@ -297,8 +298,6 @@ def score_fundamental_strategy(
     industry_name: str = "",
     industry_pe_medians: dict[str, float] | None = None,
 ) -> StrategySignal:
-    from src.tools.api import get_financial_metrics
-
     metrics_list = get_financial_metrics(ticker=ticker, end_date=trade_date, period="ttm", limit=8)
     if not metrics_list:
         return StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={})

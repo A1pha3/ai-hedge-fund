@@ -379,7 +379,7 @@ def test_score_event_freshness_marks_fresh_positive_news_as_bullish():
 
 
 def test_score_industry_pe_returns_incomplete_without_industry_context():
-    factor = strategy_scorer_module._score_industry_pe(
+    factor = fundamental_module._score_industry_pe(
         _financial_metrics(price_to_earnings_ratio=12.0),
         "",
         {"银行": 8.0},
@@ -391,7 +391,7 @@ def test_score_industry_pe_returns_incomplete_without_industry_context():
 
 
 def test_score_industry_pe_marks_discounted_pe_as_bullish():
-    factor = strategy_scorer_module._score_industry_pe(
+    factor = fundamental_module._score_industry_pe(
         _financial_metrics(price_to_earnings_ratio=6.0),
         "银行",
         {"银行": 10.0},
@@ -437,8 +437,7 @@ def test_aggregate_sub_factors_applies_weighted_consistency_penalty():
 
 
 def test_score_fundamental_strategy_returns_empty_signal_when_metrics_missing(monkeypatch):
-    monkeypatch.setattr(strategy_scorer_module, "get_financial_metrics", lambda **kwargs: [])
-
+    monkeypatch.setattr(fundamental_module, "get_financial_metrics", lambda **kwargs: [])
     signal = score_fundamental_strategy("000001", "20260305")
 
     assert signal.direction == 0
@@ -452,20 +451,20 @@ def test_score_fundamental_strategy_builds_and_caps_sub_factors(monkeypatch):
     older = _financial_metrics(report_period="20240930", revenue_growth=0.25)
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(strategy_scorer_module, "get_financial_metrics", lambda **kwargs: [latest, older])
-    monkeypatch.setattr(strategy_scorer_module, "_score_profitability", lambda metrics: SubFactor(name="profitability", direction=1, confidence=80.0, weight=0.25, metrics={"metric": metrics.report_period}))
-    monkeypatch.setattr(strategy_scorer_module, "_score_growth", lambda metrics_list: SubFactor(name="growth", direction=1, confidence=75.0, weight=0.25, metrics={"periods": len(metrics_list)}))
-    monkeypatch.setattr(strategy_scorer_module, "_score_financial_health", lambda metrics: SubFactor(name="financial_health", direction=1, confidence=70.0, weight=0.20, metrics={"metric": metrics.report_period}))
-    monkeypatch.setattr(strategy_scorer_module, "_score_growth_valuation", lambda metrics: SubFactor(name="growth_valuation", direction=0, confidence=50.0, weight=0.15, metrics={"metric": metrics.report_period}))
-    monkeypatch.setattr(strategy_scorer_module, "_score_industry_pe", lambda metrics, industry_name, medians: SubFactor(name="industry_pe", direction=-1, confidence=20.0, weight=0.15, metrics={"industry": industry_name, "median_count": len(medians or {})}))
+    monkeypatch.setattr(fundamental_module, "get_financial_metrics", lambda **kwargs: [latest, older])
+    monkeypatch.setattr(fundamental_module, "_score_profitability", lambda metrics: SubFactor(name="profitability", direction=1, confidence=80.0, weight=0.25, metrics={"metric": metrics.report_period}))
+    monkeypatch.setattr(fundamental_module, "_score_growth", lambda metrics_list: SubFactor(name="growth", direction=1, confidence=75.0, weight=0.25, metrics={"periods": len(metrics_list)}))
+    monkeypatch.setattr(fundamental_module, "_score_financial_health", lambda metrics: SubFactor(name="financial_health", direction=1, confidence=70.0, weight=0.20, metrics={"metric": metrics.report_period}))
+    monkeypatch.setattr(fundamental_module, "_score_growth_valuation", lambda metrics: SubFactor(name="growth_valuation", direction=0, confidence=50.0, weight=0.15, metrics={"metric": metrics.report_period}))
+    monkeypatch.setattr(fundamental_module, "_score_industry_pe", lambda metrics, industry_name, medians: SubFactor(name="industry_pe", direction=-1, confidence=20.0, weight=0.15, metrics={"industry": industry_name, "median_count": len(medians or {})}))
 
     def fake_aggregate(factors):
         captured["factors"] = factors
         return StrategySignal(direction=1, confidence=88.0, completeness=1.0, sub_factors={})
 
-    monkeypatch.setattr(strategy_scorer_module, "aggregate_sub_factors", fake_aggregate)
+    monkeypatch.setattr(fundamental_module, "aggregate_sub_factors", fake_aggregate)
     monkeypatch.setattr(
-        strategy_scorer_module,
+        fundamental_module,
         "_apply_fundamental_quality_cap",
         lambda signal: captured.setdefault("pre_cap_signal", signal) or StrategySignal(direction=1, confidence=45.0, completeness=1.0, sub_factors={"capped": {}}),
     )
