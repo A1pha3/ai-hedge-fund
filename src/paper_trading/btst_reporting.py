@@ -120,358 +120,107 @@ from src.paper_trading._btst_reporting.classifiers import (
     _classify_historical_prior,
     _classify_execution_quality_prior,
 )
+from src.paper_trading._btst_reporting.entry_mode_utils import (
+    _augment_execution_note as _augment_execution_note_impl,
+    _selected_action_posture as _selected_action_posture_impl,
+    _selected_holding_contract_note as _selected_holding_contract_note_impl,
+)
+from src.paper_trading._btst_reporting.catalyst_render_helpers import (
+    _append_threshold_shortfalls_line as _append_threshold_shortfalls_line_impl,
+    _append_catalyst_watch_metrics as _append_catalyst_watch_metrics_impl,
+)
+from src.paper_trading._btst_reporting.entry_transforms import (
+    _apply_execution_quality_entry_mode as _apply_execution_quality_entry_mode_impl,
+    _build_catalyst_theme_shadow_watch_rows as _build_catalyst_theme_shadow_watch_rows_impl,
+    CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES as _CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
+)
+from src.paper_trading._btst_reporting.priority_board import (
+    analyze_btst_next_day_priority_board as _analyze_btst_next_day_priority_board_impl,
+)
+from src.paper_trading._btst_reporting.premarket_card import (
+    analyze_btst_premarket_execution_card as _analyze_btst_premarket_execution_card_impl,
+)
+from src.paper_trading._btst_reporting.opening_watch import (
+    analyze_btst_opening_watch_card as _analyze_btst_opening_watch_card_impl,
+)
+from src.paper_trading._btst_reporting.entry_builders import (
+    _build_catalyst_theme_frontier_priority as _build_catalyst_theme_frontier_priority_eb,
+    _build_upstream_shadow_summary as _build_upstream_shadow_summary_eb,
+    _discover_recent_historical_report_dirs as _discover_recent_historical_report_dirs_eb,
+    _extract_catalyst_theme_entry as _extract_catalyst_theme_entry_eb,
+    _extract_catalyst_theme_shadow_entry as _extract_catalyst_theme_shadow_entry_eb,
+    _extract_next_day_outcome as _extract_next_day_outcome_eb,
+    _extract_research_upside_radar_entry as _extract_research_upside_radar_entry_eb,
+    _extract_short_trade_entry as _extract_short_trade_entry_eb,
+    _extract_short_trade_opportunity_entry as _extract_short_trade_opportunity_entry_eb,
+    _extract_upstream_shadow_entry as _extract_upstream_shadow_entry_eb,
+    _iter_selection_snapshot_paths as _iter_selection_snapshot_paths_eb,
+    _load_catalyst_theme_frontier_summary as _load_catalyst_theme_frontier_summary_eb,
+    _merge_entry_historical_prior as _merge_entry_historical_prior_eb,
+    _reclassify_selected_execution_quality_entries as _reclassify_selected_execution_quality_entries_eb,
+    _resolve_snapshot_path as _resolve_snapshot_path_eb,
+    CATALYST_THEME_MAX_ENTRIES,
+    CATALYST_THEME_SHADOW_MAX_ENTRIES as CATALYST_THEME_SHADOW_MAX_ENTRIES_CONST,
+)
 
 
 load_project_dotenv()
 
 
-CATALYST_THEME_MAX_ENTRIES = 5
-CATALYST_THEME_SHADOW_MAX_ENTRIES = 5
 CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES = 3
 
 
 def _extract_upstream_shadow_entry(
     selection_entry: dict[str, Any], supplemental_entry: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
-    short_trade_entry = dict(selection_entry.get("short_trade") or {})
-    if not short_trade_entry:
-        return None
-
-    explainability_payload = dict(short_trade_entry.get("explainability_payload") or {})
-    replay_context = dict(explainability_payload.get("replay_context") or {})
-    candidate_source = _resolve_upstream_shadow_candidate_source(
-        selection_entry, explainability_payload, replay_context
-    )
-    if candidate_source not in UPSTREAM_SHADOW_CANDIDATE_SOURCES:
-        return None
-
-    supplemental_entry = dict(supplemental_entry or {})
-    metrics_payload = dict(short_trade_entry.get("metrics_payload") or {})
-    candidate_reason_codes = _resolve_upstream_shadow_candidate_reason_codes(
-        selection_entry, supplemental_entry, replay_context
-    )
-    candidate_pool_lane = str(
-        supplemental_entry.get("candidate_pool_lane")
-        or replay_context.get("candidate_pool_lane")
-        or _source_lane_label(candidate_source)
-    )
-    candidate_pool_rank = supplemental_entry.get(
-        "candidate_pool_rank"
-    ) or replay_context.get("candidate_pool_rank")
-    decision = str(short_trade_entry.get("decision") or "rejected")
-    promotion_trigger = _build_upstream_shadow_promotion_trigger(decision)
-
-    return {
-        "ticker": selection_entry.get("ticker"),
-        "decision": decision,
-        "score_target": short_trade_entry.get("score_target"),
-        "confidence": short_trade_entry.get("confidence"),
-        "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
-        "candidate_source": candidate_source,
-        "candidate_pool_lane": candidate_pool_lane,
-        "candidate_pool_lane_display": _source_lane_display(candidate_source),
-        "candidate_pool_rank": int(candidate_pool_rank)
-        if candidate_pool_rank not in (None, "")
-        else None,
-        "candidate_pool_avg_amount_share_of_cutoff": _round_or_none(
-            supplemental_entry.get("candidate_pool_avg_amount_share_of_cutoff")
-            or replay_context.get("candidate_pool_avg_amount_share_of_cutoff")
-        ),
-        "candidate_pool_avg_amount_share_of_min_gate": _round_or_none(
-            supplemental_entry.get("candidate_pool_avg_amount_share_of_min_gate")
-            or replay_context.get("candidate_pool_avg_amount_share_of_min_gate")
-        ),
-        "upstream_candidate_source": str(
-            supplemental_entry.get("upstream_candidate_source")
-            or replay_context.get("upstream_candidate_source")
-            or "candidate_pool_truncated_after_filters"
-        ),
-        "candidate_reason_codes": candidate_reason_codes,
-        "top_reasons": list(short_trade_entry.get("top_reasons") or []),
-        "rejection_reasons": list(short_trade_entry.get("rejection_reasons") or []),
-        "positive_tags": list(short_trade_entry.get("positive_tags") or []),
-        "gate_status": dict(short_trade_entry.get("gate_status") or {}),
-        "promotion_trigger": promotion_trigger,
-        "metrics": _extract_short_trade_core_metrics(metrics_payload),
-    }
+    return _extract_upstream_shadow_entry_eb(selection_entry, supplemental_entry)
 
 
-def _resolve_upstream_shadow_candidate_source(
-    selection_entry: dict[str, Any],
-    explainability_payload: dict[str, Any],
-    replay_context: dict[str, Any],
-) -> str:
-    return str(
-        explainability_payload.get("candidate_source")
-        or selection_entry.get("candidate_source")
-        or replay_context.get("source")
-        or ""
-    )
+
 
 
 def _build_upstream_shadow_summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
-    lane_counts: dict[str, int] = {}
-    decision_counts: dict[str, int] = {}
-    for entry in entries:
-        lane = str(
-            entry.get("candidate_pool_lane")
-            or _source_lane_label(entry.get("candidate_source"))
-        )
-        decision = str(entry.get("decision") or "rejected")
-        lane_counts[lane] = int(lane_counts.get(lane) or 0) + 1
-        decision_counts[decision] = int(decision_counts.get(decision) or 0) + 1
-
-    top_focus_tickers = [
-        str(entry.get("ticker") or "") for entry in entries if entry.get("ticker")
-    ][:3]
-    return {
-        "shadow_candidate_count": len(entries),
-        "promotable_count": sum(
-            1
-            for entry in entries
-            if str(entry.get("decision") or "") in {"selected", "near_miss"}
-        ),
-        "lane_counts": lane_counts,
-        "decision_counts": decision_counts,
-        "top_focus_tickers": top_focus_tickers,
-    }
+    return _build_upstream_shadow_summary_eb(entries)
 
 
-def _extract_catalyst_theme_frontier_summary(
-    frontier: dict[str, Any],
-) -> dict[str, Any]:
-    if not frontier:
-        return {}
 
-    recommended_variant = dict(frontier.get("recommended_variant") or {})
-    promoted_shadow_count = int(recommended_variant.get("promoted_shadow_count") or 0)
-    shadow_candidate_count = int(frontier.get("shadow_candidate_count") or 0)
-    baseline_selected_count = int(frontier.get("baseline_selected_count") or 0)
-    if promoted_shadow_count > 0:
-        status = "promotable_shadow_exists"
-    elif shadow_candidate_count > 0:
-        status = "shadow_only_no_promotion"
-    elif baseline_selected_count > 0:
-        status = "selected_only_no_shadow"
-    else:
-        status = "no_catalyst_theme_candidates"
-
-    top_promoted_rows = list(recommended_variant.get("top_promoted_rows") or [])
-    return {
-        "status": status,
-        "shadow_candidate_count": shadow_candidate_count,
-        "baseline_selected_count": baseline_selected_count,
-        "recommended_variant_name": recommended_variant.get("variant_name"),
-        "recommended_promoted_shadow_count": promoted_shadow_count,
-        "recommended_relaxation_cost": recommended_variant.get(
-            "threshold_relaxation_cost"
-        ),
-        "recommended_thresholds": dict(recommended_variant.get("thresholds") or {}),
-        "recommended_promoted_tickers": [
-            str(row.get("ticker") or "")
-            for row in top_promoted_rows
-            if row.get("ticker")
-        ][:3],
-        "recommendation": frontier.get("recommendation"),
-    }
 
 
 def _load_catalyst_theme_frontier_summary(
     report_dir: str | Path | None,
 ) -> dict[str, Any]:
-    if not report_dir:
-        return {}
+    return _load_catalyst_theme_frontier_summary_eb(report_dir)
 
-    resolved_report_dir = Path(report_dir).expanduser().resolve()
-    frontier_json_path = resolved_report_dir / "catalyst_theme_frontier_latest.json"
-    if not frontier_json_path.exists():
-        return {}
-
-    summary = _extract_catalyst_theme_frontier_summary(_load_json(frontier_json_path))
-    if not summary:
-        return {}
-    frontier_markdown_path = resolved_report_dir / "catalyst_theme_frontier_latest.md"
-    summary["json_path"] = str(frontier_json_path)
-    summary["markdown_path"] = (
-        str(frontier_markdown_path.resolve())
-        if frontier_markdown_path.exists()
-        else None
-    )
-    return summary
 
 
 def _build_catalyst_theme_frontier_priority(
     frontier_summary: dict[str, Any], shadow_entries: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    if not frontier_summary:
-        return {}
+    return _build_catalyst_theme_frontier_priority_eb(frontier_summary, shadow_entries)
 
-    promoted_tickers = [
-        str(ticker or "")
-        for ticker in list(frontier_summary.get("recommended_promoted_tickers") or [])
-        if ticker
-    ]
-    promoted_entries = [
-        entry
-        for entry in shadow_entries
-        if str(entry.get("ticker") or "") in promoted_tickers
-    ]
-    return {
-        "status": frontier_summary.get("status"),
-        "recommended_variant_name": frontier_summary.get("recommended_variant_name"),
-        "recommended_relaxation_cost": frontier_summary.get(
-            "recommended_relaxation_cost"
-        ),
-        "recommended_thresholds": dict(
-            frontier_summary.get("recommended_thresholds") or {}
-        ),
-        "promoted_shadow_count": len(promoted_entries)
-        or int(frontier_summary.get("recommended_promoted_shadow_count") or 0),
-        "promoted_tickers": promoted_tickers,
-        "recommendation": frontier_summary.get("recommendation"),
-        "markdown_path": frontier_summary.get("markdown_path"),
-        "promoted_shadow_watch": _build_catalyst_theme_shadow_watch_rows(
-            promoted_entries, limit=max(len(promoted_entries), 1)
-        )
-        if promoted_entries
-        else [],
-    }
 
 
 def _resolve_snapshot_path(
     input_path: str | Path, trade_date: str | None
 ) -> tuple[Path, Path]:
-    resolved_input = Path(input_path).expanduser().resolve()
-
-    if resolved_input.is_file():
-        if resolved_input.name != "selection_snapshot.json":
-            raise ValueError(
-                "input_path must be a report directory or a selection_snapshot.json file"
-            )
-        return resolved_input, resolved_input.parents[2]
-
-    if not resolved_input.is_dir():
-        raise FileNotFoundError(f"Input path does not exist: {resolved_input}")
-
-    artifacts_dir = resolved_input / "selection_artifacts"
-    if not artifacts_dir.exists():
-        raise FileNotFoundError(
-            f"selection_artifacts directory not found under: {resolved_input}"
-        )
-
-    normalized_trade_date = _normalize_trade_date(trade_date)
-    if normalized_trade_date:
-        candidate = artifacts_dir / normalized_trade_date / "selection_snapshot.json"
-        if not candidate.exists():
-            raise FileNotFoundError(
-                f"selection_snapshot.json not found for trade_date={normalized_trade_date}: {candidate}"
-            )
-        return candidate, resolved_input
-
-    trade_date_dirs = sorted(path for path in artifacts_dir.iterdir() if path.is_dir())
-    if not trade_date_dirs:
-        raise FileNotFoundError(
-            f"No trade_date directories found under: {artifacts_dir}"
-        )
-    latest_trade_dir = trade_date_dirs[-1]
-    candidate = latest_trade_dir / "selection_snapshot.json"
-    if not candidate.exists():
-        raise FileNotFoundError(
-            f"selection_snapshot.json not found under latest trade_date directory: {candidate}"
-        )
-    return candidate, resolved_input
+    return _resolve_snapshot_path_eb(input_path, trade_date)
 
 
-def _normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
-    if frame is None or frame.empty:
-        return pd.DataFrame()
-    normalized = frame.copy()
-    if not isinstance(normalized.index, pd.DatetimeIndex):
-        normalized.index = pd.to_datetime(normalized.index)
-    normalized = normalized.sort_index()
-    normalized.columns = [str(column).lower() for column in normalized.columns]
-    return normalized
+
 
 
 def _extract_next_day_outcome(
     ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]
 ) -> dict[str, Any]:
-    cache_key = (ticker, trade_date)
-    frame = price_cache.get(cache_key)
-    if frame is None:
-        end_date = (pd.Timestamp(trade_date) + pd.Timedelta(days=10)).strftime(
-            "%Y-%m-%d"
-        )
-        try:
-            frame = _normalize_price_frame(
-                prices_to_df(
-                    get_prices_robust(
-                        ticker, trade_date, end_date, use_mock_on_fail=False
-                    )
-                )
-            )
-        except Exception:
-            try:
-                frame = _normalize_price_frame(
-                    get_price_data(ticker, trade_date, end_date)
-                )
-            except Exception:
-                frame = pd.DataFrame()
-        price_cache[cache_key] = frame
-    if frame.empty:
-        return {"data_status": "missing_price_frame"}
-
-    trade_ts = pd.Timestamp(trade_date)
-    same_day = frame.loc[frame.index.normalize() == trade_ts.normalize()]
-    next_day = frame.loc[frame.index.normalize() > trade_ts.normalize()]
-    if same_day.empty:
-        return {"data_status": "missing_trade_day_bar"}
-    if next_day.empty:
-        return {"data_status": "missing_next_trade_day_bar"}
-
-    trade_row = same_day.iloc[0]
-    next_row = next_day.iloc[0]
-    trade_close = _as_float(trade_row.get("close"))
-    next_open = _as_float(next_row.get("open"))
-    next_high = _as_float(next_row.get("high"))
-    next_close = _as_float(next_row.get("close"))
-    if trade_close <= 0 or next_open <= 0 or next_high <= 0 or next_close <= 0:
-        return {"data_status": "incomplete_price_bar"}
-
-    return {
-        "data_status": "ok",
-        "next_trade_date": next_day.index[0].strftime("%Y-%m-%d"),
-        "trade_close": round(trade_close, 4),
-        "next_open": round(next_open, 4),
-        "next_high": round(next_high, 4),
-        "next_close": round(next_close, 4),
-        "next_open_return": round((next_open / trade_close) - 1.0, 4),
-        "next_high_return": round((next_high / trade_close) - 1.0, 4),
-        "next_close_return": round((next_close / trade_close) - 1.0, 4),
-        "next_open_to_close_return": round((next_close / next_open) - 1.0, 4),
-    }
+    return _extract_next_day_outcome_eb(ticker, trade_date, price_cache)
 
 
-def _looks_like_paper_trading_report_dir(path: Path) -> bool:
-    return (
-        path.is_dir()
-        and path.name.startswith("paper_trading")
-        and (path / "session_summary.json").exists()
-        and (path / "selection_artifacts").exists()
-    )
+
 
 
 def _iter_selection_snapshot_paths(report_dir: Path) -> list[Path]:
-    selection_artifacts_dir = report_dir / "selection_artifacts"
-    if not selection_artifacts_dir.exists():
-        return []
-    return [
-        snapshot_path
-        for snapshot_path in sorted(
-            selection_artifacts_dir.glob("*/selection_snapshot.json")
-        )
-        if snapshot_path.is_file()
-    ]
+    return _iter_selection_snapshot_paths_eb(report_dir)
+
 
 
 def _discover_recent_historical_report_dirs(
@@ -479,170 +228,28 @@ def _discover_recent_historical_report_dirs(
     trade_date: str | None,
     max_reports: int = OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
 ) -> list[Path]:
-    reports_root = report_dir.parent
-    if not reports_root.exists():
-        return []
+    return _discover_recent_historical_report_dirs_eb(report_dir, trade_date, max_reports)
 
-    candidates: list[tuple[str, int, str, Path]] = []
-    for candidate in reports_root.iterdir():
-        if (
-            candidate.resolve() == report_dir.resolve()
-            or not _looks_like_paper_trading_report_dir(candidate)
-        ):
-            continue
-        snapshot_paths = _iter_selection_snapshot_paths(candidate)
-        latest_trade_date = (
-            _normalize_trade_date(snapshot_paths[-1].parent.name)
-            if snapshot_paths
-            else None
-        )
-        if trade_date and latest_trade_date and latest_trade_date >= trade_date:
-            continue
-        candidates.append(
-            (
-                latest_trade_date or "",
-                candidate.stat().st_mtime_ns,
-                candidate.name,
-                candidate,
-            )
-        )
-
-    candidates.sort(reverse=True)
-    return [candidate for _, _, _, candidate in candidates[:max_reports]]
 
 
 def _extract_short_trade_entry(
     selection_entry: dict[str, Any],
 ) -> dict[str, Any] | None:
-    short_trade_entry = selection_entry.get("short_trade") or {}
-    decision = short_trade_entry.get("decision")
-    if decision not in {"selected", "near_miss"}:
-        return None
-
-    metrics_payload = short_trade_entry.get("metrics_payload") or {}
-    explainability_payload = short_trade_entry.get("explainability_payload") or {}
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(selection_entry.get("candidate_reason_codes") or [])
-        if str(reason or "").strip()
-    ]
-    catalyst_relief = dict(
-        explainability_payload.get("upstream_shadow_catalyst_relief") or {}
-    )
-    short_trade_catalyst_relief_reason = (
-        str(catalyst_relief.get("reason") or "")
-        if catalyst_relief
-        and (
-            bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled"))
-        )
-        else None
-    )
-
-    return {
-        "ticker": selection_entry.get("ticker"),
-        "decision": decision,
-        "reporting_decision": decision,
-        "score_target": short_trade_entry.get("score_target"),
-        "confidence": short_trade_entry.get("confidence"),
-        "rank_hint": short_trade_entry.get("rank_hint"),
-        "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
-        "positive_tags": list(short_trade_entry.get("positive_tags") or []),
-        "top_reasons": list(short_trade_entry.get("top_reasons") or []),
-        "candidate_source": explainability_payload.get("candidate_source")
-        or selection_entry.get("candidate_source"),
-        "candidate_reason_codes": candidate_reason_codes,
-        "short_trade_catalyst_relief_reason": short_trade_catalyst_relief_reason,
-        "gate_status": dict(short_trade_entry.get("gate_status") or {}),
-        "metrics": {
-            "breakout_freshness": metrics_payload.get("breakout_freshness"),
-            "trend_acceleration": metrics_payload.get("trend_acceleration"),
-            "volume_expansion_quality": metrics_payload.get("volume_expansion_quality"),
-            "close_strength": metrics_payload.get("close_strength"),
-            "catalyst_freshness": metrics_payload.get("catalyst_freshness"),
-        },
-        "historical_prior": dict(
-            short_trade_entry.get("historical_prior")
-            or explainability_payload.get("historical_prior")
-            or {}
-        ),
-    }
+    return _extract_short_trade_entry_eb(selection_entry)
 
 
-def _build_opportunity_pool_promotion_trigger(metrics_payload: dict[str, Any]) -> str:
-    breakout_freshness = _as_float(metrics_payload.get("breakout_freshness"))
-    trend_acceleration = _as_float(metrics_payload.get("trend_acceleration"))
-    close_strength = _as_float(metrics_payload.get("close_strength"))
-    catalyst_freshness = _as_float(metrics_payload.get("catalyst_freshness"))
 
-    if (
-        breakout_freshness >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN
-        and trend_acceleration >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN
-    ):
-        return "若盘中 breakout 与 trend 强度继续抬升，可升级为观察票。"
-    if catalyst_freshness >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN:
-        return "若催化延续并出现量价确认，可升级为观察票。"
-    if close_strength >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN:
-        return "若开盘后 close-strength 类信号延续，可升级为观察票。"
-    return "只有盘中新增强度确认时，才允许从机会池升级。"
 
 
 def _apply_execution_quality_entry_mode(entry: dict[str, Any]) -> dict[str, Any]:
-    historical_prior = dict(entry.get("historical_prior") or {})
-    execution_quality_label = str(
-        historical_prior.get("execution_quality_label") or "unknown"
-    )
-    updated_entry = dict(entry)
-    updated_entry["historical_prior"] = historical_prior
-
-    top_reasons = [
-        str(reason)
-        for reason in list(updated_entry.get("top_reasons") or [])
-        if str(reason or "").strip()
-    ]
-
-    if execution_quality_label == "intraday_only":
-        updated_entry["preferred_entry_mode"] = "intraday_confirmation_only"
-        updated_entry["promotion_trigger"] = (
-            "历史更像盘中确认后的 intraday 机会，不把默认隔夜持有当成升级方向。"
-        )
-        if "historical_intraday_only_execution" not in top_reasons:
-            top_reasons.append("historical_intraday_only_execution")
-    elif execution_quality_label == "gap_chase_risk":
-        updated_entry["preferred_entry_mode"] = "avoid_open_chase_confirmation"
-        updated_entry["promotion_trigger"] = (
-            "若盘中回踩后重新走强可再确认，避免把开盘追价当成默认动作。"
-        )
-        if "historical_gap_chase_risk" not in top_reasons:
-            top_reasons.append("historical_gap_chase_risk")
-    elif execution_quality_label == "close_continuation":
-        updated_entry["preferred_entry_mode"] = "confirm_then_hold_breakout"
-        updated_entry["promotion_trigger"] = (
-            "若盘中 continuation 确认后量价延续良好，可升级为 confirm-then-hold，而不是默认快进快出。"
-        )
-        if "historical_close_continuation" not in top_reasons:
-            top_reasons.append("historical_close_continuation")
-    elif execution_quality_label == "zero_follow_through":
-        updated_entry["preferred_entry_mode"] = "strong_reconfirmation_only"
-        updated_entry["promotion_trigger"] = (
-            "历史同层兑现极弱，只有出现新的强确认时才允许重新升级。"
-        )
-        if "historical_zero_follow_through" not in top_reasons:
-            top_reasons.append("historical_zero_follow_through")
-
-    updated_entry["top_reasons"] = top_reasons
-    return updated_entry
+    return _apply_execution_quality_entry_mode_impl(entry)
 
 
 def _merge_entry_historical_prior(
     entry: dict[str, Any], historical_prior: dict[str, Any]
 ) -> dict[str, Any]:
-    updated_entry = dict(entry)
-    existing_historical_prior = dict(updated_entry.get("historical_prior") or {})
-    preferred_historical_prior = _choose_preferred_historical_prior(
-        existing_historical_prior, historical_prior
-    )
-    updated_entry["historical_prior"] = preferred_historical_prior
-    return updated_entry
+    return _merge_entry_historical_prior_eb(entry, historical_prior)
+
 
 
 def _reclassify_selected_execution_quality_entries(
@@ -650,384 +257,48 @@ def _reclassify_selected_execution_quality_entries(
     near_miss_entries: list[dict[str, Any]],
     opportunity_pool_entries: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    retained_selected_entries: list[dict[str, Any]] = []
-    updated_near_miss_entries = list(near_miss_entries)
-    updated_opportunity_pool_entries = list(opportunity_pool_entries)
+    return _reclassify_selected_execution_quality_entries_eb(selected_entries, near_miss_entries, opportunity_pool_entries)
 
-    for entry in selected_entries:
-        updated_entry = dict(entry)
-        historical_prior = dict(updated_entry.get("historical_prior") or {})
-        execution_quality_label = str(
-            historical_prior.get("execution_quality_label") or "unknown"
-        )
-        evaluable_count = int(historical_prior.get("evaluable_count") or 0)
-        next_close_positive_rate = _as_float(
-            historical_prior.get("next_close_positive_rate")
-        )
-
-        if (
-            execution_quality_label == "zero_follow_through"
-            and evaluable_count >= WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
-        ):
-            demoted_entry = dict(updated_entry)
-            demoted_entry["demoted_from_decision"] = "selected"
-            demoted_entry["reporting_bucket"] = "selected_execution_demoted"
-            demoted_entry["reporting_decision"] = "opportunity_pool"
-            demoted_entry["promotion_trigger"] = (
-                "历史兑现几乎为 0，先降为机会池；只有盘中新强确认时再考虑回到观察层。"
-            )
-            top_reasons = [
-                str(reason)
-                for reason in list(demoted_entry.get("top_reasons") or [])
-                if str(reason or "").strip()
-            ]
-            if "historical_zero_follow_through_selected_demoted" not in top_reasons:
-                top_reasons.append("historical_zero_follow_through_selected_demoted")
-            demoted_entry["top_reasons"] = top_reasons
-            updated_opportunity_pool_entries.append(demoted_entry)
-            continue
-
-        if (
-            execution_quality_label == "intraday_only"
-            and evaluable_count >= WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
-            and next_close_positive_rate <= 0.0
-        ):
-            demoted_entry = dict(updated_entry)
-            demoted_entry["demoted_from_decision"] = "selected"
-            demoted_entry["reporting_bucket"] = "selected_execution_demoted"
-            demoted_entry["reporting_decision"] = "near_miss"
-            demoted_entry["promotion_trigger"] = (
-                "历史更偏向盘中兑现而非收盘延续，先降为确认型观察票，不把隔夜持有当默认动作。"
-            )
-            top_reasons = [
-                str(reason)
-                for reason in list(demoted_entry.get("top_reasons") or [])
-                if str(reason or "").strip()
-            ]
-            if "historical_intraday_only_selected_demoted" not in top_reasons:
-                top_reasons.append("historical_intraday_only_selected_demoted")
-            demoted_entry["top_reasons"] = top_reasons
-            updated_near_miss_entries.append(demoted_entry)
-            continue
-
-        retained_selected_entries.append(updated_entry)
-
-    return (
-        retained_selected_entries,
-        updated_near_miss_entries,
-        updated_opportunity_pool_entries,
-    )
 
 
 def _extract_short_trade_opportunity_entry(
     selection_entry: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if (selection_entry.get("research") or {}).get("decision") == "selected":
-        return None
-
-    short_trade_entry = selection_entry.get("short_trade") or {}
-    gate_status = dict(short_trade_entry.get("gate_status") or {})
-    if not _is_short_trade_opportunity_candidate(short_trade_entry, gate_status):
-        return None
-
-    metrics_payload = dict(short_trade_entry.get("metrics_payload") or {})
-    explainability_payload = dict(short_trade_entry.get("explainability_payload") or {})
-    score_target = _as_float(short_trade_entry.get("score_target"))
-    if score_target < OPPORTUNITY_POOL_MIN_SCORE_TARGET:
-        return None
-
-    positive_tags = list(short_trade_entry.get("positive_tags") or [])
-    strong_signal_count = _count_short_trade_strong_signals(metrics_payload)
-    if strong_signal_count <= 0 and not positive_tags:
-        return None
-
-    thresholds = dict(metrics_payload.get("thresholds") or {})
-    near_miss_threshold = _as_float(thresholds.get("near_miss_threshold"))
-    score_gap_to_near_miss = (
-        round(max(0.0, near_miss_threshold - score_target), 4)
-        if near_miss_threshold > 0
-        else None
-    )
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(selection_entry.get("candidate_reason_codes") or [])
-        if str(reason or "").strip()
-    ]
-    short_trade_catalyst_relief_reason = _extract_short_trade_catalyst_relief_reason(
-        explainability_payload
-    )
-
-    return {
-        "ticker": selection_entry.get("ticker"),
-        "decision": short_trade_entry.get("decision"),
-        "reporting_decision": "opportunity_pool",
-        "score_target": short_trade_entry.get("score_target"),
-        "confidence": short_trade_entry.get("confidence"),
-        "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
-        "candidate_source": (short_trade_entry.get("explainability_payload") or {}).get(
-            "candidate_source"
-        )
-        or selection_entry.get("candidate_source"),
-        "candidate_reason_codes": candidate_reason_codes,
-        "short_trade_catalyst_relief_reason": short_trade_catalyst_relief_reason,
-        "positive_tags": positive_tags,
-        "top_reasons": list(short_trade_entry.get("top_reasons") or []),
-        "rejection_reasons": list(short_trade_entry.get("rejection_reasons") or []),
-        "gate_status": gate_status,
-        "score_gap_to_near_miss": score_gap_to_near_miss,
-        "promotion_trigger": _build_opportunity_pool_promotion_trigger(metrics_payload),
-        "metrics": _extract_short_trade_core_metrics(metrics_payload),
-        "historical_prior": dict(
-            short_trade_entry.get("historical_prior")
-            or explainability_payload.get("historical_prior")
-            or {}
-        ),
-    }
+    return _extract_short_trade_opportunity_entry_eb(selection_entry)
 
 
-def _is_short_trade_opportunity_candidate(
-    short_trade_entry: dict[str, Any], gate_status: dict[str, Any]
-) -> bool:
-    return (
-        short_trade_entry.get("decision") == "rejected"
-        and gate_status.get("data") == "pass"
-        and gate_status.get("structural") == "pass"
-    )
 
 
-def _count_short_trade_strong_signals(metrics_payload: dict[str, Any]) -> int:
-    metrics = (
-        _as_float(metrics_payload.get("breakout_freshness")),
-        _as_float(metrics_payload.get("trend_acceleration")),
-        _as_float(metrics_payload.get("volume_expansion_quality")),
-        _as_float(metrics_payload.get("close_strength")),
-        _as_float(metrics_payload.get("catalyst_freshness")),
-    )
-    return sum(metric >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN for metric in metrics)
 
 
-def _extract_short_trade_catalyst_relief_reason(
-    explainability_payload: dict[str, Any],
-) -> str | None:
-    catalyst_relief = dict(
-        explainability_payload.get("upstream_shadow_catalyst_relief") or {}
-    )
-    if catalyst_relief and (
-        bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled"))
-    ):
-        return str(catalyst_relief.get("reason") or "")
-    return None
+
 
 
 def _extract_research_upside_radar_entry(
     selection_entry: dict[str, Any],
 ) -> dict[str, Any] | None:
-    research_entry = selection_entry.get("research") or {}
-    short_trade_entry = selection_entry.get("short_trade") or {}
-    if research_entry.get("decision") != "selected":
-        return None
+    return _extract_research_upside_radar_entry_eb(selection_entry)
 
-    gate_status = dict(short_trade_entry.get("gate_status") or {})
-    if not _is_short_trade_opportunity_candidate(short_trade_entry, gate_status):
-        return None
-
-    metrics_payload = dict(short_trade_entry.get("metrics_payload") or {})
-    explainability_payload = dict(short_trade_entry.get("explainability_payload") or {})
-    score_target = _as_float(short_trade_entry.get("score_target"))
-    if score_target < OPPORTUNITY_POOL_MIN_SCORE_TARGET:
-        return None
-
-    positive_tags = list(short_trade_entry.get("positive_tags") or [])
-    strong_signal_count = _count_short_trade_strong_signals(metrics_payload)
-    if strong_signal_count <= 0 and not positive_tags:
-        return None
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(selection_entry.get("candidate_reason_codes") or [])
-        if str(reason or "").strip()
-    ]
-    short_trade_catalyst_relief_reason = _extract_short_trade_catalyst_relief_reason(
-        explainability_payload
-    )
-
-    return {
-        "ticker": selection_entry.get("ticker"),
-        "research_decision": research_entry.get("decision"),
-        "research_score_target": research_entry.get("score_target"),
-        "decision": short_trade_entry.get("decision"),
-        "score_target": short_trade_entry.get("score_target"),
-        "confidence": short_trade_entry.get("confidence"),
-        "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
-        "candidate_source": (short_trade_entry.get("explainability_payload") or {}).get(
-            "candidate_source"
-        )
-        or selection_entry.get("candidate_source"),
-        "candidate_reason_codes": candidate_reason_codes,
-        "short_trade_catalyst_relief_reason": short_trade_catalyst_relief_reason,
-        "positive_tags": positive_tags,
-        "top_reasons": list(short_trade_entry.get("top_reasons") or []),
-        "rejection_reasons": list(short_trade_entry.get("rejection_reasons") or []),
-        "gate_status": gate_status,
-        "delta_summary": list(selection_entry.get("delta_summary") or []),
-        "radar_note": "research 已选中但 BTST 未放行，只做漏票雷达，不纳入明日 short-trade 交易名单。",
-        "metrics": _extract_short_trade_core_metrics(metrics_payload),
-        "historical_prior": dict(
-            short_trade_entry.get("historical_prior")
-            or explainability_payload.get("historical_prior")
-            or {}
-        ),
-    }
 
 
 def _extract_catalyst_theme_entry(candidate: dict[str, Any]) -> dict[str, Any] | None:
-    if not candidate:
-        return None
+    return _extract_catalyst_theme_entry_eb(candidate)
 
-    metrics = dict(candidate.get("metrics") or {})
-    explainability_payload = dict(candidate.get("explainability_payload") or {})
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(candidate.get("candidate_reason_codes") or [])
-        if str(reason or "").strip()
-    ]
-    short_trade_catalyst_relief = dict(
-        candidate.get("short_trade_catalyst_relief") or {}
-    )
-    candidate_score = _as_float(
-        candidate.get("score_target")
-        if candidate.get("score_target") is not None
-        else candidate.get("candidate_score")
-    )
-    if candidate_score <= 0:
-        return None
-
-    return {
-        "ticker": candidate.get("ticker"),
-        "decision": candidate.get("decision") or "catalyst_theme",
-        "score_target": candidate_score,
-        "confidence": candidate.get("confidence"),
-        "preferred_entry_mode": candidate.get("preferred_entry_mode")
-        or "theme_research_followup",
-        "candidate_source": candidate.get("candidate_source") or "catalyst_theme",
-        "candidate_reason_codes": candidate_reason_codes,
-        "short_trade_catalyst_relief_reason": str(
-            short_trade_catalyst_relief.get("reason") or ""
-        )
-        or None,
-        "positive_tags": list(candidate.get("positive_tags") or []),
-        "top_reasons": list(candidate.get("top_reasons") or []),
-        "blockers": list(candidate.get("blockers") or []),
-        "gate_status": dict(candidate.get("gate_status") or {}),
-        "promotion_trigger": candidate.get("promotion_trigger")
-        or "只做题材催化跟踪，不进入主池或 BTST 执行名单。",
-        "metrics": {
-            "breakout_freshness": metrics.get("breakout_freshness"),
-            "trend_acceleration": metrics.get("trend_acceleration"),
-            "close_strength": metrics.get("close_strength"),
-            "sector_resonance": metrics.get("sector_resonance"),
-            "catalyst_freshness": metrics.get("catalyst_freshness"),
-        },
-        "historical_prior": dict(
-            candidate.get("historical_prior")
-            or explainability_payload.get("historical_prior")
-            or {}
-        ),
-    }
 
 
 def _extract_catalyst_theme_shadow_entry(
     candidate: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if not candidate:
-        return None
+    return _extract_catalyst_theme_shadow_entry_eb(candidate)
 
-    metrics = dict(candidate.get("metrics") or {})
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(candidate.get("candidate_reason_codes") or [])
-        if str(reason or "").strip()
-    ]
-    candidate_score = _as_float(
-        candidate.get("score_target")
-        if candidate.get("score_target") is not None
-        else candidate.get("candidate_score")
-    )
-    if candidate_score <= 0:
-        return None
-
-    return {
-        "ticker": candidate.get("ticker"),
-        "decision": candidate.get("decision") or "catalyst_theme_shadow",
-        "score_target": candidate_score,
-        "confidence": candidate.get("confidence"),
-        "preferred_entry_mode": candidate.get("preferred_entry_mode")
-        or "theme_research_followup",
-        "candidate_source": candidate.get("candidate_source")
-        or "catalyst_theme_shadow",
-        "candidate_reason_codes": candidate_reason_codes,
-        "positive_tags": list(candidate.get("positive_tags") or []),
-        "top_reasons": list(candidate.get("top_reasons") or []),
-        "blockers": list(candidate.get("blockers") or []),
-        "gate_status": dict(candidate.get("gate_status") or {}),
-        "promotion_trigger": candidate.get("promotion_trigger")
-        or "继续跟踪催化与结构缺口，不进入正式题材研究池或 BTST 执行名单。",
-        "filter_reason": candidate.get("filter_reason"),
-        "failed_threshold_count": int(candidate.get("failed_threshold_count") or 0),
-        "total_shortfall": _round_or_none(candidate.get("total_shortfall")),
-        "threshold_shortfalls": dict(candidate.get("threshold_shortfalls") or {}),
-        "metrics": {
-            "breakout_freshness": metrics.get("breakout_freshness"),
-            "trend_acceleration": metrics.get("trend_acceleration"),
-            "close_strength": metrics.get("close_strength"),
-            "sector_resonance": metrics.get("sector_resonance"),
-            "catalyst_freshness": metrics.get("catalyst_freshness"),
-        },
-    }
 
 
 def _build_catalyst_theme_shadow_watch_rows(
     entries: list[dict[str, Any]],
     *,
-    limit: int = CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
+    limit: int = _CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
 ) -> list[dict[str, Any]]:
-    ranked_entries = sorted(
-        [dict(entry) for entry in entries if entry and entry.get("ticker")],
-        key=lambda entry: (
-            entry.get("total_shortfall")
-            if entry.get("total_shortfall") is not None
-            else 999.0,
-            -_as_float(entry.get("score_target")),
-            -_as_float((entry.get("metrics") or {}).get("catalyst_freshness")),
-            str(entry.get("ticker") or ""),
-        ),
-    )
-
-    rows: list[dict[str, Any]] = []
-    for entry in ranked_entries[:limit]:
-        metrics = dict(entry.get("metrics") or {})
-        rows.append(
-            {
-                "ticker": entry.get("ticker"),
-                "candidate_score": entry.get("score_target"),
-                "preferred_entry_mode": entry.get("preferred_entry_mode"),
-                "candidate_source": entry.get("candidate_source"),
-                "filter_reason": entry.get("filter_reason"),
-                "failed_threshold_count": int(entry.get("failed_threshold_count") or 0),
-                "total_shortfall": _round_or_none(entry.get("total_shortfall")),
-                "threshold_shortfalls": dict(entry.get("threshold_shortfalls") or {}),
-                "promotion_trigger": entry.get("promotion_trigger"),
-                "positive_tags": list(entry.get("positive_tags") or []),
-                "top_reasons": list(entry.get("top_reasons") or []),
-                "metrics": {
-                    "breakout_freshness": metrics.get("breakout_freshness"),
-                    "trend_acceleration": metrics.get("trend_acceleration"),
-                    "close_strength": metrics.get("close_strength"),
-                    "sector_resonance": metrics.get("sector_resonance"),
-                    "catalyst_freshness": metrics.get("catalyst_freshness"),
-                },
-            }
-        )
-    return rows
+    return _build_catalyst_theme_shadow_watch_rows_impl(entries, limit=limit)
 
 
 def _decorate_watch_candidate_history_entry(
@@ -3529,153 +2800,19 @@ def _resolve_brief_analysis(
 
 
 def _selected_action_posture(preferred_entry_mode: str | None) -> tuple[str, list[str]]:
-    if preferred_entry_mode == "next_day_breakout_confirmation":
-        return (
-            "confirm_then_enter",
-            [
-                "只在盘中出现 breakout confirmation 时考虑执行，不做无确认追价。",
-                "若盘中强度无法延续或突破失败，则直接放弃当日入场。",
-            ],
-        )
-    if preferred_entry_mode == "intraday_confirmation_only":
-        return (
-            "confirm_then_reduce",
-            [
-                "只做盘中确认后的 intraday 机会，不把默认隔夜持有当成执行目标。",
-                "若盘中给出空间后回落，应优先减仓或放弃隔夜持有。",
-            ],
-        )
-    if preferred_entry_mode == "avoid_open_chase_confirmation":
-        return (
-            "avoid_open_chase",
-            [
-                "避免开盘直接追价，等待回踩或二次确认后再决定是否参与。",
-                "若高开后强度迅速衰减，则直接放弃当日入场。",
-            ],
-        )
-    if preferred_entry_mode == "confirm_then_hold_breakout":
-        return (
-            "confirm_then_hold",
-            [
-                "先等盘中 continuation 确认，再决定是否执行，不做无确认开盘追价。",
-                "若确认后量价延续良好，可把 follow-through 持有到收盘，而不是默认盘中快速减仓。",
-            ],
-        )
-    if preferred_entry_mode == "strong_reconfirmation_only":
-        return (
-            "reconfirm_only",
-            [
-                "历史兑现极弱，只有出现新的强确认时才允许重新评估。",
-                "没有新增强度时，不把它当成可执行 BTST 对象。",
-            ],
-        )
-    return (
-        "manual_review",
-        [
-            "当前 entry mode 不是标准 breakout confirmation，开盘前应先人工复核。",
-        ],
-    )
+    return _selected_action_posture_impl(preferred_entry_mode)
 
 
 def _selected_holding_contract_note(
     preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
 ) -> str | None:
-    prior = dict(historical_prior or {})
-    if preferred_entry_mode != "confirm_then_hold_breakout":
-        return None
-    if str(prior.get("execution_quality_label") or "") != "close_continuation":
-        return None
-    if str(prior.get("entry_timing_bias") or "") != "confirm_then_hold":
-        return None
-    return "默认按 BTST T+2 bias 管理，不把 T+3 连续走强当成基础预期。"
+    return _selected_holding_contract_note_impl(preferred_entry_mode, historical_prior)
 
 
 def _augment_execution_note(
     preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
 ) -> str | None:
-    prior = dict(historical_prior or {})
-    base_note = str(prior.get("execution_note") or "").strip()
-    contract_note = _selected_holding_contract_note(preferred_entry_mode, prior)
-    if contract_note and contract_note not in base_note:
-        return f"{base_note} {contract_note}".strip() if base_note else contract_note
-    return base_note or None
-
-
-def _build_premarket_primary_action(
-    primary_entry: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    if not primary_entry:
-        return None
-
-    posture, trigger_rules = _selected_action_posture(
-        primary_entry.get("preferred_entry_mode")
-    )
-    historical_prior = dict(primary_entry.get("historical_prior") or {})
-    if historical_prior.get("summary"):
-        trigger_rules.insert(0, f"历史先验: {historical_prior['summary']}")
-    if historical_prior.get("execution_note"):
-        trigger_rules.append(f"执行先验: {historical_prior['execution_note']}")
-    holding_contract_note = _selected_holding_contract_note(
-        primary_entry.get("preferred_entry_mode"), historical_prior
-    )
-    if holding_contract_note:
-        trigger_rules.append(f"持有 contract: {holding_contract_note}")
-    return {
-        "ticker": primary_entry.get("ticker"),
-        "action_tier": "primary_entry",
-        "execution_posture": posture,
-        "watch_priority": historical_prior.get("monitor_priority") or "unscored",
-        "execution_quality_label": historical_prior.get("execution_quality_label")
-        or "unknown",
-        "preferred_entry_mode": primary_entry.get("preferred_entry_mode"),
-        "trigger_rules": trigger_rules,
-        "avoid_rules": [
-            "不把 near-miss 或 research-only 股票并入主执行名单。",
-            "不因为开盘情绪强就跳过 breakout confirmation。",
-        ],
-        "evidence": list(primary_entry.get("top_reasons") or []),
-        "positive_tags": list(primary_entry.get("positive_tags") or []),
-        "metrics": dict(primary_entry.get("metrics") or {}),
-        "historical_prior": historical_prior,
-        "holding_contract_note": holding_contract_note,
-    }
-
-
-def _build_premarket_observer_action(
-    entry: dict[str, Any],
-    *,
-    action_tier: str,
-    execution_posture: str,
-    default_action: str,
-    secondary_rule: str,
-    avoid_rules: list[str],
-    include_rejection_reasons: bool,
-) -> dict[str, Any]:
-    historical_prior = dict(entry.get("historical_prior") or {})
-    _, primary_watch_rule = _entry_mode_action_guidance(
-        entry.get("preferred_entry_mode"),
-        default_action=default_action,
-    )
-    trigger_rules = [primary_watch_rule, secondary_rule]
-    if historical_prior.get("summary"):
-        trigger_rules.insert(0, f"历史先验: {historical_prior['summary']}")
-    evidence = list(entry.get("top_reasons") or [])
-    if include_rejection_reasons:
-        evidence += list(entry.get("rejection_reasons") or [])
-    return {
-        "ticker": entry.get("ticker"),
-        "action_tier": action_tier,
-        "execution_posture": execution_posture,
-        "watch_priority": historical_prior.get("monitor_priority") or "unscored",
-        "execution_quality_label": historical_prior.get("execution_quality_label")
-        or "unknown",
-        "preferred_entry_mode": entry.get("preferred_entry_mode"),
-        "trigger_rules": trigger_rules,
-        "avoid_rules": avoid_rules,
-        "evidence": evidence,
-        "metrics": dict(entry.get("metrics") or {}),
-        "historical_prior": historical_prior,
-    }
+    return _augment_execution_note_impl(preferred_entry_mode, historical_prior)
 
 
 def analyze_btst_premarket_execution_card(
@@ -3683,202 +2820,9 @@ def analyze_btst_premarket_execution_card(
     trade_date: str | None = None,
     next_trade_date: str | None = None,
 ) -> dict[str, Any]:
-    brief = _resolve_brief_analysis(
+    return _analyze_btst_premarket_execution_card_impl(
         input_path, trade_date=trade_date, next_trade_date=next_trade_date
     )
-    action_context = _build_premarket_action_context(brief)
-    catalyst_theme_frontier_priority = action_context[
-        "catalyst_theme_frontier_priority"
-    ]
-    catalyst_theme_shadow_watch = action_context["catalyst_theme_shadow_watch"]
-    primary_action = action_context["primary_action"]
-    watch_actions = action_context["watch_actions"]
-    opportunity_actions = action_context["opportunity_actions"]
-    no_history_observer_actions = action_context["no_history_observer_actions"]
-    risky_observer_actions = action_context["risky_observer_actions"]
-    upstream_shadow_summary = action_context["upstream_shadow_summary"]
-
-    return {
-        "trade_date": brief.get("trade_date"),
-        "next_trade_date": brief.get("next_trade_date"),
-        "selection_target": brief.get("selection_target"),
-        "summary": _build_premarket_card_summary(
-            brief=brief,
-            primary_action=primary_action,
-            watch_actions=watch_actions,
-            opportunity_actions=opportunity_actions,
-            no_history_observer_actions=no_history_observer_actions,
-            risky_observer_actions=risky_observer_actions,
-            catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
-            upstream_shadow_summary=upstream_shadow_summary,
-        ),
-        "recommendation": brief.get("recommendation"),
-        "primary_action": primary_action,
-        "watch_actions": watch_actions,
-        "opportunity_actions": opportunity_actions,
-        "no_history_observer_actions": no_history_observer_actions,
-        "risky_observer_actions": risky_observer_actions,
-        "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,
-        "catalyst_theme_shadow_watch": catalyst_theme_shadow_watch,
-        "upstream_shadow_entries": list(brief.get("upstream_shadow_entries") or []),
-        "upstream_shadow_summary": upstream_shadow_summary,
-        "excluded_research_entries": list(brief.get("excluded_research_entries") or []),
-        "global_guardrails": [
-            "主执行名单只认 short-trade selected，不把 research selected 自动等价成短线可交易票。",
-            "near-miss 默认只做观察，不预设与主票同级的买入动作。",
-            "机会池只用于补充盯盘覆盖面，不自动升级为正式交易对象。",
-            "题材催化影子池只做研究跟踪，不进入当日 BTST 交易名单。",
-            "若 selected 当日没有出现确认信号，则允许空仓而不是强行交易。",
-        ],
-        "source_paths": {
-            "report_dir": brief.get("report_dir"),
-            "snapshot_path": brief.get("snapshot_path"),
-            "session_summary_path": brief.get("session_summary_path"),
-        },
-    }
-
-
-def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
-    primary_entry = brief.get("primary_entry")
-    return {
-        "primary_entry": primary_entry,
-        "catalyst_theme_frontier_priority": dict(
-            brief.get("catalyst_theme_frontier_priority") or {}
-        ),
-        "catalyst_theme_shadow_watch": _build_catalyst_theme_shadow_watch_rows(
-            list(brief.get("catalyst_theme_shadow_entries") or [])
-        ),
-        "primary_action": _build_premarket_primary_action(primary_entry),
-        "watch_actions": _build_watch_actions(
-            list(brief.get("near_miss_entries") or [])
-        ),
-        "opportunity_actions": _build_opportunity_actions(
-            list(brief.get("opportunity_pool_entries") or [])
-        ),
-        "no_history_observer_actions": _build_no_history_observer_actions(
-            list(brief.get("no_history_observer_entries") or [])
-        ),
-        "risky_observer_actions": _build_risky_observer_actions(
-            list(brief.get("risky_observer_entries") or [])
-        ),
-        "upstream_shadow_summary": dict(brief.get("upstream_shadow_summary") or {}),
-    }
-
-
-def _build_watch_actions(
-    near_miss_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_premarket_observer_action(
-            entry,
-            action_tier="watch_only",
-            execution_posture="observe_only",
-            default_action="仅做盘中强度跟踪，不预设主买入动作。",
-            secondary_rule="若当日需要转为可执行对象，应先回看 short-trade score 与盘中确认信号。",
-            avoid_rules=[
-                "near_miss 不能与 selected 同级表达。",
-                "没有新增确认前，不把它视为默认替补主票。",
-            ],
-            include_rejection_reasons=False,
-        )
-        for entry in near_miss_entries
-    ]
-
-
-def _build_opportunity_actions(
-    opportunity_pool_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_premarket_observer_action(
-            entry,
-            action_tier="conditional_watch_upgrade",
-            execution_posture="observe_for_upgrade_only",
-            default_action=str(
-                entry.get("promotion_trigger")
-                or "只有盘中新增强度确认时，才允许从机会池升级。"
-            ),
-            secondary_rule="默认不在开盘前直接升级为主票或近似主票。",
-            avoid_rules=[
-                "机会池不是默认交易名单，不因情绪拉升直接入场。",
-                "若结构重新转弱或强度未延续，则继续留在非交易状态。",
-            ],
-            include_rejection_reasons=True,
-        )
-        for entry in opportunity_pool_entries
-    ]
-
-
-def _build_no_history_observer_actions(
-    no_history_observer_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_premarket_observer_action(
-            entry,
-            action_tier="no_history_observer_watch",
-            execution_posture="observe_only_no_history",
-            default_action="暂无可评估历史先验，只做盘中新证据观察，不预设 BTST 升级。",
-            secondary_rule="默认不升级为主票；只有出现新的独立强确认，才考虑重新评估。",
-            avoid_rules=[
-                "缺少可评估历史先验时，不把它视为标准机会池升级对象。",
-                "没有新的盘中强确认前，不预设隔夜 BTST 持有。",
-            ],
-            include_rejection_reasons=True,
-        )
-        for entry in no_history_observer_entries
-    ]
-
-
-def _build_risky_observer_actions(
-    risky_observer_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_premarket_observer_action(
-            entry,
-            action_tier="risky_observer_watch",
-            execution_posture="observe_only_high_risk",
-            default_action="只做高风险盘中观察，不做标准 BTST 升级预案。",
-            secondary_rule="默认不升级为主票，也不把隔夜持有当成基础执行路径。",
-            avoid_rules=[
-                "高风险观察桶不与标准机会池混用。",
-                "没有新的强确认时，不把它视为 BTST 候补交易对象。",
-            ],
-            include_rejection_reasons=True,
-        )
-        for entry in risky_observer_entries
-    ]
-
-
-def _build_premarket_card_summary(
-    *,
-    brief: dict[str, Any],
-    primary_action: dict[str, Any] | None,
-    watch_actions: list[dict[str, Any]],
-    opportunity_actions: list[dict[str, Any]],
-    no_history_observer_actions: list[dict[str, Any]],
-    risky_observer_actions: list[dict[str, Any]],
-    catalyst_theme_frontier_priority: dict[str, Any],
-    upstream_shadow_summary: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "primary_count": 1 if primary_action else 0,
-        "watch_count": len(watch_actions),
-        "opportunity_pool_count": len(opportunity_actions),
-        "no_history_observer_count": len(no_history_observer_actions),
-        "risky_observer_count": len(risky_observer_actions),
-        "catalyst_theme_frontier_promoted_count": len(
-            catalyst_theme_frontier_priority.get("promoted_tickers") or []
-        ),
-        "catalyst_theme_shadow_count": len(
-            brief.get("catalyst_theme_shadow_entries") or []
-        ),
-        "upstream_shadow_candidate_count": int(
-            upstream_shadow_summary.get("shadow_candidate_count") or 0
-        ),
-        "upstream_shadow_promotable_count": int(
-            upstream_shadow_summary.get("promotable_count") or 0
-        ),
-        "excluded_research_count": len(brief.get("excluded_research_entries") or []),
-    }
 
 
 def _append_premarket_overview_markdown(lines: list[str], card: dict[str, Any]) -> None:
@@ -4008,32 +2952,11 @@ def _append_candidate_watch_reason_tags(
 def _append_threshold_shortfalls_line(
     lines: list[str], threshold_shortfalls: dict[str, Any]
 ) -> None:
-    lines.append(
-        "- threshold_shortfalls: "
-        + (
-            ", ".join(
-                f"{key}={_format_float(value)}"
-                for key, value in threshold_shortfalls.items()
-            )
-            if threshold_shortfalls
-            else "none"
-        )
-    )
+    _append_threshold_shortfalls_line_impl(lines, threshold_shortfalls)
 
 
 def _append_catalyst_watch_metrics(lines: list[str], metrics: dict[str, Any]) -> None:
-    lines.append(
-        "- key_metrics: "
-        + ", ".join(
-            [
-                f"breakout={_format_float(metrics.get('breakout_freshness'))}",
-                f"trend={_format_float(metrics.get('trend_acceleration'))}",
-                f"close={_format_float(metrics.get('close_strength'))}",
-                f"sector={_format_float(metrics.get('sector_resonance'))}",
-                f"catalyst={_format_float(metrics.get('catalyst_freshness'))}",
-            ]
-        )
-    )
+    _append_catalyst_watch_metrics_impl(lines, metrics)
 
 
 def _append_premarket_excluded_entries_markdown(
@@ -4221,479 +3144,15 @@ def _append_premarket_source_paths_markdown(
     )
 
 
-def _build_opening_primary_focus_item(
-    primary_entry: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    if not primary_entry:
-        return None
-    posture, trigger_rules = _selected_action_posture(
-        primary_entry.get("preferred_entry_mode")
-    )
-    historical_prior = dict(primary_entry.get("historical_prior") or {})
-    return {
-        "ticker": primary_entry.get("ticker"),
-        "focus_tier": "primary_entry",
-        "monitor_priority": "execute",
-        "execution_posture": posture,
-        "score_target": primary_entry.get("score_target"),
-        "preferred_entry_mode": primary_entry.get("preferred_entry_mode"),
-        "why_now": ", ".join(primary_entry.get("top_reasons") or [])
-        or "当前 short-trade 正式 selected。",
-        "opening_plan": trigger_rules[0] if trigger_rules else "只在确认出现后执行。",
-        "historical_summary": historical_prior.get("summary"),
-        "execution_note": _augment_execution_note(
-            primary_entry.get("preferred_entry_mode"), historical_prior
-        ),
-    }
-
-
-def _build_opening_focus_item(
-    entry: dict[str, Any],
-    *,
-    focus_tier: str,
-    execution_posture: str,
-    default_action: str,
-    default_why_now: str,
-    execution_note_mode: str = "historical",
-    opening_plan_key: str | None = None,
-) -> dict[str, Any]:
-    historical_prior = dict(entry.get("historical_prior") or {})
-    _, opening_plan = _entry_mode_action_guidance(
-        entry.get("preferred_entry_mode"),
-        default_action=default_action,
-    )
-    if opening_plan_key:
-        opening_plan = str(entry.get(opening_plan_key) or opening_plan)
-    execution_note = (
-        _augment_execution_note(entry.get("preferred_entry_mode"), historical_prior)
-        if execution_note_mode == "augment"
-        else historical_prior.get("execution_note")
-    )
-    return {
-        "ticker": entry.get("ticker"),
-        "focus_tier": focus_tier,
-        "monitor_priority": historical_prior.get("monitor_priority") or "unscored",
-        "execution_posture": execution_posture,
-        "score_target": entry.get("score_target"),
-        "preferred_entry_mode": entry.get("preferred_entry_mode"),
-        "why_now": ", ".join(entry.get("top_reasons") or []) or default_why_now,
-        "opening_plan": opening_plan,
-        "historical_summary": historical_prior.get("summary"),
-        "execution_note": execution_note,
-    }
-
-
-def _build_opening_headline(
-    *,
-    primary_entry: dict[str, Any],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-    catalyst_theme_frontier_priority: dict[str, Any],
-    upstream_shadow_summary: dict[str, Any],
-) -> str:
-    headline = "当前没有正式交易票，开盘只做观察。"
-    if primary_entry:
-        headline = "先看主票确认，再看 near-miss 和机会池是否出现升级信号。"
-    elif near_miss_entries:
-        headline = "当前没有正式主票，开盘只保留 near-miss 与机会池观察，不预设交易。"
-    elif opportunity_pool_entries:
-        headline = "当前只有机会池可跟踪，除非盘中新强度确认，否则不交易。"
-    elif no_history_observer_entries:
-        headline = "当前没有标准 BTST 机会池，只保留无历史先验观察，不预设交易。"
-    elif risky_observer_entries:
-        headline = "当前没有标准 BTST 机会池，只保留高风险盘中观察，不预设交易。"
-    if catalyst_theme_frontier_priority.get("promoted_tickers"):
-        headline = (
-            headline.rstrip("。")
-            + "；题材催化前沿优先跟踪 "
-            + ", ".join(catalyst_theme_frontier_priority.get("promoted_tickers") or [])
-            + "，但仍只做研究跟踪。"
-        )
-    if upstream_shadow_summary.get("shadow_candidate_count"):
-        headline = (
-            headline.rstrip("。")
-            + "；上游影子召回关注 "
-            + ", ".join(upstream_shadow_summary.get("top_focus_tickers") or [])
-            + "。"
-        )
-    return headline
-
-
 def analyze_btst_opening_watch_card(
     input_path: str | Path | dict[str, Any],
     trade_date: str | None = None,
     next_trade_date: str | None = None,
 ) -> dict[str, Any]:
-    brief = _resolve_brief_analysis(
+    return _analyze_btst_opening_watch_card_impl(
         input_path, trade_date=trade_date, next_trade_date=next_trade_date
     )
-    opening_context = _build_opening_watch_context(brief)
-    catalyst_theme_frontier_priority = opening_context[
-        "catalyst_theme_frontier_priority"
-    ]
-    catalyst_theme_shadow_watch = opening_context["catalyst_theme_shadow_watch"]
-    near_miss_entries = opening_context["near_miss_entries"]
-    opportunity_pool_entries = opening_context["opportunity_pool_entries"]
-    no_history_observer_entries = opening_context["no_history_observer_entries"]
-    risky_observer_entries = opening_context["risky_observer_entries"]
-    primary_entry = opening_context["primary_entry"]
-    focus_items = _build_opening_focus_items(
-        brief=brief,
-        primary_entry=primary_entry,
-        near_miss_entries=near_miss_entries,
-        opportunity_pool_entries=opportunity_pool_entries,
-        no_history_observer_entries=no_history_observer_entries,
-        risky_observer_entries=risky_observer_entries,
-    )
-    _sort_opening_focus_items(focus_items)
-    upstream_shadow_summary = opening_context["upstream_shadow_summary"]
-    headline = _build_opening_headline(
-        primary_entry=primary_entry,
-        near_miss_entries=near_miss_entries,
-        opportunity_pool_entries=opportunity_pool_entries,
-        no_history_observer_entries=no_history_observer_entries,
-        risky_observer_entries=risky_observer_entries,
-        catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
-        upstream_shadow_summary=upstream_shadow_summary,
-    )
 
-    return {
-        "trade_date": brief.get("trade_date"),
-        "next_trade_date": brief.get("next_trade_date"),
-        "selection_target": brief.get("selection_target"),
-        "headline": headline,
-        "recommendation": brief.get("recommendation"),
-        "summary": _build_opening_watch_summary(
-            brief=brief,
-            no_history_observer_entries=no_history_observer_entries,
-            risky_observer_entries=risky_observer_entries,
-            catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
-            upstream_shadow_summary=upstream_shadow_summary,
-        ),
-        "focus_items": focus_items,
-        "no_history_observer_entries": no_history_observer_entries,
-        "risky_observer_entries": risky_observer_entries,
-        "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,
-        "catalyst_theme_shadow_watch": catalyst_theme_shadow_watch,
-        "upstream_shadow_entries": list(brief.get("upstream_shadow_entries") or []),
-        "upstream_shadow_summary": upstream_shadow_summary,
-        "global_guardrails": [
-            "selected 之外的对象默认都不是开盘直接交易名单。",
-            "机会池只做覆盖扩容，不因情绪走强直接升级为正式交易票。",
-            "题材催化影子池只做研究跟踪，不进入当日 BTST 交易名单。",
-            "research 漏票雷达只做上涨线索学习，不加入当日 BTST 交易名单。",
-            "若主票缺少确认信号，则允许空仓，不强行补票。",
-        ],
-        "source_paths": {
-            "report_dir": brief.get("report_dir"),
-            "snapshot_path": brief.get("snapshot_path"),
-            "session_summary_path": brief.get("session_summary_path"),
-        },
-    }
-
-
-def _build_opening_watch_context(brief: dict[str, Any]) -> dict[str, Any]:
-    selected_entries = [
-        _apply_execution_quality_entry_mode(entry)
-        for entry in list(brief.get("selected_entries") or [])
-    ]
-    return {
-        "catalyst_theme_frontier_priority": dict(
-            brief.get("catalyst_theme_frontier_priority") or {}
-        ),
-        "catalyst_theme_shadow_watch": _build_catalyst_theme_shadow_watch_rows(
-            list(brief.get("catalyst_theme_shadow_entries") or [])
-        ),
-        "selected_entries": selected_entries,
-        "near_miss_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("near_miss_entries") or [])
-        ],
-        "opportunity_pool_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("opportunity_pool_entries") or [])
-        ],
-        "no_history_observer_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("no_history_observer_entries") or [])
-        ],
-        "risky_observer_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("risky_observer_entries") or [])
-        ],
-        "primary_entry": _resolve_opening_primary_entry(brief, selected_entries),
-        "upstream_shadow_summary": dict(brief.get("upstream_shadow_summary") or {}),
-    }
-
-
-def _resolve_opening_primary_entry(
-    brief: dict[str, Any], selected_entries: list[dict[str, Any]]
-) -> dict[str, Any]:
-    primary_entry = dict(brief.get("primary_entry") or {})
-    if not primary_entry and selected_entries:
-        return dict(selected_entries[0])
-    if primary_entry:
-        return _apply_execution_quality_entry_mode(primary_entry)
-    return {}
-
-
-def _build_opening_focus_items(
-    *,
-    brief: dict[str, Any],
-    primary_entry: dict[str, Any],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    focus_items = _build_primary_focus_items(primary_entry)
-    focus_items.extend(_build_near_miss_focus_items(near_miss_entries))
-    focus_items.extend(_build_opportunity_pool_focus_items(opportunity_pool_entries))
-    focus_items.extend(_build_risky_observer_focus_items(risky_observer_entries))
-    focus_items.extend(
-        _build_no_history_observer_focus_items(no_history_observer_entries)
-    )
-    focus_items.extend(
-        _build_research_upside_focus_items(
-            list(brief.get("research_upside_radar_entries") or [])
-        )
-    )
-    return focus_items
-
-
-def _build_primary_focus_items(primary_entry: dict[str, Any]) -> list[dict[str, Any]]:
-    primary_focus_item = _build_opening_primary_focus_item(primary_entry)
-    return [primary_focus_item] if primary_focus_item else []
-
-
-def _build_near_miss_focus_items(
-    near_miss_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_opening_focus_item(
-            entry,
-            focus_tier="near_miss_watch",
-            execution_posture="observe_only",
-            default_action="只观察，不预设与主票同级的买入动作。",
-            default_why_now="当前接近 near-miss 边界。",
-            execution_note_mode="augment",
-        )
-        for entry in near_miss_entries
-    ]
-
-
-def _build_opportunity_pool_focus_items(
-    opportunity_pool_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_opening_focus_item(
-            entry,
-            focus_tier="opportunity_pool",
-            execution_posture="observe_for_upgrade_only",
-            default_action=str(
-                entry.get("promotion_trigger")
-                or "只有盘中新增强度确认时，才允许从机会池升级。"
-            ),
-            default_why_now="结构未坏，但暂未进入正式 short-trade 名单。",
-        )
-        for entry in opportunity_pool_entries
-    ]
-
-
-def _build_risky_observer_focus_items(
-    risky_observer_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_opening_focus_item(
-            entry,
-            focus_tier="risky_observer",
-            execution_posture="risk_observer_only",
-            default_action="只做高风险盘中确认观察，不预设隔夜 BTST 升级。",
-            default_why_now="当前属于高风险盘中观察桶。",
-        )
-        for entry in risky_observer_entries
-    ]
-
-
-def _build_no_history_observer_focus_items(
-    no_history_observer_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_opening_focus_item(
-            entry,
-            focus_tier="no_history_observer",
-            execution_posture="observe_only_no_history",
-            default_action="暂无可评估历史先验，只做盘中新证据观察，不预设 BTST 升级。",
-            default_why_now="当前暂无可评估历史先验，只保留观察。",
-        )
-        for entry in no_history_observer_entries
-    ]
-
-
-def _build_research_upside_focus_items(
-    research_upside_radar_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_opening_focus_item(
-            entry,
-            focus_tier="research_upside_radar",
-            execution_posture="non_trade_learning_only",
-            default_action="只做漏票学习，不加入当日 BTST 交易名单。",
-            default_why_now="research 已选中但 BTST 未放行。",
-            opening_plan_key="radar_note",
-        )
-        for entry in research_upside_radar_entries
-    ]
-
-
-def _sort_opening_focus_items(focus_items: list[dict[str, Any]]) -> None:
-    focus_items.sort(
-        key=lambda item: (
-            0
-            if item.get("focus_tier") == "primary_entry"
-            else 1
-            if item.get("focus_tier") == "near_miss_watch"
-            else 2
-            if item.get("focus_tier") == "opportunity_pool"
-            else 3
-            if item.get("focus_tier") == "no_history_observer"
-            else 4,
-            _monitor_priority_rank(item.get("monitor_priority")),
-            _execution_priority_rank(
-                (item.get("execution_note") and "medium") or "unscored"
-            ),
-            -_as_float(item.get("score_target")),
-            str(item.get("ticker") or ""),
-        )
-    )
-
-
-def _build_opening_watch_summary(
-    *,
-    brief: dict[str, Any],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-    catalyst_theme_frontier_priority: dict[str, Any],
-    upstream_shadow_summary: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "primary_count": len(brief.get("selected_entries") or []),
-        "near_miss_count": len(brief.get("near_miss_entries") or []),
-        "opportunity_pool_count": len(brief.get("opportunity_pool_entries") or []),
-        "no_history_observer_count": len(no_history_observer_entries),
-        "risky_observer_count": len(risky_observer_entries),
-        "catalyst_theme_frontier_promoted_count": len(
-            catalyst_theme_frontier_priority.get("promoted_tickers") or []
-        ),
-        "catalyst_theme_shadow_count": len(
-            brief.get("catalyst_theme_shadow_entries") or []
-        ),
-        "upstream_shadow_candidate_count": int(
-            upstream_shadow_summary.get("shadow_candidate_count") or 0
-        ),
-        "upstream_shadow_promotable_count": int(
-            upstream_shadow_summary.get("promotable_count") or 0
-        ),
-    }
-
-
-def _append_indexed_ticker_blocks(
-    lines: list[str],
-    items: list[dict[str, Any]],
-    render_item: Callable[[list[str], dict[str, Any]], None],
-) -> None:
-    _append_indexed_ticker_blocks_impl(lines, items, render_item)
-
-
-def _append_titled_indexed_section(
-    lines: list[str],
-    *,
-    title: str,
-    items: list[dict[str, Any]],
-    render_item: Callable[[list[str], dict[str, Any], int], None],
-) -> None:
-    _append_titled_indexed_section_impl(
-        lines,
-        title=title,
-        items=items,
-        render_item=render_item,
-        append_none_block_fn=_append_none_block,
-    )
-
-
-def _append_titled_indexed_ticker_section(
-    lines: list[str],
-    *,
-    title: str,
-    items: list[dict[str, Any]],
-    render_item: Callable[[list[str], dict[str, Any]], None],
-) -> None:
-    _append_titled_indexed_ticker_section_impl(
-        lines,
-        title=title,
-        items=items,
-        render_item=render_item,
-        append_titled_indexed_section_fn=_append_titled_indexed_section,
-        append_indexed_ticker_block_fn=_append_indexed_ticker_block,
-    )
-
-
-def _append_indexed_ticker_block(
-    lines: list[str],
-    item: dict[str, Any],
-    index: int,
-    render_item: Callable[[list[str], dict[str, Any]], None],
-) -> None:
-    _append_indexed_ticker_block_impl(lines, item, index, render_item)
-
-
-def _append_opening_watch_focus_items_markdown(
-    lines: list[str], focus_items: list[dict[str, Any]]
-) -> None:
-    _append_opening_watch_focus_items_markdown_impl(
-        lines,
-        focus_items,
-        append_titled_indexed_ticker_section=_append_titled_indexed_ticker_section,
-        format_float=_format_float,
-    )
-
-
-def _append_catalyst_theme_watch_markdown(
-    lines: list[str],
-    *,
-    title: str,
-    items: list[dict[str, Any]],
-    focus_tier: str,
-    execution_posture: str,
-) -> None:
-    _append_catalyst_theme_watch_markdown_impl(
-        lines,
-        title=title,
-        items=items,
-        focus_tier=focus_tier,
-        execution_posture=execution_posture,
-        append_none_block=_append_none_block,
-        append_indexed_ticker_blocks=_append_indexed_ticker_blocks,
-        append_candidate_watch_scoring_fields=_append_candidate_watch_scoring_fields,
-        append_candidate_watch_reason_tags=_append_candidate_watch_reason_tags,
-        append_threshold_shortfalls_line=_append_threshold_shortfalls_line,
-        append_catalyst_watch_metrics=_append_catalyst_watch_metrics,
-    )
-
-
-def _append_upstream_shadow_recall_markdown(
-    lines: list[str],
-    upstream_shadow_summary: dict[str, Any],
-    upstream_shadow_entries: list[dict[str, Any]],
-) -> None:
-    _append_upstream_shadow_section(
-        lines,
-        upstream_shadow_summary,
-        upstream_shadow_entries,
-        _append_opening_upstream_shadow_item,
-    )
 
 
 def render_btst_opening_watch_card_markdown(card: dict[str, Any]) -> str:
@@ -4798,77 +3257,101 @@ def _append_opening_watch_source_paths_markdown(
     )
 
 
-def _build_priority_board_row(
-    entry: dict[str, Any],
+def _append_indexed_ticker_blocks(
+    lines: list[str],
+    items: list[dict[str, Any]],
+    render_item: Callable[[list[str], dict[str, Any]], None],
+) -> None:
+    _append_indexed_ticker_blocks_impl(lines, items, render_item)
+
+
+def _append_titled_indexed_section(
+    lines: list[str],
     *,
-    lane: str,
-    actionability: str,
-    default_action: str,
-    default_why_now: str,
-    execution_note_mode: str = "historical",
-    historical_default_monitor_priority: str = "unscored",
-    opening_plan_key: str | None = None,
-    research_score_target: Any | None = None,
-) -> dict[str, Any]:
-    historical_prior = dict(entry.get("historical_prior") or {})
-    if lane in {"primary_entry", "selected_backup"}:
-        _, trigger_rules = _selected_action_posture(entry.get("preferred_entry_mode"))
-        suggested_action = trigger_rules[0] if trigger_rules else "盘中确认后再执行。"
-    else:
-        _, suggested_action = _entry_mode_action_guidance(
-            entry.get("preferred_entry_mode"),
-            default_action=default_action,
-        )
-    if opening_plan_key:
-        suggested_action = str(entry.get(opening_plan_key) or suggested_action)
-    execution_note = (
-        _augment_execution_note(entry.get("preferred_entry_mode"), historical_prior)
-        if execution_note_mode == "augment"
-        else historical_prior.get("execution_note")
+    title: str,
+    items: list[dict[str, Any]],
+    render_item: Callable[[list[str], dict[str, Any], int], None],
+) -> None:
+    _append_titled_indexed_section_impl(
+        lines,
+        title=title,
+        items=items,
+        render_item=render_item,
+        append_none_block_fn=_append_none_block,
     )
-    return {
-        "ticker": entry.get("ticker"),
-        "lane": lane,
-        "actionability": actionability,
-        "monitor_priority": historical_prior.get("monitor_priority")
-        or historical_default_monitor_priority,
-        "execution_priority": historical_prior.get("execution_priority") or "unscored",
-        "execution_quality_label": historical_prior.get("execution_quality_label")
-        or "unknown",
-        "score_target": entry.get("score_target"),
-        "research_score_target": research_score_target,
-        "preferred_entry_mode": entry.get("preferred_entry_mode"),
-        "why_now": ", ".join(entry.get("top_reasons") or []) or default_why_now,
-        "suggested_action": suggested_action,
-        "historical_summary": historical_prior.get("summary"),
-        "execution_note": execution_note,
-    }
 
 
-def _build_priority_board_headline(
+def _append_titled_indexed_ticker_section(
+    lines: list[str],
     *,
-    brief: dict[str, Any],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-    catalyst_theme_frontier_priority: dict[str, Any],
-) -> str:
-    headline = "当前没有可执行主票，priority board 只保留观察与漏票线索。"
-    if brief.get("primary_entry"):
-        headline = "先执行主票确认，再按 near-miss、机会池、research 漏票雷达递减关注。"
-    elif brief.get("near_miss_entries"):
-        headline = "当前没有主票，优先看 near-miss，其次看机会池和 research 漏票雷达。"
-    elif no_history_observer_entries:
-        headline = "当前没有标准 BTST 候选，只保留无历史先验观察与研究跟踪。"
-    elif risky_observer_entries:
-        headline = "当前没有标准 BTST 候选，只有高风险盘中观察与研究跟踪。"
-    if catalyst_theme_frontier_priority.get("promoted_tickers"):
-        headline = (
-            headline.rstrip("。")
-            + "；题材催化前沿 research priority 为 "
-            + ", ".join(catalyst_theme_frontier_priority.get("promoted_tickers") or [])
-            + "。"
-        )
-    return headline
+    title: str,
+    items: list[dict[str, Any]],
+    render_item: Callable[[list[str], dict[str, Any]], None],
+) -> None:
+    _append_titled_indexed_ticker_section_impl(
+        lines,
+        title=title,
+        items=items,
+        render_item=render_item,
+        append_titled_indexed_section_fn=_append_titled_indexed_section,
+        append_indexed_ticker_block_fn=_append_indexed_ticker_block,
+    )
+
+
+def _append_opening_watch_focus_items_markdown(
+    lines: list[str], focus_items: list[dict[str, Any]]
+) -> None:
+    _append_opening_watch_focus_items_markdown_impl(
+        lines,
+        focus_items,
+        append_titled_indexed_ticker_section=_append_titled_indexed_ticker_section,
+        format_float=_format_float,
+    )
+
+
+def _append_catalyst_theme_watch_markdown(
+    lines: list[str],
+    *,
+    title: str,
+    items: list[dict[str, Any]],
+    focus_tier: str,
+    execution_posture: str,
+) -> None:
+    _append_catalyst_theme_watch_markdown_impl(
+        lines,
+        title=title,
+        items=items,
+        focus_tier=focus_tier,
+        execution_posture=execution_posture,
+        append_none_block=_append_none_block,
+        append_indexed_ticker_blocks=_append_indexed_ticker_blocks,
+        append_candidate_watch_scoring_fields=_append_candidate_watch_scoring_fields,
+        append_candidate_watch_reason_tags=_append_candidate_watch_reason_tags,
+        append_threshold_shortfalls_line=_append_threshold_shortfalls_line,
+        append_catalyst_watch_metrics=_append_catalyst_watch_metrics,
+    )
+
+
+def _append_upstream_shadow_recall_markdown(
+    lines: list[str],
+    upstream_shadow_summary: dict[str, Any],
+    upstream_shadow_entries: list[dict[str, Any]],
+) -> None:
+    _append_upstream_shadow_section(
+        lines,
+        upstream_shadow_summary,
+        upstream_shadow_entries,
+        _append_opening_upstream_shadow_item,
+    )
+
+
+def _append_indexed_ticker_block(
+    lines: list[str],
+    item: dict[str, Any],
+    index: int,
+    render_item: Callable[[list[str], dict[str, Any]], None],
+) -> None:
+    _append_indexed_ticker_block_impl(lines, item, index, render_item)
 
 
 def analyze_btst_next_day_priority_board(
@@ -4876,260 +3359,10 @@ def analyze_btst_next_day_priority_board(
     trade_date: str | None = None,
     next_trade_date: str | None = None,
 ) -> dict[str, Any]:
-    brief = _resolve_brief_analysis(
+    return _analyze_btst_next_day_priority_board_impl(
         input_path, trade_date=trade_date, next_trade_date=next_trade_date
     )
-    board_context = _build_priority_board_context(brief)
-    catalyst_theme_frontier_priority = board_context["catalyst_theme_frontier_priority"]
-    catalyst_theme_shadow_watch = board_context["catalyst_theme_shadow_watch"]
-    selected_entries = board_context["selected_entries"]
-    near_miss_entries = board_context["near_miss_entries"]
-    opportunity_pool_entries = board_context["opportunity_pool_entries"]
-    no_history_observer_entries = board_context["no_history_observer_entries"]
-    risky_observer_entries = board_context["risky_observer_entries"]
-    priority_rows = _build_priority_board_rows(
-        brief=brief,
-        selected_entries=selected_entries,
-        near_miss_entries=near_miss_entries,
-        opportunity_pool_entries=opportunity_pool_entries,
-        no_history_observer_entries=no_history_observer_entries,
-        risky_observer_entries=risky_observer_entries,
-    )
-    _sort_priority_board_rows(priority_rows)
 
-    headline = _build_priority_board_headline(
-        brief=brief,
-        no_history_observer_entries=no_history_observer_entries,
-        risky_observer_entries=risky_observer_entries,
-        catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
-    )
-
-    return {
-        "trade_date": brief.get("trade_date"),
-        "next_trade_date": brief.get("next_trade_date"),
-        "selection_target": brief.get("selection_target"),
-        "headline": headline,
-        "summary": _build_priority_board_summary(
-            brief=brief,
-            no_history_observer_entries=no_history_observer_entries,
-            risky_observer_entries=risky_observer_entries,
-            catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
-        ),
-        "priority_rows": priority_rows,
-        "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,
-        "catalyst_theme_shadow_watch": catalyst_theme_shadow_watch,
-        "global_guardrails": [
-            "priority board 只负责排序和分层，不改变 short-trade admission 默认语义。",
-            "题材催化影子池只做研究跟踪，不进入当日 BTST 交易名单。",
-            "research_upside_radar 只做上涨线索学习，不进入当日 BTST 交易名单。",
-            "所有交易候选都仍需盘中确认，不因历史先验直接跳过执行 guardrail。",
-        ],
-        "source_paths": {
-            "report_dir": brief.get("report_dir"),
-            "snapshot_path": brief.get("snapshot_path"),
-            "session_summary_path": brief.get("session_summary_path"),
-        },
-    }
-
-
-def _build_priority_board_context(brief: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "catalyst_theme_frontier_priority": dict(
-            brief.get("catalyst_theme_frontier_priority") or {}
-        ),
-        "catalyst_theme_shadow_watch": _build_catalyst_theme_shadow_watch_rows(
-            list(brief.get("catalyst_theme_shadow_entries") or [])
-        ),
-        "selected_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("selected_entries") or [])
-        ],
-        "near_miss_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("near_miss_entries") or [])
-        ],
-        "opportunity_pool_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("opportunity_pool_entries") or [])
-        ],
-        "no_history_observer_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("no_history_observer_entries") or [])
-        ],
-        "risky_observer_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in list(brief.get("risky_observer_entries") or [])
-        ],
-    }
-
-
-def _build_priority_board_rows(
-    *,
-    brief: dict[str, Any],
-    selected_entries: list[dict[str, Any]],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        *_build_selected_priority_rows(selected_entries),
-        *_build_near_miss_priority_rows(near_miss_entries),
-        *_build_opportunity_pool_priority_rows(opportunity_pool_entries),
-        *_build_no_history_observer_priority_rows(no_history_observer_entries),
-        *_build_risky_observer_priority_rows(risky_observer_entries),
-        *_build_research_upside_priority_rows(
-            list(brief.get("research_upside_radar_entries") or [])
-        ),
-    ]
-
-
-def _build_selected_priority_rows(
-    selected_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_priority_board_row(
-            entry,
-            lane="primary_entry" if index == 0 else "selected_backup",
-            actionability="trade_candidate",
-            default_action="盘中确认后再执行。",
-            default_why_now="当前 short-trade selected。",
-            execution_note_mode="augment",
-            historical_default_monitor_priority="high",
-        )
-        for index, entry in enumerate(selected_entries)
-    ]
-
-
-def _build_near_miss_priority_rows(
-    near_miss_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_priority_board_row(
-            entry,
-            lane="near_miss_watch",
-            actionability="watch_only",
-            default_action="仅做盘中跟踪，不预设主买入动作。",
-            default_why_now="当前接近 near-miss 边界。",
-            execution_note_mode="augment",
-        )
-        for entry in near_miss_entries
-    ]
-
-
-def _build_opportunity_pool_priority_rows(
-    opportunity_pool_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_priority_board_row(
-            entry,
-            lane="opportunity_pool",
-            actionability="upgrade_only",
-            default_action=str(
-                entry.get("promotion_trigger") or "只有盘中新强度确认时才升级。"
-            ),
-            default_why_now="结构未坏但仍在机会池。",
-        )
-        for entry in opportunity_pool_entries
-    ]
-
-
-def _build_no_history_observer_priority_rows(
-    no_history_observer_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_priority_board_row(
-            entry,
-            lane="no_history_observer",
-            actionability="observe_only_no_history",
-            default_action=str(
-                entry.get("promotion_trigger")
-                or "暂无可评估历史先验，只做盘中新证据观察。"
-            ),
-            default_why_now="暂无可评估历史先验。",
-        )
-        for entry in no_history_observer_entries
-    ]
-
-
-def _build_risky_observer_priority_rows(
-    risky_observer_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_priority_board_row(
-            entry,
-            lane="risky_observer",
-            actionability="high_risk_watch_only",
-            default_action="只做高风险盘中观察，不做标准 BTST 升级。",
-            default_why_now="当前属于高风险观察桶。",
-        )
-        for entry in risky_observer_entries
-    ]
-
-
-def _build_research_upside_priority_rows(
-    research_upside_radar_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        _build_priority_board_row(
-            entry,
-            lane="research_upside_radar",
-            actionability="non_trade_learning_only",
-            default_action="只做漏票学习，不加入当日 BTST 交易名单。",
-            default_why_now="research 已选中但 BTST 未放行。",
-            opening_plan_key="radar_note",
-            research_score_target=entry.get("research_score_target"),
-        )
-        for entry in research_upside_radar_entries
-    ]
-
-
-def _sort_priority_board_rows(priority_rows: list[dict[str, Any]]) -> None:
-    lane_rank = {
-        "primary_entry": 0,
-        "selected_backup": 1,
-        "near_miss_watch": 2,
-        "opportunity_pool": 3,
-        "no_history_observer": 4,
-        "risky_observer": 5,
-        "research_upside_radar": 6,
-    }
-    priority_rows.sort(
-        key=lambda row: (
-            lane_rank.get(str(row.get("lane") or "research_upside_radar"), 9),
-            _monitor_priority_rank(row.get("monitor_priority")),
-            _execution_priority_rank(row.get("execution_priority")),
-            -(row.get("research_score_target") or 0.0),
-            -_as_float(row.get("score_target")),
-            str(row.get("ticker") or ""),
-        )
-    )
-
-
-def _build_priority_board_summary(
-    *,
-    brief: dict[str, Any],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-    catalyst_theme_frontier_priority: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "primary_count": len(brief.get("selected_entries") or []),
-        "near_miss_count": len(brief.get("near_miss_entries") or []),
-        "opportunity_pool_count": len(brief.get("opportunity_pool_entries") or []),
-        "no_history_observer_count": len(no_history_observer_entries),
-        "risky_observer_count": len(risky_observer_entries),
-        "research_upside_radar_count": len(
-            brief.get("research_upside_radar_entries") or []
-        ),
-        "catalyst_theme_count": len(brief.get("catalyst_theme_entries") or []),
-        "catalyst_theme_frontier_promoted_count": len(
-            catalyst_theme_frontier_priority.get("promoted_tickers") or []
-        ),
-        "catalyst_theme_shadow_count": len(
-            brief.get("catalyst_theme_shadow_entries") or []
-        ),
-    }
 
 
 def render_btst_next_day_priority_board_markdown(board: dict[str, Any]) -> str:
