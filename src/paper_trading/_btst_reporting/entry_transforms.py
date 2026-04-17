@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import Any
 
 from src.paper_trading.btst_reporting_utils import (
-    OPPORTUNITY_POOL_STRONG_SIGNAL_MIN,
     _as_float,
     _round_or_none,
 )

@@ -12,10 +12,6 @@ from src.paper_trading.btst_reporting_utils import (
     OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
     OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES,
     OPPORTUNITY_POOL_MAX_ENTRIES,
-    OPPORTUNITY_POOL_MIN_SCORE_TARGET,
-    OPPORTUNITY_POOL_STRONG_SIGNAL_MIN,
-    UPSTREAM_SHADOW_CANDIDATE_SOURCES,
-    WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT,
     _as_float,
     _catalyst_bucket_label,
     _compact_trade_date,
@@ -29,21 +25,15 @@ from src.paper_trading.btst_reporting_utils import (
     _round_or_none,
     _score_bucket_label,
     _shadow_decision_rank,
-    _source_lane_display,
-    _source_lane_label,
     _sync_text_artifact_alias,
     _write_json,
     infer_next_trade_date,
-    _entry_mode_action_guidance,
-    _execution_priority_rank,
     _historical_execution_entry_sort_key,
-    _monitor_priority_rank,
     _opportunity_pool_execution_sort_key,
     _research_historical_entry_sort_key,
     _summary_value,
 )
 
-from scripts.btst_latest_followup_utils import _choose_preferred_historical_prior
 from src.paper_trading.btst_opening_watch_markdown_helpers import (
     append_catalyst_theme_watch_markdown as _append_catalyst_theme_watch_markdown_impl,
     append_opening_watch_focus_items_markdown as _append_opening_watch_focus_items_markdown_impl,
@@ -110,9 +100,6 @@ from src.project_env import load_project_dotenv
 from src.tools.akshare_api import get_prices_robust
 from src.tools.api import get_price_data, prices_to_df
 from src.paper_trading._btst_reporting.extractors import (
-    _resolve_upstream_shadow_candidate_reason_codes,
-    _build_upstream_shadow_promotion_trigger,
-    _extract_short_trade_core_metrics,
     _extract_upstream_shadow_replay_only_entry,
     RESEARCH_UPSIDE_RADAR_MAX_ENTRIES,
 )
@@ -149,7 +136,7 @@ from src.paper_trading._btst_reporting.entry_builders import (
     _discover_recent_historical_report_dirs as _discover_recent_historical_report_dirs_eb,
     _extract_catalyst_theme_entry as _extract_catalyst_theme_entry_eb,
     _extract_catalyst_theme_shadow_entry as _extract_catalyst_theme_shadow_entry_eb,
-    _extract_next_day_outcome as _extract_next_day_outcome_eb,
+
     _extract_research_upside_radar_entry as _extract_research_upside_radar_entry_eb,
     _extract_short_trade_entry as _extract_short_trade_entry_eb,
     _extract_short_trade_opportunity_entry as _extract_short_trade_opportunity_entry_eb,
@@ -160,7 +147,11 @@ from src.paper_trading._btst_reporting.entry_builders import (
     _reclassify_selected_execution_quality_entries as _reclassify_selected_execution_quality_entries_eb,
     _resolve_snapshot_path as _resolve_snapshot_path_eb,
     CATALYST_THEME_MAX_ENTRIES,
-    CATALYST_THEME_SHADOW_MAX_ENTRIES as CATALYST_THEME_SHADOW_MAX_ENTRIES_CONST,
+    CATALYST_THEME_SHADOW_MAX_ENTRIES,
+)
+from src.paper_trading._btst_reporting.pool_classifiers import (
+    _demote_weak_near_miss_entries,
+    _partition_opportunity_pool_entries,
 )
 
 
@@ -209,10 +200,74 @@ def _resolve_snapshot_path(
 
 
 
+def _normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    normalized = frame.copy()
+    if not isinstance(normalized.index, pd.DatetimeIndex):
+        normalized.index = pd.to_datetime(normalized.index)
+    normalized = normalized.sort_index()
+    normalized.columns = [str(column).lower() for column in normalized.columns]
+    return normalized
+
+
 def _extract_next_day_outcome(
     ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]
 ) -> dict[str, Any]:
-    return _extract_next_day_outcome_eb(ticker, trade_date, price_cache)
+    cache_key = (ticker, trade_date)
+    frame = price_cache.get(cache_key)
+    if frame is None:
+        end_date = (pd.Timestamp(trade_date) + pd.Timedelta(days=10)).strftime(
+            "%Y-%m-%d"
+        )
+        try:
+            frame = _normalize_price_frame(
+                prices_to_df(
+                    get_prices_robust(
+                        ticker, trade_date, end_date, use_mock_on_fail=False
+                    )
+                )
+            )
+        except Exception:
+            try:
+                frame = _normalize_price_frame(
+                    get_price_data(ticker, trade_date, end_date)
+                )
+            except Exception:
+                frame = pd.DataFrame()
+        price_cache[cache_key] = frame
+    if frame.empty:
+        return {"data_status": "missing_price_frame"}
+
+    trade_ts = pd.Timestamp(trade_date)
+    same_day = frame.loc[frame.index.normalize() == trade_ts.normalize()]
+    next_day = frame.loc[frame.index.normalize() > trade_ts.normalize()]
+    if same_day.empty:
+        return {"data_status": "missing_trade_day_bar"}
+    if next_day.empty:
+        return {"data_status": "missing_next_trade_day_bar"}
+
+    trade_row = same_day.iloc[0]
+    next_row = next_day.iloc[0]
+    trade_close = _as_float(trade_row.get("close"))
+    next_open = _as_float(next_row.get("open"))
+    next_high = _as_float(next_row.get("high"))
+    next_close = _as_float(next_row.get("close"))
+    if trade_close <= 0 or next_open <= 0 or next_high <= 0 or next_close <= 0:
+        return {"data_status": "incomplete_price_bar"}
+
+    return {
+        "data_status": "ok",
+        "next_trade_date": next_day.index[0].strftime("%Y-%m-%d"),
+        "trade_close": round(trade_close, 4),
+        "next_open": round(next_open, 4),
+        "next_high": round(next_high, 4),
+        "next_close": round(next_close, 4),
+        "next_open_return": round((next_open / trade_close) - 1.0, 4),
+        "next_high_return": round((next_high / trade_close) - 1.0, 4),
+        "next_close_return": round((next_close / trade_close) - 1.0, 4),
+        "next_open_to_close_return": round((next_close / next_open) - 1.0, 4),
+    }
 
 
 
@@ -530,12 +585,6 @@ def _build_historical_prior_summary(
         f"{resolved_scope_label}历史 {evaluable_count} 例，next_high>={threshold_pct:.1f}% 命中率={_format_float(hit_rate)}, "
         f"next_close 正收益率={_format_float(close_positive_rate)}。"
     )
-
-
-from src.paper_trading._btst_reporting.pool_classifiers import (
-    _demote_weak_near_miss_entries,
-    _partition_opportunity_pool_entries,
-)
 
 
 def _append_primary_and_near_miss_recommendations(

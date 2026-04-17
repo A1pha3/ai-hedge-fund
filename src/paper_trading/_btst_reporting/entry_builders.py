@@ -13,34 +13,24 @@ import pandas as pd
 
 from src.paper_trading.btst_reporting_utils import (
     OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
-    OPPORTUNITY_POOL_MAX_ENTRIES,
     OPPORTUNITY_POOL_MIN_SCORE_TARGET,
     OPPORTUNITY_POOL_STRONG_SIGNAL_MIN,
     UPSTREAM_SHADOW_CANDIDATE_SOURCES,
     WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT,
     _as_float,
-    _catalyst_bucket_label,
-    _format_float,
     _load_json,
     _normalize_trade_date,
     _round_or_none,
-    _score_bucket_label,
     _source_lane_display,
     _source_lane_label,
 )
 from src.paper_trading._btst_reporting.extractors import (
-    RESEARCH_UPSIDE_RADAR_MAX_ENTRIES,
     _build_upstream_shadow_promotion_trigger,
     _extract_short_trade_core_metrics,
-    _extract_upstream_shadow_replay_only_entry,
     _resolve_upstream_shadow_candidate_reason_codes,
-)
-from src.paper_trading._btst_reporting.entry_mode_utils import (
-    _selected_action_posture,
 )
 from src.paper_trading._btst_reporting.entry_transforms import (
     CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES,
-    _apply_execution_quality_entry_mode,
     _build_catalyst_theme_shadow_watch_rows as _build_catalyst_theme_shadow_watch_rows_direct,
 )
 from scripts.btst_latest_followup_utils import _choose_preferred_historical_prior
