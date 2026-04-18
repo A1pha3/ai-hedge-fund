@@ -992,27 +992,6 @@ def _build_short_trade_explainability_payload(
     }
 
 
-def resolve_short_trade_thresholds(context: ShortTradeEvaluationContext) -> ShortTradeThresholdState:
-    snapshot = context.snapshot
-    profile = snapshot["profile"]
-    breakout_freshness = float(snapshot["breakout_freshness"])
-    trend_acceleration = float(snapshot["trend_acceleration"])
-    breakout_stage, selected_breakout_gate_pass, near_miss_breakout_gate_pass = _classify_breakout_stage(
-        breakout_freshness=breakout_freshness,
-        trend_acceleration=trend_acceleration,
-        profile=profile,
-    )
-    return ShortTradeThresholdState(
-        breakout_freshness=breakout_freshness,
-        trend_acceleration=trend_acceleration,
-        effective_near_miss_threshold=float(snapshot["effective_near_miss_threshold"]),
-        effective_select_threshold=float(snapshot["effective_select_threshold"]),
-        selected_score_tolerance=float(snapshot["selected_score_tolerance"]),
-        breakout_stage=breakout_stage,
-        selected_breakout_gate_pass=selected_breakout_gate_pass,
-        near_miss_breakout_gate_pass=near_miss_breakout_gate_pass,
-    )
-
 
 def _build_short_trade_mutable_verdict_state(snapshot: dict[str, Any]) -> ShortTradeMutableVerdictState:
     return ShortTradeMutableVerdictState(
@@ -1083,110 +1062,6 @@ def _build_short_trade_explainability_state(snapshot: dict[str, Any]) -> ShortTr
         t_plus_2_continuation_candidate=dict(snapshot["t_plus_2_continuation_candidate"]),
     )
 
-
-def _build_short_trade_verdict_reasons(
-    *,
-    snapshot: dict[str, Any],
-    context: ShortTradeEvaluationContext,
-    thresholds: ShortTradeThresholdState,
-    decision: str,
-    mutable_state: ShortTradeMutableVerdictState,
-) -> tuple[list[str], list[str]]:
-    top_reasons = _build_short_trade_top_reasons(
-        state=_build_short_trade_top_reasons_state(
-            snapshot=snapshot,
-            context=context,
-            thresholds=thresholds,
-        )
-    )
-    rejection_reasons = _build_short_trade_rejection_reasons(
-        decision=decision,
-        blockers=mutable_state.blockers,
-        breakout_freshness=thresholds.breakout_freshness,
-        trend_acceleration=thresholds.trend_acceleration,
-        effective_near_miss_threshold=thresholds.effective_near_miss_threshold,
-        score_target=float(snapshot["score_target"]),
-        near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
-        profile=snapshot["profile"],
-        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
-    )
-    return top_reasons, rejection_reasons
-
-
-def _finalize_short_trade_verdict(
-    *,
-    snapshot: dict[str, Any],
-    thresholds: ShortTradeThresholdState,
-    quality_score: float,
-    decision: str,
-    mutable_state: ShortTradeMutableVerdictState,
-    top_reasons: list[str],
-    rejection_reasons: list[str],
-) -> ShortTradeVerdict:
-    confidence = derive_confidence(
-        float(snapshot["score_target"]),
-        thresholds.breakout_freshness,
-        thresholds.trend_acceleration,
-        float(snapshot["catalyst_freshness"]),
-        quality_score,
-    )
-    return ShortTradeVerdict(
-        decision=decision,
-        confidence=confidence,
-        positive_tags=mutable_state.positive_tags,
-        negative_tags=trim_reasons(mutable_state.negative_tags),
-        blockers=trim_reasons(mutable_state.blockers),
-        gate_status=mutable_state.gate_status,
-        top_reasons=top_reasons,
-        rejection_reasons=rejection_reasons,
-    )
-
-
-def resolve_short_trade_verdict(
-    context: ShortTradeEvaluationContext,
-    *,
-    thresholds: ShortTradeThresholdState,
-    quality_score: float,
-) -> ShortTradeVerdict:
-    snapshot = context.snapshot
-    mutable_state = _build_short_trade_mutable_verdict_state(snapshot)
-
-    decision = _resolve_short_trade_decision(
-        blockers=mutable_state.blockers,
-        gate_status=mutable_state.gate_status,
-        score_target=float(snapshot["score_target"]),
-        effective_near_miss_threshold=thresholds.effective_near_miss_threshold,
-        effective_select_threshold=thresholds.effective_select_threshold,
-        selected_score_tolerance=thresholds.selected_score_tolerance,
-        selected_breakout_gate_pass=thresholds.selected_breakout_gate_pass,
-        near_miss_breakout_gate_pass=thresholds.near_miss_breakout_gate_pass,
-        rank_decision_cap=dict(snapshot.get("rank_decision_cap") or {}),
-        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
-        selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
-    )
-    _annotate_short_trade_tags(
-        positive_tags=mutable_state.positive_tags,
-        negative_tags=mutable_state.negative_tags,
-        breakout_stage=thresholds.breakout_stage,
-        carryover_evidence_deficiency=context.carryover_evidence_deficiency,
-        selected_historical_proof_deficiency=context.selected_historical_proof_deficiency,
-    )
-    top_reasons, rejection_reasons = _build_short_trade_verdict_reasons(
-        snapshot=snapshot,
-        context=context,
-        thresholds=thresholds,
-        decision=decision,
-        mutable_state=mutable_state,
-    )
-    return _finalize_short_trade_verdict(
-        snapshot=snapshot,
-        thresholds=thresholds,
-        quality_score=quality_score,
-        decision=decision,
-        mutable_state=mutable_state,
-        top_reasons=top_reasons,
-        rejection_reasons=rejection_reasons,
-    )
 
 
 def build_short_trade_metrics_payload(

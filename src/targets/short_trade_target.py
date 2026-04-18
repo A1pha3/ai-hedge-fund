@@ -570,18 +570,6 @@ def _build_target_input_from_entry(*, trade_date: str, entry: dict[str, Any]) ->
     )
 
 
-def _summarize_positive_factor(name: str, value: float) -> str | None:
-    if value < 0.45:
-        return None
-    return f"{name}={value:.2f}"
-
-
-def _summarize_penalty(name: str, value: float) -> str | None:
-    if value < 0.45:
-        return None
-    return f"{name}={value:.2f}"
-
-
 def _classify_breakout_stage(*, breakout_freshness: float, trend_acceleration: float, profile: Any) -> tuple[str, bool, bool]:
     selected_gate_pass = breakout_freshness >= float(profile.selected_breakout_freshness_min) and trend_acceleration >= float(profile.selected_trend_acceleration_min)
     near_miss_gate_pass = breakout_freshness >= float(profile.near_miss_breakout_freshness_min) and trend_acceleration >= float(profile.near_miss_trend_acceleration_min)
@@ -591,32 +579,6 @@ def _classify_breakout_stage(*, breakout_freshness: float, trend_acceleration: f
         return "prepared_breakout", False, True
     return "weak_breakout", False, False
 
-
-def _collect_breakout_gate_misses(*, breakout_freshness: float, trend_acceleration: float, breakout_min: float, trend_min: float, label: str) -> list[str]:
-    misses: list[str] = []
-    if breakout_freshness < breakout_min:
-        misses.append(f"breakout_freshness_below_{label}_floor")
-    if trend_acceleration < trend_min:
-        misses.append(f"trend_acceleration_below_{label}_floor")
-    return misses
-
-
-def _resolve_positive_score_weights(profile: Any) -> dict[str, float]:
-    configured_weights = {
-        "breakout_freshness": float(profile.breakout_freshness_weight),
-        "trend_acceleration": float(profile.trend_acceleration_weight),
-        "volume_expansion_quality": float(profile.volume_expansion_quality_weight),
-        "close_strength": float(profile.close_strength_weight),
-        "sector_resonance": float(profile.sector_resonance_weight),
-        "catalyst_freshness": float(profile.catalyst_freshness_weight),
-        "layer_c_alignment": float(profile.layer_c_alignment_weight),
-        "historical_continuation_score": float(getattr(profile, "historical_continuation_score_weight", 0.0)),
-        "momentum_strength": float(getattr(profile, "momentum_strength_weight", 0.0)),
-        "short_term_reversal": float(getattr(profile, "short_term_reversal_weight", 0.0)),
-        "intraday_strength": float(getattr(profile, "intraday_strength_weight", 0.0)),
-        "reversal_2d": float(getattr(profile, "reversal_2d_weight", 0.0)),
-    }
-    return _normalize_positive_score_weights(configured_weights)
 
 
 def _compute_short_trade_signal_snapshot(input_data: TargetEvaluationInput, *, profile: Any) -> dict[str, Any]:
