@@ -5,32 +5,22 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
-import pandas as pd
 
 from src.paper_trading.btst_reporting_utils import (
     OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
-    OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
-    OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES,
     OPPORTUNITY_POOL_MAX_ENTRIES,
     _as_float,
-    _catalyst_bucket_label,
     _compact_trade_date,
     _format_float,
     _load_json,
     _load_selection_replay_input,
-    _mean_or_none,
     _normalize_trade_date,
     _resolve_followup_trade_dates,
     _resolve_replay_input_path,
-    _round_or_none,
-    _score_bucket_label,
     _shadow_decision_rank,
     _sync_text_artifact_alias,
     _write_json,
     infer_next_trade_date,
-    _historical_execution_entry_sort_key,
-    _opportunity_pool_execution_sort_key,
-    _research_historical_entry_sort_key,
     _summary_value,
 )
 
@@ -44,39 +34,16 @@ from src.paper_trading.btst_priority_board_markdown_helpers import (
     append_priority_board_rows_markdown as _append_priority_board_rows_markdown_impl,
     append_priority_board_shadow_watch_markdown as _append_priority_board_shadow_watch_markdown_impl,
 )
-from src.paper_trading.btst_trade_brief_shadow_markdown_helpers import (
-    append_brief_catalyst_frontier_markdown as _append_brief_catalyst_frontier_markdown_impl,
-    append_brief_catalyst_shadow_markdown as _append_brief_catalyst_shadow_markdown_impl,
-    append_brief_upstream_shadow_markdown as _append_brief_upstream_shadow_markdown_impl,
-)
 from src.paper_trading.btst_shared_markdown_helpers import (
-    append_frontier_priority_summary as _append_frontier_priority_summary_impl,
-    append_frontier_promoted_shadow_none_block as _append_frontier_promoted_shadow_none_block_impl,
-    append_frontier_section as _append_frontier_section_impl,
     append_guardrail_section as _append_guardrail_section_impl,
     append_indexed_ticker_block as _append_indexed_ticker_block_impl,
     append_indexed_ticker_blocks as _append_indexed_ticker_blocks_impl,
-    append_none_block as _append_none_block_impl,
-    append_source_paths_section as _append_source_paths_section_impl,
     append_titled_indexed_section as _append_titled_indexed_section_impl,
     append_titled_indexed_ticker_section as _append_titled_indexed_ticker_section_impl,
     append_upstream_shadow_core_fields as _append_upstream_shadow_core_fields_impl,
     append_upstream_shadow_section as _append_upstream_shadow_section_impl,
     append_upstream_shadow_summary as _append_upstream_shadow_summary_impl,
     append_upstream_shadow_summary_header as _append_upstream_shadow_summary_header_impl,
-)
-from src.paper_trading.btst_trade_brief_core_markdown_helpers import (
-    append_brief_observer_lane_markdown as _append_brief_observer_lane_markdown_impl,
-    append_brief_scored_entries_markdown as _append_brief_scored_entries_markdown_impl,
-)
-from src.paper_trading.btst_trade_brief_catalyst_markdown_helpers import (
-    append_brief_catalyst_theme_markdown as _append_brief_catalyst_theme_markdown_impl,
-    append_brief_excluded_research_markdown as _append_brief_excluded_research_markdown_impl,
-)
-from src.paper_trading.btst_trade_brief_pool_markdown_helpers import (
-    append_brief_opportunity_pool_markdown as _append_brief_opportunity_pool_markdown_impl,
-    append_brief_pruned_entries_markdown as _append_brief_pruned_entries_markdown_impl,
-    append_brief_research_radar_markdown as _append_brief_research_radar_markdown_impl,
 )
 from src.paper_trading.btst_recommendation_helpers import (
     append_pool_and_observer_recommendations as _append_pool_and_observer_recommendations_impl,
@@ -97,15 +64,9 @@ from src.paper_trading.btst_report_artifact_helpers import (
     resolve_followup_artifact_context as _resolve_followup_artifact_context_impl,
 )
 from src.project_env import load_project_dotenv
-from src.tools.akshare_api import get_prices_robust
-from src.tools.api import get_price_data, prices_to_df
 from src.paper_trading._btst_reporting.extractors import (
     _extract_upstream_shadow_replay_only_entry,
     RESEARCH_UPSIDE_RADAR_MAX_ENTRIES,
-)
-from src.paper_trading._btst_reporting.classifiers import (
-    _classify_historical_prior,
-    _classify_execution_quality_prior,
 )
 from src.paper_trading._btst_reporting.entry_mode_utils import (
     _augment_execution_note as _augment_execution_note_impl,
@@ -149,9 +110,19 @@ from src.paper_trading._btst_reporting.entry_builders import (
     CATALYST_THEME_MAX_ENTRIES,
     CATALYST_THEME_SHADOW_MAX_ENTRIES,
 )
-from src.paper_trading._btst_reporting.pool_classifiers import (
-    _demote_weak_near_miss_entries,
-    _partition_opportunity_pool_entries,
+from src.paper_trading._btst_reporting.brief_resolver import (
+    _resolve_brief_analysis as _resolve_brief_analysis_impl,
+)
+from src.paper_trading._btst_reporting.brief_rendering import (
+    _append_brief_catalyst_frontier_markdown as _append_brief_catalyst_frontier_markdown_br,
+    _append_brief_catalyst_shadow_markdown as _append_brief_catalyst_shadow_markdown_br,
+    _append_brief_catalyst_theme_markdown as _append_brief_catalyst_theme_markdown_br,
+    _append_brief_excluded_research_markdown as _append_brief_excluded_research_markdown_br,
+    _append_brief_observer_lane_markdown as _append_brief_observer_lane_markdown_br,
+    _append_brief_opportunity_pool_markdown as _append_brief_opportunity_pool_markdown_br,
+    _append_brief_scored_entries_markdown as _append_brief_scored_entries_markdown_br,
+    _append_brief_upstream_shadow_markdown as _append_brief_upstream_shadow_markdown_br,
+    render_btst_next_day_trade_brief_markdown as render_btst_next_day_trade_brief_br,
 )
 
 
@@ -160,6 +131,22 @@ load_project_dotenv()
 
 CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES = 3
 
+
+
+from src.paper_trading._btst_reporting.historical_prior import (
+    _collect_historical_watch_candidate_rows,
+    _extract_excluded_research_entry,
+    _extract_next_day_outcome,
+    _enrich_btst_brief_entries_with_history,
+    _summarize_historical_opportunity_rows,
+    _build_watch_candidate_historical_prior,
+    _apply_historical_prior_to_entries,
+)
+from src.paper_trading._btst_reporting.pool_classifiers import (
+    _partition_opportunity_pool_entries,
+)
+from src.tools.akshare_api import get_prices_robust
+from src.tools.api import get_price_data
 
 def _extract_upstream_shadow_entry(
     selection_entry: dict[str, Any], supplemental_entry: dict[str, Any] | None = None
@@ -200,74 +187,6 @@ def _resolve_snapshot_path(
 
 
 
-def _normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
-    if frame is None or frame.empty:
-        return pd.DataFrame()
-    normalized = frame.copy()
-    if not isinstance(normalized.index, pd.DatetimeIndex):
-        normalized.index = pd.to_datetime(normalized.index)
-    normalized = normalized.sort_index()
-    normalized.columns = [str(column).lower() for column in normalized.columns]
-    return normalized
-
-
-def _extract_next_day_outcome(
-    ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]
-) -> dict[str, Any]:
-    cache_key = (ticker, trade_date)
-    frame = price_cache.get(cache_key)
-    if frame is None:
-        end_date = (pd.Timestamp(trade_date) + pd.Timedelta(days=10)).strftime(
-            "%Y-%m-%d"
-        )
-        try:
-            frame = _normalize_price_frame(
-                prices_to_df(
-                    get_prices_robust(
-                        ticker, trade_date, end_date, use_mock_on_fail=False
-                    )
-                )
-            )
-        except Exception:
-            try:
-                frame = _normalize_price_frame(
-                    get_price_data(ticker, trade_date, end_date)
-                )
-            except Exception:
-                frame = pd.DataFrame()
-        price_cache[cache_key] = frame
-    if frame.empty:
-        return {"data_status": "missing_price_frame"}
-
-    trade_ts = pd.Timestamp(trade_date)
-    same_day = frame.loc[frame.index.normalize() == trade_ts.normalize()]
-    next_day = frame.loc[frame.index.normalize() > trade_ts.normalize()]
-    if same_day.empty:
-        return {"data_status": "missing_trade_day_bar"}
-    if next_day.empty:
-        return {"data_status": "missing_next_trade_day_bar"}
-
-    trade_row = same_day.iloc[0]
-    next_row = next_day.iloc[0]
-    trade_close = _as_float(trade_row.get("close"))
-    next_open = _as_float(next_row.get("open"))
-    next_high = _as_float(next_row.get("high"))
-    next_close = _as_float(next_row.get("close"))
-    if trade_close <= 0 or next_open <= 0 or next_high <= 0 or next_close <= 0:
-        return {"data_status": "incomplete_price_bar"}
-
-    return {
-        "data_status": "ok",
-        "next_trade_date": next_day.index[0].strftime("%Y-%m-%d"),
-        "trade_close": round(trade_close, 4),
-        "next_open": round(next_open, 4),
-        "next_high": round(next_high, 4),
-        "next_close": round(next_close, 4),
-        "next_open_return": round((next_open / trade_close) - 1.0, 4),
-        "next_high_return": round((next_high / trade_close) - 1.0, 4),
-        "next_close_return": round((next_close / trade_close) - 1.0, 4),
-        "next_open_to_close_return": round((next_close / next_open) - 1.0, 4),
-    }
 
 
 
@@ -356,235 +275,6 @@ def _build_catalyst_theme_shadow_watch_rows(
     return _build_catalyst_theme_shadow_watch_rows_impl(entries, limit=limit)
 
 
-def _decorate_watch_candidate_history_entry(
-    entry: dict[str, Any], family: str
-) -> dict[str, Any]:
-    metrics = dict(entry.get("metrics") or {})
-    return {
-        **entry,
-        "watch_candidate_family": family,
-        "score_bucket": _score_bucket_label(entry.get("score_target")),
-        "catalyst_bucket": _catalyst_bucket_label(metrics),
-    }
-
-
-def _collect_historical_opportunity_rows(
-    report_dir: Path, trade_date: str | None
-) -> dict[str, Any]:
-    historical_report_dirs = [
-        report_dir,
-        *_discover_recent_historical_report_dirs(report_dir, trade_date),
-    ]
-    rows: list[dict[str, Any]] = []
-    contributing_reports: set[str] = set()
-
-    for historical_report_dir in historical_report_dirs:
-        for snapshot_path in _iter_selection_snapshot_paths(historical_report_dir):
-            snapshot = _load_json(snapshot_path)
-            snapshot_trade_date = _normalize_trade_date(
-                snapshot.get("trade_date") or snapshot_path.parent.name
-            )
-            if trade_date and snapshot_trade_date and snapshot_trade_date >= trade_date:
-                continue
-            selection_targets = snapshot.get("selection_targets") or {}
-            for selection_entry in selection_targets.values():
-                opportunity_entry = _extract_short_trade_opportunity_entry(
-                    dict(selection_entry)
-                )
-                if opportunity_entry is None:
-                    continue
-                rows.append(
-                    {
-                        **opportunity_entry,
-                        "trade_date": snapshot_trade_date,
-                        "report_dir": str(historical_report_dir),
-                        "snapshot_path": str(snapshot_path),
-                    }
-                )
-                contributing_reports.add(str(historical_report_dir))
-
-    rows.sort(
-        key=lambda row: (row.get("trade_date") or "", row.get("ticker") or ""),
-        reverse=True,
-    )
-    return {
-        "rows": rows,
-        "historical_report_dirs": historical_report_dirs,
-        "contributing_report_count": len(contributing_reports),
-    }
-
-
-def _collect_historical_watch_candidate_rows(
-    report_dir: Path, trade_date: str | None
-) -> dict[str, Any]:
-    historical_report_dirs = [
-        report_dir,
-        *_discover_recent_historical_report_dirs(report_dir, trade_date),
-    ]
-    rows: list[dict[str, Any]] = []
-    contributing_reports: set[str] = set()
-    family_counts = {
-        "selected": 0,
-        "near_miss": 0,
-        "opportunity_pool": 0,
-        "research_upside_radar": 0,
-        "catalyst_theme": 0,
-    }
-
-    for historical_report_dir in historical_report_dirs:
-        for snapshot_path in _iter_selection_snapshot_paths(historical_report_dir):
-            snapshot = _load_json(snapshot_path)
-            snapshot_trade_date = _normalize_trade_date(
-                snapshot.get("trade_date") or snapshot_path.parent.name
-            )
-            if trade_date and snapshot_trade_date and snapshot_trade_date >= trade_date:
-                continue
-            _collect_watch_candidate_rows_from_selection_targets(
-                rows=rows,
-                family_counts=family_counts,
-                contributing_reports=contributing_reports,
-                historical_report_dir=historical_report_dir,
-                snapshot_path=snapshot_path,
-                snapshot_trade_date=snapshot_trade_date,
-                selection_targets=snapshot.get("selection_targets") or {},
-            )
-            _collect_watch_candidate_rows_from_catalyst_entries(
-                rows=rows,
-                family_counts=family_counts,
-                contributing_reports=contributing_reports,
-                historical_report_dir=historical_report_dir,
-                snapshot_path=snapshot_path,
-                snapshot_trade_date=snapshot_trade_date,
-                catalyst_entries=snapshot.get("catalyst_theme_candidates") or [],
-            )
-
-    rows.sort(
-        key=lambda row: (row.get("trade_date") or "", row.get("ticker") or ""),
-        reverse=True,
-    )
-    return {
-        "rows": rows,
-        "historical_report_dirs": historical_report_dirs,
-        "contributing_report_count": len(contributing_reports),
-        "family_counts": family_counts,
-    }
-
-
-def _collect_watch_candidate_rows_from_selection_targets(
-    *,
-    rows: list[dict[str, Any]],
-    family_counts: dict[str, int],
-    contributing_reports: set[str],
-    historical_report_dir: Path,
-    snapshot_path: Path,
-    snapshot_trade_date: str | None,
-    selection_targets: dict[str, Any],
-) -> None:
-    history_context = {
-        "trade_date": snapshot_trade_date,
-        "report_dir": str(historical_report_dir),
-        "snapshot_path": str(snapshot_path),
-    }
-    for selection_entry in selection_targets.values():
-        normalized_selection_entry = dict(selection_entry)
-        _append_watch_candidate_row(
-            rows=rows,
-            family_counts=family_counts,
-            contributing_reports=contributing_reports,
-            report_dir=str(historical_report_dir),
-            family=str(
-                (_extract_short_trade_entry(normalized_selection_entry) or {}).get(
-                    "decision"
-                )
-                or ""
-            ),
-            entry=_extract_short_trade_entry(normalized_selection_entry),
-            history_context=history_context,
-        )
-        _append_watch_candidate_row(
-            rows=rows,
-            family_counts=family_counts,
-            contributing_reports=contributing_reports,
-            report_dir=str(historical_report_dir),
-            family="opportunity_pool",
-            entry=_extract_short_trade_opportunity_entry(normalized_selection_entry),
-            history_context=history_context,
-        )
-        _append_watch_candidate_row(
-            rows=rows,
-            family_counts=family_counts,
-            contributing_reports=contributing_reports,
-            report_dir=str(historical_report_dir),
-            family="research_upside_radar",
-            entry=_extract_research_upside_radar_entry(normalized_selection_entry),
-            history_context=history_context,
-        )
-
-
-def _collect_watch_candidate_rows_from_catalyst_entries(
-    *,
-    rows: list[dict[str, Any]],
-    family_counts: dict[str, int],
-    contributing_reports: set[str],
-    historical_report_dir: Path,
-    snapshot_path: Path,
-    snapshot_trade_date: str | None,
-    catalyst_entries: list[dict[str, Any]],
-) -> None:
-    history_context = {
-        "trade_date": snapshot_trade_date,
-        "report_dir": str(historical_report_dir),
-        "snapshot_path": str(snapshot_path),
-    }
-    for catalyst_entry in catalyst_entries:
-        _append_watch_candidate_row(
-            rows=rows,
-            family_counts=family_counts,
-            contributing_reports=contributing_reports,
-            report_dir=str(historical_report_dir),
-            family="catalyst_theme",
-            entry=_extract_catalyst_theme_entry(dict(catalyst_entry)),
-            history_context=history_context,
-        )
-
-
-def _append_watch_candidate_row(
-    *,
-    rows: list[dict[str, Any]],
-    family_counts: dict[str, int],
-    contributing_reports: set[str],
-    report_dir: str,
-    family: str,
-    entry: dict[str, Any] | None,
-    history_context: dict[str, Any],
-) -> None:
-    if entry is None:
-        return
-    rows.append(
-        {**_decorate_watch_candidate_history_entry(entry, family), **history_context}
-    )
-    family_counts[family] = int(family_counts.get(family) or 0) + 1
-    contributing_reports.add(report_dir)
-
-
-def _build_historical_prior_summary(
-    *,
-    applied_scope: str,
-    evaluable_count: int,
-    hit_rate: float | None,
-    close_positive_rate: float | None,
-    scope_label: str | None = None,
-) -> str | None:
-    if evaluable_count <= 0:
-        return None
-    resolved_scope_label = scope_label or (
-        "同票" if applied_scope == "same_ticker" else "同源"
-    )
-    threshold_pct = OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD * 100.0
-    return (
-        f"{resolved_scope_label}历史 {evaluable_count} 例，next_high>={threshold_pct:.1f}% 命中率={_format_float(hit_rate)}, "
-        f"next_close 正收益率={_format_float(close_positive_rate)}。"
-    )
 
 
 def _append_primary_and_near_miss_recommendations(
@@ -723,807 +413,8 @@ def _append_research_and_shadow_recommendations(
     )
 
 
-def _summarize_historical_opportunity_rows(
-    rows: list[dict[str, Any]],
-    price_cache: dict[tuple[str, str], pd.DataFrame],
-) -> dict[str, Any]:
-    summary_state = _build_empty_historical_opportunity_summary_state()
-
-    for row in rows:
-        evaluated_row = _evaluate_historical_opportunity_row(row, price_cache)
-        if evaluated_row is None:
-            continue
-        _accumulate_historical_opportunity_summary(summary_state, evaluated_row)
-
-    next_high_hit_rate, next_close_positive_rate = (
-        _compute_historical_opportunity_rates(
-            summary_state["evaluated_rows"], summary_state
-        )
-    )
-    return _build_historical_opportunity_summary_payload(
-        rows=rows,
-        evaluated_rows=summary_state["evaluated_rows"],
-        next_open_values=summary_state["next_open_values"],
-        next_high_values=summary_state["next_high_values"],
-        next_close_values=summary_state["next_close_values"],
-        next_open_to_close_values=summary_state["next_open_to_close_values"],
-        next_high_hit_rate=next_high_hit_rate,
-        next_close_positive_rate=next_close_positive_rate,
-    )
 
 
-def _build_empty_historical_opportunity_summary_state() -> dict[str, Any]:
-    return {
-        "evaluated_rows": [],
-        "next_open_values": [],
-        "next_high_values": [],
-        "next_close_values": [],
-        "next_open_to_close_values": [],
-        "hit_count": 0,
-        "positive_close_count": 0,
-    }
-
-
-def _accumulate_historical_opportunity_summary(
-    summary_state: dict[str, Any], evaluated_row: dict[str, Any]
-) -> None:
-    next_open_return = evaluated_row.get("next_open_return")
-    next_high_return = evaluated_row.get("next_high_return")
-    next_close_return = evaluated_row.get("next_close_return")
-    next_open_to_close_return = evaluated_row.get("next_open_to_close_return")
-    if next_open_return is not None:
-        summary_state["next_open_values"].append(next_open_return)
-    if next_high_return is not None:
-        summary_state["next_high_values"].append(next_high_return)
-        if next_high_return >= OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD:
-            summary_state["hit_count"] += 1
-    if next_close_return is not None:
-        summary_state["next_close_values"].append(next_close_return)
-        if next_close_return > 0:
-            summary_state["positive_close_count"] += 1
-    if next_open_to_close_return is not None:
-        summary_state["next_open_to_close_values"].append(next_open_to_close_return)
-    summary_state["evaluated_rows"].append(evaluated_row)
-
-
-def _compute_historical_opportunity_rates(
-    evaluated_rows: list[dict[str, Any]],
-    summary_state: dict[str, Any],
-) -> tuple[float | None, float | None]:
-    evaluable_count = len(evaluated_rows)
-    next_high_hit_rate = (
-        round(summary_state["hit_count"] / evaluable_count, 4)
-        if evaluable_count
-        else None
-    )
-    next_close_positive_rate = (
-        round(summary_state["positive_close_count"] / evaluable_count, 4)
-        if evaluable_count
-        else None
-    )
-    return next_high_hit_rate, next_close_positive_rate
-
-
-def _evaluate_historical_opportunity_row(
-    row: dict[str, Any],
-    price_cache: dict[tuple[str, str], pd.DataFrame],
-) -> dict[str, Any] | None:
-    trade_date = str(row.get("trade_date") or "")
-    ticker = str(row.get("ticker") or "")
-    if not trade_date or not ticker:
-        return None
-    outcome = _extract_next_day_outcome(ticker, trade_date, price_cache)
-    if outcome.get("data_status") != "ok":
-        return None
-    return {
-        "trade_date": trade_date,
-        "ticker": ticker,
-        "candidate_source": row.get("candidate_source"),
-        "score_target": _round_or_none(row.get("score_target")),
-        "next_open_return": _round_or_none(outcome.get("next_open_return")),
-        "next_high_return": _round_or_none(outcome.get("next_high_return")),
-        "next_close_return": _round_or_none(outcome.get("next_close_return")),
-        "next_open_to_close_return": _round_or_none(
-            outcome.get("next_open_to_close_return")
-        ),
-    }
-
-
-def _build_historical_opportunity_summary_payload(
-    *,
-    rows: list[dict[str, Any]],
-    evaluated_rows: list[dict[str, Any]],
-    next_open_values: list[float],
-    next_high_values: list[float],
-    next_close_values: list[float],
-    next_open_to_close_values: list[float],
-    next_high_hit_rate: float | None,
-    next_close_positive_rate: float | None,
-) -> dict[str, Any]:
-    return {
-        "sample_count": len(rows),
-        "evaluable_count": len(evaluated_rows),
-        "next_high_hit_threshold": OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
-        "next_open_return_mean": _mean_or_none(next_open_values),
-        "next_high_hit_rate_at_threshold": next_high_hit_rate,
-        "next_close_positive_rate": next_close_positive_rate,
-        "next_high_return_mean": _mean_or_none(next_high_values),
-        "next_close_return_mean": _mean_or_none(next_close_values),
-        "next_open_to_close_return_mean": _mean_or_none(next_open_to_close_values),
-        "recent_examples": evaluated_rows[:3],
-    }
-
-
-def _build_opportunity_pool_historical_prior(
-    entry: dict[str, Any],
-    historical_rows: list[dict[str, Any]],
-    price_cache: dict[tuple[str, str], pd.DataFrame],
-) -> dict[str, Any]:
-    same_ticker_rows = [
-        row for row in historical_rows if row.get("ticker") == entry.get("ticker")
-    ]
-    same_source_rows = [
-        row
-        for row in historical_rows
-        if row.get("candidate_source") == entry.get("candidate_source")
-    ]
-    applied_scope, applied_rows = _resolve_opportunity_pool_historical_scope(
-        same_ticker_rows, same_source_rows
-    )
-
-    stats = _summarize_historical_opportunity_rows(applied_rows, price_cache)
-    bias_label, monitor_priority = _classify_historical_prior(
-        stats.get("next_high_hit_rate_at_threshold"),
-        stats.get("next_close_positive_rate"),
-        int(stats.get("evaluable_count") or 0),
-    )
-    execution_quality = _classify_execution_quality_prior(
-        stats.get("next_open_return_mean"),
-        stats.get("next_open_to_close_return_mean"),
-        stats.get("next_high_return_mean"),
-        stats.get("next_close_return_mean"),
-        stats.get("next_high_hit_rate_at_threshold"),
-        stats.get("next_close_positive_rate"),
-        int(stats.get("evaluable_count") or 0),
-    )
-    return _build_opportunity_pool_historical_prior_payload(
-        same_ticker_rows=same_ticker_rows,
-        same_source_rows=same_source_rows,
-        applied_scope=applied_scope,
-        stats=stats,
-        bias_label=bias_label,
-        monitor_priority=monitor_priority,
-        execution_quality=execution_quality,
-    )
-
-
-def _resolve_opportunity_pool_historical_scope(
-    same_ticker_rows: list[dict[str, Any]],
-    same_source_rows: list[dict[str, Any]],
-) -> tuple[str, list[dict[str, Any]]]:
-    if len(same_ticker_rows) >= OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES:
-        return "same_ticker", same_ticker_rows
-    if same_source_rows:
-        return "candidate_source", same_source_rows
-    if same_ticker_rows:
-        return "same_ticker", same_ticker_rows
-    return "none", []
-
-
-def _build_opportunity_pool_historical_prior_payload(
-    *,
-    same_ticker_rows: list[dict[str, Any]],
-    same_source_rows: list[dict[str, Any]],
-    applied_scope: str,
-    stats: dict[str, Any],
-    bias_label: str,
-    monitor_priority: str,
-    execution_quality: dict[str, str],
-) -> dict[str, Any]:
-    return {
-        "same_ticker_sample_count": len(same_ticker_rows),
-        "same_candidate_source_sample_count": len(same_source_rows),
-        "applied_scope": applied_scope,
-        **stats,
-        "bias_label": bias_label,
-        "monitor_priority": monitor_priority,
-        **execution_quality,
-        "summary": _build_historical_prior_summary(
-            applied_scope=applied_scope,
-            evaluable_count=int(stats.get("evaluable_count") or 0),
-            hit_rate=stats.get("next_high_hit_rate_at_threshold"),
-            close_positive_rate=stats.get("next_close_positive_rate"),
-        ),
-    }
-
-
-def _build_watch_candidate_historical_prior(
-    entry: dict[str, Any],
-    historical_rows: list[dict[str, Any]],
-    price_cache: dict[tuple[str, str], pd.DataFrame],
-    *,
-    family: str,
-) -> dict[str, Any]:
-    decorated_entry = _decorate_watch_candidate_history_entry(entry, family)
-    row_buckets = _build_watch_candidate_historical_row_buckets(
-        historical_rows=historical_rows,
-        decorated_entry=decorated_entry,
-        family=family,
-    )
-    applied_scope, scope_label, applied_rows = _resolve_watch_candidate_scope_selection(
-        row_buckets
-    )
-
-    stats = _summarize_historical_opportunity_rows(applied_rows, price_cache)
-    bias_label, monitor_priority = _classify_historical_prior(
-        stats.get("next_high_hit_rate_at_threshold"),
-        stats.get("next_close_positive_rate"),
-        int(stats.get("evaluable_count") or 0),
-    )
-    execution_quality = _classify_execution_quality_prior(
-        stats.get("next_open_return_mean"),
-        stats.get("next_open_to_close_return_mean"),
-        stats.get("next_high_return_mean"),
-        stats.get("next_close_return_mean"),
-        stats.get("next_high_hit_rate_at_threshold"),
-        stats.get("next_close_positive_rate"),
-        int(stats.get("evaluable_count") or 0),
-    )
-    return _build_watch_candidate_historical_prior_payload(
-        family=family,
-        decorated_entry=decorated_entry,
-        row_buckets=row_buckets,
-        applied_scope=applied_scope,
-        stats=stats,
-        bias_label=bias_label,
-        monitor_priority=monitor_priority,
-        execution_quality=execution_quality,
-        scope_label=scope_label,
-    )
-
-
-def _build_watch_candidate_historical_prior_payload(
-    *,
-    family: str,
-    decorated_entry: dict[str, Any],
-    row_buckets: dict[str, list[dict[str, Any]]],
-    applied_scope: str,
-    stats: dict[str, Any],
-    bias_label: str,
-    monitor_priority: str,
-    execution_quality: dict[str, str],
-    scope_label: str | None,
-) -> dict[str, Any]:
-    return {
-        "watch_candidate_family": family,
-        "score_bucket": decorated_entry.get("score_bucket"),
-        "catalyst_bucket": decorated_entry.get("catalyst_bucket"),
-        "same_ticker_sample_count": len(row_buckets["same_ticker"]),
-        "same_family_sample_count": len(row_buckets["same_family"]),
-        "same_candidate_source_sample_count": len(row_buckets["same_source"]),
-        "same_family_source_sample_count": len(row_buckets["same_family_source"]),
-        "same_family_source_score_catalyst_sample_count": len(
-            row_buckets["same_family_source_score_catalyst"]
-        ),
-        "same_source_score_sample_count": len(row_buckets["same_source_score"]),
-        "applied_scope": applied_scope,
-        **stats,
-        "bias_label": bias_label,
-        "monitor_priority": monitor_priority,
-        **execution_quality,
-        "summary": _build_historical_prior_summary(
-            applied_scope=applied_scope,
-            evaluable_count=int(stats.get("evaluable_count") or 0),
-            hit_rate=stats.get("next_high_hit_rate_at_threshold"),
-            close_positive_rate=stats.get("next_close_positive_rate"),
-            scope_label=scope_label,
-        ),
-    }
-
-
-def _build_watch_candidate_historical_row_buckets(
-    *,
-    historical_rows: list[dict[str, Any]],
-    decorated_entry: dict[str, Any],
-    family: str,
-) -> dict[str, list[dict[str, Any]]]:
-    same_ticker_rows = [
-        row
-        for row in historical_rows
-        if row.get("ticker") == decorated_entry.get("ticker")
-    ]
-    same_family_rows = [
-        row for row in historical_rows if row.get("watch_candidate_family") == family
-    ]
-    same_source_rows = [
-        row
-        for row in historical_rows
-        if row.get("candidate_source") == decorated_entry.get("candidate_source")
-    ]
-    same_family_source_rows = [
-        row
-        for row in same_family_rows
-        if row.get("candidate_source") == decorated_entry.get("candidate_source")
-    ]
-    same_family_source_score_catalyst_rows = [
-        row
-        for row in same_family_source_rows
-        if row.get("score_bucket") == decorated_entry.get("score_bucket")
-        and row.get("catalyst_bucket") == decorated_entry.get("catalyst_bucket")
-    ]
-    same_source_score_rows = [
-        row
-        for row in same_source_rows
-        if row.get("score_bucket") == decorated_entry.get("score_bucket")
-    ]
-    return {
-        "same_ticker": same_ticker_rows,
-        "same_family": same_family_rows,
-        "same_source": same_source_rows,
-        "same_family_source": same_family_source_rows,
-        "same_family_source_score_catalyst": same_family_source_score_catalyst_rows,
-        "same_source_score": same_source_score_rows,
-    }
-
-
-def _resolve_watch_candidate_scope_selection(
-    row_buckets: dict[str, list[dict[str, Any]]],
-) -> tuple[str, str | None, list[dict[str, Any]]]:
-    scope_candidates = [
-        (
-            "same_ticker",
-            "同票",
-            row_buckets["same_ticker"]
-            if len(row_buckets["same_ticker"])
-            >= OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES
-            else [],
-        ),
-        (
-            "family_source_score_catalyst",
-            "同层同源同分桶",
-            row_buckets["same_family_source_score_catalyst"],
-        ),
-        ("family_source", "同层同源", row_buckets["same_family_source"]),
-        ("source_score", "同源同分桶", row_buckets["same_source_score"]),
-        ("candidate_source", "同源", row_buckets["same_source"]),
-        ("same_ticker", "同票", row_buckets["same_ticker"]),
-    ]
-    for scope_name, label, scope_rows in scope_candidates:
-        if scope_rows:
-            return scope_name, label, scope_rows
-    return "none", None, []
-
-
-def _extract_excluded_research_entry(
-    selection_entry: dict[str, Any],
-) -> dict[str, Any] | None:
-    research_entry = selection_entry.get("research") or {}
-    short_trade_entry = selection_entry.get("short_trade") or {}
-    if research_entry.get("decision") != "selected":
-        return None
-    if short_trade_entry.get("decision") in {"selected", "near_miss"}:
-        return None
-    if _extract_research_upside_radar_entry(selection_entry) is not None:
-        return None
-
-    return {
-        "ticker": selection_entry.get("ticker"),
-        "research_score_target": research_entry.get("score_target"),
-        "short_trade_decision": short_trade_entry.get("decision"),
-        "short_trade_score_target": short_trade_entry.get("score_target"),
-        "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
-        "delta_summary": list(selection_entry.get("delta_summary") or []),
-    }
-
-
-def _build_btst_candidate_historical_context(
-    historical_payload: dict[str, Any],
-) -> dict[str, Any]:
-    family_counts = dict(historical_payload.get("family_counts") or {})
-    return {
-        "lookback_report_limit": OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
-        "historical_report_count": int(
-            historical_payload.get("contributing_report_count") or 0
-        ),
-        "historical_btst_candidate_count": len(historical_payload.get("rows") or []),
-        "historical_watch_candidate_count": len(historical_payload.get("rows") or []),
-        "historical_selected_candidate_count": int(family_counts.get("selected") or 0),
-        "historical_near_miss_candidate_count": int(
-            family_counts.get("near_miss") or 0
-        ),
-        "historical_opportunity_candidate_count": int(
-            family_counts.get("opportunity_pool") or 0
-        ),
-        "historical_research_upside_radar_count": int(
-            family_counts.get("research_upside_radar") or 0
-        ),
-        "historical_catalyst_theme_count": int(
-            family_counts.get("catalyst_theme") or 0
-        ),
-        "next_high_hit_threshold": OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
-    }
-
-
-def _apply_historical_prior_to_entries(
-    entries: list[dict[str, Any]],
-    *,
-    historical_rows: list[dict[str, Any]],
-    price_cache: dict[tuple[str, str], pd.DataFrame],
-    family: str,
-) -> list[dict[str, Any]]:
-    return [
-        _apply_historical_prior_to_entry(
-            entry=entry,
-            historical_rows=historical_rows,
-            price_cache=price_cache,
-            family=family,
-        )
-        for entry in entries
-    ]
-
-
-def _apply_historical_prior_to_entry(
-    *,
-    entry: dict[str, Any],
-    historical_rows: list[dict[str, Any]],
-    price_cache: dict[tuple[str, str], pd.DataFrame],
-    family: str,
-) -> dict[str, Any]:
-    enriched_entry = dict(entry)
-    enriched_entry.update(
-        _merge_entry_historical_prior(
-            enriched_entry,
-            _build_watch_candidate_historical_prior(
-                enriched_entry,
-                historical_rows,
-                price_cache,
-                family=family,
-            ),
-        )
-    )
-    return enriched_entry
-
-
-def _enrich_btst_brief_entries_with_history(
-    *,
-    report_dir: Path,
-    actual_trade_date: str | None,
-    selected_entries: list[dict[str, Any]],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    research_upside_radar_entries: list[dict[str, Any]],
-    catalyst_theme_entries: list[dict[str, Any]],
-) -> tuple[
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    dict[str, Any],
-]:
-    default_context = _build_empty_btst_candidate_historical_context()
-    no_history_observer_entries, risky_observer_entries, weak_history_pruned_entries = (
-        _build_empty_brief_history_observer_groups()
-    )
-    if not (
-        selected_entries
-        or near_miss_entries
-        or opportunity_pool_entries
-        or research_upside_radar_entries
-        or catalyst_theme_entries
-    ):
-        return _build_empty_brief_history_enrichment_result(
-            selected_entries,
-            near_miss_entries,
-            opportunity_pool_entries,
-            research_upside_radar_entries,
-            catalyst_theme_entries,
-            no_history_observer_entries,
-            risky_observer_entries,
-            weak_history_pruned_entries,
-            default_context,
-        )
-
-    historical_payload = _collect_historical_watch_candidate_rows(
-        report_dir, actual_trade_date
-    )
-    price_cache: dict[tuple[str, str], pd.DataFrame] = {}
-    (
-        selected_entries,
-        near_miss_entries,
-        opportunity_pool_entries,
-        research_upside_radar_entries,
-        catalyst_theme_entries,
-    ) = _apply_historical_prior_to_brief_entry_groups(
-        historical_rows=historical_payload["rows"],
-        price_cache=price_cache,
-        selected_entries=selected_entries,
-        near_miss_entries=near_miss_entries,
-        opportunity_pool_entries=opportunity_pool_entries,
-        research_upside_radar_entries=research_upside_radar_entries,
-        catalyst_theme_entries=catalyst_theme_entries,
-    )
-
-    (
-        selected_entries,
-        near_miss_entries,
-        opportunity_pool_entries,
-        no_history_observer_entries,
-        risky_observer_entries,
-        weak_history_pruned_entries,
-    ) = _postprocess_brief_history_enriched_groups(
-        selected_entries=selected_entries,
-        near_miss_entries=near_miss_entries,
-        opportunity_pool_entries=opportunity_pool_entries,
-        no_history_observer_entries=no_history_observer_entries,
-        risky_observer_entries=risky_observer_entries,
-        weak_history_pruned_entries=weak_history_pruned_entries,
-    )
-    _sort_brief_history_enriched_groups(
-        selected_entries=selected_entries,
-        near_miss_entries=near_miss_entries,
-        opportunity_pool_entries=opportunity_pool_entries,
-        no_history_observer_entries=no_history_observer_entries,
-        risky_observer_entries=risky_observer_entries,
-        research_upside_radar_entries=research_upside_radar_entries,
-        catalyst_theme_entries=catalyst_theme_entries,
-    )
-
-    return (
-        selected_entries,
-        near_miss_entries,
-        opportunity_pool_entries,
-        research_upside_radar_entries,
-        catalyst_theme_entries,
-        no_history_observer_entries,
-        risky_observer_entries,
-        weak_history_pruned_entries,
-        _build_btst_candidate_historical_context(historical_payload),
-    )
-
-
-def _build_empty_btst_candidate_historical_context() -> dict[str, Any]:
-    return {
-        "lookback_report_limit": OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
-        "historical_report_count": 0,
-        "historical_btst_candidate_count": 0,
-        "historical_watch_candidate_count": 0,
-        "historical_selected_candidate_count": 0,
-        "historical_near_miss_candidate_count": 0,
-        "historical_opportunity_candidate_count": 0,
-        "historical_research_upside_radar_count": 0,
-        "historical_catalyst_theme_count": 0,
-        "next_high_hit_threshold": OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
-    }
-
-
-def _build_empty_brief_history_observer_groups() -> tuple[
-    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]
-]:
-    return [], [], []
-
-
-def _build_empty_brief_history_enrichment_result(
-    selected_entries: list[dict[str, Any]],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    research_upside_radar_entries: list[dict[str, Any]],
-    catalyst_theme_entries: list[dict[str, Any]],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-    weak_history_pruned_entries: list[dict[str, Any]],
-    default_context: dict[str, Any],
-) -> tuple[
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    dict[str, Any],
-]:
-    return (
-        selected_entries,
-        near_miss_entries,
-        opportunity_pool_entries,
-        research_upside_radar_entries,
-        catalyst_theme_entries,
-        no_history_observer_entries,
-        risky_observer_entries,
-        weak_history_pruned_entries,
-        default_context,
-    )
-
-
-def _postprocess_brief_history_enriched_groups(
-    *,
-    selected_entries: list[dict[str, Any]],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-    weak_history_pruned_entries: list[dict[str, Any]],
-) -> tuple[
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-]:
-    selected_entries, near_miss_entries, opportunity_pool_entries = (
-        _apply_and_reclassify_brief_history_groups(
-            selected_entries=selected_entries,
-            near_miss_entries=near_miss_entries,
-            opportunity_pool_entries=opportunity_pool_entries,
-        )
-    )
-    (
-        near_miss_entries,
-        opportunity_pool_entries,
-        no_history_observer_entries,
-        risky_observer_entries,
-        weak_history_pruned_entries,
-    ) = _demote_and_partition_brief_history_groups(
-        near_miss_entries=near_miss_entries,
-        opportunity_pool_entries=opportunity_pool_entries,
-        no_history_observer_entries=no_history_observer_entries,
-        risky_observer_entries=risky_observer_entries,
-        weak_history_pruned_entries=weak_history_pruned_entries,
-    )
-    return (
-        selected_entries,
-        near_miss_entries,
-        opportunity_pool_entries,
-        no_history_observer_entries,
-        risky_observer_entries,
-        weak_history_pruned_entries,
-    )
-
-
-def _apply_and_reclassify_brief_history_groups(
-    *,
-    selected_entries: list[dict[str, Any]],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    selected_entries, near_miss_entries, opportunity_pool_entries = (
-        _apply_execution_quality_modes_to_brief_groups(
-            selected_entries=selected_entries,
-            near_miss_entries=near_miss_entries,
-            opportunity_pool_entries=opportunity_pool_entries,
-        )
-    )
-    return _reclassify_selected_execution_quality_entries(
-        selected_entries,
-        near_miss_entries,
-        opportunity_pool_entries,
-    )
-
-
-def _demote_and_partition_brief_history_groups(
-    *,
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-    weak_history_pruned_entries: list[dict[str, Any]],
-) -> tuple[
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-]:
-    near_miss_entries, opportunity_pool_entries = _demote_weak_near_miss_entries(
-        near_miss_entries,
-        opportunity_pool_entries,
-    )
-    (
-        opportunity_pool_entries,
-        no_history_observer_entries,
-        risky_observer_entries,
-        weak_history_pruned_entries,
-    ) = _partition_opportunity_pool_entries(
-        opportunity_pool_entries,
-    )
-    return (
-        near_miss_entries,
-        opportunity_pool_entries,
-        no_history_observer_entries,
-        risky_observer_entries,
-        weak_history_pruned_entries,
-    )
-
-
-def _sort_brief_history_enriched_groups(
-    *,
-    selected_entries: list[dict[str, Any]],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    no_history_observer_entries: list[dict[str, Any]],
-    risky_observer_entries: list[dict[str, Any]],
-    research_upside_radar_entries: list[dict[str, Any]],
-    catalyst_theme_entries: list[dict[str, Any]],
-) -> None:
-    selected_entries.sort(key=_historical_execution_entry_sort_key)
-    near_miss_entries.sort(key=_historical_execution_entry_sort_key)
-    opportunity_pool_entries.sort(key=_opportunity_pool_execution_sort_key)
-    no_history_observer_entries.sort(key=_opportunity_pool_execution_sort_key)
-    risky_observer_entries.sort(key=_opportunity_pool_execution_sort_key)
-    research_upside_radar_entries.sort(key=_research_historical_entry_sort_key)
-    catalyst_theme_entries.sort(key=_historical_execution_entry_sort_key)
-
-
-def _apply_historical_prior_to_brief_entry_groups(
-    *,
-    historical_rows: list[dict[str, Any]],
-    price_cache: dict[tuple[str, str], pd.DataFrame],
-    selected_entries: list[dict[str, Any]],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-    research_upside_radar_entries: list[dict[str, Any]],
-    catalyst_theme_entries: list[dict[str, Any]],
-) -> tuple[
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-]:
-    return (
-        _apply_historical_prior_to_entries(
-            selected_entries,
-            historical_rows=historical_rows,
-            price_cache=price_cache,
-            family="selected",
-        ),
-        _apply_historical_prior_to_entries(
-            near_miss_entries,
-            historical_rows=historical_rows,
-            price_cache=price_cache,
-            family="near_miss",
-        ),
-        _apply_historical_prior_to_entries(
-            opportunity_pool_entries,
-            historical_rows=historical_rows,
-            price_cache=price_cache,
-            family="opportunity_pool",
-        ),
-        _apply_historical_prior_to_entries(
-            research_upside_radar_entries,
-            historical_rows=historical_rows,
-            price_cache=price_cache,
-            family="research_upside_radar",
-        ),
-        _apply_historical_prior_to_entries(
-            catalyst_theme_entries,
-            historical_rows=historical_rows,
-            price_cache=price_cache,
-            family="catalyst_theme",
-        ),
-    )
-
-
-def _apply_execution_quality_modes_to_brief_groups(
-    *,
-    selected_entries: list[dict[str, Any]],
-    near_miss_entries: list[dict[str, Any]],
-    opportunity_pool_entries: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    return (
-        [_apply_execution_quality_entry_mode(entry) for entry in selected_entries],
-        [_apply_execution_quality_entry_mode(entry) for entry in near_miss_entries],
-        [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in opportunity_pool_entries
-        ],
-    )
 
 
 def _build_btst_recommendation_lines(
@@ -2341,101 +1232,14 @@ def _build_btst_brief_decision_counts(
 
 
 def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
-    historical_context = (
-        analysis.get("btst_candidate_historical_context")
-        or analysis.get("watch_candidate_historical_context")
-        or analysis.get("opportunity_pool_historical_context")
-        or {}
-    )
-    summary = analysis["summary"]
-    lines.append("# BTST Next-Day Trade Brief")
-    lines.append("")
-    lines.append("## Overview")
-    lines.append(f"- trade_date: {analysis.get('trade_date')}")
-    lines.append(f"- next_trade_date: {analysis.get('next_trade_date') or 'n/a'}")
-    lines.append(f"- target_mode: {analysis.get('target_mode')}")
-    lines.append(f"- selection_target: {analysis.get('selection_target')}")
-    lines.append(
-        f"- short_trade_selected_count: {summary.get('short_trade_selected_count')}"
-    )
-    lines.append(
-        f"- short_trade_near_miss_count: {summary.get('short_trade_near_miss_count')}"
-    )
-    lines.append(
-        f"- short_trade_blocked_count: {summary.get('short_trade_blocked_count')}"
-    )
-    lines.append(
-        f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count')}"
-    )
-    lines.append(
-        f"- short_trade_opportunity_pool_count: {summary.get('short_trade_opportunity_pool_count')}"
-    )
-    lines.append(
-        f"- no_history_observer_count: {summary.get('no_history_observer_count')}"
-    )
-    lines.append(
-        f"- research_upside_radar_count: {summary.get('research_upside_radar_count')}"
-    )
-    lines.append(f"- catalyst_theme_count: {summary.get('catalyst_theme_count')}")
-    lines.append(
-        f"- catalyst_theme_shadow_count: {summary.get('catalyst_theme_shadow_count')}"
-    )
-    lines.append(
-        f"- catalyst_theme_frontier_promoted_count: {summary.get('catalyst_theme_frontier_promoted_count')}"
-    )
-    lines.append(
-        f"- upstream_shadow_candidate_count: {summary.get('upstream_shadow_candidate_count')}"
-    )
-    lines.append(
-        f"- upstream_shadow_promotable_count: {summary.get('upstream_shadow_promotable_count')}"
-    )
-    lines.append(
-        f"- opportunity_pool_historical_report_count: {historical_context.get('historical_report_count')}"
-    )
-    lines.append(
-        f"- btst_candidate_historical_count: {historical_context.get('historical_btst_candidate_count')}"
-    )
-    lines.append(
-        f"- watch_candidate_historical_count: {historical_context.get('historical_watch_candidate_count')}"
-    )
-    lines.append(
-        f"- watch_selected_historical_count: {historical_context.get('historical_selected_candidate_count')}"
-    )
-    lines.append(
-        f"- watch_near_miss_historical_count: {historical_context.get('historical_near_miss_candidate_count')}"
-    )
-    lines.append(
-        f"- opportunity_pool_historical_candidate_count: {historical_context.get('historical_opportunity_candidate_count')}"
-    )
-    lines.append(
-        f"- research_upside_radar_historical_count: {historical_context.get('historical_research_upside_radar_count')}"
-    )
-    lines.append(
-        f"- catalyst_theme_historical_count: {historical_context.get('historical_catalyst_theme_count')}"
-    )
-    lines.append(
-        f"- excluded_research_selected_count: {len(analysis.get('excluded_research_entries') or [])}"
-    )
-    lines.append("")
-    lines.append("## Recommendation")
-    lines.append(f"- {analysis.get('recommendation')}")
-    lines.append("")
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_overview_markdown as _impl
+    _impl(lines, analysis)
 
 
 def _append_brief_scored_entries_markdown(
     lines: list[str], title: str, entries: list[dict[str, Any]]
 ) -> None:
-    _append_brief_scored_entries_markdown_impl(
-        lines,
-        title,
-        entries,
-        append_brief_ticker_section=_append_brief_ticker_section,
-        append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
-        append_brief_short_trade_metrics=_append_brief_short_trade_metrics,
-        append_brief_historical_recent_examples=_append_brief_historical_recent_examples,
-        append_gate_status_line=_append_gate_status_line,
-        format_float=_format_float,
-    )
+    _append_brief_scored_entries_markdown_br(lines, title, entries)
 
 
 def _append_brief_ticker_section(
@@ -2445,14 +1249,8 @@ def _append_brief_ticker_section(
     entries: list[dict[str, Any]],
     render_entry: Callable[[list[str], dict[str, Any]], None],
 ) -> None:
-    lines.append(f"## {title}")
-    if not entries:
-        _append_none_block(lines)
-        return
-    for entry in entries:
-        lines.append(f"### {entry['ticker']}")
-        render_entry(lines, entry)
-        lines.append("")
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_ticker_section as _impl
+    _impl(lines, title=title, entries=entries, render_entry=render_entry)
 
 
 def _append_brief_historical_prior_fields(
@@ -2464,81 +1262,40 @@ def _append_brief_historical_prior_fields(
     include_execution_quality: bool = False,
     include_execution_note: bool = False,
 ) -> None:
-    if include_monitor_priority:
-        lines.append(
-            f"- historical_monitor_priority: {historical_prior.get('monitor_priority') or 'n/a'}"
-        )
-    if include_summary:
-        lines.append(
-            f"- historical_summary: {historical_prior.get('summary') or 'n/a'}"
-        )
-    if include_execution_quality:
-        lines.append(
-            f"- historical_execution_quality: {historical_prior.get('execution_quality_label') or 'n/a'}"
-        )
-    if include_execution_note:
-        lines.append(
-            f"- historical_execution_note: {historical_prior.get('execution_note') or 'n/a'}"
-        )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_historical_prior_fields as _impl
+    _impl(lines, historical_prior, include_summary=include_summary, include_monitor_priority=include_monitor_priority, include_execution_quality=include_execution_quality, include_execution_note=include_execution_note)
 
 
 def _append_brief_scored_entry_metrics(
     lines: list[str], metrics: dict[str, Any]
 ) -> None:
-    _append_brief_short_trade_metrics(lines, metrics)
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_scored_entry_metrics as _impl
+    _impl(lines, metrics)
 
 
 def _append_brief_short_trade_metrics(
     lines: list[str], metrics: dict[str, Any]
 ) -> None:
-    lines.append(
-        "- key_metrics: "
-        + ", ".join(
-            [
-                f"breakout={_format_float(metrics.get('breakout_freshness'))}",
-                f"trend={_format_float(metrics.get('trend_acceleration'))}",
-                f"volume={_format_float(metrics.get('volume_expansion_quality'))}",
-                f"close={_format_float(metrics.get('close_strength'))}",
-                f"catalyst={_format_float(metrics.get('catalyst_freshness'))}",
-            ]
-        )
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_short_trade_metrics as _impl
+    _impl(lines, metrics)
 
 
 def _append_brief_historical_recent_examples(
     lines: list[str], historical_prior: dict[str, Any]
 ) -> None:
-    recent_examples = historical_prior.get("recent_examples") or []
-    if recent_examples:
-        lines.append(
-            "- historical_recent_examples: "
-            + "; ".join(
-                f"{sample.get('trade_date')} {sample.get('ticker')} open={_format_float(sample.get('next_open_return'))}, high={_format_float(sample.get('next_high_return'))}, close={_format_float(sample.get('next_close_return'))}"
-                for sample in recent_examples
-            )
-        )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_historical_recent_examples as _impl
+    _impl(lines, historical_prior)
 
 
 def _append_brief_opportunity_pool_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
-    _append_brief_opportunity_pool_markdown_impl(
-        lines,
-        entries,
-        append_brief_ticker_section=_append_brief_ticker_section,
-        append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
-        append_brief_short_trade_metrics=_append_brief_short_trade_metrics,
-        append_brief_historical_recent_examples=_append_brief_historical_recent_examples,
-        append_gate_status_line=_append_gate_status_line,
-        format_float=_format_float,
-    )
+    _append_brief_opportunity_pool_markdown_br(lines, entries)
 
 
 def _append_gate_status_line(lines: list[str], gate_status: dict[str, Any]) -> None:
-    lines.append(
-        "- gate_status: "
-        + ", ".join(f"{key}={value}" for key, value in gate_status.items())
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_gate_status_line as _impl
+    _impl(lines, gate_status)
 
 
 def _append_brief_observer_lane_markdown(
@@ -2547,71 +1304,34 @@ def _append_brief_observer_lane_markdown(
     entries: list[dict[str, Any]],
     include_execution_note: bool,
 ) -> None:
-    _append_brief_observer_lane_markdown_impl(
-        lines,
-        title,
-        entries,
-        include_execution_note,
-        append_brief_ticker_section=_append_brief_ticker_section,
-        append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
-    )
+    _append_brief_observer_lane_markdown_br(lines, title, entries, include_execution_note)
 
 
 def _append_brief_pruned_entries_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
-    _append_brief_pruned_entries_markdown_impl(
-        lines,
-        entries,
-        append_brief_ticker_section=_append_brief_ticker_section,
-        append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_pruned_entries_markdown as _impl
+    _impl(lines, entries)
 
 
 def _append_brief_research_radar_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
-    _append_brief_research_radar_markdown_impl(
-        lines,
-        entries,
-        append_brief_ticker_section=_append_brief_ticker_section,
-        append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
-        format_float=_format_float,
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_research_radar_markdown as _impl
+    _impl(lines, entries)
 
 
 def _append_brief_catalyst_theme_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
-    _append_brief_catalyst_theme_markdown_impl(
-        lines,
-        entries,
-        append_brief_ticker_section=_append_brief_ticker_section,
-        append_brief_historical_prior_fields=_append_brief_historical_prior_fields,
-        append_gate_status_line=_append_gate_status_line,
-        format_float=_format_float,
-    )
-
-
-def _append_brief_catalyst_frontier_markdown(
-    lines: list[str], frontier_priority: dict[str, Any]
-) -> None:
-    _append_brief_catalyst_frontier_markdown_impl(
-        lines,
-        frontier_priority,
-        append_frontier_section=_append_frontier_section,
-        append_threshold_shortfalls_line=_append_threshold_shortfalls_line,
-        append_catalyst_watch_metrics=_append_catalyst_watch_metrics,
-        format_float=_format_float,
-    )
+    _append_brief_catalyst_theme_markdown_br(lines, entries)
 
 
 def _append_frontier_priority_summary(
     lines: list[str], frontier_priority: dict[str, Any]
 ) -> None:
-    _append_frontier_priority_summary_impl(
-        lines, frontier_priority, format_float=_format_float
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_frontier_priority_summary as _impl
+    _impl(lines, frontier_priority)
 
 
 def _append_frontier_section(
@@ -2619,55 +1339,26 @@ def _append_frontier_section(
     frontier_priority: dict[str, Any],
     render_entries: Callable[[list[str], list[dict[str, Any]]], None],
 ) -> None:
-    _append_frontier_section_impl(
-        lines,
-        frontier_priority,
-        render_entries,
-        append_none_block_fn=_append_none_block,
-        append_frontier_priority_summary_fn=_append_frontier_priority_summary,
-        append_frontier_promoted_shadow_none_block_fn=_append_frontier_promoted_shadow_none_block,
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_frontier_section as _impl
+    _impl(lines, frontier_priority, render_entries)
+
+
+def _append_brief_catalyst_frontier_markdown(
+    lines: list[str], frontier_priority: dict[str, Any]
+) -> None:
+    _append_brief_catalyst_frontier_markdown_br(lines, frontier_priority)
 
 
 def _append_brief_catalyst_shadow_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
-    _append_brief_catalyst_shadow_markdown_impl(
-        lines,
-        entries,
-        append_brief_ticker_section=_append_brief_ticker_section,
-        append_threshold_shortfalls_line=_append_threshold_shortfalls_line,
-        append_catalyst_watch_metrics=_append_catalyst_watch_metrics,
-        append_gate_status_line=_append_gate_status_line,
-        format_float=_format_float,
-    )
+    _append_brief_catalyst_shadow_markdown_br(lines, entries)
 
 
 def _append_brief_excluded_research_markdown(
     lines: list[str], entries: list[dict[str, Any]]
 ) -> None:
-    _append_brief_excluded_research_markdown_impl(
-        lines,
-        entries,
-        append_brief_ticker_section=_append_brief_ticker_section,
-        format_float=_format_float,
-    )
-
-
-def _append_brief_upstream_shadow_markdown(
-    lines: list[str],
-    upstream_shadow_summary: dict[str, Any],
-    upstream_shadow_entries: list[dict[str, Any]],
-) -> None:
-    _append_brief_upstream_shadow_markdown_impl(
-        lines,
-        upstream_shadow_summary,
-        upstream_shadow_entries,
-        append_brief_summary_ticker_section=_append_brief_summary_ticker_section,
-        append_upstream_shadow_summary=_append_brief_upstream_shadow_summary,
-        append_gate_status_line=_append_gate_status_line,
-        format_float=_format_float,
-    )
+    _append_brief_excluded_research_markdown_br(lines, entries)
 
 
 def _append_brief_summary_ticker_section(
@@ -2678,76 +1369,27 @@ def _append_brief_summary_ticker_section(
     append_summary: Callable[[list[str]], None],
     render_entry: Callable[[list[str], dict[str, Any]], None],
 ) -> None:
-    lines.append(f"## {title}")
-    if not entries:
-        _append_none_block(lines)
-        return
-    append_summary(lines)
-    for entry in entries:
-        lines.append(f"### {entry['ticker']}")
-        render_entry(lines, entry)
-        lines.append("")
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_summary_ticker_section as _impl
+    _impl(lines, title=title, entries=entries, append_summary=append_summary, render_entry=render_entry)
 
 
 def _append_brief_upstream_shadow_summary(
     lines: list[str], upstream_shadow_summary: dict[str, Any]
 ) -> None:
-    _append_upstream_shadow_summary(
-        lines,
-        upstream_shadow_summary,
-        empty_lane_counts_label="none",
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_upstream_shadow_summary as _impl
+    _impl(lines, upstream_shadow_summary)
+
+
+def _append_brief_upstream_shadow_markdown(
+    lines: list[str],
+    upstream_shadow_summary: dict[str, Any],
+    upstream_shadow_entries: list[dict[str, Any]],
+) -> None:
+    _append_brief_upstream_shadow_markdown_br(lines, upstream_shadow_summary, upstream_shadow_entries)
 
 
 def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
-    lines: list[str] = []
-    _append_brief_overview_markdown(lines, analysis)
-    _append_brief_scored_entries_markdown(
-        lines, "Selected Entries", list(analysis.get("selected_entries") or [])
-    )
-    _append_brief_scored_entries_markdown(
-        lines, "Near-Miss Watchlist", list(analysis.get("near_miss_entries") or [])
-    )
-    _append_brief_opportunity_pool_markdown(
-        lines, list(analysis.get("opportunity_pool_entries") or [])
-    )
-    _append_brief_observer_lane_markdown(
-        lines,
-        "Risky Observer Lane",
-        list(analysis.get("risky_observer_entries") or []),
-        include_execution_note=True,
-    )
-    _append_brief_observer_lane_markdown(
-        lines,
-        "No-History Observer Lane",
-        list(analysis.get("no_history_observer_entries") or []),
-        include_execution_note=False,
-    )
-    _append_brief_pruned_entries_markdown(
-        lines, list(analysis.get("weak_history_pruned_entries") or [])
-    )
-    _append_brief_research_radar_markdown(
-        lines, list(analysis.get("research_upside_radar_entries") or [])
-    )
-    _append_brief_catalyst_theme_markdown(
-        lines, list(analysis.get("catalyst_theme_entries") or [])
-    )
-    _append_brief_catalyst_frontier_markdown(
-        lines, dict(analysis.get("catalyst_theme_frontier_priority") or {})
-    )
-    _append_brief_catalyst_shadow_markdown(
-        lines, list(analysis.get("catalyst_theme_shadow_entries") or [])
-    )
-    _append_brief_excluded_research_markdown(
-        lines, list(analysis.get("excluded_research_entries") or [])
-    )
-    _append_brief_upstream_shadow_markdown(
-        lines,
-        dict(analysis.get("upstream_shadow_summary") or {}),
-        list(analysis.get("upstream_shadow_entries") or []),
-    )
-    _append_brief_source_paths_markdown(lines, analysis)
-    return "\n".join(lines) + "\n"
+    return render_btst_next_day_trade_brief_br(analysis)
 
 
 def _append_source_paths_section(
@@ -2758,33 +1400,26 @@ def _append_source_paths_section(
     session_summary_path: Any,
     replay_input_path: Any | None = None,
 ) -> None:
-    _append_source_paths_section_impl(
-        lines,
-        report_dir=report_dir,
-        snapshot_path=snapshot_path,
-        session_summary_path=session_summary_path,
-        replay_input_path=replay_input_path,
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_source_paths_section as _impl
+    _impl(lines, report_dir=report_dir, snapshot_path=snapshot_path, session_summary_path=session_summary_path, replay_input_path=replay_input_path)
 
 
 def _append_none_block(lines: list[str]) -> None:
-    _append_none_block_impl(lines)
+    from src.paper_trading._btst_reporting.brief_rendering import _append_none_block as _impl
+    _impl(lines)
 
 
 def _append_frontier_promoted_shadow_none_block(lines: list[str]) -> None:
-    _append_frontier_promoted_shadow_none_block_impl(lines)
+    from src.paper_trading._btst_reporting.brief_rendering import _append_frontier_promoted_shadow_none_block as _impl
+    _impl(lines)
 
 
 def _append_brief_source_paths_markdown(
     lines: list[str], analysis: dict[str, Any]
 ) -> None:
-    _append_source_paths_section(
-        lines,
-        report_dir=analysis.get("report_dir"),
-        snapshot_path=analysis.get("snapshot_path"),
-        replay_input_path=analysis.get("replay_input_path"),
-        session_summary_path=analysis.get("session_summary_path"),
-    )
+    from src.paper_trading._btst_reporting.brief_rendering import _append_brief_source_paths_markdown as _impl
+    _impl(lines, analysis)
+
 
 
 def _resolve_brief_analysis(
@@ -2792,60 +1427,7 @@ def _resolve_brief_analysis(
     trade_date: str | None,
     next_trade_date: str | None,
 ) -> dict[str, Any]:
-    payload = dict(input_path) if isinstance(input_path, dict) else {}
-
-    if not payload:
-        resolved_input = Path(input_path).expanduser().resolve()
-        if resolved_input.is_file():
-            payload = _load_json(resolved_input)
-            if "selected_entries" not in payload or "near_miss_entries" not in payload:
-                return analyze_btst_next_day_trade_brief(
-                    resolved_input,
-                    trade_date=trade_date,
-                    next_trade_date=next_trade_date,
-                )
-        else:
-            return analyze_btst_next_day_trade_brief(
-                resolved_input, trade_date=trade_date, next_trade_date=next_trade_date
-            )
-
-    if next_trade_date and not payload.get("next_trade_date"):
-        payload["next_trade_date"] = _normalize_trade_date(next_trade_date)
-
-    frontier_summary = dict(payload.get("catalyst_theme_frontier_summary") or {})
-    frontier_priority = dict(payload.get("catalyst_theme_frontier_priority") or {})
-    if not frontier_summary or not frontier_priority:
-        frontier_summary = frontier_summary or _load_catalyst_theme_frontier_summary(
-            payload.get("report_dir")
-        )
-        frontier_priority = (
-            frontier_priority
-            or _build_catalyst_theme_frontier_priority(
-                frontier_summary,
-                list(payload.get("catalyst_theme_shadow_entries") or []),
-            )
-        )
-        payload["catalyst_theme_frontier_summary"] = frontier_summary
-        payload["catalyst_theme_frontier_priority"] = frontier_priority
-
-    summary = dict(payload.get("summary") or {})
-    summary.setdefault(
-        "catalyst_theme_frontier_promoted_count",
-        len(frontier_priority.get("promoted_tickers") or []),
-    )
-    payload["summary"] = summary
-    payload.setdefault("upstream_shadow_entries", [])
-    payload.setdefault(
-        "upstream_shadow_summary",
-        {
-            "shadow_candidate_count": 0,
-            "promotable_count": 0,
-            "lane_counts": {},
-            "decision_counts": {},
-            "top_focus_tickers": [],
-        },
-    )
-    return payload
+    return _resolve_brief_analysis_impl(input_path, trade_date, next_trade_date)
 
 
 def _selected_action_posture(preferred_entry_mode: str | None) -> tuple[str, list[str]]:

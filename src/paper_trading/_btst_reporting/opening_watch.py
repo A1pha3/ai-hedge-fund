@@ -342,8 +342,7 @@ def analyze_btst_opening_watch_card(
     trade_date: str | None = None,
     next_trade_date: str | None = None,
 ) -> dict[str, Any]:
-    # Lazy import to avoid circular dependency with btst_reporting.py
-    from src.paper_trading.btst_reporting import _resolve_brief_analysis
+    from src.paper_trading._btst_reporting.brief_resolver import _resolve_brief_analysis
 
     brief = _resolve_brief_analysis(
         input_path, trade_date=trade_date, next_trade_date=next_trade_date

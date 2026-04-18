@@ -384,7 +384,7 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._extract_next_day_outcome",
+        "src.paper_trading._btst_reporting.historical_prior._extract_next_day_outcome",
         lambda ticker, trade_date, price_cache: {
             "data_status": "ok",
             "next_trade_date": "2026-03-27",

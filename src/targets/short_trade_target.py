@@ -232,16 +232,44 @@ def _resolve_selected_score_tolerance(
     upstream_shadow_catalyst_relief_reason: str,
     historical_prior: dict[str, Any],
 ) -> float:
+    gap_to_selected = float(effective_select_threshold) - float(score_target)
+    if gap_to_selected <= 0.0:
+        return 0.0
+    if not _is_eligible_for_carryover_tolerance(
+        upstream_shadow_catalyst_relief_applied=upstream_shadow_catalyst_relief_applied,
+        upstream_shadow_catalyst_relief_reason=upstream_shadow_catalyst_relief_reason,
+        historical_prior=historical_prior,
+    ):
+        return 0.0
+    return STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE if gap_to_selected <= STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE else 0.0
+
+
+def _is_eligible_for_carryover_tolerance(
+    *,
+    upstream_shadow_catalyst_relief_applied: bool,
+    upstream_shadow_catalyst_relief_reason: str,
+    historical_prior: dict[str, Any],
+) -> bool:
+    if not upstream_shadow_catalyst_relief_applied:
+        return False
+    if upstream_shadow_catalyst_relief_reason != "catalyst_theme_short_trade_carryover":
+        return False
+    if str(historical_prior.get("execution_quality_label") or "") != "close_continuation":
+        return False
+    if str(historical_prior.get("entry_timing_bias") or "") != "confirm_then_hold":
+        return False
+
     evaluable_count = int(historical_prior.get("evaluable_count") or 0)
-    has_calibrated_prior = any(
-        key in historical_prior
-        for key in (
-            "calibrated_next_close_positive_rate",
-            "calibrated_next_high_hit_rate_at_threshold",
-            "calibrated_next_open_to_close_return_mean",
-            "prior_evidence_weight",
-        )
-    )
+    if evaluable_count < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT:
+        return False
+
+    prior_metrics = _extract_prior_metrics(historical_prior, evaluable_count)
+    if _has_calibrated_prior(historical_prior):
+        return _meets_calibrated_thresholds(prior_metrics)
+    return _meets_uncalibrated_thresholds(prior_metrics)
+
+
+def _extract_prior_metrics(historical_prior: dict[str, Any], evaluable_count: int) -> dict[str, float]:
     prior_strength = float(historical_prior.get("prior_shrinkage_strength", 3.0) or 3.0)
     evidence_weight = clamp_unit_interval(
         float(
@@ -255,36 +283,41 @@ def _resolve_selected_score_tolerance(
     next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_close_positive_rate", historical_prior.get("next_close_positive_rate", 0.0)) or 0.0))
     next_high_hit_rate = clamp_unit_interval(float(historical_prior.get("calibrated_next_high_hit_rate_at_threshold", historical_prior.get("next_high_hit_rate_at_threshold", 0.0)) or 0.0))
     next_open_to_close_return_mean = float(historical_prior.get("calibrated_next_open_to_close_return_mean", historical_prior.get("next_open_to_close_return_mean", 0.0)) or 0.0)
-    gap_to_selected = float(effective_select_threshold) - float(score_target)
-    if gap_to_selected <= 0.0:
-        return 0.0
-    if not upstream_shadow_catalyst_relief_applied:
-        return 0.0
-    if upstream_shadow_catalyst_relief_reason != "catalyst_theme_short_trade_carryover":
-        return 0.0
-    if str(historical_prior.get("execution_quality_label") or "") != "close_continuation":
-        return 0.0
-    if str(historical_prior.get("entry_timing_bias") or "") != "confirm_then_hold":
-        return 0.0
-    if evaluable_count < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT:
-        return 0.0
-    if has_calibrated_prior:
-        if evidence_weight < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVIDENCE_WEIGHT:
-            return 0.0
-        if next_close_positive_rate < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_CLOSE_POSITIVE_RATE:
-            return 0.0
-        if next_high_hit_rate < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_HIGH_HIT_RATE:
-            return 0.0
-        if next_open_to_close_return_mean < STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_OPEN_TO_CLOSE_RETURN_MEAN:
-            return 0.0
-    else:
-        if next_close_positive_rate < 0.8:
-            return 0.0
-        if next_high_hit_rate < 0.8:
-            return 0.0
-        if next_open_to_close_return_mean < 0.02:
-            return 0.0
-    return STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE if gap_to_selected <= STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE else 0.0
+    return {
+        "evidence_weight": evidence_weight,
+        "next_close_positive_rate": next_close_positive_rate,
+        "next_high_hit_rate": next_high_hit_rate,
+        "next_open_to_close_return_mean": next_open_to_close_return_mean,
+    }
+
+
+def _has_calibrated_prior(historical_prior: dict[str, Any]) -> bool:
+    return any(
+        key in historical_prior
+        for key in (
+            "calibrated_next_close_positive_rate",
+            "calibrated_next_high_hit_rate_at_threshold",
+            "calibrated_next_open_to_close_return_mean",
+            "prior_evidence_weight",
+        )
+    )
+
+
+def _meets_calibrated_thresholds(metrics: dict[str, float]) -> bool:
+    return (
+        metrics["evidence_weight"] >= STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVIDENCE_WEIGHT
+        and metrics["next_close_positive_rate"] >= STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_CLOSE_POSITIVE_RATE
+        and metrics["next_high_hit_rate"] >= STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_HIGH_HIT_RATE
+        and metrics["next_open_to_close_return_mean"] >= STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_CALIBRATED_NEXT_OPEN_TO_CLOSE_RETURN_MEAN
+    )
+
+
+def _meets_uncalibrated_thresholds(metrics: dict[str, float]) -> bool:
+    return (
+        metrics["next_close_positive_rate"] >= 0.8
+        and metrics["next_high_hit_rate"] >= 0.8
+        and metrics["next_open_to_close_return_mean"] >= 0.02
+    )
 
 
 def _resolve_profitability_relief(

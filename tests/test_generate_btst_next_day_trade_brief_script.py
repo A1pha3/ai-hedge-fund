@@ -7,6 +7,7 @@ import pandas as pd
 from scripts.generate_btst_next_day_trade_brief import analyze_btst_next_day_trade_brief, render_btst_next_day_trade_brief_markdown
 import src.paper_trading.btst_reporting as btst_reporting
 import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
+import src.paper_trading._btst_reporting.historical_prior as historical_prior
 from src.paper_trading.btst_reporting import infer_next_trade_date
 
 
@@ -45,7 +46,7 @@ def test_build_watch_candidate_historical_prior_prefers_family_source_score_scop
     ]
 
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_decorate_watch_candidate_history_entry",
         lambda raw_entry, family: {**raw_entry, "ticker": "002001", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
     )
@@ -54,15 +55,15 @@ def test_build_watch_candidate_historical_prior_prefers_family_source_score_scop
         captured["applied_rows"] = list(rows)
         return {"sample_count": len(rows), "evaluable_count": len(rows), "next_high_hit_rate_at_threshold": 1.0, "next_close_positive_rate": 1.0}
 
-    monkeypatch.setattr(btst_reporting, "_classify_historical_prior", lambda *args: ("supportive", "high"))
-    monkeypatch.setattr(btst_reporting, "_classify_execution_quality_prior", lambda *args: {"execution_quality_label": "close_continuation"})
-    monkeypatch.setattr(btst_reporting, "_summarize_historical_opportunity_rows", fake_summarize)
+    monkeypatch.setattr(historical_prior, "_classify_historical_prior", lambda *args: ("supportive", "high"))
+    monkeypatch.setattr(historical_prior, "_classify_execution_quality_prior", lambda *args: {"execution_quality_label": "close_continuation"})
+    monkeypatch.setattr(historical_prior, "_summarize_historical_opportunity_rows", fake_summarize)
 
     def fake_summary(**kwargs):
         captured["summary_kwargs"] = kwargs
         return "summary"
 
-    monkeypatch.setattr(btst_reporting, "_build_historical_prior_summary", fake_summary)
+    monkeypatch.setattr(historical_prior, "_build_historical_prior_summary", fake_summary)
 
     prior = btst_reporting._build_watch_candidate_historical_prior(entry, historical_rows, {}, family="catalyst_theme")
 
@@ -80,18 +81,18 @@ def test_build_watch_candidate_historical_prior_falls_back_to_same_ticker_when_n
     ]
 
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_decorate_watch_candidate_history_entry",
         lambda raw_entry, family: {**raw_entry, "ticker": "002001", "candidate_source": "catalyst_theme", "score_bucket": "high", "catalyst_bucket": "fresh"},
     )
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_summarize_historical_opportunity_rows",
         lambda rows, price_cache: {"sample_count": len(rows), "evaluable_count": len(rows), "next_high_hit_rate_at_threshold": None, "next_close_positive_rate": None},
     )
-    monkeypatch.setattr(btst_reporting, "_classify_historical_prior", lambda *args: ("unknown", "normal"))
-    monkeypatch.setattr(btst_reporting, "_classify_execution_quality_prior", lambda *args: {"execution_quality_label": "unknown"})
-    monkeypatch.setattr(btst_reporting, "_build_historical_prior_summary", lambda **kwargs: "fallback-summary")
+    monkeypatch.setattr(historical_prior, "_classify_historical_prior", lambda *args: ("unknown", "normal"))
+    monkeypatch.setattr(historical_prior, "_classify_execution_quality_prior", lambda *args: {"execution_quality_label": "unknown"})
+    monkeypatch.setattr(historical_prior, "_build_historical_prior_summary", lambda **kwargs: "fallback-summary")
 
     prior = btst_reporting._build_watch_candidate_historical_prior({"ticker": "002001", "candidate_source": "catalyst_theme"}, historical_rows, {}, family="catalyst_theme")
 
@@ -118,7 +119,7 @@ def test_summarize_historical_opportunity_rows_skips_missing_and_aggregates_mean
             "next_open_to_close_return": -0.01,
         },
     }
-    monkeypatch.setattr(btst_reporting, "_extract_next_day_outcome", lambda ticker, trade_date, price_cache: outcomes[(ticker, trade_date)])
+    monkeypatch.setattr(historical_prior, "_extract_next_day_outcome", lambda ticker, trade_date, price_cache: outcomes[(ticker, trade_date)])
 
     summary = btst_reporting._summarize_historical_opportunity_rows(
         [
@@ -139,7 +140,7 @@ def test_summarize_historical_opportunity_rows_skips_missing_and_aggregates_mean
 
 
 def test_summarize_historical_opportunity_rows_returns_empty_summary_without_valid_rows(monkeypatch):
-    monkeypatch.setattr(btst_reporting, "_extract_next_day_outcome", lambda ticker, trade_date, price_cache: {"data_status": "missing_next_day"})
+    monkeypatch.setattr(historical_prior, "_extract_next_day_outcome", lambda ticker, trade_date, price_cache: {"data_status": "missing_next_day"})
 
     summary = btst_reporting._summarize_historical_opportunity_rows(
         [
@@ -190,35 +191,35 @@ def test_enrich_btst_brief_entries_with_history_threads_helpers_and_context(monk
     report_dir.mkdir()
 
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {"rows": [{"ticker": "hist"}], "family_counts": {"selected": 1}, "report_count": 2, "candidate_count": 3},
     )
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_apply_historical_prior_to_entries",
         lambda entries, historical_rows, price_cache, family: [{**entry, "family": family, "hist_rows": len(historical_rows)} for entry in entries],
     )
-    monkeypatch.setattr(btst_reporting, "_apply_execution_quality_entry_mode", lambda entry: {**entry, "mode_applied": True})
+    monkeypatch.setattr(historical_prior, "_apply_execution_quality_entry_mode", lambda entry: {**entry, "mode_applied": True})
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_reclassify_selected_execution_quality_entries",
         lambda selected, near_miss, opportunity: (selected, near_miss, opportunity),
     )
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_demote_weak_near_miss_entries",
         lambda near_miss, opportunity: (near_miss, opportunity),
     )
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_partition_opportunity_pool_entries",
         lambda opportunity: (opportunity, [{"ticker": "NH"}], [{"ticker": "RK"}], [{"ticker": "PR"}]),
     )
-    monkeypatch.setattr(btst_reporting, "_historical_execution_entry_sort_key", lambda entry: entry.get("ticker", ""))
-    monkeypatch.setattr(btst_reporting, "_opportunity_pool_execution_sort_key", lambda entry: entry.get("ticker", ""))
-    monkeypatch.setattr(btst_reporting, "_research_historical_entry_sort_key", lambda entry: entry.get("ticker", ""))
-    monkeypatch.setattr(btst_reporting, "_build_btst_candidate_historical_context", lambda payload: {"report_count": payload["report_count"]})
+    monkeypatch.setattr(historical_prior, "_historical_execution_entry_sort_key", lambda entry: entry.get("ticker", ""))
+    monkeypatch.setattr(historical_prior, "_opportunity_pool_execution_sort_key", lambda entry: entry.get("ticker", ""))
+    monkeypatch.setattr(historical_prior, "_research_historical_entry_sort_key", lambda entry: entry.get("ticker", ""))
+    monkeypatch.setattr(historical_prior, "_build_btst_candidate_historical_context", lambda payload: {"report_count": payload["report_count"]})
 
     result = btst_reporting._enrich_btst_brief_entries_with_history(
         report_dir=report_dir,
@@ -679,12 +680,12 @@ def test_render_btst_next_day_trade_brief_markdown_emits_sections_and_sources():
 
 def test_apply_historical_prior_to_entries_merges_prior_into_each_entry(monkeypatch):
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_build_watch_candidate_historical_prior",
         lambda entry, historical_rows, price_cache, family: {"summary": f"{family}:{entry['ticker']}", "sample_count": len(historical_rows)},
     )
     monkeypatch.setattr(
-        btst_reporting,
+        historical_prior,
         "_merge_entry_historical_prior",
         lambda entry, prior: {"historical_prior": prior, "merged_ticker": entry["ticker"]},
     )
@@ -895,7 +896,7 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._extract_next_day_outcome",
+        "src.paper_trading._btst_reporting.historical_prior._extract_next_day_outcome",
         lambda ticker, trade_date, price_cache: {
             "data_status": "ok",
             "next_trade_date": "2026-03-27",
@@ -1303,7 +1304,7 @@ def test_generate_btst_next_day_trade_brief_demotes_weak_historical_near_miss_in
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": [
                 {
@@ -1337,7 +1338,7 @@ def test_generate_btst_next_day_trade_brief_demotes_weak_historical_near_miss_in
         },
     )
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._extract_next_day_outcome",
+        "src.paper_trading._btst_reporting.historical_prior._extract_next_day_outcome",
         lambda ticker, trade_date, price_cache: {
             "data_status": "ok",
             "next_trade_date": "2026-04-07",
@@ -1505,7 +1506,7 @@ def test_generate_btst_next_day_trade_brief_rebuckets_intraday_selected_and_reor
         )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": historical_rows,
             "historical_report_dirs": [],
@@ -1551,7 +1552,7 @@ def test_generate_btst_next_day_trade_brief_rebuckets_intraday_selected_and_reor
             "next_open_to_close_return": -0.01,
         }
 
-    monkeypatch.setattr("src.paper_trading.btst_reporting._extract_next_day_outcome", _outcome)
+    monkeypatch.setattr("src.paper_trading._btst_reporting.historical_prior._extract_next_day_outcome", _outcome)
 
     analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-04-06", next_trade_date="2026-04-07")
 
@@ -1808,7 +1809,7 @@ def test_generate_btst_next_day_trade_brief_prunes_balanced_confirmation_opportu
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": [],
             "historical_report_dirs": [],
@@ -1883,7 +1884,7 @@ def test_generate_btst_next_day_trade_brief_prunes_weak_balanced_confirmation_op
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": [],
             "historical_report_dirs": [],
@@ -1956,7 +1957,7 @@ def test_generate_btst_next_day_trade_brief_rebuckets_no_history_opportunity_poo
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": [],
             "historical_report_dirs": [],
@@ -2029,7 +2030,7 @@ def test_generate_btst_next_day_trade_brief_prunes_low_score_no_history_upstream
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": [],
             "historical_report_dirs": [],
@@ -2132,7 +2133,7 @@ def test_generate_btst_next_day_trade_brief_prunes_weak_catalyst_no_history_with
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": [],
             "historical_report_dirs": [],
@@ -2241,7 +2242,7 @@ def test_generate_btst_next_day_trade_brief_prunes_mixed_boundary_opportunity_po
     )
 
     monkeypatch.setattr(
-        "src.paper_trading.btst_reporting._collect_historical_watch_candidate_rows",
+        "src.paper_trading._btst_reporting.historical_prior._collect_historical_watch_candidate_rows",
         lambda report_dir, actual_trade_date: {
             "rows": [],
             "historical_report_dirs": [],
@@ -2291,8 +2292,8 @@ def test_extract_next_day_outcome_prefers_robust_prices_before_tushare(monkeypat
         frame["time"] = pd.to_datetime(frame["time"])
         return frame.set_index("time")
 
-    monkeypatch.setattr(btst_reporting, "get_prices_robust", _robust)
-    monkeypatch.setattr(btst_reporting, "prices_to_df", _prices_to_df)
+    monkeypatch.setattr(historical_prior, "get_prices_robust", _robust)
+    monkeypatch.setattr(historical_prior, "prices_to_df", _prices_to_df)
     monkeypatch.setattr(
         btst_reporting,
         "get_price_data",
