@@ -13,10 +13,10 @@ from typing import Any
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_catalyst_theme_short_trade_carryover_relief_config as build_catalyst_theme_short_trade_carryover_relief_config_impl,
 )
+from src.execution.daily_pipeline_candidate_helpers import rank_scored_entries
 from src.execution.daily_pipeline_hotspot_helpers import (
     build_upstream_shadow_catalyst_relief_config as build_upstream_shadow_catalyst_relief_config_impl,
     build_upstream_shadow_release_entry as build_upstream_shadow_release_entry_impl,
-    rank_scored_entries,
     resolve_selected_threshold,
     select_upstream_shadow_release_entries as select_upstream_shadow_release_entries_impl,
     summarize_shadow_release_historical_support,
@@ -66,7 +66,30 @@ from src.screening.models import StrategySignal
 
 
 def _summarize_upstream_shadow_release_historical_support(historical_prior: dict[str, Any]) -> dict[str, Any]:
-    return summarize_upstream_shadow_release_historical_support_impl(historical_prior)
+    return summarize_upstream_shadow_release_historical_support_impl(
+        historical_prior=historical_prior,
+        historical_prior_int_fn=_historical_prior_int,
+        historical_prior_float_fn=_historical_prior_float,
+        summarize_shadow_release_historical_support_fn=summarize_shadow_release_historical_support,
+    )
+
+
+def _historical_prior_float(prior: dict[str, Any], key: str) -> float | None:
+    if key not in prior or prior[key] is None:
+        return None
+    try:
+        return float(prior[key])
+    except (TypeError, ValueError):
+        return None
+
+
+def _historical_prior_int(prior: dict[str, Any], key: str) -> int | None:
+    if key not in prior or prior[key] is None:
+        return None
+    try:
+        return int(prior[key])
+    except (TypeError, ValueError):
+        return None
 
 
 def _supports_upstream_shadow_catalyst_relief_history(historical_prior: dict[str, Any] | None) -> bool:
