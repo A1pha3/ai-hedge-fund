@@ -375,7 +375,6 @@ def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_
         prior_by_ticker=prior_by_ticker,
         resolve_historical_prior_for_ticker_fn=_resolve_historical_prior_for_ticker,
     )
-from src.execution.daily_pipeline_prior_utils import historical_prior_float as _historical_prior_float, historical_prior_int as _historical_prior_int
 
 
 def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
