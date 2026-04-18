@@ -23,9 +23,6 @@ from src.execution.daily_pipeline_watchlist_helpers import (
     tag_merge_approved_layer_c_results,
 )
 from src.execution.daily_pipeline_settings import (
-    UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
-    UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
-    UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
     WATCHLIST_DIAGNOSTICS_CONFIG,
     WATCHLIST_SCORE_THRESHOLD,
 )

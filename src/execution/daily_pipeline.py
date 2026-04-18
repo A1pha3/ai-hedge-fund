@@ -38,9 +38,6 @@ from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_catalyst_theme_shadow_entry as build_catalyst_theme_shadow_entry_impl,
 )
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
-    build_catalyst_theme_short_trade_carryover_relief_config as build_catalyst_theme_short_trade_carryover_relief_config_impl,
-)
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_upstream_catalyst_theme_candidates,
     collect_catalyst_theme_diagnostic_rankings,
 )
@@ -58,31 +55,34 @@ from src.execution.daily_pipeline_merge_approved_wrappers import (
     _apply_merge_approved_fused_boost,
     _apply_merge_approved_layer_c_alignment_uplift,
     _apply_merge_approved_sector_resonance_uplift,
-    _build_batch_uplift_summary as _build_batch_uplift_summary_impl,
     _build_layer_b_filter_diagnostics,
     _build_merge_approved_watchlist,
     _build_watchlist_filter_diagnostics,
-    _classify_watchlist_entry_default,
     _select_upstream_shadow_release_entries as _select_upstream_shadow_release_entries_from_wrappers,
     _tag_merge_approved_layer_c_results,
 )
-from src.execution.daily_pipeline_hotspot_helpers import (
-    build_upstream_shadow_catalyst_relief_config as build_upstream_shadow_catalyst_relief_config_impl,
-)
-from src.execution.daily_pipeline_hotspot_helpers import (
-    build_upstream_shadow_release_entry as build_upstream_shadow_release_entry_impl,
-)
-from src.execution.daily_pipeline_hotspot_helpers import (
-    resolve_selected_threshold,
-)
-from src.execution.daily_pipeline_hotspot_helpers import (
-    select_upstream_shadow_release_entries as select_upstream_shadow_release_entries_impl,
-)
-from src.execution.daily_pipeline_hotspot_helpers import (
-    summarize_shadow_release_historical_support,
-)
-from src.execution.daily_pipeline_hotspot_helpers import (
-    summarize_upstream_shadow_release_historical_support as summarize_upstream_shadow_release_historical_support_impl,
+# Re-exported for test access (tests/execution/test_phase4_execution.py)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
+    _build_catalyst_theme_short_trade_carryover_relief_config,
+    _build_upstream_shadow_catalyst_relief_config,
+    _build_upstream_shadow_catalyst_relief_payload_kwargs,
+    _build_upstream_shadow_catalyst_relief_threshold_inputs,
+    _build_upstream_shadow_watchlist_entry,
+    _build_upstream_shadow_watchlist_reason_codes,
+    _coerce_upstream_shadow_strategy_signal,
+    _extract_upstream_shadow_catalyst_relief_metrics,
+    _parse_optional_float,
+    _passes_upstream_shadow_catalyst_relief_gates,
+    _passes_upstream_shadow_release_quality_floor,
+    _resolve_upstream_shadow_release_max_tickers,
+    _resolve_upstream_shadow_release_priority_rank,
+    _resolve_upstream_shadow_selected_threshold,
+    _select_upstream_shadow_release_entries,
+    _should_promote_upstream_shadow_release_to_watchlist,
+    _should_release_upstream_shadow_candidate,
+    _summarize_upstream_shadow_release_historical_support,
+    _supports_upstream_shadow_catalyst_relief_history,
+    _upstream_shadow_watchlist_promotion_sort_key,
 )
 from src.execution.daily_pipeline_phase4_entry_helpers import (
     _build_short_trade_boundary_entry,
@@ -169,19 +169,8 @@ from src.execution.daily_pipeline_settings import (
     UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN,
     UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR,
     UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY,
     UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CANDIDATE_SCORE_MIN,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_CLOSE_MIN,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_HISTORY_NEXT_CLOSE_MIN,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_NEAR_MISS_THRESHOLD,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_SELECTED_THRESHOLD,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_HARD_CLIFF_TREND_MIN,
     UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD,
-    UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_BY_LANE,
     UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
     UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN,
     UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS,
@@ -191,11 +180,8 @@ from src.execution.daily_pipeline_settings import (
     UPSTREAM_SHADOW_RELEASE_LANES,
     UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
     UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
-    UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_CLOSE_MIN,
-    UPSTREAM_SHADOW_RELEASE_SCORE_FLOOR_TREND_MIN,
-    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES,
-    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS,
-    WATCHLIST_DIAGNOSTICS_CONFIG,
+    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_LANES,  # noqa: F401 — re-exported for tests
+    UPSTREAM_SHADOW_WATCHLIST_PROMOTION_MAX_TICKERS,  # noqa: F401 — re-exported for tests
     WATCHLIST_SCORE_THRESHOLD,
 )
 from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
@@ -210,9 +196,6 @@ from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
     prepare_short_trade_candidate_diagnostics_state,
 )
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
-from src.execution.merge_approved_breakout_uplift import (
-    summarize_merge_approved_breakout_uplift_config,
-)
 from src.execution.merge_approved_loader import load_merge_approved_tickers
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.plan_generator import generate_execution_plan
@@ -230,7 +213,7 @@ from src.screening.candidate_pool import (
     build_candidate_pool_with_shadow,
 )
 from src.screening.market_state import detect_market_state
-from src.screening.models import CandidateStock, StrategySignal
+from src.screening.models import CandidateStock
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
@@ -244,31 +227,14 @@ from src.tools.tushare_api import get_daily_basic_batch
 
 from src.execution.daily_pipeline_upstream_shadow_helpers import (
     _build_catalyst_theme_short_trade_carryover_relief_config,
-    _build_upstream_shadow_catalyst_relief_config,
-    _build_upstream_shadow_catalyst_relief_payload_kwargs,
-    _build_upstream_shadow_catalyst_relief_threshold_inputs,
     _build_upstream_shadow_release_entry,
-    _build_upstream_shadow_watchlist_entry,
-    _build_upstream_shadow_watchlist_reason_codes,
-    _coerce_upstream_shadow_strategy_signal,
     _compute_short_trade_boundary_candidate_score,
-    _extract_upstream_shadow_catalyst_relief_metrics,
     _mark_upstream_shadow_watchlist_promotions,
     _merge_watchlist_with_upstream_shadow_promotions,
-    _parse_optional_float,
-    _passes_upstream_shadow_catalyst_relief_gates,
-    _passes_upstream_shadow_release_quality_floor,
     _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
-    _resolve_upstream_shadow_release_max_tickers,
-    _resolve_upstream_shadow_release_priority_rank,
-    _resolve_upstream_shadow_selected_threshold,
-    _select_upstream_shadow_release_entries as _select_upstream_shadow_release_entries_impl,
     _select_upstream_shadow_watchlist_entries,
-    _should_promote_upstream_shadow_release_to_watchlist,
     _should_release_upstream_shadow_candidate,
     _summarize_upstream_shadow_release_historical_support,
-    _supports_upstream_shadow_catalyst_relief_history,
-    _upstream_shadow_watchlist_promotion_sort_key,
 )
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
