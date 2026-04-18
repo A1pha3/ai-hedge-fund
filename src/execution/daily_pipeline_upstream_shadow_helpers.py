@@ -74,22 +74,7 @@ def _summarize_upstream_shadow_release_historical_support(historical_prior: dict
     )
 
 
-def _historical_prior_float(prior: dict[str, Any], key: str) -> float | None:
-    if key not in prior or prior[key] is None:
-        return None
-    try:
-        return float(prior[key])
-    except (TypeError, ValueError):
-        return None
-
-
-def _historical_prior_int(prior: dict[str, Any], key: str) -> int | None:
-    if key not in prior or prior[key] is None:
-        return None
-    try:
-        return int(prior[key])
-    except (TypeError, ValueError):
-        return None
+from src.execution.daily_pipeline_prior_utils import historical_prior_float as _historical_prior_float, historical_prior_int as _historical_prior_int
 
 
 def _supports_upstream_shadow_catalyst_relief_history(historical_prior: dict[str, Any] | None) -> bool:

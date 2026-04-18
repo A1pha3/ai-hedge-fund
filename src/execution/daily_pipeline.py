@@ -410,26 +410,7 @@ def _attach_historical_prior_to_watchlist(
     return attached_watchlist
 
 
-def _historical_prior_float(prior: dict[str, Any], key: str) -> float | None:
-    value = prior.get(key)
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _historical_prior_int(prior: dict[str, Any], key: str) -> int | None:
-    value = prior.get(key)
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
+from src.execution.daily_pipeline_prior_utils import historical_prior_float as _historical_prior_float, historical_prior_int as _historical_prior_int
 
 
 def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
