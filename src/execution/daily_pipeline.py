@@ -10,14 +10,10 @@ from inspect import signature
 from time import perf_counter
 from typing import Any
 
-from scripts.btst_latest_followup_utils import (
-    load_latest_btst_historical_prior_by_ticker,
-)
+from scripts.btst_latest_followup_utils import load_latest_btst_historical_prior_by_ticker
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     build_buy_orders_with_diagnostics as build_buy_orders_with_diagnostics_impl,
-)
-from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     build_reentry_filter_payload,
 )
 from src.execution.daily_pipeline_candidate_helpers import (
@@ -28,27 +24,19 @@ from src.execution.daily_pipeline_candidate_helpers import (
 )
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_catalyst_theme_candidate_diagnostics as build_catalyst_theme_candidate_diagnostics_impl,
-)
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_catalyst_theme_candidate_diagnostics_payload,
     build_catalyst_theme_prefilter_thresholds,
     build_catalyst_theme_ranked_outputs,
-)
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_catalyst_theme_shadow_entry as build_catalyst_theme_shadow_entry_impl,
-)
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     build_upstream_catalyst_theme_candidates,
     collect_catalyst_theme_diagnostic_rankings,
-)
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     compute_catalyst_theme_threshold_shortfalls as compute_catalyst_theme_threshold_shortfalls_impl,
-)
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     finalize_catalyst_theme_candidate_diagnostics,
-)
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     resolve_catalyst_theme_close_momentum_relief as resolve_catalyst_theme_close_momentum_relief_impl,
+)
+from src.execution.daily_pipeline_historical_prior_attachment import (
+    attach_historical_prior_to_entries as _attach_historical_prior_to_entries_impl,
+    attach_historical_prior_to_watchlist as _attach_historical_prior_to_watchlist,
 )
 from src.execution.daily_pipeline_merge_approved_wrappers import (
     _apply_merge_approved_breakout_signal_uplift,
@@ -61,70 +49,31 @@ from src.execution.daily_pipeline_merge_approved_wrappers import (
     _select_upstream_shadow_release_entries as _select_upstream_shadow_release_entries_from_wrappers,
     _tag_merge_approved_layer_c_results,
 )
-# Re-exported for test access (tests/execution/test_phase4_execution.py)
-from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
-    _build_catalyst_theme_short_trade_carryover_relief_config,
-    _build_upstream_shadow_catalyst_relief_config,
-    _build_upstream_shadow_catalyst_relief_payload_kwargs,
-    _build_upstream_shadow_catalyst_relief_threshold_inputs,
-    _build_upstream_shadow_watchlist_entry,
-    _build_upstream_shadow_watchlist_reason_codes,
-    _coerce_upstream_shadow_strategy_signal,
-    _extract_upstream_shadow_catalyst_relief_metrics,
-    _parse_optional_float,
-    _passes_upstream_shadow_catalyst_relief_gates,
-    _passes_upstream_shadow_release_quality_floor,
-    _resolve_upstream_shadow_release_max_tickers,
-    _resolve_upstream_shadow_release_priority_rank,
-    _resolve_upstream_shadow_selected_threshold,
-    _select_upstream_shadow_release_entries,
-    _should_promote_upstream_shadow_release_to_watchlist,
-    _should_release_upstream_shadow_candidate,
-    _summarize_upstream_shadow_release_historical_support,
-    _supports_upstream_shadow_catalyst_relief_history,
-    _upstream_shadow_watchlist_promotion_sort_key,
-)
 from src.execution.daily_pipeline_phase4_entry_helpers import (
     _build_short_trade_boundary_entry,
     _build_upstream_shadow_observation_entry,
 )
 from src.execution.daily_pipeline_post_market_helpers import (
-    aggregate_post_market_diagnostics,
-    build_high_pool,
-    build_post_market_execution_plan,
-    build_selection_target_inputs,
-)
-from src.execution.daily_pipeline_post_market_helpers import (
-    build_sell_order_diagnostics as build_sell_order_diagnostics_impl,
-)
-from src.execution.daily_pipeline_post_market_helpers import (
-    build_watchlist_price_map as build_watchlist_price_map_impl,
-)
-from src.execution.daily_pipeline_post_market_helpers import (
-    ensure_plan_target_shells as ensure_plan_target_shells_impl,
-)
-from src.execution.daily_pipeline_post_market_helpers import (
-    merge_agent_results,
     PostMarketCandidateContext,
     PostMarketDiagnosticsAggregation,
     PostMarketOrderContext,
     PostMarketSelectionResolution,
     PostMarketWatchlistContext,
+    aggregate_post_market_diagnostics,
+    build_high_pool,
+    build_post_market_execution_plan,
+    build_selection_target_inputs,
+    build_sell_order_diagnostics as build_sell_order_diagnostics_impl,
+    build_watchlist_price_map as build_watchlist_price_map_impl,
+    ensure_plan_target_shells as ensure_plan_target_shells_impl,
+    merge_agent_results,
     resolve_post_market_selection_targets,
 )
 from src.execution.daily_pipeline_runtime_helpers import (
     build_filter_summary as _build_filter_summary_impl,
-)
-from src.execution.daily_pipeline_runtime_helpers import (
     default_exit_checker as _default_exit_checker_impl,
-)
-from src.execution.daily_pipeline_runtime_helpers import (
     load_candidate_pool_bundle as _load_candidate_pool_bundle_impl,
-)
-from src.execution.daily_pipeline_runtime_helpers import (
     load_latest_historical_prior_by_ticker as _load_latest_historical_prior_by_ticker_impl,
-)
-from src.execution.daily_pipeline_runtime_helpers import (
     resolve_historical_prior_for_ticker as _resolve_historical_prior_for_ticker_impl,
 )
 from src.execution.daily_pipeline_settings import (
@@ -186,14 +135,41 @@ from src.execution.daily_pipeline_settings import (
 )
 from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
     build_short_trade_candidate_diagnostics as build_short_trade_candidate_diagnostics_impl,
-)
-from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
     build_short_trade_candidate_diagnostics_payload,
     build_short_trade_prefilter_thresholds,
     build_short_trade_ranked_outputs,
     collect_short_trade_diagnostic_rankings,
     finalize_short_trade_candidate_diagnostics,
     prepare_short_trade_candidate_diagnostics_state,
+)
+# Re-exported for test access (tests/execution/test_phase4_execution.py)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
+    _build_catalyst_theme_short_trade_carryover_relief_config,
+    _build_upstream_shadow_catalyst_relief_config,
+    _build_upstream_shadow_catalyst_relief_payload_kwargs,
+    _build_upstream_shadow_catalyst_relief_threshold_inputs,
+    _build_upstream_shadow_release_entry,
+    _build_upstream_shadow_watchlist_entry,
+    _build_upstream_shadow_watchlist_reason_codes,
+    _coerce_upstream_shadow_strategy_signal,
+    _compute_short_trade_boundary_candidate_score,
+    _extract_upstream_shadow_catalyst_relief_metrics,
+    _mark_upstream_shadow_watchlist_promotions,
+    _merge_watchlist_with_upstream_shadow_promotions,
+    _parse_optional_float,
+    _passes_upstream_shadow_catalyst_relief_gates,
+    _passes_upstream_shadow_release_quality_floor,
+    _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+    _resolve_upstream_shadow_release_max_tickers,
+    _resolve_upstream_shadow_release_priority_rank,
+    _resolve_upstream_shadow_selected_threshold,
+    _select_upstream_shadow_release_entries,
+    _select_upstream_shadow_watchlist_entries,
+    _should_promote_upstream_shadow_release_to_watchlist,
+    _should_release_upstream_shadow_candidate,
+    _summarize_upstream_shadow_release_historical_support,
+    _supports_upstream_shadow_catalyst_relief_history,
+    _upstream_shadow_watchlist_promotion_sort_key,
 )
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.execution.merge_approved_loader import load_merge_approved_tickers
@@ -204,38 +180,17 @@ from src.execution.t1_confirmation import confirm_buy_signal
 from src.llm.defaults import get_default_model_config
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
-from src.portfolio.position_calculator import (
-    calculate_position,
-    enforce_daily_trade_limit,
-)
-from src.screening.candidate_pool import (
-    build_candidate_pool,
-    build_candidate_pool_with_shadow,
-)
+from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
+from src.screening.candidate_pool import build_candidate_pool, build_candidate_pool_with_shadow
 from src.screening.market_state import detect_market_state
 from src.screening.models import CandidateStock
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetMode
-from src.targets.profiles import (
-    build_short_trade_target_profile,
-    use_short_trade_target_profile,
-)
+from src.targets.profiles import build_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets, summarize_selection_targets
 from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
 from src.tools.tushare_api import get_daily_basic_batch
-
-from src.execution.daily_pipeline_upstream_shadow_helpers import (
-    _build_catalyst_theme_short_trade_carryover_relief_config,
-    _build_upstream_shadow_release_entry,
-    _compute_short_trade_boundary_candidate_score,
-    _mark_upstream_shadow_watchlist_promotions,
-    _merge_watchlist_with_upstream_shadow_promotions,
-    _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
-    _select_upstream_shadow_watchlist_entries,
-    _should_release_upstream_shadow_candidate,
-    _summarize_upstream_shadow_release_historical_support,
-)
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
 ExitChecker = Callable[..., list]
