@@ -95,49 +95,6 @@ class PerformanceMetricsCalculator:
         }
 
     @staticmethod
-    def compute_trade_metrics(trades: Sequence[dict]) -> PerformanceMetrics:
-        """
-        从交易记录计算盈亏比、胜率和交易次数。
-
-        参数:
-            trades: 交易记录列表，每条含 'pnl' 字段（正=盈利，负=亏损）
-
-        返回:
-            包含 profit_loss_ratio, win_rate, total_trades 的指标字典
-        """
-        if not trades:
-            return {"profit_loss_ratio": None, "win_rate": None, "total_trades": 0}
-
-        pnls = [t.get("pnl", 0) for t in trades if "pnl" in t]
-        if not pnls:
-            return {"profit_loss_ratio": None, "win_rate": None, "total_trades": 0}
-
-        wins = [p for p in pnls if p > 0]
-        losses = [p for p in pnls if p < 0]
-
-        total_trades = len(pnls)
-        win_rate = float(len(wins) / total_trades) if total_trades > 0 else 0.0
-
-        avg_win = sum(wins) / len(wins) if wins else 0.0
-        avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
-        profit_loss_ratio = float(avg_win / avg_loss) if avg_loss > 1e-12 else (float("inf") if avg_win > 0 else 0.0)
-
-        return {
-            "profit_loss_ratio": profit_loss_ratio,
-            "win_rate": win_rate,
-            "total_trades": total_trades,
-        }
-
-    @staticmethod
-    def compute_turnover(total_trade_value: float, avg_nav: float, trading_days: int, annual_trading_days: int = 252) -> float:
-        """
-        计算年化换手率 = (总交易额 / 平均净值) × (252 / 交易天数)
-        """
-        if avg_nav < 1e-12 or trading_days < 1:
-            return 0.0
-        return float((total_trade_value / avg_nav) * (annual_trading_days / trading_days))
-
-    @staticmethod
     def compute_beta(portfolio_returns: Sequence[float], benchmark_returns: Sequence[float]) -> float | None:
         """
         计算组合 Beta（对基准指数的回归系数）。

@@ -165,72 +165,6 @@ def calculate_yoy_revenue_growth(revenues: list[float], periods_per_year: int = 
     return None
 
 
-def calculate_fcf_growth(fcfs: list[float], years: int | None = None) -> float | None:
-    """
-    计算自由现金流的复合年增长率 (CAGR)
-
-    Args:
-        fcfs: 自由现金流列表，按时间顺序从新到旧排列
-        years: 计算CAGR的年数，如果为None则使用全部数据
-
-    Returns:
-        CAGR 值，如果无法计算则返回 None
-    """
-    if not fcfs or len(fcfs) < 2:
-        return None
-
-    # FCF 可以是负数，所以只过滤 None
-    valid_fcfs = [f for f in fcfs if f is not None]
-    if len(valid_fcfs) < 2:
-        return None
-
-    latest = valid_fcfs[0]
-    oldest = valid_fcfs[-1] if years is None else valid_fcfs[min(years, len(valid_fcfs) - 1)]
-
-    # 如果最旧值为0或符号不同，无法计算有意义的CAGR
-    if oldest == 0:
-        return None
-
-    n_years = len(valid_fcfs) - 1 if years is None else min(years, len(valid_fcfs) - 1)
-    if n_years <= 0:
-        return None
-
-    try:
-        # 对于可能为负数的FCF，使用简单增长率而非CAGR
-        if latest * oldest < 0:  # 符号不同
-            return (latest - oldest) / abs(oldest)
-
-        cagr = (latest / oldest) ** (1 / n_years) - 1
-        if math.isfinite(cagr):
-            return cagr
-    except (ValueError, ZeroDivisionError, OverflowError):
-        pass
-
-    return None
-
-
-def get_revenue_growth_for_analysis(revenues: list[float], analysis_type: str = "cagr") -> float | None:
-    """
-    统一接口：根据分析类型获取收入增长率
-
-    Args:
-        revenues: 收入列表，按时间顺序从新到旧排列
-        analysis_type: 分析类型
-            - "cagr": 复合年增长率（推荐用于长期分析）
-            - "simple": 简单总增长率
-            - "yoy": 同比增长率（推荐用于季度数据）
-
-    Returns:
-        对应类型的增长率
-    """
-    if analysis_type == "cagr":
-        return calculate_revenue_growth_cagr(revenues)
-    if analysis_type == "simple":
-        return calculate_simple_revenue_growth(revenues)
-    if analysis_type == "yoy":
-        return calculate_yoy_revenue_growth(revenues)
-    return calculate_revenue_growth_cagr(revenues)
-
 
 def annualize_ytd_value(value: float, report_period: str) -> float | None:
     """
@@ -310,23 +244,3 @@ def calculate_pe_from_line_items(market_cap: float, line_items: list) -> float |
             break
 
     return None
-
-
-def format_growth_for_display(growth: float | None, metric_name: str = "增长率") -> str:
-    """
-    格式化增长率用于显示
-
-    Args:
-        growth: 增长率值
-        metric_name: 指标名称
-
-    Returns:
-        格式化后的字符串
-    """
-    if growth is None:
-        return f"{metric_name}: N/A"
-
-    if abs(growth) < 0.001:
-        return f"{metric_name}: 0%"
-
-    return f"{metric_name}: {growth:.1%}"

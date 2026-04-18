@@ -65,10 +65,6 @@ class LLMModel(BaseModel):
         """Convert to format needed for questionary choices"""
         return (self.display_name, self.model_name, self.provider.value)
 
-    def is_custom(self) -> bool:
-        """Check if the model is a Gemini model"""
-        return self.model_name == "-"
-
     def has_json_mode(self) -> bool:
         """Check if the model supports JSON mode"""
         if self.is_deepseek() or self.is_gemini() or self.is_minimax() or self.is_volcengine_non_json_mode():

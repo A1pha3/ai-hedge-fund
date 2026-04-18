@@ -75,20 +75,6 @@ def normalize_provider_name(provider_name: str | None) -> str:
     return _PROVIDER_ALIASES.get(normalized.lower(), normalized)
 
 
-def get_default_model_provider() -> str:
-    _, model_provider = get_default_model_config()
-    return model_provider
-
-
-def get_default_model_name(provider_name: str | None = None) -> str:
-    model_name, resolved_provider = get_default_model_config()
-    if provider_name and normalize_provider_name(provider_name) != resolved_provider:
-        raise DefaultModelConfigurationError(
-            f"默认模型 provider 已配置为 {resolved_provider}，但请求读取的是 {normalize_provider_name(provider_name)}。"
-        )
-    return model_name
-
-
 def get_default_model_config() -> tuple[str, str]:
     _ensure_default_env_loaded()
     env_model_name = _read_env(*_MODEL_NAME_ENV_VARS)

@@ -16,7 +16,7 @@ from src.llm.defaults import get_default_model_config
 from src.llm.models import get_model, get_model_info, get_provider_concurrency_limit_env_var, get_provider_profile, get_provider_routes
 from src.monitoring.llm_metrics import record_llm_attempt
 from src.utils.llm_call_helpers import handle_llm_failure, resolve_llm_call_context, return_success_result
-from src.utils.llm_json_helpers import extract_balanced_json_candidates, extract_json_payload_from_content
+from src.utils.llm_json_helpers import extract_json_payload_from_content
 from src.utils import llm_provider_routing
 from src.utils.progress import progress
 
@@ -290,9 +290,6 @@ def _strip_reasoning_blocks(content: str) -> str:
         cleaned = re.sub(pattern, "", cleaned, flags=re.DOTALL | re.IGNORECASE)
     return cleaned.strip()
 
-
-def _extract_balanced_json_candidates(content: str) -> list[str]:
-    return extract_balanced_json_candidates(content)
 
 
 def _try_json_loads(payload: str) -> dict | None:

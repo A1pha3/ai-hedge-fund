@@ -49,11 +49,9 @@ from .engine_checkpoint_helpers import (
 from .engine_pending_helpers import (
     apply_pending_buy_result,
     apply_pending_sell_result,
-    build_pending_watch_scores,
     dedupe_pending_orders,
     evaluate_pending_buy_order,
     evaluate_pending_sell_order,
-    initialize_pending_queue_state,
     process_pending_queues,
     queue_limit_blocked_pipeline_decision,
     queue_limit_down_sell_decision,
@@ -63,9 +61,6 @@ from .engine_telemetry_helpers import (
     build_pipeline_day_event_payload as build_pipeline_day_event_payload_helper,
     build_pipeline_day_record_payloads as build_pipeline_day_record_payloads_helper,
     build_pipeline_day_timing_payload as build_pipeline_day_timing_payload_helper,
-    build_pipeline_day_timing_seconds,
-    build_pipeline_queue_counts,
-    build_pipeline_runtime_state_payload,
 )
 from .metrics import PerformanceMetricsCalculator
 from .output import OutputBuilder
@@ -737,52 +732,6 @@ class BacktestEngine:
             process_single_pending_sell=self._process_single_pending_sell,
             dedupe_pending_orders_fn=self._dedupe_pending_orders,
         )
-
-    @staticmethod
-    def _initialize_pending_queue_state() -> tuple[list[PendingOrder], list[PendingOrder], list[str]]:
-        return initialize_pending_queue_state()
-
-    @staticmethod
-    def _build_pending_watch_scores(prepared_plan: ExecutionPlan) -> dict[str, float]:
-        return build_pending_watch_scores(prepared_plan)
-
-    def _process_pending_buy_queue(
-        self,
-        *,
-        current_prices: dict[str, float],
-        limit_up: set[str],
-        watch_scores: dict[str, float],
-        decisions: dict[str, dict],
-        next_pending_buy: list[PendingOrder],
-        alerts: list[str],
-    ) -> None:
-        for order in self._pending_buy_queue:
-            self._process_single_pending_buy(
-                order=order,
-                current_prices=current_prices,
-                limit_up=limit_up,
-                watch_scores=watch_scores,
-                decisions=decisions,
-                next_pending_buy=next_pending_buy,
-                alerts=alerts,
-            )
-
-    def _process_pending_sell_queue(
-        self,
-        *,
-        limit_down: set[str],
-        decisions: dict[str, dict],
-        next_pending_sell: list[PendingOrder],
-        alerts: list[str],
-    ) -> None:
-        for order in self._pending_sell_queue:
-            self._process_single_pending_sell(
-                order=order,
-                limit_down=limit_down,
-                decisions=decisions,
-                next_pending_sell=next_pending_sell,
-                alerts=alerts,
-            )
 
     def _load_pipeline_day_context(
         self,
@@ -1669,31 +1618,6 @@ class BacktestEngine:
             "timing_payload_builder": build_pipeline_timing_payload,
         }
 
-    def _build_pipeline_queue_counts(self) -> dict[str, int]:
-        return build_pipeline_queue_counts(
-            pending_buy_queue=self._pending_buy_queue,
-            pending_sell_queue=self._pending_sell_queue,
-        )
-
-    def _build_pipeline_day_timing_seconds(
-        self,
-        *,
-        load_market_data_seconds: float,
-        pre_market_seconds: float,
-        intraday_seconds: float,
-        append_daily_state_seconds: float,
-        post_market_seconds: float,
-        total_day_seconds: float,
-    ) -> dict[str, float]:
-        return build_pipeline_day_timing_seconds(
-            load_market_data_seconds=load_market_data_seconds,
-            pre_market_seconds=pre_market_seconds,
-            intraday_seconds=intraday_seconds,
-            append_daily_state_seconds=append_daily_state_seconds,
-            post_market_seconds=post_market_seconds,
-            total_day_seconds=total_day_seconds,
-        )
-
     def _build_pipeline_day_event_payload(
         self,
         *,
@@ -1784,15 +1708,6 @@ class BacktestEngine:
             pending_buy_queue=self._pending_buy_queue,
             pending_sell_queue=self._pending_sell_queue,
             exit_reentry_cooldowns=self._exit_reentry_cooldowns,
-        )
-
-    def _build_pipeline_runtime_state_payload(self) -> dict[str, object]:
-        runtime_context = self._build_pipeline_runtime_payload_context()
-        return build_pipeline_runtime_state_payload(
-            portfolio_snapshot=runtime_context.portfolio_snapshot,
-            pending_buy_queue=runtime_context.pending_buy_queue,
-            pending_sell_queue=runtime_context.pending_sell_queue,
-            exit_reentry_cooldowns=runtime_context.exit_reentry_cooldowns,
         )
 
     def _emit_pipeline_day_records(self, *, timing_payload: dict, event_payload: dict) -> None:

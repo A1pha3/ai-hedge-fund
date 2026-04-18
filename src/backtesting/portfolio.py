@@ -107,17 +107,8 @@ class Portfolio:
     def get_cash(self) -> float:
         return float(self._portfolio["cash"])
 
-    def get_margin_used(self) -> float:
-        return float(self._portfolio["margin_used"])
-
-    def get_margin_requirement(self) -> float:
-        return float(self._portfolio["margin_requirement"])
-
     def get_positions(self) -> Mapping[str, PositionState]:
         return MappingProxyType(self._portfolio["positions"])  # type: ignore[arg-type]
-
-    def get_realized_gains(self) -> Mapping[str, TickerRealizedGains]:
-        return MappingProxyType(self._portfolio["realized_gains"])  # type: ignore[arg-type]
 
     def ensure_ticker(self, ticker: str) -> None:
         if ticker in self._portfolio["positions"]:
