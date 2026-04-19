@@ -1455,6 +1455,7 @@ def test_btst_precision_supply_probe_profiles_rebalance_non_catalyst_signal_mix(
     assert probe_b.historical_continuation_score_weight == 0.10
     assert probe_b.short_term_reversal_weight < probe_a.short_term_reversal_weight
     assert probe_b.intraday_strength_weight > probe_a.intraday_strength_weight
+    assert probe_b.reversal_2d_weight > probe_a.reversal_2d_weight
 
 
 def test_short_trade_rank_threshold_tightening_raises_thresholds_for_deep_rank_entries() -> None:
@@ -2551,7 +2552,20 @@ def test_historical_continuation_score_weight_boosts_strong_same_ticker_continua
     assert boosted_result.metrics_payload["thresholds"]["historical_continuation_score_weight"] == 0.08
 
 
-def test_btst_precision_supply_probe_boosts_non_catalyst_boundary_candidate() -> None:
+@pytest.mark.parametrize(
+    ("profile_name", "expected_intraday_strength_weight", "expected_reversal_2d_weight", "expected_historical_continuation_score_weight"),
+    [
+        ("btst_precision_v2_supply_probe_a", 0.10, 0.06, 0.10),
+        ("btst_precision_v2_supply_probe_b", 0.12, 0.09, 0.10),
+    ],
+    ids=["probe_a", "probe_b"],
+)
+def test_btst_precision_supply_probe_boosts_non_catalyst_boundary_candidate(
+    profile_name: str,
+    expected_intraday_strength_weight: float,
+    expected_reversal_2d_weight: float,
+    expected_historical_continuation_score_weight: float,
+) -> None:
     entry = _make_non_catalyst_supply_probe_entry()
     event_sentiment = entry["strategy_signals"]["event_sentiment"]
 
@@ -2569,7 +2583,7 @@ def test_btst_precision_supply_probe_boosts_non_catalyst_boundary_candidate() ->
             rank_hint=1,
         )
 
-    with use_short_trade_target_profile(profile_name="btst_precision_v2_supply_probe_a"):
+    with use_short_trade_target_profile(profile_name=profile_name):
         probe_result = evaluate_short_trade_rejected_target(
             trade_date="20260328",
             entry=entry,
@@ -2581,9 +2595,9 @@ def test_btst_precision_supply_probe_boosts_non_catalyst_boundary_candidate() ->
     assert probe_result.metrics_payload["catalyst_freshness"] == 0.0
     assert probe_result.metrics_payload["effective_catalyst_freshness"] == 0.0
     assert probe_result.score_target > baseline_result.score_target
-    assert probe_result.metrics_payload["thresholds"]["intraday_strength_weight"] == 0.10
-    assert probe_result.metrics_payload["thresholds"]["reversal_2d_weight"] == 0.06
-    assert probe_result.metrics_payload["thresholds"]["historical_continuation_score_weight"] == 0.10
+    assert probe_result.metrics_payload["thresholds"]["intraday_strength_weight"] == expected_intraday_strength_weight
+    assert probe_result.metrics_payload["thresholds"]["reversal_2d_weight"] == expected_reversal_2d_weight
+    assert probe_result.metrics_payload["thresholds"]["historical_continuation_score_weight"] == expected_historical_continuation_score_weight
 
 
 def test_upstream_shadow_catalyst_relief_promotes_strong_recalled_shadow_to_near_miss() -> None:
