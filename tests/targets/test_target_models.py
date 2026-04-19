@@ -1526,6 +1526,64 @@ def test_btst_precision_supply_probe_profiles_rebalance_non_catalyst_signal_mix(
     assert probe_b.reversal_2d_weight > probe_a.reversal_2d_weight
 
 
+def test_btst_precision_catalyst_cap_probe_applies_source_specific_rank_caps() -> None:
+    baseline = get_short_trade_target_profile("btst_precision_v2")
+    cap_probe = get_short_trade_target_profile("btst_precision_v2_catalyst_cap_probe")
+
+    assert cap_probe.select_threshold == baseline.select_threshold
+    assert cap_probe.near_miss_threshold == baseline.near_miss_threshold
+    assert cap_probe.selected_rank_cap_ratio == baseline.selected_rank_cap_ratio
+    assert cap_probe.near_miss_rank_cap_ratio == baseline.near_miss_rank_cap_ratio
+    assert cap_probe.catalyst_theme_selected_rank_cap_ratio == 0.05
+    assert cap_probe.catalyst_theme_near_miss_rank_cap_ratio == 0.10
+
+    catalyst_entry = {
+        **_make_prepared_breakout_entry(),
+        "candidate_source": "catalyst_theme",
+        "reason": "catalyst_theme_candidate_score_ranked",
+        "reasons": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+        ],
+        "candidate_reason_codes": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+        ],
+    }
+    boundary_entry = {
+        **catalyst_entry,
+        "candidate_source": "short_trade_boundary",
+        "reason": "short_trade_boundary_candidate",
+        "reasons": ["short_trade_boundary_candidate"],
+        "candidate_reason_codes": ["short_trade_boundary_candidate"],
+    }
+
+    with use_short_trade_target_profile(profile_name="btst_precision_v2_catalyst_cap_probe"):
+        catalyst_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=catalyst_entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+        boundary_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=boundary_entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+
+    catalyst_cap_state = catalyst_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    boundary_cap_state = boundary_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert catalyst_cap_state["selected_rank_cap_ratio"] == 0.05
+    assert catalyst_cap_state["near_miss_rank_cap_ratio"] == 0.10
+    assert catalyst_cap_state["selected_rank_cap"] == 5
+    assert catalyst_cap_state["near_miss_rank_cap"] == 10
+    assert catalyst_result.decision == "rejected"
+    assert boundary_cap_state["selected_rank_cap_ratio"] == baseline.selected_rank_cap_ratio
+    assert boundary_cap_state["near_miss_rank_cap_ratio"] == baseline.near_miss_rank_cap_ratio
+    assert boundary_result.decision in {"near_miss", "selected"}
+
+
 def test_short_trade_rank_threshold_tightening_raises_thresholds_for_deep_rank_entries() -> None:
     entry = _make_prepared_breakout_entry()
 
