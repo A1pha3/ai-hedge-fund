@@ -567,12 +567,12 @@ def test_build_runtime_recorder_and_engine_reuses_recorder_path(monkeypatch, tmp
 
 
 def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]]) -> None:
-    monkeypatch.setattr("src.backtesting.engine.get_prices", lambda *a, **k: None)
-    monkeypatch.setattr("src.backtesting.engine.get_financial_metrics", lambda *a, **k: [])
-    monkeypatch.setattr("src.backtesting.engine.get_insider_trades", lambda *a, **k: [])
-    monkeypatch.setattr("src.backtesting.engine.get_company_news", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_prices", lambda *a, **k: None)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_financial_metrics", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_insider_trades", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_company_news", lambda *a, **k: [])
     monkeypatch.setattr("src.backtesting.output.print_backtest_results", lambda *a, **k: None)
-    monkeypatch.setattr("src.backtesting.engine.get_limit_list", lambda *a, **k: None)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_limit_list", lambda *a, **k: None)
 
     def fake_get_price_data(ticker: str, start_date: str, end_date: str, api_key=None):
         closes = closes_by_ticker[ticker]
@@ -588,7 +588,7 @@ def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]
         frame.set_index("date", inplace=True)
         return frame[["open", "close", "high", "low", "volume"]]
 
-    monkeypatch.setattr("src.backtesting.engine.get_price_data", fake_get_price_data)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
     monkeypatch.setattr("src.backtesting.benchmarks.get_price_data", fake_get_price_data)
 
 

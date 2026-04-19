@@ -106,12 +106,12 @@ def _load_insider_from_fixture(ticker: str, start: str | None, end: str, limit: 
 @pytest.fixture(autouse=True)
 def patch_engine_prices(monkeypatch):
     # No-op non-price endpoints
-    monkeypatch.setattr("src.backtesting.engine.get_prices", lambda *a, **k: None)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_prices", lambda *a, **k: None)
 
     def _fake_get_financial_metrics(ticker: str, end_date: str, period: str = "ttm", limit: int = 10, api_key: str | None = None):
         return _load_financial_metrics_from_fixture(ticker, end_date, limit)
 
-    monkeypatch.setattr("src.backtesting.engine.get_financial_metrics", _fake_get_financial_metrics)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_financial_metrics", _fake_get_financial_metrics)
 
     def _fake_get_insider_trades(ticker: str, end_date: str, start_date: str | None = None, limit: int = 1000, api_key: str | None = None):
         return _load_insider_from_fixture(ticker, start_date, end_date, limit)
@@ -119,12 +119,12 @@ def patch_engine_prices(monkeypatch):
     def _fake_get_company_news(ticker: str, end_date: str, start_date: str | None = None, limit: int = 1000, api_key: str | None = None):
         return _load_news_from_fixture(ticker, start_date, end_date, limit)
 
-    monkeypatch.setattr("src.backtesting.engine.get_insider_trades", _fake_get_insider_trades)
-    monkeypatch.setattr("src.backtesting.engine.get_company_news", _fake_get_company_news)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_insider_trades", _fake_get_insider_trades)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_company_news", _fake_get_company_news)
 
     # Patch price data loader to use fixtures
     def _fake_get_price_data(ticker: str, start_date: str, end_date: str, api_key: str | None = None):
         return _load_price_df_from_fixture(ticker, start_date, end_date)
 
-    monkeypatch.setattr("src.backtesting.engine.get_price_data", _fake_get_price_data)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", _fake_get_price_data)
     yield

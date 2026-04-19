@@ -36,12 +36,12 @@ class StubPipeline:
 
 
 def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]]) -> None:
-    monkeypatch.setattr("src.backtesting.engine.get_prices", lambda *a, **k: None)
-    monkeypatch.setattr("src.backtesting.engine.get_financial_metrics", lambda *a, **k: [])
-    monkeypatch.setattr("src.backtesting.engine.get_insider_trades", lambda *a, **k: [])
-    monkeypatch.setattr("src.backtesting.engine.get_company_news", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_prices", lambda *a, **k: None)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_financial_metrics", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_insider_trades", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_company_news", lambda *a, **k: [])
     monkeypatch.setattr("src.backtesting.output.print_backtest_results", lambda *a, **k: None)
-    monkeypatch.setattr("src.backtesting.engine.get_limit_list", lambda *a, **k: None)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_limit_list", lambda *a, **k: None)
 
     def fake_get_price_data(ticker: str, start_date: str, end_date: str, api_key=None):
         closes = closes_by_ticker[ticker]
@@ -57,7 +57,7 @@ def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]
         frame.set_index("date", inplace=True)
         return frame[["open", "close", "high", "low", "volume"]]
 
-    monkeypatch.setattr("src.backtesting.engine.get_price_data", fake_get_price_data)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
     monkeypatch.setattr("src.backtesting.benchmarks.get_price_data", fake_get_price_data)
 
 
@@ -173,7 +173,7 @@ def test_pipeline_mode_blocks_limit_up_buy(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "src.backtesting.engine.get_limit_list",
+        "src.backtesting.engine_market_data.get_limit_list",
         lambda trade_date: pd.DataFrame([{"ts_code": "000001.SZ", "limit": "U"}]) if trade_date == "20240304" else None,
     )
     plan = ExecutionPlan(
@@ -226,7 +226,7 @@ def test_pipeline_mode_pending_buy_executes_after_board_opens(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "src.backtesting.engine.get_limit_list",
+        "src.backtesting.engine_market_data.get_limit_list",
         lambda trade_date: pd.DataFrame([{"ts_code": "000001.SZ", "limit": "U"}]) if trade_date == "20240304" else None,
     )
     plan = ExecutionPlan(
@@ -889,7 +889,7 @@ def test_pipeline_mode_pending_sell_executes_after_limit_down_releases(monkeypat
         },
     )
     monkeypatch.setattr(
-        "src.backtesting.engine.get_limit_list",
+        "src.backtesting.engine_market_data.get_limit_list",
         lambda trade_date: pd.DataFrame([{"ts_code": "000001.SZ", "limit": "D"}]) if trade_date == "20240304" else None,
     )
     exit_signal = type("ExitSignalLike", (), {"ticker": "000001", "sell_ratio": 1.0})()
