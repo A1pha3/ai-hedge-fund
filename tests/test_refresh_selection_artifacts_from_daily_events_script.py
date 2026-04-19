@@ -950,6 +950,306 @@ def test_refresh_selection_artifacts_from_daily_events_uses_catalyst_theme_metri
     assert short_trade["explainability_payload"]["upstream_shadow_catalyst_relief"]["applied"] is True
 
 
+def test_rebuild_catalyst_theme_diagnostics_for_report_replays_frozen_universe_beyond_baseline(tmp_path):
+    report_dir = tmp_path / "paper_trading_20260410_20260410_catalyst_theme_rerun"
+    selection_dir = report_dir / "selection_artifacts" / "2026-04-10"
+    selection_dir.mkdir(parents=True)
+    trade_date = "20260410"
+
+    baseline_entry = _make_catalyst_theme_carryover_entry()
+    baseline_entry["quality_score"] = 0.5
+    baseline_entry.pop("market_state", None)
+
+    replay_entry = _make_catalyst_theme_carryover_entry()
+    replay_entry["ticker"] = "002003"
+    replay_entry["decision"] = "watch"
+    replay_entry["reason"] = "watchlist_selected"
+    replay_entry["reasons"] = ["watchlist_selected"]
+    replay_entry["candidate_source"] = "layer_c_watchlist"
+    replay_entry["candidate_reason_codes"] = ["watchlist_selected"]
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        market_state={
+            "state_type": "trend",
+            "adjusted_weights": {
+                "trend": 0.3,
+                "mean_reversion": 0.2,
+                "fundamental": 0.3,
+                "event_sentiment": 0.2,
+            },
+        },
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": [], "selected_tickers": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [baseline_entry],
+                        "shadow_candidates": [],
+                        "selected_tickers": ["002001"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text(
+        json.dumps(
+            {
+                "end_date": "2026-04-10",
+                "plan_generation": {"selection_target": "short_trade_only"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (selection_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "rejected_entries": [replay_entry],
+                "supplemental_catalyst_theme_entries": [baseline_entry],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (selection_dir / "selection_snapshot.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-04-10",
+                "market_state": {
+                    "state_type": "trend",
+                    "adjusted_weights": {
+                        "trend": 0.3,
+                        "mean_reversion": 0.2,
+                        "fundamental": 0.3,
+                        "event_sentiment": 0.2,
+                    },
+                },
+                "catalyst_theme_candidates": [baseline_entry],
+                "catalyst_theme_shadow_candidates": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = refresh_module.rebuild_catalyst_theme_diagnostics_for_report(report_dir, trade_date="2026-04-10")
+
+    assert Path(result["artifact_path"]).exists()
+    payload = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert payload["source_summary"]["replay_universe_count"] == 2
+    assert payload["baseline"]["_baseline_source"] == "selection_snapshot"
+    assert payload["baseline"]["selected_tickers"] == ["002001"]
+    assert "002003" in payload["rebuild"]["selected_tickers"]
+    assert "002003" in payload["diff"]["added_selected_tickers"]
+
+    changed_entry = next(row for row in payload["diff"]["changed_selected_entries"] if row["ticker"] == "002001")
+    assert changed_entry["baseline_quality_score"] == 0.5
+    assert changed_entry["rebuilt_quality_score"] == pytest.approx(0.725, abs=1e-4)
+    assert changed_entry["rebuilt_market_state_type"] == "trend"
+
+
+def test_rebuild_catalyst_theme_diagnostics_for_report_creates_output_directory(tmp_path):
+    report_dir = tmp_path / "paper_trading_20260411_20260411_catalyst_theme_missing_output_dir"
+    trade_date = "20260411"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": [], "selected_tickers": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [_make_catalyst_theme_carryover_entry()],
+                        "shadow_candidates": [],
+                        "selected_tickers": ["002001"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").parent.mkdir(parents=True)
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    result = refresh_module.rebuild_catalyst_theme_diagnostics_for_report(report_dir, trade_date="2026-04-11")
+
+    artifact_path = Path(result["artifact_path"])
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact_path.exists()
+    assert artifact_path.parent.name == "2026-04-11"
+    assert payload["baseline"]["_baseline_source"] == "plan_funnel_diagnostics"
+    assert sorted(payload["source_summary"]["missing_optional_inputs"]) == [
+        "selection_artifacts/2026-04-11/selection_snapshot.json",
+        "selection_artifacts/2026-04-11/selection_target_replay_input.json",
+    ]
+
+
+def test_rebuild_catalyst_theme_diagnostics_for_report_raises_clear_error_when_daily_events_missing(tmp_path):
+    report_dir = tmp_path / "paper_trading_20260411_20260411_catalyst_theme_missing_daily_events"
+    report_dir.mkdir()
+
+    with pytest.raises(ValueError, match="Missing daily_events.jsonl"):
+        refresh_module.rebuild_catalyst_theme_diagnostics_for_report(report_dir, trade_date="2026-04-11")
+
+
+def test_rebuild_catalyst_theme_diagnostics_for_report_reports_entries_dropped_without_strategy_signals(tmp_path):
+    report_dir = tmp_path / "paper_trading_20260411_20260411_catalyst_theme_dropped_no_signals"
+    selection_dir = report_dir / "selection_artifacts" / "2026-04-11"
+    selection_dir.mkdir(parents=True)
+    trade_date = "20260411"
+
+    empty_signal_entry = _make_short_trade_boundary_entry(ticker="300757", strategy_signals={})
+    populated_entry = _make_catalyst_theme_carryover_entry()
+    populated_entry["ticker"] = "002009"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": [], "selected_tickers": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [populated_entry],
+                        "shadow_candidates": [],
+                        "selected_tickers": ["002009"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+    (selection_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "rejected_entries": [empty_signal_entry],
+                "supplemental_catalyst_theme_entries": [populated_entry],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = refresh_module.rebuild_catalyst_theme_diagnostics_for_report(report_dir, trade_date="2026-04-11")
+
+    payload = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert payload["source_summary"]["dropped_no_strategy_signals_counts"]["replay_input_rejected_entries"] == 1
+    assert payload["source_summary"]["replay_requires_strategy_signals"] is True
+    assert payload["source_summary"]["dropped_no_strategy_signal_tickers"] == ["300757"]
+    assert payload["source_summary"]["replay_universe_count"] == 1
+
+
+def test_rebuild_catalyst_theme_diagnostics_for_report_counts_only_winning_source_per_ticker(tmp_path):
+    report_dir = tmp_path / "paper_trading_20260411_20260411_catalyst_theme_source_priority"
+    selection_dir = report_dir / "selection_artifacts" / "2026-04-11"
+    selection_dir.mkdir(parents=True)
+    trade_date = "20260411"
+
+    richer_entry = _make_catalyst_theme_carryover_entry()
+    richer_entry["ticker"] = "002019"
+    weaker_entry = _make_catalyst_theme_carryover_entry()
+    weaker_entry["ticker"] = "002019"
+    weaker_entry["strategy_signals"] = {
+        "trend": _make_signal(1, 95.0).model_dump(mode="json"),
+    }
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": [], "selected_tickers": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [weaker_entry],
+                        "shadow_candidates": [],
+                        "selected_tickers": ["002019"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+    (selection_dir / "selection_target_replay_input.json").write_text(
+        json.dumps(
+            {
+                "rejected_entries": [richer_entry],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = refresh_module.rebuild_catalyst_theme_diagnostics_for_report(report_dir, trade_date="2026-04-11")
+
+    payload = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert payload["source_summary"]["source_ticker_counts"]["replay_input_rejected_entries"] == 1
+    assert payload["source_summary"]["source_ticker_counts"].get("filter_catalyst_selected", 0) == 0
+
+
 def test_rebuild_selection_targets_for_plan_uses_selection_target_historical_prior(monkeypatch: pytest.MonkeyPatch):
     captured_entries: list[dict] = []
 
