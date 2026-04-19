@@ -12,6 +12,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("input_paths", nargs="+", help="One or more paper trading report directories or report roots")
     parser.add_argument("--trade-date", default=None, help="Optional trade date in YYYY-MM-DD or YYYYMMDD format")
     parser.add_argument("--report-name-contains", default="paper_trading", help="When scanning a root directory, only include report directories whose names contain this fragment")
+    parser.add_argument(
+        "--use-selection-snapshot-baseline",
+        action="store_true",
+        help="Opt in to using selection_snapshot.json as the audit baseline instead of the frozen plan funnel diagnostics",
+    )
     return parser.parse_args()
 
 
@@ -26,7 +31,11 @@ def _discover_unique_report_dirs(input_paths: list[str], *, report_name_contains
 def main() -> None:
     args = parse_args()
     for report_dir in _discover_unique_report_dirs(args.input_paths, report_name_contains=args.report_name_contains):
-        result = rebuild_catalyst_theme_diagnostics_for_report(report_dir, trade_date=args.trade_date)
+        result = rebuild_catalyst_theme_diagnostics_for_report(
+            report_dir,
+            trade_date=args.trade_date,
+            use_selection_snapshot_baseline=args.use_selection_snapshot_baseline,
+        )
         print(f"report_dir={result['report_dir']}")
         for row in result["results"]:
             print(f"trade_date={row['trade_date']}")

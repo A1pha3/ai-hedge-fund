@@ -959,6 +959,8 @@ def test_rebuild_catalyst_theme_diagnostics_for_report_replays_frozen_universe_b
     baseline_entry = _make_catalyst_theme_carryover_entry()
     baseline_entry["quality_score"] = 0.5
     baseline_entry.pop("market_state", None)
+    contaminated_snapshot_entry = dict(baseline_entry)
+    contaminated_snapshot_entry["quality_score"] = 0.1
 
     replay_entry = _make_catalyst_theme_carryover_entry()
     replay_entry["ticker"] = "002003"
@@ -1042,7 +1044,7 @@ def test_rebuild_catalyst_theme_diagnostics_for_report_replays_frozen_universe_b
                         "event_sentiment": 0.2,
                     },
                 },
-                "catalyst_theme_candidates": [baseline_entry],
+                "catalyst_theme_candidates": [contaminated_snapshot_entry],
                 "catalyst_theme_shadow_candidates": [],
             },
             ensure_ascii=False,
@@ -1057,7 +1059,7 @@ def test_rebuild_catalyst_theme_diagnostics_for_report_replays_frozen_universe_b
     assert Path(result["artifact_path"]).exists()
     payload = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
     assert payload["source_summary"]["replay_universe_count"] == 2
-    assert payload["baseline"]["_baseline_source"] == "selection_snapshot"
+    assert payload["baseline"]["_baseline_source"] == "plan_funnel_diagnostics"
     assert payload["baseline"]["selected_tickers"] == ["002001"]
     assert "002003" in payload["rebuild"]["selected_tickers"]
     assert "002003" in payload["diff"]["added_selected_tickers"]
@@ -1066,6 +1068,17 @@ def test_rebuild_catalyst_theme_diagnostics_for_report_replays_frozen_universe_b
     assert changed_entry["baseline_quality_score"] == 0.5
     assert changed_entry["rebuilt_quality_score"] == pytest.approx(0.725, abs=1e-4)
     assert changed_entry["rebuilt_market_state_type"] == "trend"
+
+    snapshot_result = refresh_module.rebuild_catalyst_theme_diagnostics_for_report(
+        report_dir,
+        trade_date="2026-04-10",
+        use_selection_snapshot_baseline=True,
+    )
+
+    snapshot_payload = json.loads(Path(snapshot_result["artifact_path"]).read_text(encoding="utf-8"))
+    assert snapshot_payload["baseline"]["_baseline_source"] == "selection_snapshot"
+    snapshot_changed_entry = next(row for row in snapshot_payload["diff"]["changed_selected_entries"] if row["ticker"] == "002001")
+    assert snapshot_changed_entry["baseline_quality_score"] == 0.1
 
 
 def test_rebuild_catalyst_theme_diagnostics_for_report_creates_output_directory(tmp_path):
@@ -1115,6 +1128,53 @@ def test_rebuild_catalyst_theme_diagnostics_for_report_creates_output_directory(
         "selection_artifacts/2026-04-11/selection_snapshot.json",
         "selection_artifacts/2026-04-11/selection_target_replay_input.json",
     ]
+
+
+def test_rebuild_catalyst_theme_diagnostics_for_report_accepts_hyphenated_frozen_trade_dates(tmp_path):
+    report_dir = tmp_path / "paper_trading_20260414_20260414_hyphenated_frozen_date"
+    frozen_trade_date = "2026-04-14"
+
+    plan = ExecutionPlan(
+        date=frozen_trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": [], "selected_tickers": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [_make_catalyst_theme_carryover_entry()],
+                        "shadow_candidates": [],
+                        "selected_tickers": ["002001"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").parent.mkdir(parents=True)
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": frozen_trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    hyphenated_result = refresh_module.rebuild_catalyst_theme_diagnostics_for_report(report_dir, trade_date=frozen_trade_date)
+    compact_result = refresh_module.rebuild_catalyst_theme_diagnostics_for_report(report_dir, trade_date="20260414")
+
+    hyphenated_payload = json.loads(Path(hyphenated_result["artifact_path"]).read_text(encoding="utf-8"))
+    compact_payload = json.loads(Path(compact_result["artifact_path"]).read_text(encoding="utf-8"))
+    assert hyphenated_payload["trade_date"] == "2026-04-14"
+    assert compact_payload["trade_date"] == "2026-04-14"
+    assert hyphenated_payload["baseline"]["selected_tickers"] == ["002001"]
+    assert compact_payload["baseline"]["selected_tickers"] == ["002001"]
 
 
 def test_rebuild_catalyst_theme_diagnostics_for_report_raises_clear_error_when_daily_events_missing(tmp_path):

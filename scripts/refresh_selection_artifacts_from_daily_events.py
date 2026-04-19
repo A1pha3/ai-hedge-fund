@@ -801,10 +801,11 @@ def _build_baseline_catalyst_theme_diagnostics_payload(
     plan: ExecutionPlan,
     report_dir: Path,
     trade_date_compact: str,
+    use_selection_snapshot_baseline: bool = False,
 ) -> dict[str, Any]:
     selection_snapshot_path = _selection_artifact_trade_dir(report_dir, trade_date_compact) / "selection_snapshot.json"
     selection_snapshot = _load_selection_snapshot_payload(report_dir, trade_date_compact)
-    if selection_snapshot_path.exists():
+    if use_selection_snapshot_baseline and selection_snapshot_path.exists():
         return {
             **_serialize_catalyst_theme_diagnostics_payload(
                 {
@@ -872,7 +873,12 @@ def _build_catalyst_theme_diagnostics_diff(
     }
 
 
-def rebuild_catalyst_theme_diagnostics_for_report(report_dir: str | Path, trade_date: str | None = None) -> dict[str, Any]:
+def rebuild_catalyst_theme_diagnostics_for_report(
+    report_dir: str | Path,
+    trade_date: str | None = None,
+    *,
+    use_selection_snapshot_baseline: bool = False,
+) -> dict[str, Any]:
     resolved_report_dir = Path(report_dir).expanduser().resolve()
     daily_events_path = resolved_report_dir / "daily_events.jsonl"
     if not daily_events_path.exists():
@@ -916,6 +922,7 @@ def rebuild_catalyst_theme_diagnostics_for_report(report_dir: str | Path, trade_
             plan=plan,
             report_dir=resolved_report_dir,
             trade_date_compact=trade_date_compact,
+            use_selection_snapshot_baseline=use_selection_snapshot_baseline,
         )
         diff_payload = _build_catalyst_theme_diagnostics_diff(
             baseline=baseline_payload,
