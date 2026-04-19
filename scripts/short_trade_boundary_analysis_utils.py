@@ -10,7 +10,7 @@ import pandas as pd
 
 from scripts.btst_data_utils import load_json, normalize_price_frame, round_or_none, safe_float
 from src.project_env import load_project_dotenv
-from src.execution.daily_pipeline import (
+from src.execution.daily_pipeline_settings import (
     SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
     SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
     SHORT_TRADE_BOUNDARY_CATALYST_MIN,

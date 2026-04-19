@@ -3,6 +3,56 @@ from __future__ import annotations
 from typing import Any
 from collections.abc import Callable
 
+from src.execution.daily_pipeline_candidate_helpers import (
+    qualify_short_trade_boundary_candidate_from_snapshot,
+    rank_scored_entries,
+    resolve_short_trade_candidate_context,
+)
+from src.execution.daily_pipeline_merge_approved_wrappers import (
+    _select_upstream_shadow_release_entries as _select_upstream_shadow_release_entries_from_wrappers,
+)
+from src.execution.daily_pipeline_phase4_entry_helpers import (
+    _build_short_trade_boundary_entry,
+    _build_upstream_shadow_observation_entry,
+)
+from src.execution.daily_pipeline_runtime_helpers import (
+    resolve_historical_prior_for_ticker as _resolve_historical_prior_for_ticker_impl,
+)
+from src.execution.daily_pipeline_settings import (
+    FAST_AGENT_SCORE_THRESHOLD,
+    SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
+    SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
+    SHORT_TRADE_BOUNDARY_CATALYST_MIN,
+    SHORT_TRADE_BOUNDARY_MAX_TICKERS,
+    SHORT_TRADE_BOUNDARY_SCORE_BUFFER,
+    SHORT_TRADE_BOUNDARY_TREND_MIN,
+    SHORT_TRADE_BOUNDARY_VOLUME_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
+    UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN,
+    UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+    UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
+    UPSTREAM_SHADOW_RELEASE_LANES,
+    UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
+    UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (
+    _build_upstream_shadow_release_entry,
+    _compute_short_trade_boundary_candidate_score,
+    _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+    _should_release_upstream_shadow_candidate,
+    _summarize_upstream_shadow_release_historical_support,
+)
+from src.screening.models import CandidateStock
+from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
+
 
 def build_upstream_short_trade_candidates(
     *,
@@ -565,3 +615,86 @@ def build_short_trade_prefilter_thresholds(
             if priority_tickers
         },
     }
+
+
+def _qualifies_short_trade_boundary_candidate(*, trade_date: str, entry: dict) -> tuple[bool, str, dict]:
+    snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
+    return qualify_short_trade_boundary_candidate_from_snapshot(
+        snapshot=snapshot,
+        compute_candidate_score_fn=_compute_short_trade_boundary_candidate_score,
+        breakout_min=SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
+        trend_min=SHORT_TRADE_BOUNDARY_TREND_MIN,
+        volume_min=SHORT_TRADE_BOUNDARY_VOLUME_MIN,
+        catalyst_min=SHORT_TRADE_BOUNDARY_CATALYST_MIN,
+        candidate_score_min=SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
+    )
+
+
+def _select_upstream_shadow_release_entries(
+    ranked_released_shadow_entries: list[tuple[float, float, float, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    return _select_upstream_shadow_release_entries_from_wrappers(
+        ranked_released_shadow_entries=ranked_released_shadow_entries,
+        max_tickers=UPSTREAM_SHADOW_RELEASE_MAX_TICKERS,
+        lane_max_tickers=UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
+        priority_tickers_by_lane=UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
+    )
+
+
+def build_short_trade_candidate_diagnostics_with_defaults(
+    fused: list,
+    high_pool: list,
+    trade_date: str,
+    *,
+    shadow_fused: list | None = None,
+    shadow_candidate_by_ticker: dict[str, CandidateStock] | None = None,
+    historical_prior_by_ticker: dict[str, dict[str, Any]] | None = None,
+) -> dict:
+    return build_short_trade_candidate_diagnostics(
+        fused=fused,
+        high_pool=high_pool,
+        trade_date=trade_date,
+        shadow_fused=shadow_fused,
+        shadow_candidate_by_ticker=dict(shadow_candidate_by_ticker or {}),
+        historical_prior_by_ticker=historical_prior_by_ticker or {},
+        prepare_short_trade_candidate_diagnostics_state_fn=prepare_short_trade_candidate_diagnostics_state,
+        finalize_short_trade_candidate_diagnostics_fn=finalize_short_trade_candidate_diagnostics,
+        collect_short_trade_diagnostic_rankings_fn=collect_short_trade_diagnostic_rankings,
+        resolve_short_trade_candidate_context_fn=resolve_short_trade_candidate_context,
+        build_short_trade_boundary_entry_fn=_build_short_trade_boundary_entry,
+        resolve_historical_prior_for_ticker_fn=_resolve_historical_prior_for_ticker_impl,
+        qualifies_short_trade_boundary_candidate_fn=_qualifies_short_trade_boundary_candidate,
+        summarize_shadow_release_historical_support_fn=_summarize_upstream_shadow_release_historical_support,
+        should_release_upstream_shadow_candidate_fn=_should_release_upstream_shadow_candidate,
+        build_upstream_shadow_release_entry_fn=_build_upstream_shadow_release_entry,
+        build_upstream_shadow_observation_entry_fn=_build_upstream_shadow_observation_entry,
+        build_short_trade_ranked_outputs_fn=build_short_trade_ranked_outputs,
+        rank_scored_entries_fn=rank_scored_entries,
+        select_upstream_shadow_release_entries_fn=_select_upstream_shadow_release_entries,
+        build_short_trade_candidate_diagnostics_payload_fn=build_short_trade_candidate_diagnostics_payload,
+        build_short_trade_prefilter_thresholds_fn=build_short_trade_prefilter_thresholds,
+        resolve_no_profitability_hard_cliff_fn=_resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
+        short_trade_boundary_candidate_score_min=SHORT_TRADE_BOUNDARY_CANDIDATE_SCORE_MIN,
+        short_trade_boundary_breakout_min=SHORT_TRADE_BOUNDARY_BREAKOUT_MIN,
+        short_trade_boundary_trend_min=SHORT_TRADE_BOUNDARY_TREND_MIN,
+        short_trade_boundary_volume_min=SHORT_TRADE_BOUNDARY_VOLUME_MIN,
+        short_trade_boundary_catalyst_min=SHORT_TRADE_BOUNDARY_CATALYST_MIN,
+        upstream_shadow_release_candidate_score_min=UPSTREAM_SHADOW_RELEASE_CANDIDATE_SCORE_MIN,
+        upstream_shadow_catalyst_relief_candidate_score_min=UPSTREAM_SHADOW_CATALYST_RELIEF_CANDIDATE_SCORE_MIN,
+        upstream_shadow_catalyst_relief_breakout_min=UPSTREAM_SHADOW_CATALYST_RELIEF_BREAKOUT_MIN,
+        upstream_shadow_catalyst_relief_trend_min=UPSTREAM_SHADOW_CATALYST_RELIEF_TREND_MIN,
+        upstream_shadow_catalyst_relief_close_min=UPSTREAM_SHADOW_CATALYST_RELIEF_CLOSE_MIN,
+        upstream_shadow_catalyst_relief_catalyst_freshness_floor=UPSTREAM_SHADOW_CATALYST_RELIEF_CATALYST_FRESHNESS_FLOOR,
+        upstream_shadow_catalyst_relief_near_miss_threshold=UPSTREAM_SHADOW_CATALYST_RELIEF_NEAR_MISS_THRESHOLD,
+        upstream_shadow_catalyst_relief_post_gate_selected_threshold=UPSTREAM_SHADOW_CATALYST_RELIEF_POST_GATE_SELECTED_THRESHOLD,
+        upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_default=UPSTREAM_SHADOW_CATALYST_RELIEF_REQUIRE_NO_PROFITABILITY_HARD_CLIFF_DEFAULT,
+        upstream_shadow_release_lanes=list(UPSTREAM_SHADOW_RELEASE_LANES),
+        upstream_shadow_release_lane_score_mins=UPSTREAM_SHADOW_RELEASE_LANE_SCORE_MINS,
+        upstream_shadow_release_lane_max_tickers=UPSTREAM_SHADOW_RELEASE_LANE_MAX_TICKERS,
+        upstream_shadow_release_priority_tickers_by_lane=UPSTREAM_SHADOW_RELEASE_PRIORITY_TICKERS_BY_LANE,
+        short_trade_boundary_max_tickers=SHORT_TRADE_BOUNDARY_MAX_TICKERS,
+        upstream_shadow_observation_max_tickers=UPSTREAM_SHADOW_OBSERVATION_MAX_TICKERS,
+        score_buffer=SHORT_TRADE_BOUNDARY_SCORE_BUFFER,
+        minimum_score_b=FAST_AGENT_SCORE_THRESHOLD - SHORT_TRADE_BOUNDARY_SCORE_BUFFER,
+        max_candidates=SHORT_TRADE_BOUNDARY_MAX_TICKERS,
+    )
