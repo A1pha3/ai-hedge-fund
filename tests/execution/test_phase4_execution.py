@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 import src.execution.daily_pipeline as daily_pipeline_module
+import src.execution.daily_pipeline_catalyst_diagnostics_helpers as catalyst_helpers_module
 import src.execution.layer_c_aggregator as layer_c_aggregator_module
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.daily_pipeline import DailyPipeline, WATCHLIST_SCORE_THRESHOLD
@@ -1545,9 +1546,9 @@ def test_build_short_trade_candidate_diagnostics_ranks_supportive_release_above_
 
 
 def test_qualifies_catalyst_theme_candidate_applies_close_momentum_relief_to_metrics_payload():
-    original_build_short_trade_target_snapshot_from_entry = daily_pipeline_module.build_short_trade_target_snapshot_from_entry
+    original_build_short_trade_target_snapshot_from_entry = catalyst_helpers_module.build_short_trade_target_snapshot_from_entry
     try:
-        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
+        catalyst_helpers_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
             "gate_status": {"data": "pass", "structural": "pass", "score": "proxy_only"},
             "blockers": ["stale_trend_repair_penalty"],
             "breakout_freshness": 0.40,
@@ -1561,7 +1562,7 @@ def test_qualifies_catalyst_theme_candidate_applies_close_momentum_relief_to_met
             entry={"ticker": "000006"},
         )
     finally:
-        daily_pipeline_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+        catalyst_helpers_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
 
     assert qualified is True
     assert filter_reason == "catalyst_theme_candidate_score_ranked"

@@ -3,6 +3,29 @@ from __future__ import annotations
 from typing import Any
 from collections.abc import Callable
 
+from src.execution.daily_pipeline_candidate_helpers import (
+    qualify_catalyst_theme_candidate_from_snapshot,
+)
+from src.execution.daily_pipeline_settings import (
+    CATALYST_THEME_BREAKOUT_MIN,
+    CATALYST_THEME_CANDIDATE_SCORE_MIN,
+    CATALYST_THEME_CATALYST_MIN,
+    CATALYST_THEME_CLOSE_MIN,
+    CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN,
+    CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN,
+    CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN,
+    CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN,
+    CATALYST_THEME_MAX_TICKERS,
+    CATALYST_THEME_SECTOR_MIN,
+    CATALYST_THEME_SHADOW_MAX_TICKERS,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD,
+    CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+)
+from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
+
 
 def build_upstream_catalyst_theme_candidates(
     *,
@@ -479,3 +502,146 @@ def build_catalyst_theme_prefilter_thresholds(
         "short_trade_carryover_min_historical_evaluable_count": int(short_trade_carryover_min_historical_evaluable_count),
         "short_trade_carryover_require_no_profitability_hard_cliff": short_trade_carryover_require_no_profitability_hard_cliff,
     }
+
+
+# ---------------------------------------------------------------------------
+# Catalyst theme wrapper functions (moved from daily_pipeline.py)
+# These collapse the previous wrapper → _impl delegation pattern by calling
+# the impl functions directly since they now live in the same module.
+# ---------------------------------------------------------------------------
+
+
+def _build_catalyst_theme_entry(*, item: Any, reason: str, rank: int) -> dict[str, Any]:
+    return {
+        "ticker": item.ticker,
+        "decision": "catalyst_theme",
+        "score_b": round(float(item.score_b), 4),
+        "score_c": 0.0,
+        "score_final": round(float(item.score_b), 4),
+        "quality_score": 0.5,
+        "preferred_entry_mode": "theme_research_followup",
+        "reason": reason,
+        "reasons": [reason, "catalyst_theme_research_candidate"],
+        "candidate_source": "catalyst_theme",
+        "upstream_candidate_source": "layer_b_fused_universe",
+        "candidate_reason_codes": [reason, "catalyst_theme_research_candidate"],
+        "strategy_signals": {name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(item.strategy_signals or {}).items()},
+        "agent_contribution_summary": {},
+        "rank": rank,
+    }
+
+
+def _compute_catalyst_theme_candidate_score(snapshot: dict[str, Any]) -> float:
+    return round(
+        (0.40 * float(snapshot.get("catalyst_freshness", 0.0) or 0.0)) + (0.25 * float(snapshot.get("sector_resonance", 0.0) or 0.0)) + (0.15 * float(snapshot.get("breakout_freshness", 0.0) or 0.0)) + (0.10 * float(snapshot.get("close_strength", 0.0) or 0.0)) + (0.10 * float(snapshot.get("trend_acceleration", 0.0) or 0.0)),
+        4,
+    )
+
+
+def _resolve_catalyst_theme_close_momentum_relief(
+    *,
+    breakout_freshness: float,
+    trend_acceleration: float,
+    close_strength: float,
+    sector_resonance: float,
+    catalyst_freshness: float,
+) -> dict[str, Any]:
+    return resolve_catalyst_theme_close_momentum_relief(
+        breakout_freshness=breakout_freshness,
+        trend_acceleration=trend_acceleration,
+        close_strength=close_strength,
+        sector_resonance=sector_resonance,
+        catalyst_freshness=catalyst_freshness,
+        catalyst_theme_catalyst_min=CATALYST_THEME_CATALYST_MIN,
+        catalyst_theme_close_momentum_relief_breakout_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN,
+        catalyst_theme_close_momentum_relief_trend_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN,
+        catalyst_theme_close_momentum_relief_close_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN,
+        catalyst_theme_close_momentum_relief_sector_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN,
+        catalyst_theme_sector_min=CATALYST_THEME_SECTOR_MIN,
+    )
+
+
+def _compute_catalyst_theme_threshold_shortfalls(metric_values: dict[str, Any], threshold_checks: dict[str, float] | None = None) -> dict[str, float]:
+    return compute_catalyst_theme_threshold_shortfalls(
+        metric_values=metric_values,
+        threshold_checks=threshold_checks,
+        catalyst_theme_candidate_score_min=CATALYST_THEME_CANDIDATE_SCORE_MIN,
+        catalyst_theme_breakout_min=CATALYST_THEME_BREAKOUT_MIN,
+        catalyst_theme_close_min=CATALYST_THEME_CLOSE_MIN,
+        catalyst_theme_sector_min=CATALYST_THEME_SECTOR_MIN,
+        catalyst_theme_catalyst_min=CATALYST_THEME_CATALYST_MIN,
+    )
+
+
+def _build_catalyst_theme_shadow_entry(*, item: Any, filter_reason: str, metrics_payload: dict[str, Any]) -> dict[str, Any]:
+    return build_catalyst_theme_shadow_entry(
+        item=item,
+        filter_reason=filter_reason,
+        metrics_payload=metrics_payload,
+        build_catalyst_theme_entry_fn=_build_catalyst_theme_entry,
+        compute_threshold_shortfalls_fn=_compute_catalyst_theme_threshold_shortfalls,
+    )
+
+
+def _qualifies_catalyst_theme_candidate(*, trade_date: str, entry: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
+    return qualify_catalyst_theme_candidate_from_snapshot(
+        snapshot=snapshot,
+        resolve_close_momentum_relief_fn=_resolve_catalyst_theme_close_momentum_relief,
+        compute_candidate_score_fn=_compute_catalyst_theme_candidate_score,
+        catalyst_theme_sector_min=CATALYST_THEME_SECTOR_MIN,
+        catalyst_theme_candidate_score_min=CATALYST_THEME_CANDIDATE_SCORE_MIN,
+        catalyst_theme_breakout_min=CATALYST_THEME_BREAKOUT_MIN,
+        catalyst_theme_close_min=CATALYST_THEME_CLOSE_MIN,
+        catalyst_theme_catalyst_min=CATALYST_THEME_CATALYST_MIN,
+    )
+
+
+def _build_catalyst_theme_short_trade_carryover_relief_config(*, metrics_payload: dict[str, Any]) -> dict[str, Any]:
+    return build_catalyst_theme_short_trade_carryover_relief_config(
+        metrics_payload=metrics_payload,
+        candidate_score_min=CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN,
+        breakout_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_BREAKOUT_MIN,
+        trend_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN,
+        close_min=CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_CLOSE_MIN,
+        catalyst_freshness_floor=CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR,
+        near_miss_threshold=CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD,
+        min_historical_evaluable_count=CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT,
+        require_no_profitability_hard_cliff=CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+    )
+
+
+def _build_catalyst_theme_candidate_diagnostics(
+    fused: list[Any],
+    watchlist: list[Any],
+    short_trade_candidate_diagnostics: dict[str, Any],
+    trade_date: str,
+) -> dict[str, Any]:
+    return build_catalyst_theme_candidate_diagnostics(
+        fused=fused,
+        watchlist=watchlist,
+        short_trade_candidate_diagnostics=short_trade_candidate_diagnostics,
+        trade_date=trade_date,
+        build_upstream_catalyst_theme_candidates_fn=build_upstream_catalyst_theme_candidates,
+        collect_catalyst_theme_diagnostic_rankings_fn=collect_catalyst_theme_diagnostic_rankings,
+        build_catalyst_theme_ranked_outputs_fn=build_catalyst_theme_ranked_outputs,
+        finalize_catalyst_theme_candidate_diagnostics_fn=finalize_catalyst_theme_candidate_diagnostics,
+        build_catalyst_theme_entry_fn=_build_catalyst_theme_entry,
+        qualifies_catalyst_theme_candidate_fn=_qualifies_catalyst_theme_candidate,
+        build_catalyst_theme_shadow_entry_fn=_build_catalyst_theme_shadow_entry,
+        build_catalyst_theme_short_trade_carryover_relief_config_fn=_build_catalyst_theme_short_trade_carryover_relief_config,
+        build_catalyst_theme_candidate_diagnostics_payload_fn=build_catalyst_theme_candidate_diagnostics_payload,
+        build_catalyst_theme_prefilter_thresholds_fn=build_catalyst_theme_prefilter_thresholds,
+        catalyst_theme_candidate_score_min=CATALYST_THEME_CANDIDATE_SCORE_MIN,
+        catalyst_theme_breakout_min=CATALYST_THEME_BREAKOUT_MIN,
+        catalyst_theme_close_min=CATALYST_THEME_CLOSE_MIN,
+        catalyst_theme_sector_min=CATALYST_THEME_SECTOR_MIN,
+        catalyst_theme_catalyst_min=CATALYST_THEME_CATALYST_MIN,
+        short_trade_carryover_candidate_score_min=CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN,
+        short_trade_carryover_catalyst_freshness_floor=CATALYST_THEME_SHORT_TRADE_CARRYOVER_CATALYST_FRESHNESS_FLOOR,
+        short_trade_carryover_near_miss_threshold=CATALYST_THEME_SHORT_TRADE_CARRYOVER_NEAR_MISS_THRESHOLD,
+        short_trade_carryover_min_historical_evaluable_count=CATALYST_THEME_SHORT_TRADE_CARRYOVER_MIN_HISTORICAL_EVALUABLE_COUNT,
+        short_trade_carryover_require_no_profitability_hard_cliff=CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
+        catalyst_theme_max_tickers=CATALYST_THEME_MAX_TICKERS,
+        catalyst_theme_shadow_max_tickers=CATALYST_THEME_SHADOW_MAX_TICKERS,
+    )
