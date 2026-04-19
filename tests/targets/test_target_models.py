@@ -2553,6 +2553,14 @@ def test_historical_continuation_score_weight_boosts_strong_same_ticker_continua
 
 def test_btst_precision_supply_probe_boosts_non_catalyst_boundary_candidate() -> None:
     entry = _make_non_catalyst_supply_probe_entry()
+    event_sentiment = entry["strategy_signals"]["event_sentiment"]
+
+    assert event_sentiment["direction"] == 0
+    assert event_sentiment["confidence"] == 0.0
+    assert event_sentiment["sub_factors"]["event_freshness"]["direction"] == 0
+    assert event_sentiment["sub_factors"]["event_freshness"]["confidence"] == 0.0
+    assert event_sentiment["sub_factors"]["news_sentiment"]["direction"] == 0
+    assert event_sentiment["sub_factors"]["news_sentiment"]["confidence"] == 0.0
 
     with use_short_trade_target_profile(profile_name="btst_precision_v2"):
         baseline_result = evaluate_short_trade_rejected_target(
