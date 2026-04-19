@@ -438,6 +438,26 @@ def _make_strong_close_continuation_selected_frontier_entry() -> dict:
     }
 
 
+def _make_non_catalyst_supply_probe_entry() -> dict:
+    entry = _make_strong_close_continuation_selected_frontier_entry()
+    entry["ticker"] = "600176"
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 58.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["metrics"] = {
+        "momentum_1m": -0.08,
+        "momentum_3m": 0.22,
+        "momentum_6m": 0.62,
+        "volume_momentum": 0.68,
+    }
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 60.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 67.0
+    entry["strategy_signals"]["event_sentiment"]["confidence"] = 64.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 58.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 60.0
+    entry["strategy_signals"]["mean_reversion"] = _make_signal(1, 62.0).model_dump(mode="json")
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.10, "investor": 0.06}}
+    return entry
+
+
 def test_build_selection_targets_wraps_research_semantics_for_watchlist() -> None:
     watchlist = [
         LayerCResult(
@@ -2526,6 +2546,29 @@ def test_historical_continuation_score_weight_boosts_strong_same_ticker_continua
     assert boosted_result.score_target > baseline_result.score_target
     assert boosted_result.metrics_payload["historical_continuation_prior_score"]["enabled"] is True
     assert boosted_result.metrics_payload["thresholds"]["historical_continuation_score_weight"] == 0.08
+
+
+def test_btst_precision_supply_probe_boosts_non_catalyst_boundary_candidate() -> None:
+    entry = _make_non_catalyst_supply_probe_entry()
+
+    with use_short_trade_target_profile(profile_name="btst_precision_v2"):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    with use_short_trade_target_profile(profile_name="btst_precision_v2_supply_probe_a"):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    assert probe_result.score_target > baseline_result.score_target
+    assert probe_result.metrics_payload["thresholds"]["intraday_strength_weight"] == 0.10
+    assert probe_result.metrics_payload["thresholds"]["reversal_2d_weight"] == 0.06
+    assert probe_result.metrics_payload["thresholds"]["historical_continuation_score_weight"] == 0.10
 
 
 def test_upstream_shadow_catalyst_relief_promotes_strong_recalled_shadow_to_near_miss() -> None:
