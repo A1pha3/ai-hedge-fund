@@ -72,6 +72,9 @@ outputs/
 *.sqlite
 *.sqlite3
 
+# Local git worktrees
+.worktrees/
+
 # Alembic (keep migration files, but ignore generated/cache files)
 app/backend/alembic/versions/__pycache__/
 .claude/scheduled_tasks.lock
