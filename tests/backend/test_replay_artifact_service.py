@@ -9,8 +9,21 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.backend.database.connection import Base
-from app.backend.database.models import ReplayResearchFeedbackLedger, ReplayResearchFeedbackWorkflowItem
+from app.backend.database.models import (
+    ReplayResearchFeedbackLedger,
+    ReplayResearchFeedbackWorkflowItem,
+)
+from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+from app.backend.services._replay_artifacts.selection_feedback import (
+    ReplaySelectionFeedbackHelper,
+)
+from app.backend.services._replay_artifacts.selection_overview import (
+    ReplaySelectionOverviewHelper,
+)
+from app.backend.services._replay_artifacts.summary import ReplaySummaryHelper
+from app.backend.services._replay_artifacts.workflow import ReplayFeedbackWorkflowHelper
 from app.backend.services.replay_artifact_service import ReplayArtifactService
+from src.research.models import ResearchFeedbackRecord
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -181,11 +194,7 @@ def test_sync_workflow_items_preserves_assigned_final_and_reopens_unassigned_dra
     service._sync_workflow_items(report_name="demo_report")
 
     with service._db_session() as db:
-        items = (
-            db.query(ReplayResearchFeedbackWorkflowItem)
-            .order_by(ReplayResearchFeedbackWorkflowItem.symbol.asc())
-            .all()
-        )
+        items = db.query(ReplayResearchFeedbackWorkflowItem).order_by(ReplayResearchFeedbackWorkflowItem.symbol.asc()).all()
 
     assert len(items) == 2
     assigned_item, reopened_item = items
@@ -764,6 +773,57 @@ def test_derive_cache_benchmark_overview_falls_back_to_payload_values(tmp_path: 
     }
 
 
+def test_replay_summary_helper_derives_cache_benchmark_overview_from_payload(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    helper = ReplaySummaryHelper(service)
+
+    overview = helper.derive_cache_benchmark_overview(
+        {
+            "artifacts": {
+                "data_cache_benchmark_json": "cache.json",
+                "data_cache_benchmark_markdown": None,
+                "data_cache_benchmark_appended_report": "cache-report.md",
+            },
+            "data_cache_benchmark_status": {},
+            "data_cache_benchmark": {
+                "requested": True,
+                "executed": True,
+                "write_status": "payload-success",
+                "reason": "payload-reason",
+                "ticker": "300724",
+                "trade_date": "20260311",
+                "summary": {
+                    "reuse_confirmed": True,
+                    "disk_hit_gain": 6,
+                    "miss_reduction": 4,
+                    "set_reduction": 3,
+                    "first_hit_rate": 0.25,
+                    "second_hit_rate": 1.0,
+                },
+            },
+        }
+    )
+
+    assert overview == {
+        "requested": True,
+        "executed": True,
+        "write_status": "payload-success",
+        "reason": "payload-reason",
+        "ticker": "300724",
+        "trade_date": "20260311",
+        "reuse_confirmed": True,
+        "disk_hit_gain": 6,
+        "miss_reduction": 4,
+        "set_reduction": 3,
+        "first_hit_rate": 0.25,
+        "second_hit_rate": 1.0,
+        "artifacts": {
+            "data_cache_benchmark_json": "cache.json",
+            "data_cache_benchmark_appended_report": "cache-report.md",
+        },
+    }
+
+
 def test_derive_cache_benchmark_overview_ignores_invalid_summary_payload(tmp_path: Path) -> None:
     service = _build_service_with_db(tmp_path)
 
@@ -942,6 +1002,56 @@ def test_get_selection_artifact_day_returns_snapshot_and_review(tmp_path: Path) 
         "2026-03-23T10:00:00+08:00",
         "2026-03-22T10:00:00+08:00",
     ]
+
+
+def test_replay_summary_helper_derives_btst_followup_overview(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    helper = ReplaySummaryHelper(service)
+
+    overview = helper.derive_btst_followup_overview(
+        {
+            "artifacts": {
+                "btst_next_day_trade_brief_json": "brief.json",
+                "btst_next_day_trade_brief_markdown": "brief.md",
+                "btst_premarket_execution_card_json": "card.json",
+                "btst_premarket_execution_card_markdown": "card.md",
+            },
+            "btst_followup": {
+                "trade_date": "2026-03-11",
+                "next_trade_date": "2026-03-12",
+                "brief_json": "brief.json",
+                "brief_markdown": "brief.md",
+                "execution_card_json": "card.json",
+                "execution_card_markdown": "card.md",
+                "brief_payload": {
+                    "selection_target": "short_trade_only",
+                    "primary_entry": {"ticker": "300724"},
+                    "selected_entries": [{"ticker": "300724"}],
+                    "near_miss_entries": [{"ticker": "002916"}],
+                    "excluded_research_entries": [{"ticker": "300502"}],
+                },
+            },
+        }
+    )
+
+    assert overview == {
+        "available": True,
+        "trade_date": "2026-03-11",
+        "next_trade_date": "2026-03-12",
+        "selection_target": "short_trade_only",
+        "primary_entry_ticker": "300724",
+        "watchlist_tickers": ["002916"],
+        "excluded_research_tickers": ["300502"],
+        "selected_count": 1,
+        "watchlist_count": 1,
+        "excluded_research_count": 1,
+        "artifacts": {
+            "brief_json": "brief.json",
+            "brief_markdown": "brief.md",
+            "execution_card_json": "card.json",
+            "execution_card_markdown": "card.md",
+        },
+    }
 
 
 def test_derive_btst_control_tower_overview_returns_none_without_artifacts(tmp_path: Path) -> None:
@@ -1353,6 +1463,49 @@ def test_derive_trade_date_target_index_merges_delta_counts_and_coerces_counts(t
     ]
 
 
+def test_selection_overview_helper_derives_trade_date_target_index(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    helper = ReplaySelectionOverviewHelper(service)
+
+    assert helper.derive_trade_date_target_index(
+        [
+            (
+                "2026-03-11",
+                {
+                    "target_summary": {
+                        "target_mode": "dual_target",
+                        "delta_classification_counts": {"research_reject_short_pass": "2"},
+                        "research_selected_count": "1",
+                        "research_near_miss_count": None,
+                        "short_trade_selected_count": "3",
+                        "short_trade_blocked_count": 0,
+                    },
+                    "dual_target_delta": {
+                        "delta_counts": {
+                            "research_reject_short_pass": 1,
+                            "research_near_miss_short_blocked": "4",
+                        }
+                    },
+                },
+            )
+        ]
+    ) == [
+        {
+            "trade_date": "2026-03-11",
+            "target_mode": "dual_target",
+            "short_trade_profile_name": None,
+            "delta_classification_counts": {
+                "research_reject_short_pass": 3,
+                "research_near_miss_short_blocked": 4,
+            },
+            "research_selected_count": 1,
+            "research_near_miss_count": 0,
+            "short_trade_selected_count": 3,
+            "short_trade_blocked_count": 0,
+        }
+    ]
+
+
 def test_build_trade_date_target_index_row_prefers_snapshot_mode_and_coerces_counts(tmp_path: Path) -> None:
     service = _build_service_with_db(tmp_path)
 
@@ -1505,6 +1658,61 @@ def test_derive_selection_artifact_overview_returns_unavailable_when_root_missin
     service = _build_service_with_db(tmp_path)
 
     assert service._derive_selection_artifact_overview(
+        report_dir,
+        {
+            "plan_generation": {"selection_target": "short_trade_only"},
+            "artifacts": {"btst_next_day_trade_brief_json": str(brief_json_path)},
+        },
+        daily_events=[],
+    ) == {
+        "available": False,
+        "trade_date_count": 0,
+        "available_trade_dates": [],
+        "trade_date_target_index": [],
+        "write_status_counts": {},
+        "blocker_counts": [],
+        "short_trade_profile_overview": None,
+        "dual_target_overview": None,
+        "feedback_summary": None,
+        "btst_followup_overview": {
+            "available": True,
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+            "selection_target": "short_trade_only",
+            "primary_entry_ticker": "300724",
+            "watchlist_tickers": [],
+            "excluded_research_tickers": [],
+            "selected_count": 1,
+            "watchlist_count": 0,
+            "excluded_research_count": 0,
+            "artifacts": {
+                "brief_json": str(brief_json_path),
+            },
+        },
+        "btst_control_tower_overview": None,
+    }
+
+
+def test_selection_overview_helper_derives_unavailable_overview_when_root_missing(
+    tmp_path: Path,
+) -> None:
+    report_dir = tmp_path / "demo_report"
+    report_dir.mkdir(parents=True)
+    brief_json_path = report_dir / "btst_next_day_trade_brief_latest.json"
+    _write_json(
+        brief_json_path,
+        {
+            "trade_date": "2026-03-11",
+            "next_trade_date": "2026-03-12",
+            "selection_target": "short_trade_only",
+            "selected_entries": [{"ticker": "300724"}],
+        },
+    )
+
+    service = _build_service_with_db(tmp_path)
+    helper = ReplaySelectionOverviewHelper(service)
+
+    assert helper.derive_selection_artifact_overview(
         report_dir,
         {
             "plan_generation": {"selection_target": "short_trade_only"},
@@ -1921,6 +2129,53 @@ def test_append_selection_artifact_feedback_batch_updates_summary(tmp_path: Path
     assert [record["symbol"] for record in activity["workflow_queue"]["draft"]] == ["300724", "002916"]
 
 
+def test_selection_feedback_helper_batch_strips_and_dedupes_symbols(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    artifact_root = report_dir / "selection_artifacts"
+    day_dir = artifact_root / "2026-03-11"
+
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "artifacts": {
+                "selection_artifact_root": str(artifact_root),
+                "research_feedback_summary": str(artifact_root / "research_feedback_summary.json"),
+            },
+        },
+    )
+    _write_json(
+        day_dir / "selection_snapshot.json",
+        {
+            "artifact_version": "v1",
+            "run_id": "demo_run",
+            "trade_date": "2026-03-11",
+            "selected": [{"symbol": "300724"}],
+            "rejected": [{"symbol": "002916"}],
+        },
+    )
+    (day_dir / "selection_review.md").write_text("review body", encoding="utf-8")
+    (day_dir / "research_feedback.jsonl").write_text("", encoding="utf-8")
+
+    service = _build_service_with_db(tmp_path)
+    helper = ReplaySelectionFeedbackHelper(service)
+
+    result = helper.append_selection_artifact_feedback_batch(
+        report_name="demo_report",
+        trade_date="2026-03-11",
+        reviewer="researcher_a",
+        symbols=[" 300724 ", "", "002916", "300724"],
+        primary_tag="threshold_false_negative",
+        research_verdict="needs_weekly_review",
+        tags=["thesis_clear"],
+        review_status="draft",
+        confidence=0.55,
+        notes="weekly batch triage",
+    )
+
+    assert result["appended_count"] == 2
+    assert [record["symbol"] for record in result["records"]] == ["300724", "002916"]
+
+
 def test_list_workflow_queue_and_update_assignee(tmp_path: Path) -> None:
     report_dir = tmp_path / "demo_report"
     artifact_root = report_dir / "selection_artifacts"
@@ -2014,6 +2269,138 @@ def test_list_workflow_queue_and_update_assignee(tmp_path: Path) -> None:
     my_queue = service.list_workflow_queue(assignee="einstein")
     assert my_queue["item_count"] == 1
     assert my_queue["items"][0]["symbol"] == "300724"
+
+
+def test_workflow_helper_updates_assignee_and_status(tmp_path: Path) -> None:
+    report_dir = tmp_path / "demo_report"
+    artifact_root = report_dir / "selection_artifacts"
+    day_dir = artifact_root / "2026-03-11"
+
+    _write_json(
+        report_dir / "session_summary.json",
+        {
+            "artifacts": {
+                "selection_artifact_root": str(artifact_root),
+                "research_feedback_summary": str(artifact_root / "research_feedback_summary.json"),
+            },
+        },
+    )
+    _write_json(
+        day_dir / "selection_snapshot.json",
+        {
+            "artifact_version": "v1",
+            "run_id": "demo_run",
+            "trade_date": "2026-03-11",
+            "selected": [{"symbol": "300724"}],
+            "rejected": [{"symbol": "002916"}],
+        },
+    )
+    (day_dir / "selection_review.md").write_text("review body", encoding="utf-8")
+    _write_jsonl(
+        day_dir / "research_feedback.jsonl",
+        [
+            {
+                "feedback_version": "v1",
+                "artifact_version": "v1",
+                "label_version": "v1",
+                "run_id": "demo_run",
+                "trade_date": "2026-03-11",
+                "symbol": "300724",
+                "review_scope": "watchlist",
+                "reviewer": "einstein",
+                "review_status": "draft",
+                "primary_tag": "high_quality_selection",
+                "tags": ["high_quality_selection"],
+                "confidence": 0.82,
+                "research_verdict": "selected_for_good_reason",
+                "notes": "needs owner",
+                "created_at": "2026-03-25T10:00:00+08:00",
+            }
+        ],
+    )
+
+    service = _build_service_with_db(tmp_path)
+    helper = ReplayFeedbackWorkflowHelper(service)
+
+    updated = helper.update_workflow_item(
+        report_name="demo_report",
+        trade_date="2026-03-11",
+        symbol="300724",
+        review_scope="watchlist",
+        assignee="einstein",
+    )
+
+    assert updated["assignee"] == "einstein"
+    assert updated["workflow_status"] == "assigned"
+
+
+def test_ledger_io_helper_syncs_day_records_and_removes_stale_rows(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    helper = ReplayLedgerIoHelper(service)
+    feedback_path = tmp_path / "feedback.jsonl"
+
+    with service._db_session() as db:
+        db.add(
+            ReplayResearchFeedbackLedger(
+                report_name="demo_report",
+                trade_date="2026-03-11",
+                feedback_path="stale.jsonl",
+                run_id="old-run",
+                artifact_version="v1",
+                label_version="v1",
+                symbol="000001",
+                review_scope="watchlist",
+                reviewer="stale-reviewer",
+                review_status="draft",
+                primary_tag="old-tag",
+                tags=["old"],
+                confidence=0.1,
+                research_verdict="old",
+                notes="stale",
+                created_at=datetime(2026, 3, 10, 10, 0),
+            )
+        )
+        db.commit()
+
+    helper.sync_feedback_ledger_for_day(
+        report_name="demo_report",
+        trade_date="2026-03-11",
+        feedback_path=feedback_path,
+        records=[
+            ResearchFeedbackRecord(
+                run_id="run-1",
+                trade_date="2026-03-11",
+                symbol="300724",
+                review_scope="watchlist",
+                reviewer="alice",
+                review_status="final",
+                primary_tag="high_quality_selection",
+                tags=["thesis_clear"],
+                confidence=0.9,
+                research_verdict="selected",
+                notes="latest",
+                created_at="2026-03-11T10:00:00+08:00",
+                artifact_version="v1",
+            )
+        ],
+    )
+
+    with service._db_session() as db:
+        rows = db.query(ReplayResearchFeedbackLedger).order_by(ReplayResearchFeedbackLedger.symbol.asc()).all()
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.symbol == "300724"
+    assert row.feedback_path == str(feedback_path)
+    assert row.review_status == "final"
+    assert row.primary_tag == "high_quality_selection"
+
+
+def test_ledger_io_helper_read_jsonl_returns_empty_for_missing_file(tmp_path: Path) -> None:
+    service = _build_service_with_db(tmp_path)
+    helper = ReplayLedgerIoHelper(service)
+
+    assert helper.read_jsonl(tmp_path / "missing.jsonl") == []
 
 
 def test_get_selection_artifact_day_syncs_existing_feedback_to_database(tmp_path: Path) -> None:
