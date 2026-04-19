@@ -1,6 +1,33 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
+# Default unit conversion rules for A-share data sources.
+# Both AKShare and Tushare return ratios in percentage format (e.g. 15.5 = 15.5%).
+_ASHARE_UNIT_CONVERSION_RULES: dict[str, float] = {
+    "return_on_equity": 0.01,
+    "return_on_assets": 0.01,
+    "debt_to_equity": 0.01,
+    "debt_to_assets": 0.01,
+    "gross_margin": 0.01,
+    "operating_margin": 0.01,
+    "net_margin": 0.01,
+    "revenue_growth": 0.01,
+    "earnings_growth": 0.01,
+    "book_value_growth": 0.01,
+    "earnings_per_share_growth": 0.01,
+    "free_cash_flow_growth": 0.01,
+    "operating_income_growth": 0.01,
+    "ebitda_growth": 0.01,
+    "current_ratio": 1.0,
+    "quick_ratio": 1.0,
+    "cash_ratio": 1.0,
+    "interest_coverage": 1.0,
+    "asset_turnover": 1.0,
+    "inventory_turnover": 1.0,
+    "receivables_turnover": 1.0,
+    "payout_ratio": 0.01,
+}
+
 
 class DataSourceAdapter(ABC):
     """数据源适配器基类
@@ -20,7 +47,6 @@ class DataSourceAdapter(ABC):
             标准化后的数据字典，字段名与 FinancialMetrics 模型一致
         """
 
-    @abstractmethod
     def get_unit_conversion_rules(self) -> dict[str, float]:
         """返回单位转换规则
 
@@ -28,6 +54,7 @@ class DataSourceAdapter(ABC):
             {field: multiplier} 字段到乘数的映射
             例如: {"return_on_equity": 0.01} 表示值需要乘以 0.01
         """
+        return dict(_ASHARE_UNIT_CONVERSION_RULES)
 
     def apply_unit_conversion(self, value: float | None, multiplier: float) -> float | None:
         """应用单位转换

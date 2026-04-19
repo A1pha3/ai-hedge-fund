@@ -11,36 +11,6 @@ class TushareAdapter(DataSourceAdapter):
     - 市值：万元为单位
     """
 
-    def get_unit_conversion_rules(self) -> dict[str, float]:
-        """Tushare 单位转换规则
-
-        Tushare fina_indicator 接口返回的比率类字段需要除以 100
-        """
-        return {
-            "return_on_equity": 0.01,
-            "return_on_assets": 0.01,
-            "debt_to_equity": 0.01,
-            "debt_to_assets": 0.01,
-            "gross_margin": 0.01,
-            "operating_margin": 0.01,
-            "net_margin": 0.01,
-            "revenue_growth": 0.01,
-            "earnings_growth": 0.01,
-            "book_value_growth": 0.01,
-            "earnings_per_share_growth": 0.01,
-            "free_cash_flow_growth": 0.01,
-            "operating_income_growth": 0.01,
-            "ebitda_growth": 0.01,
-            "current_ratio": 1.0,
-            "quick_ratio": 1.0,
-            "cash_ratio": 1.0,
-            "interest_coverage": 1.0,
-            "asset_turnover": 1.0,
-            "inventory_turnover": 1.0,
-            "receivables_turnover": 1.0,
-            "payout_ratio": 0.01,
-        }
-
     def adapt_financial_metrics(self, raw_data: dict[str, Any]) -> dict[str, Any]:
         """将 Tushare 原始数据转换为标准格式
 
