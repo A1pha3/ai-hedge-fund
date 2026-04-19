@@ -438,6 +438,43 @@ def _make_strong_close_continuation_selected_frontier_entry() -> dict:
     }
 
 
+def _make_non_catalyst_supply_probe_entry() -> dict:
+    entry = _make_strong_close_continuation_selected_frontier_entry()
+    entry["ticker"] = "600176"
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 58.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["metrics"] = {
+        "momentum_1m": -0.08,
+        "momentum_3m": 0.22,
+        "momentum_6m": 0.62,
+        "volume_momentum": 0.68,
+    }
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 60.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 67.0
+    entry["strategy_signals"]["event_sentiment"]["direction"] = 0
+    entry["strategy_signals"]["event_sentiment"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["direction"] = 0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["direction"] = 0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 0.0
+    entry["strategy_signals"]["mean_reversion"] = _make_signal(1, 62.0).model_dump(mode="json")
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.10, "investor": 0.06}}
+    return entry
+
+
+def _make_non_catalyst_boundary_decision_probe_entry() -> dict:
+    entry = _make_non_catalyst_supply_probe_entry()
+    entry["score_b"] = 0.46823849969417464
+    entry["score_c"] = -0.15490341150771986
+    entry["score_final"] = 0.0021799855779751076
+    entry["quality_score"] = 0.38695184839524344
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 28.075218699134354
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 14.167346401591947
+    entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 33.287846370701416
+    entry["strategy_signals"]["mean_reversion"]["confidence"] = 59.88064680026239
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.15005685005029568, "investor": 0.13021382233035975}}
+    return entry
+
+
 def test_build_selection_targets_wraps_research_semantics_for_watchlist() -> None:
     watchlist = [
         LayerCResult(
@@ -1404,6 +1441,53 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert btst_precision_v2_profile.historical_continuation_score_weight == 0.08
     assert btst_precision_v2_profile.short_term_reversal_weight == 0.50
     assert btst_precision_v2_profile.short_term_reversal_weight > btst_precision_profile.short_term_reversal_weight
+
+
+def test_btst_precision_supply_probe_profiles_rebalance_non_catalyst_signal_mix() -> None:
+    baseline = get_short_trade_target_profile("btst_precision_v2")
+
+    probe_a = get_short_trade_target_profile("btst_precision_v2_supply_probe_a")
+    probe_b = get_short_trade_target_profile("btst_precision_v2_supply_probe_b")
+
+    assert probe_a.select_threshold == baseline.select_threshold
+    assert probe_a.near_miss_threshold == baseline.near_miss_threshold
+    assert probe_a.selected_rank_cap_ratio == baseline.selected_rank_cap_ratio
+    assert probe_a.near_miss_rank_cap_ratio == baseline.near_miss_rank_cap_ratio
+    assert probe_a.selected_rank_cap_relief_allow_risk_off == baseline.selected_rank_cap_relief_allow_risk_off
+    assert probe_a.selected_rank_cap_relief_allow_crisis == baseline.selected_rank_cap_relief_allow_crisis
+    assert probe_a.profitability_relief_enabled == baseline.profitability_relief_enabled
+    assert probe_a.profitability_hard_cliff_boundary_relief_enabled == baseline.profitability_hard_cliff_boundary_relief_enabled
+    assert probe_a.visibility_gap_continuation_relief_enabled == baseline.visibility_gap_continuation_relief_enabled
+    assert probe_a.merge_approved_continuation_relief_enabled == baseline.merge_approved_continuation_relief_enabled
+    assert probe_a.historical_execution_relief_select_threshold == baseline.historical_execution_relief_select_threshold
+    assert probe_a.short_term_reversal_weight == 0.35
+    assert probe_a.intraday_strength_weight == 0.10
+    assert probe_a.reversal_2d_weight == 0.06
+    assert probe_a.historical_continuation_score_weight == 0.10
+    assert probe_a.catalyst_freshness_weight == 0.03
+    assert probe_a.short_term_reversal_weight < baseline.short_term_reversal_weight
+    assert probe_a.intraday_strength_weight > baseline.intraday_strength_weight
+    assert probe_a.reversal_2d_weight > baseline.reversal_2d_weight
+
+    assert probe_b.select_threshold == baseline.select_threshold
+    assert probe_b.near_miss_threshold == baseline.near_miss_threshold
+    assert probe_b.selected_rank_cap_ratio == baseline.selected_rank_cap_ratio
+    assert probe_b.near_miss_rank_cap_ratio == baseline.near_miss_rank_cap_ratio
+    assert probe_b.selected_rank_cap_relief_allow_risk_off == baseline.selected_rank_cap_relief_allow_risk_off
+    assert probe_b.selected_rank_cap_relief_allow_crisis == baseline.selected_rank_cap_relief_allow_crisis
+    assert probe_b.profitability_relief_enabled == baseline.profitability_relief_enabled
+    assert probe_b.profitability_hard_cliff_boundary_relief_enabled == baseline.profitability_hard_cliff_boundary_relief_enabled
+    assert probe_b.visibility_gap_continuation_relief_enabled == baseline.visibility_gap_continuation_relief_enabled
+    assert probe_b.merge_approved_continuation_relief_enabled == baseline.merge_approved_continuation_relief_enabled
+    assert probe_b.historical_execution_relief_select_threshold == baseline.historical_execution_relief_select_threshold
+    assert probe_b.short_term_reversal_weight == 0.30
+    assert probe_b.intraday_strength_weight == 0.12
+    assert probe_b.reversal_2d_weight == 0.09
+    assert probe_b.historical_continuation_score_weight == 0.10
+    assert probe_b.catalyst_freshness_weight == 0.02
+    assert probe_b.short_term_reversal_weight < probe_a.short_term_reversal_weight
+    assert probe_b.intraday_strength_weight > probe_a.intraday_strength_weight
+    assert probe_b.reversal_2d_weight > probe_a.reversal_2d_weight
 
 
 def test_short_trade_rank_threshold_tightening_raises_thresholds_for_deep_rank_entries() -> None:
@@ -2498,6 +2582,89 @@ def test_historical_continuation_score_weight_boosts_strong_same_ticker_continua
     assert boosted_result.score_target > baseline_result.score_target
     assert boosted_result.metrics_payload["historical_continuation_prior_score"]["enabled"] is True
     assert boosted_result.metrics_payload["thresholds"]["historical_continuation_score_weight"] == 0.08
+
+
+@pytest.mark.parametrize(
+    ("profile_name", "expected_intraday_strength_weight", "expected_reversal_2d_weight", "expected_historical_continuation_score_weight"),
+    [
+        ("btst_precision_v2_supply_probe_a", 0.10, 0.06, 0.10),
+        ("btst_precision_v2_supply_probe_b", 0.12, 0.09, 0.10),
+    ],
+    ids=["probe_a", "probe_b"],
+)
+def test_btst_precision_supply_probe_boosts_non_catalyst_boundary_candidate(
+    profile_name: str,
+    expected_intraday_strength_weight: float,
+    expected_reversal_2d_weight: float,
+    expected_historical_continuation_score_weight: float,
+) -> None:
+    entry = _make_non_catalyst_supply_probe_entry()
+    event_sentiment = entry["strategy_signals"]["event_sentiment"]
+
+    assert event_sentiment["direction"] == 0
+    assert event_sentiment["confidence"] == 0.0
+    assert event_sentiment["sub_factors"]["event_freshness"]["direction"] == 0
+    assert event_sentiment["sub_factors"]["event_freshness"]["confidence"] == 0.0
+    assert event_sentiment["sub_factors"]["news_sentiment"]["direction"] == 0
+    assert event_sentiment["sub_factors"]["news_sentiment"]["confidence"] == 0.0
+
+    with use_short_trade_target_profile(profile_name="btst_precision_v2"):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    with use_short_trade_target_profile(profile_name=profile_name):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    assert baseline_result.metrics_payload["catalyst_freshness"] == 0.0
+    assert baseline_result.metrics_payload["effective_catalyst_freshness"] == 0.0
+    assert probe_result.metrics_payload["catalyst_freshness"] == 0.0
+    assert probe_result.metrics_payload["effective_catalyst_freshness"] == 0.0
+    assert probe_result.score_target > baseline_result.score_target
+    assert probe_result.metrics_payload["thresholds"]["intraday_strength_weight"] == expected_intraday_strength_weight
+    assert probe_result.metrics_payload["thresholds"]["reversal_2d_weight"] == expected_reversal_2d_weight
+    assert probe_result.metrics_payload["thresholds"]["historical_continuation_score_weight"] == expected_historical_continuation_score_weight
+
+
+def test_btst_precision_supply_probe_promotes_non_catalyst_boundary_candidate_to_selected() -> None:
+    entry = _make_non_catalyst_boundary_decision_probe_entry()
+
+    with use_short_trade_target_profile(profile_name="btst_precision_v2"):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    with use_short_trade_target_profile(profile_name="btst_precision_v2_supply_probe_a"):
+        probe_a_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    with use_short_trade_target_profile(profile_name="btst_precision_v2_supply_probe_b"):
+        probe_b_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+
+    assert baseline_result.decision == "near_miss"
+    assert probe_a_result.decision == "selected"
+    assert probe_b_result.decision == "selected"
+    assert baseline_result.metrics_payload["catalyst_freshness"] == 0.0
+    assert probe_a_result.metrics_payload["catalyst_freshness"] == 0.0
+    assert probe_b_result.metrics_payload["catalyst_freshness"] == 0.0
+    assert round(baseline_result.score_target, 6) == pytest.approx(0.270109, abs=1e-6)
+    assert round(probe_a_result.score_target, 6) == pytest.approx(0.309726, abs=1e-6)
+    assert round(probe_b_result.score_target, 6) == pytest.approx(0.323166, abs=1e-6)
 
 
 def test_upstream_shadow_catalyst_relief_promotes_strong_recalled_shadow_to_near_miss() -> None:
