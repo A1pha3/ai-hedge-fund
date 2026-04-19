@@ -53,10 +53,8 @@ from .engine_pending_helpers import (
     evaluate_pending_buy_order,
     evaluate_pending_sell_order,
     process_pending_queues,
-    queue_limit_blocked_pipeline_decision,
-    queue_limit_down_sell_decision,
-    queue_limit_up_buy_decision,
 )
+from .engine_pipeline_decisions import PipelineDecisionExecutor, PipelineDecisionExecutionInputs
 from .engine_telemetry_helpers import (
     build_pipeline_day_event_payload as build_pipeline_day_event_payload_helper,
     build_pipeline_day_record_payloads as build_pipeline_day_record_payloads_helper,
@@ -79,12 +77,6 @@ class PipelineModeDayState:
     previous_plan_timing: dict[str, float] = field(default_factory=dict)
     previous_plan_funnel_diagnostics: dict = field(default_factory=dict)
     prepared_plan: ExecutionPlan | None = None
-
-
-@dataclass(frozen=True)
-class PipelineDecisionExecutionInputs:
-    price: float
-    normalized_ticker: str
 
 
 @dataclass(frozen=True)
@@ -239,6 +231,11 @@ class BacktestEngine:
         self._pending_buy_queue: list[PendingOrder] = []
         self._pending_sell_queue: list[PendingOrder] = []
         self._exit_reentry_cooldowns: dict[str, dict] = {}
+        self._decision_executor = PipelineDecisionExecutor(
+            portfolio=self._portfolio,
+            executor=self._executor,
+            register_cooldown_fn=self._register_exit_reentry_cooldown,
+        )
 
     def _resolve_timing_log_path(self) -> Path | None:
         explicit_path = os.getenv("BACKTEST_TIMING_LOG_PATH")
@@ -825,337 +822,17 @@ class BacktestEngine:
         decisions: dict[str, dict],
         executed_trades: dict[str, int],
     ) -> None:
-        buy_order_by_ticker, watchlist_by_ticker = self._build_pipeline_decision_lookup_maps(prepared_plan)
-        for ticker, decision in decisions.items():
-            self._apply_single_pipeline_decision(
-                ticker=ticker,
-                decision=decision,
-                current_prices=current_prices,
-                daily_turnovers=daily_turnovers,
-                limit_up=limit_up,
-                limit_down=limit_down,
-                trade_date_compact=trade_date_compact,
-                buy_order_by_ticker=buy_order_by_ticker,
-                watchlist_by_ticker=watchlist_by_ticker,
-                executed_trades=executed_trades,
-            )
-        self._dedupe_pipeline_pending_queues()
-
-    def _build_pipeline_decision_lookup_maps(self, prepared_plan: ExecutionPlan) -> tuple[dict[str, Any], dict[str, Any]]:
-        return (
-            {order.ticker: order for order in prepared_plan.buy_orders},
-            {item.ticker: item for item in prepared_plan.watchlist},
-        )
-
-    def _dedupe_pipeline_pending_queues(self) -> None:
-        self._pending_buy_queue = self._dedupe_pending_orders(self._pending_buy_queue)
-        self._pending_sell_queue = self._dedupe_pending_orders(self._pending_sell_queue)
-
-    def _apply_single_pipeline_decision(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        current_prices: dict[str, float],
-        daily_turnovers: dict[str, float],
-        limit_up: set[str],
-        limit_down: set[str],
-        trade_date_compact: str,
-        buy_order_by_ticker: dict[str, Any],
-        watchlist_by_ticker: dict[str, Any],
-        executed_trades: dict[str, int],
-    ) -> None:
-        execution_inputs = self._build_pipeline_decision_execution_inputs(
-            ticker=ticker,
+        self._decision_executor.apply_decisions(
+            prepared_plan=prepared_plan,
             current_prices=current_prices,
-        )
-        if execution_inputs is None:
-            return
-        if self._queue_pipeline_decision_if_blocked(
-            ticker=ticker,
-            decision=decision,
-            normalized_ticker=execution_inputs.normalized_ticker,
-            trade_date_compact=trade_date_compact,
-            limit_up=limit_up,
-            limit_down=limit_down,
-            buy_order_by_ticker=buy_order_by_ticker,
-            executed_trades=executed_trades,
-        ):
-            return
-        self._execute_and_record_pipeline_decision(
-            ticker=ticker,
-            decision=decision,
-            execution_inputs=execution_inputs,
             daily_turnovers=daily_turnovers,
             limit_up=limit_up,
             limit_down=limit_down,
             trade_date_compact=trade_date_compact,
-            buy_order_by_ticker=buy_order_by_ticker,
-            watchlist_by_ticker=watchlist_by_ticker,
+            decisions=decisions,
             executed_trades=executed_trades,
-        )
-
-    @staticmethod
-    def _resolve_pipeline_decision_price(*, ticker: str, current_prices: dict[str, float]) -> float | None:
-        return current_prices.get(ticker)
-
-    def _build_pipeline_decision_execution_inputs(
-        self,
-        *,
-        ticker: str,
-        current_prices: dict[str, float],
-    ) -> PipelineDecisionExecutionInputs | None:
-        price = self._resolve_pipeline_decision_price(ticker=ticker, current_prices=current_prices)
-        if price is None:
-            return None
-        return PipelineDecisionExecutionInputs(
-            price=price,
-            normalized_ticker=self._normalize_ticker(ticker),
-        )
-
-    def _queue_pipeline_decision_if_blocked(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        normalized_ticker: str,
-        trade_date_compact: str,
-        limit_up: set[str],
-        limit_down: set[str],
-        buy_order_by_ticker: dict[str, Any],
-        executed_trades: dict[str, int],
-    ) -> bool:
-        return self._queue_limit_blocked_pipeline_decision(
-            ticker=ticker,
-            decision=decision,
-            normalized_ticker=normalized_ticker,
-            trade_date_compact=trade_date_compact,
-            limit_up=limit_up,
-            limit_down=limit_down,
-            buy_order_by_ticker=buy_order_by_ticker,
-            executed_trades=executed_trades,
-        )
-
-    def _execute_pipeline_trade_flow(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        price: float,
-        normalized_ticker: str,
-        daily_turnovers: dict[str, float],
-        limit_up: set[str],
-        limit_down: set[str],
-    ) -> int:
-        return self._execute_pipeline_decision(
-            ticker=ticker,
-            decision=decision,
-            price=price,
-            normalized_ticker=normalized_ticker,
-            daily_turnovers=daily_turnovers,
-            limit_up=limit_up,
-            limit_down=limit_down,
-        )
-
-    def _execute_and_record_pipeline_decision(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        execution_inputs: PipelineDecisionExecutionInputs,
-        daily_turnovers: dict[str, float],
-        limit_up: set[str],
-        limit_down: set[str],
-        trade_date_compact: str,
-        buy_order_by_ticker: dict[str, Any],
-        watchlist_by_ticker: dict[str, Any],
-        executed_trades: dict[str, int],
-    ) -> None:
-        executed_qty = self._execute_pipeline_trade_flow(
-            ticker=ticker,
-            decision=decision,
-            price=execution_inputs.price,
-            normalized_ticker=execution_inputs.normalized_ticker,
-            daily_turnovers=daily_turnovers,
-            limit_up=limit_up,
-            limit_down=limit_down,
-        )
-        executed_trades[ticker] = executed_qty
-        self._record_pipeline_execution_side_effects(
-            ticker=ticker,
-            decision=decision,
-            executed_qty=executed_qty,
-            trade_date_compact=trade_date_compact,
-            buy_order_by_ticker=buy_order_by_ticker,
-            watchlist_by_ticker=watchlist_by_ticker,
-        )
-
-    def _queue_limit_blocked_pipeline_decision(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        normalized_ticker: str,
-        trade_date_compact: str,
-        limit_up: set[str],
-        limit_down: set[str],
-        buy_order_by_ticker: dict[str, Any],
-        executed_trades: dict[str, int],
-    ) -> bool:
-        return queue_limit_blocked_pipeline_decision(
-            **self._build_queue_limit_blocked_pipeline_decision_kwargs(
-                ticker=ticker,
-                decision=decision,
-                normalized_ticker=normalized_ticker,
-                trade_date_compact=trade_date_compact,
-                limit_up=limit_up,
-                limit_down=limit_down,
-                buy_order_by_ticker=buy_order_by_ticker,
-                executed_trades=executed_trades,
-            )
-        )
-
-    def _build_queue_limit_blocked_pipeline_decision_kwargs(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        normalized_ticker: str,
-        trade_date_compact: str,
-        limit_up: set[str],
-        limit_down: set[str],
-        buy_order_by_ticker: dict[str, Any],
-        executed_trades: dict[str, int],
-    ) -> dict[str, Any]:
-        return {
-            "ticker": ticker,
-            "decision": decision,
-            "normalized_ticker": normalized_ticker,
-            "trade_date_compact": trade_date_compact,
-            "limit_up": limit_up,
-            "limit_down": limit_down,
-            "buy_order_by_ticker": buy_order_by_ticker,
-            "executed_trades": executed_trades,
-            "queue_limit_up_buy_decision_fn": self._queue_limit_up_buy_decision,
-            "queue_limit_down_sell_decision_fn": self._queue_limit_down_sell_decision,
-        }
-
-    def _queue_limit_up_buy_decision(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        trade_date_compact: str,
-        buy_order_by_ticker: dict[str, Any],
-        executed_trades: dict[str, int],
-    ) -> bool:
-        return queue_limit_up_buy_decision(
             pending_buy_queue=self._pending_buy_queue,
-            ticker=ticker,
-            decision=decision,
-            trade_date_compact=trade_date_compact,
-            buy_order_by_ticker=buy_order_by_ticker,
-            executed_trades=executed_trades,
-        )
-
-    def _queue_limit_down_sell_decision(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        trade_date_compact: str,
-        executed_trades: dict[str, int],
-    ) -> bool:
-        return queue_limit_down_sell_decision(
             pending_sell_queue=self._pending_sell_queue,
-            positions=self._portfolio.get_positions(),
-            ticker=ticker,
-            decision=decision,
-            trade_date_compact=trade_date_compact,
-            executed_trades=executed_trades,
-        )
-
-    def _execute_pipeline_decision(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        price: float,
-        normalized_ticker: str,
-        daily_turnovers: dict[str, float],
-        limit_up: set[str],
-        limit_down: set[str],
-    ) -> int:
-        return self._executor.execute_trade(
-            ticker,
-            decision["action"],
-            decision["quantity"],
-            price,
-            self._portfolio,
-            is_limit_up=normalized_ticker in limit_up,
-            is_limit_down=normalized_ticker in limit_down,
-            daily_turnover=daily_turnovers.get(ticker),
-        )
-
-    def _record_pipeline_execution_side_effects(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        executed_qty: int,
-        trade_date_compact: str,
-        buy_order_by_ticker: dict[str, Any],
-        watchlist_by_ticker: dict[str, Any],
-    ) -> None:
-        if executed_qty <= 0:
-            return
-        if decision["action"] == "buy":
-            self._record_pipeline_buy_execution(
-                ticker=ticker,
-                executed_qty=executed_qty,
-                trade_date_compact=trade_date_compact,
-                buy_order_by_ticker=buy_order_by_ticker,
-                watchlist_by_ticker=watchlist_by_ticker,
-            )
-            return
-        if decision["action"] == "sell":
-            self._record_pipeline_sell_execution(
-                ticker=ticker,
-                decision=decision,
-                trade_date_compact=trade_date_compact,
-            )
-
-    def _record_pipeline_sell_execution(
-        self,
-        *,
-        ticker: str,
-        decision: dict,
-        trade_date_compact: str,
-    ) -> None:
-        trigger_reason = str(decision.get("reason") or "")
-        self._portfolio.record_long_exit(ticker, trigger_reason=trigger_reason)
-        self._register_exit_reentry_cooldown(ticker, trade_date_compact, trigger_reason)
-
-    def _record_pipeline_buy_execution(
-        self,
-        *,
-        ticker: str,
-        executed_qty: int,
-        trade_date_compact: str,
-        buy_order_by_ticker: dict[str, Any],
-        watchlist_by_ticker: dict[str, Any],
-    ) -> None:
-        existing_long_before = int(self._portfolio.get_positions()[ticker]["long"]) - int(executed_qty)
-        watch_item = watchlist_by_ticker.get(ticker)
-        matching_order = buy_order_by_ticker.get(ticker)
-        self._portfolio.record_long_entry(
-            ticker,
-            trade_date_compact,
-            reset=existing_long_before <= 0,
-            entry_score=(matching_order.score_final if matching_order is not None else (watch_item.score_final if watch_item is not None else 0.0)),
-            quality_score=(matching_order.quality_score if matching_order is not None else (watch_item.quality_score if watch_item is not None else 0.5)),
-            industry_sw="",
-            is_fundamental_driven=False,
         )
 
     def _run_pending_pipeline_plan(

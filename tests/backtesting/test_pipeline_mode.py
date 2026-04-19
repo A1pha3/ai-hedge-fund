@@ -509,8 +509,11 @@ def test_apply_pipeline_decisions_builds_lookup_maps_and_dedupes_queues(monkeypa
     def fake_apply_single(**kwargs):
         captured["apply_kwargs"] = kwargs
 
-    monkeypatch.setattr(engine, "_apply_single_pipeline_decision", fake_apply_single)
-    monkeypatch.setattr(engine, "_dedupe_pending_orders", lambda orders: [*orders, PendingOrder(ticker="DONE", order_type="buy", shares=1)])
+    monkeypatch.setattr(engine._decision_executor, "_apply_single", fake_apply_single)
+    monkeypatch.setattr(engine._decision_executor, "_dedupe_queues", lambda buy_q, sell_q: (
+        buy_q.append(PendingOrder(ticker="DONE", order_type="buy", shares=1)) or
+        sell_q.append(PendingOrder(ticker="DONE", order_type="sell", shares=1))
+    ))
 
     engine._apply_pipeline_decisions(
         prepared_plan=prepared_plan,
@@ -547,11 +550,11 @@ def test_apply_single_pipeline_decision_skips_when_price_missing(monkeypatch):
     execute_calls: list[dict] = []
     side_effect_calls: list[dict] = []
 
-    monkeypatch.setattr(engine, "_queue_limit_blocked_pipeline_decision", lambda **kwargs: queue_calls.append(kwargs) or False)
-    monkeypatch.setattr(engine, "_execute_pipeline_decision", lambda **kwargs: execute_calls.append(kwargs) or 0)
-    monkeypatch.setattr(engine, "_record_pipeline_execution_side_effects", lambda **kwargs: side_effect_calls.append(kwargs))
+    monkeypatch.setattr(engine._decision_executor, "_queue_if_blocked", lambda **kwargs: queue_calls.append(kwargs) or False)
+    monkeypatch.setattr(engine._decision_executor, "_execute_decision", lambda **kwargs: execute_calls.append(kwargs) or 0)
+    monkeypatch.setattr(engine._decision_executor, "_record_side_effects", lambda **kwargs: side_effect_calls.append(kwargs))
 
-    engine._apply_single_pipeline_decision(
+    engine._decision_executor._apply_single(
         ticker="AAPL",
         decision={"action": "buy", "quantity": 10},
         current_prices={},
@@ -562,6 +565,8 @@ def test_apply_single_pipeline_decision_skips_when_price_missing(monkeypatch):
         buy_order_by_ticker={},
         watchlist_by_ticker={},
         executed_trades={},
+        pending_buy_queue=engine._pending_buy_queue,
+        pending_sell_queue=engine._pending_sell_queue,
     )
 
     assert queue_calls == []
@@ -586,7 +591,7 @@ def test_apply_single_pipeline_decision_executes_and_records_side_effects(monkey
     captured: dict[str, object] = {}
     executed_trades: dict[str, int] = {}
 
-    monkeypatch.setattr(engine, "_normalize_ticker", lambda ticker: "AAPL")
+    monkeypatch.setattr(engine._decision_executor, "_normalize_ticker", lambda ticker: "AAPL")
     def fake_queue(**kwargs):
         captured["queue_kwargs"] = kwargs
         return False
@@ -598,11 +603,11 @@ def test_apply_single_pipeline_decision_executes_and_records_side_effects(monkey
     def fake_side_effects(**kwargs):
         captured["side_effect_kwargs"] = kwargs
 
-    monkeypatch.setattr(engine, "_queue_limit_blocked_pipeline_decision", fake_queue)
-    monkeypatch.setattr(engine, "_execute_pipeline_decision", fake_execute)
-    monkeypatch.setattr(engine, "_record_pipeline_execution_side_effects", fake_side_effects)
+    monkeypatch.setattr(engine._decision_executor, "_queue_if_blocked", fake_queue)
+    monkeypatch.setattr(engine._decision_executor, "_execute_decision", fake_execute)
+    monkeypatch.setattr(engine._decision_executor, "_record_side_effects", fake_side_effects)
 
-    engine._apply_single_pipeline_decision(
+    engine._decision_executor._apply_single(
         ticker="AAPL",
         decision={"action": "buy", "quantity": 10},
         current_prices={"AAPL": 11.5},
@@ -613,6 +618,8 @@ def test_apply_single_pipeline_decision_executes_and_records_side_effects(monkey
         buy_order_by_ticker={"AAPL": object()},
         watchlist_by_ticker={"AAPL": object()},
         executed_trades=executed_trades,
+        pending_buy_queue=engine._pending_buy_queue,
+        pending_sell_queue=engine._pending_sell_queue,
     )
 
     assert captured["queue_kwargs"]["normalized_ticker"] == "AAPL"
@@ -726,7 +733,7 @@ def test_queue_limit_blocked_pipeline_decision_queues_buy_and_marks_zero_executi
     )
     executed_trades: dict[str, int] = {}
 
-    blocked = engine._queue_limit_blocked_pipeline_decision(
+    blocked = engine._decision_executor._queue_limit_blocked(
         ticker="AAPL",
         decision={"action": "buy", "quantity": 10},
         normalized_ticker="AAPL",
@@ -735,6 +742,8 @@ def test_queue_limit_blocked_pipeline_decision_queues_buy_and_marks_zero_executi
         limit_down=set(),
         buy_order_by_ticker={"AAPL": type("BuyOrderLike", (), {"score_final": 0.8, "amount": 1200.0})()},
         executed_trades=executed_trades,
+        pending_buy_queue=engine._pending_buy_queue,
+        pending_sell_queue=engine._pending_sell_queue,
     )
 
     assert blocked is True
@@ -761,7 +770,7 @@ def test_queue_limit_blocked_pipeline_decision_queues_sell_with_ratio_and_reason
     engine._portfolio.apply_long_buy("AAPL", 40, 10.0)
     executed_trades: dict[str, int] = {}
 
-    blocked = engine._queue_limit_blocked_pipeline_decision(
+    blocked = engine._decision_executor._queue_limit_blocked(
         ticker="AAPL",
         decision={"action": "sell", "quantity": 10, "reason": "limit_down_exit"},
         normalized_ticker="AAPL",
@@ -770,6 +779,8 @@ def test_queue_limit_blocked_pipeline_decision_queues_sell_with_ratio_and_reason
         limit_down={"AAPL"},
         buy_order_by_ticker={},
         executed_trades=executed_trades,
+        pending_buy_queue=engine._pending_buy_queue,
+        pending_sell_queue=engine._pending_sell_queue,
     )
 
     assert blocked is True
