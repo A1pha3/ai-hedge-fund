@@ -175,3 +175,17 @@ def get_analyst_nodes():
     """Get the mapping of analyst keys to their (node_name, agent_func) tuples."""
     return {key: (f"{key}_agent", config["agent_func"]) for key, config in ANALYST_CONFIG.items()}
 
+
+def get_agents_list():
+    """Get a list of agent info dicts for API consumption."""
+    return [
+        {
+            "key": key,
+            "display_name": config["display_name"],
+            "description": config["description"],
+            "investing_style": config["investing_style"],
+            "type": config["type"],
+        }
+        for key, config in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"])
+    ]
+

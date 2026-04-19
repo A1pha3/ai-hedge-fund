@@ -515,7 +515,7 @@ def test_apply_pipeline_decisions_builds_lookup_maps_and_dedupes_queues(monkeypa
         sell_q.append(PendingOrder(ticker="DONE", order_type="sell", shares=1))
     ))
 
-    engine._apply_pipeline_decisions(
+    engine._pending_plan_runner._apply_pipeline_decisions(
         prepared_plan=prepared_plan,
         current_prices={"AAPL": 11.0},
         daily_turnovers={"AAPL": 1000000.0},
@@ -524,6 +524,8 @@ def test_apply_pipeline_decisions_builds_lookup_maps_and_dedupes_queues(monkeypa
         trade_date_compact="20240304",
         decisions={"AAPL": {"action": "buy", "quantity": 10}},
         executed_trades={"AAPL": 0},
+        pending_buy_queue=engine._pending_buy_queue,
+        pending_sell_queue=engine._pending_sell_queue,
     )
 
     assert captured["apply_kwargs"]["buy_order_by_ticker"] == {"AAPL": prepared_plan.buy_orders[0]}
@@ -651,9 +653,10 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
     exits = [type("ExitSignalLike", (), {"ticker": "AAPL", "sell_ratio": 1.0})()]
     crisis_response = {"pause_new_buys": False, "forced_reduce_ratio": 0.0}
     captured: dict[str, object] = {}
+    runner = engine._pending_plan_runner
 
     monkeypatch.setattr(
-        engine,
+        runner,
         "_prepare_pending_pipeline_plan",
         lambda **kwargs: (
             prepared_plan,
@@ -663,17 +666,22 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
             {"layer_b": {"kept": 1}},
         ),
     )
-    monkeypatch.setattr(
-        engine,
-        "_run_pending_intraday_stage",
-        lambda **kwargs: (
-            confirmed_orders,
-            exits,
-            crisis_response,
-            ["queued-buy:AAPL"],
-            0.2,
-        ),
-    )
+
+    def fake_build_intraday_state(**kwargs):
+        from src.backtesting.engine_pending_plan_runner import PendingPipelineIntradayState
+        return (
+            PendingPipelineIntradayState(
+                confirmed_orders=confirmed_orders,
+                exits=exits,
+                crisis_response=crisis_response,
+                queue_alerts=["queued-buy:AAPL"],
+                intraday_seconds=0.2,
+            ),
+            engine._pending_buy_queue,
+            engine._pending_sell_queue,
+        )
+
+    monkeypatch.setattr(runner, "_build_pending_pipeline_intraday_state", fake_build_intraday_state)
 
     def fake_merge(**kwargs):
         captured["merge_kwargs"] = kwargs
@@ -681,10 +689,10 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
     def fake_apply(**kwargs):
         captured["apply_kwargs"] = kwargs
 
-    monkeypatch.setattr(engine, "_merge_pending_intraday_decisions", fake_merge)
-    monkeypatch.setattr(engine, "_apply_pipeline_decisions", fake_apply)
+    monkeypatch.setattr(runner, "_merge_pending_intraday_decisions", fake_merge)
+    monkeypatch.setattr(runner, "_apply_pipeline_decisions", fake_apply)
 
-    result = engine._run_pending_pipeline_plan(
+    result = runner.run_pending_pipeline_plan(
         pending_plan=pending_plan,
         day_context=type(
             "DayContext",
@@ -699,6 +707,10 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
         )(),
         decisions=decisions,
         executed_trades=executed_trades,
+        pending_buy_queue=engine._pending_buy_queue,
+        pending_sell_queue=engine._pending_sell_queue,
+        build_confirmation_inputs_fn=lambda plan, prices: {},
+        process_pending_queues_fn=lambda **kw: ([], [], []),
     )
 
     assert captured["merge_kwargs"]["confirmed_orders"] == confirmed_orders
@@ -707,14 +719,12 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
     assert captured["apply_kwargs"]["prepared_plan"] is prepared_plan
     assert captured["apply_kwargs"]["executed_trades"] is executed_trades
     assert prepared_plan.risk_alerts == ["existing", "queued-buy:AAPL"]
-    assert result == (
-        prepared_plan,
-        0.1,
-        0.2,
-        {"watchlist_count": 2},
-        {"post_market_seconds": 0.9},
-        {"layer_b": {"kept": 1}},
-    )
+    assert result.prepared_plan is prepared_plan
+    assert result.pre_market_seconds == 0.1
+    assert result.intraday_seconds == 0.2
+    assert result.previous_plan_counts == {"watchlist_count": 2}
+    assert result.previous_plan_timing == {"post_market_seconds": 0.9}
+    assert result.previous_plan_funnel_diagnostics == {"layer_b": {"kept": 1}}
 
 
 def test_queue_limit_blocked_pipeline_decision_queues_buy_and_marks_zero_execution():
