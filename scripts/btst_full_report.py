@@ -3,11 +3,12 @@
 BTST完整分析报告：2026-04-13信号日 → 04-14目标日
 包含：候选池构建、因子评分、行业分析、历史回测验证、Top候选深度分析
 """
+import argparse
 import os, json, sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from collections import defaultdict
 
@@ -157,22 +158,56 @@ def score_contributions(factors, weights):
     return {k: round(nw.get(k, 0) * factors.get(k, 0), 4) for k in nw}
 
 
-def main():
-    import tushare as ts
-    ts.set_token(os.getenv('TUSHARE_TOKEN'))
-    pro = ts.pro_api()
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate BTST full report for a specific signal date or the latest usable trade date.")
+    parser.add_argument("--trade-date", default=None, help="Signal date in YYYYMMDD format. Omit to auto-resolve the latest usable trade date.")
+    return parser.parse_args()
 
-    cal = pro.trade_cal(exchange='SSE', start_date='20260407', end_date='20260416', is_open='1')
+
+def resolve_trade_dates(pro, requested_trade_date=None):
+    if requested_trade_date:
+        trade_dt = datetime.strptime(requested_trade_date, "%Y%m%d")
+        cal_start = (trade_dt - timedelta(days=20)).strftime("%Y%m%d")
+        cal_end = (trade_dt + timedelta(days=15)).strftime("%Y%m%d")
+    else:
+        today = datetime.now()
+        cal_start = (today - timedelta(days=30)).strftime("%Y%m%d")
+        cal_end = (today + timedelta(days=15)).strftime("%Y%m%d")
+
+    cal = pro.trade_cal(exchange='SSE', start_date=cal_start, end_date=cal_end, is_open='1')
     all_dates = sorted(cal['cal_date'].tolist())
     next_map = {d: all_dates[i+1] for i, d in enumerate(all_dates) if i+1 < len(all_dates)}
 
-    trade_date = None
-    for d in reversed(all_dates):
-        df_test = pro.daily(trade_date=d)
-        if df_test is not None and not df_test.empty:
-            trade_date = d
-            break
+    if requested_trade_date:
+        if requested_trade_date not in all_dates:
+            raise SystemExit(f"指定信号日不是上交所开市日: {requested_trade_date}")
+        df_test = pro.daily(trade_date=requested_trade_date)
+        if df_test is None or df_test.empty:
+            raise SystemExit(f"指定信号日暂无收盘数据: {requested_trade_date}")
+        trade_date = requested_trade_date
+    else:
+        trade_date = None
+        for d in reversed(all_dates):
+            df_test = pro.daily(trade_date=d)
+            if df_test is not None and not df_test.empty:
+                trade_date = d
+                break
+        if trade_date is None:
+            raise SystemExit("未找到可用的收盘数据日期")
+
     next_date = next_map.get(trade_date, 'N/A')
+    return trade_date, next_date, all_dates
+
+
+def main():
+    import tushare as ts
+    args = parse_args()
+    ts.set_token(os.getenv('TUSHARE_TOKEN'))
+    pro = ts.pro_api()
+
+    trade_date, next_date, all_dates = resolve_trade_dates(pro, args.trade_date)
+    next_map = {d: all_dates[i+1] for i, d in enumerate(all_dates) if i+1 < len(all_dates)}
+    trade_dt = datetime.strptime(trade_date, "%Y%m%d")
 
     # ====== 获取最近5日数据用于历史回测验证 ======
     lookback_dates = [d for d in all_dates if d <= trade_date][-5:]
@@ -237,10 +272,11 @@ def main():
 
     codes = df['ts_code'].tolist()
     history = []
+    history_start_date = (trade_dt - timedelta(days=320)).strftime("%Y%m%d")
     for i in range(0, len(codes), 80):
         batch = codes[i:i+80]
         try:
-            h = pro.daily(ts_code=','.join(batch), start_date='20250601', end_date=trade_date)
+            h = pro.daily(ts_code=','.join(batch), start_date=history_start_date, end_date=trade_date)
             if h is not None and not h.empty: history.append(h)
         except: continue
 

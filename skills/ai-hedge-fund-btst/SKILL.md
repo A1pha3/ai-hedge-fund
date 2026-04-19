@@ -1,6 +1,6 @@
 ---
 name: ai-hedge-fund-btst
-description: Use this skill when the user asks to generate tomorrow's BTST trading plan or tomorrow's BTST plain-language explanation in this repository. Trigger on requests like 生成明天的btst交易计划, 生成明天的btst交易通俗说明, 生成明天的BTST计划, or 做明天BTST文档. Ask whether to save to the default folder outputs/YYYYMM or a custom directory, then run the BTST rule report and the multi-agent LLM short-trade pipeline, and write five final Chinese markdown documents.
+description: 当用户在本仓库中用中文提出以下需求时触发：生成BTST次日交易文档、生成明天的BTST交易计划、生成明天的BTST全套文档、生成明天的BTST通俗说明、生成X月X日的BTST交易计划、使用X月X日收盘数据生成次日BTST文档、生成次日短线交易文档。重点匹配结构：BTST + 交易计划|全套文档|通俗说明 + 使用某日收盘数据 或 明天/次日 + 保存到默认目录 或 自定义目录。触发后先询问是否保存到 outputs/YYYYMM/，再运行规则版BTST报告、多智能体短线闭环流程，并产出5份中文Markdown文档。
 ---
 
 # ai-hedge-fund-btst
