@@ -53,6 +53,13 @@ from .engine_pending_helpers import (
     evaluate_pending_sell_order,
     process_pending_queues,
 )
+from .engine_agent_mode import (
+    build_confirmation_inputs,
+    build_pipeline_agent_output,
+    execute_agent_mode_trades,
+    resolve_agent_mode_day_window,
+    run_agent_mode_agent,
+)
 from .engine_pending_plan_runner import PendingPlanRunner, PendingPlanRunResult
 from .engine_pipeline_decisions import PipelineDecisionExecutor
 from .engine_telemetry_helpers import (
@@ -520,7 +527,7 @@ class BacktestEngine:
 
     def _run_agent_mode(self, dates: pd.DatetimeIndex) -> PerformanceMetrics:
         for current_date in dates:
-            day_window = self._resolve_agent_mode_day_window(current_date)
+            day_window = resolve_agent_mode_day_window(current_date)
             if day_window is None:
                 continue
             lookback_start, current_date_str, previous_date_str = day_window
@@ -529,8 +536,24 @@ class BacktestEngine:
             if current_prices is None:
                 continue
 
-            agent_output = self._run_agent_mode_agent(lookback_start=lookback_start, current_date_str=current_date_str)
-            executed_trades = self._execute_agent_mode_trades(agent_output["decisions"], current_prices)
+            agent_output = run_agent_mode_agent(
+                agent_controller=self._agent_controller,
+                agent=self._agent,
+                tickers=self._tickers,
+                lookback_start=lookback_start,
+                current_date_str=current_date_str,
+                portfolio=self._portfolio,
+                model_name=self._model_name,
+                model_provider=self._model_provider,
+                selected_analysts=self._selected_analysts,
+            )
+            executed_trades = execute_agent_mode_trades(
+                executor=self._executor,
+                tickers=self._tickers,
+                decisions=agent_output["decisions"],
+                current_prices=current_prices,
+                portfolio=self._portfolio,
+            )
             self._append_daily_state(
                 current_date=current_date,
                 current_date_str=current_date_str,
@@ -542,64 +565,11 @@ class BacktestEngine:
 
         return self._performance_metrics
 
-    def _resolve_agent_mode_day_window(self, current_date: pd.Timestamp) -> tuple[str, str, str] | None:
-        lookback_start = (current_date - relativedelta(months=1)).strftime("%Y-%m-%d")
-        current_date_str = current_date.strftime("%Y-%m-%d")
-        if lookback_start == current_date_str:
-            return None
-        previous_date_str = (current_date - relativedelta(days=1)).strftime("%Y-%m-%d")
-        return lookback_start, current_date_str, previous_date_str
-
-    def _run_agent_mode_agent(self, *, lookback_start: str, current_date_str: str) -> AgentOutput:
-        return self._agent_controller.run_agent(
-            self._agent,
-            tickers=self._tickers,
-            start_date=lookback_start,
-            end_date=current_date_str,
-            portfolio=self._portfolio,
-            model_name=self._model_name,
-            model_provider=self._model_provider,
-            selected_analysts=self._selected_analysts,
-        )
-
-    def _execute_agent_mode_trades(self, decisions: dict[str, dict], current_prices: dict[str, float]) -> dict[str, int]:
-        executed_trades: dict[str, int] = {}
-        for ticker in self._tickers:
-            decision = decisions.get(ticker, {"action": "hold", "quantity": 0})
-            executed_trades[ticker] = self._executor.execute_trade(
-                ticker,
-                decision.get("action", "hold"),
-                decision.get("quantity", 0),
-                current_prices[ticker],
-                self._portfolio,
-            )
-        return executed_trades
-
     def _build_confirmation_inputs(self, plan: ExecutionPlan, current_prices: dict[str, float]) -> dict[str, dict]:
-        confirmation_inputs: dict[str, dict] = {}
-        for order in plan.buy_orders:
-            price = current_prices.get(order.ticker, 0.0)
-            if price <= 0:
-                continue
-            confirmation_inputs[order.ticker] = {
-                "day_low": price,
-                "ema30": price * 0.99,
-                "current_price": price,
-                "vwap": price * 0.995,
-                "intraday_volume": 1.0,
-                "avg_same_time_volume": 1.0,
-                "industry_percentile": 0.5,
-                "stock_pct_change": 0.0,
-                "industry_pct_change": 0.0,
-            }
-        return confirmation_inputs
+        return build_confirmation_inputs(plan, current_prices)
 
     def _build_pipeline_agent_output(self, decisions: dict[str, dict], active_tickers: Sequence[str]) -> AgentOutput:
-        normalized = {
-            ticker: decisions.get(ticker, {"action": "hold", "quantity": 0})
-            for ticker in active_tickers
-        }
-        return {"decisions": normalized, "analyst_signals": {}}
+        return build_pipeline_agent_output(decisions, active_tickers)
 
     @staticmethod
     def _dedupe_pending_orders(orders: Sequence[PendingOrder]) -> list[PendingOrder]:
