@@ -1453,20 +1453,38 @@ def test_btst_precision_supply_probe_profiles_rebalance_non_catalyst_signal_mix(
     assert probe_a.near_miss_threshold == baseline.near_miss_threshold
     assert probe_a.selected_rank_cap_ratio == baseline.selected_rank_cap_ratio
     assert probe_a.near_miss_rank_cap_ratio == baseline.near_miss_rank_cap_ratio
+    assert probe_a.selected_rank_cap_relief_allow_risk_off == baseline.selected_rank_cap_relief_allow_risk_off
+    assert probe_a.selected_rank_cap_relief_allow_crisis == baseline.selected_rank_cap_relief_allow_crisis
+    assert probe_a.profitability_relief_enabled == baseline.profitability_relief_enabled
+    assert probe_a.profitability_hard_cliff_boundary_relief_enabled == baseline.profitability_hard_cliff_boundary_relief_enabled
+    assert probe_a.visibility_gap_continuation_relief_enabled == baseline.visibility_gap_continuation_relief_enabled
+    assert probe_a.merge_approved_continuation_relief_enabled == baseline.merge_approved_continuation_relief_enabled
+    assert probe_a.historical_execution_relief_select_threshold == baseline.historical_execution_relief_select_threshold
     assert probe_a.short_term_reversal_weight == 0.35
     assert probe_a.intraday_strength_weight == 0.10
     assert probe_a.reversal_2d_weight == 0.06
     assert probe_a.historical_continuation_score_weight == 0.10
+    assert probe_a.catalyst_freshness_weight == 0.03
     assert probe_a.short_term_reversal_weight < baseline.short_term_reversal_weight
     assert probe_a.intraday_strength_weight > baseline.intraday_strength_weight
     assert probe_a.reversal_2d_weight > baseline.reversal_2d_weight
 
     assert probe_b.select_threshold == baseline.select_threshold
     assert probe_b.near_miss_threshold == baseline.near_miss_threshold
+    assert probe_b.selected_rank_cap_ratio == baseline.selected_rank_cap_ratio
+    assert probe_b.near_miss_rank_cap_ratio == baseline.near_miss_rank_cap_ratio
+    assert probe_b.selected_rank_cap_relief_allow_risk_off == baseline.selected_rank_cap_relief_allow_risk_off
+    assert probe_b.selected_rank_cap_relief_allow_crisis == baseline.selected_rank_cap_relief_allow_crisis
+    assert probe_b.profitability_relief_enabled == baseline.profitability_relief_enabled
+    assert probe_b.profitability_hard_cliff_boundary_relief_enabled == baseline.profitability_hard_cliff_boundary_relief_enabled
+    assert probe_b.visibility_gap_continuation_relief_enabled == baseline.visibility_gap_continuation_relief_enabled
+    assert probe_b.merge_approved_continuation_relief_enabled == baseline.merge_approved_continuation_relief_enabled
+    assert probe_b.historical_execution_relief_select_threshold == baseline.historical_execution_relief_select_threshold
     assert probe_b.short_term_reversal_weight == 0.30
     assert probe_b.intraday_strength_weight == 0.12
     assert probe_b.reversal_2d_weight == 0.09
     assert probe_b.historical_continuation_score_weight == 0.10
+    assert probe_b.catalyst_freshness_weight == 0.02
     assert probe_b.short_term_reversal_weight < probe_a.short_term_reversal_weight
     assert probe_b.intraday_strength_weight > probe_a.intraday_strength_weight
     assert probe_b.reversal_2d_weight > probe_a.reversal_2d_weight
