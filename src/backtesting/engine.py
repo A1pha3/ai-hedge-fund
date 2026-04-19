@@ -63,9 +63,7 @@ from .engine_agent_mode import (
 from .engine_pending_plan_runner import PendingPlanRunner, PendingPlanRunResult
 from .engine_pipeline_decisions import PipelineDecisionExecutor
 from .engine_telemetry_helpers import (
-    build_pipeline_day_event_payload as build_pipeline_day_event_payload_helper,
     build_pipeline_day_record_payloads as build_pipeline_day_record_payloads_helper,
-    build_pipeline_day_timing_payload as build_pipeline_day_timing_payload_helper,
 )
 from .metrics import PerformanceMetricsCalculator
 from .output import OutputBuilder
@@ -84,14 +82,6 @@ class PipelineModeDayState:
     previous_plan_timing: dict[str, float] = field(default_factory=dict)
     previous_plan_funnel_diagnostics: dict = field(default_factory=dict)
     prepared_plan: ExecutionPlan | None = None
-
-
-@dataclass(frozen=True)
-class PipelineRuntimePayloadContext:
-    portfolio_snapshot: dict[str, Any]
-    pending_buy_queue: list[PendingOrder]
-    pending_sell_queue: list[PendingOrder]
-    exit_reentry_cooldowns: dict[str, dict]
 
 
 from .trader import TradeExecutor, TradingConstraints
@@ -949,176 +939,6 @@ class BacktestEngine:
         if self._pipeline is None:
             return []
         return collect_execution_plan_observations(self._pipeline, trade_date_compact)
-
-    def _build_pipeline_day_timing_payload(
-        self,
-        *,
-        trade_date_compact: str,
-        active_tickers: Sequence[str],
-        executed_trades: dict[str, int],
-        execution_plan_observations: list[dict],
-        load_market_data_seconds: float,
-        pre_market_seconds: float,
-        intraday_seconds: float,
-        append_daily_state_seconds: float,
-        post_market_seconds: float,
-        total_day_seconds: float,
-        pending_plan: ExecutionPlan | None,
-        previous_plan_counts: dict[str, int],
-        previous_plan_timing: dict[str, float],
-        previous_plan_funnel_diagnostics: dict,
-    ) -> dict:
-        runtime_context = self._build_pipeline_runtime_payload_context()
-        return build_pipeline_day_timing_payload_helper(
-            **self._build_pipeline_day_timing_payload_kwargs(
-                trade_date_compact=trade_date_compact,
-                active_tickers=active_tickers,
-                executed_trades=executed_trades,
-                execution_plan_observations=execution_plan_observations,
-                load_market_data_seconds=load_market_data_seconds,
-                pre_market_seconds=pre_market_seconds,
-                intraday_seconds=intraday_seconds,
-                append_daily_state_seconds=append_daily_state_seconds,
-                post_market_seconds=post_market_seconds,
-                total_day_seconds=total_day_seconds,
-                pending_plan=pending_plan,
-                previous_plan_counts=previous_plan_counts,
-                previous_plan_timing=previous_plan_timing,
-                previous_plan_funnel_diagnostics=previous_plan_funnel_diagnostics,
-                runtime_context=runtime_context,
-            )
-        )
-
-    def _build_pipeline_day_timing_payload_kwargs(
-        self,
-        *,
-        trade_date_compact: str,
-        active_tickers: Sequence[str],
-        executed_trades: dict[str, int],
-        execution_plan_observations: list[dict],
-        load_market_data_seconds: float,
-        pre_market_seconds: float,
-        intraday_seconds: float,
-        append_daily_state_seconds: float,
-        post_market_seconds: float,
-        total_day_seconds: float,
-        pending_plan: ExecutionPlan | None,
-        previous_plan_counts: dict[str, int],
-        previous_plan_timing: dict[str, float],
-        previous_plan_funnel_diagnostics: dict,
-        runtime_context: PipelineRuntimePayloadContext,
-    ) -> dict[str, Any]:
-        return {
-            "trade_date_compact": trade_date_compact,
-            "active_tickers": active_tickers,
-            "executed_trades": executed_trades,
-            "execution_plan_observations": execution_plan_observations,
-            "load_market_data_seconds": load_market_data_seconds,
-            "pre_market_seconds": pre_market_seconds,
-            "intraday_seconds": intraday_seconds,
-            "append_daily_state_seconds": append_daily_state_seconds,
-            "post_market_seconds": post_market_seconds,
-            "total_day_seconds": total_day_seconds,
-            "pending_plan": pending_plan,
-            "previous_plan_counts": previous_plan_counts,
-            "previous_plan_timing": previous_plan_timing,
-            "previous_plan_funnel_diagnostics": previous_plan_funnel_diagnostics,
-            "pending_buy_queue": runtime_context.pending_buy_queue,
-            "pending_sell_queue": runtime_context.pending_sell_queue,
-            "timing_payload_builder": build_pipeline_timing_payload,
-        }
-
-    def _build_pipeline_day_event_payload(
-        self,
-        *,
-        trade_date_compact: str,
-        active_tickers: Sequence[str],
-        executed_trades: dict[str, int],
-        decisions: dict[str, dict],
-        current_prices: dict[str, float],
-        prepared_plan: ExecutionPlan | None,
-        pending_plan: ExecutionPlan | None,
-        execution_plan_observations: list[dict],
-        timing_seconds: dict,
-    ) -> dict:
-        return build_pipeline_day_event_payload_helper(
-            **self._build_pipeline_day_event_payload_helper_kwargs(
-                trade_date_compact=trade_date_compact,
-                active_tickers=active_tickers,
-                executed_trades=executed_trades,
-                decisions=decisions,
-                current_prices=current_prices,
-                prepared_plan=prepared_plan,
-                pending_plan=pending_plan,
-                execution_plan_observations=execution_plan_observations,
-                timing_seconds=timing_seconds,
-            )
-        )
-
-    def _build_pipeline_day_event_payload_helper_kwargs(
-        self,
-        *,
-        trade_date_compact: str,
-        active_tickers: Sequence[str],
-        executed_trades: dict[str, int],
-        decisions: dict[str, dict],
-        current_prices: dict[str, float],
-        prepared_plan: ExecutionPlan | None,
-        pending_plan: ExecutionPlan | None,
-        execution_plan_observations: list[dict],
-        timing_seconds: dict,
-    ) -> dict[str, Any]:
-        return self._build_pipeline_day_event_payload_kwargs(
-            trade_date_compact=trade_date_compact,
-            active_tickers=active_tickers,
-            executed_trades=executed_trades,
-            decisions=decisions,
-            current_prices=current_prices,
-            prepared_plan=prepared_plan,
-            pending_plan=pending_plan,
-            execution_plan_observations=execution_plan_observations,
-            timing_seconds=timing_seconds,
-            runtime_context=self._build_pipeline_runtime_payload_context(),
-        )
-
-    def _build_pipeline_day_event_payload_kwargs(
-        self,
-        *,
-        trade_date_compact: str,
-        active_tickers: Sequence[str],
-        executed_trades: dict[str, int],
-        decisions: dict[str, dict],
-        current_prices: dict[str, float],
-        prepared_plan: ExecutionPlan | None,
-        pending_plan: ExecutionPlan | None,
-        execution_plan_observations: list[dict],
-        timing_seconds: dict,
-        runtime_context: PipelineRuntimePayloadContext,
-    ) -> dict[str, Any]:
-        return {
-            "trade_date_compact": trade_date_compact,
-            "active_tickers": active_tickers,
-            "executed_trades": executed_trades,
-            "decisions": decisions,
-            "current_prices": current_prices,
-            "prepared_plan": prepared_plan,
-            "pending_plan": pending_plan,
-            "execution_plan_observations": execution_plan_observations,
-            "timing_seconds": timing_seconds,
-            "portfolio_snapshot": runtime_context.portfolio_snapshot,
-            "pending_buy_queue": runtime_context.pending_buy_queue,
-            "pending_sell_queue": runtime_context.pending_sell_queue,
-            "exit_reentry_cooldowns": runtime_context.exit_reentry_cooldowns,
-            "event_payload_builder": build_pipeline_event_payload,
-        }
-
-    def _build_pipeline_runtime_payload_context(self) -> PipelineRuntimePayloadContext:
-        return PipelineRuntimePayloadContext(
-            portfolio_snapshot=self._portfolio.get_snapshot(),
-            pending_buy_queue=self._pending_buy_queue,
-            pending_sell_queue=self._pending_sell_queue,
-            exit_reentry_cooldowns=self._exit_reentry_cooldowns,
-        )
 
     def _emit_pipeline_day_records(self, *, timing_payload: dict, event_payload: dict) -> None:
         self._append_timing_log(timing_payload)
