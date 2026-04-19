@@ -1573,6 +1573,122 @@ def test_qualifies_catalyst_theme_candidate_applies_close_momentum_relief_to_met
     assert "close_momentum_catalyst_relief" in metrics_payload["theme_tags"]
 
 
+def test_build_catalyst_theme_entry_derives_context_from_fused_score_for_snapshot_metrics():
+    strong_item = FusedScore(
+        ticker="000006",
+        score_b=0.62,
+        strategy_signals=_shadow_candidate_signals(),
+        arbitration_applied=[],
+        market_state=MarketState(
+            state_type=MarketStateType.TREND,
+            adjusted_weights={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+        ),
+        weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+        decision="watch",
+    )
+    weak_item = FusedScore(
+        ticker="000007",
+        score_b=0.48,
+        strategy_signals={
+            "trend": StrategySignal(direction=1, confidence=35, completeness=1.0, sub_factors={}),
+            "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+            "fundamental": StrategySignal(direction=0, confidence=0, completeness=1.0, sub_factors={}),
+            "event_sentiment": StrategySignal(
+                direction=0,
+                confidence=0,
+                completeness=1.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ),
+        },
+        arbitration_applied=[],
+        market_state=MarketState(state_type=MarketStateType.RANGE),
+        weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+        decision="watch",
+    )
+
+    strong_entry = daily_pipeline_module._build_catalyst_theme_entry(
+        item=strong_item,
+        reason="catalyst_theme_candidate_score_ranked",
+        rank=1,
+    )
+    weak_entry = daily_pipeline_module._build_catalyst_theme_entry(
+        item=weak_item,
+        reason="catalyst_theme_candidate_score_ranked",
+        rank=2,
+    )
+    strong_snapshot = catalyst_helpers_module.build_short_trade_target_snapshot_from_entry(
+        trade_date="20260305",
+        entry=strong_entry,
+    )
+    weak_snapshot = catalyst_helpers_module.build_short_trade_target_snapshot_from_entry(
+        trade_date="20260305",
+        entry=weak_entry,
+    )
+
+    assert strong_entry["quality_score"] > weak_entry["quality_score"]
+    assert strong_entry["market_state"]["state_type"] == "trend"
+    assert strong_entry["agent_contribution_summary"]["cohort_contributions"]["analyst"] > weak_entry["agent_contribution_summary"]["cohort_contributions"]["analyst"]
+    assert strong_entry["agent_contribution_summary"]["cohort_contributions"]["investor"] > weak_entry["agent_contribution_summary"]["cohort_contributions"]["investor"]
+    assert strong_snapshot["analyst_alignment"] > weak_snapshot["analyst_alignment"]
+    assert strong_snapshot["investor_alignment"] > weak_snapshot["investor_alignment"]
+    assert strong_snapshot["score_c_strength"] > weak_snapshot["score_c_strength"]
+    assert strong_snapshot["sector_resonance"] > weak_snapshot["sector_resonance"] + 0.20
+
+
+def test_build_catalyst_theme_entry_qualifies_context_supported_fused_candidate():
+    item = FusedScore(
+        ticker="000008",
+        score_b=0.48,
+        strategy_signals={
+            "trend": StrategySignal(
+                direction=1,
+                confidence=76,
+                completeness=1.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 72.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 62.0, "completeness": 1.0},
+                },
+            ),
+            "mean_reversion": StrategySignal(direction=0, confidence=20, completeness=1.0, sub_factors={}),
+            "fundamental": StrategySignal(direction=1, confidence=72, completeness=1.0, sub_factors={}),
+            "event_sentiment": StrategySignal(
+                direction=1,
+                confidence=52,
+                completeness=1.0,
+                sub_factors={
+                    "event_freshness": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 1, "confidence": 52.0, "completeness": 1.0},
+                },
+            ),
+        },
+        arbitration_applied=[],
+        market_state=MarketState(state_type=MarketStateType.TREND),
+        weights_used={"trend": 0.3, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.2},
+        decision="watch",
+    )
+
+    entry = daily_pipeline_module._build_catalyst_theme_entry(
+        item=item,
+        reason="catalyst_theme_candidate_score_ranked",
+        rank=1,
+    )
+
+    qualified, filter_reason, metrics_payload = daily_pipeline_module._qualifies_catalyst_theme_candidate(
+        trade_date="20260305",
+        entry=entry,
+    )
+
+    assert qualified is True
+    assert filter_reason == "catalyst_theme_candidate_score_ranked"
+    assert metrics_payload["sector_resonance"] >= daily_pipeline_module.CATALYST_THEME_SECTOR_MIN
+    assert metrics_payload["candidate_score"] >= daily_pipeline_module.CATALYST_THEME_CANDIDATE_SCORE_MIN
+
+
 def test_run_post_market_releases_strong_upstream_shadow_into_supplemental_targets():
     pipeline = DailyPipeline(agent_runner=lambda tickers, trade_date, model: {}, exit_checker=lambda portfolio, trade_date: [], target_mode="short_trade_only")
 

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from src.execution.daily_pipeline_candidate_helpers import (
     qualify_catalyst_theme_candidate_from_snapshot,
 )
+from src.execution.layer_c_aggregator import _derive_quality_score
 from src.execution.daily_pipeline_settings import (
     CATALYST_THEME_BREAKOUT_MIN,
     CATALYST_THEME_CANDIDATE_SCORE_MIN,
@@ -25,6 +26,77 @@ from src.execution.daily_pipeline_settings import (
     CATALYST_THEME_SHORT_TRADE_CARRYOVER_REQUIRE_NO_PROFITABILITY_HARD_CLIFF,
 )
 from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
+
+
+def _signal_directional_strength(signal: Any) -> float:
+    if signal is None:
+        return 0.0
+    direction = int(getattr(signal, "direction", 0) or 0)
+    confidence = max(0.0, min(100.0, float(getattr(signal, "confidence", 0.0) or 0.0)))
+    completeness = max(0.0, min(1.0, float(getattr(signal, "completeness", 0.0) or 0.0)))
+    return max(-1.0, min(1.0, direction * (confidence / 100.0) * completeness))
+
+
+def _serialize_market_state(item: Any) -> dict[str, Any]:
+    market_state = getattr(item, "market_state", None)
+    if hasattr(market_state, "model_dump"):
+        return dict(market_state.model_dump(mode="json"))
+    return dict(market_state or {})
+
+
+def _build_catalyst_theme_agent_contribution_summary(item: Any) -> tuple[float, dict[str, Any]]:
+    strategy_signals = dict(getattr(item, "strategy_signals", {}) or {})
+    trend_strength = _signal_directional_strength(strategy_signals.get("trend"))
+    event_strength = _signal_directional_strength(strategy_signals.get("event_sentiment"))
+    fundamental_strength = _signal_directional_strength(strategy_signals.get("fundamental"))
+
+    analyst_contribution = max(0.0, (0.40 * max(0.0, fundamental_strength)) + (0.10 * max(0.0, event_strength)))
+    investor_contribution = max(0.0, (0.35 * max(0.0, trend_strength)) + (0.10 * max(0.0, event_strength)))
+    adjusted_score_c = round((0.55 * analyst_contribution) + (0.45 * investor_contribution), 4)
+
+    positive_agents = []
+    if analyst_contribution > 0:
+        positive_agents.append(
+            {
+                "agent_id": "catalyst_theme_fundamental_proxy",
+                "contribution": round(analyst_contribution, 4),
+                "raw_contribution": round(analyst_contribution, 4),
+                "normalized_weight": 1.0,
+                "direction": 1,
+                "confidence": round(max(0.0, fundamental_strength) * 100.0, 2),
+                "completeness": 1.0,
+                "cohort": "analyst",
+            }
+        )
+    if investor_contribution > 0:
+        positive_agents.append(
+            {
+                "agent_id": "catalyst_theme_trend_proxy",
+                "contribution": round(investor_contribution, 4),
+                "raw_contribution": round(investor_contribution, 4),
+                "normalized_weight": 1.0,
+                "direction": 1,
+                "confidence": round(max(0.0, trend_strength) * 100.0, 2),
+                "completeness": 1.0,
+                "cohort": "investor",
+            }
+        )
+
+    return adjusted_score_c, {
+        "active_agent_count": len(positive_agents),
+        "positive_agent_count": len(positive_agents),
+        "negative_agent_count": 0,
+        "neutral_agent_count": 0,
+        "raw_score_c": adjusted_score_c,
+        "adjusted_score_c": adjusted_score_c,
+        "cohort_contributions": {
+            "analyst": round(analyst_contribution, 4),
+            "investor": round(investor_contribution, 4),
+            "other": 0.0,
+        },
+        "top_positive_agents": positive_agents[:3],
+        "top_negative_agents": [],
+    }
 
 
 def build_upstream_catalyst_theme_candidates(
@@ -512,13 +584,15 @@ def build_catalyst_theme_prefilter_thresholds(
 
 
 def _build_catalyst_theme_entry(*, item: Any, reason: str, rank: int) -> dict[str, Any]:
+    score_c, agent_contribution_summary = _build_catalyst_theme_agent_contribution_summary(item)
     return {
         "ticker": item.ticker,
         "decision": "catalyst_theme",
         "score_b": round(float(item.score_b), 4),
-        "score_c": 0.0,
+        "score_c": score_c,
         "score_final": round(float(item.score_b), 4),
-        "quality_score": 0.5,
+        "quality_score": round(float(_derive_quality_score(item)), 4),
+        "market_state": _serialize_market_state(item),
         "preferred_entry_mode": "theme_research_followup",
         "reason": reason,
         "reasons": [reason, "catalyst_theme_research_candidate"],
@@ -526,7 +600,7 @@ def _build_catalyst_theme_entry(*, item: Any, reason: str, rank: int) -> dict[st
         "upstream_candidate_source": "layer_b_fused_universe",
         "candidate_reason_codes": [reason, "catalyst_theme_research_candidate"],
         "strategy_signals": {name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(item.strategy_signals or {}).items()},
-        "agent_contribution_summary": {},
+        "agent_contribution_summary": agent_contribution_summary,
         "rank": rank,
     }
 
