@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
+from src.utils.numeric import clip
+
 _logger = logging.getLogger(__name__)
 
 
@@ -23,10 +25,6 @@ class SearchObjective(StrEnum):
     COMPOSITE = "composite"
     EDGE = "edge"
     BTST = "btst"
-
-
-def _clip(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
 
 
 @dataclass(frozen=True)
@@ -97,10 +95,10 @@ def compute_objective_score(
         ):
             return None
 
-        normalized_payoff = _clip(float(payoff_ratio) / 3.0, 0.0, 1.0)
-        normalized_expectancy = _clip((float(expectancy) + 0.03) / 0.06, 0.0, 1.0)
-        downside_penalty = _clip(abs(float(downside_p10)) / 0.06, 0.0, 1.0)
-        effective_sample_weight = _clip(float(sample_weight or 0.0), 0.0, 1.0)
+        normalized_payoff = clip(float(payoff_ratio) / 3.0, 0.0, 1.0)
+        normalized_expectancy = clip((float(expectancy) + 0.03) / 0.06, 0.0, 1.0)
+        downside_penalty = clip(abs(float(downside_p10)) / 0.06, 0.0, 1.0)
+        effective_sample_weight = clip(float(sample_weight or 0.0), 0.0, 1.0)
         edge_score = (
             (0.28 * float(win_rate))
             + (0.22 * normalized_payoff)
@@ -132,11 +130,11 @@ def compute_objective_score(
         ):
             return None
 
-        normalized_payoff = _clip(float(payoff_ratio) / 3.0, 0.0, 1.0)
-        normalized_expectancy = _clip((float(expectancy) + 0.03) / 0.06, 0.0, 1.0)
-        normalized_t_plus_3_expectancy = _clip((float(t_plus_3_expectancy) + 0.03) / 0.08, 0.0, 1.0)
-        downside_penalty = _clip(abs(float(downside_p10)) / 0.06, 0.0, 1.0)
-        effective_sample_weight = _clip(float(sample_weight or 0.0), 0.0, 1.0)
+        normalized_payoff = clip(float(payoff_ratio) / 3.0, 0.0, 1.0)
+        normalized_expectancy = clip((float(expectancy) + 0.03) / 0.06, 0.0, 1.0)
+        normalized_t_plus_3_expectancy = clip((float(t_plus_3_expectancy) + 0.03) / 0.08, 0.0, 1.0)
+        downside_penalty = clip(abs(float(downside_p10)) / 0.06, 0.0, 1.0)
+        effective_sample_weight = clip(float(sample_weight or 0.0), 0.0, 1.0)
 
         base_score = (
             (0.28 * float(win_rate))

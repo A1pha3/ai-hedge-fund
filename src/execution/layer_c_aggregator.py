@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 
 from src.execution.models import LayerCResult
 from src.screening.models import FusedScore, StrategySignal
+from src.utils.env_helpers import get_env_float
 
 INVESTOR_AGENT_IDS = [
     "aswath_damodaran_agent",
@@ -42,21 +42,11 @@ QUALITY_SUBFACTOR_WEIGHTS = {
 }
 
 
-def _get_env_float(name: str, default: float) -> float:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    try:
-        return float(raw_value)
-    except ValueError:
-        return default
-
-
-LAYER_C_INVESTOR_WEIGHT_SCALE = _get_env_float("DAILY_PIPELINE_LAYER_C_INVESTOR_WEIGHT_SCALE", 0.90)
-LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE = _get_env_float("DAILY_PIPELINE_LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE", 0.15)
-LAYER_C_BLEND_B_WEIGHT = _get_env_float("DAILY_PIPELINE_LAYER_C_BLEND_B_WEIGHT", 0.25)
-LAYER_C_BLEND_C_WEIGHT = _get_env_float("DAILY_PIPELINE_LAYER_C_BLEND_C_WEIGHT", 0.75)
-LAYER_C_AVOID_SCORE_C_THRESHOLD = _get_env_float("DAILY_PIPELINE_LAYER_C_AVOID_SCORE_C_THRESHOLD", -0.30)
+LAYER_C_INVESTOR_WEIGHT_SCALE = get_env_float("DAILY_PIPELINE_LAYER_C_INVESTOR_WEIGHT_SCALE", 0.90)
+LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE = get_env_float("DAILY_PIPELINE_LAYER_C_BEARISH_INVESTOR_CONTRIBUTION_SCALE", 0.15)
+LAYER_C_BLEND_B_WEIGHT = get_env_float("DAILY_PIPELINE_LAYER_C_BLEND_B_WEIGHT", 0.25)
+LAYER_C_BLEND_C_WEIGHT = get_env_float("DAILY_PIPELINE_LAYER_C_BLEND_C_WEIGHT", 0.75)
+LAYER_C_AVOID_SCORE_C_THRESHOLD = get_env_float("DAILY_PIPELINE_LAYER_C_AVOID_SCORE_C_THRESHOLD", -0.30)
 
 
 def _resolve_layer_c_blend_weights() -> tuple[float, float]:

@@ -7,10 +7,11 @@ used by all strategy scorer modules.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable
 
 from src.screening.models import StrategySignal, SubFactor
+from src.utils.env_helpers import get_env_flag
+from src.utils.numeric import clip
 
 # ---------------------------------------------------------------------------
 # Weight constants (shared across scorer modules)
@@ -66,32 +67,13 @@ NEGATIVE_NEWS_KEYWORDS = {
 # ---------------------------------------------------------------------------
 
 
-def _clip(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
-
-
 def _signal_to_direction(signal: str) -> int:
     mapping = {"bullish": 1, "neutral": 0, "bearish": -1}
     return mapping.get(str(signal).lower(), 0)
 
 
-def _get_env_flag(name: str, default: bool = False) -> bool:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _get_env_mode(name: str, default: str) -> str:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    value = raw_value.strip().lower()
-    return value or default
-
-
 def _get_trend_subfactor_weights() -> dict[str, float]:
-    if _get_env_flag("LAYER_B_ANALYSIS_ENABLE_LONG_TREND_ALIGNMENT", default=True):
+    if get_env_flag("LAYER_B_ANALYSIS_ENABLE_LONG_TREND_ALIGNMENT", default=True):
         return TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND
     return TREND_SUBFACTOR_WEIGHTS
 
@@ -112,8 +94,8 @@ def _make_sub_factor(
     return SubFactor(
         name=name,
         direction=direction,
-        confidence=_clip(confidence, 0.0, 100.0),
-        completeness=_clip(completeness, 0.0, 1.0),
+        confidence=clip(confidence, 0.0, 100.0),
+        completeness=clip(completeness, 0.0, 1.0),
         weight=weight,
         metrics=metrics or {},
     )
@@ -133,7 +115,7 @@ def derive_completeness(sub_factors: Iterable[SubFactor]) -> float:
     if total_weight <= 0:
         return 0.0
 
-    return _clip(
+    return clip(
         sum((factor.weight / total_weight) * factor.completeness for factor in available),
         0.0,
         1.0,
@@ -170,7 +152,7 @@ def _build_aggregated_strategy_signal(
 ) -> StrategySignal:
     return StrategySignal(
         direction=direction,
-        confidence=_clip(confidence, 0.0, 100.0),
+        confidence=clip(confidence, 0.0, 100.0),
         completeness=completeness,
         sub_factors=sub_factor_map,
     )

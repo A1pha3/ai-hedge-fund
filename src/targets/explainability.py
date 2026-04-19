@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-
-def clamp_unit_interval(value: float) -> float:
-    return max(0.0, min(1.0, float(value or 0.0)))
+from src.utils.numeric import clamp_unit_interval  # noqa: F401 — re-exported for backward compatibility
 
 
 def derive_confidence(*components: float) -> float:

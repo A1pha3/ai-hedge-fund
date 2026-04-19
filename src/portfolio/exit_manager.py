@@ -2,23 +2,11 @@
 
 from __future__ import annotations
 
-import os
-
 from src.portfolio.models import ExitSignal, HoldingState
-
-
-def _get_env_float(name: str, default: float) -> float:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    try:
-        return float(raw_value)
-    except ValueError:
-        return default
-
+from src.utils.env_helpers import get_env_float
 
 HARD_STOP_LOSS_PCT = -0.06
-LOGIC_STOP_LOSS_SCORE_THRESHOLD = _get_env_float("LOGIC_STOP_LOSS_SCORE_THRESHOLD", -0.20)
+LOGIC_STOP_LOSS_SCORE_THRESHOLD = get_env_float("LOGIC_STOP_LOSS_SCORE_THRESHOLD", -0.20)
 PROFIT_RETRACE_ARM_PCT = 0.06
 PROFIT_RETRACE_EXIT_PCT = 0.01
 MAX_HOLDING_DAYS = 20

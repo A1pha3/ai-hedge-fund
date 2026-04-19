@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.agents.technicals import calculate_adx, calculate_atr
 from src.screening.models import DEFAULT_STRATEGY_WEIGHTS, MarketState, MarketStateType
+from src.utils.numeric import clamp_unit_interval
 
 
 @dataclass(frozen=True)
@@ -26,21 +27,17 @@ class MarketStateMetrics:
     regime_flip_risk: float
 
 
-def _clamp_unit_interval(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
-
-
 def _compute_style_dispersion(*, breadth_ratio: float, daily_return: float, limit_ratio: float) -> float:
-    weak_breadth_gap = _clamp_unit_interval((0.50 - breadth_ratio) / 0.18)
-    narrow_leadership = weak_breadth_gap * _clamp_unit_interval((limit_ratio - 1.50) / 2.50)
-    index_resilience_divergence = weak_breadth_gap * _clamp_unit_interval((daily_return + 0.0020) / 0.0100)
-    return round(_clamp_unit_interval((0.55 * narrow_leadership) + (0.45 * index_resilience_divergence)), 6)
+    weak_breadth_gap = clamp_unit_interval((0.50 - breadth_ratio) / 0.18)
+    narrow_leadership = weak_breadth_gap * clamp_unit_interval((limit_ratio - 1.50) / 2.50)
+    index_resilience_divergence = weak_breadth_gap * clamp_unit_interval((daily_return + 0.0020) / 0.0100)
+    return round(clamp_unit_interval((0.55 * narrow_leadership) + (0.45 * index_resilience_divergence)), 6)
 
 
 def _compute_regime_flip_risk(*, breadth_ratio: float, daily_return: float, northbound_flow_days: int, style_dispersion: float) -> float:
-    breadth_deterioration = _clamp_unit_interval((0.46 - breadth_ratio) / 0.14)
-    dispersion_pressure = _clamp_unit_interval((style_dispersion - 0.35) / 0.45)
-    index_mismatch = _clamp_unit_interval((daily_return + 0.0015) / 0.0080) if breadth_ratio <= 0.42 else 0.0
+    breadth_deterioration = clamp_unit_interval((0.46 - breadth_ratio) / 0.14)
+    dispersion_pressure = clamp_unit_interval((style_dispersion - 0.35) / 0.45)
+    index_mismatch = clamp_unit_interval((daily_return + 0.0015) / 0.0080) if breadth_ratio <= 0.42 else 0.0
     if northbound_flow_days <= -3:
         flow_headwind = 1.0
     elif northbound_flow_days <= -1:
@@ -48,7 +45,7 @@ def _compute_regime_flip_risk(*, breadth_ratio: float, daily_return: float, nort
     else:
         flow_headwind = 0.0
     return round(
-        _clamp_unit_interval(
+        clamp_unit_interval(
             (0.40 * breadth_deterioration)
             + (0.25 * dispersion_pressure)
             + (0.20 * index_mismatch)

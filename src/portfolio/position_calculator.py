@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import os
-
 from src.portfolio.models import PositionPlan
-
+from src.utils.env_helpers import get_env_float
 
 WATCHLIST_MIN_SCORE = 0.225
 FULL_EXECUTION_SCORE = 0.50
@@ -16,22 +14,12 @@ A_SHARE_MIN_LOT = 100
 MIN_LOT_OVERRIDE_MAX_RATIO = 0.15
 
 
-def _get_env_float(name: str, default: float) -> float:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    try:
-        return float(raw_value)
-    except ValueError:
-        return default
-
-
 def _get_execution_thresholds() -> tuple[float, float, float, float]:
     return (
-        _get_env_float("PIPELINE_WATCHLIST_MIN_SCORE", WATCHLIST_MIN_SCORE),
-        _get_env_float("PIPELINE_FULL_EXECUTION_SCORE", FULL_EXECUTION_SCORE),
-        _get_env_float("PIPELINE_STANDARD_EXECUTION_SCORE", STANDARD_EXECUTION_SCORE),
-        _get_env_float("PIPELINE_WATCHLIST_EDGE_EXECUTION_RATIO", WATCHLIST_EDGE_EXECUTION_RATIO),
+        get_env_float("PIPELINE_WATCHLIST_MIN_SCORE", WATCHLIST_MIN_SCORE),
+        get_env_float("PIPELINE_FULL_EXECUTION_SCORE", FULL_EXECUTION_SCORE),
+        get_env_float("PIPELINE_STANDARD_EXECUTION_SCORE", STANDARD_EXECUTION_SCORE),
+        get_env_float("PIPELINE_WATCHLIST_EDGE_EXECUTION_RATIO", WATCHLIST_EDGE_EXECUTION_RATIO),
     )
 
 

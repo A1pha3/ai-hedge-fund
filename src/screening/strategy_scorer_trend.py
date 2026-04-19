@@ -18,11 +18,11 @@ from src.agents.technicals import (
 from src.screening.models import StrategySignal, SubFactor
 from src.screening.strategy_scorer_utils import (
     aggregate_sub_factors,
-    _clip,
     _get_trend_subfactor_weights,
     _make_sub_factor,
     _signal_to_direction,
 )
+from src.utils.numeric import clip as _clip
 
 
 # ---------------------------------------------------------------------------
