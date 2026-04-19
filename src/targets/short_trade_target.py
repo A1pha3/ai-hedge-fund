@@ -25,6 +25,12 @@ from src.targets.short_trade_prepared_breakout_helpers import (
 from src.targets.short_trade_prepared_breakout_helpers import (
     resolve_prepared_breakout_volume_relief as _resolve_prepared_breakout_volume_relief,
 )
+from src.targets.short_trade_target_evaluation_helpers import (
+    _build_short_trade_rejection_reasons as _build_short_trade_rejection_reasons_impl,
+)
+from src.targets.short_trade_target_evaluation_helpers import (
+    _classify_breakout_stage as _classify_breakout_stage_impl,
+)
 from src.targets.short_trade_target_input_helpers import (
     build_item_replay_context as _build_item_replay_context_impl,
 )
@@ -571,14 +577,7 @@ def _build_target_input_from_entry(*, trade_date: str, entry: dict[str, Any]) ->
 
 
 def _classify_breakout_stage(*, breakout_freshness: float, trend_acceleration: float, profile: Any) -> tuple[str, bool, bool]:
-    selected_gate_pass = breakout_freshness >= float(profile.selected_breakout_freshness_min) and trend_acceleration >= float(profile.selected_trend_acceleration_min)
-    near_miss_gate_pass = breakout_freshness >= float(profile.near_miss_breakout_freshness_min) and trend_acceleration >= float(profile.near_miss_trend_acceleration_min)
-    if selected_gate_pass:
-        return "confirmed_breakout", True, True
-    if near_miss_gate_pass:
-        return "prepared_breakout", False, True
-    return "weak_breakout", False, False
-
+    return _classify_breakout_stage_impl(breakout_freshness=breakout_freshness, trend_acceleration=trend_acceleration, profile=profile)
 
 
 def _compute_short_trade_signal_snapshot(input_data: TargetEvaluationInput, *, profile: Any) -> dict[str, Any]:
@@ -813,11 +812,7 @@ def _build_short_trade_rejection_reasons(
     profile: Any,
     carryover_evidence_deficiency: dict[str, Any],
 ) -> list[str]:
-    from src.targets.short_trade_target_evaluation_helpers import (
-        _build_short_trade_rejection_reasons as _helper,
-    )
-
-    return _helper(
+    return _build_short_trade_rejection_reasons_impl(
         decision=decision,
         blockers=blockers,
         breakout_freshness=breakout_freshness,
