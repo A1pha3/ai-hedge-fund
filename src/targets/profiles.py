@@ -16,6 +16,8 @@ class ShortTradeTargetProfile:
     near_miss_rank_cap: int = 0
     selected_rank_cap_ratio: float = 0.0
     near_miss_rank_cap_ratio: float = 0.0
+    catalyst_theme_selected_rank_cap_ratio: float | None = None
+    catalyst_theme_near_miss_rank_cap_ratio: float | None = None
     selected_rank_cap_relief_score_margin_min: float = 0.0
     selected_rank_cap_relief_rank_buffer: int = 0
     selected_rank_cap_relief_rank_buffer_ratio: float = 0.0
@@ -136,6 +138,7 @@ class ShortTradeTargetProfile:
     extension_score_penalty_weight: float = 0.08
     overbought_momentum_penalty_weight: float = 0.0
     overbought_momentum_threshold: float = 1.0
+    catalyst_theme_penalty: float = 0.0
     watchlist_zero_catalyst_penalty: float = 0.0
     watchlist_zero_catalyst_catalyst_freshness_max: float = 0.0
     watchlist_zero_catalyst_close_strength_min: float = 1.0

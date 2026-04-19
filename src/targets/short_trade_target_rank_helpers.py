@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+_UNSET_RANK_CAP_RATIO = object()
+
 
 # ---------------------------------------------------------------------------
 # Rank threshold tightening constants
@@ -42,6 +44,20 @@ def _normalize_rank_cap_ratio(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     if normalized <= 0.0:
+        return None
+    return normalized
+
+
+def _resolve_rank_cap_ratio_override(value: Any) -> float | None | object:
+    if value is None:
+        return _UNSET_RANK_CAP_RATIO
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return _UNSET_RANK_CAP_RATIO
+    if normalized < 0.0:
+        return _UNSET_RANK_CAP_RATIO
+    if normalized == 0.0:
         return None
     return normalized
 
@@ -118,14 +134,31 @@ def _apply_rank_based_threshold_tightening(snapshot: dict[str, Any], *, rank_hin
 # ---------------------------------------------------------------------------
 
 
-def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | None, rank_population: int | None) -> dict[str, Any]:
+def _resolve_rank_decision_cap(
+    snapshot: dict[str, Any],
+    *,
+    rank_hint: int | None,
+    rank_population: int | None,
+    candidate_source: str | None = None,
+    candidate_reason_codes: list[str] | None = None,
+) -> dict[str, Any]:
     normalized_rank = int(rank_hint or 0)
     normalized_population = int(rank_population or 0) or None
     profile = snapshot.get("profile")
+    normalized_candidate_source = str(candidate_source or "").strip().lower()
+    normalized_reason_codes = {str(code or "").strip().lower() for code in list(candidate_reason_codes or []) if str(code or "").strip()}
+    catalyst_theme_source_specific_caps_enabled = normalized_candidate_source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
     selected_rank_cap_hard = _normalize_rank_cap(getattr(profile, "selected_rank_cap", 0))
     near_miss_rank_cap_hard = _normalize_rank_cap(getattr(profile, "near_miss_rank_cap", 0))
     selected_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "selected_rank_cap_ratio", 0.0))
     near_miss_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "near_miss_rank_cap_ratio", 0.0))
+    if catalyst_theme_source_specific_caps_enabled:
+        catalyst_theme_selected_rank_cap_ratio = _resolve_rank_cap_ratio_override(getattr(profile, "catalyst_theme_selected_rank_cap_ratio", None))
+        if catalyst_theme_selected_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO:
+            selected_rank_cap_ratio = catalyst_theme_selected_rank_cap_ratio
+        catalyst_theme_near_miss_rank_cap_ratio = _resolve_rank_cap_ratio_override(getattr(profile, "catalyst_theme_near_miss_rank_cap_ratio", None))
+        if catalyst_theme_near_miss_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO:
+            near_miss_rank_cap_ratio = catalyst_theme_near_miss_rank_cap_ratio
     selected_rank_cap = _resolve_effective_rank_cap(
         hard_cap=selected_rank_cap_hard,
         cap_ratio=selected_rank_cap_ratio,
@@ -204,6 +237,8 @@ def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | Non
 
     return {
         "enabled": bool(selected_rank_cap is not None or near_miss_rank_cap is not None or selected_rank_cap_ratio is not None or near_miss_rank_cap_ratio is not None),
+        "candidate_source": normalized_candidate_source or None,
+        "catalyst_theme_source_specific_caps_enabled": catalyst_theme_source_specific_caps_enabled,
         "rank_hint": normalized_rank if normalized_rank > 0 else None,
         "rank_population": normalized_population,
         "selected_rank_cap_hard": selected_rank_cap_hard,
@@ -240,11 +275,20 @@ def _resolve_rank_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | Non
     }
 
 
-def _apply_rank_based_decision_cap(snapshot: dict[str, Any], *, rank_hint: int | None, rank_population: int | None) -> dict[str, Any]:
+def _apply_rank_based_decision_cap(
+    snapshot: dict[str, Any],
+    *,
+    rank_hint: int | None,
+    rank_population: int | None,
+    candidate_source: str | None = None,
+    candidate_reason_codes: list[str] | None = None,
+) -> dict[str, Any]:
     adjusted = dict(snapshot)
     adjusted["rank_decision_cap"] = _resolve_rank_decision_cap(
         snapshot,
         rank_hint=rank_hint,
         rank_population=rank_population,
+        candidate_source=candidate_source,
+        candidate_reason_codes=candidate_reason_codes,
     )
     return adjusted

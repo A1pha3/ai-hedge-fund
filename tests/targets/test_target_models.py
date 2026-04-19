@@ -895,6 +895,42 @@ def test_watchlist_zero_catalyst_penalty_applies_only_to_layer_c_watchlist() -> 
     assert guarded_boundary_result.metrics_payload["watchlist_zero_catalyst_guard"]["applied"] is False
 
 
+def test_catalyst_theme_penalty_applies_only_to_catalyst_theme_candidates() -> None:
+    entry = {
+        **_make_prepared_breakout_entry(),
+        "candidate_source": "catalyst_theme",
+        "reason": "catalyst_theme_candidate_score_ranked",
+        "reasons": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+        ],
+        "candidate_reason_codes": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+        ],
+    }
+    baseline_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+
+    with use_short_trade_target_profile(
+        overrides={
+            "catalyst_theme_penalty": 0.04,
+        }
+    ):
+        guarded_catalyst_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=entry, rank_hint=1)
+        guarded_boundary_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry={**entry, "candidate_source": "short_trade_boundary"},
+            rank_hint=1,
+        )
+
+    assert guarded_catalyst_result.metrics_payload["catalyst_theme_penalty"] == 0.04
+    assert guarded_catalyst_result.metrics_payload["catalyst_theme_guard"]["applied"] is True
+    assert "catalyst_theme_penalty_applied" in guarded_catalyst_result.negative_tags
+    assert guarded_catalyst_result.score_target < baseline_result.score_target
+    assert guarded_boundary_result.metrics_payload["catalyst_theme_penalty"] == 0.0
+    assert guarded_boundary_result.metrics_payload["catalyst_theme_guard"]["applied"] is False
+
+
 def test_watchlist_zero_catalyst_crowded_penalty_targets_crowded_zero_catalyst_watchlist_case() -> None:
     crowded_entry = {
         "ticker": "300724",
@@ -1387,10 +1423,10 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert btst_precision_profile.near_miss_rank_cap_ratio == 0.16
     assert btst_precision_profile.short_term_reversal_weight > default_profile.short_term_reversal_weight
     assert btst_precision_profile.trend_acceleration_weight > btst_precision_profile.breakout_freshness_weight
-    assert btst_precision_v2_profile.select_threshold == 0.34
+    assert btst_precision_v2_profile.select_threshold == 0.35
     assert btst_precision_v2_profile.near_miss_threshold == 0.26
-    assert btst_precision_v2_profile.selected_rank_cap_ratio == 0.16
-    assert btst_precision_v2_profile.near_miss_rank_cap_ratio == 0.32
+    assert btst_precision_v2_profile.selected_rank_cap_ratio == 0.12
+    assert btst_precision_v2_profile.near_miss_rank_cap_ratio == 0.24
     assert btst_precision_v2_profile.selected_rank_cap_relief_score_margin_min == 0.02
     assert btst_precision_v2_profile.selected_rank_cap_relief_rank_buffer_ratio == 0.003
     assert btst_precision_v2_profile.selected_rank_cap_relief_close_strength_max == 1.0
@@ -1576,6 +1612,46 @@ def test_short_trade_rank_decision_cap_soft_relief_respects_t_plus_2_guard() -> 
     assert cap_state["selected_rank_cap_relief_t_plus_2_pass"] is False
 
 
+def test_short_trade_rank_decision_cap_soft_relief_accepts_short_trade_boundary_t_plus_2_candidate() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["candidate_source"] = "short_trade_boundary"
+    entry["reason"] = "short_trade_boundary_candidate"
+    entry["reasons"] = ["short_trade_boundary_candidate"]
+    entry["candidate_reason_codes"] = ["short_trade_boundary_candidate"]
+
+    with use_short_trade_target_profile(
+        profile_name="watchlist_zero_catalyst_guard_relief",
+        overrides={
+            "selected_rank_cap": 8,
+            "near_miss_rank_cap": 25,
+            "selected_rank_cap_relief_score_margin_min": 0.0,
+            "selected_rank_cap_relief_rank_buffer": 20,
+            "selected_rank_cap_relief_require_t_plus_2_candidate": True,
+            "t_plus_2_continuation_trend_acceleration_max": 0.95,
+            "t_plus_2_continuation_layer_c_alignment_min": 0.30,
+            "t_plus_2_continuation_layer_c_alignment_max": 0.50,
+        },
+    ):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=1,
+        )
+        deep_rank_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=20,
+        )
+
+    cap_state = deep_rank_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert baseline_result.decision == "selected"
+    assert deep_rank_result.metrics_payload["t_plus_2_continuation_candidate"]["applied"] is True
+    assert deep_rank_result.decision == "selected"
+    assert deep_rank_result.gate_status.get("rank") != "selected_cap_exceeded"
+    assert cap_state["selected_cap_soft_relief_applied"] is True
+    assert cap_state["selected_rank_cap_relief_t_plus_2_pass"] is True
+
+
 def test_short_trade_rank_decision_cap_soft_relief_respects_sector_resonance_floor() -> None:
     entry = _make_catalyst_theme_short_trade_carryover_entry()
 
@@ -1731,6 +1807,8 @@ def test_short_trade_rank_decision_cap_ratio_scales_with_rank_population() -> No
     with use_short_trade_target_profile(
         profile_name="default",
         overrides={
+            "select_threshold": 0.30,
+            "near_miss_threshold": 0.20,
             "selected_rank_cap": 0,
             "near_miss_rank_cap": 0,
             "selected_rank_cap_ratio": 0.10,
@@ -1758,6 +1836,126 @@ def test_short_trade_rank_decision_cap_ratio_scales_with_rank_population() -> No
     assert high_cap_state["selected_rank_cap"] == 30
     assert high_cap_state["near_miss_rank_cap"] == 60
     assert high_population.decision == "selected"
+
+
+def test_short_trade_rank_decision_cap_supports_catalyst_theme_specific_ratio_caps() -> None:
+    catalyst_entry = {
+        **_make_prepared_breakout_entry(),
+        "candidate_source": "catalyst_theme",
+        "reason": "catalyst_theme_candidate_score_ranked",
+        "reasons": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+        ],
+        "candidate_reason_codes": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+        ],
+    }
+    boundary_entry = {
+        **catalyst_entry,
+        "candidate_source": "short_trade_boundary",
+        "reason": "short_trade_boundary_candidate",
+        "reasons": ["short_trade_boundary_candidate"],
+        "candidate_reason_codes": ["short_trade_boundary_candidate"],
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "selected_rank_cap": 0,
+            "near_miss_rank_cap": 0,
+            "selected_rank_cap_ratio": 0.0,
+            "near_miss_rank_cap_ratio": 0.0,
+            "catalyst_theme_selected_rank_cap_ratio": 0.05,
+            "catalyst_theme_near_miss_rank_cap_ratio": 0.10,
+        },
+    ):
+        catalyst_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=catalyst_entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+        boundary_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=boundary_entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+
+    catalyst_cap_state = catalyst_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    boundary_cap_state = boundary_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert catalyst_cap_state["selected_rank_cap_ratio"] == 0.05
+    assert catalyst_cap_state["near_miss_rank_cap_ratio"] == 0.1
+    assert catalyst_cap_state["selected_rank_cap"] == 5
+    assert catalyst_cap_state["near_miss_rank_cap"] == 10
+    assert catalyst_cap_state["near_miss_cap_exceeded"] is True
+    assert catalyst_result.decision == "rejected"
+    assert boundary_cap_state["selected_rank_cap_ratio"] is None
+    assert boundary_cap_state["near_miss_rank_cap_ratio"] is None
+    assert boundary_result.decision in {"near_miss", "selected"}
+
+
+def test_short_trade_rank_decision_cap_allows_catalyst_theme_ratio_override_to_disable_global_cap() -> None:
+    catalyst_entry = {
+        **_make_prepared_breakout_entry(),
+        "candidate_source": "catalyst_theme",
+        "reason": "catalyst_theme_candidate_score_ranked",
+        "reasons": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+        ],
+        "candidate_reason_codes": [
+            "catalyst_theme_candidate_score_ranked",
+            "catalyst_theme_research_candidate",
+        ],
+    }
+    boundary_entry = {
+        **catalyst_entry,
+        "candidate_source": "short_trade_boundary",
+        "reason": "short_trade_boundary_candidate",
+        "reasons": ["short_trade_boundary_candidate"],
+        "candidate_reason_codes": ["short_trade_boundary_candidate"],
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "select_threshold": 0.30,
+            "near_miss_threshold": 0.20,
+            "selected_rank_cap": 0,
+            "near_miss_rank_cap": 0,
+            "selected_rank_cap_ratio": 0.10,
+            "near_miss_rank_cap_ratio": 0.20,
+            "catalyst_theme_selected_rank_cap_ratio": 0.0,
+            "catalyst_theme_near_miss_rank_cap_ratio": 0.0,
+        },
+    ):
+        catalyst_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=catalyst_entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+        boundary_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=boundary_entry,
+            rank_hint=15,
+            rank_population=100,
+        )
+
+    catalyst_cap_state = catalyst_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    boundary_cap_state = boundary_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert catalyst_cap_state["selected_rank_cap_ratio"] is None
+    assert catalyst_cap_state["near_miss_rank_cap_ratio"] is None
+    assert catalyst_cap_state["selected_cap_exceeded"] is False
+    assert catalyst_cap_state["near_miss_cap_exceeded"] is False
+    assert boundary_cap_state["selected_rank_cap_ratio"] == 0.1
+    assert boundary_cap_state["near_miss_rank_cap_ratio"] == 0.2
+    assert boundary_cap_state["selected_cap_exceeded"] is True
+    assert boundary_cap_state["near_miss_cap_exceeded"] is False
+    assert boundary_result.decision == "near_miss"
 
 
 def test_short_trade_market_state_threshold_adjustment_tightens_crisis_regime() -> None:
@@ -1910,8 +2108,8 @@ def test_btst_precision_v2_selected_close_retention_lift_downgrades_weak_selecte
     adjustment = tightened_result.metrics_payload["thresholds"]["selected_close_retention_adjustment"]
     assert baseline_result.decision == "selected"
     assert tightened_result.decision == "near_miss"
-    assert baseline_result.effective_select_threshold == pytest.approx(0.34, abs=1e-4)
-    assert tightened_result.effective_select_threshold == pytest.approx(0.425, abs=1e-4)
+    assert baseline_result.effective_select_threshold == pytest.approx(0.35, abs=1e-4)
+    assert tightened_result.effective_select_threshold == pytest.approx(0.435, abs=1e-4)
     assert tightened_result.metrics_payload["close_retention_score"] == pytest.approx(0.3927, abs=1e-4)
     assert tightened_result.metrics_payload["breakout_close_gap"] == pytest.approx(0.179, abs=1e-4)
     assert adjustment["enabled"] is True

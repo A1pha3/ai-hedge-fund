@@ -381,10 +381,10 @@ SHORT_TRADE_TARGET_PROFILES: dict[str, ShortTradeTargetProfile] = {
     ),
     "btst_precision_v2": ShortTradeTargetProfile(
         name="btst_precision_v2",
-        select_threshold=0.34,
+        select_threshold=0.35,
         near_miss_threshold=0.26,
-        selected_rank_cap_ratio=0.16,
-        near_miss_rank_cap_ratio=0.32,
+        selected_rank_cap_ratio=0.12,
+        near_miss_rank_cap_ratio=0.24,
         selected_rank_cap_relief_score_margin_min=0.02,
         selected_rank_cap_relief_rank_buffer_ratio=0.003,
         selected_rank_cap_relief_require_confirmed_breakout=True,

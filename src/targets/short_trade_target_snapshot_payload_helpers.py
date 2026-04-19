@@ -84,6 +84,7 @@ def _build_short_trade_snapshot_payload_views(
         "profitability_hard_cliff_boundary_relief": dict(relief_snapshot["profitability_hard_cliff_boundary_relief"]),
         "historical_execution_relief": dict(relief_snapshot["historical_execution_relief"]),
         "catalyst_relief": dict(relief_snapshot["upstream_shadow_catalyst_relief"]),
+        "catalyst_theme_penalty": dict(relief_snapshot["catalyst_theme_penalty"]),
         "watchlist_zero_catalyst_penalty": dict(relief_snapshot["watchlist_zero_catalyst_penalty"]),
         "watchlist_zero_catalyst_crowded_penalty": dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"]),
         "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
@@ -128,6 +129,8 @@ def _build_watchlist_snapshot_payload(
     relief_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     return {
+        "catalyst_theme_guard": snapshot_views["catalyst_theme_penalty"],
+        "catalyst_theme_penalty": relief_snapshot["catalyst_theme_penalty_effective"],
         "watchlist_zero_catalyst_guard": snapshot_views["watchlist_zero_catalyst_penalty"],
         "watchlist_zero_catalyst_penalty": relief_snapshot["watchlist_zero_catalyst_penalty_effective"],
         "watchlist_zero_catalyst_crowded_guard": snapshot_views["watchlist_zero_catalyst_crowded_penalty"],

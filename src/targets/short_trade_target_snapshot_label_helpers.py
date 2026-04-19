@@ -77,6 +77,7 @@ def _append_short_trade_snapshot_continuation_relief_tags(
 
 def _append_short_trade_snapshot_penalty_tags(
     *,
+    catalyst_theme_penalty: dict[str, Any],
     watchlist_zero_catalyst_penalty: dict[str, Any],
     watchlist_zero_catalyst_crowded_penalty: dict[str, Any],
     watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any],
@@ -85,6 +86,8 @@ def _append_short_trade_snapshot_penalty_tags(
     positive_tags: list[str],
     negative_tags: list[str],
 ) -> None:
+    if catalyst_theme_penalty["applied"]:
+        negative_tags.append("catalyst_theme_penalty_applied")
     if watchlist_zero_catalyst_penalty["applied"]:
         negative_tags.append("watchlist_zero_catalyst_penalty_applied")
     if watchlist_zero_catalyst_crowded_penalty["applied"]:
@@ -211,6 +214,7 @@ def _build_short_trade_snapshot_label_inputs(
         "prepared_breakout_volume_relief": dict(relief_snapshot["prepared_breakout_volume_relief"]),
         "prepared_breakout_continuation_relief": dict(relief_snapshot["prepared_breakout_continuation_relief"]),
         "prepared_breakout_selected_catalyst_relief": dict(relief_snapshot["prepared_breakout_selected_catalyst_relief"]),
+        "catalyst_theme_penalty": dict(relief_snapshot["catalyst_theme_penalty"]),
         "watchlist_zero_catalyst_penalty": dict(relief_snapshot["watchlist_zero_catalyst_penalty"]),
         "watchlist_zero_catalyst_crowded_penalty": dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"]),
         "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
@@ -276,6 +280,7 @@ def collect_short_trade_snapshot_labels_and_gates(
         positive_tags=positive_tags,
     )
     _append_short_trade_snapshot_penalty_tags(
+        catalyst_theme_penalty=inputs["catalyst_theme_penalty"],
         watchlist_zero_catalyst_penalty=inputs["watchlist_zero_catalyst_penalty"],
         watchlist_zero_catalyst_crowded_penalty=inputs["watchlist_zero_catalyst_crowded_penalty"],
         watchlist_zero_catalyst_flat_trend_penalty=inputs["watchlist_zero_catalyst_flat_trend_penalty"],

@@ -25,6 +25,7 @@ def analyze_btst_micro_window_report(
     *,
     label: str,
     next_high_hit_threshold: float = 0.02,
+    trade_date_filter: str | None = None,
 ) -> dict[str, Any]:
     report_path = Path(report_dir).expanduser().resolve()
     selection_root = report_path / "selection_artifacts"
@@ -35,9 +36,12 @@ def analyze_btst_micro_window_report(
     cycle_status_counts: Counter[str] = Counter()
     data_status_counts: Counter[str] = Counter()
     target_modes: Counter[str] = Counter()
+    normalized_trade_date_filter = _normalize_trade_date(trade_date_filter)
 
     for snapshot in _iter_selection_snapshots(report_path) or []:
         trade_date = _normalize_trade_date(snapshot.get("trade_date"))
+        if normalized_trade_date_filter and trade_date != normalized_trade_date_filter:
+            continue
         target_mode = str(snapshot.get("target_mode") or "unknown")
         target_modes[target_mode] += 1
         for ticker, evaluation in dict(snapshot.get("selection_targets") or {}).items():
