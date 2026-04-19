@@ -450,9 +450,12 @@ def _make_non_catalyst_supply_probe_entry() -> dict:
     }
     entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 60.0
     entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 67.0
-    entry["strategy_signals"]["event_sentiment"]["confidence"] = 64.0
-    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 58.0
-    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 60.0
+    entry["strategy_signals"]["event_sentiment"]["direction"] = 0
+    entry["strategy_signals"]["event_sentiment"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["direction"] = 0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["event_freshness"]["confidence"] = 0.0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["direction"] = 0
+    entry["strategy_signals"]["event_sentiment"]["sub_factors"]["news_sentiment"]["confidence"] = 0.0
     entry["strategy_signals"]["mean_reversion"] = _make_signal(1, 62.0).model_dump(mode="json")
     entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.10, "investor": 0.06}}
     return entry
@@ -2565,6 +2568,10 @@ def test_btst_precision_supply_probe_boosts_non_catalyst_boundary_candidate() ->
             rank_hint=1,
         )
 
+    assert baseline_result.metrics_payload["catalyst_freshness"] == 0.0
+    assert baseline_result.metrics_payload["effective_catalyst_freshness"] == 0.0
+    assert probe_result.metrics_payload["catalyst_freshness"] == 0.0
+    assert probe_result.metrics_payload["effective_catalyst_freshness"] == 0.0
     assert probe_result.score_target > baseline_result.score_target
     assert probe_result.metrics_payload["thresholds"]["intraday_strength_weight"] == 0.10
     assert probe_result.metrics_payload["thresholds"]["reversal_2d_weight"] == 0.06
