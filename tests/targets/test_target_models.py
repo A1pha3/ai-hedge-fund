@@ -1406,6 +1406,34 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert btst_precision_v2_profile.short_term_reversal_weight > btst_precision_profile.short_term_reversal_weight
 
 
+def test_btst_precision_supply_probe_profiles_rebalance_non_catalyst_signal_mix() -> None:
+    baseline = get_short_trade_target_profile("btst_precision_v2")
+
+    probe_a = get_short_trade_target_profile("btst_precision_v2_supply_probe_a")
+    probe_b = get_short_trade_target_profile("btst_precision_v2_supply_probe_b")
+
+    assert probe_a.select_threshold == baseline.select_threshold
+    assert probe_a.near_miss_threshold == baseline.near_miss_threshold
+    assert probe_a.selected_rank_cap_ratio == baseline.selected_rank_cap_ratio
+    assert probe_a.near_miss_rank_cap_ratio == baseline.near_miss_rank_cap_ratio
+    assert probe_a.short_term_reversal_weight == 0.35
+    assert probe_a.intraday_strength_weight == 0.10
+    assert probe_a.reversal_2d_weight == 0.06
+    assert probe_a.historical_continuation_score_weight == 0.10
+    assert probe_a.short_term_reversal_weight < baseline.short_term_reversal_weight
+    assert probe_a.intraday_strength_weight > baseline.intraday_strength_weight
+    assert probe_a.reversal_2d_weight > baseline.reversal_2d_weight
+
+    assert probe_b.select_threshold == baseline.select_threshold
+    assert probe_b.near_miss_threshold == baseline.near_miss_threshold
+    assert probe_b.short_term_reversal_weight == 0.30
+    assert probe_b.intraday_strength_weight == 0.12
+    assert probe_b.reversal_2d_weight == 0.09
+    assert probe_b.historical_continuation_score_weight == 0.10
+    assert probe_b.short_term_reversal_weight < probe_a.short_term_reversal_weight
+    assert probe_b.intraday_strength_weight > probe_a.intraday_strength_weight
+
+
 def test_short_trade_rank_threshold_tightening_raises_thresholds_for_deep_rank_entries() -> None:
     entry = _make_prepared_breakout_entry()
 
