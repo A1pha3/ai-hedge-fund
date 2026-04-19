@@ -36,6 +36,17 @@ def _build_default_watchlist_rule_result(*, enabled: bool, source: str) -> dict[
     }
 
 
+def _build_default_source_penalty_result(*, enabled: bool, source: str) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "eligible": False,
+        "applied": False,
+        "candidate_source": source,
+        "gate_hits": {},
+        "effective_penalty": 0.0,
+    }
+
+
 def resolve_watchlist_penalty_rule(
     *,
     input_data: TargetEvaluationInput,
@@ -55,6 +66,41 @@ def resolve_watchlist_penalty_rule(
         "candidate_source": source,
         "gate_hits": gate_hits,
         "effective_penalty": penalty if eligible else 0.0,
+    }
+
+
+def resolve_catalyst_theme_penalty_impl(
+    *,
+    input_data: TargetEvaluationInput,
+    profile: Any,
+    normalized_reason_codes: Callable[[Any], list[str]],
+    exempt_carryover_candidate_fn: Callable[..., bool],
+    clamp_unit_interval_fn: Callable[[float], float],
+) -> dict[str, Any]:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    penalty = clamp_unit_interval_fn(float(profile.catalyst_theme_penalty or 0.0))
+    candidate_reason_codes = set(normalized_reason_codes(input_data.replay_context.get("candidate_reason_codes")))
+    carryover_exempt = exempt_carryover_candidate_fn(source=source, candidate_reason_codes=candidate_reason_codes)
+    default_result = _build_default_source_penalty_result(enabled=penalty > 0.0, source=source)
+    if penalty <= 0.0 or source != "catalyst_theme" or carryover_exempt:
+        return {
+            **default_result,
+            "gate_hits": {
+                "candidate_source": source == "catalyst_theme",
+                "carryover_exempt": not carryover_exempt,
+            },
+        }
+
+    return {
+        "enabled": True,
+        "eligible": True,
+        "applied": True,
+        "candidate_source": source,
+        "gate_hits": {
+            "candidate_source": True,
+            "carryover_exempt": True,
+        },
+        "effective_penalty": penalty,
     }
 
 
@@ -148,6 +194,7 @@ def resolve_t_plus_2_continuation_candidate_impl(
     clamp_unit_interval_fn: Callable[[float], float],
 ) -> dict[str, Any]:
     source = str(input_data.replay_context.get("source") or "").strip()
+    eligible_sources = {"layer_c_watchlist", "short_trade_boundary"}
     enabled = bool(profile.t_plus_2_continuation_enabled)
     weak_history = _has_weak_t_plus_2_history(input_data=input_data, clamp_unit_interval_fn=clamp_unit_interval_fn)
     default_result = {
@@ -157,11 +204,11 @@ def resolve_t_plus_2_continuation_candidate_impl(
         "candidate_source": source,
         "gate_hits": {},
     }
-    if not enabled or source != "layer_c_watchlist":
+    if not enabled or source not in eligible_sources:
         return default_result
 
     gate_hits = {
-        "candidate_source": source == "layer_c_watchlist",
+        "candidate_source": source in eligible_sources,
         "catalyst_freshness": raw_catalyst_freshness <= clamp_unit_interval_fn(float(profile.t_plus_2_continuation_catalyst_freshness_max or 0.0)),
         "breakout_freshness": breakout_freshness >= clamp_unit_interval_fn(float(profile.t_plus_2_continuation_breakout_freshness_min or 0.0)),
         "trend_acceleration": trend_acceleration >= clamp_unit_interval_fn(float(profile.t_plus_2_continuation_trend_acceleration_min or 0.0)),
