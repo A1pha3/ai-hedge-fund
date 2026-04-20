@@ -147,7 +147,33 @@ def _resolve_rank_decision_cap(
     profile = snapshot.get("profile")
     normalized_candidate_source = str(candidate_source or "").strip().lower()
     normalized_reason_codes = {str(code or "").strip().lower() for code in list(candidate_reason_codes or []) if str(code or "").strip()}
-    catalyst_theme_source_specific_caps_enabled = normalized_candidate_source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
+    breakout_freshness = float(snapshot.get("breakout_freshness") or 0.0)
+    trend_acceleration = float(snapshot.get("trend_acceleration") or 0.0)
+    sector_resonance = float(snapshot.get("sector_resonance") or 0.0)
+    close_strength = float(snapshot.get("close_strength") or 0.0)
+    catalyst_freshness = float(snapshot.get("catalyst_freshness") or 0.0)
+    catalyst_theme_source_specific_rank_cap_trend_acceleration_min = max(
+        0.0,
+        float(getattr(profile, "catalyst_theme_source_specific_rank_cap_trend_acceleration_min", 0.0) or 0.0),
+    )
+    catalyst_theme_source_specific_rank_cap_sector_resonance_min = max(
+        0.0,
+        float(getattr(profile, "catalyst_theme_source_specific_rank_cap_sector_resonance_min", 0.0) or 0.0),
+    )
+    catalyst_theme_source_specific_rank_cap_guard_active = (
+        normalized_candidate_source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
+    )
+    catalyst_theme_source_specific_rank_cap_trend_acceleration_pass = (
+        trend_acceleration >= catalyst_theme_source_specific_rank_cap_trend_acceleration_min
+    )
+    catalyst_theme_source_specific_rank_cap_sector_resonance_pass = (
+        sector_resonance >= catalyst_theme_source_specific_rank_cap_sector_resonance_min
+    )
+    catalyst_theme_source_specific_caps_enabled = (
+        catalyst_theme_source_specific_rank_cap_guard_active
+        and catalyst_theme_source_specific_rank_cap_trend_acceleration_pass
+        and catalyst_theme_source_specific_rank_cap_sector_resonance_pass
+    )
     selected_rank_cap_hard = _normalize_rank_cap(getattr(profile, "selected_rank_cap", 0))
     near_miss_rank_cap_hard = _normalize_rank_cap(getattr(profile, "near_miss_rank_cap", 0))
     selected_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "selected_rank_cap_ratio", 0.0))
@@ -210,17 +236,12 @@ def _resolve_rank_decision_cap(
     selected_rank_cap_relief_score_margin = round(score_target - effective_select_threshold, 4)
     selected_rank_cap_relief_score_pass = selected_rank_cap_relief_score_margin >= selected_rank_cap_relief_score_margin_min
 
-    breakout_freshness = float(snapshot.get("breakout_freshness") or 0.0)
-    trend_acceleration = float(snapshot.get("trend_acceleration") or 0.0)
     selected_breakout_gate_pass = breakout_freshness >= float(getattr(profile, "selected_breakout_freshness_min", 0.0)) and trend_acceleration >= float(getattr(profile, "selected_trend_acceleration_min", 0.0))
     selected_rank_cap_relief_breakout_pass = (not selected_rank_cap_relief_require_confirmed_breakout) or selected_breakout_gate_pass
 
-    sector_resonance = float(snapshot.get("sector_resonance") or 0.0)
     selected_rank_cap_relief_sector_resonance_pass = sector_resonance >= selected_rank_cap_relief_sector_resonance_min
 
-    close_strength = float(snapshot.get("close_strength") or 0.0)
     selected_rank_cap_relief_close_strength_pass = close_strength <= selected_rank_cap_relief_close_strength_max
-    catalyst_freshness = float(snapshot.get("catalyst_freshness") or 0.0)
 
     t_plus_2_continuation_candidate = dict(snapshot.get("t_plus_2_continuation_candidate") or {})
     selected_rank_cap_relief_t_plus_2_support_applied = bool(t_plus_2_continuation_candidate.get("applied"))
@@ -296,6 +317,11 @@ def _resolve_rank_decision_cap(
     return {
         "enabled": bool(selected_rank_cap is not None or near_miss_rank_cap is not None or selected_rank_cap_ratio is not None or near_miss_rank_cap_ratio is not None),
         "candidate_source": normalized_candidate_source or None,
+        "catalyst_theme_source_specific_rank_cap_guard_active": catalyst_theme_source_specific_rank_cap_guard_active,
+        "catalyst_theme_source_specific_rank_cap_trend_acceleration_min": round(catalyst_theme_source_specific_rank_cap_trend_acceleration_min, 4),
+        "catalyst_theme_source_specific_rank_cap_sector_resonance_min": round(catalyst_theme_source_specific_rank_cap_sector_resonance_min, 4),
+        "catalyst_theme_source_specific_rank_cap_trend_acceleration_pass": catalyst_theme_source_specific_rank_cap_trend_acceleration_pass,
+        "catalyst_theme_source_specific_rank_cap_sector_resonance_pass": catalyst_theme_source_specific_rank_cap_sector_resonance_pass,
         "catalyst_theme_source_specific_caps_enabled": catalyst_theme_source_specific_caps_enabled,
         "rank_hint": normalized_rank if normalized_rank > 0 else None,
         "rank_population": normalized_population,
