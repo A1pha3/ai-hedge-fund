@@ -1130,6 +1130,53 @@ def test_rebuild_catalyst_theme_diagnostics_for_report_creates_output_directory(
     ]
 
 
+def test_rebuild_catalyst_theme_diagnostics_for_report_marks_requested_snapshot_baseline_fallback(tmp_path):
+    report_dir = tmp_path / "paper_trading_20260411_20260411_catalyst_theme_missing_snapshot_baseline"
+    trade_date = "20260411"
+
+    plan = ExecutionPlan(
+        date=trade_date,
+        target_mode="short_trade_only",
+        risk_metrics={
+            "funnel_diagnostics": {
+                "filters": {
+                    "watchlist": {"tickers": [], "released_shadow_entries": []},
+                    "short_trade_candidates": {"tickers": [], "released_shadow_entries": [], "selected_tickers": []},
+                    "catalyst_theme_candidates": {
+                        "tickers": [_make_catalyst_theme_carryover_entry()],
+                        "shadow_candidates": [],
+                        "selected_tickers": ["002001"],
+                    },
+                }
+            }
+        },
+    )
+    (report_dir / "daily_events.jsonl").parent.mkdir(parents=True)
+    (report_dir / "daily_events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "paper_trading_day",
+                "trade_date": trade_date,
+                "current_plan": plan.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (report_dir / "session_summary.json").write_text("{}\n", encoding="utf-8")
+
+    result = refresh_module.rebuild_catalyst_theme_diagnostics_for_report(
+        report_dir,
+        trade_date="2026-04-11",
+        use_selection_snapshot_baseline=True,
+    )
+
+    payload = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert payload["baseline"]["_baseline_source"] == "plan_funnel_diagnostics"
+    assert payload["baseline"]["_baseline_fallback_reason"] == "selection_snapshot_requested_but_not_found"
+
+
 def test_rebuild_catalyst_theme_diagnostics_for_report_accepts_hyphenated_frozen_trade_dates(tmp_path):
     report_dir = tmp_path / "paper_trading_20260414_20260414_hyphenated_frozen_date"
     frozen_trade_date = "2026-04-14"

@@ -818,7 +818,7 @@ def _build_baseline_catalyst_theme_diagnostics_payload(
             "_baseline_source": "selection_snapshot",
         }
     catalyst_theme_filter = dict(dict(dict((plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("filters") or {}).get("catalyst_theme_candidates") or {})
-    return {
+    baseline_payload = {
         **_serialize_catalyst_theme_diagnostics_payload(
             {
                 "candidate_count": len(list(catalyst_theme_filter.get("tickers") or [])),
@@ -829,6 +829,9 @@ def _build_baseline_catalyst_theme_diagnostics_payload(
         ),
         "_baseline_source": "plan_funnel_diagnostics",
     }
+    if use_selection_snapshot_baseline and not selection_snapshot_path.exists():
+        baseline_payload["_baseline_fallback_reason"] = "selection_snapshot_requested_but_not_found"
+    return baseline_payload
 
 
 def _build_catalyst_theme_diagnostics_diff(

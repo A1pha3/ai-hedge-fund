@@ -24,8 +24,27 @@ def _discover_unique_report_dirs(input_paths: list[str], *, report_name_contains
     report_dirs: list[Path] = []
     for raw_input in input_paths:
         report_dirs.extend(discover_report_dirs(raw_input, report_name_contains=report_name_contains))
+        resolved_input = Path(raw_input).expanduser().resolve()
+        if _looks_like_replayable_report_dir(resolved_input, report_name_contains=report_name_contains):
+            report_dirs.append(resolved_input)
+            continue
+        if not resolved_input.is_dir():
+            continue
+        report_dirs.extend(
+            candidate
+            for candidate in sorted(resolved_input.iterdir())
+            if _looks_like_replayable_report_dir(candidate, report_name_contains=report_name_contains)
+        )
     seen: set[Path] = set()
     return [path for path in report_dirs if not (path in seen or seen.add(path))]
+
+
+def _looks_like_replayable_report_dir(path: Path, *, report_name_contains: str) -> bool:
+    return (
+        path.is_dir()
+        and (path / "daily_events.jsonl").exists()
+        and (not report_name_contains or report_name_contains in path.name)
+    )
 
 
 def main() -> None:
