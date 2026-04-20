@@ -10,17 +10,19 @@ from scripts.btst_report_utils import discover_report_dirs, normalize_trade_date
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
 from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
 from scripts.btst_latest_followup_utils import load_btst_followup_by_ticker_for_report, load_latest_btst_followup_by_ticker
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import _build_catalyst_theme_candidate_diagnostics
 from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config, _build_upstream_shadow_observation_entry, _qualifies_short_trade_boundary_candidate
 from src.execution.models import ExecutionPlan
 from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
 from src.research.artifacts import FileSelectionArtifactWriter
-from src.screening.models import StrategySignal
+from src.screening.models import FusedScore, MarketState, StrategySignal
 from src.targets.models import DualTargetEvaluation
 from src.targets.router import build_selection_targets, summarize_selection_targets
 from src.targets.short_trade_target import evaluate_short_trade_selected_target
 
 EVIDENCE_DEFICIENT_BROAD_FAMILY_ONLY = "evidence_deficient_broad_family_only"
+CATALYST_THEME_DIAGNOSTICS_RERUN_FILENAME = "catalyst_theme_diagnostics_rerun.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -619,6 +621,342 @@ def rebuild_selection_targets_for_plan(
     plan.selection_targets = selection_targets
     plan.dual_target_summary = dual_target_summary
     return plan
+
+
+def _selection_artifact_trade_dir(report_dir: Path, trade_date_compact: str) -> Path:
+    trade_date = normalize_trade_date(trade_date_compact) or trade_date_compact
+    return report_dir / "selection_artifacts" / str(trade_date)
+
+
+def _load_selection_snapshot_payload(report_dir: Path, trade_date_compact: str) -> dict[str, Any]:
+    return safe_load_json(_selection_artifact_trade_dir(report_dir, trade_date_compact) / "selection_snapshot.json")
+
+
+def _load_selection_replay_input_payload(report_dir: Path, trade_date_compact: str) -> dict[str, Any]:
+    return safe_load_json(_selection_artifact_trade_dir(report_dir, trade_date_compact) / "selection_target_replay_input.json")
+
+
+def _normalize_market_state_payload(raw_market_state: Any) -> dict[str, Any]:
+    if hasattr(raw_market_state, "model_dump"):
+        return dict(raw_market_state.model_dump(mode="json") or {})
+    if isinstance(raw_market_state, dict):
+        return dict(raw_market_state or {})
+    return {}
+
+
+def _resolve_replay_market_state(
+    raw_market_state: Any,
+    *,
+    fallback_market_state: Any,
+) -> MarketState | None:
+    payload = _normalize_market_state_payload(raw_market_state) or _normalize_market_state_payload(fallback_market_state)
+    if not payload:
+        return None
+    try:
+        return MarketState.model_validate(payload)
+    except Exception:
+        return None
+
+
+def _coerce_replay_entry(raw_entry: Any) -> dict[str, Any]:
+    if hasattr(raw_entry, "model_dump"):
+        return dict(raw_entry.model_dump(mode="json") or {})
+    if isinstance(raw_entry, dict):
+        return dict(raw_entry or {})
+    return {}
+
+
+def _replay_entry_richness(entry: dict[str, Any]) -> tuple[int, int]:
+    strategy_signals = _normalize_strategy_signals_payload(entry.get("strategy_signals"))
+    return len(strategy_signals), len(entry)
+
+
+def _upsert_replay_entry(
+    entries_by_ticker: dict[str, dict[str, Any]],
+    *,
+    raw_entry: Any,
+    source_name: str,
+    source_row_counts: dict[str, int],
+    sources_by_ticker: dict[str, set[str]],
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]],
+    dropped_no_strategy_signals_counts: dict[str, int],
+    dropped_no_strategy_signal_tickers: set[str],
+) -> None:
+    entry = _attach_strategy_signals_to_entry(
+        _coerce_replay_entry(raw_entry),
+        strategy_signals_by_ticker=strategy_signals_by_ticker,
+    )
+    ticker = str(entry.get("ticker") or "").strip()
+    if not ticker:
+        return
+    source_row_counts[source_name] = source_row_counts.get(source_name, 0) + 1
+    if not _normalize_strategy_signals_payload(entry.get("strategy_signals")):
+        dropped_no_strategy_signals_counts[source_name] = dropped_no_strategy_signals_counts.get(source_name, 0) + 1
+        dropped_no_strategy_signal_tickers.add(ticker)
+        return
+    existing_entry = entries_by_ticker.get(ticker)
+    if existing_entry is None or _replay_entry_richness(entry) > _replay_entry_richness(existing_entry):
+        entries_by_ticker[ticker] = entry
+        sources_by_ticker[ticker] = {source_name}
+
+
+def _build_frozen_catalyst_replay_universe(
+    *,
+    plan: ExecutionPlan,
+    report_dir: Path,
+    trade_date_compact: str,
+    strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]],
+) -> tuple[list[FusedScore], dict[str, Any]]:
+    trade_dir = _selection_artifact_trade_dir(report_dir, trade_date_compact)
+    replay_input_path = trade_dir / "selection_target_replay_input.json"
+    selection_snapshot_path = trade_dir / "selection_snapshot.json"
+    replay_input = _load_selection_replay_input_payload(report_dir, trade_date_compact)
+    selection_snapshot = _load_selection_snapshot_payload(report_dir, trade_date_compact)
+    filters = dict(dict((plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("filters") or {})
+    fallback_market_state = selection_snapshot.get("market_state") or getattr(plan, "market_state", None)
+
+    entries_by_ticker: dict[str, dict[str, Any]] = {}
+    source_row_counts: dict[str, int] = {}
+    sources_by_ticker: dict[str, set[str]] = {}
+    dropped_no_strategy_signals_counts: dict[str, int] = {}
+    dropped_no_strategy_signal_tickers: set[str] = set()
+
+    for source_name, entries in (
+        ("replay_input_watchlist", replay_input.get("watchlist") or []),
+        ("replay_input_rejected_entries", replay_input.get("rejected_entries") or []),
+        ("replay_input_supplemental_short_trade", replay_input.get("supplemental_short_trade_entries") or []),
+        ("replay_input_supplemental_catalyst", replay_input.get("supplemental_catalyst_theme_entries") or []),
+        ("replay_input_shadow_observation", replay_input.get("upstream_shadow_observation_entries") or []),
+        ("snapshot_catalyst_selected", selection_snapshot.get("catalyst_theme_candidates") or []),
+        ("snapshot_catalyst_shadow", selection_snapshot.get("catalyst_theme_shadow_candidates") or []),
+        ("filter_watchlist", dict(filters.get("watchlist") or {}).get("tickers") or []),
+        ("filter_watchlist_shadow", dict(filters.get("watchlist") or {}).get("released_shadow_entries") or []),
+        ("filter_short_trade", dict(filters.get("short_trade_candidates") or {}).get("tickers") or []),
+        ("filter_short_trade_shadow", dict(filters.get("short_trade_candidates") or {}).get("released_shadow_entries") or []),
+        ("filter_short_trade_observation", dict(filters.get("short_trade_candidates") or {}).get("shadow_observation_entries") or []),
+        ("filter_catalyst_selected", dict(filters.get("catalyst_theme_candidates") or {}).get("tickers") or []),
+        ("filter_catalyst_shadow", dict(filters.get("catalyst_theme_candidates") or {}).get("shadow_candidates") or []),
+        ("current_plan_watchlist", list(plan.watchlist or [])),
+    ):
+        for raw_entry in list(entries or []):
+            _upsert_replay_entry(
+                entries_by_ticker,
+                raw_entry=raw_entry,
+                source_name=source_name,
+                source_row_counts=source_row_counts,
+                sources_by_ticker=sources_by_ticker,
+                strategy_signals_by_ticker=strategy_signals_by_ticker,
+                dropped_no_strategy_signals_counts=dropped_no_strategy_signals_counts,
+                dropped_no_strategy_signal_tickers=dropped_no_strategy_signal_tickers,
+            )
+
+    replay_universe: list[FusedScore] = []
+    for ticker, entry in sorted(entries_by_ticker.items()):
+        market_state = _resolve_replay_market_state(entry.get("market_state"), fallback_market_state=fallback_market_state)
+        replay_universe.append(
+            FusedScore(
+                ticker=ticker,
+                score_b=max(-1.0, min(1.0, float(entry.get("score_b", 0.0) or 0.0))),
+                strategy_signals=_coerce_strategy_signal_models(_normalize_strategy_signals_payload(entry.get("strategy_signals"))),
+                arbitration_applied=[],
+                market_state=market_state,
+                weights_used=dict(getattr(market_state, "adjusted_weights", {}) or {}),
+                decision=str(entry.get("decision") or FusedScore.classify_decision(float(entry.get("score_b", 0.0) or 0.0))),
+            )
+        )
+
+    return replay_universe, {
+        "source_row_counts": source_row_counts,
+        "source_ticker_counts": {source: sum(1 for tickers in sources_by_ticker.values() if source in tickers) for source in sorted(source_row_counts)},
+        "dropped_no_strategy_signals_counts": dict(sorted(dropped_no_strategy_signals_counts.items())),
+        "dropped_no_strategy_signal_tickers": sorted(dropped_no_strategy_signal_tickers),
+        "missing_optional_inputs": [
+            str(path.relative_to(report_dir))
+            for path in (selection_snapshot_path, replay_input_path)
+            if not path.exists()
+        ],
+        "replay_requires_strategy_signals": True,
+        "replay_universe_count": len(replay_universe),
+        "replay_universe_tickers": sorted(item.ticker for item in replay_universe),
+    }
+
+
+def _serialize_catalyst_theme_diagnostics_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    entries = [dict(entry or {}) for entry in list(payload.get("tickers") or [])]
+    shadow_entries = [dict(entry or {}) for entry in list(payload.get("shadow_candidates") or [])]
+    return {
+        "candidate_count": int(payload.get("candidate_count", len(entries)) or 0),
+        "shadow_candidate_count": int(payload.get("shadow_candidate_count", len(shadow_entries)) or 0),
+        "selected_tickers": [str(entry.get("ticker") or "") for entry in entries if str(entry.get("ticker") or "").strip()],
+        "shadow_tickers": [str(entry.get("ticker") or "") for entry in shadow_entries if str(entry.get("ticker") or "").strip()],
+        "filtered_reason_counts": dict(payload.get("filtered_reason_counts") or {}),
+        "reason_counts": dict(payload.get("reason_counts") or {}),
+        "tickers": entries,
+        "shadow_candidates": shadow_entries,
+    }
+
+
+def _build_baseline_catalyst_theme_diagnostics_payload(
+    *,
+    plan: ExecutionPlan,
+    report_dir: Path,
+    trade_date_compact: str,
+    use_selection_snapshot_baseline: bool = False,
+) -> dict[str, Any]:
+    selection_snapshot_path = _selection_artifact_trade_dir(report_dir, trade_date_compact) / "selection_snapshot.json"
+    selection_snapshot = _load_selection_snapshot_payload(report_dir, trade_date_compact)
+    if use_selection_snapshot_baseline and selection_snapshot_path.exists():
+        return {
+            **_serialize_catalyst_theme_diagnostics_payload(
+                {
+                    "candidate_count": len(selection_snapshot.get("catalyst_theme_candidates") or []),
+                    "shadow_candidate_count": len(selection_snapshot.get("catalyst_theme_shadow_candidates") or []),
+                    "tickers": selection_snapshot.get("catalyst_theme_candidates") or [],
+                    "shadow_candidates": selection_snapshot.get("catalyst_theme_shadow_candidates") or [],
+                }
+            ),
+            "_baseline_source": "selection_snapshot",
+        }
+    catalyst_theme_filter = dict(dict(dict((plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("filters") or {}).get("catalyst_theme_candidates") or {})
+    baseline_payload = {
+        **_serialize_catalyst_theme_diagnostics_payload(
+            {
+                "candidate_count": len(list(catalyst_theme_filter.get("tickers") or [])),
+                "shadow_candidate_count": len(list(catalyst_theme_filter.get("shadow_candidates") or [])),
+                "tickers": list(catalyst_theme_filter.get("tickers") or []),
+                "shadow_candidates": list(catalyst_theme_filter.get("shadow_candidates") or []),
+            }
+        ),
+        "_baseline_source": "plan_funnel_diagnostics",
+    }
+    if use_selection_snapshot_baseline and not selection_snapshot_path.exists():
+        baseline_payload["_baseline_fallback_reason"] = "selection_snapshot_requested_but_not_found"
+    return baseline_payload
+
+
+def _build_catalyst_theme_diagnostics_diff(
+    *,
+    baseline: dict[str, Any],
+    rebuild: dict[str, Any],
+) -> dict[str, Any]:
+    baseline_selected = set(baseline.get("selected_tickers") or [])
+    rebuilt_selected = set(rebuild.get("selected_tickers") or [])
+    baseline_shadow = set(baseline.get("shadow_tickers") or [])
+    rebuilt_shadow = set(rebuild.get("shadow_tickers") or [])
+
+    baseline_entries = {str(entry.get("ticker") or ""): dict(entry or {}) for entry in list(baseline.get("tickers") or []) if str(entry.get("ticker") or "").strip()}
+    rebuilt_entries = {str(entry.get("ticker") or ""): dict(entry or {}) for entry in list(rebuild.get("tickers") or []) if str(entry.get("ticker") or "").strip()}
+
+    changed_selected_entries: list[dict[str, Any]] = []
+    for ticker in sorted(baseline_selected & rebuilt_selected):
+        baseline_entry = baseline_entries.get(ticker, {})
+        rebuilt_entry = rebuilt_entries.get(ticker, {})
+        baseline_quality = round(float(baseline_entry.get("quality_score", 0.0) or 0.0), 4)
+        rebuilt_quality = round(float(rebuilt_entry.get("quality_score", 0.0) or 0.0), 4)
+        baseline_market_state = str(dict(baseline_entry.get("market_state") or {}).get("state_type") or "")
+        rebuilt_market_state = str(dict(rebuilt_entry.get("market_state") or {}).get("state_type") or "")
+        if baseline_quality == rebuilt_quality and baseline_market_state == rebuilt_market_state:
+            continue
+        changed_selected_entries.append(
+            {
+                "ticker": ticker,
+                "baseline_quality_score": baseline_quality,
+                "rebuilt_quality_score": rebuilt_quality,
+                "baseline_market_state_type": baseline_market_state,
+                "rebuilt_market_state_type": rebuilt_market_state,
+            }
+        )
+
+    return {
+        "added_selected_tickers": sorted(rebuilt_selected - baseline_selected),
+        "removed_selected_tickers": sorted(baseline_selected - rebuilt_selected),
+        "added_shadow_tickers": sorted(rebuilt_shadow - baseline_shadow),
+        "removed_shadow_tickers": sorted(baseline_shadow - rebuilt_shadow),
+        "changed_selected_entries": changed_selected_entries,
+    }
+
+
+def rebuild_catalyst_theme_diagnostics_for_report(
+    report_dir: str | Path,
+    trade_date: str | None = None,
+    *,
+    use_selection_snapshot_baseline: bool = False,
+) -> dict[str, Any]:
+    resolved_report_dir = Path(report_dir).expanduser().resolve()
+    daily_events_path = resolved_report_dir / "daily_events.jsonl"
+    if not daily_events_path.exists():
+        raise ValueError(f"Missing daily_events.jsonl at {daily_events_path}")
+    plans_by_date = load_frozen_post_market_plans(daily_events_path)
+    requested_trade_date = _normalize_trade_date_compact(trade_date)
+    target_trade_dates = [requested_trade_date] if requested_trade_date else sorted(plans_by_date.keys())
+    if requested_trade_date and requested_trade_date not in plans_by_date:
+        raise ValueError(f"Missing current_plan in daily_events for trade_date={requested_trade_date}")
+
+    results: list[dict[str, Any]] = []
+    for trade_date_compact in target_trade_dates:
+        plan = ExecutionPlan.model_validate(plans_by_date[trade_date_compact].model_dump(mode="json"))
+        strategy_signals_by_ticker = _build_strategy_signals_lookup(
+            plan,
+            report_dir=resolved_report_dir,
+            trade_date_compact=trade_date_compact,
+        )
+        replay_watchlist = _rehydrate_watchlist_strategy_signals(
+            list(plan.watchlist or []),
+            strategy_signals_by_ticker=strategy_signals_by_ticker,
+        )
+        replay_universe, source_summary = _build_frozen_catalyst_replay_universe(
+            plan=plan,
+            report_dir=resolved_report_dir,
+            trade_date_compact=trade_date_compact,
+            strategy_signals_by_ticker=strategy_signals_by_ticker,
+        )
+        short_trade_candidate_diagnostics = dict(
+            dict(dict((plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("filters") or {}).get("short_trade_candidates") or {}
+        )
+        rebuilt_payload = _serialize_catalyst_theme_diagnostics_payload(
+            _build_catalyst_theme_candidate_diagnostics(
+                fused=replay_universe,
+                watchlist=replay_watchlist,
+                short_trade_candidate_diagnostics=short_trade_candidate_diagnostics,
+                trade_date=trade_date_compact,
+            )
+        )
+        baseline_payload = _build_baseline_catalyst_theme_diagnostics_payload(
+            plan=plan,
+            report_dir=resolved_report_dir,
+            trade_date_compact=trade_date_compact,
+            use_selection_snapshot_baseline=use_selection_snapshot_baseline,
+        )
+        diff_payload = _build_catalyst_theme_diagnostics_diff(
+            baseline=baseline_payload,
+            rebuild=rebuilt_payload,
+        )
+        artifact_payload = {
+            "report_dir": str(resolved_report_dir),
+            "trade_date": normalize_trade_date(trade_date_compact) or trade_date_compact,
+            "source_summary": source_summary,
+            "baseline": baseline_payload,
+            "rebuild": rebuilt_payload,
+            "diff": diff_payload,
+        }
+        artifact_path = _selection_artifact_trade_dir(resolved_report_dir, trade_date_compact) / CATALYST_THEME_DIAGNOSTICS_RERUN_FILENAME
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(json.dumps(artifact_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        results.append(
+            {
+                "trade_date": artifact_payload["trade_date"],
+                "artifact_path": str(artifact_path),
+                "baseline_selected_tickers": baseline_payload["selected_tickers"],
+                "rebuilt_selected_tickers": rebuilt_payload["selected_tickers"],
+                "replay_universe_count": source_summary["replay_universe_count"],
+            }
+        )
+
+    return {
+        "report_dir": str(resolved_report_dir),
+        "results": results,
+        **({"artifact_path": results[0]["artifact_path"]} if len(results) == 1 else {}),
+    }
 
 
 def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: str | None = None) -> dict[str, Any]:

@@ -6,6 +6,12 @@ from pathlib import Path
 from src.execution.models import ExecutionPlan
 
 
+def _normalize_frozen_trade_date_key(value: object) -> str:
+    raw_value = str(value or "").strip()
+    digits = "".join(ch for ch in raw_value if ch.isdigit())
+    return digits if len(digits) == 8 else raw_value
+
+
 def load_frozen_post_market_plans(daily_events_path: str | Path) -> dict[str, ExecutionPlan]:
     source_path = Path(daily_events_path).resolve()
     plans_by_date: dict[str, ExecutionPlan] = {}
@@ -19,7 +25,7 @@ def load_frozen_post_market_plans(daily_events_path: str | Path) -> dict[str, Ex
             current_plan_payload = payload.get("current_plan")
             if not current_plan_payload:
                 continue
-            trade_date = str(payload.get("trade_date") or current_plan_payload.get("date") or "")
+            trade_date = _normalize_frozen_trade_date_key(payload.get("trade_date") or current_plan_payload.get("date"))
             if not trade_date:
                 continue
             plans_by_date[trade_date] = ExecutionPlan.model_validate(current_plan_payload)
