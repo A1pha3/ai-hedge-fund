@@ -27,6 +27,9 @@ class ShortTradeTargetProfile:
     selected_rank_cap_relief_require_t_plus_2_candidate: bool = False
     selected_rank_cap_relief_allow_risk_off: bool = True
     selected_rank_cap_relief_allow_crisis: bool = True
+    selected_rank_cap_relief_catalyst_theme_carryover_support_enabled: bool = False
+    selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count: int = 0
+    selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min: float = 0.0
     selected_breakout_freshness_min: float = 0.35
     selected_trend_acceleration_min: float = 0.38
     selected_close_retention_min: float = 0.0

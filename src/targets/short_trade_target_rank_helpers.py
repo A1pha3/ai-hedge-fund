@@ -189,6 +189,17 @@ def _resolve_rank_decision_cap(
     selected_rank_cap_relief_require_t_plus_2_candidate = bool(getattr(profile, "selected_rank_cap_relief_require_t_plus_2_candidate", False))
     selected_rank_cap_relief_allow_risk_off = bool(getattr(profile, "selected_rank_cap_relief_allow_risk_off", True))
     selected_rank_cap_relief_allow_crisis = bool(getattr(profile, "selected_rank_cap_relief_allow_crisis", True))
+    selected_rank_cap_relief_catalyst_theme_carryover_support_enabled = bool(
+        getattr(profile, "selected_rank_cap_relief_catalyst_theme_carryover_support_enabled", False)
+    )
+    selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count = max(
+        0,
+        int(getattr(profile, "selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count", 0) or 0),
+    )
+    selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min = max(
+        0.0,
+        float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min", 0.0) or 0.0),
+    )
 
     selected_rank_cap_relief_cap: int | None = None
     if selected_rank_cap is not None and selected_rank_cap_relief_rank_buffer is not None:
@@ -209,8 +220,10 @@ def _resolve_rank_decision_cap(
 
     close_strength = float(snapshot.get("close_strength") or 0.0)
     selected_rank_cap_relief_close_strength_pass = close_strength <= selected_rank_cap_relief_close_strength_max
+    catalyst_freshness = float(snapshot.get("catalyst_freshness") or 0.0)
 
     t_plus_2_continuation_candidate = dict(snapshot.get("t_plus_2_continuation_candidate") or {})
+    selected_rank_cap_relief_t_plus_2_support_applied = bool(t_plus_2_continuation_candidate.get("applied"))
     selected_rank_cap_relief_t_plus_2_pass = (not selected_rank_cap_relief_require_t_plus_2_candidate) or bool(t_plus_2_continuation_candidate.get("applied"))
 
     market_state_threshold_adjustment = dict(snapshot.get("market_state_threshold_adjustment") or {})
@@ -231,8 +244,53 @@ def _resolve_rank_decision_cap(
             selected_rank_cap_relief_market_risk_source = "unknown"
     selected_rank_cap_relief_market_risk_pass = not ((selected_rank_cap_relief_market_risk_level == "risk_off" and not selected_rank_cap_relief_allow_risk_off) or (selected_rank_cap_relief_market_risk_level == "crisis" and not selected_rank_cap_relief_allow_crisis))
 
+    profitability_hard_cliff_boundary_relief = dict(snapshot.get("profitability_hard_cliff_boundary_relief") or {})
+    profitability_hard_cliff_boundary_gate_hits = dict(profitability_hard_cliff_boundary_relief.get("gate_hits") or {})
+    selected_rank_cap_relief_boundary_guard_active = (
+        normalized_candidate_source == "short_trade_boundary"
+        and bool(profitability_hard_cliff_boundary_relief.get("enabled"))
+        and bool(profitability_hard_cliff_boundary_gate_hits.get("profitability_hard_cliff"))
+    )
+    selected_rank_cap_relief_boundary_pass = (not selected_rank_cap_relief_boundary_guard_active) or bool(profitability_hard_cliff_boundary_relief.get("applied"))
+
+    historical_prior = dict(snapshot.get("historical_prior") or {})
+    selected_rank_cap_relief_catalyst_theme_carryover_candidate = (
+        normalized_candidate_source == "catalyst_theme"
+        and "catalyst_theme_short_trade_carryover_candidate" in normalized_reason_codes
+    )
+    selected_rank_cap_relief_catalyst_theme_carryover_guard_active = (
+        selected_rank_cap_relief_catalyst_theme_carryover_support_enabled
+        and selected_rank_cap_relief_catalyst_theme_carryover_candidate
+    )
+    selected_rank_cap_relief_catalyst_theme_carryover_historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
+    selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass = (
+        selected_rank_cap_relief_catalyst_theme_carryover_historical_evaluable_count
+        >= selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count
+    )
+    selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass = (
+        catalyst_freshness >= selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min
+    )
+    selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass = selected_rank_cap_relief_t_plus_2_support_applied
+    selected_rank_cap_relief_catalyst_theme_carryover_support_pass = (
+        (not selected_rank_cap_relief_catalyst_theme_carryover_guard_active)
+        or selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass
+        or selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass
+        or selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass
+    )
+
     selected_rank_cap_relief_within_buffer = bool(selected_rank_cap_relief_cap is not None and normalized_rank > 0 and normalized_rank <= selected_rank_cap_relief_cap)
-    selected_cap_soft_relief_applied = bool(selected_cap_exceeded_raw and selected_rank_cap_relief_within_buffer and selected_rank_cap_relief_score_pass and selected_rank_cap_relief_breakout_pass and selected_rank_cap_relief_sector_resonance_pass and selected_rank_cap_relief_close_strength_pass and selected_rank_cap_relief_t_plus_2_pass and selected_rank_cap_relief_market_risk_pass)
+    selected_cap_soft_relief_applied = bool(
+        selected_cap_exceeded_raw
+        and selected_rank_cap_relief_within_buffer
+        and selected_rank_cap_relief_score_pass
+        and selected_rank_cap_relief_breakout_pass
+        and selected_rank_cap_relief_sector_resonance_pass
+        and selected_rank_cap_relief_close_strength_pass
+        and selected_rank_cap_relief_t_plus_2_pass
+        and selected_rank_cap_relief_market_risk_pass
+        and selected_rank_cap_relief_boundary_pass
+        and selected_rank_cap_relief_catalyst_theme_carryover_support_pass
+    )
     selected_cap_exceeded_effective = bool(selected_cap_exceeded_raw and not selected_cap_soft_relief_applied)
 
     return {
@@ -267,11 +325,23 @@ def _resolve_rank_decision_cap(
         "selected_rank_cap_relief_close_strength_pass": selected_rank_cap_relief_close_strength_pass,
         "selected_rank_cap_relief_require_t_plus_2_candidate": selected_rank_cap_relief_require_t_plus_2_candidate,
         "selected_rank_cap_relief_t_plus_2_pass": selected_rank_cap_relief_t_plus_2_pass,
+        "selected_rank_cap_relief_t_plus_2_support_applied": selected_rank_cap_relief_t_plus_2_support_applied,
         "selected_rank_cap_relief_allow_risk_off": selected_rank_cap_relief_allow_risk_off,
         "selected_rank_cap_relief_allow_crisis": selected_rank_cap_relief_allow_crisis,
         "selected_rank_cap_relief_market_risk_source": selected_rank_cap_relief_market_risk_source,
         "selected_rank_cap_relief_market_risk_level": selected_rank_cap_relief_market_risk_level,
         "selected_rank_cap_relief_market_risk_pass": selected_rank_cap_relief_market_risk_pass,
+        "selected_rank_cap_relief_boundary_guard_active": selected_rank_cap_relief_boundary_guard_active,
+        "selected_rank_cap_relief_boundary_pass": selected_rank_cap_relief_boundary_pass,
+        "selected_rank_cap_relief_catalyst_theme_carryover_support_enabled": selected_rank_cap_relief_catalyst_theme_carryover_support_enabled,
+        "selected_rank_cap_relief_catalyst_theme_carryover_guard_active": selected_rank_cap_relief_catalyst_theme_carryover_guard_active,
+        "selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count": selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count,
+        "selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min": round(selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min, 4),
+        "selected_rank_cap_relief_catalyst_theme_carryover_historical_evaluable_count": selected_rank_cap_relief_catalyst_theme_carryover_historical_evaluable_count,
+        "selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass": selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass,
+        "selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass": selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass,
+        "selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass": selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass,
+        "selected_rank_cap_relief_catalyst_theme_carryover_support_pass": selected_rank_cap_relief_catalyst_theme_carryover_support_pass,
     }
 
 

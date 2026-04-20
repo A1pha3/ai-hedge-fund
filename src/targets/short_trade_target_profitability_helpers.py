@@ -14,6 +14,7 @@ def _has_weak_profitability_hard_cliff_boundary_history(input_data: TargetEvalua
     historical_applied_scope = str(historical_prior.get("applied_scope") or "")
     historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
     historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
+    historical_next_close_return_mean = float(historical_prior.get("next_close_return_mean", 0.0) or 0.0)
     weak_same_ticker_intraday_history = (
         historical_applied_scope == "same_ticker"
         and historical_execution_quality_label == "intraday_only"
@@ -24,7 +25,12 @@ def _has_weak_profitability_hard_cliff_boundary_history(input_data: TargetEvalua
         historical_execution_quality_label == "zero_follow_through"
         and historical_evaluable_count >= 3
     )
-    return weak_same_ticker_intraday_history or weak_zero_follow_through_history
+    weak_family_source_catalyst_history = (
+        historical_applied_scope in {"family_source_score_catalyst", "same_family_source_score_catalyst"}
+        and historical_evaluable_count >= 8
+        and historical_next_close_return_mean < 0.0
+    )
+    return weak_same_ticker_intraday_history or weak_zero_follow_through_history or weak_family_source_catalyst_history
 
 
 def resolve_profitability_relief_impl(

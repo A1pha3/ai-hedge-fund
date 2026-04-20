@@ -147,6 +147,7 @@ def build_catalyst_theme_metrics_payload(
     breakout_freshness: float,
     trend_acceleration: float,
     close_strength: float,
+    quality_score: float,
     sector_resonance: float,
     catalyst_freshness: float,
     candidate_score: float,
@@ -160,6 +161,7 @@ def build_catalyst_theme_metrics_payload(
         "breakout_freshness": breakout_freshness,
         "trend_acceleration": trend_acceleration,
         "close_strength": close_strength,
+        "quality_score": quality_score,
         "sector_resonance": sector_resonance,
         "catalyst_freshness": catalyst_freshness,
         "candidate_score": candidate_score,
@@ -178,6 +180,8 @@ def resolve_catalyst_theme_filter_reason(
     gate_status: dict[str, Any],
     effective_catalyst_freshness: float,
     catalyst_freshness_min: float,
+    quality_score: float,
+    quality_score_min: float,
     sector_resonance: float,
     effective_sector_min: float,
     close_strength: float,
@@ -189,6 +193,8 @@ def resolve_catalyst_theme_filter_reason(
 ) -> str:
     if str(gate_status.get("data") or "") != "pass":
         return "metric_data_fail"
+    if quality_score < quality_score_min:
+        return "quality_score_below_catalyst_theme_floor"
     if effective_catalyst_freshness < catalyst_freshness_min:
         return "catalyst_freshness_below_catalyst_theme_floor"
     if sector_resonance < effective_sector_min:
@@ -212,11 +218,13 @@ def qualify_catalyst_theme_candidate_from_snapshot(
     catalyst_theme_breakout_min: float,
     catalyst_theme_close_min: float,
     catalyst_theme_catalyst_min: float,
+    catalyst_theme_quality_min: float,
 ) -> tuple[bool, str, dict[str, Any]]:
     gate_status, blockers = _extract_gate_status_and_blockers(snapshot)
     breakout_freshness = round(float(snapshot.get("breakout_freshness", 0.0) or 0.0), 4)
     trend_acceleration = round(float(snapshot.get("trend_acceleration", 0.0) or 0.0), 4)
     close_strength = round(float(snapshot.get("close_strength", 0.0) or 0.0), 4)
+    quality_score = round(float(snapshot.get("quality_score", 0.5) or 0.5), 4)
     sector_resonance = round(float(snapshot.get("sector_resonance", 0.0) or 0.0), 4)
     catalyst_freshness = round(float(snapshot.get("catalyst_freshness", 0.0) or 0.0), 4)
     close_momentum_catalyst_relief = resolve_close_momentum_relief_fn(
@@ -247,6 +255,7 @@ def qualify_catalyst_theme_candidate_from_snapshot(
         "candidate_score": round(float(catalyst_theme_candidate_score_min), 4),
         "breakout_freshness": round(float(catalyst_theme_breakout_min), 4),
         "close_strength": round(float(catalyst_theme_close_min), 4),
+        "quality_score": round(float(catalyst_theme_quality_min), 4),
         "sector_resonance": effective_sector_min,
         "catalyst_freshness": round(float(catalyst_theme_catalyst_min), 4),
     }
@@ -254,6 +263,7 @@ def qualify_catalyst_theme_candidate_from_snapshot(
         "candidate_score": candidate_score,
         "breakout_freshness": breakout_freshness,
         "close_strength": close_strength,
+        "quality_score": quality_score,
         "sector_resonance": sector_resonance,
         "catalyst_freshness": effective_catalyst_freshness,
     }
@@ -263,6 +273,7 @@ def qualify_catalyst_theme_candidate_from_snapshot(
         breakout_freshness=breakout_freshness,
         trend_acceleration=trend_acceleration,
         close_strength=close_strength,
+        quality_score=quality_score,
         sector_resonance=sector_resonance,
         catalyst_freshness=catalyst_freshness,
         candidate_score=candidate_score,
@@ -283,6 +294,8 @@ def qualify_catalyst_theme_candidate_from_snapshot(
         gate_status=gate_status,
         effective_catalyst_freshness=effective_catalyst_freshness,
         catalyst_freshness_min=catalyst_theme_catalyst_min,
+        quality_score=quality_score,
+        quality_score_min=catalyst_theme_quality_min,
         sector_resonance=sector_resonance,
         effective_sector_min=effective_sector_min,
         close_strength=close_strength,

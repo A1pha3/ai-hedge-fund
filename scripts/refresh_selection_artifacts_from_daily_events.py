@@ -636,6 +636,39 @@ def _load_selection_replay_input_payload(report_dir: Path, trade_date_compact: s
     return safe_load_json(_selection_artifact_trade_dir(report_dir, trade_date_compact) / "selection_target_replay_input.json")
 
 
+def _load_rebuilt_catalyst_theme_filter(report_dir: Path, trade_date_compact: str) -> dict[str, Any] | None:
+    payload = safe_load_json(_selection_artifact_trade_dir(report_dir, trade_date_compact) / CATALYST_THEME_DIAGNOSTICS_RERUN_FILENAME)
+    if "rebuild" not in payload:
+        return None
+    rebuild = dict(payload.get("rebuild") or {})
+    tickers = [dict(entry or {}) for entry in list(rebuild.get("tickers") or [])]
+    shadow_candidates = [dict(entry or {}) for entry in list(rebuild.get("shadow_candidates") or [])]
+    return {
+        "tickers": tickers,
+        "shadow_candidates": shadow_candidates,
+        "selected_tickers": [str(ticker or "").strip() for ticker in list(rebuild.get("selected_tickers") or []) if str(ticker or "").strip()],
+        "filtered_reason_counts": dict(rebuild.get("filtered_reason_counts") or {}),
+        "reason_counts": dict(rebuild.get("reason_counts") or {}),
+    }
+
+
+def _apply_rebuilt_catalyst_theme_filter(*, plan: ExecutionPlan, report_dir: Path, trade_date_compact: str) -> ExecutionPlan:
+    rebuilt_filter = _load_rebuilt_catalyst_theme_filter(report_dir, trade_date_compact)
+    if rebuilt_filter is None:
+        return plan
+
+    risk_metrics = dict(plan.risk_metrics or {})
+    funnel_diagnostics = dict(risk_metrics.get("funnel_diagnostics") or {})
+    filters = dict(funnel_diagnostics.get("filters") or {})
+    catalyst_theme_filter = dict(filters.get("catalyst_theme_candidates") or {})
+    catalyst_theme_filter.update(rebuilt_filter)
+    filters["catalyst_theme_candidates"] = catalyst_theme_filter
+    funnel_diagnostics["filters"] = filters
+    risk_metrics["funnel_diagnostics"] = funnel_diagnostics
+    plan.risk_metrics = risk_metrics
+    return plan
+
+
 def _normalize_market_state_payload(raw_market_state: Any) -> dict[str, Any]:
     if hasattr(raw_market_state, "model_dump"):
         return dict(raw_market_state.model_dump(mode="json") or {})
@@ -972,6 +1005,11 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
     refreshed_results: list[dict[str, Any]] = []
     for trade_date_compact in target_trade_dates:
         plan = ExecutionPlan.model_validate(plans_by_date[trade_date_compact].model_dump(mode="json"))
+        plan = _apply_rebuilt_catalyst_theme_filter(
+            plan=plan,
+            report_dir=resolved_report_dir,
+            trade_date_compact=trade_date_compact,
+        )
         shadow_lookup = _build_candidate_pool_shadow_lookup(raw_plans_by_date.get(trade_date_compact) or {})
         strategy_signals_by_ticker = _build_strategy_signals_lookup(
             plan,

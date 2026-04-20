@@ -1448,6 +1448,9 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert default_profile.selected_rank_cap_relief_require_t_plus_2_candidate is False
     assert default_profile.selected_rank_cap_relief_allow_risk_off is True
     assert default_profile.selected_rank_cap_relief_allow_crisis is True
+    assert default_profile.selected_rank_cap_relief_catalyst_theme_carryover_support_enabled is False
+    assert default_profile.selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count == 0
+    assert default_profile.selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min == 0.0
     assert default_profile.profitability_hard_cliff_boundary_relief_trend_acceleration_min == 0.45
     assert default_profile.profitability_hard_cliff_boundary_relief_close_strength_min == 0.35
     assert default_profile.profitability_hard_cliff_boundary_relief_sector_resonance_min == 0.125
@@ -1470,6 +1473,9 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert btst_precision_v2_profile.selected_rank_cap_relief_require_confirmed_breakout is True
     assert btst_precision_v2_profile.selected_rank_cap_relief_allow_risk_off is True
     assert btst_precision_v2_profile.selected_rank_cap_relief_allow_crisis is False
+    assert btst_precision_v2_profile.selected_rank_cap_relief_catalyst_theme_carryover_support_enabled is True
+    assert btst_precision_v2_profile.selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count == 3
+    assert btst_precision_v2_profile.selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min == 0.05
     assert btst_precision_v2_profile.selected_close_retention_min == 0.46
     assert btst_precision_v2_profile.selected_close_retention_threshold_lift == 0.05
     assert btst_precision_v2_profile.selected_breakout_close_gap_max == 0.16
@@ -1792,6 +1798,134 @@ def test_short_trade_rank_decision_cap_soft_relief_accepts_short_trade_boundary_
     assert deep_rank_result.gate_status.get("rank") != "selected_cap_exceeded"
     assert cap_state["selected_cap_soft_relief_applied"] is True
     assert cap_state["selected_rank_cap_relief_t_plus_2_pass"] is True
+
+
+def test_short_trade_rank_decision_cap_soft_relief_preserves_boundary_candidate_with_boundary_relief() -> None:
+    entry = _make_profitability_hard_cliff_boundary_frontier_entry()
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "selected_rank_cap": 8,
+            "near_miss_rank_cap": 25,
+            "selected_rank_cap_relief_score_margin_min": 0.0,
+            "selected_rank_cap_relief_rank_buffer": 20,
+            "selected_rank_cap_relief_require_confirmed_breakout": True,
+        },
+    ):
+        deep_rank_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=20,
+        )
+
+    cap_state = deep_rank_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert deep_rank_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["applied"] is True
+    assert deep_rank_result.decision == "selected"
+    assert deep_rank_result.gate_status.get("rank") == "selected_cap_soft_relief"
+    assert cap_state["selected_cap_soft_relief_applied"] is True
+
+
+def test_short_trade_rank_decision_cap_soft_relief_does_not_rescue_boundary_candidate_without_boundary_relief() -> None:
+    entry = _make_profitability_hard_cliff_boundary_frontier_entry()
+    entry["historical_prior"] = {
+        "execution_quality_label": "balanced_confirmation",
+        "applied_scope": "family_source_score_catalyst",
+        "sample_count": 15,
+        "evaluable_count": 11,
+        "next_high_hit_rate_at_threshold": 0.7273,
+        "next_close_positive_rate": 0.5455,
+        "next_close_return_mean": -0.0076,
+        "next_open_to_close_return_mean": -0.006,
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "selected_rank_cap": 8,
+            "near_miss_rank_cap": 25,
+            "selected_rank_cap_relief_score_margin_min": 0.0,
+            "selected_rank_cap_relief_rank_buffer": 20,
+            "selected_rank_cap_relief_require_confirmed_breakout": True,
+        },
+    ):
+        deep_rank_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=20,
+        )
+
+    cap_state = deep_rank_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert deep_rank_result.metrics_payload["profitability_hard_cliff_boundary_relief"]["applied"] is False
+    assert deep_rank_result.decision == "near_miss"
+    assert deep_rank_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert cap_state["selected_cap_exceeded_effective"] is True
+    assert cap_state["selected_cap_soft_relief_applied"] is False
+
+
+def test_short_trade_rank_decision_cap_soft_relief_preserves_catalyst_theme_carryover_with_historical_support() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "selected_rank_cap": 8,
+            "near_miss_rank_cap": 25,
+            "selected_rank_cap_relief_score_margin_min": 0.0,
+            "selected_rank_cap_relief_rank_buffer": 20,
+            "selected_rank_cap_relief_require_confirmed_breakout": True,
+            "selected_rank_cap_relief_catalyst_theme_carryover_support_enabled": True,
+            "selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count": 3,
+            "selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min": 0.05,
+        },
+    ):
+        deep_rank_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=20,
+        )
+
+    cap_state = deep_rank_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert deep_rank_result.decision == "selected"
+    assert deep_rank_result.gate_status.get("rank") == "selected_cap_soft_relief"
+    assert cap_state["selected_cap_soft_relief_applied"] is True
+    assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_guard_active"] is True
+    assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_support_pass"] is True
+    assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass"] is True
+
+
+def test_short_trade_rank_decision_cap_soft_relief_does_not_rescue_catalyst_theme_carryover_without_support() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry.pop("historical_prior", None)
+
+    with use_short_trade_target_profile(
+        profile_name="default",
+        overrides={
+            "selected_rank_cap": 8,
+            "near_miss_rank_cap": 25,
+            "selected_rank_cap_relief_score_margin_min": 0.0,
+            "selected_rank_cap_relief_rank_buffer": 20,
+            "selected_rank_cap_relief_require_confirmed_breakout": True,
+            "selected_rank_cap_relief_catalyst_theme_carryover_support_enabled": True,
+            "selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count": 3,
+            "selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min": 0.05,
+        },
+    ):
+        deep_rank_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=20,
+        )
+
+    cap_state = deep_rank_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert deep_rank_result.decision == "near_miss"
+    assert deep_rank_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert cap_state["selected_cap_exceeded_effective"] is True
+    assert cap_state["selected_cap_soft_relief_applied"] is False
+    assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_guard_active"] is True
+    assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_support_pass"] is False
+    assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass"] is False
+    assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass"] is False
 
 
 def test_short_trade_rank_decision_cap_soft_relief_respects_sector_resonance_floor() -> None:
@@ -2665,7 +2799,31 @@ def test_profitability_hard_cliff_boundary_relief_rejects_weak_same_ticker_intra
     assert result.decision in {"rejected", "near_miss", "selected"}
     assert result.metrics_payload["profitability_hard_cliff_boundary_relief"]["applied"] is False
     assert result.metrics_payload["profitability_hard_cliff_boundary_relief"]["gate_hits"]["historical_execution_quality"] is False
-    assert result.metrics_payload["thresholds"]["near_miss_threshold"] == 0.34
+    assert result.metrics_payload["profitability_hard_cliff_boundary_relief"]["effective_near_miss_threshold"] == 0.34
+
+
+def test_profitability_hard_cliff_boundary_relief_rejects_negative_family_source_score_history() -> None:
+    entry = _make_profitability_hard_cliff_boundary_frontier_entry()
+    entry["historical_prior"] = {
+        "execution_quality_label": "balanced_confirmation",
+        "applied_scope": "family_source_score_catalyst",
+        "sample_count": 15,
+        "evaluable_count": 11,
+        "next_high_hit_rate_at_threshold": 0.7273,
+        "next_close_positive_rate": 0.5455,
+        "next_close_return_mean": -0.0076,
+        "next_open_to_close_return_mean": -0.006,
+    }
+
+    result = evaluate_short_trade_rejected_target(
+        trade_date="20260324",
+        entry=entry,
+    )
+
+    assert result.decision in {"rejected", "near_miss", "selected"}
+    assert result.metrics_payload["profitability_hard_cliff_boundary_relief"]["applied"] is False
+    assert result.metrics_payload["profitability_hard_cliff_boundary_relief"]["gate_hits"]["historical_execution_quality"] is False
+    assert result.metrics_payload["profitability_hard_cliff_boundary_relief"]["effective_near_miss_threshold"] == 0.34
 
 
 def test_historical_execution_relief_promotes_positive_gap_chase_boundary_to_near_miss() -> None:

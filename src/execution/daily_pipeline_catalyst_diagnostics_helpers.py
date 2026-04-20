@@ -17,6 +17,7 @@ from src.execution.daily_pipeline_settings import (
     CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_SECTOR_MIN,
     CATALYST_THEME_CLOSE_MOMENTUM_RELIEF_TREND_MIN,
     CATALYST_THEME_MAX_TICKERS,
+    CATALYST_THEME_QUALITY_MIN,
     CATALYST_THEME_SECTOR_MIN,
     CATALYST_THEME_SHADOW_MAX_TICKERS,
     CATALYST_THEME_SHORT_TRADE_CARRYOVER_CANDIDATE_SCORE_MIN,
@@ -659,6 +660,11 @@ def _build_catalyst_theme_shadow_entry(*, item: Any, filter_reason: str, metrics
 
 def _qualifies_catalyst_theme_candidate(*, trade_date: str, entry: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
     snapshot = build_short_trade_target_snapshot_from_entry(trade_date=trade_date, entry=entry)
+    if "quality_score" not in snapshot:
+        snapshot = {
+            **snapshot,
+            "quality_score": float(entry.get("quality_score", 0.5) or 0.5),
+        }
     return qualify_catalyst_theme_candidate_from_snapshot(
         snapshot=snapshot,
         resolve_close_momentum_relief_fn=_resolve_catalyst_theme_close_momentum_relief,
@@ -668,6 +674,7 @@ def _qualifies_catalyst_theme_candidate(*, trade_date: str, entry: dict[str, Any
         catalyst_theme_breakout_min=CATALYST_THEME_BREAKOUT_MIN,
         catalyst_theme_close_min=CATALYST_THEME_CLOSE_MIN,
         catalyst_theme_catalyst_min=CATALYST_THEME_CATALYST_MIN,
+        catalyst_theme_quality_min=CATALYST_THEME_QUALITY_MIN,
     )
 
 

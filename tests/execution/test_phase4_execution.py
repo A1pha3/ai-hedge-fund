@@ -1573,6 +1573,63 @@ def test_qualifies_catalyst_theme_candidate_applies_close_momentum_relief_to_met
     assert "close_momentum_catalyst_relief" in metrics_payload["theme_tags"]
 
 
+def test_qualifies_catalyst_theme_candidate_honors_quality_floor_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_build_short_trade_target_snapshot_from_entry = catalyst_helpers_module.build_short_trade_target_snapshot_from_entry
+    try:
+        catalyst_helpers_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
+            "gate_status": {"data": "pass", "structural": "pass", "score": "proxy_only"},
+            "blockers": [],
+            "breakout_freshness": 0.40,
+            "trend_acceleration": 0.80,
+            "close_strength": 0.91,
+            "sector_resonance": 0.10,
+            "catalyst_freshness": 0.0,
+            "quality_score": 0.35,
+        }
+        monkeypatch.setattr(daily_pipeline_module, "CATALYST_THEME_QUALITY_MIN", 0.40, raising=False)
+        monkeypatch.setattr(catalyst_helpers_module, "CATALYST_THEME_QUALITY_MIN", 0.40, raising=False)
+
+        qualified, filter_reason, metrics_payload = daily_pipeline_module._qualifies_catalyst_theme_candidate(
+            trade_date="20260305",
+            entry={"ticker": "000006", "quality_score": 0.35},
+        )
+    finally:
+        catalyst_helpers_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    assert qualified is False
+    assert filter_reason == "quality_score_below_catalyst_theme_floor"
+    assert metrics_payload["quality_score"] == 0.35
+    assert metrics_payload["threshold_checks"]["quality_score"] == 0.40
+    assert metrics_payload["threshold_metric_values"]["quality_score"] == 0.35
+
+
+def test_qualifies_catalyst_theme_candidate_falls_back_to_entry_quality_score_when_snapshot_omits_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_build_short_trade_target_snapshot_from_entry = catalyst_helpers_module.build_short_trade_target_snapshot_from_entry
+    try:
+        catalyst_helpers_module.build_short_trade_target_snapshot_from_entry = lambda trade_date, entry: {
+            "gate_status": {"data": "pass", "structural": "pass", "score": "proxy_only"},
+            "blockers": [],
+            "breakout_freshness": 0.40,
+            "trend_acceleration": 0.80,
+            "close_strength": 0.91,
+            "sector_resonance": 0.10,
+            "catalyst_freshness": 0.0,
+        }
+        monkeypatch.setattr(daily_pipeline_module, "CATALYST_THEME_QUALITY_MIN", 0.40, raising=False)
+        monkeypatch.setattr(catalyst_helpers_module, "CATALYST_THEME_QUALITY_MIN", 0.40, raising=False)
+
+        qualified, filter_reason, metrics_payload = daily_pipeline_module._qualifies_catalyst_theme_candidate(
+            trade_date="20260305",
+            entry={"ticker": "000006", "quality_score": 0.35},
+        )
+    finally:
+        catalyst_helpers_module.build_short_trade_target_snapshot_from_entry = original_build_short_trade_target_snapshot_from_entry
+
+    assert qualified is False
+    assert filter_reason == "quality_score_below_catalyst_theme_floor"
+    assert metrics_payload["quality_score"] == 0.35
+
+
 def test_build_catalyst_theme_entry_derives_context_from_fused_score_for_snapshot_metrics():
     strong_item = FusedScore(
         ticker="000006",
