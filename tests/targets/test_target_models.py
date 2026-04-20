@@ -1414,6 +1414,7 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     guard_relief_profile = get_short_trade_target_profile("watchlist_zero_catalyst_guard_relief")
     btst_precision_profile = get_short_trade_target_profile("btst_precision_v1")
     btst_precision_v2_profile = get_short_trade_target_profile("btst_precision_v2")
+    catalyst_research_rank_probe = get_short_trade_target_profile("btst_precision_v2_catalyst_research_rank_probe")
 
     assert conservative_profile.select_threshold > default_profile.select_threshold > aggressive_profile.select_threshold
     assert conservative_profile.layer_c_avoid_penalty > default_profile.layer_c_avoid_penalty > aggressive_profile.layer_c_avoid_penalty
@@ -1483,6 +1484,15 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert btst_precision_v2_profile.historical_continuation_score_weight == 0.08
     assert btst_precision_v2_profile.short_term_reversal_weight == 0.50
     assert btst_precision_v2_profile.short_term_reversal_weight > btst_precision_profile.short_term_reversal_weight
+    assert catalyst_research_rank_probe.select_threshold == btst_precision_v2_profile.select_threshold
+    assert catalyst_research_rank_probe.near_miss_threshold == btst_precision_v2_profile.near_miss_threshold
+    assert catalyst_research_rank_probe.selected_rank_cap_ratio == btst_precision_v2_profile.selected_rank_cap_ratio
+    assert catalyst_research_rank_probe.near_miss_rank_cap_ratio == btst_precision_v2_profile.near_miss_rank_cap_ratio
+    assert catalyst_research_rank_probe.catalyst_theme_selected_rank_cap_ratio == 0.18
+    assert catalyst_research_rank_probe.catalyst_theme_near_miss_rank_cap_ratio == 0.30
+    assert catalyst_research_rank_probe.selected_rank_cap_relief_catalyst_theme_carryover_support_enabled is True
+    assert catalyst_research_rank_probe.selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count == 3
+    assert catalyst_research_rank_probe.selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min == 0.05
 
 
 def test_btst_precision_supply_probe_profiles_rebalance_non_catalyst_signal_mix() -> None:
@@ -1926,6 +1936,84 @@ def test_short_trade_rank_decision_cap_soft_relief_does_not_rescue_catalyst_them
     assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_support_pass"] is False
     assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass"] is False
     assert cap_state["selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass"] is False
+
+
+def test_catalyst_research_rank_probe_releases_research_candidate_from_source_cap_pressure() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["ticker"] = "688048"
+    entry["reasons"] = [
+        "catalyst_theme_candidate_score_ranked",
+        "catalyst_theme_research_candidate",
+    ]
+    entry["candidate_reason_codes"] = list(entry["reasons"])
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_rank_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    baseline_cap_state = baseline_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    probe_cap_state = probe_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert baseline_result.decision == "near_miss"
+    assert baseline_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert baseline_cap_state["selected_rank_cap"] == 3
+    assert baseline_cap_state["selected_cap_exceeded_effective"] is True
+    assert baseline_cap_state["catalyst_theme_source_specific_caps_enabled"] is True
+    assert probe_result.decision == "selected"
+    assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.18)
+    assert probe_cap_state["selected_rank_cap"] == 4
+    assert probe_cap_state["selected_cap_exceeded_effective"] is False
+    assert probe_cap_state["catalyst_theme_source_specific_caps_enabled"] is True
+
+
+def test_catalyst_research_rank_probe_keeps_carryover_candidate_on_generic_cap() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_rank_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    probe_cap_state = probe_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert probe_result.decision == "near_miss"
+    assert probe_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.12)
+    assert probe_cap_state["selected_rank_cap"] == 3
+    assert probe_cap_state["selected_cap_exceeded_effective"] is True
+    assert probe_cap_state["catalyst_theme_source_specific_caps_enabled"] is False
+    assert probe_cap_state["selected_rank_cap_relief_catalyst_theme_carryover_guard_active"] is True
 
 
 def test_short_trade_rank_decision_cap_soft_relief_respects_sector_resonance_floor() -> None:
