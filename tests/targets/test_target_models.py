@@ -2106,6 +2106,145 @@ def test_catalyst_research_rank_probe_keeps_carryover_candidate_on_generic_cap()
     assert probe_cap_state["selected_rank_cap_relief_catalyst_theme_carryover_guard_active"] is True
 
 
+def test_catalyst_research_displacement_probe_releases_low_sector_high_trend_candidate_via_soft_relief() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["ticker"] = "002491"
+    entry["score_c"] = -0.6
+    entry["score_final"] = -0.1
+    entry["reasons"] = [
+        "catalyst_theme_candidate_score_ranked",
+        "catalyst_theme_research_candidate",
+    ]
+    entry["candidate_reason_codes"] = list(entry["reasons"])
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 86.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 80.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 88.0
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_rank_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        refined_cap_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_displacement_probe",
+    ):
+        displacement_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    baseline_cap_state = baseline_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    refined_cap_state = refined_cap_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    displacement_cap_state = displacement_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert baseline_result.decision == "near_miss"
+    assert baseline_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert baseline_cap_state["selected_cap_soft_relief_applied"] is False
+    assert refined_cap_result.decision == "near_miss"
+    assert refined_cap_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert refined_cap_state["catalyst_theme_source_specific_caps_enabled"] is False
+    assert displacement_result.decision == "selected"
+    assert displacement_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.12)
+    assert displacement_cap_state["selected_rank_cap"] == 3
+    assert displacement_cap_state["selected_cap_soft_relief_applied"] is True
+    assert displacement_cap_state["selected_cap_exceeded_effective"] is False
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_guard_active"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_support_pass"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_close_strength_pass"] is True
+
+
+def test_catalyst_research_displacement_probe_does_not_release_high_close_candidate() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["ticker"] = "688048"
+    entry["reasons"] = [
+        "catalyst_theme_candidate_score_ranked",
+        "catalyst_theme_research_candidate",
+    ]
+    entry["candidate_reason_codes"] = list(entry["reasons"])
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_displacement_probe",
+    ):
+        displacement_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    displacement_cap_state = displacement_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert displacement_result.decision == "near_miss"
+    assert displacement_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert displacement_cap_state["selected_cap_soft_relief_applied"] is False
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_guard_active"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_close_strength_pass"] is False
+
+
+def test_catalyst_research_displacement_probe_does_not_release_candidate_below_sector_floor() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["ticker"] = "600522"
+    entry["score_c"] = -0.7
+    entry["score_final"] = -0.1
+    entry["reasons"] = [
+        "catalyst_theme_candidate_score_ranked",
+        "catalyst_theme_research_candidate",
+    ]
+    entry["candidate_reason_codes"] = list(entry["reasons"])
+    entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 86.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 80.0
+    entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 88.0
+    entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_displacement_probe",
+    ):
+        displacement_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    displacement_cap_state = displacement_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert displacement_result.decision == "near_miss"
+    assert displacement_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert displacement_cap_state["selected_cap_soft_relief_applied"] is False
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_guard_active"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass"] is True
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass"] is False
+    assert displacement_cap_state["selected_rank_cap_relief_catalyst_theme_research_close_strength_pass"] is True
+
+
 def test_short_trade_rank_decision_cap_soft_relief_respects_sector_resonance_floor() -> None:
     entry = _make_catalyst_theme_short_trade_carryover_entry()
 

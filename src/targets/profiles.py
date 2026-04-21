@@ -32,6 +32,10 @@ class ShortTradeTargetProfile:
     selected_rank_cap_relief_catalyst_theme_carryover_support_enabled: bool = False
     selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count: int = 0
     selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min: float = 0.0
+    selected_rank_cap_relief_catalyst_theme_research_enabled: bool = False
+    selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min: float = 0.0
+    selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min: float = 0.0
+    selected_rank_cap_relief_catalyst_theme_research_close_strength_max: float = 1.0
     selected_breakout_freshness_min: float = 0.35
     selected_trend_acceleration_min: float = 0.38
     selected_close_retention_min: float = 0.0

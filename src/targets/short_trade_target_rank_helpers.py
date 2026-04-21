@@ -298,6 +298,47 @@ def _resolve_rank_decision_cap(
         or selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass
         or selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass
     )
+    selected_rank_cap_relief_catalyst_theme_research_enabled = bool(
+        getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_enabled", False)
+    )
+    selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min = max(
+        0.0,
+        float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min", 0.0) or 0.0),
+    )
+    selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min = max(
+        0.0,
+        float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min", 0.0) or 0.0),
+    )
+    selected_rank_cap_relief_catalyst_theme_research_close_strength_max = min(
+        1.0,
+        max(0.0, float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_close_strength_max", 1.0) or 1.0)),
+    )
+    selected_rank_cap_relief_catalyst_theme_research_candidate = (
+        normalized_candidate_source == "catalyst_theme"
+        and "catalyst_theme_research_candidate" in normalized_reason_codes
+        and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
+    )
+    selected_rank_cap_relief_catalyst_theme_research_guard_active = (
+        selected_rank_cap_relief_catalyst_theme_research_enabled
+        and selected_rank_cap_relief_catalyst_theme_research_candidate
+    )
+    selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass = (
+        trend_acceleration >= selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min
+    )
+    selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass = (
+        sector_resonance >= selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min
+    )
+    selected_rank_cap_relief_catalyst_theme_research_close_strength_pass = (
+        close_strength <= selected_rank_cap_relief_catalyst_theme_research_close_strength_max
+    )
+    selected_rank_cap_relief_catalyst_theme_research_support_pass = (
+        (not selected_rank_cap_relief_catalyst_theme_research_guard_active)
+        or (
+            selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass
+            and selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass
+            and selected_rank_cap_relief_catalyst_theme_research_close_strength_pass
+        )
+    )
 
     selected_rank_cap_relief_within_buffer = bool(selected_rank_cap_relief_cap is not None and normalized_rank > 0 and normalized_rank <= selected_rank_cap_relief_cap)
     selected_cap_soft_relief_applied = bool(
@@ -311,6 +352,7 @@ def _resolve_rank_decision_cap(
         and selected_rank_cap_relief_market_risk_pass
         and selected_rank_cap_relief_boundary_pass
         and selected_rank_cap_relief_catalyst_theme_carryover_support_pass
+        and selected_rank_cap_relief_catalyst_theme_research_support_pass
     )
     selected_cap_exceeded_effective = bool(selected_cap_exceeded_raw and not selected_cap_soft_relief_applied)
 
@@ -368,6 +410,15 @@ def _resolve_rank_decision_cap(
         "selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass": selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass,
         "selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass": selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass,
         "selected_rank_cap_relief_catalyst_theme_carryover_support_pass": selected_rank_cap_relief_catalyst_theme_carryover_support_pass,
+        "selected_rank_cap_relief_catalyst_theme_research_enabled": selected_rank_cap_relief_catalyst_theme_research_enabled,
+        "selected_rank_cap_relief_catalyst_theme_research_guard_active": selected_rank_cap_relief_catalyst_theme_research_guard_active,
+        "selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min": round(selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min, 4),
+        "selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min": round(selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min, 4),
+        "selected_rank_cap_relief_catalyst_theme_research_close_strength_max": round(selected_rank_cap_relief_catalyst_theme_research_close_strength_max, 4),
+        "selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass": selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass,
+        "selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass": selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass,
+        "selected_rank_cap_relief_catalyst_theme_research_close_strength_pass": selected_rank_cap_relief_catalyst_theme_research_close_strength_pass,
+        "selected_rank_cap_relief_catalyst_theme_research_support_pass": selected_rank_cap_relief_catalyst_theme_research_support_pass,
     }
 
 
