@@ -144,3 +144,114 @@ def test_run_variant_includes_rejected_entries_from_frozen_replay_input(monkeypa
 
     assert result["total_layer_b_passes"] == 1
     assert result["by_date"]["20260409"]["selected_tickers"] == ["AAA"]
+
+
+def test_run_variant_replays_profitability_neutral_from_frozen_replay_input(monkeypatch, tmp_path):
+    replay_input_path = tmp_path / "selection_artifacts" / "2026-04-09" / "selection_target_replay_input.json"
+    replay_input_path.parent.mkdir(parents=True)
+    replay_input_path.write_text(
+        json.dumps(
+            {
+                "trade_date": "2026-04-09",
+                "watchlist": [
+                    {
+                        "ticker": "AAA",
+                        "score_b": 0.302,
+                        "decision": "neutral",
+                        "market_state": {
+                            "state_type": "mixed",
+                            "breadth_ratio": 0.6,
+                            "position_scale": 1.0,
+                            "adjusted_weights": {
+                                "trend": 0.4,
+                                "fundamental": 0.6,
+                            },
+                        },
+                        "strategy_signals": {
+                            "trend": {
+                                "direction": 1,
+                                "confidence": 95.0,
+                                "completeness": 1.0,
+                                "sub_factors": {},
+                            },
+                            "fundamental": {
+                                "direction": -1,
+                                "confidence": 13.0,
+                                "completeness": 1.0,
+                                "sub_factors": {
+                                    "profitability": {
+                                        "name": "profitability",
+                                        "direction": -1,
+                                        "confidence": 100.0,
+                                        "completeness": 1.0,
+                                        "weight": 0.25,
+                                        "metrics": {
+                                            "positive_count": 0,
+                                            "available_count": 3,
+                                            "zero_pass_mode": "bearish",
+                                        },
+                                    },
+                                    "growth": {
+                                        "name": "growth",
+                                        "direction": 1,
+                                        "confidence": 60.0,
+                                        "completeness": 1.0,
+                                        "weight": 0.25,
+                                        "metrics": {},
+                                    },
+                                    "financial_health": {
+                                        "name": "financial_health",
+                                        "direction": 0,
+                                        "confidence": 50.0,
+                                        "completeness": 1.0,
+                                        "weight": 0.20,
+                                        "metrics": {},
+                                    },
+                                    "growth_valuation": {
+                                        "name": "growth_valuation",
+                                        "direction": 0,
+                                        "confidence": 50.0,
+                                        "completeness": 1.0,
+                                        "weight": 0.15,
+                                        "metrics": {},
+                                    },
+                                    "industry_pe": {
+                                        "name": "industry_pe",
+                                        "direction": 0,
+                                        "confidence": 50.0,
+                                        "completeness": 1.0,
+                                        "weight": 0.15,
+                                        "metrics": {},
+                                    },
+                                },
+                            },
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        analyze_layer_b_rule_variants,
+        "build_candidate_pool",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live candidate pool should not be used")),
+    )
+
+    baseline = _run_variant(
+        ["20260409"],
+        env_updates={},
+        fast_score_threshold=0.38,
+        replay_input_report_dir=tmp_path,
+    )
+    variant = _run_variant(
+        ["20260409"],
+        env_updates={"LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE": "neutral"},
+        fast_score_threshold=0.38,
+        replay_input_report_dir=tmp_path,
+    )
+
+    assert baseline["by_date"]["20260409"]["selected_tickers"] == []
+    assert variant["by_date"]["20260409"]["selected_tickers"] == ["AAA"]

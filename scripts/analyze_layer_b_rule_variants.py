@@ -16,10 +16,15 @@ load_project_dotenv()
 from src.execution.daily_pipeline import FAST_AGENT_MAX_TICKERS, FAST_AGENT_SCORE_THRESHOLD
 from src.screening.candidate_pool import _SNAPSHOT_DIR, build_candidate_pool
 from src.screening.market_state import detect_market_state
-from src.screening.signal_fusion import fuse_batch
+from src.screening.models import MarketState, StrategySignal, SubFactor
+from src.screening.signal_fusion import fuse_batch, fuse_signals_for_ticker
 from src.screening.strategy_scorer import score_batch
+from src.screening.strategy_scorer_utils import aggregate_sub_factors
 
 REPLAY_INPUT_FILENAME = "selection_target_replay_input.json"
+_SUPPORTED_REPLAY_INPUT_VARIANT_ENVS = {
+    "LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE",
+}
 
 VARIANTS = {
     "baseline": {},
@@ -188,12 +193,11 @@ def _run_variant(
     with _temporary_env(env_updates):
         for trade_date in trade_dates:
             if replay_input_report_dir is not None:
-                if env_updates:
-                    raise ValueError("replay_input_report_dir only supports the baseline variant")
                 day_payload = _load_replay_input_day(
                     replay_input_report_dir=replay_input_report_dir,
                     trade_date=trade_date,
                     fast_score_threshold=fast_score_threshold,
+                    env_updates=env_updates,
                 )
                 by_date[trade_date] = day_payload
                 total_passes += int(day_payload["layer_b_count"])
@@ -242,6 +246,7 @@ def _load_replay_input_day(
     replay_input_report_dir: Path,
     trade_date: str,
     fast_score_threshold: float,
+    env_updates: dict[str, str],
 ) -> dict[str, object]:
     artifact_trade_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
     replay_input_path = replay_input_report_dir / "selection_artifacts" / artifact_trade_date / REPLAY_INPUT_FILENAME
@@ -254,14 +259,28 @@ def _load_replay_input_day(
             continue
         replay_entries[ticker] = resolved_entry
     watchlist_entries = list(replay_entries.values())
+    if env_updates:
+        record_map = _replay_variant_records_from_entries(watchlist_entries, env_updates=env_updates)
+    else:
+        record_map = _build_stored_replay_record_map(watchlist_entries)
     selected_entries = sorted(
-        [entry for entry in watchlist_entries if float(entry.get("score_b") or 0.0) >= fast_score_threshold],
-        key=lambda entry: float(entry.get("score_b") or 0.0),
+        [record for record in record_map.values() if float(record.get("score_b") or 0.0) >= fast_score_threshold],
+        key=lambda record: float(record.get("score_b") or 0.0),
         reverse=True,
     )[:FAST_AGENT_MAX_TICKERS]
     selected_tickers = {str(entry.get("ticker") or "") for entry in selected_entries if str(entry.get("ticker") or "").strip()}
+    for ticker, record in record_map.items():
+        record["selected"] = ticker in selected_tickers
+    return {
+        "selected_tickers": [str(entry.get("ticker") or "") for entry in selected_entries if str(entry.get("ticker") or "").strip()],
+        "records": record_map,
+        "layer_b_count": len(selected_tickers),
+    }
+
+
+def _build_stored_replay_record_map(replay_entries: list[dict]) -> dict[str, dict]:
     record_map: dict[str, dict] = {}
-    for entry in watchlist_entries:
+    for entry in replay_entries:
         ticker = str(entry.get("ticker") or "").strip()
         if not ticker:
             continue
@@ -270,15 +289,85 @@ def _load_replay_input_day(
             "industry_sw": str(entry.get("industry_sw") or ""),
             "score_b": round(float(entry.get("score_b") or 0.0), 4),
             "decision": str(entry.get("decision") or ""),
-            "selected": ticker in selected_tickers,
+            "selected": False,
             "arbitration_applied": list(entry.get("arbitration_applied") or []),
             "strategy_signals": dict(entry.get("strategy_signals") or {}),
         }
-    return {
-        "selected_tickers": [str(entry.get("ticker") or "") for entry in selected_entries if str(entry.get("ticker") or "").strip()],
-        "records": record_map,
-        "layer_b_count": len(selected_tickers),
+    return record_map
+
+
+def _replay_variant_records_from_entries(replay_entries: list[dict], *, env_updates: dict[str, str]) -> dict[str, dict]:
+    unsupported = sorted(set(env_updates) - _SUPPORTED_REPLAY_INPUT_VARIANT_ENVS)
+    if unsupported:
+        raise ValueError(f"replay_input_report_dir does not support env overrides: {', '.join(unsupported)}")
+    record_map: dict[str, dict] = {}
+    for entry in replay_entries:
+        ticker = str(entry.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        market_state = MarketState.model_validate(dict(entry.get("market_state") or {}))
+        strategy_signals = _apply_replay_input_env_updates(
+            {
+                name: StrategySignal.model_validate(dict(payload or {}))
+                for name, payload in dict(entry.get("strategy_signals") or {}).items()
+            },
+            env_updates=env_updates,
+        )
+        fused = fuse_signals_for_ticker(ticker, strategy_signals, market_state)
+        record_map[ticker] = {
+            "ticker": ticker,
+            "industry_sw": str(entry.get("industry_sw") or ""),
+            "score_b": round(float(fused.score_b), 4),
+            "decision": fused.decision,
+            "selected": False,
+            "arbitration_applied": list(fused.arbitration_applied),
+            "strategy_signals": {name: signal.model_dump() for name, signal in fused.strategy_signals.items()},
+        }
+    return record_map
+
+
+def _apply_replay_input_env_updates(
+    strategy_signals: dict[str, StrategySignal],
+    *,
+    env_updates: dict[str, str],
+) -> dict[str, StrategySignal]:
+    resolved = {name: signal.model_copy(deep=True) for name, signal in strategy_signals.items()}
+    profitability_mode = str(env_updates.get("LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE") or "").strip().lower()
+    if profitability_mode:
+        resolved = _apply_profitability_zero_pass_mode(resolved, profitability_mode=profitability_mode)
+    return resolved
+
+
+def _apply_profitability_zero_pass_mode(
+    strategy_signals: dict[str, StrategySignal],
+    *,
+    profitability_mode: str,
+) -> dict[str, StrategySignal]:
+    if profitability_mode not in {"neutral", "inactive"}:
+        raise ValueError(f"Unsupported profitability zero pass mode for replay_input_report_dir: {profitability_mode}")
+    fundamental_signal = strategy_signals.get("fundamental")
+    if fundamental_signal is None:
+        return strategy_signals
+    profitability_payload = dict((fundamental_signal.sub_factors or {}).get("profitability") or {})
+    profitability_metrics = dict(profitability_payload.get("metrics") or {})
+    if int(profitability_metrics.get("positive_count") or 0) != 0:
+        return strategy_signals
+    profitability_factor = SubFactor.model_validate(profitability_payload)
+    profitability_factor.direction = 0
+    profitability_factor.confidence = 0.0
+    profitability_factor.completeness = 0.0 if profitability_mode == "inactive" else profitability_factor.completeness
+    profitability_factor.metrics = {
+        **profitability_metrics,
+        "zero_pass_mode": profitability_mode,
     }
+    rebuilt_factors = []
+    for name, payload in dict(fundamental_signal.sub_factors or {}).items():
+        if name == "profitability":
+            rebuilt_factors.append(profitability_factor)
+        else:
+            rebuilt_factors.append(SubFactor.model_validate(dict(payload or {})))
+    strategy_signals["fundamental"] = aggregate_sub_factors(rebuilt_factors)
+    return strategy_signals
 
 
 def _build_comparison(variant_name: str, baseline: dict, variant: dict) -> dict:
@@ -360,8 +449,10 @@ def main() -> None:
     trade_dates = _resolve_trade_dates(args.month_prefix or None, explicit_trade_dates or None)
     variant_names = _resolve_variant_names(args.variants or None)
     replay_input_report_dir = Path(args.replay_input_report_dir).expanduser() if str(args.replay_input_report_dir or "").strip() else None
-    if replay_input_report_dir is not None and any(name != "baseline" for name in variant_names):
-        raise SystemExit("--replay-input-report-dir currently supports baseline only")
+    if replay_input_report_dir is not None:
+        unsupported_variants = [name for name in variant_names if name not in {"baseline", "profitability_neutral", "profitability_only"}]
+        if unsupported_variants:
+            raise SystemExit("--replay-input-report-dir currently supports baseline, profitability_neutral and profitability_only only")
 
     variant_results = {
         name: _run_variant(
