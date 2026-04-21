@@ -68,12 +68,24 @@ VARIANTS = {
 }
 
 
+_LAYER_B_ANALYSIS_ENV_KEYS = (
+    "LAYER_B_ANALYSIS_PROFITABILITY_ZERO_PASS_MODE",
+    "LAYER_B_ANALYSIS_NEUTRAL_MEAN_REVERSION_MODE",
+    "LAYER_B_ANALYSIS_EXCLUDE_NEUTRAL_MEAN_REVERSION",
+)
+
+
 @contextmanager
-def _temporary_env(updates: dict[str, str]) -> Iterator[None]:
-    original = {key: os.environ.get(key) for key in updates}
+def _temporary_env(updates: dict[str, str | None]) -> Iterator[None]:
+    resolved_updates: dict[str, str | None] = {key: None for key in _LAYER_B_ANALYSIS_ENV_KEYS}
+    resolved_updates.update(updates)
+    original = {key: os.environ.get(key) for key in resolved_updates}
     try:
-        for key, value in updates.items():
-            os.environ[key] = value
+        for key, value in resolved_updates.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         yield
     finally:
         for key, previous in original.items():

@@ -35,6 +35,12 @@ def _format_market_cap(value: float) -> str:
     return f"{value:.2f}"
 
 
+def _format_optional_score(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    return f"{float(value):.4f}"
+
+
 def _compact_json(value: object) -> str:
     if value in (None, "", [], {}):
         return ""
@@ -100,8 +106,25 @@ def _load_downstream_map(report_dir: Path | None) -> dict[str, dict[str, dict[st
             watchlist = list(plan.get("watchlist", []) or [])
             buy_orders = {str(order.get("ticker") or "") for order in list(plan.get("buy_orders", []) or []) if order.get("ticker")}
             funnel = dict(((plan.get("risk_metrics") or {}).get("funnel_diagnostics") or {}))
-            watchlist_filters = dict((funnel.get("filters") or {}).get("watchlist") or {})
+            filters = dict(funnel.get("filters") or {})
+            watchlist_filters = dict(filters.get("watchlist") or {})
+            layer_b_filters = dict(filters.get("layer_b") or {})
             rejected_entries = list(watchlist_filters.get("tickers", []) or [])
+            layer_b_filtered_entries = list(layer_b_filters.get("tickers", []) or [])
+
+            for entry in layer_b_filtered_entries:
+                ticker = str(entry.get("ticker") or "")
+                if not ticker:
+                    continue
+                date_map[ticker] = {
+                    "layer_c_status": "filtered_after_layer_b",
+                    "score_c": None,
+                    "score_final": None,
+                    "bc_conflict": "",
+                    "decision_c": str(entry.get("decision") or ""),
+                    "buy_order_entered": False,
+                    "downstream_reason": str(entry.get("reason") or ",".join(entry.get("reasons", []) or [])),
+                }
 
             for item in watchlist:
                 ticker = str(item.get("ticker") or "")
@@ -178,8 +201,8 @@ def _build_rows(trade_dates: list[str], downstream_map: dict[str, dict[str, dict
                 "top_factor_2": _format_factor(top_factors[1]) if len(top_factors) >= 2 else "",
                 "top_factor_3": _format_factor(top_factors[2]) if len(top_factors) >= 3 else "",
                 "layer_c_status": layer_c_status,
-                "score_c": f"{float(downstream.get('score_c', 0.0) or 0.0):.4f}" if downstream else "",
-                "score_final": f"{float(downstream.get('score_final', 0.0) or 0.0):.4f}" if downstream else "",
+                "score_c": _format_optional_score(downstream.get("score_c")) if downstream else "",
+                "score_final": _format_optional_score(downstream.get("score_final")) if downstream else "",
                 "decision_c": str(downstream.get("decision_c") or ""),
                 "bc_conflict": str(downstream.get("bc_conflict") or ""),
                 "buy_order_entered": "yes" if bool(downstream.get("buy_order_entered")) else "no",
