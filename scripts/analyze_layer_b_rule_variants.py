@@ -19,6 +19,7 @@ from src.screening.market_state import detect_market_state
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 
+REPLAY_INPUT_FILENAME = "selection_target_replay_input.json"
 
 VARIANTS = {
     "baseline": {},
@@ -174,18 +175,35 @@ def _classify_added_sample(baseline_record: dict) -> list[str]:
     return tags
 
 
-def _run_variant(trade_dates: list[str], env_updates: dict[str, str]) -> dict:
+def _run_variant(
+    trade_dates: list[str],
+    env_updates: dict[str, str],
+    *,
+    fast_score_threshold: float = FAST_AGENT_SCORE_THRESHOLD,
+    replay_input_report_dir: Path | None = None,
+) -> dict:
     by_date: dict[str, dict] = {}
     total_passes = 0
 
     with _temporary_env(env_updates):
         for trade_date in trade_dates:
+            if replay_input_report_dir is not None:
+                if env_updates:
+                    raise ValueError("replay_input_report_dir only supports the baseline variant")
+                day_payload = _load_replay_input_day(
+                    replay_input_report_dir=replay_input_report_dir,
+                    trade_date=trade_date,
+                    fast_score_threshold=fast_score_threshold,
+                )
+                by_date[trade_date] = day_payload
+                total_passes += int(day_payload["layer_b_count"])
+                continue
             candidates = build_candidate_pool(trade_date, use_cache=True)
             market_state = detect_market_state(trade_date)
             scored = score_batch(candidates, trade_date)
             fused = fuse_batch(scored, market_state, trade_date)
             selected = sorted(
-                [item for item in fused if item.score_b >= FAST_AGENT_SCORE_THRESHOLD],
+                [item for item in fused if item.score_b >= fast_score_threshold],
                 key=lambda item: item.score_b,
                 reverse=True,
             )[:FAST_AGENT_MAX_TICKERS]
@@ -216,6 +234,50 @@ def _run_variant(trade_dates: list[str], env_updates: dict[str, str]) -> dict:
         "trade_dates": trade_dates,
         "total_layer_b_passes": total_passes,
         "by_date": by_date,
+    }
+
+
+def _load_replay_input_day(
+    *,
+    replay_input_report_dir: Path,
+    trade_date: str,
+    fast_score_threshold: float,
+) -> dict[str, object]:
+    artifact_trade_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+    replay_input_path = replay_input_report_dir / "selection_artifacts" / artifact_trade_date / REPLAY_INPUT_FILENAME
+    payload = json.loads(replay_input_path.read_text(encoding="utf-8"))
+    replay_entries: dict[str, dict] = {}
+    for entry in list(payload.get("watchlist") or []) + list(payload.get("rejected_entries") or []):
+        resolved_entry = dict(entry or {})
+        ticker = str(resolved_entry.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        replay_entries[ticker] = resolved_entry
+    watchlist_entries = list(replay_entries.values())
+    selected_entries = sorted(
+        [entry for entry in watchlist_entries if float(entry.get("score_b") or 0.0) >= fast_score_threshold],
+        key=lambda entry: float(entry.get("score_b") or 0.0),
+        reverse=True,
+    )[:FAST_AGENT_MAX_TICKERS]
+    selected_tickers = {str(entry.get("ticker") or "") for entry in selected_entries if str(entry.get("ticker") or "").strip()}
+    record_map: dict[str, dict] = {}
+    for entry in watchlist_entries:
+        ticker = str(entry.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        record_map[ticker] = {
+            "ticker": ticker,
+            "industry_sw": str(entry.get("industry_sw") or ""),
+            "score_b": round(float(entry.get("score_b") or 0.0), 4),
+            "decision": str(entry.get("decision") or ""),
+            "selected": ticker in selected_tickers,
+            "arbitration_applied": list(entry.get("arbitration_applied") or []),
+            "strategy_signals": dict(entry.get("strategy_signals") or {}),
+        }
+    return {
+        "selected_tickers": [str(entry.get("ticker") or "") for entry in selected_entries if str(entry.get("ticker") or "").strip()],
+        "records": record_map,
+        "layer_b_count": len(selected_tickers),
     }
 
 
@@ -289,15 +351,25 @@ def main() -> None:
     parser.add_argument("--month-prefix", default="", help="candidate_pool_YYYYMM*.json prefix")
     parser.add_argument("--trade-dates", default="", help="comma-separated trade dates like 20260323,20260324")
     parser.add_argument("--variants", default="", help="comma-separated variant names; baseline is always included")
+    parser.add_argument("--fast-score-threshold", type=float, default=FAST_AGENT_SCORE_THRESHOLD, help="Layer B score threshold used to build the fast high pool")
+    parser.add_argument("--replay-input-report-dir", default="", help="optional frozen report dir that provides selection_artifacts/*/selection_target_replay_input.json for baseline replay")
     parser.add_argument("--output", default="", help="optional json output path")
     args = parser.parse_args()
 
     explicit_trade_dates = [item.strip() for item in args.trade_dates.split(",") if item.strip()]
     trade_dates = _resolve_trade_dates(args.month_prefix or None, explicit_trade_dates or None)
     variant_names = _resolve_variant_names(args.variants or None)
+    replay_input_report_dir = Path(args.replay_input_report_dir).expanduser() if str(args.replay_input_report_dir or "").strip() else None
+    if replay_input_report_dir is not None and any(name != "baseline" for name in variant_names):
+        raise SystemExit("--replay-input-report-dir currently supports baseline only")
 
     variant_results = {
-        name: _run_variant(trade_dates, env_updates)
+        name: _run_variant(
+            trade_dates,
+            env_updates,
+            fast_score_threshold=float(args.fast_score_threshold),
+            replay_input_report_dir=replay_input_report_dir,
+        )
         for name, env_updates in VARIANTS.items()
         if name in variant_names
     }
@@ -313,9 +385,10 @@ def main() -> None:
         "window": {"start": trade_dates[0], "end": trade_dates[-1], "days": len(trade_dates)},
         "variants": variant_names,
         "thresholds": {
-            "fast_agent_score_threshold": FAST_AGENT_SCORE_THRESHOLD,
+            "fast_agent_score_threshold": float(args.fast_score_threshold),
             "fast_agent_max_tickers": FAST_AGENT_MAX_TICKERS,
         },
+        "replay_input_report_dir": str(replay_input_report_dir) if replay_input_report_dir is not None else None,
         "baseline_total_layer_b_passes": baseline["total_layer_b_passes"],
         "comparisons": comparisons,
     }
