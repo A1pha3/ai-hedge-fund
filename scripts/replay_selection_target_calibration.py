@@ -17,7 +17,7 @@ from scripts.replay_selection_target_calibration_helpers import (
     prepare_replay_source_context,
 )
 from src.execution.models import LayerCResult
-from src.targets import SHORT_TRADE_TARGET_PROFILES, get_active_short_trade_target_profile, get_short_trade_target_profile, use_short_trade_target_profile
+from src.targets import SHORT_TRADE_TARGET_PROFILES, build_short_trade_target_profile, get_active_short_trade_target_profile, get_short_trade_target_profile, use_short_trade_target_profile
 from src.targets.router import build_selection_targets
 from src.targets.candidate_entry_filters import (
     apply_candidate_entry_filters as _apply_candidate_entry_filters,
@@ -186,6 +186,46 @@ def _active_short_trade_target_profile():
 
 def _resolve_structural_profile_overrides(structural_overrides: dict[str, Any]) -> dict[str, Any]:
     return dict(structural_overrides.get("profile_overrides") or {})
+
+
+def _extract_embedded_short_trade_profile_snapshot(payload: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    pipeline_config_snapshot = dict(payload.get("pipeline_config_snapshot") or {})
+    short_trade_profile_snapshot = dict(pipeline_config_snapshot.get("short_trade_target_profile") or {})
+    embedded_profile_name = str(short_trade_profile_snapshot.get("name") or "").strip() or None
+    embedded_profile_config = dict(short_trade_profile_snapshot.get("config") or {})
+    return embedded_profile_name, embedded_profile_config
+
+
+def _apply_legacy_bearish_conflict_block_fallback(embedded_profile_config: dict[str, Any]) -> dict[str, Any]:
+    resolved_config = dict(embedded_profile_config or {})
+    has_legacy_conflict_blockers = bool(resolved_config.get("hard_block_bearish_conflicts"))
+    if not has_legacy_conflict_blockers:
+        return resolved_config
+    if "hard_block_conflict_score_b_relief_min" not in resolved_config:
+        resolved_config["hard_block_conflict_score_b_relief_min"] = None
+    if "hard_block_conflict_score_c_relief_min" not in resolved_config:
+        resolved_config["hard_block_conflict_score_c_relief_min"] = None
+    return resolved_config
+
+
+def _resolve_replay_profile_context(
+    payload: dict[str, Any],
+    *,
+    requested_profile_name: str,
+    requested_profile_overrides: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    resolved_profile_name = str(requested_profile_name or "default")
+    resolved_profile_overrides = dict(requested_profile_overrides or {})
+    embedded_profile_name, embedded_profile_config = _extract_embedded_short_trade_profile_snapshot(payload)
+    if resolved_profile_name == "default" and embedded_profile_name:
+        resolved_profile_name = embedded_profile_name
+        if embedded_profile_config:
+            embedded_profile_config = _apply_legacy_bearish_conflict_block_fallback(embedded_profile_config)
+            resolved_profile_overrides = {
+                **embedded_profile_config,
+                **resolved_profile_overrides,
+            }
+    return resolved_profile_name, resolved_profile_overrides
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -788,6 +828,7 @@ def analyze_selection_target_replay_sources(
     structural_variant: str = "baseline",
     structural_overrides: dict[str, Any] | None = None,
     focus_tickers: list[str] | None = None,
+    refresh_latest_historical_prior: bool = False,
 ) -> dict[str, Any]:
     if not replay_input_sources:
         raise FileNotFoundError("No replay input sources provided.")
@@ -801,35 +842,50 @@ def analyze_selection_target_replay_sources(
         resolve_structural_profile_overrides=_resolve_structural_profile_overrides,
     )
     state = build_replay_analysis_state()
-    default_profile = _resolve_short_trade_target_profile(config.profile_name)
     prior_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
-    with _override_short_trade_thresholds(
-        profile_name=config.profile_name,
-        profile_overrides=config.structural_profile_overrides or None,
-        select_threshold=select_threshold,
-        near_miss_threshold=near_miss_threshold,
-        breakout_freshness_weight=config.effective_structural_overrides.get("breakout_freshness_weight"),
-        trend_acceleration_weight=config.effective_structural_overrides.get("trend_acceleration_weight"),
-        volume_expansion_quality_weight=config.effective_structural_overrides.get("volume_expansion_quality_weight"),
-        close_strength_weight=config.effective_structural_overrides.get("close_strength_weight"),
-        sector_resonance_weight=config.effective_structural_overrides.get("sector_resonance_weight"),
-        catalyst_freshness_weight=config.effective_structural_overrides.get("catalyst_freshness_weight"),
-        layer_c_alignment_weight=config.effective_structural_overrides.get("layer_c_alignment_weight"),
-        stale_penalty_block_threshold=config.effective_structural_overrides.get("stale_penalty_block_threshold"),
-        overhead_penalty_block_threshold=config.effective_structural_overrides.get("overhead_penalty_block_threshold"),
-        extension_penalty_block_threshold=config.effective_structural_overrides.get("extension_penalty_block_threshold"),
-        layer_c_avoid_penalty=config.effective_structural_overrides.get("layer_c_avoid_penalty"),
-        strong_bearish_conflicts=config.effective_structural_overrides.get("strong_bearish_conflicts"),
-        stale_score_penalty_weight=config.effective_structural_overrides.get("stale_score_penalty_weight"),
-        overhead_score_penalty_weight=config.effective_structural_overrides.get("overhead_score_penalty_weight"),
-        extension_score_penalty_weight=config.effective_structural_overrides.get("extension_score_penalty_weight"),
-    ):
-        for replay_input_path, payload in replay_input_sources:
-            refreshed_payload = _attach_latest_historical_prior_to_payload(
-                payload,
-                replay_input_path=replay_input_path,
-                prior_cache=prior_cache,
+    default_profile_name, default_profile_overrides = _resolve_replay_profile_context(
+        replay_input_sources[0][1],
+        requested_profile_name=config.profile_name,
+        requested_profile_overrides=config.structural_profile_overrides,
+    )
+    default_profile = build_short_trade_target_profile(default_profile_name, default_profile_overrides)
+
+    for replay_input_path, payload in replay_input_sources:
+        resolved_profile_name, resolved_profile_overrides = _resolve_replay_profile_context(
+            payload,
+            requested_profile_name=config.profile_name,
+            requested_profile_overrides=config.structural_profile_overrides,
+        )
+        with _override_short_trade_thresholds(
+            profile_name=resolved_profile_name,
+            profile_overrides=resolved_profile_overrides or None,
+            select_threshold=select_threshold,
+            near_miss_threshold=near_miss_threshold,
+            breakout_freshness_weight=config.effective_structural_overrides.get("breakout_freshness_weight"),
+            trend_acceleration_weight=config.effective_structural_overrides.get("trend_acceleration_weight"),
+            volume_expansion_quality_weight=config.effective_structural_overrides.get("volume_expansion_quality_weight"),
+            close_strength_weight=config.effective_structural_overrides.get("close_strength_weight"),
+            sector_resonance_weight=config.effective_structural_overrides.get("sector_resonance_weight"),
+            catalyst_freshness_weight=config.effective_structural_overrides.get("catalyst_freshness_weight"),
+            layer_c_alignment_weight=config.effective_structural_overrides.get("layer_c_alignment_weight"),
+            stale_penalty_block_threshold=config.effective_structural_overrides.get("stale_penalty_block_threshold"),
+            overhead_penalty_block_threshold=config.effective_structural_overrides.get("overhead_penalty_block_threshold"),
+            extension_penalty_block_threshold=config.effective_structural_overrides.get("extension_penalty_block_threshold"),
+            layer_c_avoid_penalty=config.effective_structural_overrides.get("layer_c_avoid_penalty"),
+            strong_bearish_conflicts=config.effective_structural_overrides.get("strong_bearish_conflicts"),
+            stale_score_penalty_weight=config.effective_structural_overrides.get("stale_score_penalty_weight"),
+            overhead_score_penalty_weight=config.effective_structural_overrides.get("overhead_score_penalty_weight"),
+            extension_score_penalty_weight=config.effective_structural_overrides.get("extension_score_penalty_weight"),
+        ):
+            refreshed_payload = (
+                _attach_latest_historical_prior_to_payload(
+                    payload,
+                    replay_input_path=replay_input_path,
+                    prior_cache=prior_cache,
+                )
+                if refresh_latest_historical_prior
+                else dict(payload)
             )
             source_context = prepare_replay_source_context(
                 replay_input_path=replay_input_path,
@@ -889,6 +945,7 @@ def analyze_selection_target_replay_inputs(
     structural_variant: str = "baseline",
     structural_overrides: dict[str, Any] | None = None,
     focus_tickers: list[str] | None = None,
+    refresh_latest_historical_prior: bool = False,
 ) -> dict[str, Any]:
     replay_input_sources = load_selection_target_replay_sources(input_path)
     return analyze_selection_target_replay_sources(
@@ -899,6 +956,7 @@ def analyze_selection_target_replay_inputs(
         structural_variant=structural_variant,
         structural_overrides=structural_overrides,
         focus_tickers=focus_tickers,
+        refresh_latest_historical_prior=refresh_latest_historical_prior,
     )
 
 
@@ -1076,6 +1134,7 @@ def compare_selection_target_replay_inputs(
     structural_variant: str = "baseline",
     focus_tickers: list[str] | None = None,
     allow_roster_drift: bool = False,
+    refresh_latest_historical_prior: bool = False,
 ) -> dict[str, Any]:
     left_sources = load_selection_target_replay_sources(input_path)
     right_sources = load_selection_target_replay_sources(compare_to_path)
@@ -1093,6 +1152,7 @@ def compare_selection_target_replay_inputs(
         near_miss_threshold=near_miss_threshold,
         structural_variant=structural_variant,
         focus_tickers=focus_tickers,
+        refresh_latest_historical_prior=refresh_latest_historical_prior,
     )
     right_analysis = analyze_selection_target_replay_inputs(
         compare_to_path,
@@ -1101,6 +1161,7 @@ def compare_selection_target_replay_inputs(
         near_miss_threshold=near_miss_threshold,
         structural_variant=structural_variant,
         focus_tickers=focus_tickers,
+        refresh_latest_historical_prior=refresh_latest_historical_prior,
     )
 
     left_focus = _index_replay_rows(list(left_analysis.get("focused_score_diagnostics") or []))

@@ -124,6 +124,190 @@ def _write_replay_input(tmp_path):
     return replay_input_path
 
 
+def _write_replay_input_with_embedded_profile_snapshot(tmp_path):
+    embedded_profile_config = {
+        "select_threshold": 0.58,
+        "near_miss_threshold": 0.46,
+        "stale_penalty_block_threshold": 0.72,
+        "overhead_penalty_block_threshold": 0.68,
+        "extension_penalty_block_threshold": 0.74,
+        "layer_c_avoid_penalty": 0.12,
+        "stale_score_penalty_weight": 0.12,
+        "overhead_score_penalty_weight": 0.1,
+        "extension_score_penalty_weight": 0.08,
+    }
+    with _override_short_trade_thresholds(profile_name="default", profile_overrides=embedded_profile_config):
+        watch_item = LayerCResult(
+            ticker="000001",
+            score_b=0.71,
+            score_c=0.66,
+            score_final=0.69,
+            quality_score=0.65,
+            decision="avoid",
+            strategy_signals={
+                "trend": _make_signal(
+                    1,
+                    84.0,
+                    sub_factors={
+                        "momentum": {"direction": 1, "confidence": 86.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 78.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 74.0, "completeness": 1.0},
+                        "volatility": {"direction": 1, "confidence": 66.0, "completeness": 1.0},
+                        "long_trend_alignment": {"direction": 0, "confidence": 30.0, "completeness": 1.0},
+                    },
+                ),
+                "event_sentiment": _make_signal(
+                    1,
+                    76.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 1, "confidence": 90.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 1, "confidence": 65.0, "completeness": 1.0},
+                    },
+                ),
+                "mean_reversion": _make_signal(-1, 18.0),
+            },
+            agent_contribution_summary={"cohort_contributions": {"analyst": 0.22, "investor": 0.11}},
+        )
+        selection_targets, summary = build_selection_targets(
+            trade_date="20260322",
+            watchlist=[watch_item],
+            rejected_entries=[],
+            supplemental_short_trade_entries=[],
+            buy_order_tickers={"000001"},
+            target_mode="dual_target",
+        )
+        replay_input = {
+            "artifact_version": "v1",
+            "run_id": "test_run_embedded_profile_snapshot",
+            "trade_date": "2026-03-22",
+            "market": "CN",
+            "target_mode": "dual_target",
+            "pipeline_config_snapshot": {
+                "short_trade_target_profile": {
+                    "name": "default",
+                    "config": embedded_profile_config,
+                }
+            },
+            "source_summary": {
+                "watchlist_count": 1,
+                "rejected_entry_count": 0,
+                "supplemental_short_trade_entry_count": 0,
+                "buy_order_ticker_count": 1,
+            },
+            "watchlist": [watch_item.model_dump(mode="json")],
+            "rejected_entries": [],
+            "supplemental_short_trade_entries": [],
+            "buy_order_tickers": ["000001"],
+            "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
+            "target_summary": summary.model_dump(mode="json"),
+        }
+    replay_input_path = tmp_path / "selection_target_replay_input.json"
+    replay_input_path.write_text(json.dumps(replay_input, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay_input_path
+
+
+def _write_replay_input_with_legacy_bearish_conflict_block(tmp_path):
+    embedded_profile_config = {
+        "select_threshold": 0.58,
+        "near_miss_threshold": 0.46,
+        "stale_penalty_block_threshold": 0.72,
+        "overhead_penalty_block_threshold": 0.68,
+        "extension_penalty_block_threshold": 0.74,
+        "layer_c_avoid_penalty": 0.12,
+        "stale_score_penalty_weight": 0.12,
+        "overhead_score_penalty_weight": 0.1,
+        "extension_score_penalty_weight": 0.08,
+        "hard_block_bearish_conflicts": ["b_positive_c_strong_bearish", "b_strong_buy_c_negative"],
+        "overhead_conflict_penalty_conflicts": ["b_positive_c_strong_bearish", "b_strong_buy_c_negative"],
+    }
+    with _override_short_trade_thresholds(profile_name="default", profile_overrides=embedded_profile_config):
+        watch_item = LayerCResult(
+            ticker="002001",
+            score_b=0.55,
+            score_c=0.0,
+            score_final=0.30,
+            quality_score=0.61,
+            decision="watch",
+            bc_conflict="b_strong_buy_c_negative",
+            strategy_signals={
+                "trend": _make_signal(
+                    1,
+                    72.0,
+                    sub_factors={
+                        "momentum": {"direction": 1, "confidence": 56.0, "completeness": 1.0},
+                        "adx_strength": {"direction": 1, "confidence": 52.0, "completeness": 1.0},
+                        "ema_alignment": {"direction": 1, "confidence": 70.0, "completeness": 1.0},
+                        "volatility": {"direction": 1, "confidence": 44.0, "completeness": 1.0},
+                        "long_trend_alignment": {"direction": 1, "confidence": 62.0, "completeness": 1.0},
+                    },
+                ),
+                "event_sentiment": _make_signal(
+                    1,
+                    48.0,
+                    sub_factors={
+                        "event_freshness": {"direction": 1, "confidence": 40.0, "completeness": 1.0},
+                        "news_sentiment": {"direction": 1, "confidence": 56.0, "completeness": 1.0},
+                    },
+                ),
+                "mean_reversion": _make_signal(0, 0.0),
+            },
+            agent_contribution_summary={"cohort_contributions": {"analyst": 0.36, "investor": 0.18}},
+        )
+        selection_targets, summary = build_selection_targets(
+            trade_date="20260322",
+            watchlist=[watch_item],
+            rejected_entries=[],
+            supplemental_short_trade_entries=[],
+            buy_order_tickers=set(),
+            target_mode="dual_target",
+        )
+        stored_short_trade = selection_targets["002001"].short_trade
+        assert stored_short_trade is not None
+        stored_short_trade_payload = stored_short_trade.model_dump(mode="json")
+        stored_short_trade_payload["decision"] = "blocked"
+        stored_short_trade_payload["blockers"] = ["layer_c_bearish_conflict"]
+        stored_short_trade_payload["rejection_reasons"] = []
+        stored_short_trade_payload["gate_status"] = {
+            "data": "pass",
+            "execution": "pass",
+            "structural": "fail",
+            "score": "pass",
+        }
+        replay_input = {
+            "artifact_version": "v1",
+            "run_id": "test_run_legacy_bearish_conflict_block",
+            "trade_date": "2026-03-22",
+            "market": "CN",
+            "target_mode": "dual_target",
+            "pipeline_config_snapshot": {
+                "short_trade_target_profile": {
+                    "name": "default",
+                    "config": embedded_profile_config,
+                }
+            },
+            "source_summary": {
+                "watchlist_count": 1,
+                "rejected_entry_count": 0,
+                "supplemental_short_trade_entry_count": 0,
+                "buy_order_ticker_count": 0,
+            },
+            "watchlist": [watch_item.model_dump(mode="json")],
+            "rejected_entries": [],
+            "supplemental_short_trade_entries": [],
+            "buy_order_tickers": [],
+            "selection_targets": {
+                "002001": {
+                    **selection_targets["002001"].model_dump(mode="json"),
+                    "short_trade": stored_short_trade_payload,
+                }
+            },
+            "target_summary": summary.model_dump(mode="json"),
+        }
+    replay_input_path = tmp_path / "selection_target_replay_input.json"
+    replay_input_path.write_text(json.dumps(replay_input, ensure_ascii=False, indent=2), encoding="utf-8")
+    return replay_input_path
+
+
 def _write_selection_snapshot(tmp_path):
     watch_item = LayerCResult(
         ticker="000001",
@@ -381,6 +565,28 @@ def test_attach_latest_historical_prior_to_payload_prefers_stronger_followup_pri
     assert refreshed_payload["rejected_entries"][0]["historical_prior"]["next_close_positive_rate"] == 0.8333
 
 
+def test_analyze_selection_target_replay_inputs_does_not_refresh_latest_historical_prior_by_default(tmp_path, monkeypatch) -> None:
+    replay_dir = tmp_path / "report_dir" / "selection_artifacts" / "2026-03-22"
+    replay_dir.mkdir(parents=True, exist_ok=True)
+    replay_input_path = _write_replay_input(replay_dir)
+    refresh_calls: list[str] = []
+
+    def _unexpected_refresh(payload, *, replay_input_path, prior_cache):
+        refresh_calls.append(str(replay_input_path))
+        return dict(payload)
+
+    monkeypatch.setattr(
+        replay_selection_target_calibration,
+        "_attach_latest_historical_prior_to_payload",
+        _unexpected_refresh,
+    )
+
+    analysis = analyze_selection_target_replay_inputs(replay_input_path)
+
+    assert refresh_calls == []
+    assert analysis["decision_mismatch_count"] == 0
+
+
 def _write_replay_input_with_pipeline_snapshot(tmp_path, *, run_id: str, selected_analysts: list[str], analyst_roster_version: str):
     tmp_path.mkdir(parents=True, exist_ok=True)
     replay_input_path = _write_replay_input(tmp_path)
@@ -413,6 +619,22 @@ def test_override_short_trade_thresholds_accepts_watchlist_zero_catalyst_profile
         assert profile.watchlist_zero_catalyst_sector_resonance_min == 0.35
 
 
+def test_override_short_trade_thresholds_strong_bearish_conflicts_override_embedded_conflict_lists():
+    embedded_profile_config = {
+        "hard_block_bearish_conflicts": ["b_positive_c_strong_bearish", "b_strong_buy_c_negative"],
+        "overhead_conflict_penalty_conflicts": ["b_positive_c_strong_bearish", "b_strong_buy_c_negative"],
+    }
+
+    with _override_short_trade_thresholds(
+        profile_name="default",
+        profile_overrides=embedded_profile_config,
+        strong_bearish_conflicts=[],
+    ):
+        profile = get_active_short_trade_target_profile()
+        assert profile.hard_block_bearish_conflicts == frozenset()
+        assert profile.overhead_conflict_penalty_conflicts == frozenset()
+
+
 def test_replay_selection_target_calibration_reproduces_stored_decisions(tmp_path):
     replay_input_path = _write_replay_input(tmp_path)
 
@@ -424,6 +646,25 @@ def test_replay_selection_target_calibration_reproduces_stored_decisions(tmp_pat
     assert analysis["decision_transition_counts"] == {"selected->selected": 1}
     assert analysis["signal_availability"] == {"has_any": 1}
     assert analysis["available_strategy_signal_counts"] == {"trend": 1, "event_sentiment": 1, "mean_reversion": 1}
+
+
+def test_replay_selection_target_calibration_uses_embedded_profile_snapshot_by_default(tmp_path):
+    replay_input_path = _write_replay_input_with_embedded_profile_snapshot(tmp_path)
+
+    analysis = analyze_selection_target_replay_inputs(replay_input_path)
+
+    assert analysis["decision_mismatch_count"] == 0
+    assert analysis["select_threshold"] == 0.58
+    assert analysis["near_miss_threshold"] == 0.46
+
+
+def test_replay_selection_target_calibration_preserves_legacy_bearish_conflict_blocks(tmp_path):
+    replay_input_path = _write_replay_input_with_legacy_bearish_conflict_block(tmp_path)
+
+    analysis = analyze_selection_target_replay_inputs(replay_input_path)
+
+    assert analysis["decision_mismatch_count"] == 0
+    assert analysis["decision_transition_counts"] == {"blocked->blocked": 1}
 
 
 def test_replay_selection_target_calibration_accepts_selection_snapshot_input(tmp_path):

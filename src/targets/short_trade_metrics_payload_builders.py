@@ -488,6 +488,8 @@ def _build_t_plus_2_and_merge_threshold_metrics_payload(profile: Any) -> dict[st
         "merge_approved_continuation_near_miss_threshold": round(float(profile.merge_approved_continuation_near_miss_threshold), 4),
         "hard_block_bearish_conflicts": sorted(str(item) for item in profile.hard_block_bearish_conflicts),
         "overhead_conflict_penalty_conflicts": sorted(str(item) for item in profile.overhead_conflict_penalty_conflicts),
+        "hard_block_conflict_score_b_relief_min": None if profile.hard_block_conflict_score_b_relief_min is None else round(float(profile.hard_block_conflict_score_b_relief_min), 4),
+        "hard_block_conflict_score_c_relief_min": None if profile.hard_block_conflict_score_c_relief_min is None else round(float(profile.hard_block_conflict_score_c_relief_min), 4),
     }
 
 

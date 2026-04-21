@@ -143,7 +143,9 @@ def _append_short_trade_snapshot_blockers(
     if input_data.bc_conflict in profile.hard_block_bearish_conflicts:
         score_b = float(getattr(input_data, "score_b", 0.0) or 0.0)
         score_c = float(getattr(input_data, "score_c", 0.0) or 0.0)
-        if score_b >= 0.50 and score_c >= -0.08:
+        score_b_relief_min = getattr(profile, "hard_block_conflict_score_b_relief_min", 0.50)
+        score_c_relief_min = getattr(profile, "hard_block_conflict_score_c_relief_min", -0.08)
+        if score_b_relief_min is not None and score_c_relief_min is not None and score_b >= float(score_b_relief_min) and score_c >= float(score_c_relief_min):
             pass
         else:
             blockers.append("layer_c_bearish_conflict")
