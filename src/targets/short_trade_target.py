@@ -72,6 +72,7 @@ from src.targets.short_trade_target_watchlist_helpers import (
     resolve_catalyst_theme_penalty_impl,
     resolve_t_plus_2_continuation_candidate_impl,
     resolve_watchlist_zero_catalyst_crowded_penalty_impl,
+    resolve_watchlist_filter_diagnostics_flat_trend_penalty_impl,
     resolve_watchlist_zero_catalyst_flat_trend_penalty_impl,
     resolve_watchlist_zero_catalyst_penalty_impl,
 )
@@ -550,6 +551,24 @@ def _resolve_watchlist_zero_catalyst_flat_trend_penalty(
     )
 
 
+def _resolve_watchlist_filter_diagnostics_flat_trend_penalty(
+    *,
+    input_data: TargetEvaluationInput,
+    catalyst_freshness: float,
+    close_strength: float,
+    trend_acceleration: float,
+    profile: Any,
+) -> dict[str, Any]:
+    return resolve_watchlist_filter_diagnostics_flat_trend_penalty_impl(
+        input_data=input_data,
+        catalyst_freshness=catalyst_freshness,
+        close_strength=close_strength,
+        trend_acceleration=trend_acceleration,
+        profile=profile,
+        clamp_unit_interval_fn=clamp_unit_interval,
+    )
+
+
 def _resolve_t_plus_2_continuation_candidate(
     *,
     input_data: TargetEvaluationInput,
@@ -642,6 +661,7 @@ def _resolve_short_trade_snapshot_reliefs(
         resolve_watchlist_zero_catalyst_penalty=_resolve_watchlist_zero_catalyst_penalty,
         resolve_watchlist_zero_catalyst_crowded_penalty=_resolve_watchlist_zero_catalyst_crowded_penalty,
         resolve_watchlist_zero_catalyst_flat_trend_penalty=_resolve_watchlist_zero_catalyst_flat_trend_penalty,
+        resolve_watchlist_filter_diagnostics_flat_trend_penalty=_resolve_watchlist_filter_diagnostics_flat_trend_penalty,
         resolve_t_plus_2_continuation_candidate=_resolve_t_plus_2_continuation_candidate,
         resolve_profitability_hard_cliff_boundary_relief=_resolve_profitability_hard_cliff_boundary_relief,
         resolve_selected_score_tolerance=_resolve_selected_score_tolerance,
@@ -770,6 +790,7 @@ def _build_short_trade_top_reasons(
     watchlist_zero_catalyst_guard: dict[str, Any] | None = None,
     watchlist_zero_catalyst_crowded_guard: dict[str, Any] | None = None,
     watchlist_zero_catalyst_flat_trend_guard: dict[str, Any] | None = None,
+    watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any] | None = None,
     carryover_evidence_deficiency: dict[str, Any] | None = None,
     selected_historical_proof_deficiency: dict[str, Any] | None = None,
     t_plus_2_continuation_candidate: dict[str, Any] | None = None,
@@ -814,6 +835,7 @@ def _build_short_trade_top_reasons(
             watchlist_zero_catalyst_guard=dict(watchlist_zero_catalyst_guard or {}),
             watchlist_zero_catalyst_crowded_guard=dict(watchlist_zero_catalyst_crowded_guard or {}),
             watchlist_zero_catalyst_flat_trend_guard=dict(watchlist_zero_catalyst_flat_trend_guard or {}),
+            watchlist_filter_diagnostics_flat_trend_guard=dict(watchlist_filter_diagnostics_flat_trend_guard or {}),
             carryover_evidence_deficiency=dict(carryover_evidence_deficiency or {}),
             selected_historical_proof_deficiency=dict(selected_historical_proof_deficiency or {}),
             t_plus_2_continuation_candidate=dict(t_plus_2_continuation_candidate or {}),

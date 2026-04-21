@@ -50,11 +50,27 @@ def _build_default_checkpoint_path(
 
 
 def _parse_grid_params(raw: list[str]) -> dict[str, list[Any]]:
+    def _parse_scalar(value: str) -> Any:
+        stripped = value.strip()
+        lowered = stripped.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        if "." in stripped:
+            try:
+                return float(stripped)
+            except ValueError:
+                return stripped
+        if stripped.isdigit():
+            return int(stripped)
+        return stripped
+
     grid: dict[str, list[Any]] = {}
     for item in raw:
         if "=" in item:
             key, values_str = item.split("=", 1)
-            values = [float(v.strip()) if "." in v else int(v.strip()) if v.strip().isdigit() else v.strip() for v in values_str.split(",")]
+            values = [_parse_scalar(v) for v in values_str.split(",")]
             grid[key.strip()] = values
         else:
             try:

@@ -20,6 +20,10 @@ class ShortTradeTargetProfile:
     catalyst_theme_near_miss_rank_cap_ratio: float | None = None
     catalyst_theme_source_specific_rank_cap_trend_acceleration_min: float = 0.0
     catalyst_theme_source_specific_rank_cap_sector_resonance_min: float = 0.0
+    catalyst_theme_source_specific_rank_cap_close_strength_min: float = 0.0
+    liquidity_shadow_selected_rank_cap_ratio: float | None = None
+    liquidity_shadow_near_miss_rank_cap_ratio: float | None = None
+    liquidity_shadow_source_specific_rank_cap_require_relief_applied: bool = True
     selected_rank_cap_relief_score_margin_min: float = 0.0
     selected_rank_cap_relief_rank_buffer: int = 0
     selected_rank_cap_relief_rank_buffer_ratio: float = 0.0
@@ -164,6 +168,10 @@ class ShortTradeTargetProfile:
     watchlist_zero_catalyst_flat_trend_layer_c_alignment_min: float = 1.0
     watchlist_zero_catalyst_flat_trend_sector_resonance_min: float = 1.0
     watchlist_zero_catalyst_flat_trend_trend_acceleration_max: float = 1.0
+    watchlist_filter_diagnostics_flat_trend_penalty: float = 0.0
+    watchlist_filter_diagnostics_flat_trend_catalyst_freshness_max: float = 0.0
+    watchlist_filter_diagnostics_flat_trend_close_strength_min: float = 1.0
+    watchlist_filter_diagnostics_flat_trend_trend_acceleration_max: float = 1.0
     t_plus_2_continuation_enabled: bool = False
     t_plus_2_continuation_catalyst_freshness_max: float = 0.0
     t_plus_2_continuation_breakout_freshness_min: float = 1.0

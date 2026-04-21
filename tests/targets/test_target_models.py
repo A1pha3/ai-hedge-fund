@@ -1097,6 +1097,79 @@ def test_watchlist_zero_catalyst_flat_trend_penalty_targets_low_trend_zero_catal
     assert high_trend_control_result.metrics_payload["trend_acceleration"] > 0.66
 
 
+def test_watchlist_filter_diagnostics_flat_trend_penalty_targets_low_trend_zero_catalyst_diagnostics_case() -> None:
+    low_trend_entry = {
+        "ticker": "600988",
+        "score_b": 0.99,
+        "score_c": -0.054,
+        "score_final": 0.3657,
+        "quality_score": 0.95,
+        "decision": "watch",
+        "reason": "watchlist_selected",
+        "strategy_signals": {
+            "trend": _make_signal(
+                1,
+                72.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 50.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 35.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 92.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 38.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 15.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "event_sentiment": _make_signal(
+                0,
+                0.0,
+                sub_factors={
+                    "event_freshness": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                    "news_sentiment": {"direction": 0, "confidence": 0.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+            "mean_reversion": _make_signal(0, 0.0).model_dump(mode="json"),
+        },
+        "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.12, "investor": 0.02}},
+        "candidate_source": "watchlist_filter_diagnostics",
+    }
+    high_trend_control_entry = {
+        **low_trend_entry,
+        "ticker": "601869",
+        "strategy_signals": {
+            **low_trend_entry["strategy_signals"],
+            "trend": _make_signal(
+                1,
+                82.0,
+                sub_factors={
+                    "momentum": {"direction": 1, "confidence": 82.0, "completeness": 1.0},
+                    "adx_strength": {"direction": 1, "confidence": 58.0, "completeness": 1.0},
+                    "ema_alignment": {"direction": 1, "confidence": 96.0, "completeness": 1.0},
+                    "volatility": {"direction": 1, "confidence": 38.0, "completeness": 1.0},
+                    "long_trend_alignment": {"direction": 0, "confidence": 15.0, "completeness": 1.0},
+                },
+            ).model_dump(mode="json"),
+        },
+    }
+
+    with use_short_trade_target_profile(
+        overrides={
+            "watchlist_filter_diagnostics_flat_trend_penalty": 0.04,
+            "watchlist_filter_diagnostics_flat_trend_catalyst_freshness_max": 0.05,
+            "watchlist_filter_diagnostics_flat_trend_close_strength_min": 0.82,
+            "watchlist_filter_diagnostics_flat_trend_trend_acceleration_max": 0.66,
+        }
+    ):
+        low_trend_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=low_trend_entry, rank_hint=1)
+        high_trend_control_result = evaluate_short_trade_rejected_target(trade_date="20260328", entry=high_trend_control_entry, rank_hint=1)
+
+    assert low_trend_result.metrics_payload["watchlist_filter_diagnostics_flat_trend_penalty"] == 0.04
+    assert low_trend_result.metrics_payload["watchlist_filter_diagnostics_flat_trend_guard"]["applied"] is True
+    assert "watchlist_filter_diagnostics_flat_trend_penalty_applied" in low_trend_result.negative_tags
+    assert low_trend_result.metrics_payload["trend_acceleration"] <= 0.66
+    assert high_trend_control_result.metrics_payload["watchlist_filter_diagnostics_flat_trend_penalty"] == 0.0
+    assert high_trend_control_result.metrics_payload["watchlist_filter_diagnostics_flat_trend_guard"]["applied"] is False
+    assert high_trend_control_result.metrics_payload["trend_acceleration"] > 0.66
+
+
 def test_t_plus_2_continuation_candidate_tags_mid_alignment_low_catalyst_watchlist_case() -> None:
     continuation_entry = {
         "ticker": "600988",
@@ -1415,6 +1488,7 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     btst_precision_profile = get_short_trade_target_profile("btst_precision_v1")
     btst_precision_v2_profile = get_short_trade_target_profile("btst_precision_v2")
     catalyst_research_rank_probe = get_short_trade_target_profile("btst_precision_v2_catalyst_research_rank_probe")
+    watchlist_displacement_probe = get_short_trade_target_profile("btst_precision_v2_watchlist_incumbent_displacement_probe")
 
     assert conservative_profile.select_threshold > default_profile.select_threshold > aggressive_profile.select_threshold
     assert conservative_profile.layer_c_avoid_penalty > default_profile.layer_c_avoid_penalty > aggressive_profile.layer_c_avoid_penalty
@@ -1429,6 +1503,8 @@ def test_short_trade_profiles_define_ordered_governance_envelopes() -> None:
     assert guard_relief_profile.t_plus_2_continuation_trend_acceleration_max == 0.60
     assert guard_relief_profile.t_plus_2_continuation_close_strength_max == 0.90
     assert guard_relief_profile.t_plus_2_continuation_sector_resonance_max == 0.20
+    assert watchlist_displacement_probe.watchlist_zero_catalyst_flat_trend_penalty == 0.10
+    assert watchlist_displacement_probe.watchlist_filter_diagnostics_flat_trend_penalty == 0.0
     assert default_profile.visibility_gap_continuation_relief_enabled is True
     assert default_profile.visibility_gap_continuation_breakout_freshness_min == 0.24
     assert default_profile.visibility_gap_continuation_trend_acceleration_min == 0.60
@@ -2106,6 +2182,249 @@ def test_catalyst_research_rank_probe_keeps_carryover_candidate_on_generic_cap()
     assert probe_cap_state["selected_rank_cap_relief_catalyst_theme_carryover_guard_active"] is True
 
 
+def test_catalyst_research_close_strength_probe_releases_strong_close_research_candidate() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["ticker"] = "688048"
+    entry["reasons"] = [
+        "catalyst_theme_candidate_score_ranked",
+        "catalyst_theme_research_candidate",
+    ]
+    entry["candidate_reason_codes"] = list(entry["reasons"])
+    entry["catalyst_theme_metrics"] = {
+        "breakout_freshness": 0.48,
+        "trend_acceleration": 0.80,
+        "close_strength": 0.89,
+        "sector_resonance": 0.14,
+        "catalyst_freshness": 0.18,
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_close_strength_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    probe_cap_state = probe_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert probe_result.decision == "selected"
+    assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.18)
+    assert probe_cap_state["selected_rank_cap"] == 4
+    assert probe_cap_state["selected_cap_exceeded_effective"] is False
+    assert probe_cap_state["catalyst_theme_source_specific_caps_enabled"] is True
+    assert probe_cap_state["catalyst_theme_source_specific_rank_cap_trend_acceleration_pass"] is True
+    assert probe_cap_state["catalyst_theme_source_specific_rank_cap_sector_resonance_pass"] is True
+    assert probe_cap_state["catalyst_theme_source_specific_rank_cap_close_strength_min"] == pytest.approx(0.85)
+    assert probe_cap_state["catalyst_theme_source_specific_rank_cap_close_strength_pass"] is True
+
+
+def test_catalyst_research_close_strength_probe_keeps_weak_close_research_candidate_on_generic_cap() -> None:
+    entry = _make_catalyst_theme_short_trade_carryover_entry()
+    entry["ticker"] = "301205"
+    entry["reasons"] = [
+        "catalyst_theme_candidate_score_ranked",
+        "catalyst_theme_research_candidate",
+    ]
+    entry["candidate_reason_codes"] = list(entry["reasons"])
+    entry["catalyst_theme_metrics"] = {
+        "breakout_freshness": 0.42,
+        "trend_acceleration": 0.80,
+        "close_strength": 0.79,
+        "sector_resonance": 0.14,
+        "catalyst_freshness": 0.16,
+    }
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_rank_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        refined_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_catalyst_research_close_strength_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    refined_cap_state = refined_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    probe_cap_state = probe_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert refined_result.decision == "selected"
+    assert refined_cap_state["catalyst_theme_source_specific_caps_enabled"] is True
+    assert probe_result.decision == "near_miss"
+    assert probe_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.12)
+    assert probe_cap_state["selected_rank_cap"] == 3
+    assert probe_cap_state["selected_cap_exceeded_effective"] is True
+    assert probe_cap_state["catalyst_theme_source_specific_caps_enabled"] is False
+    assert probe_cap_state["catalyst_theme_source_specific_rank_cap_trend_acceleration_pass"] is True
+    assert probe_cap_state["catalyst_theme_source_specific_rank_cap_sector_resonance_pass"] is True
+    assert probe_cap_state["catalyst_theme_source_specific_rank_cap_close_strength_min"] == pytest.approx(0.85)
+    assert probe_cap_state["catalyst_theme_source_specific_rank_cap_close_strength_pass"] is False
+
+
+def test_liquidity_shadow_release_probe_releases_corridor_shadow_from_selected_cap_pressure() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry["candidate_source"] = "upstream_liquidity_corridor_shadow"
+    entry["candidate_pool_lane"] = "layer_a_liquidity_corridor"
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        baseline_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_liquidity_shadow_release_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    baseline_cap_state = baseline_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    probe_cap_state = probe_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert baseline_result.decision == "near_miss"
+    assert baseline_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert baseline_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.12)
+    assert baseline_cap_state["selected_rank_cap"] == 3
+    assert baseline_cap_state["selected_cap_exceeded_effective"] is True
+    assert baseline_cap_state["shadow_source_specific_caps_enabled"] is False
+    assert probe_result.decision == "selected"
+    assert probe_cap_state["liquidity_shadow_selected_rank_cap_ratio"] == pytest.approx(0.18)
+    assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.18)
+    assert probe_cap_state["selected_rank_cap"] == 4
+    assert probe_cap_state["selected_cap_exceeded_effective"] is False
+    assert probe_cap_state["shadow_source_specific_rank_cap_guard_active"] is True
+    assert probe_cap_state["shadow_source_specific_rank_cap_relief_applied"] is True
+    assert probe_cap_state["shadow_source_specific_caps_enabled"] is True
+
+
+def test_liquidity_shadow_release_probe_releases_post_gate_shadow_from_selected_cap_pressure() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry["candidate_source"] = "post_gate_liquidity_competition_shadow"
+    entry["candidate_pool_lane"] = "post_gate_liquidity_competition"
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_liquidity_shadow_release_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    probe_cap_state = probe_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert probe_result.decision == "selected"
+    assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.18)
+    assert probe_cap_state["selected_rank_cap"] == 4
+    assert probe_cap_state["selected_cap_exceeded_effective"] is False
+    assert probe_cap_state["shadow_source_specific_rank_cap_guard_active"] is True
+    assert probe_cap_state["shadow_source_specific_rank_cap_relief_applied"] is True
+    assert probe_cap_state["shadow_source_specific_caps_enabled"] is True
+
+
+def test_liquidity_shadow_release_probe_keeps_shadow_candidate_on_generic_cap_without_relief() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry["candidate_source"] = "upstream_liquidity_corridor_shadow"
+    entry["candidate_pool_lane"] = "layer_a_liquidity_corridor"
+    entry.pop("short_trade_catalyst_relief", None)
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_liquidity_shadow_release_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    probe_cap_state = probe_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert probe_result.decision == "near_miss"
+    assert probe_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.12)
+    assert probe_cap_state["selected_rank_cap"] == 3
+    assert probe_cap_state["selected_cap_exceeded_effective"] is True
+    assert probe_cap_state["shadow_source_specific_rank_cap_guard_active"] is True
+    assert probe_cap_state["shadow_source_specific_rank_cap_relief_applied"] is False
+    assert probe_cap_state["shadow_source_specific_caps_enabled"] is False
+
+
+def test_liquidity_shadow_release_probe_does_not_apply_shadow_caps_to_non_shadow_sources() -> None:
+    entry = _make_upstream_shadow_catalyst_relief_entry()
+    entry["candidate_source"] = "catalyst_theme"
+    entry["candidate_pool_lane"] = "catalyst_theme"
+
+    with use_short_trade_target_profile(
+        profile_name="btst_precision_v2_liquidity_shadow_release_probe",
+        overrides={
+            "selected_rank_cap_relief_rank_buffer": 0,
+            "selected_rank_cap_relief_rank_buffer_ratio": 0.0,
+        },
+    ):
+        probe_result = evaluate_short_trade_rejected_target(
+            trade_date="20260328",
+            entry=entry,
+            rank_hint=4,
+            rank_population=20,
+        )
+
+    probe_cap_state = probe_result.metrics_payload["thresholds"]["rank_decision_cap"]
+    assert probe_result.decision == "near_miss"
+    assert probe_result.gate_status.get("rank") == "selected_cap_exceeded"
+    assert probe_cap_state["selected_rank_cap_ratio"] == pytest.approx(0.12)
+    assert probe_cap_state["selected_rank_cap"] == 3
+    assert probe_cap_state["selected_cap_exceeded_effective"] is True
+    assert probe_cap_state["shadow_source_specific_rank_cap_guard_active"] is False
+    assert probe_cap_state["shadow_source_specific_rank_cap_relief_applied"] is True
+    assert probe_cap_state["shadow_source_specific_caps_enabled"] is False
+
+
 def test_catalyst_research_displacement_probe_releases_low_sector_high_trend_candidate_via_soft_relief() -> None:
     entry = _make_catalyst_theme_short_trade_carryover_entry()
     entry["ticker"] = "002491"
@@ -2119,6 +2438,11 @@ def test_catalyst_research_displacement_probe_releases_low_sector_high_trend_can
     entry["strategy_signals"]["trend"]["sub_factors"]["momentum"]["confidence"] = 86.0
     entry["strategy_signals"]["trend"]["sub_factors"]["adx_strength"]["confidence"] = 80.0
     entry["strategy_signals"]["trend"]["sub_factors"]["ema_alignment"]["confidence"] = 88.0
+    entry["catalyst_theme_metrics"] = {
+        "trend_acceleration": 0.85,
+        "sector_resonance": 0.10,
+        "close_strength": 0.82,
+    }
     entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
 
     with use_short_trade_target_profile(
@@ -2188,6 +2512,11 @@ def test_catalyst_research_displacement_probe_does_not_release_high_close_candid
         "catalyst_theme_research_candidate",
     ]
     entry["candidate_reason_codes"] = list(entry["reasons"])
+    entry["catalyst_theme_metrics"] = {
+        "trend_acceleration": 0.85,
+        "sector_resonance": 0.10,
+        "close_strength": 0.87,
+    }
     entry["agent_contribution_summary"] = {"cohort_contributions": {"analyst": 0.0, "investor": 0.0}}
 
     with use_short_trade_target_profile(

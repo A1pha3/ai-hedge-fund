@@ -152,6 +152,7 @@ def _resolve_rank_decision_cap(
     sector_resonance = float(snapshot.get("sector_resonance") or 0.0)
     close_strength = float(snapshot.get("close_strength") or 0.0)
     catalyst_freshness = float(snapshot.get("catalyst_freshness") or 0.0)
+    upstream_shadow_catalyst_relief_applied = bool(snapshot.get("upstream_shadow_catalyst_relief_applied"))
     catalyst_theme_source_specific_rank_cap_trend_acceleration_min = max(
         0.0,
         float(getattr(profile, "catalyst_theme_source_specific_rank_cap_trend_acceleration_min", 0.0) or 0.0),
@@ -159,6 +160,10 @@ def _resolve_rank_decision_cap(
     catalyst_theme_source_specific_rank_cap_sector_resonance_min = max(
         0.0,
         float(getattr(profile, "catalyst_theme_source_specific_rank_cap_sector_resonance_min", 0.0) or 0.0),
+    )
+    catalyst_theme_source_specific_rank_cap_close_strength_min = max(
+        0.0,
+        float(getattr(profile, "catalyst_theme_source_specific_rank_cap_close_strength_min", 0.0) or 0.0),
     )
     catalyst_theme_source_specific_rank_cap_guard_active = (
         normalized_candidate_source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
@@ -169,15 +174,46 @@ def _resolve_rank_decision_cap(
     catalyst_theme_source_specific_rank_cap_sector_resonance_pass = (
         sector_resonance >= catalyst_theme_source_specific_rank_cap_sector_resonance_min
     )
+    catalyst_theme_source_specific_rank_cap_close_strength_pass = (
+        close_strength >= catalyst_theme_source_specific_rank_cap_close_strength_min
+    )
     catalyst_theme_source_specific_caps_enabled = (
         catalyst_theme_source_specific_rank_cap_guard_active
         and catalyst_theme_source_specific_rank_cap_trend_acceleration_pass
         and catalyst_theme_source_specific_rank_cap_sector_resonance_pass
+        and catalyst_theme_source_specific_rank_cap_close_strength_pass
     )
     selected_rank_cap_hard = _normalize_rank_cap(getattr(profile, "selected_rank_cap", 0))
     near_miss_rank_cap_hard = _normalize_rank_cap(getattr(profile, "near_miss_rank_cap", 0))
     selected_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "selected_rank_cap_ratio", 0.0))
     near_miss_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "near_miss_rank_cap_ratio", 0.0))
+    liquidity_shadow_selected_rank_cap_ratio = _resolve_rank_cap_ratio_override(getattr(profile, "liquidity_shadow_selected_rank_cap_ratio", None))
+    liquidity_shadow_near_miss_rank_cap_ratio = _resolve_rank_cap_ratio_override(getattr(profile, "liquidity_shadow_near_miss_rank_cap_ratio", None))
+    liquidity_shadow_source_specific_rank_cap_require_relief_applied = bool(
+        getattr(profile, "liquidity_shadow_source_specific_rank_cap_require_relief_applied", True)
+    )
+    shadow_source_specific_rank_cap_guard_active = (
+        normalized_candidate_source in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"}
+        and "upstream_shadow_release_candidate" in normalized_reason_codes
+    )
+    shadow_source_specific_rank_cap_relief_applied = upstream_shadow_catalyst_relief_applied
+    shadow_source_specific_rank_cap_has_override = (
+        liquidity_shadow_selected_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO
+        or liquidity_shadow_near_miss_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO
+    )
+    shadow_source_specific_caps_enabled = (
+        shadow_source_specific_rank_cap_guard_active
+        and shadow_source_specific_rank_cap_has_override
+        and (
+            shadow_source_specific_rank_cap_relief_applied
+            or not liquidity_shadow_source_specific_rank_cap_require_relief_applied
+        )
+    )
+    if shadow_source_specific_caps_enabled:
+        if liquidity_shadow_selected_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO:
+            selected_rank_cap_ratio = liquidity_shadow_selected_rank_cap_ratio
+        if liquidity_shadow_near_miss_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO:
+            near_miss_rank_cap_ratio = liquidity_shadow_near_miss_rank_cap_ratio
     if catalyst_theme_source_specific_caps_enabled:
         catalyst_theme_selected_rank_cap_ratio = _resolve_rank_cap_ratio_override(getattr(profile, "catalyst_theme_selected_rank_cap_ratio", None))
         if catalyst_theme_selected_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO:
@@ -359,11 +395,20 @@ def _resolve_rank_decision_cap(
     return {
         "enabled": bool(selected_rank_cap is not None or near_miss_rank_cap is not None or selected_rank_cap_ratio is not None or near_miss_rank_cap_ratio is not None),
         "candidate_source": normalized_candidate_source or None,
+        "liquidity_shadow_selected_rank_cap_ratio": None if liquidity_shadow_selected_rank_cap_ratio is _UNSET_RANK_CAP_RATIO else liquidity_shadow_selected_rank_cap_ratio,
+        "liquidity_shadow_near_miss_rank_cap_ratio": None if liquidity_shadow_near_miss_rank_cap_ratio is _UNSET_RANK_CAP_RATIO else liquidity_shadow_near_miss_rank_cap_ratio,
+        "liquidity_shadow_source_specific_rank_cap_require_relief_applied": liquidity_shadow_source_specific_rank_cap_require_relief_applied,
+        "shadow_source_specific_rank_cap_guard_active": shadow_source_specific_rank_cap_guard_active,
+        "shadow_source_specific_rank_cap_has_override": shadow_source_specific_rank_cap_has_override,
+        "shadow_source_specific_rank_cap_relief_applied": shadow_source_specific_rank_cap_relief_applied,
+        "shadow_source_specific_caps_enabled": shadow_source_specific_caps_enabled,
         "catalyst_theme_source_specific_rank_cap_guard_active": catalyst_theme_source_specific_rank_cap_guard_active,
         "catalyst_theme_source_specific_rank_cap_trend_acceleration_min": round(catalyst_theme_source_specific_rank_cap_trend_acceleration_min, 4),
         "catalyst_theme_source_specific_rank_cap_sector_resonance_min": round(catalyst_theme_source_specific_rank_cap_sector_resonance_min, 4),
+        "catalyst_theme_source_specific_rank_cap_close_strength_min": round(catalyst_theme_source_specific_rank_cap_close_strength_min, 4),
         "catalyst_theme_source_specific_rank_cap_trend_acceleration_pass": catalyst_theme_source_specific_rank_cap_trend_acceleration_pass,
         "catalyst_theme_source_specific_rank_cap_sector_resonance_pass": catalyst_theme_source_specific_rank_cap_sector_resonance_pass,
+        "catalyst_theme_source_specific_rank_cap_close_strength_pass": catalyst_theme_source_specific_rank_cap_close_strength_pass,
         "catalyst_theme_source_specific_caps_enabled": catalyst_theme_source_specific_caps_enabled,
         "rank_hint": normalized_rank if normalized_rank > 0 else None,
         "rank_population": normalized_population,

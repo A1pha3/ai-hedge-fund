@@ -76,11 +76,13 @@ class WatchlistPenaltyState:
     watchlist_zero_catalyst_penalty: dict[str, Any]
     watchlist_zero_catalyst_crowded_penalty: dict[str, Any]
     watchlist_zero_catalyst_flat_trend_penalty: dict[str, Any]
+    watchlist_filter_diagnostics_flat_trend_penalty: dict[str, Any]
     t_plus_2_continuation_candidate: dict[str, Any]
     effective_catalyst_theme_penalty: float
     effective_watchlist_zero_catalyst_penalty: float
     effective_watchlist_zero_catalyst_crowded_penalty: float
     effective_watchlist_zero_catalyst_flat_trend_penalty: float
+    effective_watchlist_filter_diagnostics_flat_trend_penalty: float
 
 
 @dataclass(frozen=True)
@@ -773,6 +775,7 @@ def _resolve_watchlist_penalty_state(
     resolve_watchlist_zero_catalyst_penalty: Callable[..., dict[str, Any]],
     resolve_watchlist_zero_catalyst_crowded_penalty: Callable[..., dict[str, Any]],
     resolve_watchlist_zero_catalyst_flat_trend_penalty: Callable[..., dict[str, Any]],
+    resolve_watchlist_filter_diagnostics_flat_trend_penalty: Callable[..., dict[str, Any]],
     resolve_t_plus_2_continuation_candidate: Callable[..., dict[str, Any]],
 ) -> WatchlistPenaltyState:
     catalyst_theme_penalty = resolve_catalyst_theme_penalty(
@@ -804,6 +807,13 @@ def _resolve_watchlist_penalty_state(
         trend_acceleration=threshold_state.trend_acceleration,
         profile=profile,
     )
+    watchlist_filter_diagnostics_flat_trend_penalty = resolve_watchlist_filter_diagnostics_flat_trend_penalty(
+        input_data=input_data,
+        catalyst_freshness=state.raw_catalyst_freshness,
+        close_strength=state.close_strength,
+        trend_acceleration=threshold_state.trend_acceleration,
+        profile=profile,
+    )
     t_plus_2_continuation_candidate = resolve_t_plus_2_continuation_candidate(
         input_data=input_data,
         raw_catalyst_freshness=state.raw_catalyst_freshness,
@@ -819,11 +829,13 @@ def _resolve_watchlist_penalty_state(
         watchlist_zero_catalyst_penalty=watchlist_zero_catalyst_penalty,
         watchlist_zero_catalyst_crowded_penalty=watchlist_zero_catalyst_crowded_penalty,
         watchlist_zero_catalyst_flat_trend_penalty=watchlist_zero_catalyst_flat_trend_penalty,
+        watchlist_filter_diagnostics_flat_trend_penalty=watchlist_filter_diagnostics_flat_trend_penalty,
         t_plus_2_continuation_candidate=t_plus_2_continuation_candidate,
         effective_catalyst_theme_penalty=float(catalyst_theme_penalty["effective_penalty"]),
         effective_watchlist_zero_catalyst_penalty=float(watchlist_zero_catalyst_penalty["effective_penalty"]),
         effective_watchlist_zero_catalyst_crowded_penalty=float(watchlist_zero_catalyst_crowded_penalty["effective_penalty"]),
         effective_watchlist_zero_catalyst_flat_trend_penalty=float(watchlist_zero_catalyst_flat_trend_penalty["effective_penalty"]),
+        effective_watchlist_filter_diagnostics_flat_trend_penalty=float(watchlist_filter_diagnostics_flat_trend_penalty["effective_penalty"]),
     )
 
 
@@ -916,6 +928,7 @@ def _build_snapshot_score_payload(
         "watchlist_zero_catalyst_penalty": round(watchlist_penalty_state.effective_watchlist_zero_catalyst_penalty, 4),
         "watchlist_zero_catalyst_crowded_penalty": round(watchlist_penalty_state.effective_watchlist_zero_catalyst_crowded_penalty, 4),
         "watchlist_zero_catalyst_flat_trend_penalty": round(watchlist_penalty_state.effective_watchlist_zero_catalyst_flat_trend_penalty, 4),
+        "watchlist_filter_diagnostics_flat_trend_penalty": round(watchlist_penalty_state.effective_watchlist_filter_diagnostics_flat_trend_penalty, 4),
     }
     total_positive_contribution = round(sum(weighted_positive_contributions.values()), 4)
     total_negative_contribution = round(sum(weighted_negative_contributions.values()), 4)
@@ -954,6 +967,7 @@ def _build_snapshot_score_payload(
         - watchlist_penalty_state.effective_watchlist_zero_catalyst_penalty
         - watchlist_penalty_state.effective_watchlist_zero_catalyst_crowded_penalty
         - watchlist_penalty_state.effective_watchlist_zero_catalyst_flat_trend_penalty
+        - watchlist_penalty_state.effective_watchlist_filter_diagnostics_flat_trend_penalty
         - overbought_momentum_penalty
     )
     return {
@@ -989,6 +1003,7 @@ def _resolve_short_trade_snapshot_relief_resolution(
     resolve_watchlist_zero_catalyst_penalty: Callable[..., dict[str, Any]],
     resolve_watchlist_zero_catalyst_crowded_penalty: Callable[..., dict[str, Any]],
     resolve_watchlist_zero_catalyst_flat_trend_penalty: Callable[..., dict[str, Any]],
+    resolve_watchlist_filter_diagnostics_flat_trend_penalty: Callable[..., dict[str, Any]],
     resolve_t_plus_2_continuation_candidate: Callable[..., dict[str, Any]],
     resolve_profitability_hard_cliff_boundary_relief: Callable[..., dict[str, Any]],
     resolve_selected_score_tolerance: Callable[..., float],
@@ -1014,6 +1029,7 @@ def _resolve_short_trade_snapshot_relief_resolution(
         resolve_watchlist_zero_catalyst_penalty=resolve_watchlist_zero_catalyst_penalty,
         resolve_watchlist_zero_catalyst_crowded_penalty=resolve_watchlist_zero_catalyst_crowded_penalty,
         resolve_watchlist_zero_catalyst_flat_trend_penalty=resolve_watchlist_zero_catalyst_flat_trend_penalty,
+        resolve_watchlist_filter_diagnostics_flat_trend_penalty=resolve_watchlist_filter_diagnostics_flat_trend_penalty,
         resolve_t_plus_2_continuation_candidate=resolve_t_plus_2_continuation_candidate,
         resolve_profitability_hard_cliff_boundary_relief=resolve_profitability_hard_cliff_boundary_relief,
     )
@@ -1045,6 +1061,7 @@ def _build_short_trade_snapshot_resolution_core_state(
     resolve_watchlist_zero_catalyst_penalty: Callable[..., dict[str, Any]],
     resolve_watchlist_zero_catalyst_crowded_penalty: Callable[..., dict[str, Any]],
     resolve_watchlist_zero_catalyst_flat_trend_penalty: Callable[..., dict[str, Any]],
+    resolve_watchlist_filter_diagnostics_flat_trend_penalty: Callable[..., dict[str, Any]],
     resolve_t_plus_2_continuation_candidate: Callable[..., dict[str, Any]],
     resolve_profitability_hard_cliff_boundary_relief: Callable[..., dict[str, Any]],
 ) -> SnapshotResolutionCoreState:
@@ -1080,6 +1097,7 @@ def _build_short_trade_snapshot_resolution_core_state(
         resolve_watchlist_zero_catalyst_penalty=resolve_watchlist_zero_catalyst_penalty,
         resolve_watchlist_zero_catalyst_crowded_penalty=resolve_watchlist_zero_catalyst_crowded_penalty,
         resolve_watchlist_zero_catalyst_flat_trend_penalty=resolve_watchlist_zero_catalyst_flat_trend_penalty,
+        resolve_watchlist_filter_diagnostics_flat_trend_penalty=resolve_watchlist_filter_diagnostics_flat_trend_penalty,
         resolve_t_plus_2_continuation_candidate=resolve_t_plus_2_continuation_candidate,
     )
     score_penalty_state = _resolve_score_penalty_state(
@@ -1214,6 +1232,7 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "watchlist_zero_catalyst_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_penalty,
         "watchlist_zero_catalyst_crowded_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_crowded_penalty,
         "watchlist_zero_catalyst_flat_trend_penalty": resolution.watchlist_penalty_state.watchlist_zero_catalyst_flat_trend_penalty,
+        "watchlist_filter_diagnostics_flat_trend_penalty": resolution.watchlist_penalty_state.watchlist_filter_diagnostics_flat_trend_penalty,
         "t_plus_2_continuation_candidate": resolution.watchlist_penalty_state.t_plus_2_continuation_candidate,
         "breakout_trap_guard": resolution.score_penalty_state.breakout_trap_guard,
         "breakout_trap_risk": resolution.score_penalty_state.breakout_trap_risk,
@@ -1242,6 +1261,7 @@ def _build_short_trade_snapshot_reliefs_payload(resolution: SnapshotReliefResolu
         "watchlist_zero_catalyst_penalty_effective": resolution.watchlist_penalty_state.effective_watchlist_zero_catalyst_penalty,
         "watchlist_zero_catalyst_crowded_penalty_effective": resolution.watchlist_penalty_state.effective_watchlist_zero_catalyst_crowded_penalty,
         "watchlist_zero_catalyst_flat_trend_penalty_effective": resolution.watchlist_penalty_state.effective_watchlist_zero_catalyst_flat_trend_penalty,
+        "watchlist_filter_diagnostics_flat_trend_penalty_effective": resolution.watchlist_penalty_state.effective_watchlist_filter_diagnostics_flat_trend_penalty,
         "stale_trend_repair_penalty": resolution.score_penalty_state.stale_trend_repair_penalty,
         "overhead_supply_penalty": resolution.score_penalty_state.overhead_supply_penalty,
         "extension_without_room_penalty": resolution.score_penalty_state.extension_without_room_penalty,
@@ -1270,6 +1290,7 @@ def resolve_short_trade_snapshot_reliefs_impl(
     resolve_watchlist_zero_catalyst_penalty: Callable[..., dict[str, Any]],
     resolve_watchlist_zero_catalyst_crowded_penalty: Callable[..., dict[str, Any]],
     resolve_watchlist_zero_catalyst_flat_trend_penalty: Callable[..., dict[str, Any]],
+    resolve_watchlist_filter_diagnostics_flat_trend_penalty: Callable[..., dict[str, Any]],
     resolve_t_plus_2_continuation_candidate: Callable[..., dict[str, Any]],
     resolve_profitability_hard_cliff_boundary_relief: Callable[..., dict[str, Any]],
     resolve_selected_score_tolerance: Callable[..., float],
@@ -1295,6 +1316,7 @@ def resolve_short_trade_snapshot_reliefs_impl(
         resolve_watchlist_zero_catalyst_penalty=resolve_watchlist_zero_catalyst_penalty,
         resolve_watchlist_zero_catalyst_crowded_penalty=resolve_watchlist_zero_catalyst_crowded_penalty,
         resolve_watchlist_zero_catalyst_flat_trend_penalty=resolve_watchlist_zero_catalyst_flat_trend_penalty,
+        resolve_watchlist_filter_diagnostics_flat_trend_penalty=resolve_watchlist_filter_diagnostics_flat_trend_penalty,
         resolve_t_plus_2_continuation_candidate=resolve_t_plus_2_continuation_candidate,
         resolve_profitability_hard_cliff_boundary_relief=resolve_profitability_hard_cliff_boundary_relief,
         resolve_selected_score_tolerance=resolve_selected_score_tolerance,

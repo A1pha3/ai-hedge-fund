@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.optimize_profile import _build_default_checkpoint_path, _build_replay_evaluator, _resolve_primary_surface
+from scripts.optimize_profile import _build_default_checkpoint_path, _build_replay_evaluator, _parse_grid_params, _resolve_primary_surface
 
 
 def test_resolve_primary_surface_prefers_selected_when_sample_sufficient() -> None:
@@ -57,6 +57,18 @@ def test_default_checkpoint_path_is_stable_and_input_sensitive() -> None:
     assert replay_a == replay_b
     assert replay_a != replay_c
     assert replay_a != walk
+
+
+def test_parse_grid_params_coerces_boolean_literals() -> None:
+    grid = _parse_grid_params(
+        [
+            "liquidity_shadow_source_specific_rank_cap_require_relief_applied=False",
+            "profitability_relief_enabled=true",
+        ]
+    )
+
+    assert grid["liquidity_shadow_source_specific_rank_cap_require_relief_applied"] == [False]
+    assert grid["profitability_relief_enabled"] == [True]
 
 
 def test_replay_evaluator_scales_sample_weight_by_window_coverage(monkeypatch: pytest.MonkeyPatch) -> None:

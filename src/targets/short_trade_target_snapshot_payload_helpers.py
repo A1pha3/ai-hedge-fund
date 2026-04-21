@@ -88,6 +88,7 @@ def _build_short_trade_snapshot_payload_views(
         "watchlist_zero_catalyst_penalty": dict(relief_snapshot["watchlist_zero_catalyst_penalty"]),
         "watchlist_zero_catalyst_crowded_penalty": dict(relief_snapshot["watchlist_zero_catalyst_crowded_penalty"]),
         "watchlist_zero_catalyst_flat_trend_penalty": dict(relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty"]),
+        "watchlist_filter_diagnostics_flat_trend_penalty": dict(relief_snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]),
     }
 
 
@@ -137,6 +138,8 @@ def _build_watchlist_snapshot_payload(
         "watchlist_zero_catalyst_crowded_penalty": relief_snapshot["watchlist_zero_catalyst_crowded_penalty_effective"],
         "watchlist_zero_catalyst_flat_trend_guard": snapshot_views["watchlist_zero_catalyst_flat_trend_penalty"],
         "watchlist_zero_catalyst_flat_trend_penalty": relief_snapshot["watchlist_zero_catalyst_flat_trend_penalty_effective"],
+        "watchlist_filter_diagnostics_flat_trend_guard": snapshot_views["watchlist_filter_diagnostics_flat_trend_penalty"],
+        "watchlist_filter_diagnostics_flat_trend_penalty": relief_snapshot["watchlist_filter_diagnostics_flat_trend_penalty_effective"],
     }
 
 

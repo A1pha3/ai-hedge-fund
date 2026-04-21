@@ -155,17 +155,20 @@ def _build_watchlist_metrics_payload(
     watchlist_zero_catalyst_guard: dict[str, Any],
     watchlist_zero_catalyst_crowded_guard: dict[str, Any],
     watchlist_zero_catalyst_flat_trend_guard: dict[str, Any],
+    watchlist_filter_diagnostics_flat_trend_guard: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "catalyst_theme_penalty": round(float(snapshot["catalyst_theme_penalty"]), 4),
         "watchlist_zero_catalyst_penalty": round(float(snapshot["watchlist_zero_catalyst_penalty"]), 4),
         "watchlist_zero_catalyst_crowded_penalty": round(float(snapshot["watchlist_zero_catalyst_crowded_penalty"]), 4),
         "watchlist_zero_catalyst_flat_trend_penalty": round(float(snapshot["watchlist_zero_catalyst_flat_trend_penalty"]), 4),
+        "watchlist_filter_diagnostics_flat_trend_penalty": round(float(snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]), 4),
         "t_plus_2_continuation_candidate": _build_t_plus_2_continuation_candidate_metrics_payload(t_plus_2_continuation_candidate),
         "catalyst_theme_guard": _build_watchlist_guard_metrics_payload(catalyst_theme_guard),
         "watchlist_zero_catalyst_guard": _build_watchlist_guard_metrics_payload(watchlist_zero_catalyst_guard),
         "watchlist_zero_catalyst_crowded_guard": _build_watchlist_guard_metrics_payload(watchlist_zero_catalyst_crowded_guard),
         "watchlist_zero_catalyst_flat_trend_guard": _build_watchlist_guard_metrics_payload(watchlist_zero_catalyst_flat_trend_guard),
+        "watchlist_filter_diagnostics_flat_trend_guard": _build_watchlist_guard_metrics_payload(watchlist_filter_diagnostics_flat_trend_guard),
     }
 
 
@@ -307,10 +310,14 @@ def _build_short_trade_threshold_core_metrics_payload(*, profile: Any, snapshot:
         "selected_rank_cap_relief_rank_buffer": int(getattr(profile, "selected_rank_cap_relief_rank_buffer", 0) or 0),
         "selected_rank_cap_relief_rank_buffer_ratio": round(float(getattr(profile, "selected_rank_cap_relief_rank_buffer_ratio", 0.0) or 0.0), 4),
         "selected_rank_cap_relief_sector_resonance_min": round(float(getattr(profile, "selected_rank_cap_relief_sector_resonance_min", 0.0) or 0.0), 4),
+        "liquidity_shadow_selected_rank_cap_ratio": None if getattr(profile, "liquidity_shadow_selected_rank_cap_ratio", None) is None else round(float(getattr(profile, "liquidity_shadow_selected_rank_cap_ratio", 0.0) or 0.0), 4),
+        "liquidity_shadow_near_miss_rank_cap_ratio": None if getattr(profile, "liquidity_shadow_near_miss_rank_cap_ratio", None) is None else round(float(getattr(profile, "liquidity_shadow_near_miss_rank_cap_ratio", 0.0) or 0.0), 4),
+        "liquidity_shadow_source_specific_rank_cap_require_relief_applied": bool(getattr(profile, "liquidity_shadow_source_specific_rank_cap_require_relief_applied", True)),
         "selected_rank_cap_relief_catalyst_theme_research_enabled": bool(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_enabled", False)),
         "selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min": round(float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min", 0.0) or 0.0), 4),
         "selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min": round(float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min", 0.0) or 0.0), 4),
         "selected_rank_cap_relief_catalyst_theme_research_close_strength_max": round(float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_close_strength_max", 1.0) or 1.0), 4),
+        "catalyst_theme_source_specific_rank_cap_close_strength_min": round(float(getattr(profile, "catalyst_theme_source_specific_rank_cap_close_strength_min", 0.0) or 0.0), 4),
         "selected_rank_cap_relief_require_confirmed_breakout": bool(getattr(profile, "selected_rank_cap_relief_require_confirmed_breakout", False)),
         "selected_rank_cap_relief_require_t_plus_2_candidate": bool(getattr(profile, "selected_rank_cap_relief_require_t_plus_2_candidate", False)),
         "selected_rank_cap_relief_allow_risk_off": bool(getattr(profile, "selected_rank_cap_relief_allow_risk_off", True)),
@@ -675,6 +682,7 @@ def _collect_short_trade_metrics_payload_inputs(snapshot: dict[str, Any]) -> dic
         "watchlist_zero_catalyst_guard": dict(snapshot["watchlist_zero_catalyst_guard"]),
         "watchlist_zero_catalyst_crowded_guard": dict(snapshot["watchlist_zero_catalyst_crowded_guard"]),
         "watchlist_zero_catalyst_flat_trend_guard": dict(snapshot["watchlist_zero_catalyst_flat_trend_guard"]),
+        "watchlist_filter_diagnostics_flat_trend_guard": dict(snapshot["watchlist_filter_diagnostics_flat_trend_guard"]),
         "visibility_gap_continuation_relief": dict(snapshot["visibility_gap_continuation_relief"]),
         "merge_approved_continuation_relief": dict(snapshot["merge_approved_continuation_relief"]),
         "prepared_breakout_penalty_relief": dict(snapshot["prepared_breakout_penalty_relief"]),

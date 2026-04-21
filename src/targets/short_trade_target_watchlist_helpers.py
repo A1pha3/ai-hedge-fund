@@ -52,10 +52,11 @@ def resolve_watchlist_penalty_rule(
     input_data: TargetEvaluationInput,
     penalty: float,
     gate_hits: dict[str, bool],
+    eligible_source: str = "layer_c_watchlist",
 ) -> dict[str, Any]:
     source = str(input_data.replay_context.get("source") or "").strip()
     default_result = _build_default_watchlist_rule_result(enabled=penalty > 0.0, source=source)
-    if penalty <= 0.0 or source != "layer_c_watchlist":
+    if penalty <= 0.0 or source != eligible_source:
         return default_result
 
     eligible = all(gate_hits.values())
@@ -177,6 +178,30 @@ def resolve_watchlist_zero_catalyst_flat_trend_penalty_impl(
             "layer_c_alignment": layer_c_alignment >= clamp_unit_interval_fn(float(profile.watchlist_zero_catalyst_flat_trend_layer_c_alignment_min or 0.0)),
             "sector_resonance": sector_resonance >= clamp_unit_interval_fn(float(profile.watchlist_zero_catalyst_flat_trend_sector_resonance_min or 0.0)),
             "trend_acceleration": trend_acceleration <= clamp_unit_interval_fn(float(profile.watchlist_zero_catalyst_flat_trend_trend_acceleration_max or 0.0)),
+        },
+    )
+
+
+def resolve_watchlist_filter_diagnostics_flat_trend_penalty_impl(
+    *,
+    input_data: TargetEvaluationInput,
+    catalyst_freshness: float,
+    close_strength: float,
+    trend_acceleration: float,
+    profile: Any,
+    clamp_unit_interval_fn: Callable[[float], float],
+) -> dict[str, Any]:
+    source = str(input_data.replay_context.get("source") or "").strip()
+    penalty = clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_flat_trend_penalty or 0.0))
+    return resolve_watchlist_penalty_rule(
+        input_data=input_data,
+        penalty=penalty,
+        eligible_source="watchlist_filter_diagnostics",
+        gate_hits={
+            "candidate_source": source == "watchlist_filter_diagnostics",
+            "catalyst_freshness": catalyst_freshness <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_flat_trend_catalyst_freshness_max or 0.0)),
+            "close_strength": close_strength >= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_flat_trend_close_strength_min or 0.0)),
+            "trend_acceleration": trend_acceleration <= clamp_unit_interval_fn(float(profile.watchlist_filter_diagnostics_flat_trend_trend_acceleration_max or 0.0)),
         },
     )
 
