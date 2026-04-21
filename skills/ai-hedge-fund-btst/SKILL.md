@@ -180,6 +180,7 @@ Purpose:
 Must include:
 
 - A clear comparison of the two strategies
+- A plain-language market backdrop section covering the broad index condition, sector heat, and where capital is concentrating
 - What overlaps between them
 - What should be watched versus traded
 - Common mistakes retail traders may make
@@ -192,6 +193,7 @@ Writing rules:
 - Do not use hype, certainty claims, or inciting language
 - Do not recycle a fixed paragraph template day after day
 - The explanation should reflect the actual overlap, tension, and differences in the current run
+- The market backdrop should be tied to current artifacts and observable context, not generic daily commentary
 - If today's result is narrower, weaker, more concentrated, or more divergent than recent runs, say that directly in natural language
 
 ### 4. YYYYMMDD-两套交易计划论坛短版.md
@@ -204,6 +206,7 @@ Writing rules:
 
 - Keep it compact and directly postable
 - Preserve the same factual tone
+- Include one concise market-context sentence covering index tone, hot sectors, or the current capital focus when that context materially affects execution
 - Emphasize the single takeaway and the execution attitude
 - Rewrite it from the current run, not by mechanically compressing yesterday's wording
 
