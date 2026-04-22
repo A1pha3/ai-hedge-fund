@@ -66,3 +66,36 @@ def test_analyze_btst_independent_window_monitor_tracks_second_window_readiness(
     assert "001309 Primary Roll Forward: readiness=ready_for_reassessment" in markdown
     assert "300113 Recurring Close Candidate: readiness=await_new_independent_window_data" in markdown
     assert "600821 Recurring Intraday Control: readiness=no_short_trade_window_evidence" in markdown
+
+
+def test_analyze_btst_independent_window_monitor_counts_corridor_shadow_selected_and_near_miss(tmp_path: Path) -> None:
+    reports_root = tmp_path / "data" / "reports"
+    window_a = reports_root / "paper_trading_20260406_20260406_live_m2_7_short_trade_only_20260407_today_btst"
+    window_b = reports_root / "paper_trading_20260415_20260415_live_m2_7_short_trade_only_20260416_today_btst"
+
+    _write_snapshot(
+        window_a,
+        "2026-04-06",
+        [
+            {"ticker": "300720", "candidate_source": "upstream_liquidity_corridor_shadow", "short_trade": {"decision": "near_miss"}},
+        ],
+    )
+    _write_snapshot(
+        window_b,
+        "2026-04-15",
+        [
+            {"ticker": "300720", "candidate_source": "post_gate_liquidity_competition_shadow", "short_trade": {"decision": "selected"}},
+        ],
+    )
+
+    analysis = analyze_btst_independent_window_monitor(
+        reports_root,
+        tickers=["300720"],
+        report_name_contains="paper_trading",
+    )
+
+    row = analysis["rows"][0]
+    assert row["ticker"] == "300720"
+    assert row["readiness"] == "ready_for_reassessment"
+    assert row["distinct_window_count"] == 2
+    assert row["missing_window_count"] == 0

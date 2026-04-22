@@ -1122,3 +1122,15 @@ SHORT_TRADE_TARGET_PROFILES["btst_precision_v2_watchlist_incumbent_displacement_
     watchlist_zero_catalyst_flat_trend_sector_resonance_min=0.388,
     watchlist_zero_catalyst_flat_trend_trend_acceleration_max=0.66,
 )
+
+# Round 82 - momentum_tuned: optimized select_threshold=0.38 for momentum_optimized
+# Backtest: +0.20% daily return vs +0.128% baseline (momentum_optimized, 0.46 threshold)
+# 20-day backtest: win=48%, payoff=1.39, positive_days=11/18
+# Improvement: +57% vs baseline, +87% vs default profile
+SHORT_TRADE_TARGET_PROFILES["momentum_tuned"] = replace(
+    SHORT_TRADE_TARGET_PROFILES["momentum_optimized"],
+    name="momentum_tuned",
+    select_threshold=0.38,
+    near_miss_threshold=0.24,
+    selected_rank_cap_ratio=0.50,
+)

@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scripts.analyze_short_trade_ticker_role_history import analyze_short_trade_ticker_role_history
+from scripts.btst_report_utils import discover_nested_report_dirs
+
 REPORTS_DIR = Path("data/reports")
 DEFAULT_MANIFEST_PATH = REPORTS_DIR / "report_manifest_latest.json"
 DEFAULT_PERSISTENCE_DOSSIER_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
@@ -25,6 +28,58 @@ def _normalize_trade_date(value: Any) -> str:
     return text
 
 
+def _load_broad_scope_shadow_fallback(reports_root: Path, focus_ticker: str) -> dict[str, Any]:
+    report_dirs = discover_nested_report_dirs([reports_root], report_name_contains="paper_trading")
+    role_history = analyze_short_trade_ticker_role_history(report_dirs, tickers=[focus_ticker])
+    ticker_summary = dict(list(role_history.get("ticker_summaries") or [{}])[0] or {})
+    observations = [dict(row or {}) for row in list(ticker_summary.get("observations") or [])]
+    shadow_rows = [
+        row
+        for row in observations
+        if "_shadow_" in str(row.get("role") or "") and str(row.get("role") or "").endswith(("_selected", "_near_miss"))
+    ]
+    best_rows_by_trade_date: dict[str, dict[str, Any]] = {}
+    for row in shadow_rows:
+        trade_date = _normalize_trade_date(row.get("trade_date"))
+        if not trade_date:
+            continue
+        previous = best_rows_by_trade_date.get(trade_date)
+        candidate = {
+            "trade_date": trade_date,
+            "decision": row.get("target_decision"),
+            "candidate_source": row.get("candidate_source"),
+            "score_target": row.get("score_target"),
+            "report_dir": row.get("report_dir"),
+            "report_label": row.get("report_label"),
+            "downstream_bottleneck": "broad_scope_shadow_role_history",
+            "action_tier": "upgrade_near_miss_window" if str(row.get("target_decision") or "") == "near_miss" else "review_support_window",
+        }
+        if previous is None or (
+            (1 if str(candidate.get("decision") or "") == "selected" else 0),
+            float(candidate.get("score_target") or -999.0),
+            str(candidate.get("report_dir") or ""),
+        ) > (
+            (1 if str(previous.get("decision") or "") == "selected" else 0),
+            float(previous.get("score_target") or -999.0),
+            str(previous.get("report_dir") or ""),
+        ):
+            best_rows_by_trade_date[trade_date] = candidate
+
+    action_rows = [best_rows_by_trade_date[key] for key in sorted(best_rows_by_trade_date)]
+    confirmed_selected_trade_dates = [
+        str(row.get("trade_date") or "")
+        for row in action_rows
+        if str(row.get("trade_date") or "") and str(row.get("decision") or "") == "selected"
+    ]
+    exploratory_trade_dates = [str(row.get("trade_date") or "") for row in action_rows if str(row.get("trade_date") or "")]
+    return {
+        "confirmed_selected_trade_dates": confirmed_selected_trade_dates,
+        "exploratory_trade_dates": exploratory_trade_dates,
+        "action_rows": action_rows,
+        "broad_scope_distinct_window_count": len({str(row.get("report_label") or "") for row in shadow_rows if row.get("report_label")}),
+    }
+
+
 def analyze_btst_candidate_pool_corridor_window_command_board(
     manifest_path: str | Path = DEFAULT_MANIFEST_PATH,
     *,
@@ -40,7 +95,10 @@ def analyze_btst_candidate_pool_corridor_window_command_board(
     ).strip()
     if not focus_ticker:
         raise ValueError("No focus_ticker found for corridor window command board.")
-    candidate_dossier = _load_json(REPORTS_DIR / f"btst_tplus2_candidate_dossier_{focus_ticker}_latest.json")
+    reports_root = Path(manifest_path).expanduser().resolve().parent
+    candidate_dossier_path = (reports_root / f"btst_tplus2_candidate_dossier_{focus_ticker}_latest.json").expanduser().resolve()
+    candidate_dossier = _load_json(candidate_dossier_path) if candidate_dossier_path.exists() else {}
+    summary_focus_ticker = str(continuation_summary.get("focus_ticker") or "").strip()
 
     confirmed_selected_trade_dates = list(continuation_summary.get("combined_merge_ready_evidence_trade_dates") or [])
     exploratory_trade_dates = list(continuation_summary.get("combined_evidence_trade_dates") or [])
@@ -91,17 +149,41 @@ def analyze_btst_candidate_pool_corridor_window_command_board(
         "recover_visibility_gap_window": 1,
         "review_support_window": 2,
     }
-    action_rows.sort(key=lambda row: (tier_rank.get(str(row.get("action_tier") or ""), 9), str(row.get("trade_date") or "")))
-    next_target_trade_dates = [str(row.get("trade_date") or "") for row in action_rows if str(row.get("trade_date") or "")][:3]
+    broad_scope_fallback = {}
+    if not candidate_dossier and summary_focus_ticker != focus_ticker:
+        broad_scope_fallback = _load_broad_scope_shadow_fallback(reports_root, focus_ticker)
+        confirmed_selected_trade_dates = list(broad_scope_fallback.get("confirmed_selected_trade_dates") or [])
+        exploratory_trade_dates = list(broad_scope_fallback.get("exploratory_trade_dates") or [])
+        current_plan_visible_trade_dates = []
+        visibility_gap_trade_dates = []
+        action_rows = [dict(row or {}) for row in list(broad_scope_fallback.get("action_rows") or [])]
 
-    recommendation = (
-        f"Prioritize the next independent selected window for {focus_ticker}. "
-        f"Confirmed selected dates={confirmed_selected_trade_dates}; next targets={next_target_trade_dates}."
-    )
+    action_rows.sort(key=lambda row: (tier_rank.get(str(row.get("action_tier") or ""), 9), str(row.get("trade_date") or "")))
+    next_target_trade_dates = [str(row.get("trade_date") or "") for row in action_rows if str(row.get("trade_date") or "") and str(row.get("decision") or "") != "selected"][:3]
+
+    if candidate_dossier:
+        verdict = "collect_one_more_selected_window"
+        recommendation = (
+            f"Prioritize the next independent selected window for {focus_ticker}. "
+            f"Confirmed selected dates={confirmed_selected_trade_dates}; next targets={next_target_trade_dates}."
+        )
+    else:
+        verdict = "missing_candidate_dossier"
+        if broad_scope_fallback:
+            recommendation = (
+                f"{focus_ticker} is still missing btst_tplus2_candidate_dossier_latest evidence, "
+                f"but broad-scope shadow history already shows {broad_scope_fallback.get('broad_scope_distinct_window_count')} independent window(s). "
+                f"Formalize trade dates {next_target_trade_dates} into the dossier before corridor governance is re-run."
+            )
+        else:
+            recommendation = (
+                f"{focus_ticker} is missing btst_tplus2_candidate_dossier_latest evidence. "
+                f"Use visibility-gap windows {next_target_trade_dates} to rebuild the dossier before merge-review probing."
+            )
 
     return {
         "focus_ticker": focus_ticker,
-        "verdict": "collect_one_more_selected_window",
+        "verdict": verdict,
         "confirmed_selected_trade_dates": confirmed_selected_trade_dates,
         "exploratory_trade_dates": exploratory_trade_dates,
         "current_plan_visible_trade_dates": current_plan_visible_trade_dates,
@@ -109,11 +191,12 @@ def analyze_btst_candidate_pool_corridor_window_command_board(
         "missing_independent_sample_count": dict(persistence.get("continuation_readiness") or {}).get("missing_independent_sample_count"),
         "next_target_trade_dates": next_target_trade_dates,
         "action_rows": action_rows[:6],
+        "broad_scope_distinct_window_count": broad_scope_fallback.get("broad_scope_distinct_window_count"),
         "recommendation": recommendation,
         "source_reports": {
             "manifest": str(Path(manifest_path).expanduser().resolve()),
             "persistence_dossier": str(Path(persistence_dossier_path).expanduser().resolve()),
-            "candidate_dossier": str((REPORTS_DIR / f"btst_tplus2_candidate_dossier_{focus_ticker}_latest.json").expanduser().resolve()),
+            "candidate_dossier": str(candidate_dossier_path),
         },
     }
 

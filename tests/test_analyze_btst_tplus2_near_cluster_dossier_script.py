@@ -122,6 +122,169 @@ def test_analyze_btst_tplus2_near_cluster_dossier_supports_observation_queue(mon
     assert analysis["promotion_readiness_verdict"] == "validation_queue_ready"
 
 
+def test_analyze_btst_tplus2_near_cluster_dossier_counts_recent_tier_trade_dates_within_same_report(
+    monkeypatch, tmp_path: Path
+) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+
+    monkeypatch.setattr(
+        dossier,
+        "_collect_rows",
+        lambda *_args, **_kwargs: [
+            {
+                "report_label": "window_anchor",
+                "trade_date": "2026-03-24",
+                "ticker": "600988",
+                "candidate_source": "layer_c_watchlist",
+                "metrics_payload": {
+                    "breakout_freshness": 0.35,
+                    "trend_acceleration": 0.48,
+                    "catalyst_freshness": 0.01,
+                    "layer_c_alignment": 0.49,
+                    "sector_resonance": 0.13,
+                    "close_strength": 0.64,
+                    "t_plus_2_continuation_candidate": {"applied": True},
+                },
+                "next_high_return": 0.05,
+                "next_close_return": -0.01,
+                "t_plus_2_close_return": 0.03,
+            },
+            {
+                "report_label": "window_bundle",
+                "trade_date": "2026-03-27",
+                "ticker": "300683",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "metrics_payload": {
+                    "breakout_freshness": 0.37,
+                    "trend_acceleration": 0.5,
+                    "catalyst_freshness": 0.02,
+                    "layer_c_alignment": 0.5,
+                    "sector_resonance": 0.14,
+                        "close_strength": 0.88,
+                },
+                "next_high_return": 0.09,
+                "next_close_return": 0.03,
+                "t_plus_2_close_return": 0.07,
+            },
+            {
+                "report_label": "window_bundle",
+                "trade_date": "2026-03-30",
+                "ticker": "300683",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "metrics_payload": {
+                    "breakout_freshness": 0.38,
+                    "trend_acceleration": 0.49,
+                    "catalyst_freshness": 0.02,
+                    "layer_c_alignment": 0.5,
+                    "sector_resonance": 0.14,
+                        "close_strength": 0.88,
+                },
+                "next_high_return": 0.08,
+                "next_close_return": 0.02,
+                "t_plus_2_close_return": 0.06,
+            },
+        ],
+    )
+
+    analysis = dossier.analyze_btst_tplus2_near_cluster_dossier(reports_root, candidate_ticker="300683")
+
+    assert analysis["candidate_tier_focus"] == "near_cluster_peer"
+    assert analysis["recent_window_count"] == 1
+    assert analysis["recent_tier_window_count"] == 2
+    assert analysis["recent_tier_verdict"] == "recent_tier_confirmed"
+
+
+def test_analyze_btst_tplus2_near_cluster_dossier_keeps_strong_positive_t_plus_2_window_in_recent_tier(
+    monkeypatch, tmp_path: Path
+) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+
+    monkeypatch.setattr(
+        dossier,
+        "_collect_rows",
+        lambda *_args, **_kwargs: [
+            {
+                "report_label": "window_anchor",
+                "trade_date": "2026-03-24",
+                "ticker": "600988",
+                "candidate_source": "layer_c_watchlist",
+                "metrics_payload": {
+                    "breakout_freshness": 0.35,
+                    "trend_acceleration": 0.48,
+                    "catalyst_freshness": 0.01,
+                    "layer_c_alignment": 0.49,
+                    "sector_resonance": 0.13,
+                    "close_strength": 0.64,
+                    "t_plus_2_continuation_candidate": {"applied": True},
+                },
+                "next_high_return": 0.05,
+                "next_close_return": -0.01,
+                "t_plus_2_close_return": 0.03,
+            },
+            {
+                "report_label": "window_bundle",
+                "trade_date": "2026-03-27",
+                "ticker": "300683",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "metrics_payload": {
+                    "breakout_freshness": 0.37,
+                    "trend_acceleration": 0.5,
+                    "catalyst_freshness": 0.02,
+                    "layer_c_alignment": 0.5,
+                    "sector_resonance": 0.14,
+                    "close_strength": 0.88,
+                },
+                "next_high_return": 0.1646,
+                "next_close_return": 0.0858,
+                "t_plus_2_close_return": 0.1172,
+            },
+            {
+                "report_label": "window_bundle",
+                "trade_date": "2026-03-30",
+                "ticker": "300683",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "metrics_payload": {
+                    "breakout_freshness": 0.38,
+                    "trend_acceleration": 0.49,
+                    "catalyst_freshness": 0.02,
+                    "layer_c_alignment": 0.5,
+                    "sector_resonance": 0.14,
+                    "close_strength": 0.88,
+                },
+                "next_high_return": 0.0904,
+                "next_close_return": 0.029,
+                "t_plus_2_close_return": 0.1576,
+            },
+            {
+                "report_label": "window_bundle",
+                "trade_date": "2026-03-31",
+                "ticker": "300683",
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "metrics_payload": {
+                    "breakout_freshness": 0.39,
+                    "trend_acceleration": 0.5,
+                    "catalyst_freshness": 0.02,
+                    "layer_c_alignment": 0.5,
+                    "sector_resonance": 0.14,
+                    "close_strength": 0.88,
+                },
+                "next_high_return": 0.1504,
+                "next_close_return": 0.125,
+                "t_plus_2_close_return": 0.0936,
+            },
+        ],
+    )
+
+    analysis = dossier.analyze_btst_tplus2_near_cluster_dossier(reports_root, candidate_ticker="300683")
+
+    assert analysis["candidate_tier_focus"] == "near_cluster_peer"
+    assert analysis["recent_window_count"] == 1
+    assert analysis["recent_tier_window_count"] == 3
+    assert analysis["recent_tier_verdict"] == "recent_tier_confirmed"
+
+
 def test_analyze_btst_tplus2_near_cluster_dossier_marks_governance_followup_candidate(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()

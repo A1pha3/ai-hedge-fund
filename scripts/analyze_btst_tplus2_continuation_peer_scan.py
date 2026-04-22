@@ -45,6 +45,10 @@ RECENT_TIER_VERDICT_RANK = {
     "recent_tier_absent": 3,
     "no_recent_windows": 4,
 }
+ALLOWED_CANDIDATE_SOURCES = {
+    "layer_c_watchlist",
+    "upstream_liquidity_corridor_shadow",
+}
 
 
 def _metric_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -125,6 +129,20 @@ def _is_peer_outcome_edge(row: dict[str, Any]) -> bool:
     return float(t_plus_2_close_return) > 0.0 and float(t_plus_2_close_return) > float(next_close_return)
 
 
+def _is_strong_positive_continuation_window(
+    *,
+    next_high_return: float,
+    next_close_return: float,
+    t_plus_2_close_return: float,
+) -> bool:
+    return (
+        next_high_return >= 0.08
+        and next_close_return >= 0.05
+        and t_plus_2_close_return >= 0.05
+        and t_plus_2_close_return >= next_close_return - 0.04
+    )
+
+
 def _classify_recent_tier_verdict(
     recent_tier_window_count: int,
     recent_window_count: int,
@@ -181,7 +199,14 @@ def _classify_peer_tier(
     if (
         similarity_score <= near_similarity_threshold
         and t_plus_2_close_return > 0.0
-        and t_plus_2_close_return >= next_close_return - 0.01
+        and (
+            t_plus_2_close_return >= next_close_return - 0.01
+            or _is_strong_positive_continuation_window(
+                next_high_return=next_high_return,
+                next_close_return=next_close_return,
+                t_plus_2_close_return=t_plus_2_close_return,
+            )
+        )
     ):
         return "near_cluster_peer"
     if (
@@ -273,7 +298,11 @@ def _classify_peer_candidate_rows(
     grouped_all_candidate_rows: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         ticker = str(row.get("ticker") or "")
-        if not ticker or ticker == anchor_ticker or str(row.get("candidate_source") or "") != "layer_c_watchlist":
+        if (
+            not ticker
+            or ticker == anchor_ticker
+            or str(row.get("candidate_source") or "") not in ALLOWED_CANDIDATE_SOURCES
+        ):
             continue
         candidate_row = _build_peer_candidate_row(
             row,

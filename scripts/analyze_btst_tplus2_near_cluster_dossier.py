@@ -210,7 +210,12 @@ def _summarize_candidate_windows(
         for row in candidate_rows
         if str(row.get("report_label") or "") in recent_labels and str(row.get("peer_tier") or "unclassified") == candidate_tier_focus
     ]
-    recent_tier_window_count = len({str(row.get("report_label") or "") for row in recent_tier_rows})
+    recent_tier_window_count = len(
+        {
+            str(normalize_trade_date(row.get("trade_date")) or row.get("trade_date") or row.get("report_label") or "")
+            for row in recent_tier_rows
+        }
+    )
     recent_tier_ratio = round(recent_tier_window_count / len(recent_window_summaries), 4) if recent_window_summaries else 0.0
     recent_tier_surface_summary = build_surface_summary(recent_tier_rows, next_high_hit_threshold=next_high_hit_threshold)
     return {

@@ -137,6 +137,55 @@ def test_generate_btst_tplus2_continuation_validation_queue_escalates_merge_read
     assert analysis["queue_rows"][0]["next_step"] == "Escalate into default BTST merge review under explicit governance approval."
 
 
+def test_generate_btst_tplus2_continuation_validation_queue_keeps_seed_order_when_board_focus_is_non_governance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir()
+
+    monkeypatch.setattr(
+        validation_queue,
+        "generate_btst_tplus2_continuation_expansion_board",
+        lambda *_args, **_kwargs: {
+            "focus_candidate": {"ticker": "300408", "tier": "strict_peer"},
+            "board_rows": [
+                {"ticker": "300408", "tier": "strict_peer", "priority_rank": 1},
+                {"ticker": "300720", "tier": "near_cluster_peer", "priority_rank": 2},
+                {"ticker": "600989", "tier": "near_cluster_peer", "priority_rank": 3},
+                {"ticker": "300683", "tier": "near_cluster_peer", "priority_rank": 8},
+            ],
+            "next_validation_candidates": [
+                {"ticker": "300720", "tier": "near_cluster_peer", "priority_rank": 2},
+                {"ticker": "600989", "tier": "near_cluster_peer", "priority_rank": 3},
+                {"ticker": "300683", "tier": "near_cluster_peer", "priority_rank": 8},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        validation_queue,
+        "analyze_btst_tplus2_near_cluster_dossier",
+        lambda *_args, **kwargs: {
+            "candidate_ticker": kwargs["candidate_ticker"],
+            "candidate_tier_focus": "near_cluster_peer",
+            "recent_tier_verdict": "recent_tier_confirmed" if kwargs["candidate_ticker"] != "300683" else "recent_tier_thin",
+            "recent_tier_window_count": 4 if kwargs["candidate_ticker"] != "300683" else 1,
+            "recent_window_count": 5,
+            "recent_tier_ratio": 0.8 if kwargs["candidate_ticker"] != "300683" else 0.2,
+            "promotion_readiness_verdict": "watchlist_ready" if kwargs["candidate_ticker"] != "300683" else "low_priority",
+            "tier_focus_surface_summary": {
+                "next_close_positive_rate": 1.0,
+                "t_plus_2_close_positive_rate": 1.0,
+                "t_plus_2_close_return_distribution": {"mean": 0.05 if kwargs["candidate_ticker"] == "300683" else 0.02},
+            },
+        },
+    )
+
+    analysis = validation_queue.generate_btst_tplus2_continuation_validation_queue(reports_root)
+
+    assert analysis["focus_ticker"] == "300720"
+    assert [row["ticker"] for row in analysis["queue_rows"]] == ["300720", "600989", "300683"]
+
+
 def test_generate_btst_tplus2_continuation_validation_queue_threads_payload(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()

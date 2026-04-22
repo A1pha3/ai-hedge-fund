@@ -25,11 +25,77 @@ RECENT_TIER_PRIORITY = {
     "recent_tier_absent": 3,
     "no_recent_windows": 4,
 }
+NEXT_VALIDATION_CANDIDATE_LIMIT = 3
+STRONG_THIN_NEAR_CLUSTER_MIN_NEXT_CLOSE_POSITIVE_RATE = 0.75
+STRONG_THIN_NEAR_CLUSTER_MIN_T_PLUS_2_POSITIVE_RATE = 0.75
+STRONG_THIN_NEAR_CLUSTER_MIN_T_PLUS_2_RETURN_MEAN = 0.05
 
 
 def _surface_metric(summary: dict[str, Any], key: str) -> float:
     value = dict(summary.get("surface_summary") or {}).get(key)
     return float(value) if value is not None else -999.0
+
+
+def _is_seed_eligible(row: dict[str, Any]) -> bool:
+    return (
+        str(row.get("recent_tier_verdict") or "") in {"recent_tier_confirmed", "recent_tier_mixed", "recent_tier_thin"}
+        and (row.get("next_close_positive_rate") is None or float(row.get("next_close_positive_rate")) > 0.0)
+        and (row.get("t_plus_2_close_return_mean") is None or float(row.get("t_plus_2_close_return_mean")) > 0.0)
+    )
+
+
+def _is_strong_thin_near_cluster_seed(row: dict[str, Any]) -> bool:
+    return (
+        str(row.get("tier") or "") == "near_cluster_peer"
+        and str(row.get("recent_tier_verdict") or "") == "recent_tier_thin"
+        and float(row.get("next_close_positive_rate") or 0.0) >= STRONG_THIN_NEAR_CLUSTER_MIN_NEXT_CLOSE_POSITIVE_RATE
+        and float(row.get("t_plus_2_close_positive_rate") or 0.0) >= STRONG_THIN_NEAR_CLUSTER_MIN_T_PLUS_2_POSITIVE_RATE
+        and float(row.get("t_plus_2_close_return_mean") or 0.0) >= STRONG_THIN_NEAR_CLUSTER_MIN_T_PLUS_2_RETURN_MEAN
+    )
+
+
+def _build_next_validation_candidates(board_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    eligible_rows = [row for row in board_rows[1:] if _is_seed_eligible(row)]
+    seed_rows: list[dict[str, Any]] = eligible_rows[: min(2, NEXT_VALIDATION_CANDIDATE_LIMIT)]
+    seeded_tickers = {str(row.get("ticker") or "") for row in seed_rows}
+
+    if NEXT_VALIDATION_CANDIDATE_LIMIT >= 3:
+        thin_seed = next(
+            (
+                row
+                for row in eligible_rows
+                if str(row.get("ticker") or "") not in seeded_tickers and _is_strong_thin_near_cluster_seed(row)
+            ),
+            None,
+        )
+        if thin_seed is not None:
+            seed_rows.append(thin_seed)
+            seeded_tickers.add(str(thin_seed.get("ticker") or ""))
+
+    for row in eligible_rows:
+        ticker = str(row.get("ticker") or "")
+        if ticker in seeded_tickers:
+            continue
+        seed_rows.append(row)
+        seeded_tickers.add(ticker)
+        if len(seed_rows) >= NEXT_VALIDATION_CANDIDATE_LIMIT:
+            break
+
+    return [
+        {
+            "ticker": row.get("ticker"),
+            "tier": row.get("tier"),
+            "priority_rank": row.get("priority_rank"),
+            "recent_tier_verdict": row.get("recent_tier_verdict"),
+            "recent_tier_window_count": row.get("recent_tier_window_count"),
+            "recent_window_count": row.get("recent_window_count"),
+            "recent_tier_ratio": row.get("recent_tier_ratio"),
+            "next_close_positive_rate": row.get("next_close_positive_rate"),
+            "t_plus_2_close_positive_rate": row.get("t_plus_2_close_positive_rate"),
+            "t_plus_2_close_return_mean": row.get("t_plus_2_close_return_mean"),
+        }
+        for row in seed_rows[:NEXT_VALIDATION_CANDIDATE_LIMIT]
+    ]
 
 
 def _maybe_load_json(path: str | Path | None) -> dict[str, Any]:
@@ -173,24 +239,7 @@ def generate_btst_tplus2_continuation_expansion_board(
         row["priority_rank"] = index
 
     focus_candidate = dict(board_rows[0]) if board_rows else None
-    next_validation_candidates = [
-        {
-            "ticker": row.get("ticker"),
-            "tier": row.get("tier"),
-            "priority_rank": row.get("priority_rank"),
-            "recent_tier_verdict": row.get("recent_tier_verdict"),
-            "recent_tier_window_count": row.get("recent_tier_window_count"),
-            "recent_window_count": row.get("recent_window_count"),
-            "recent_tier_ratio": row.get("recent_tier_ratio"),
-            "next_close_positive_rate": row.get("next_close_positive_rate"),
-            "t_plus_2_close_positive_rate": row.get("t_plus_2_close_positive_rate"),
-            "t_plus_2_close_return_mean": row.get("t_plus_2_close_return_mean"),
-        }
-        for row in board_rows[1:]
-        if str(row.get("recent_tier_verdict") or "") in {"recent_tier_confirmed", "recent_tier_mixed", "recent_tier_thin"}
-        and (row.get("next_close_positive_rate") is None or float(row.get("next_close_positive_rate")) > 0.0)
-        and (row.get("t_plus_2_close_return_mean") is None or float(row.get("t_plus_2_close_return_mean")) > 0.0)
-    ][:3]
+    next_validation_candidates = _build_next_validation_candidates(board_rows)
 
     if board_rows:
         leader = board_rows[0]
