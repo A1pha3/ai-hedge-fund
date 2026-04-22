@@ -147,10 +147,24 @@ def generate_btst_tplus2_continuation_validation_queue(
     max_candidates = max(int(max_candidates), 0)
     queue_seed = list(expansion_board.get("next_validation_candidates") or [])[:max_candidates]
     expansion_board_rows = [dict(row or {}) for row in list(expansion_board.get("board_rows") or [])]
+    implicit_focus_candidate = dict(expansion_board.get("focus_candidate") or {})
+    implicit_focus_row = next(
+        (
+            row
+            for row in expansion_board_rows
+            if str(row.get("ticker") or "") == str(implicit_focus_candidate.get("ticker") or "")
+        ),
+        {},
+    )
+    implicit_focus_ticker = (
+        str(implicit_focus_candidate.get("ticker") or "")
+        if str(implicit_focus_candidate.get("tier") or implicit_focus_row.get("tier") or "") == "governance_followup"
+        else ""
+    )
 
     resolved_focus_ticker = str(
         focus_ticker
-        or dict(expansion_board.get("focus_candidate") or {}).get("ticker")
+        or implicit_focus_ticker
         or (queue_seed[0].get("ticker") if queue_seed else "")
         or ""
     )

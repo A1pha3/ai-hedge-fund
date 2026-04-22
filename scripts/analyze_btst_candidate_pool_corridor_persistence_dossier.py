@@ -131,7 +131,8 @@ def analyze_btst_candidate_pool_corridor_persistence_dossier(
         "mean_t_plus_2_return": parallel_watch_row.get("mean_t_plus_2_return"),
     }
 
-    if focus_lane_pair_row.get("governance_blocker") == "no_selected_persistence_or_independent_edge":
+    blocker = str(focus_lane_pair_row.get("governance_blocker") or "").strip()
+    if blocker in {"no_selected_persistence_or_independent_edge", "shadow_recall_not_persistent"}:
         verdict = "await_second_independent_selected_window"
         next_confirmation_requirement = (
             f"{resolved_focus_ticker} still needs {missing_independent_sample_count if missing_independent_sample_count is not None else 'additional'} "

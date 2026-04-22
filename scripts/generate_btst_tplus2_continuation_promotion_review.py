@@ -76,7 +76,7 @@ def _collect_promotion_review_blockers(context: dict[str, Any]) -> list[str]:
     blockers: list[str] = []
     if context["candidate_tier_focus"] == "governance_followup" and not context["governance_payoff_ready"]:
         blockers.append("governance_followup_needs_multiwindow_payoff")
-    elif context["candidate_tier_focus"] not in {"observation_candidate", "governance_followup"}:
+    elif context["candidate_tier_focus"] not in {"observation_candidate", "near_cluster_peer", "governance_followup"}:
         blockers.append("focus_not_observation_candidate")
     if context["focus_recent_tier_verdict"] not in {"recent_tier_confirmed", "governance_followup_payoff_confirmed"}:
         if context["focus_recent_tier_verdict"] == "governance_followup_pending_evidence":

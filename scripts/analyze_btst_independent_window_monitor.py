@@ -45,7 +45,11 @@ def _extract_window_key(report_label: str) -> str:
 
 def _is_short_trade_role(role: Any) -> bool:
     normalized = str(role or "")
-    return normalized.startswith("short_trade_") or normalized.startswith("short_trade_boundary")
+    return (
+        normalized.startswith("short_trade_")
+        or normalized.startswith("short_trade_boundary")
+        or ("_shadow_" in normalized and normalized.endswith(("_selected", "_near_miss")))
+    )
 
 
 def _build_lane_row(summary: dict[str, Any], *, ticker: str) -> dict[str, Any]:

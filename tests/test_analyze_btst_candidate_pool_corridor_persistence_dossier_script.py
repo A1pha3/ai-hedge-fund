@@ -108,3 +108,81 @@ def test_analyze_btst_candidate_pool_corridor_persistence_dossier_flags_300720_w
     assert "# BTST Candidate Pool Corridor Persistence Dossier" in markdown
     assert "300720" in markdown
     assert "await_second_independent_selected_window" in markdown
+
+
+def test_analyze_btst_candidate_pool_corridor_persistence_dossier_keeps_transient_shadow_probe_waiting(tmp_path: Path) -> None:
+    corridor_pack_path = tmp_path / "btst_candidate_pool_corridor_validation_pack_latest.json"
+    lane_pair_board_path = tmp_path / "btst_candidate_pool_lane_pair_board_latest.json"
+    objective_monitor_path = tmp_path / "btst_tplus1_tplus2_objective_monitor_latest.json"
+
+    _write_json(
+        corridor_pack_path,
+        {
+            "pack_status": "parallel_probe_ready",
+            "primary_validation_ticker": {
+                "ticker": "300683",
+                "objective_fit_score": 0.9719,
+                "mean_t_plus_2_return": 0.0577,
+                "t_plus_2_positive_rate": 1.0,
+                "t_plus_2_return_hit_rate_at_target": 0.75,
+                "positive_rate_delta_vs_tradeable_surface": 0.5294,
+                "mean_return_delta_vs_tradeable_surface": 0.0634,
+                "return_hit_rate_delta_vs_tradeable_surface": 0.6324,
+            },
+        },
+    )
+    _write_json(
+        lane_pair_board_path,
+        {
+            "pair_status": "ready_for_ranked_comparison",
+            "board_leader": {
+                "ticker": "300683",
+                "lane_family": "corridor",
+                "governance_status": "transient_probe_only",
+                "governance_blocker": "shadow_recall_not_persistent",
+                "governance_summary": "shadow recall is not persistent yet",
+                "current_decision": "rejected",
+                "current_candidate_source": "upstream_liquidity_corridor_shadow",
+                "governance_same_source_sample_count": None,
+                "governance_same_source_next_close_positive_rate": None,
+                "governance_same_source_next_close_return_mean": None,
+            },
+            "candidates": [
+                {
+                    "ticker": "300683",
+                    "lane_family": "corridor",
+                    "role": "primary_shadow_replay",
+                    "objective_fit_score": 0.9719,
+                    "mean_t_plus_2_return": 0.0577,
+                    "governance_status": "transient_probe_only",
+                    "governance_blocker": "shadow_recall_not_persistent",
+                    "governance_same_source_sample_count": None,
+                    "governance_same_source_next_close_positive_rate": None,
+                    "governance_same_source_next_close_return_mean": None,
+                    "current_decision": "rejected",
+                    "current_candidate_source": "upstream_liquidity_corridor_shadow",
+                }
+            ],
+        },
+    )
+    _write_json(
+        objective_monitor_path,
+        {
+            "tradeable_surface": {
+                "objective_fit_score": 0.2492,
+                "t_plus_2_positive_rate": 0.4706,
+                "t_plus_2_return_hit_rate_at_target": 0.1176,
+                "mean_t_plus_2_return": -0.0057,
+            }
+        },
+    )
+
+    analysis = analyze_btst_candidate_pool_corridor_persistence_dossier(
+        corridor_pack_path,
+        lane_pair_board_path=lane_pair_board_path,
+        objective_monitor_path=objective_monitor_path,
+    )
+
+    assert analysis["focus_ticker"] == "300683"
+    assert analysis["verdict"] == "await_second_independent_selected_window"
+    assert analysis["recommendation"].startswith("Keep 300683 as corridor primary shadow replay")

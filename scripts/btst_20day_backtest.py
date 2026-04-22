@@ -325,7 +325,7 @@ PROFILE_WEIGHT_FIELDS = {
     "reversal_2d": "reversal_2d_weight",
 }
 
-DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "btst_precision_v1", "btst_precision_v2", "btst_precision_v3", "ic_v3", "ic_v4", "ic_v5")
+DEFAULT_PROFILE_NAMES = ("default", "ic_optimized", "momentum_optimized", "momentum_tuned", "btst_precision_v1", "btst_precision_v2", "btst_precision_v3", "ic_v3", "ic_v4", "ic_v5")
 
 
 def _parse_profile_names(raw: str | None) -> tuple[str, ...]:

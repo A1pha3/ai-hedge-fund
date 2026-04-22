@@ -20,8 +20,25 @@ def reset_output_artifacts_for_fresh_run(
     if checkpoint_path.exists():
         return
 
+    output_dir = checkpoint_path.parent
     checkpoint_timing_log_path = checkpoint_path.with_name(f"{checkpoint_path.stem}.timings.jsonl")
-    for stale_file in (daily_events_path, timing_log_path, checkpoint_timing_log_path):
+    stale_output_patterns = (
+        "session_summary.json",
+        "btst_next_day_trade_brief*.json",
+        "btst_next_day_trade_brief*.md",
+        "btst_premarket_execution_card*.json",
+        "btst_premarket_execution_card*.md",
+        "btst_next_day_priority_board*.json",
+        "btst_next_day_priority_board*.md",
+        "btst_opening_watch_card*.json",
+        "btst_opening_watch_card*.md",
+        "catalyst_theme_frontier*.json",
+        "catalyst_theme_frontier*.md",
+    )
+    stale_files = [daily_events_path, timing_log_path, checkpoint_timing_log_path]
+    for pattern in stale_output_patterns:
+        stale_files.extend(path for path in output_dir.glob(pattern) if path.is_file())
+    for stale_file in stale_files:
         if stale_file.exists():
             stale_file.unlink()
 
